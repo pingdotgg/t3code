@@ -33,8 +33,8 @@ export * from "@effect/platform-node-shared/NodeSocket"
  * Use `NodeWS.layerWebSocketConstructor` if any of these matter:
  *
  * - Reads cannot be paused, so incoming frames are buffered without limit, or
- *   fail the socket with a `SocketReadError` once a configured
- *   `highWaterMark` is exceeded.
+ *   fail the socket with a `SocketReadError` and close it once they exceed a
+ *   configured `highWaterMark`.
  * - A custom `Host` header is ignored.
  * - Outgoing messages are not compressed.
  *

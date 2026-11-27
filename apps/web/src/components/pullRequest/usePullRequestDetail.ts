@@ -1,4 +1,6 @@
+import { useAtomValue } from "@effect/atom-react";
 import { resolvePullRequestDetailChecks } from "@t3tools/client-runtime/pull-request-checks";
+import { pullRequestPendingEditsFor } from "@t3tools/client-runtime/state/pull-requests";
 import {
   AuthSourceControlWriteScope,
   type EnvironmentId,
@@ -13,6 +15,7 @@ import { useServerConfigs } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
 import {
+  newestDisplayedPullRequestSummary,
   newestPullRequestSummary,
   pullRequestEnvironment,
   pullRequestListEntryToSummary,
@@ -21,6 +24,7 @@ import {
 import {
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
+  samePullRequestReadExceptStamps,
 } from "./pullRequestDetail.logic";
 
 // Query atoms key on JSON order, so the panel and the row prefetch must build the ref here.
@@ -36,6 +40,29 @@ export function pullRequestPanelReference(target: {
     number: target.number,
     ...(target.host ? { host: target.host } : {}),
   };
+}
+
+const internedReferences = new Map<string, PullRequestRef>();
+
+/**
+ * One object per pull request reference. Parents rebuild the reference on unrelated updates, and
+ * every comment's reaction bar, form and resolve button closes over it.
+ */
+export function internPullRequestReference(reference: PullRequestRef): PullRequestRef {
+  const key = JSON.stringify([
+    reference.projectId,
+    reference.host ?? null,
+    reference.repository,
+    reference.number,
+    reference.expectedAccountId ?? null,
+    reference.allowStale ?? null,
+  ]);
+  const interned = internedReferences.get(key);
+  if (interned !== undefined) return interned;
+  // Losing old entries only costs those pull requests one extra render.
+  if (internedReferences.size >= 500) internedReferences.clear();
+  internedReferences.set(key, reference);
+  return reference;
 }
 
 export function pullRequestRefKey(reference: PullRequestRef) {
@@ -105,6 +132,7 @@ export function usePullRequestDetail(
     setCachedDetail(detailQuery.data);
   }
   const observedSummary = useSharedPullRequestSummary(environmentId, reference);
+  const pendingEdits = useAtomValue(pullRequestPendingEditsFor(environmentId, reference));
   const activity = activityQuery.data;
   const resolvedCoreDetail = resolveDisplayedPullRequestDetail({
     live: liveDetail,
@@ -115,9 +143,12 @@ export function usePullRequestDetail(
   // `detail` would cost it its cache scope.
   const listSummary = listEntry === null ? null : pullRequestListEntryToSummary(listEntry);
   // The row can come from the page's stored snapshot, which no answer has published yet.
-  const sharedSummary = newestPullRequestSummary(
+  const sharedSummary = newestDisplayedPullRequestSummary(
     resolvedCoreDetail,
-    newestPullRequestSummary(observedSummary, listSummary),
+    liveDetail === null,
+    newestPullRequestSummary(listSummary, observedSummary),
+    reference,
+    pendingEdits,
   );
   const coreDetail =
     resolvedCoreDetail === null || sharedSummary === null || sharedSummary === resolvedCoreDetail
@@ -182,9 +213,23 @@ export function usePullRequestDetail(
           ),
           commentsTruncated: activity?.commentsTruncated ?? false,
           reviewThreads: activity?.reviewThreads ?? [],
+          ...(activity?.reviewThreadsTruncated === undefined
+            ? {}
+            : { reviewThreadsTruncated: activity.reviewThreadsTruncated }),
+          ...(activity?.overviewThreads === undefined
+            ? {}
+            : { overviewThreads: activity.overviewThreads }),
           commits: activity?.commits ?? [],
           reactions: activity?.reactions ?? [],
         };
+  // Keep the shown detail through refreshes that only restamp it, so the panel's tree can skip
+  // re-rendering. Code that orders local edits against observations reads `observedAt` instead.
+  const [shownDetail, setShownDetail] = useState(detail);
+  const stableDetail =
+    detail !== shownDetail && samePullRequestReadExceptStamps(shownDetail, detail)
+      ? shownDetail
+      : detail;
+  if (stableDetail !== shownDetail) setShownDetail(stableDetail);
   return {
     canWriteSourceControl,
     detailQuery,
@@ -192,6 +237,7 @@ export function usePullRequestDetail(
     activity,
     sharedSummary,
     coreDetail,
-    detail,
+    detail: stableDetail,
+    observedAt: detail?.observedAt,
   };
 }

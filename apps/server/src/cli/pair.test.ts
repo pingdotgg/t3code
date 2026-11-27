@@ -14,6 +14,7 @@ import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -29,13 +30,20 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
 } from "../cloud/serviceProtocol.ts";
 import * as ServiceLauncherClient from "../cloud/serviceLauncherClient.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as ServerOwnership from "../serverOwnership.ts";
 import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
   type PersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import { resolveHostCliCommand } from "./invocation.ts";
-import { DevServerNotProxiableError, resolveTailscaleLocalTarget } from "./pair.ts";
+import {
+  DevServerNotProxiableError,
+  resolveTailscaleLocalTarget,
+  ServePortOccupiedError,
+  TailscaleServeTargetRefusedError,
+} from "./pair.ts";
 
 import packageJson from "../../package.json" with { type: "json" };
 import { buildPairingAppLink } from "@t3tools/shared/remote";
@@ -136,7 +144,7 @@ describe("t3 pair", () => {
             Effect.gen(function* () {
               if (!ChildProcess.isStandardCommand(command))
                 return yield* Effect.die("Unexpected pipeline");
-              if (command.args[0] === "serve") {
+              if (command.args[0] === "serve" && command.args[1] === "--bg") {
                 const target = String(command.args.at(-1));
                 const descriptor = yield* Effect.promise(async () =>
                   (await fetch(new URL("/.well-known/t3/environment", target))).json(),
@@ -192,6 +200,87 @@ describe("t3 pair", () => {
         }),
       "::1",
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  // The MagicDNS probe fails whenever the host cannot reach its own *.ts.net name,
+  // so it cannot be what decides that the port is free.
+  it.effect(
+    "leaves another app's Serve route alone when the host cannot reach its MagicDNS URL",
+    () =>
+      withDescriptorServer((origin) =>
+        // Another live app on loopback; a dead port's route may be taken back.
+        withDescriptorServer((otherAppOrigin) =>
+          Effect.gen(function* () {
+            const fetch = yield* FetchHttpClient.Fetch;
+            const tailscaleCalls: Array<ReadonlyArray<string>> = [];
+            const spawner = ChildProcessSpawner.make((command) => {
+              const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+              tailscaleCalls.push(args);
+              const stdout =
+                args[0] === "status"
+                  ? '{"BackendState":"Running","Self":{"DNSName":"host-a.tail.ts.net.","TailscaleIPs":["100.64.0.1"],"CapMap":{"https":null}}}'
+                  : args[0] === "serve" && args[1] === "status"
+                    ? JSON.stringify({
+                        TCP: { "443": { HTTPS: true } },
+                        Web: {
+                          "host-a.tail.ts.net:443": {
+                            Handlers: { "/": { Proxy: otherAppOrigin } },
+                          },
+                        },
+                      })
+                    : "";
+              return Effect.succeed(
+                ChildProcessSpawner.makeHandle({
+                  pid: ChildProcessSpawner.ProcessId(1),
+                  // A recorded takeover fails fast instead of waiting out the HTTPS retries.
+                  exitCode: Effect.succeed(
+                    ChildProcessSpawner.ExitCode(
+                      args[0] === "serve" && args[1] !== "status" ? 1 : 0,
+                    ),
+                  ),
+                  isRunning: Effect.succeed(false),
+                  kill: () => Effect.void,
+                  unref: Effect.succeed(Effect.void),
+                  stdin: Sink.drain,
+                  stdout: Stream.make(new TextEncoder().encode(stdout)),
+                  stderr: Stream.empty,
+                  all: Stream.empty,
+                  getInputFd: () => Sink.drain,
+                  getOutputFd: () => Stream.empty,
+                }),
+              );
+            });
+
+            const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-ts-held-"));
+            yield* persistServerRuntimeState({
+              path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+              state: yield* makePersistedServerRuntimeState({
+                config: { host: "127.0.0.1", devUrl: undefined },
+                port: Number(new URL(origin).port),
+              }),
+            });
+
+            const exit = yield* runCli(["pair", "--base-dir", baseDir, "--tailscale"]).pipe(
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              Effect.provideService(HostProcess.Platform, "linux"),
+              Effect.provideService(FetchHttpClient.Fetch, async (input, init) => {
+                if (String(input).startsWith(origin)) return fetch(input, init);
+                throw new TypeError("getaddrinfo ENOTFOUND host-a.tail.ts.net");
+              }),
+              Effect.exit,
+            );
+
+            assert.deepEqual(
+              tailscaleCalls.filter((args) => args[0] === "serve" && args[1] !== "status"),
+              [],
+            );
+            assert.isTrue(Exit.isFailure(exit));
+            if (Exit.isFailure(exit)) {
+              assert.instanceOf(Cause.squash(exit.cause), ServePortOccupiedError);
+            }
+          }),
+        ),
+      ).pipe(Effect.provide(layerCliRuntime)),
   );
 
   it.effect("mints a token and prints a QR pairing URL for a live server", () =>
@@ -409,7 +498,10 @@ describe("t3 pair", () => {
           ]);
           assert.isTrue(Exit.isFailure(exit));
           if (Exit.isFailure(exit)) {
-            assert.include(String(Cause.squash(exit.cause)), "t3@0.0.45 pair");
+            assert.include(
+              String(Cause.squash(exit.cause)),
+              `t3@0.0.45 pair --base-dir ${baseDir}`,
+            );
           }
         }),
       "127.0.0.1",
@@ -467,6 +559,280 @@ describe("t3 pair", () => {
         assert.deepEqual(tailscaleCalls, [["status", "--json"]]);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  // regression: #35517 - the macOS Tailscale apps refuse Serve targets other than
+  // localhost, 127.0.0.1 and ::1, so a specific bind needs an explanation.
+  it.effect("names the bind address when Tailscale refuses it as a Serve target", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-remote-"));
+      yield* persistServerRuntimeState({
+        path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+        state: yield* makePersistedServerRuntimeState({
+          config: { host: "127.0.0.2", devUrl: undefined },
+          port: 3773,
+        }),
+      });
+      const spawner = ChildProcessSpawner.make((command) => {
+        const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+        const serve = args[0] === "serve" && args[1] !== "status";
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(serve ? 1 : 0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(
+              new TextEncoder().encode(
+                serve
+                  ? ""
+                  : args[0] === "status"
+                    ? '{"Self":{"DNSName":"pair-test.tail.ts.net."}}'
+                    : "{}",
+              ),
+            ),
+            stderr: Stream.make(
+              new TextEncoder().encode(
+                serve
+                  ? "Warning: the MacOS extension doesn't support connecting to remote destinations from non-default route\n"
+                  : "",
+              ),
+            ),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      });
+
+      const error = yield* provideCliTestLayers(
+        runCli(["pair", "--base-dir", baseDir, "--tailscale"]).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(FetchHttpClient.Fetch, async (input) => {
+            if (String(input) === "http://127.0.0.2:3773/.well-known/t3/environment") {
+              return Response.json(testDescriptor);
+            }
+            assert.equal(String(input), "https://pair-test.tail.ts.net/.well-known/t3/environment");
+            return new Response(null, { status: 503 });
+          }),
+          Effect.flip,
+        ),
+      );
+
+      assert.instanceOf(error, TailscaleServeTargetRefusedError);
+      assert.include(String(error), "127.0.0.2");
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  // regression: #37459 - on Linux without an operator, tailscaled refuses Serve config
+  // from a normal user, and the CLI must say how to fix it.
+  it.effect("explains the operator fix when Tailscale denies the Serve config", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-remote-"));
+      yield* persistServerRuntimeState({
+        path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+        state: yield* makePersistedServerRuntimeState({
+          config: { host: "127.0.0.1", devUrl: undefined },
+          port: 3773,
+        }),
+      });
+      const spawner = ChildProcessSpawner.make((command) => {
+        const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+        const serve = args[0] === "serve" && args[1] !== "status";
+        return Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(serve ? 1 : 0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(
+              new TextEncoder().encode(
+                serve
+                  ? ""
+                  : args[0] === "status"
+                    ? '{"Self":{"DNSName":"pair-test.tail.ts.net."}}'
+                    : "{}",
+              ),
+            ),
+            stderr: Stream.make(
+              new TextEncoder().encode(
+                serve
+                  ? "sending serve config: Access denied: serve config denied\n\nUse 'sudo tailscale serve --https=443 --bg http://127.0.0.1:3773'.\nTo not require root, use 'sudo tailscale set --operator=$USER' once.\n"
+                  : "",
+              ),
+            ),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        );
+      });
+
+      const error = yield* provideCliTestLayers(
+        runCli(["pair", "--base-dir", baseDir, "--tailscale"]).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(FetchHttpClient.Fetch, async (input) => {
+            if (String(input) === "http://127.0.0.1:3773/.well-known/t3/environment") {
+              return Response.json(testDescriptor);
+            }
+            assert.equal(String(input), "https://pair-test.tail.ts.net/.well-known/t3/environment");
+            return new Response(null, { status: 503 });
+          }),
+          Effect.flip,
+        ),
+      );
+
+      assert.include(String(error), "sudo tailscale set --operator=$USER");
+      assert.notInclude(String(error), "by hand to see why");
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+});
+
+describe("auth session revoke", () => {
+  // Nothing listens on the recorded port; `server` stubs what fetch meets there instead.
+  it.effect.each([
+    {
+      label: "goes through a running server, which closes open connections",
+      recorded: true,
+      lockHeld: false,
+      server: "answers",
+      outcome: "revoked by server",
+    },
+    {
+      label: "writes the database when no server runs",
+      recorded: false,
+      lockHeld: false,
+      server: "none",
+      outcome: "revoked locally",
+    },
+    {
+      label: "writes the database when the recorded server has stopped",
+      recorded: true,
+      lockHeld: false,
+      server: "none",
+      outcome: "revoked locally",
+    },
+    {
+      label: "changes nothing when a running server refuses the connection",
+      recorded: true,
+      lockHeld: true,
+      server: "none",
+      outcome: "RunningServerUnreachableError",
+    },
+    {
+      label: "does not repeat a change locally when the server stops replying mid-request",
+      recorded: true,
+      lockHeld: false,
+      server: "hangs",
+      outcome: "RunningServerNoReplyError",
+    },
+    {
+      label: "does not repeat a change locally when the server answers with an error",
+      recorded: true,
+      lockHeld: false,
+      server: "fails",
+      outcome: "HttpClientError",
+    },
+  ] as const)("$label", ({ recorded, lockHeld, server, outcome }) =>
+    provideCliTestLayers(
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-revoke-test-"));
+        const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+        const issued = JSON.parse(
+          yield* captureStdout(
+            runCli(["auth", "session", "issue", "--base-dir", baseDir, "--json"]),
+          ),
+        ) as { readonly sessionId: string };
+        if (recorded) {
+          // A port just released has no listener, so connecting to it is refused.
+          const port = yield* (yield* NetService.NetService).reserveLoopbackPort("127.0.0.1");
+          yield* persistServerRuntimeState({
+            path: statePath,
+            // An owner id skips the legacy liveness probe, so only the lock decides.
+            state: {
+              ...baseState,
+              pid: process.pid,
+              ownerId: "test-owner",
+              port,
+              origin: `http://127.0.0.1:${port}`,
+            },
+          });
+        }
+        if (lockHeld) {
+          yield* ServerOwnership.acquireServerOwnership(statePath).pipe(
+            Effect.provide(ProcessRunner.layer),
+          );
+        }
+
+        const requests: Array<{ readonly path: string; readonly body: unknown }> = [];
+        const requestStarted = Promise.withResolvers<void>();
+        const fetch: typeof globalThis.fetch | undefined =
+          server === "answers" || server === "fails"
+            ? async (input, init) => {
+                requests.push({
+                  path: new URL(String(input)).pathname,
+                  body: JSON.parse(String(init?.body)),
+                });
+                return server === "answers"
+                  ? Response.json({ revoked: true })
+                  : new Response(null, { status: 502 });
+              }
+            : server === "hangs"
+              ? (_input, init) => {
+                  requestStarted.resolve();
+                  return new Promise((_resolve, reject) =>
+                    init?.signal?.addEventListener("abort", () => reject(init.signal?.reason)),
+                  );
+                }
+              : undefined;
+        const revoke = runCli([
+          "auth",
+          "session",
+          "revoke",
+          "--base-dir",
+          baseDir,
+          issued.sessionId,
+        ]);
+        const running = yield* (
+          fetch === undefined
+            ? revoke
+            : revoke.pipe(Effect.provideService(FetchHttpClient.Fetch, fetch))
+        ).pipe(Effect.exit, Effect.forkChild);
+        if (server === "hangs") {
+          yield* Effect.promise(() => requestStarted.promise);
+          yield* TestClock.adjust("30 seconds");
+        }
+        const exit = yield* Fiber.join(running);
+        const listed = JSON.parse(
+          yield* captureStdout(
+            runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"]),
+          ),
+        ) as ReadonlyArray<{ readonly sessionId: string }>;
+
+        assert.deepEqual(
+          requests,
+          server === "answers" || server === "fails"
+            ? [{ path: "/api/auth/clients/revoke", body: { sessionId: issued.sessionId } }]
+            : [],
+        );
+        if (outcome === "revoked by server" || outcome === "revoked locally") {
+          assert.isTrue(Exit.isSuccess(exit));
+        } else {
+          assert.include(Cause.pretty(Exit.isFailure(exit) ? exit.cause : Cause.empty), outcome);
+        }
+        // The stub server revokes nothing, and the CLI's own session is gone either way.
+        assert.deepEqual(
+          listed.map((session) => session.sessionId),
+          outcome === "revoked locally" ? [] : [issued.sessionId],
+        );
+      }).pipe(Effect.scoped),
+    ),
   );
 });
 

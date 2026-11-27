@@ -1,4 +1,7 @@
-import { recognizeRemoteWith } from "@t3tools/source-control-core/shared/definition";
+import {
+  makeSourceControlDefinitionRegistry,
+  recognizeRemoteWith,
+} from "@t3tools/source-control-core/shared/definition";
 import { describe, expect, it } from "vite-plus/test";
 
 import { definition } from "./definition.ts";
@@ -107,6 +110,13 @@ describe("GitLab CLI commands", () => {
     }
     expect(definition.changeRequestCloseCommand.test("glab mr view 7")).toBe(false);
   });
+
+  it("recognizes shell creates, including glab's `new` alias", () => {
+    for (const command of ["glab mr create --fill --yes", "glab mr new --fill --yes"]) {
+      expect(definition.changeRequestCreateCommand.test(command), command).toBe(true);
+    }
+    expect(definition.changeRequestCreateCommand.test("glab mr view 7")).toBe(false);
+  });
 });
 
 describe("GitLab remotes", () => {
@@ -130,5 +140,81 @@ describe("GitLab remotes", () => {
 
   it("matches complete DNS labels only", () => {
     expect(recognize("https://notgitlab.example.com/group/repo.git")).toBeNull();
+  });
+
+  it.each([
+    "ssh://git@altssh.gitlab.com:443/group/project.git",
+    "git@altssh.gitlab.com:group/project.git",
+  ])("recognizes GitLab.com's port 443 SSH host in %s", (url) => {
+    expect(recognize(url)).toEqual({
+      kind: "gitlab",
+      name: "GitLab",
+      baseUrl: "https://gitlab.com",
+    });
+  });
+
+  it("reads a self-hosted altssh host as its own server", () => {
+    expect(recognize("ssh://git@altssh.gitlab.example.com:443/group/project.git")).toEqual({
+      kind: "gitlab",
+      name: "GitLab Self-Hosted",
+      baseUrl: "https://altssh.gitlab.example.com",
+    });
+  });
+});
+
+describe("GitLab repository keys", () => {
+  const registry = makeSourceControlDefinitionRegistry([definition]);
+
+  it.each([
+    "git@gitlab.com:Group/Sub/Project.git",
+    "ssh://git@altssh.gitlab.com:443/Group/Sub/Project.git",
+    "git@altssh.gitlab.com:Group/Sub/Project.git",
+    "https://gitlab.com/Group/Sub/Project.git",
+  ])("names %s on gitlab.com, where its merge requests live", (remoteUrl) => {
+    const canonicalKey = registry.repositoryKeyFromRemote(remoteUrl);
+    expect(canonicalKey).toBe("gitlab.com/group/sub/project");
+    const link = parse("https://gitlab.com/group/sub/project/-/merge_requests/5")!;
+    expect(
+      definition.isChangeRequestInRepository(
+        {
+          canonicalKey,
+          displayName: "group/sub/project",
+          locator: { source: "git-remote", remoteName: "origin", remoteUrl },
+        },
+        link,
+      ),
+    ).toBe(true);
+    expect(registry.changeRequestHost({ canonicalKey }, "gitlab")).toBe("gitlab.com");
+  });
+
+  it("matches merge requests for a key saved under altssh.gitlab.com", () => {
+    const canonicalKey = "altssh.gitlab.com/group/sub/project";
+    expect(registry.canonicalRepositoryKey(canonicalKey)).toBe("gitlab.com/group/sub/project");
+    const identity = {
+      canonicalKey,
+      displayName: "group/sub/project",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "ssh://git@altssh.gitlab.com:443/group/sub/project.git",
+      },
+    };
+    const link = parse("https://gitlab.com/group/sub/project/-/merge_requests/5")!;
+    expect(definition.isChangeRequestInRepository(identity, link)).toBe(true);
+    expect(definition.canReadChangeRequestOnHost(identity, link)).toBe(true);
+  });
+
+  it.each([
+    [
+      "ssh://git@altssh.gitlab.example.com:443/team/project.git",
+      "altssh.gitlab.example.com/team/project",
+    ],
+    [
+      "git@altssh.gitlab.com.evil.example:team/project.git",
+      "altssh.gitlab.com.evil.example/team/project",
+    ],
+  ])("leaves the key of %s alone", (remoteUrl, key) => {
+    expect(registry.repositoryKeyFromRemote(remoteUrl)).toBe(key);
+    expect(registry.canonicalRepositoryKey(key)).toBe(key);
   });
 });

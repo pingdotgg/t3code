@@ -31,7 +31,7 @@ const ASR_FAMILIES = new Set([
   "medasr",
 ]);
 
-// Preserve Handy's onboarding badges; curation alone also includes specialist models.
+// Older clients rank and pick setup models by this flag; current clients use language recommendations.
 const RECOMMENDED = new Set([
   "parakeet-unified-en-0.6b",
   "nemotron-3.5-asr-streaming-0.6b",
@@ -81,9 +81,8 @@ export function generateSpeechCatalog(
     ids.add(model.repository);
     filenames.add(file.filename);
     const languages = [...new Set(model.languages.map(canonicalLanguage))];
-    const performance = data.results[model.id]?.performance;
-    const secondsPer30s = (realtimeFactor: number | undefined) =>
-      realtimeFactor ? Number((BENCHMARK_DICTATION_SECONDS / realtimeFactor).toFixed(2)) : null;
+    const realtimeFactor = data.results[model.id]?.performance.accelerated;
+    const cpuFactor = data.results[model.id]?.performance.cpu;
     const accuracy = Object.fromEntries(
       languages.flatMap((language) => {
         const cell = data.results[model.id]?.accuracy[languageIdentity(language)];
@@ -112,8 +111,8 @@ export function generateSpeechCatalog(
         benchmark: {
           accuracy,
           secondsPer30s: {
-            cpu: secondsPer30s(performance?.cpu),
-            accelerated: secondsPer30s(performance?.accelerated),
+            cpu: cpuFactor ? BENCHMARK_DICTATION_SECONDS / cpuFactor : null,
+            accelerated: realtimeFactor ? BENCHMARK_DICTATION_SECONDS / realtimeFactor : null,
           },
         },
         recommended: RECOMMENDED.has(model.id),

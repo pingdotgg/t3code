@@ -734,164 +734,159 @@ describe("orchestration v2 legacy v1 cutover", () => {
   it.live(
     "migrates an untouched v1 database copy through shell import, lazy transcripts, continuation and restart",
     () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const workspace = yield* checkpointWorkspace("legacy-v1-cutover");
-          const stateDir = yield* fs.makeTempDirectory({ prefix: "t3-v1-cutover-state-" });
-          const fixturePath = path.join(stateDir, "v1-source.sqlite");
-          const copyPath = path.join(stateDir, "userdata", "state.sqlite");
-          yield* fs.makeDirectory(path.join(stateDir, "userdata"), { recursive: true });
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspace = yield* checkpointWorkspace("legacy-v1-cutover");
+        const stateDir = yield* fs.makeTempDirectory({ prefix: "t3-v1-cutover-state-" });
+        const fixturePath = path.join(stateDir, "v1-source.sqlite");
+        const copyPath = path.join(stateDir, "userdata", "state.sqlite");
+        yield* fs.makeDirectory(path.join(stateDir, "userdata"), { recursive: true });
 
-          const v1Snapshot = yield* seedV1Database(fixturePath, workspace);
-          const fixtureHashBefore = yield* sha256File(fixturePath);
-          yield* fs.copyFile(fixturePath, copyPath);
+        const v1Snapshot = yield* seedV1Database(fixturePath, workspace);
+        const fixtureHashBefore = yield* sha256File(fixturePath);
+        yield* fs.copyFile(fixturePath, copyPath);
 
-          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-          const longThreadId = ThreadId.make(LONG_THREAD);
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const longThreadId = ThreadId.make(LONG_THREAD);
 
-          const boot1Logs: CapturedLog[] = [];
-          const firstBoot = yield* Effect.scoped(
-            Effect.gen(function* () {
-              const sql = yield* SqlClient.SqlClient;
-              const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-              const maintenance = yield* ProjectionReplay.ProjectionReplay;
-              const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const boot1Logs: CapturedLog[] = [];
+        const firstBoot = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+            const maintenance = yield* ProjectionReplay.ProjectionReplay;
+            const projections = yield* ProjectionStore.ProjectionStoreV2;
 
-              assert.equal(yield* importer.pendingThreadCount, ALL_THREADS.length);
-              const shellImport = yield* importer.reconcileShells;
-              assert.deepStrictEqual(shellImport, {
-                importedThreadCount: ALL_THREADS.length,
-                importedMessageCount: 14,
-              });
+            assert.equal(yield* importer.pendingThreadCount, ALL_THREADS.length);
+            const shellImport = yield* importer.reconcileShells;
+            assert.deepStrictEqual(shellImport, {
+              importedThreadCount: ALL_THREADS.length,
+              importedMessageCount: 14,
+            });
 
-              assert.deepStrictEqual(yield* importer.reconcileShells, {
-                importedThreadCount: 0,
-                importedMessageCount: 0,
-              });
-              assert.isTrue((yield* maintenance.rebuild).valid);
+            assert.deepStrictEqual(yield* importer.reconcileShells, {
+              importedThreadCount: 0,
+              importedMessageCount: 0,
+            });
+            assert.isTrue((yield* maintenance.rebuild).valid);
 
-              const shellSnapshot = yield* projections.getShellSnapshot();
-              const visibleShellIds = [
-                ...shellSnapshot.threads.map((thread) => thread.id),
-                ...shellSnapshot.archivedThreads.map((thread) => thread.id),
-              ];
-              assert.notInclude(visibleShellIds, ThreadId.make(DELETED_THREAD));
-              assert.include(
-                shellSnapshot.archivedThreads.map((thread) => thread.id),
-                ThreadId.make(ARCHIVED_THREAD),
-              );
-              const pinnedShell = shellSnapshot.threads.find(
-                (thread) => thread.id === PINNED_THREAD,
-              );
-              assert.equal(pinnedShell?.pinOrderKey, "a0");
+            const shellSnapshot = yield* projections.getShellSnapshot();
+            const visibleShellIds = [
+              ...shellSnapshot.threads.map((thread) => thread.id),
+              ...shellSnapshot.archivedThreads.map((thread) => thread.id),
+            ];
+            assert.notInclude(visibleShellIds, ThreadId.make(DELETED_THREAD));
+            assert.include(
+              shellSnapshot.archivedThreads.map((thread) => thread.id),
+              ThreadId.make(ARCHIVED_THREAD),
+            );
+            const pinnedShell = shellSnapshot.threads.find((thread) => thread.id === PINNED_THREAD);
+            assert.equal(pinnedShell?.pinOrderKey, "a0");
 
-              const activeShell = yield* projections.getThreadProjection(
-                ThreadId.make(ACTIVE_THREAD),
-              );
-              assert.equal(activeShell.thread.historyOrigin, "v1_import");
-              assert.isNull(activeShell.thread.activeProviderThreadId);
-              assert.deepStrictEqual(
-                activeShell.messages.map((message) => message.id),
-                ["message:cutover:active:3", "message:cutover:active:4"],
-              );
-              assert.isEmpty(activeShell.providerThreads);
+            const activeShell = yield* projections.getThreadProjection(
+              ThreadId.make(ACTIVE_THREAD),
+            );
+            assert.equal(activeShell.thread.historyOrigin, "v1_import");
+            assert.isNull(activeShell.thread.activeProviderThreadId);
+            assert.deepStrictEqual(
+              activeShell.messages.map((message) => message.id),
+              ["message:cutover:active:3", "message:cutover:active:4"],
+            );
+            assert.isEmpty(activeShell.providerThreads);
 
-              assert.isEmpty(
-                activeShell.turnItems.filter(
-                  (item) => item.type !== "user_message" && item.type !== "assistant_message",
-                ),
-              );
+            assert.isEmpty(
+              activeShell.turnItems.filter(
+                (item) => item.type !== "user_message" && item.type !== "assistant_message",
+              ),
+            );
 
-              const deletedShell = yield* projections.getThreadProjection(
-                ThreadId.make(DELETED_THREAD),
-              );
-              assert.isNotNull(deletedShell.thread.deletedAt);
-              assert.equal(
-                deletedShell.thread.deletedAt?.toString(),
-                DateTime.makeUnsafe("2026-01-09T00:00:00.000Z").toString(),
-              );
+            const deletedShell = yield* projections.getThreadProjection(
+              ThreadId.make(DELETED_THREAD),
+            );
+            assert.isNotNull(deletedShell.thread.deletedAt);
+            assert.equal(
+              deletedShell.thread.deletedAt?.toString(),
+              DateTime.makeUnsafe("2026-01-09T00:00:00.000Z").toString(),
+            );
 
-              for (const threadId of [
-                ACTIVE_THREAD,
-                ARCHIVED_THREAD,
-                PINNED_THREAD,
-                DELETED_THREAD,
-                INTERRUPTED_THREAD,
-                LONG_THREAD,
-              ]) {
-                yield* importer.ensureTranscript(ThreadId.make(threadId));
-              }
-              assert.deepStrictEqual(
-                yield* importer.ensureTranscript(ThreadId.make(ACTIVE_THREAD)),
-                { importedThreadCount: 0, importedMessageCount: 0 },
-              );
+            for (const threadId of [
+              ACTIVE_THREAD,
+              ARCHIVED_THREAD,
+              PINNED_THREAD,
+              DELETED_THREAD,
+              INTERRUPTED_THREAD,
+              LONG_THREAD,
+            ]) {
+              yield* importer.ensureTranscript(ThreadId.make(threadId));
+            }
+            assert.deepStrictEqual(yield* importer.ensureTranscript(ThreadId.make(ACTIVE_THREAD)), {
+              importedThreadCount: 0,
+              importedMessageCount: 0,
+            });
 
-              const active = yield* projections.getThreadProjection(ThreadId.make(ACTIVE_THREAD));
-              assert.deepStrictEqual(
-                active.messages.map((message) => message.id),
-                [
-                  "message:cutover:active:1",
-                  "message:cutover:active:2",
-                  "message:cutover:active:3",
-                  "message:cutover:active:4",
-                ],
-              );
-              assert.deepStrictEqual(messageOrdinals(active), [
-                ["message:cutover:active:1", 1, "completed"],
-                ["message:cutover:active:2", 2, "completed"],
-                ["message:cutover:active:3", 3, "completed"],
-                ["message:cutover:active:4", 4, "completed"],
-              ]);
-              assert.deepStrictEqual(
-                active.messages.find((message) => message.id === "message:cutover:active:2")
-                  ?.attachments,
-                [
-                  {
-                    type: "image",
-                    id: "att-1",
-                    name: "shot.png",
-                    mimeType: "image/png",
-                    sizeBytes: 1234,
-                  },
-                ],
-              );
-              assert.equal(active.thread.linkedPullRequest?.number, 9100);
-              assert.deepStrictEqual(
-                active.thread.pullRequests?.map((pullRequest) => pullRequest.number),
-                [9100],
-              );
+            const active = yield* projections.getThreadProjection(ThreadId.make(ACTIVE_THREAD));
+            assert.deepStrictEqual(
+              active.messages.map((message) => message.id),
+              [
+                "message:cutover:active:1",
+                "message:cutover:active:2",
+                "message:cutover:active:3",
+                "message:cutover:active:4",
+              ],
+            );
+            assert.deepStrictEqual(messageOrdinals(active), [
+              ["message:cutover:active:1", 1, "completed"],
+              ["message:cutover:active:2", 2, "completed"],
+              ["message:cutover:active:3", 3, "completed"],
+              ["message:cutover:active:4", 4, "completed"],
+            ]);
+            assert.deepStrictEqual(
+              active.messages.find((message) => message.id === "message:cutover:active:2")
+                ?.attachments,
+              [
+                {
+                  type: "image",
+                  id: "att-1",
+                  name: "shot.png",
+                  mimeType: "image/png",
+                  sizeBytes: 1234,
+                },
+              ],
+            );
+            assert.equal(active.thread.linkedPullRequest?.number, 9100);
+            assert.deepStrictEqual(
+              active.thread.pullRequests?.map((pullRequest) => pullRequest.number),
+              [9100],
+            );
 
-              const archived = yield* projections.getThreadProjection(
-                ThreadId.make(ARCHIVED_THREAD),
-              );
-              assert.isNotNull(archived.thread.archivedAt);
-              const pinned = yield* projections.getThreadProjection(ThreadId.make(PINNED_THREAD));
-              assert.isNotNull(pinned.thread.pinnedAt);
-              assert.equal(pinned.thread.pinOrderKey, "a0");
-              const snoozed = yield* projections.getThreadProjection(ThreadId.make(SNOOZED_THREAD));
-              assert.equal(
-                snoozed.thread.snoozedUntil?.toString(),
-                DateTime.makeUnsafe("2026-02-01T00:00:00.000Z").toString(),
-              );
+            const archived = yield* projections.getThreadProjection(ThreadId.make(ARCHIVED_THREAD));
+            assert.isNotNull(archived.thread.archivedAt);
+            const pinned = yield* projections.getThreadProjection(ThreadId.make(PINNED_THREAD));
+            assert.isNotNull(pinned.thread.pinnedAt);
+            assert.equal(pinned.thread.pinOrderKey, "a0");
+            const snoozed = yield* projections.getThreadProjection(ThreadId.make(SNOOZED_THREAD));
+            assert.equal(
+              snoozed.thread.snoozedUntil?.toString(),
+              DateTime.makeUnsafe("2026-02-01T00:00:00.000Z").toString(),
+            );
 
-              assert.deepStrictEqual(
-                snoozed.messages.map((message) => message.id),
-                ["message:cutover:snoozed:1", "message:cutover:snoozed:3"],
-              );
-              const snoozedImportRow = yield* sql<{
-                readonly transcript_imported_at: string | null;
-              }>`
+            assert.deepStrictEqual(
+              snoozed.messages.map((message) => message.id),
+              ["message:cutover:snoozed:1", "message:cutover:snoozed:3"],
+            );
+            const snoozedImportRow = yield* sql<{
+              readonly transcript_imported_at: string | null;
+            }>`
               SELECT transcript_imported_at
               FROM orchestration_v2_legacy_imports
               WHERE thread_id = ${SNOOZED_THREAD}
             `;
-              assert.isNull(snoozedImportRow[0]?.transcript_imported_at);
+            assert.isNull(snoozedImportRow[0]?.transcript_imported_at);
 
-              // A failed hydration leaves the legacy rows and pending marker
-              // available for retry in a fresh runtime after restart.
-              yield* sql`
+            // A failed hydration leaves the legacy rows and pending marker
+            // available for retry in a fresh runtime after restart.
+            yield* sql`
                 CREATE TRIGGER fail_snoozed_hydration
                 BEFORE INSERT ON orchestration_events
                 WHEN NEW.event_id = 'migration:v1:message:message:cutover:snoozed:2'
@@ -899,253 +894,246 @@ describe("orchestration v2 legacy v1 cutover", () => {
                   SELECT RAISE(ABORT, 'injected cutover hydration failure');
                 END
               `;
-              const hydrationError = yield* importer
-                .ensureTranscript(ThreadId.make(SNOOZED_THREAD))
-                .pipe(Effect.flip);
-              assert.equal(hydrationError._tag, "LegacyV1ThreadImportError");
-              assert.equal(yield* importer.pendingThreadCount, 1);
+            const hydrationError = yield* importer
+              .ensureTranscript(ThreadId.make(SNOOZED_THREAD))
+              .pipe(Effect.flip);
+            assert.equal(hydrationError._tag, "LegacyV1ThreadImportError");
+            assert.equal(yield* importer.pendingThreadCount, 1);
 
-              const interrupted = yield* projections.getThreadProjection(
-                ThreadId.make(INTERRUPTED_THREAD),
-              );
-              assert.deepStrictEqual(messageOrdinals(interrupted), [
-                ["message:cutover:interrupted:1", 1, "completed"],
-                ["message:cutover:interrupted:2", 2, "interrupted"],
-              ]);
+            const interrupted = yield* projections.getThreadProjection(
+              ThreadId.make(INTERRUPTED_THREAD),
+            );
+            assert.deepStrictEqual(messageOrdinals(interrupted), [
+              ["message:cutover:interrupted:1", 1, "completed"],
+              ["message:cutover:interrupted:2", 2, "interrupted"],
+            ]);
 
-              const continued = yield* dispatchMessageAwaitingRun({
-                threadId: longThreadId,
-                messageId: "message:cutover:long:continuation",
-                commandId: "command:cutover:continue",
-                text: CONTINUATION_PROMPT,
-              });
+            const continued = yield* dispatchMessageAwaitingRun({
+              threadId: longThreadId,
+              messageId: "message:cutover:long:continuation",
+              commandId: "command:cutover:continue",
+              text: CONTINUATION_PROMPT,
+            });
 
-              const runs = continued.runs.filter((run) => run.ordinal >= 1);
-              assert.equal(runs.at(-1)?.status, "completed");
-              assert.equal(continued.providerThreads.length, 1);
-              assert.isNotNull(continued.providerThreads[0]?.nativeThreadRef);
-              assert.equal(continued.contextHandoffs.length, 1);
-              const handoff = continued.contextHandoffs[0]!;
-              assert.equal(handoff.strategy, "manual_context");
-              assert.isAtMost(handoff.summaryText.length, 32_000);
-              assert.include(handoff.summaryText, LATEST_MARKER);
-              assert.notInclude(handoff.summaryText, EARLIEST_MARKER);
-              const turns = yield* Ref.get(capturedTurns);
-              assert.equal(turns.length, 1);
-              assert.include(turns[0]!.text, "Context handoff (manual_context):");
-              assert.include(turns[0]!.text, `User message:\n${CONTINUATION_PROMPT}`);
+            const runs = continued.runs.filter((run) => run.ordinal >= 1);
+            assert.equal(runs.at(-1)?.status, "completed");
+            assert.equal(continued.providerThreads.length, 1);
+            assert.isNotNull(continued.providerThreads[0]?.nativeThreadRef);
+            assert.equal(continued.contextHandoffs.length, 1);
+            const handoff = continued.contextHandoffs[0]!;
+            assert.equal(handoff.strategy, "manual_context");
+            assert.isAtMost(handoff.summaryText.length, 32_000);
+            assert.include(handoff.summaryText, LATEST_MARKER);
+            assert.notInclude(handoff.summaryText, EARLIEST_MARKER);
+            const turns = yield* Ref.get(capturedTurns);
+            assert.equal(turns.length, 1);
+            assert.include(turns[0]!.text, "Context handoff (manual_context):");
+            assert.include(turns[0]!.text, `User message:\n${CONTINUATION_PROMPT}`);
 
-              const continuedAgain = yield* dispatchMessageAwaitingRun({
-                threadId: longThreadId,
-                messageId: "message:cutover:long:continuation:2",
-                commandId: "command:cutover:continue:again",
-                text: "One more.",
-              });
-              assert.equal(continuedAgain.contextHandoffs.length, 1);
-              assert.equal((yield* Ref.get(capturedTurns)).length, 2);
+            const continuedAgain = yield* dispatchMessageAwaitingRun({
+              threadId: longThreadId,
+              messageId: "message:cutover:long:continuation:2",
+              commandId: "command:cutover:continue:again",
+              text: "One more.",
+            });
+            assert.equal(continuedAgain.contextHandoffs.length, 1);
+            assert.equal((yield* Ref.get(capturedTurns)).length, 2);
 
-              const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-              yield* worker.drain();
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            yield* worker.drain();
 
-              const migrationEventCount = yield* sql<{ readonly count: number }>`
+            const migrationEventCount = yield* sql<{ readonly count: number }>`
               SELECT COUNT(*) AS count
               FROM orchestration_events
               WHERE application_event_version = 2
                 AND event_id LIKE 'migration:v1:%'
             `;
-              const importRows = yield* sql<{
-                readonly thread_id: string;
-                readonly transcript_imported_at: string | null;
-              }>`
+            const importRows = yield* sql<{
+              readonly thread_id: string;
+              readonly transcript_imported_at: string | null;
+            }>`
               SELECT thread_id, transcript_imported_at
               FROM orchestration_v2_legacy_imports
               ORDER BY thread_id
             `;
-              const legacyProjects = yield* sql<Record<string, unknown>>`
+            const legacyProjects = yield* sql<Record<string, unknown>>`
               SELECT * FROM projection_projects ORDER BY project_id
             `;
-              const legacyThreads = yield* sql<Record<string, unknown>>`
+            const legacyThreads = yield* sql<Record<string, unknown>>`
               SELECT * FROM projection_threads ORDER BY thread_id
             `;
-              const legacyMessages = yield* sql<Record<string, unknown>>`
+            const legacyMessages = yield* sql<Record<string, unknown>>`
               SELECT * FROM projection_thread_messages ORDER BY message_id
             `;
-              const recordedMigration41 = yield* sql<{ readonly name: string }>`
+            const recordedMigration41 = yield* sql<{ readonly name: string }>`
               SELECT name FROM effect_sql_migrations WHERE migration_id = 41
             `;
-              const authSessionColumns = yield* sql<{ readonly name: string }>`
+            const authSessionColumns = yield* sql<{ readonly name: string }>`
               PRAGMA table_info(auth_sessions)
             `;
-              return {
-                migrationEventCount: migrationEventCount[0]?.count ?? 0,
-                importRows,
-                legacyProjects,
-                legacyThreads,
-                legacyMessages,
-                longProjection: continuedAgain,
-                migration41Name: recordedMigration41[0]?.name ?? null,
-                authSessionColumnNames: authSessionColumns.map((column) => column.name),
-              };
-            }).pipe(
-              Effect.provide(
-                layerBoot({
-                  name: "legacy-v1-cutover-first",
-                  dbPath: copyPath,
-                  workspace,
-                  capturedTurns,
-                }),
-              ),
-              Effect.provideService(
-                Logger.CurrentLoggers,
-                new Set([makeCapturingLogger(boot1Logs)]),
-              ),
+            return {
+              migrationEventCount: migrationEventCount[0]?.count ?? 0,
+              importRows,
+              legacyProjects,
+              legacyThreads,
+              legacyMessages,
+              longProjection: continuedAgain,
+              migration41Name: recordedMigration41[0]?.name ?? null,
+              authSessionColumnNames: authSessionColumns.map((column) => column.name),
+            };
+          }).pipe(
+            Effect.provide(
+              layerBoot({
+                name: "legacy-v1-cutover-first",
+                dbPath: copyPath,
+                workspace,
+                capturedTurns,
+              }),
             ),
-          );
+            Effect.provideService(Logger.CurrentLoggers, new Set([makeCapturingLogger(boot1Logs)])),
+          ),
+        );
 
-          const divergenceLog = boot1Logs.find((log) =>
-            String(log.message).includes("migration history diverges"),
-          );
-          assert.deepStrictEqual(divergenceLog?.annotations.divergent, [
-            "41:ThreadSummaryTimeline (this build: AuthSessionClientConnection)",
-          ]);
-          assert.equal(firstBoot.migration41Name, "ThreadSummaryTimeline");
+        const divergenceLog = boot1Logs.find((log) =>
+          String(log.message).includes("migration history diverges"),
+        );
+        assert.deepStrictEqual(divergenceLog?.annotations.divergent, [
+          "41:ThreadSummaryTimeline (this build: AuthSessionClientConnection)",
+        ]);
+        assert.equal(firstBoot.migration41Name, "ThreadSummaryTimeline");
 
-          assert.notInclude(firstBoot.authSessionColumnNames, "client_surface");
-          assert.notInclude(firstBoot.authSessionColumnNames, "client_app_version");
+        assert.notInclude(firstBoot.authSessionColumnNames, "client_surface");
+        assert.notInclude(firstBoot.authSessionColumnNames, "client_app_version");
 
-          // Full row contents of the legacy recovery tables survive migration
-          // and continuation unchanged, not just their counts.
-          assert.deepStrictEqual(
-            restrictToSnapshotColumns(firstBoot.legacyProjects, v1Snapshot.projects),
-            v1Snapshot.projects.rows,
-          );
-          assert.deepStrictEqual(
-            restrictToSnapshotColumns(firstBoot.legacyThreads, v1Snapshot.threads),
-            v1Snapshot.threads.rows,
-          );
-          assert.deepStrictEqual(
-            restrictToSnapshotColumns(firstBoot.legacyMessages, v1Snapshot.messages),
-            v1Snapshot.messages.rows,
-          );
+        // Full row contents of the legacy recovery tables survive migration
+        // and continuation unchanged, not just their counts.
+        assert.deepStrictEqual(
+          restrictToSnapshotColumns(firstBoot.legacyProjects, v1Snapshot.projects),
+          v1Snapshot.projects.rows,
+        );
+        assert.deepStrictEqual(
+          restrictToSnapshotColumns(firstBoot.legacyThreads, v1Snapshot.threads),
+          v1Snapshot.threads.rows,
+        );
+        assert.deepStrictEqual(
+          restrictToSnapshotColumns(firstBoot.legacyMessages, v1Snapshot.messages),
+          v1Snapshot.messages.rows,
+        );
 
-          assert.equal(firstBoot.importRows.length, ALL_THREADS.length);
-          const unhydratedRows = firstBoot.importRows.filter(
-            (row) => row.transcript_imported_at === null,
-          );
-          assert.deepStrictEqual(
-            unhydratedRows.map((row) => row.thread_id),
-            [SNOOZED_THREAD],
-          );
+        assert.equal(firstBoot.importRows.length, ALL_THREADS.length);
+        const unhydratedRows = firstBoot.importRows.filter(
+          (row) => row.transcript_imported_at === null,
+        );
+        assert.deepStrictEqual(
+          unhydratedRows.map((row) => row.thread_id),
+          [SNOOZED_THREAD],
+        );
 
-          const boot2Logs: CapturedLog[] = [];
-          yield* Effect.scoped(
-            Effect.gen(function* () {
-              const sql = yield* SqlClient.SqlClient;
-              const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-              const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const boot2Logs: CapturedLog[] = [];
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+            const projections = yield* ProjectionStore.ProjectionStoreV2;
 
-              assert.equal(yield* importer.pendingThreadCount, 1);
-              assert.deepStrictEqual(yield* importer.reconcileShells, {
+            assert.equal(yield* importer.pendingThreadCount, 1);
+            assert.deepStrictEqual(yield* importer.reconcileShells, {
+              importedThreadCount: 0,
+              importedMessageCount: 0,
+            });
+            yield* sql`DROP TRIGGER fail_snoozed_hydration`;
+            assert.deepStrictEqual(
+              yield* importer.ensureTranscript(ThreadId.make(SNOOZED_THREAD)),
+              { importedThreadCount: 1, importedMessageCount: 1 },
+            );
+            const snoozed = yield* projections.getThreadProjection(ThreadId.make(SNOOZED_THREAD));
+            assert.deepStrictEqual(
+              snoozed.messages.map((message) => message.id),
+              [
+                "message:cutover:snoozed:1",
+                "message:cutover:snoozed:2",
+                "message:cutover:snoozed:3",
+              ],
+            );
+            assert.equal(yield* importer.pendingThreadCount, 0);
+            for (const threadId of ALL_THREADS) {
+              assert.deepStrictEqual(yield* importer.ensureTranscript(ThreadId.make(threadId)), {
                 importedThreadCount: 0,
                 importedMessageCount: 0,
               });
-              yield* sql`DROP TRIGGER fail_snoozed_hydration`;
-              assert.deepStrictEqual(
-                yield* importer.ensureTranscript(ThreadId.make(SNOOZED_THREAD)),
-                { importedThreadCount: 1, importedMessageCount: 1 },
-              );
-              const snoozed = yield* projections.getThreadProjection(ThreadId.make(SNOOZED_THREAD));
-              assert.deepStrictEqual(
-                snoozed.messages.map((message) => message.id),
-                [
-                  "message:cutover:snoozed:1",
-                  "message:cutover:snoozed:2",
-                  "message:cutover:snoozed:3",
-                ],
-              );
-              assert.equal(yield* importer.pendingThreadCount, 0);
-              for (const threadId of ALL_THREADS) {
-                assert.deepStrictEqual(yield* importer.ensureTranscript(ThreadId.make(threadId)), {
-                  importedThreadCount: 0,
-                  importedMessageCount: 0,
-                });
-              }
-              const migrationEventCount = yield* sql<{ readonly count: number }>`
+            }
+            const migrationEventCount = yield* sql<{ readonly count: number }>`
               SELECT COUNT(*) AS count
               FROM orchestration_events
               WHERE application_event_version = 2
                 AND event_id LIKE 'migration:v1:%'
             `;
 
-              assert.equal(migrationEventCount[0]?.count, firstBoot.migrationEventCount + 2);
+            assert.equal(migrationEventCount[0]?.count, firstBoot.migrationEventCount + 2);
 
-              const restarted = yield* projections.getThreadProjection(longThreadId);
-              assert.equal(restarted.thread.historyOrigin, "v1_import");
-              assert.equal(restarted.contextHandoffs.length, 1);
-              assert.isNotNull(restarted.thread.activeProviderThreadId);
-              assert.deepStrictEqual(
-                restarted.runs.map((run) => run.status),
-                firstBoot.longProjection.runs.map((run) => run.status),
-              );
+            const restarted = yield* projections.getThreadProjection(longThreadId);
+            assert.equal(restarted.thread.historyOrigin, "v1_import");
+            assert.equal(restarted.contextHandoffs.length, 1);
+            assert.isNotNull(restarted.thread.activeProviderThreadId);
+            assert.deepStrictEqual(
+              restarted.runs.map((run) => run.status),
+              firstBoot.longProjection.runs.map((run) => run.status),
+            );
 
-              assert.deepStrictEqual(
-                restrictToSnapshotColumns(
-                  yield* sql<Record<string, unknown>>`
+            assert.deepStrictEqual(
+              restrictToSnapshotColumns(
+                yield* sql<Record<string, unknown>>`
                     SELECT * FROM projection_projects ORDER BY project_id
                   `,
-                  v1Snapshot.projects,
-                ),
-                v1Snapshot.projects.rows,
-              );
-              assert.deepStrictEqual(
-                restrictToSnapshotColumns(
-                  yield* sql<Record<string, unknown>>`
+                v1Snapshot.projects,
+              ),
+              v1Snapshot.projects.rows,
+            );
+            assert.deepStrictEqual(
+              restrictToSnapshotColumns(
+                yield* sql<Record<string, unknown>>`
                     SELECT * FROM projection_threads ORDER BY thread_id
                   `,
-                  v1Snapshot.threads,
-                ),
-                v1Snapshot.threads.rows,
-              );
-              assert.deepStrictEqual(
-                restrictToSnapshotColumns(
-                  yield* sql<Record<string, unknown>>`
+                v1Snapshot.threads,
+              ),
+              v1Snapshot.threads.rows,
+            );
+            assert.deepStrictEqual(
+              restrictToSnapshotColumns(
+                yield* sql<Record<string, unknown>>`
                     SELECT * FROM projection_thread_messages ORDER BY message_id
                   `,
-                  v1Snapshot.messages,
-                ),
-                v1Snapshot.messages.rows,
-              );
-              const quickCheck = yield* sql<{ readonly quick_check: string }>`
+                v1Snapshot.messages,
+              ),
+              v1Snapshot.messages.rows,
+            );
+            const quickCheck = yield* sql<{ readonly quick_check: string }>`
               PRAGMA quick_check
             `;
-              assert.deepStrictEqual(
-                quickCheck.map((row) => row.quick_check),
-                ["ok"],
-              );
-            }).pipe(
-              Effect.provide(
-                layerBoot({
-                  name: "legacy-v1-cutover-restart",
-                  dbPath: copyPath,
-                  workspace,
-                  capturedTurns,
-                }),
-              ),
-              Effect.provideService(
-                Logger.CurrentLoggers,
-                new Set([makeCapturingLogger(boot2Logs)]),
-              ),
+            assert.deepStrictEqual(
+              quickCheck.map((row) => row.quick_check),
+              ["ok"],
+            );
+          }).pipe(
+            Effect.provide(
+              layerBoot({
+                name: "legacy-v1-cutover-restart",
+                dbPath: copyPath,
+                workspace,
+                capturedTurns,
+              }),
             ),
-          );
+            Effect.provideService(Logger.CurrentLoggers, new Set([makeCapturingLogger(boot2Logs)])),
+          ),
+        );
 
-          assert.isTrue(
-            boot2Logs.some((log) => String(log.message).includes("migration history diverges")),
-          );
+        assert.isTrue(
+          boot2Logs.some((log) => String(log.message).includes("migration history diverges")),
+        );
 
-          // The seeded source file is the untouched recovery copy: migration
-          // only ever ran against the file copied out of it.
-          assert.equal(yield* sha256File(fixturePath), fixtureHashBefore);
-        }).pipe(Effect.provide(NodeServices.layer)),
-      ),
+        // The seeded source file is the untouched recovery copy: migration
+        // only ever ran against the file copied out of it.
+        assert.equal(yield* sha256File(fixturePath), fixtureHashBefore);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

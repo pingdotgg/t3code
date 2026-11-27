@@ -208,6 +208,25 @@ describe("HttpServerResponse", () => {
     assert.strictEqual(response.headers["content-length"], "1")
   })
 
+  it("keeps explicit content headers when the status, cookies or other headers change", () => {
+    const response = HttpServerResponse.text("body").pipe(
+      HttpServerResponse.setHeaders({ "content-type": "text/custom", "content-length": "1", "x-test": "ok" })
+    )
+
+    for (
+      const updated of [
+        HttpServerResponse.setStatus(response, 201),
+        HttpServerResponse.setCookieUnsafe(response, "session", "123"),
+        HttpServerResponse.removeHeader(response, "x-test")
+      ]
+    ) {
+      assert.strictEqual(updated.headers["content-type"], "text/custom")
+      assert.strictEqual(updated.headers["content-length"], "1")
+    }
+    assert.strictEqual(HttpServerResponse.removeHeader(response, "content-type").headers["content-type"], "text/plain")
+    assert.strictEqual(HttpServerResponse.removeHeader(response, "content-length").headers["content-length"], "4")
+  })
+
   it.effect("fromWeb preserves content-length through a Web round trip", () =>
     Effect.gen(function*() {
       const response = HttpServerResponse.fromWeb(

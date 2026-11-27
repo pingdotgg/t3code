@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableMessage } from "../errors/translatable.ts";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import {
   type ThreadLinkedPullRequest,
@@ -17,6 +19,7 @@ import {
   type ProjectId,
   type ProjectIconOverride,
   type ProjectScript,
+  type ProjectTrackedFolder,
   type ProviderApprovalDecision,
   type ProviderInteractionMode,
   type ProviderUserInputAnswers,
@@ -31,9 +34,21 @@ import {
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { getInitialServerConfig, request } from "../rpc/client.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import {
+  EnvironmentRpcUnavailableError,
+  getInitialServerConfig,
+  isRpcClientError,
+  request,
+} from "../rpc/client.ts";
+import { repositoryCheckpointScopeIds } from "../state/threadRepositories.ts";
 
 interface CommandMetadata {
   readonly commandId?: CommandId;
@@ -48,6 +63,7 @@ export interface CreateProjectInput extends CommandMetadata {
   readonly createWorkspaceRootIfMissing?: boolean;
   readonly defaultModelSelection?: ModelSelection | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
+  readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
 }
 
 export interface UpdateProjectInput extends CommandMetadata {
@@ -60,6 +76,11 @@ export interface UpdateProjectInput extends CommandMetadata {
   readonly faviconPath?: string | null;
   readonly defaultThreadEnvMode?: ThreadEnvMode | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
+  /** Replaces the whole list. Paths only mean something on the project's own environment. */
+  readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
+  /** Added to, and removed by path from, the list as the server has it. */
+  readonly trackFolders?: ReadonlyArray<ProjectTrackedFolder>;
+  readonly untrackFolders?: ReadonlyArray<string>;
   readonly pinned?: boolean;
   readonly archived?: boolean;
 }
@@ -94,6 +115,7 @@ export type SettleThreadInput = ThreadCommandInput;
 
 export interface UnsettleThreadInput extends ThreadCommandInput {
   readonly reason: "user";
+  readonly restoreUnsettledAt?: string | null;
 }
 
 export interface PinThreadInput extends ThreadCommandInput {
@@ -162,6 +184,8 @@ interface StartThreadBootstrap {
     readonly baseBranch: string;
     readonly branch?: string;
     readonly startFromOrigin?: boolean;
+    /** Tracked repositories to give a worktree; absent leaves the choice to the server. */
+    readonly repositories?: ReadonlyArray<{ readonly path: string }>;
   };
   readonly runSetupScript?: boolean;
 }
@@ -185,6 +209,8 @@ export interface StartThreadTurnInput extends ThreadCommandInput {
   readonly dispatchMode?: "auto" | "queue" | "steer" | "restart" | "start";
   /** Start a new provider session; needs the server's `freshContext` capability. */
   readonly freshContext?: boolean;
+  /** Defaults to true. Callers with their own retry queue opt out so a dead socket fails fast. */
+  readonly resendAfterSocketLoss?: boolean;
 }
 
 export interface InterruptThreadTurnInput extends ThreadCommandInput {
@@ -255,6 +281,7 @@ export interface RetryWorkspacePreparationInput extends ThreadCommandInput {
 }
 
 export interface EditQueuedRunInput extends ThreadCommandInput {
+  readonly modelSelection?: ModelSelection;
   readonly runId: RunId;
   readonly text: string;
   /**
@@ -278,6 +305,74 @@ const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(fun
 
 const dispatch = (command: OrchestrationV2Command) =>
   request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
+
+// The socket can close after the server accepted the frame but before it answered.
+// The server replays an accepted commandId from its receipt, so the same command
+// waits out reconnect backoff until the supervisor stops trying. The resend cap
+// stops a frame that kills the socket from looping.
+const MAX_LOST_TRANSPORT_RESENDS = 2;
+
+// A live socket can still carry a command the host never answers; the heartbeat
+// alone would leave the send pending forever.
+const MESSAGE_DISPATCH_TIMEOUT = "60 seconds";
+
+const resendAfterSocketLoss = Effect.fn("EnvironmentCommands.resendAfterSocketLoss")(function* <
+  A,
+  E,
+  R,
+>(attempt: Effect.Effect<A, E, R>) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  for (let resends = 0; ; resends += 1) {
+    const attemptSession = yield* SubscriptionRef.get(supervisor.session);
+    const exit = yield* Effect.exit(attempt);
+    if (Exit.isSuccess(exit)) return exit.value;
+    // Closing the session interrupts the request, which can beat the protocol error.
+    const lostTransport =
+      Cause.hasInterruptsOnly(exit.cause) ||
+      exit.cause.reasons.some((reason) => reason._tag === "Fail" && isRpcClientError(reason.error));
+    if (!lostTransport || resends >= MAX_LOST_TRANSPORT_RESENDS) return yield* exit;
+    const replacement = yield* Effect.raceFirst(
+      SubscriptionRef.changes(supervisor.session).pipe(
+        Stream.filter(
+          (session) =>
+            Option.isSome(session) &&
+            !(Option.isSome(attemptSession) && session.value === attemptSession.value),
+        ),
+        Stream.runHead,
+      ),
+      SubscriptionRef.changes(supervisor.state).pipe(
+        Stream.filter((state) => state.phase === "available" || state.phase === "blocked"),
+        Stream.runHead,
+        Effect.as(Option.none()),
+      ),
+    );
+    if (Option.isNone(replacement)) return yield* exit;
+  }
+});
+
+const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(function* (
+  command: Extract<OrchestrationV2Command, { type: "message.dispatch" }>,
+  resend: boolean,
+) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  const attempt = dispatch(command).pipe(
+    Effect.timeoutOrElse({
+      duration: MESSAGE_DISPATCH_TIMEOUT,
+      orElse: () =>
+        Effect.fail(
+          new EnvironmentRpcUnavailableError({
+            environmentId: supervisor.target.environmentId,
+            ...translatableMessage(
+              msg("{host} did not confirm the message within 60 seconds.", {
+                host: supervisor.target.label,
+              }),
+            ),
+          }),
+        ),
+    }),
+  );
+  return yield* resend ? resendAfterSocketLoss(attempt) : attempt;
+});
 
 const getProjection = (threadId: ThreadId) =>
   request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId });
@@ -321,6 +416,7 @@ const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
         readonly createWorkspaceRootIfMissing?: boolean;
         readonly defaultModelSelection?: ModelSelection | null;
         readonly scripts?: ReadonlyArray<ProjectScript>;
+        readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
       }
     | {
         readonly type: "project.update";
@@ -330,6 +426,9 @@ const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
         readonly workspaceRoot?: string;
         readonly defaultModelSelection?: ModelSelection | null;
         readonly scripts?: ReadonlyArray<ProjectScript>;
+        readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
+        readonly trackFolders?: ReadonlyArray<ProjectTrackedFolder>;
+        readonly untrackFolders?: ReadonlyArray<string>;
       }
     | {
         readonly type: "project.delete";
@@ -357,6 +456,7 @@ export const createProject = Effect.fn("EnvironmentCommands.createProject")(func
       ? {}
       : { defaultModelSelection: input.defaultModelSelection }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+    ...(input.trackedFolders === undefined ? {} : { trackedFolders: input.trackedFolders }),
   });
 });
 
@@ -379,6 +479,9 @@ export const updateProject = Effect.fn("EnvironmentCommands.updateProject")(func
       ? {}
       : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+    ...(input.trackedFolders === undefined ? {} : { trackedFolders: input.trackedFolders }),
+    ...(input.trackFolders === undefined ? {} : { trackFolders: input.trackFolders }),
+    ...(input.untrackFolders === undefined ? {} : { untrackFolders: input.untrackFolders }),
     ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
     ...(input.archived === undefined ? {} : { archived: input.archived }),
   });
@@ -560,6 +663,9 @@ export const unsettleThread = Effect.fn("EnvironmentCommands.unsettleThread")(fu
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     reason: input.reason,
+    ...(input.restoreUnsettledAt === undefined
+      ? {}
+      : { restoreUnsettledAt: input.restoreUnsettledAt }),
   });
 });
 
@@ -669,6 +775,10 @@ export const setThreadInteractionMode = Effect.fn("EnvironmentCommands.setThread
   },
 );
 
+// Servers without native resume dispatch command.text verbatim; newer ones clear
+// it when manualContinuationOfRunId is set.
+const MANUAL_CONTINUATION_FALLBACK_TEXT = "Continue where you left off.";
+
 export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(function* (
   input: StartThreadTurnInput,
 ) {
@@ -683,6 +793,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     input.message.attachments,
     attachments,
   );
+  const resend = input.resendAfterSocketLoss ?? true;
   const bootstrap = input.bootstrap?.createThread;
   const prepareWorktree = input.bootstrap?.prepareWorktree;
   if (bootstrap !== undefined || prepareWorktree !== undefined) {
@@ -698,6 +809,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
             ...(prepareWorktree.startFromOrigin === undefined
               ? {}
               : { startFromOrigin: prepareWorktree.startFromOrigin }),
+            ...(prepareWorktree.repositories === undefined
+              ? {}
+              : { repositories: prepareWorktree.repositories }),
           }
         : bootstrap?.worktreePath
           ? {
@@ -711,7 +825,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
                 ? {}
                 : { branch: bootstrap.branch }),
             };
-    return yield* request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
+    const launch = request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
       commandId,
       creationSource: input.creationSource ?? "web",
       threadId: input.threadId,
@@ -730,59 +844,73 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
         attachments,
       },
     });
+    return yield* resend ? resendAfterSocketLoss(launch) : launch;
   }
 
   const requestedMode = input.dispatchMode ?? "auto";
   if (requestedMode === "start") {
-    return yield* dispatch({
-      type: "message.dispatch",
-      commandId,
-      createdBy: "user",
-      creationSource: input.creationSource ?? "web",
-      threadId: input.threadId,
-      messageId: input.message.messageId,
-      ...(input.manualContinuationOfRunId === undefined
-        ? {}
-        : { manualContinuationOfRunId: input.manualContinuationOfRunId }),
-      text: input.message.text,
-      ...(context ? { context } : {}),
-      ...(input.message.idleCompaction === undefined
-        ? {}
-        : { idleCompaction: input.message.idleCompaction }),
-      attachments,
-      ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
-      ...(input.sourceProposedPlan === undefined
-        ? {}
-        : { sourcePlanRef: input.sourceProposedPlan }),
-      ...(input.freshContext ? { freshContext: true } : {}),
-      dispatchMode: { type: "start_immediately" },
-    });
+    return yield* dispatchMessage(
+      {
+        type: "message.dispatch",
+        commandId,
+        createdBy: "user",
+        creationSource: input.creationSource ?? "web",
+        threadId: input.threadId,
+        messageId: input.message.messageId,
+        ...(input.manualContinuationOfRunId === undefined
+          ? {}
+          : { manualContinuationOfRunId: input.manualContinuationOfRunId }),
+        text:
+          input.manualContinuationOfRunId !== undefined &&
+          input.message.text.trim().length === 0 &&
+          attachments.length === 0
+            ? MANUAL_CONTINUATION_FALLBACK_TEXT
+            : input.message.text,
+        ...(context ? { context } : {}),
+        ...(input.message.idleCompaction === undefined
+          ? {}
+          : { idleCompaction: input.message.idleCompaction }),
+        attachments,
+        ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+        ...(input.sourceProposedPlan === undefined
+          ? {}
+          : { sourcePlanRef: input.sourceProposedPlan }),
+        ...(input.freshContext ? { freshContext: true } : {}),
+        dispatchMode: { type: "start_immediately" },
+      },
+      resend,
+    );
   }
 
   const dispatchMode =
     requestedMode === "queue"
       ? ({ type: "queue_after_active" } as const)
       : ({ type: "start_immediately" } as const);
-  return yield* dispatch({
-    type: "message.dispatch",
-    commandId,
-    createdBy: "user",
-    creationSource: input.creationSource ?? "web",
-    threadId: input.threadId,
-    messageId: input.message.messageId,
-    text: input.message.text,
-    ...(context ? { context } : {}),
-    ...(input.message.idleCompaction === undefined
-      ? {}
-      : { idleCompaction: input.message.idleCompaction }),
-    attachments,
-    ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
-    ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
-    ...(input.sourceProposedPlan === undefined ? {} : { sourcePlanRef: input.sourceProposedPlan }),
-    ...(input.freshContext ? { freshContext: true } : {}),
-    ...(requestedMode !== "queue" ? { deliveryIntent: requestedMode } : {}),
-    dispatchMode,
-  });
+  return yield* dispatchMessage(
+    {
+      type: "message.dispatch",
+      commandId,
+      createdBy: "user",
+      creationSource: input.creationSource ?? "web",
+      threadId: input.threadId,
+      messageId: input.message.messageId,
+      text: input.message.text,
+      ...(context ? { context } : {}),
+      ...(input.message.idleCompaction === undefined
+        ? {}
+        : { idleCompaction: input.message.idleCompaction }),
+      attachments,
+      ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
+      ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+      ...(input.sourceProposedPlan === undefined
+        ? {}
+        : { sourcePlanRef: input.sourceProposedPlan }),
+      ...(input.freshContext ? { freshContext: true } : {}),
+      ...(requestedMode !== "queue" ? { deliveryIntent: requestedMode } : {}),
+      dispatchMode,
+    },
+    resend,
+  );
 });
 
 export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThreadTurn")(function* (
@@ -932,16 +1060,25 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
       });
     }
     const projection = yield* getProjection(input.threadId);
+    // A tracked repository's baseline also sits at ordinal zero; it follows the thread's rewind.
+    const repositoryScopeIds = repositoryCheckpointScopeIds(projection.checkpointScopes);
     const checkpoint =
       projection.checkpoints.find(
         (candidate) => candidate.id === input.checkpointId && candidate.scopeId === input.scopeId,
       ) ??
-      projection.checkpoints.findLast((candidate) =>
-        input.turnCount === 0
-          ? candidate.ordinalWithinScope === 0 && candidate.appRunOrdinal === null
-          : candidate.appRunOrdinal === input.turnCount,
+      projection.checkpoints.findLast(
+        (candidate) =>
+          !repositoryScopeIds.has(candidate.scopeId) &&
+          (input.turnCount === 0
+            ? candidate.ordinalWithinScope === 0 && candidate.appRunOrdinal === null
+            : candidate.appRunOrdinal === input.turnCount),
       );
-    if (checkpoint === undefined || checkpoint.status !== "ready") {
+    if (
+      checkpoint === undefined ||
+      // Missing or failed snapshots support conversation rewind only.
+      (checkpoint.status !== "ready" &&
+        !(input.restoreFiles === false && checkpoint.status !== "stale"))
+    ) {
       const target =
         input.checkpointId === undefined
           ? `run ordinal ${input.turnCount ?? "unknown"}`
@@ -1029,25 +1166,29 @@ export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(
 export const resumeThreadQueue = Effect.fn("EnvironmentCommands.resumeThreadQueue")(function* (
   input: ResumeThreadQueueInput,
 ) {
-  return yield* dispatch({
-    ...(input.runId === undefined
-      ? { type: "queue.resume" as const }
-      : { type: "queued-run.start" as const, runId: input.runId }),
-    commandId: yield* allocateCommandId(input),
-    threadId: input.threadId,
-  });
+  return yield* resendAfterSocketLoss(
+    dispatch({
+      ...(input.runId === undefined
+        ? { type: "queue.resume" as const }
+        : { type: "queued-run.start" as const, runId: input.runId }),
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+    }),
+  );
 });
 
 export const promoteQueuedRun = Effect.fn("EnvironmentCommands.promoteQueuedRun")(function* (
   input: PromoteQueuedRunInput,
 ) {
-  return yield* dispatch({
-    type: "queued-message.promote-to-steer",
-    commandId: yield* allocateCommandId(input),
-    threadId: input.threadId,
-    queuedRunId: input.queuedRunId,
-    targetRunId: input.targetRunId,
-  });
+  return yield* resendAfterSocketLoss(
+    dispatch({
+      type: "queued-message.promote-to-steer",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      queuedRunId: input.queuedRunId,
+      targetRunId: input.targetRunId,
+    }),
+  );
 });
 
 export const cancelQueuedRun = Effect.fn("EnvironmentCommands.cancelQueuedRun")(function* (
@@ -1085,6 +1226,7 @@ export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(func
     threadId: input.threadId,
     runId: input.runId,
     text: input.text,
+    ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
     ...(attachments === undefined ? {} : { attachments }),
     ...(input.edit?.context && attachments
       ? {
@@ -1117,6 +1259,34 @@ export const linkThreadPullRequest = Effect.fn("EnvironmentCommands.linkThreadPu
     });
   },
 );
+export type LinkThreadIssueInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.issue.link" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+export type UnlinkThreadIssueInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.issue.unlink" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+export const linkThreadIssue = Effect.fn("EnvironmentCommands.linkThreadIssue")(function* (
+  input: LinkThreadIssueInput,
+) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.issue.link",
+    commandId: yield* allocateCommandId(input),
+  });
+});
+export const unlinkThreadIssue = Effect.fn("EnvironmentCommands.unlinkThreadIssue")(function* (
+  input: UnlinkThreadIssueInput,
+) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.issue.unlink",
+    commandId: yield* allocateCommandId(input),
+  });
+});
 export type WatchThreadPullRequestInput = Omit<
   Extract<OrchestrationV2Command, { type: "thread.pull-request.watch" }>,
   "type" | "commandId"

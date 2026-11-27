@@ -1,10 +1,12 @@
+import { eastAsianWidth } from "get-east-asian-width";
+
 /** Server/client folds must agree: only the last LIVE_LINES are cursor-addressable, with no wrapping.
  * SGR resets at line boundaries for safe tail cuts; unfinished escapes carry through pending. */
 export interface TerminalOutputState {
   /** Fixed lines followed by the live window; contains only SGR escapes. */
   readonly text: string;
   readonly truncated: boolean;
-  /** An unfinished escape sequence awaiting the next chunk. */
+  /** An unfinished escape sequence or high surrogate awaiting the next chunk. */
   readonly pending: string;
   readonly screen: TerminalScreen;
 }
@@ -60,22 +62,71 @@ function lineLength(line: Line): number {
   return length;
 }
 
+const lineWidths = new WeakMap<Line, number>();
+const ZERO_WIDTH = /[\p{Mark}\p{Default_Ignorable_Code_Point}]/u;
+const ASCII = /^[\x00-\x7f]*$/u;
+
+function characterWidth(character: string): number {
+  return ZERO_WIDTH.test(character) ? 0 : eastAsianWidth(character.codePointAt(0)!);
+}
+
+function textWidth(text: string): number {
+  if (ASCII.test(text)) return text.length;
+  let width = 0;
+  for (const character of text) width += characterWidth(character);
+  return width;
+}
+
+function lineWidth(line: Line): number {
+  const cached = lineWidths.get(line);
+  if (cached !== undefined) return cached;
+  let width = 0;
+  for (const run of line) width += textWidth(run.text);
+  lineWidths.set(line, width);
+  return width;
+}
+
 // Strip oldest styles to bound work on color-per-character output.
 const MAX_LINE_RUNS = 2_048;
 
 function sliceLine(line: Line, start: number, end: number): Array<Run> {
   const out: Array<Run> = [];
-  let offset = 0;
+  let col = 0;
+  let base = 0;
+  let baseEnd = 0;
   for (const run of line) {
-    const runEnd = offset + run.text.length;
-    if (runEnd > start && offset < end) {
-      out.push({
-        pen: run.pen,
-        text: run.text.slice(Math.max(0, start - offset), Math.min(run.text.length, end - offset)),
-      });
+    if (ASCII.test(run.text)) {
+      const runEnd = col + run.text.length;
+      if (runEnd > start && col < end) {
+        pushRun(out, {
+          pen: run.pen,
+          text: run.text.slice(Math.max(0, start - col), Math.min(run.text.length, end - col)),
+        });
+      }
+      base = runEnd - 1;
+      baseEnd = runEnd;
+      col = runEnd;
+      continue;
     }
-    offset = runEnd;
-    if (offset >= end) break;
+    let text = "";
+    for (const character of run.text) {
+      const width = characterWidth(character);
+      if (width > 0) {
+        base = col;
+        baseEnd = col + width;
+      }
+      if (width === 0) {
+        if (base >= start && base < end && baseEnd <= end) text += character;
+      } else if (col < end && col + width > start) {
+        // Overwriting either half of a wide glyph clears that glyph's other cell.
+        text +=
+          col >= start && col + width <= end
+            ? character
+            : " ".repeat(Math.min(end, col + width) - Math.max(start, col));
+      }
+      col += width;
+    }
+    pushRun(out, { pen: run.pen, text });
   }
   return out;
 }
@@ -91,40 +142,58 @@ function pushRun(runs: Array<Run>, run: Run): void {
 }
 
 /** Mutates only lines owned by this feed. */
-function trimLineStart(runs: Array<Run>, count: number): void {
+function trimLineStart(runs: Array<Run>, count: number): number {
+  const width = lineWidth(runs);
+  const length = lineLength(runs);
+  let removedWidth = 0;
+  let removedUnits = 0;
   let dropped = 0;
   let remaining = count;
-  while (remaining > 0 && dropped < runs.length) {
+  while (dropped < runs.length) {
     const run = runs[dropped]!;
-    if (run.text.length <= remaining) {
-      remaining -= run.text.length;
-      dropped += 1;
-    } else {
-      runs[dropped] = { pen: run.pen, text: run.text.slice(remaining) };
-      remaining = 0;
+    let cut = Math.min(remaining, run.text.length);
+    // A retained tail must start at a complete character, with no detached marks.
+    while (cut < run.text.length) {
+      const code = run.text.charCodeAt(cut);
+      const character = String.fromCodePoint(run.text.codePointAt(cut)!);
+      if (!(code >= 0xdc00 && code <= 0xdfff) && characterWidth(character) !== 0) break;
+      cut += character.length;
     }
+    removedWidth += textWidth(run.text.slice(0, cut));
+    removedUnits += cut;
+    remaining = Math.max(0, remaining - cut);
+    if (cut < run.text.length) {
+      runs[dropped] = { pen: run.pen, text: run.text.slice(cut) };
+      break;
+    }
+    dropped += 1;
   }
   if (dropped > 0) runs.splice(0, dropped);
+  lineLengths.set(runs, length - removedUnits);
+  lineWidths.set(runs, width - removedWidth);
+  return removedWidth;
 }
 
 function writeLine(line: Line, col: number, text: string, pen: string): Line {
-  const length = lineLength(line);
+  const length = lineWidth(line);
   if (col === length) {
     const runs = line.slice();
     pushRun(runs, { pen, text });
+    lineWidths.set(runs, length + textWidth(text));
+    lineLengths.set(runs, lineLength(line) + text.length);
     return runs;
   }
   const runs: Array<Run> = [];
   for (const run of sliceLine(line, 0, Math.min(col, length))) pushRun(runs, run);
   if (col > length) pushRun(runs, { pen: "", text: " ".repeat(col - length) });
   pushRun(runs, { pen, text });
-  for (const run of sliceLine(line, col + text.length, length)) pushRun(runs, run);
+  for (const run of sliceLine(line, col + textWidth(text), length)) pushRun(runs, run);
   return runs;
 }
 
 /** Erase in line: 0 cursor to end, 1 start to cursor, 2 whole line. */
 function eraseLine(line: Line, col: number, mode: number): Line {
-  const length = lineLength(line);
+  const length = lineWidth(line);
   if (mode === 0) return sliceLine(line, 0, col);
   if (mode === 1) {
     const runs: Array<Run> = [];
@@ -252,6 +321,10 @@ function escapeLength(input: string, index: number): number {
   if (next === "[") {
     for (let cursor = index + 2; cursor < input.length; cursor += 1) {
       const code = input.charCodeAt(cursor);
+      // Like xterm.js, a new ESC cancels an unfinished CSI so the next sequence parses intact.
+      if (code === 0x1b) return cursor - index;
+      // CAN and SUB cancel the CSI and are consumed.
+      if (code === 0x18 || code === 0x1a) return cursor - index + 1;
       if (code >= 0x40 && code <= 0x7e) return cursor - index + 1;
     }
     return -1;
@@ -260,6 +333,7 @@ function escapeLength(input: string, index: number): number {
     // BEL/ST ends string sequences; also stop at newlines so stray binary introducers cannot hide later output.
     for (let cursor = index + 2; cursor < input.length; cursor += 1) {
       if (input[cursor] === "\u0007") return cursor - index + 1;
+      if (input[cursor] === "\u0018" || input[cursor] === "\u001a") return cursor - index + 1;
       if (input[cursor] === "\n") return cursor - index;
       // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.
       if (input[cursor] === ESC) {
@@ -282,6 +356,11 @@ function escapeLength(input: string, index: number): number {
   // After intermediates, a control or ESC is not a final byte; end before it so it is still processed.
   const final = input.charCodeAt(cursor);
   if (cursor > index + 1 && (final < 0x30 || final > 0x7e)) return cursor - index;
+  if (final >= 0xd800 && final <= 0xdbff) {
+    if (cursor + 1 >= input.length) return -1;
+    const low = input.charCodeAt(cursor + 1);
+    if (low >= 0xdc00 && low <= 0xdfff) return cursor - index + 2;
+  }
   return cursor - index + 1;
 }
 
@@ -358,15 +437,18 @@ class Terminal {
 
   write(text: string): void {
     let line = this.lines[this.row]!;
-    const length = lineLength(line);
+    const length = lineWidth(line);
+    const width = textWidth(text);
     if (this.col === length && this.owned.has(line)) {
+      const units = lineLength(line);
       pushRun(line as Array<Run>, { pen: this.pen, text });
-      lineLengths.set(line, length + text.length);
+      lineWidths.set(line, length + width);
+      lineLengths.set(line, units + text.length);
     } else {
       line = writeLine(line, this.col, text, this.pen);
       this.owned.add(line);
     }
-    this.col += text.length;
+    this.col += width;
     if (line.length > MAX_LINE_RUNS) {
       // Flatten old runs so later trimming stays cheap.
       const keep = line.length - MAX_LINE_RUNS / 8;
@@ -374,32 +456,23 @@ class Terminal {
         .slice(0, keep)
         .map((run) => run.text)
         .join("");
+      const columns = lineWidth(line);
+      const units = lineLength(line);
       line = [{ pen: "", text: plain }, ...line.slice(keep)];
+      lineWidths.set(line, columns);
+      lineLengths.set(line, units);
       this.owned.add(line);
     }
-    // Trim each write to maxChars columns so results do not depend on chunk boundaries.
-    let current = lineLength(line);
+    // The output budget is UTF-16 units; cursor positions are terminal columns.
+    const current = lineLength(line);
     if (current > this.maxChars) {
-      let removed = current - this.maxChars;
-      if (!this.owned.has(line)) {
-        line = line.slice();
-        this.owned.add(line);
-      }
-      trimLineStart(line as Array<Run>, removed);
-      // Never start on a lone low surrogate.
-      const first = line[0]?.text.charCodeAt(0) ?? 0;
-      if (first >= 0xdc00 && first <= 0xdfff) {
-        trimLineStart(line as Array<Run>, 1);
-        removed += 1;
-      }
-      current -= removed;
+      const removed = trimLineStart(line as Array<Run>, current - this.maxChars);
       this.dropped = true;
       this.col = Math.max(0, this.col - removed);
       if (this.saved !== null && this.saved.row === this.row) {
         this.saved = { ...this.saved, col: Math.max(0, this.saved.col - removed) };
       }
     }
-    lineLengths.set(line, current);
     this.lines[this.row] = line;
   }
 
@@ -432,7 +505,7 @@ class Terminal {
   moveTo(row: number, col: number): void {
     this.row = Math.max(0, Math.min(this.lines.length - 1, row));
     // A huge column (ESC[999999999C) would otherwise pad a line past any string limit.
-    this.col = Math.max(0, Math.min(TERMINAL_OUTPUT_TAIL_CHARS, col));
+    this.col = Math.max(0, Math.min(2 * TERMINAL_OUTPUT_TAIL_CHARS, col));
   }
 
   csi(params: string, final: string): void {
@@ -547,6 +620,11 @@ class Terminal {
         printable = index + 1;
       }
     }
+    const last = input.charCodeAt(input.length - 1);
+    if (last >= 0xd800 && last <= 0xdbff) {
+      flush(input.length - 1);
+      return input.slice(-1);
+    }
     flush(input.length);
     return "";
   }
@@ -639,15 +717,17 @@ export function appendTerminalOutput(
       const keep = Math.max(0, Math.min(length, budget));
       if (keep < length) {
         truncated = true;
-        terminal.lines[row] = sliceLine(line, length - keep, length);
+        const runs = line.slice();
+        const removed = trimLineStart(runs, length - keep);
+        terminal.lines[row] = runs;
         if (terminal.saved !== null && terminal.saved.row === row) {
           terminal.saved = {
             ...terminal.saved,
-            col: Math.max(0, terminal.saved.col - (length - keep)),
+            col: Math.max(0, terminal.saved.col - removed),
           };
         }
       }
-      budget -= keep;
+      budget -= lineLength(terminal.lines[row]!);
     }
   }
   if (terminal.dropped) truncated = true;
@@ -673,32 +753,38 @@ export function appendTerminalOutput(
 export function terminalOutputResumeText(state: TerminalOutputState): string {
   const { screen } = state;
   const lastRow = screen.lines.length - 1;
-  // Moves are relative to the last line, and a viewer only holds the lines in `text`.
-  let reachable = 0;
-  let cursor = 0;
-  while (reachable < LIVE_LINES - 1) {
-    const newline = state.text.indexOf("\n", cursor);
-    if (newline === -1) break;
-    reachable += 1;
-    cursor = newline + 1;
+  // A full live window can hide retained scrollback from the display tail until the next redraw.
+  let replay = screen.settled.join("");
+  if (replay !== "" && lastRow < LIVE_LINES - 1) {
+    // Scroll the history out with blank rows, then clear them before replaying the live window.
+    replay += "\n".repeat(LIVE_LINES - 1) + `${ESC}[2J`;
   }
-  const up = (row: number) => Math.min(lastRow - row, reachable);
+  replay += screen.lines.map(serializeLine).join("\n");
+  const up = (row: number) => lastRow - row;
   const goTo = (row: number, col: number) =>
     (up(row) > 0 ? `${ESC}[${up(row)}A` : "") + `${ESC}[${col + 1}G`;
   let suffix = "";
   if (screen.saved !== null) {
-    suffix += `${goTo(screen.saved.row, screen.saved.col)}${ESC}7`;
-    if (up(screen.saved.row) > 0) suffix += `${ESC}[${up(screen.saved.row)}B`;
+    if (screen.saved.row > lastRow) {
+      const extra = screen.saved.row - lastRow;
+      suffix +=
+        "\n".repeat(extra) +
+        `${ESC}[${screen.saved.col + 1}G${ESC}7` +
+        `${ESC}[${extra}A${ESC}[${lineWidth(screen.lines[lastRow]!) + 2}G${ESC}[J`;
+    } else {
+      suffix += `${goTo(screen.saved.row, screen.saved.col)}${ESC}7`;
+      if (up(screen.saved.row) > 0) suffix += `${ESC}[${up(screen.saved.row)}B`;
+    }
   }
   if (
     screen.saved !== null ||
     screen.row < lastRow ||
-    screen.col !== lineLength(screen.lines[screen.row]!)
+    screen.col !== lineWidth(screen.lines[screen.row]!)
   ) {
     suffix += goTo(screen.row, screen.col);
   }
   if (screen.pen !== "") suffix += sgr(screen.pen);
-  return state.text + suffix + state.pending;
+  return replay + suffix + state.pending;
 }
 
 export function normalizeTerminalOutput(
@@ -831,7 +917,7 @@ function spanStyle(pen: string, palette: ReadonlyArray<string>): TerminalSpanSty
       background !== undefined &&
       (foreground === undefined || contrastRatio(foreground, background) < 3)
     ) {
-      color = luminance(background) > 0.35 ? "#1f2328" : "#ffffff";
+      color = luminance(background) > 0.3 ? "#1f2328" : "#ffffff";
     }
   }
   const textDecorationLine = attributes.underline
@@ -890,8 +976,24 @@ export function terminalOutputSpans(
   return spans;
 }
 
-const SGR_PATTERN = new RegExp(`${ESC}\\[[0-9;]*m`, "gu");
+const SGR_PATTERN = new RegExp(`${ESC}\\[[0-9;:]*m`, "gu");
 
 export function terminalOutputPlainText(text: string): string {
   return text.replace(SGR_PATTERN, "");
+}
+
+// tqdm redraws a progress bar after a carriage return; JupyterLab shows only what the last
+// redraws leave on the line. Walking the frames from the last keeps this linear.
+function lastFrame(line: string): string {
+  let row = "";
+  for (const frame of line.split("\r").reverse())
+    // A cut through a surrogate pair blanks the glyph's other half, as a terminal does.
+    if (frame.length > row.length) row += frame.slice(row.length).replace(/^[\udc00-\udfff]/u, " ");
+  return row;
+}
+
+export function terminalOutputCollapseRedraws(text: string): string {
+  return /\r(?!\n)/.test(text)
+    ? text.replaceAll("\r\n", "\n").split("\n").map(lastFrame).join("\n")
+    : text;
 }

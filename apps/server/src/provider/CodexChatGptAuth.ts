@@ -7,11 +7,9 @@ import {
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { codexCallbackUrl } from "@t3tools/shared/codexAuthHandoff";
-import { hashTelemetryId } from "@t3tools/shared/telemetryId";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
-import { openAiUserId } from "../telemetry/Identify.ts";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Signature from "effect/crypto/Signature";
@@ -286,18 +284,6 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
         saved.sessions.find((session) => session.clientId === saved.activeClientId),
       ),
     ),
-    // The OpenAI account is the person, so it marks who owns this install.
-    Effect.tap((credentials) => {
-      const userId = Option.flatMap(credentials, (saved) =>
-        Option.flatMap(Option.fromUndefinedOr(saved.idToken), openAiUserId),
-      );
-      return Option.isSome(userId) && Option.isSome(analytics)
-        ? analytics.value.recordOwners(
-            [{ source: "openai", ownerId: hashTelemetryId(userId.value) }],
-            "server",
-          )
-        : Effect.void;
-    }),
   );
   const writeSessions = (saved: typeof Sessions.Type) =>
     encodeSessions(saved).pipe(
@@ -549,9 +535,10 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
           Effect.tryPromise({
             try: () =>
               new Promise<NodeHttp.Server>((resolve, reject) => {
+                const callbackBase = "http://127.0.0.1/auth/callback";
                 const server = NodeHttp.createServer((request, response) => {
-                  const url = new URL(request.url ?? "/", "http://127.0.0.1");
-                  if (request.method !== "GET" || url.pathname !== "/auth/callback") {
+                  const url = URL.parse(request.url ?? "/", callbackBase);
+                  if (request.method !== "GET" || url?.pathname !== "/auth/callback") {
                     response.writeHead(404).end();
                     return;
                   }
@@ -559,8 +546,18 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
                     response.writeHead(410).end("Sign-in is no longer active.");
                     return;
                   }
+                  // Reject a stray request without ending the sign-in, so the real redirect still lands.
+                  let returned: URL;
+                  try {
+                    returned = codexCallbackUrl(url.toString(), callbackBase, state);
+                  } catch {
+                    response
+                      .writeHead(400)
+                      .end("This response does not belong to the active sign-in.");
+                    return;
+                  }
                   used = true;
-                  callback.resolve({ url, response });
+                  callback.resolve({ url: returned, response });
                 });
                 server.once("error", reject);
                 server.listen(0, "127.0.0.1", () => resolve(server));

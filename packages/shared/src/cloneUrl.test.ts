@@ -78,6 +78,15 @@ describe("cloneUrlForProtocol", () => {
     );
   });
 
+  it("switches Bitbucket Cloud between its SSH and HTTPS hosts", () => {
+    expect(cloneUrlForProtocol("https://bitbucket.org/workspace/repo.git", "ssh")).toBe(
+      "git@ssh.bitbucket.org:workspace/repo.git",
+    );
+    expect(cloneUrlForProtocol("git@ssh.bitbucket.org:workspace/repo.git", "https")).toBe(
+      "https://bitbucket.org/workspace/repo.git",
+    );
+  });
+
   it("preserves encoded Azure repository components and same-protocol URLs", () => {
     const ssh = "git@ssh.dev.azure.com:v3/Fabrikam/Project%20One/fab%20repo";
     const https = "https://dev.azure.com/Fabrikam/Project%20One/_git/fab%20repo";
@@ -129,6 +138,20 @@ describe("cloneUrlForProtocol", () => {
     expect(cloneUrlForProtocol("https://[2001:db8::1]/org/repo.git", "ssh")).toBe(
       "git@[2001:db8::1]:org/repo.git",
     );
+    for (const [literal, encoded] of [
+      ["my repo.git", "my%20repo.git"],
+      ["repo%20name.git", "repo%2520name.git"],
+      ["repo#1?.git", "repo%231%3F.git"],
+    ]) {
+      const scp = `git@host.example:team/${literal}`;
+      const https = `https://host.example/team/${encoded}`;
+      expect(cloneUrlForProtocol(https, "ssh")).toBe(scp);
+      expect(cloneUrlForProtocol(scp, "https")).toBe(https);
+      expect(cloneUrlForProtocol(`ssh://git@host.example/team/${encoded}`, "https")).toBe(https);
+    }
+    expect(cloneUrlForProtocol("ssh://git@host.example/team/repo%20name#1?.git", "https")).toBe(
+      "https://host.example/team/repo%20name%231%3F.git",
+    );
   });
 
   it("keeps the URL as is for its own protocol and drops HTTPS credentials on switch", () => {
@@ -141,6 +164,7 @@ describe("cloneUrlForProtocol", () => {
   });
 
   it("refuses rewrites that would guess wrong", () => {
+    expect(cloneUrlForProtocol("https://host.example/team/repo%ZZ.git", "ssh")).toBeNull();
     expect(cloneUrlForProtocol("ssh://git@host.example:2222/a/b.git", "https")).toBeNull();
     expect(cloneUrlForProtocol("https://host.example:8443/a/b.git", "ssh")).toBeNull();
     expect(cloneUrlForProtocol("https://host.example:8443/a/b.git", "https")).toBe(
@@ -163,7 +187,7 @@ describe("cloneUrlForProtocol", () => {
 });
 
 describe("cloneUrlRepositoryPath", () => {
-  it("rejects Windows device names and trailing dots or spaces in every folder", () => {
+  it("derives portable clone folders from URI and SCP paths", () => {
     for (const segment of [
       "CON",
       "nul.txt",
@@ -185,5 +209,25 @@ describe("cloneUrlRepositoryPath", () => {
       "gitlab.com/group/sub/repo",
     );
     expect(cloneUrlRepositoryPath("C:/repos/project.git")).toBeNull();
+    for (const prefix of ["https://host.example/", "ssh://git@host.example/"]) {
+      expect(cloneUrlRepositoryPath(`${prefix}Research%20Tools/r%C3%A9sum%C3%A9.git`)).toBe(
+        "host.example/Research Tools/résumé",
+      );
+      expect(cloneUrlRepositoryPath(`${prefix}team/repo%2520name.git`)).toBe(
+        "host.example/team/repo%20name",
+      );
+      expect(cloneUrlRepositoryPath(`${prefix}team/%2e%2e/repo.git`)).toBeNull();
+      expect(cloneUrlRepositoryPath(`${prefix}team/repo%20.git`)).toBeNull();
+      expect(cloneUrlRepositoryPath(`${prefix}team/bad%FF.git`)).toBeNull();
+    }
+    expect(cloneUrlRepositoryPath("git@forge.example:team#1/spec#2026.git")).toBe(
+      "forge.example/team#1/spec#2026",
+    );
+    expect(cloneUrlRepositoryPath("https://forge.example/team/spec.git#readme")).toBe(
+      "forge.example/team/spec",
+    );
+    expect(cloneUrlRepositoryPath("git@host.example:team/repo%20name.git")).toBe(
+      "host.example/team/repo%20name",
+    );
   });
 });

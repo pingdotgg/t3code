@@ -89,6 +89,51 @@ describe("AcpMcpStdioBridge", () => {
     );
   });
 
+  it("reads the arguments from stdin when given -", async () => {
+    const originalEnvironment = process.env;
+    using _environment = {
+      [Symbol.dispose]: () => {
+        process.env = originalEnvironment;
+      },
+    };
+    process.env = {
+      ...originalEnvironment,
+      T3_ACP_MCP_ENDPOINT: "http://127.0.0.1:1/mcp",
+      T3_ACP_MCP_AUTHORIZATION: "Bearer bridge-test",
+    };
+    const calls: Array<unknown> = [];
+    using _fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      const message = JSON.parse(String(init?.body)) as {
+        id?: string;
+        method: string;
+        params?: unknown;
+      };
+      if (message.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+      if (message.method === "tools/call") calls.push(message.params);
+      return Response.json({
+        jsonrpc: "2.0",
+        id: message.id,
+        result:
+          message.method === "initialize" ? { protocolVersion: "2025-06-18" } : { content: [] },
+      });
+    });
+    using _output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    using _stdin = vi
+      .spyOn(process, "stdin", "get")
+      .mockReturnValue(
+        NodeStream.Readable.from(['{"task":"say \\"hi\\"",', '"mode":"async"}\r\n']) as never,
+      );
+
+    await runAcpMcpCliFastPath("acp-mcp-call", ["delegate_task", "-"]);
+
+    expect(calls).toEqual([
+      { name: "delegate_task", arguments: { task: 'say "hi"', mode: "async" } },
+    ]);
+  });
+
   it.effect("forwards requests and replays the session id and protocol version", () =>
     Effect.gen(function* () {
       const { input, written, requests, bridge } = makeHarness((request) => {
@@ -389,6 +434,68 @@ describe("AcpMcpStdioBridge", () => {
       const signal = yield* Deferred.await(started);
       yield* Fiber.interrupt(fiber);
       expect(signal?.aborted).toBe(true);
+    }),
+  );
+
+  it.effect("answers a server ping that arrives before the tool result on its SSE stream", () =>
+    Effect.gen(function* () {
+      const sent: Array<{ id?: unknown; method?: string; result?: unknown }> = [];
+      const result = yield* mcpToolSession({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        clientName: "t3-code-acp-cli",
+        fetchImplementation: async (_url, init) => {
+          if (init?.method === "DELETE") return new Response(null, { status: 204 });
+          const message = JSON.parse(String(init?.body)) as (typeof sent)[number];
+          sent.push(message);
+          if (message.method === "initialize") {
+            return Response.json(
+              { jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-06-18" } },
+              { headers: { "mcp-session-id": "session-42" } },
+            );
+          }
+          if (message.method !== "tools/call") return new Response(null, { status: 202 });
+          const ping = { jsonrpc: "2.0", id: "server-ping", method: "ping" };
+          const reply = { jsonrpc: "2.0", id: message.id, result: { content: [] } };
+          return new Response(
+            `data: ${JSON.stringify(ping)}\n\ndata: ${JSON.stringify(reply)}\n\n`,
+            { headers: { "content-type": "text/event-stream" } },
+          );
+        },
+      }).pipe(
+        Effect.flatMap((session) => session.call("orchestrator_capabilities", {})),
+        Effect.scoped,
+      );
+
+      expect(result).toEqual({ content: [] });
+      expect(sent).toContainEqual({ jsonrpc: "2.0", id: "server-ping", result: {} });
+    }),
+  );
+
+  it.effect("keeps the server's JSON-RPC error on a failed tool call", () =>
+    Effect.gen(function* () {
+      const rpcError = { code: -32602, message: "Tool 't3_feedback' not found" };
+      const error = yield* mcpToolSession({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        clientName: "t3-thread-cli",
+        fetchImplementation: async (_url, init) => {
+          if (init?.method === "DELETE") return new Response(null, { status: 204 });
+          const message = JSON.parse(String(init?.body)) as { id?: unknown; method?: string };
+          if (message.method === "initialize") {
+            return Response.json({ jsonrpc: "2.0", id: message.id, result: {} });
+          }
+          if (message.method !== "tools/call") return new Response(null, { status: 202 });
+          return Response.json({ jsonrpc: "2.0", id: message.id, error: rpcError });
+        },
+      }).pipe(
+        Effect.flatMap((session) => session.call("t3_feedback", {})),
+        Effect.scoped,
+        Effect.asVoid,
+        Effect.flip,
+      );
+
+      expect(error.rpcError).toEqual(rpcError);
     }),
   );
 

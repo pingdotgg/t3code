@@ -1,143 +1,45 @@
 # ACP providers
 
-T3 Code can run installed ACP commands or coding agents from the official
-[ACP Registry](https://agentclientprotocol.com/get-started/registry). Registry agents bring their
-own models, tools, and sign-in, while T3 Code provides projects, threads, checkpoints, and task
-delegation.
+T3 Code can run any coding agent from the official [ACP Registry](https://agentclientprotocol.com/get-started/registry) or any local ACP-compatible command. Built-in providers (Codex, Claude, Cursor, Grok, OpenCode, Pi, Antigravity) are enabled directly in **Settings → Providers** instead.
 
-Agents that T3 Code supports as their own providers, such as Codex, Claude, Cursor, Grok, OpenCode,
-Pi, and [Antigravity](./providers-antigravity.md), don't appear in the Registry list. Enable them in
-**Settings → Providers** instead.
-
-T3 Code prefers the current ACP v2 preview protocol and uses its richer messages, usage, plans,
-configuration, compaction, and agent-terminal updates when the agent supports them. It also
-negotiates ACP v1 for Registry agents that have not migrated yet, so they continue to work through
-the same generic integration.
-
-Claude Agent uses the ACP v2 preview by default for Registry and local `claude-agent-acp`
-commands. If you encounter preview issues, set `CLAUDE_AGENT_ACP_EXPERIMENTAL_V2=0` in the
-provider instance's environment overrides to use ACP v1.
+T3 Code negotiates ACP v2 preview when supported and falls back to ACP v1 automatically. For `claude-agent-acp`, set `CLAUDE_AGENT_ACP_EXPERIMENTAL_V2=0` in the instance's environment overrides if you need ACP v1.
 
 ## Add an agent
 
-1. Open **Settings → Providers**.
-2. Select **Add provider**, then **Show more**.
-3. Search the ACP Registry for the agent and select **Add** on its result.
-4. Confirm the name and instance ID, then complete the agent's sign-in step.
+- **From the ACP Registry**: Open **Settings → Providers → Add provider → Show more**, search for an agent compatible with your server, click **Add**, and complete sign-in. Registry agents are third-party code—review an agent's source and license before adding it.
+- **Local ACP command**: Under **Show more → Local ACP command**, enter the executable path/name, literal arguments (one per row—no shell expansion; e.g., `dsh` with `--profile` and `acp`), and a display name.
 
-Search only shows agents that can run on the connected server. Registry agents are third-party
-code; review an agent's source and license before adding it.
+## Installation and updates
 
-## Add a local command
+Registry agents run on your T3 Code server (including when accessed remotely) and install under `<t3-home>/tools/<agent-id>/<version>/` with SHA-256 verification when provided. T3 Code checks for Registry updates in the background and installs them on the next provider refresh. Set **Executable override** to use your own local binary instead.
 
-In **Settings → Providers → Add provider**, select **Show more**, then **Local ACP command**. Enter the executable
-name or path on the selected environment, add one literal argument per row, and choose a display
-name. For DeepSeek Harness, use `dsh` with arguments `--profile` and `acp`.
+## Sign in
 
-Local commands require no registry entry or download. Environment overrides apply to the command;
-credentials and skills remain managed by the installed agent or its wrapper. Models and reasoning
-options come from ACP, including model IDs that contain JSON. T3 Code launches the executable directly
-without expanding shell expressions.
+Open the agent's account section in **Settings → Providers** and click **Sign in** (choose an auth method if multiple are offered).
 
-## Where agents run
+- **Browser sign-in**: Opens the auth URL on your device while the agent runs on the server.
+- **Terminal sign-in**: Runs in an in-app terminal on the server (or uses a response field on mobile).
+- **API keys**: Add required variables in the instance's **Environment** settings.
 
-Registry agents always run on the machine that hosts your T3 Code server. That stays true when you
-connect through `app.t3.codes`, T3 Connect, or a relay.
+Credentials stay in the agent's own store; changing a shared login stops running threads for that agent on the server while keeping history.
 
-Agents install under `tools/<agent-id>/<version>/` inside T3 home. T3 Code verifies SHA-256 when the Registry entry
-provides one; entries without a checksum retain the Registry's HTTPS distribution guarantee.
-Registry `npx` and `uvx` packages use T3-owned npm prefixes and Python tool directories at the exact
-version published by the Registry. Their commands are available in a new server terminal for
-sign-in and direct use. Removing an agent's last provider instance removes T3-managed binary files
-but keeps package installs. To use an existing local binary, set **Executable override** explicitly.
+## Models, commands, and native sessions
 
-## Signing in
-
-Open the agent's account section in **Settings → Providers** on web or desktop. Choose
-**Sign in** and, if the agent offers several methods, select one. For an installed, configured
-provider, mobile also offers **Settings → Providers**.
-
-Browser sign-in shows the agent's URL and waits for you to open or copy it before telling the
-agent to proceed. The page opens on your device, while the agent runs on the environment.
-Terminal methods run in an in-app terminal on that environment. On mobile, send responses
-through the terminal response field. T3 Code reconnects after terminal login and waits for the
-agent to confirm sign-in before reporting success. You can cancel or retry an expired attempt.
-
-Browser and terminal sign-in leave credentials in the agent's own store. Agents that use API keys
-through environment variables still take those keys in the instance's environment settings.
-A configured environment or agent home applies to both sign-in and chat.
-
-If the agent advertises logout, choose **Sign out**. Changing a shared agent login stops running
-threads for instances of that same agent on the environment. Thread history and workspace files
-are kept. ACP does not describe account isolation, so adding another instance does not guarantee
-a separate account; use the agent's own configuration to isolate accounts when supported.
-
-If an agent cannot complete its advertised flow remotely, its CLI remains available on the
-server. For example, Codex supports `codex login --device-auth`, and Grok Build supports
-`grok login --device-auth`.
-
-## Models and options
-
-The model picker lists the models the agent reports. If the agent reports none, or hides some, add
-your own model IDs under **Custom models** in the instance settings.
-
-Other settings the agent offers, such as reasoning effort or approval mode, appear in the
-composer's model picker, beside the model list, like they do for built-in providers. Models and options that change while an agent
-is running update the picker without waiting for another provider probe.
-
-## Commands and skills
-
-Slash commands the agent provides appear under **Provider** in the `/` menu while a session is
-running. Commands the agent names with a `$` prefix appear in T3 Code's `$` skill menu instead.
-
-## Native sessions
-
-When an agent advertises ACP session listing and import support, expand its provider card,
-choose a project, and select **List sessions**. Importing one creates a deterministic T3 thread
-backed by that native session. Importing the same agent session again returns the existing thread,
-including when another client performs the import.
-
-The thread keeps the native session's title and last-update value as provider metadata without
-overwriting a title you set in T3 Code. Agents that report ACP context usage drive the thread details
-context window and cumulative cost metadata. See
-[commands and skills](./composer.md#commands-and-skills) to show it on web and desktop.
-Text resources and links render as assistant output;
-binary resources, images, and audio that T3 Code cannot render yet appear as explicit placeholders
-instead of disappearing.
+- **Models & options**: Reported automatically by the agent in the model picker. Add unlisted model IDs under **Custom models**.
+- **Commands & skills**: Agent slash commands appear under **Provider** in `/`; `$`-prefixed commands appear in the `$` skill menu.
+- **Native sessions**: When supported by the agent, expand its provider card, choose a project, and select **List sessions** to import existing sessions into T3 Code threads.
+- **Text generation**: Select an ACP model in **Settings → Threads → Text generation model** to generate titles, commit messages, and PR descriptions.
 
 ## Permissions and terminals
 
-Registry agents read files, edit, and run commands themselves, under their own sandbox and
-approval rules. They start in their own default mode, and their mode picker in the model options
-menu switches it. How far an agent is confined depends on that mode and the agent's own settings,
-so use its sandbox and permission controls when that matters.
+Registry agents enforce their own sandbox and approval rules (switchable via their mode picker in model options). When an agent asks for approval, T3 Code answers according to the thread's [permission mode](./permission-modes.md):
 
-When a registry agent asks for approval, T3 Code answers by the thread's
-[permission mode](./permission-modes.md): **Supervised** shows the request in the conversation,
-**Auto-accept edits** approves edits and shows the rest, and **Auto** and **Full access** approve
-automatically. File reads and searches never wait for approval.
+- **Supervised**: Shows approval requests in chat.
+- **Auto-accept edits**: Auto-approves edits inside the thread's folders; asks for everything else.
+- **Auto** and **Full access**: Approves automatically.
 
-Devin runs its commands through T3 Code's terminals, and those commands follow the thread's
-permission mode. For other agents, T3 Code shows the command, output, and exit status the agent
-reports but does not run or stop their terminals.
-
-Registry agents can schedule work and use T3's MCP tools. Child-task presentation depends on what
-the agent exposes: ACP has no portable native subagent-lineage contract, so richer delegation views
-remain agent-specific.
+File reads and searches never wait for approval. Devin runs commands in T3 Code terminals; other agents run their own terminals and report output/exit status.
 
 ## Checkpoints
 
-Checkpoint rollback restores your files as usual. ACP agents cannot rewind their own conversation,
-so the next turn after a rollback starts a fresh agent session that no longer remembers the
-conversation from before the checkpoint.
-
-Registry instances are not used for T3's app-owned text generation, such as thread titles, commit
-messages, branch names, or pull request descriptions. Configure a text-generation-capable provider
-for those actions.
-
-## Advanced configuration
-
-- **Executable override** runs an existing local executable instead of the managed distribution,
-  keeping the registry-declared arguments and environment.
-- **Authentication method** picks a specific method when the agent advertises more than one.
-- **Custom models** adds model IDs the agent does not report.
+Checkpoint rollback restores workspace files as usual. Because ACP agents cannot rewind their own conversation, the next turn starts a fresh session with the kept conversation history.

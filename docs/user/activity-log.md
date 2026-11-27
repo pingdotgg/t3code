@@ -1,31 +1,38 @@
 # Activity log
 
-On web and desktop, consecutive tool calls appear as an expandable summary. Open it to inspect
-commands, tool inputs, status, and exit codes. Expand a tool call to see its output. A running
-command's output updates live, and long output shows only its most recent part. Use **Open diff** on
-a file change to review its contents.
+The activity log shows what an agent is doing during a turn—shell commands, file edits, searches, and tool calls—as expandable summaries in the conversation.
 
-T3 Orchestrator summaries describe the actions taken, such as **Ran 2 commands and sent messages
-to 3 threads**. Repeated messages to the same destinations show both counts: **Sent 5 messages to
-2 threads**. Thread creation counts the threads returned by the tool, including batches.
+## Inspect tool calls
 
-Groups with many kinds of activity show up to two specific action categories and a count of the
-remaining actions. Commands, file changes, and orchestration changes take priority over reads and
-status checks. Expand the group for the full list.
-
-Failed calls do not count as successful messages or creations. Waiting on a thread does not mean
-it finished, and an interrupt or cancellation request does not mean the thread stopped. When tool
-details are unavailable, summaries use a broader description instead of guessing how many threads
-were affected.
+- Expand a summary group on web and desktop to inspect commands, tool inputs, status, and exit codes.
+- Expand an individual tool call to view its output. Running commands stream live, showing the most recent output for long logs.
+- Select **Open diff** on a file change to review the edit.
 
 ## Hide tool calls
 
-**Tool calls in chat** in **Settings → Chat** (web and desktop) or **Settings → Appearance**
-(mobile) hides commands, file edits, searches, and MCP tool calls
-from the conversation. **Hide successful** shows a call while it runs and keeps
-it only if it fails. **Hide all** hides every call and shows **Thinking** while the agent works.
-**Zen** also hides the agent's in-between messages, so each turn shows your message
-and the agent's last reply, which appears when the turn ends. If you steer while the agent is
-answering, the answer it finished before reading your steer stays too. On web and desktop, Find
-shows the in-between messages while it is open. Approvals, questions, and errors always show. The
-setting applies to this browser or device only.
+Configure **Settings → Chat → Tool calls in chat** (web and desktop) or **Settings → Appearance → Tool calls in chat** (mobile) to reduce noise in the conversation. This setting applies per device or browser.
+
+| Mode                   | Behavior                                                                                                                                                  |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Show all** (default) | Shows all tool calls and summaries.                                                                                                                       |
+| **Hide successful**    | Shows a call while it runs and keeps it only if it fails.                                                                                                 |
+| **Hide all**           | Hides every tool call and shows **Thinking** while the agent works.                                                                                       |
+| **Zen**                | Also hides intermediate agent messages, showing only your prompt and the agent's final reply once the turn ends (plus any reply finished before a steer). |
+
+Approvals, questions, and errors are always shown. On web and desktop, opening Find temporarily reveals hidden intermediate messages.
+
+## Screen reader announcements
+
+On web and desktop, configure **Settings → Chat → Screen reader announcements** to hear turn progress for the open thread (per device/browser):
+
+- **Status only**: Announces when a turn starts, needs approval or input, and finishes.
+- **Status and messages**: Also reads intermediate agent messages once complete (long messages are truncated). The final reply is not read automatically so you can read it yourself after hearing **Done**.
+- **Everything**: Adds the current step (such as the command running); rapid steps may be skipped for newer ones.
+
+Agent reasoning text is never read. Announcements follow actual agent activity regardless of **Tool calls in chat**.
+
+### Screen reader window title
+
+Turn on **Settings → Chat → Screen reader window title** to prefix the window title with the open thread's status (**Working**, **Needs approval**, or **Needs your input**), thread title, and project name. The status prefix clears when the turn ends.
+
+> Note: This title is visible in your taskbar, window switcher, and shared screens, and time trackers that group by window title will count each status separately.

@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
 import { useRightPanelStore } from "../rightPanelStore";
@@ -95,6 +96,7 @@ vi.mock(import("../localApi"), async (original) => ({
       shell: { openExternal: state.openExternal },
     }) as never,
 }));
+vi.mock(import("../env"), async (original) => ({ ...(await original()), isElectron: true }));
 vi.mock(import("@t3tools/client-runtime/change-request-links"), async (original) => ({
   ...(await original()),
   resolvePullRequestPreviewTarget: () => null,
@@ -102,6 +104,7 @@ vi.mock(import("@t3tools/client-runtime/change-request-links"), async (original)
 }));
 
 import ChatMarkdown from "./ChatMarkdown";
+import { MarkdownFileLink } from "./chat/MarkdownFileLink";
 
 const threadRef = {
   environmentId: EnvironmentId.make("selected"),
@@ -196,6 +199,19 @@ it("removes host actions after revocation while keeping file preview and copying
   expect(state.openEditor).not.toHaveBeenCalled();
 });
 
+it.each(["[Docs](https://example.com/docs)", "[Readme](docs/readme.md)"])(
+  "tells the native menu for %s whether the keyboard opened it",
+  async (text) => {
+    using _setup = setup();
+    await using screen = await renderMarkdown(text);
+    screen.anchor().focus();
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    await vi.waitFor(() => expect(state.choose.mock.lastCall?.[2]).toBe("keyboard"));
+    await userEvent.click(screen.anchor(), { button: "right" });
+    await vi.waitFor(() => expect(state.choose.mock.lastCall?.[2]).toBe("mouse"));
+  },
+);
+
 it("does not launch an editor after revocation during a native context menu", async () => {
   using _setup = setup();
   let choose: (action: string) => void = () => {
@@ -278,3 +294,49 @@ it.each(["link-to-thread", "unlink-from-thread"])(
     );
   },
 );
+
+it("preserves keyboard activation of a file-options button", async () => {
+  using _setup = setup();
+  await using screen = await render(
+    <MarkdownFileLink
+      environmentId={null}
+      href="readme.md"
+      targetPath="readme.md"
+      iconPath="readme.md"
+      workspaceRelativePath="readme.md"
+      panelPath={null}
+      label="Readme"
+      copyMarkdown="[Readme](readme.md)"
+      theme="dark"
+      onOpenInPanel={vi.fn()}
+      resolveDragPath={async () => "/work/readme.md"}
+      resolveCopyPaths={async () => ({ relativePath: "readme.md", fullPath: "/work/readme.md" })}
+      openInEditorMenuLabel="Open in editor"
+    />,
+  );
+  const button = screen.container.querySelector("button")!;
+  button.focus();
+  for (const key of ["{Enter}", " "]) {
+    await userEvent.keyboard(key);
+    await vi.waitFor(() => expect(state.choose.mock.lastCall?.[2]).toBe("keyboard"));
+    state.choose.mockClear();
+  }
+  await userEvent.click(button);
+  await vi.waitFor(() => expect(state.choose.mock.lastCall?.[2]).toBe("mouse"));
+});
+
+it("opens an editor link over the desktop bridge on a click and on a middle-click", async () => {
+  using _setup = setup();
+  const href = "vscode://file/work/docs/readme.md:3";
+  await using screen = await renderMarkdown(`[Open in editor](${href})`);
+  for (const [type, button] of [
+    ["click", 0],
+    ["auxclick", 1],
+  ] as const) {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true, button });
+    await act(async () => screen.anchor().dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(true);
+    expect(state.openExternal).toHaveBeenLastCalledWith(href);
+  }
+  expect(state.openExternal).toHaveBeenCalledTimes(2);
+});

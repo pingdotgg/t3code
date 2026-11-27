@@ -68,15 +68,22 @@ function countOf(text: string, char: string): number {
 
 // Slugs like `foo(bar)` or `GPT-6.1-Sol[1m]` keep balanced brackets; prose wrapping them does not.
 function trimModelSlug(slug: string): string {
-  let trimmed = slug;
-  while (trimmed.length > 0) {
-    const last = trimmed.at(-1)!;
+  let end = slug.length;
+  const unmatched = new Map<string, number>();
+  while (end > 0) {
+    const last = slug[end - 1]!;
+    if (SENTENCE_PUNCTUATION.includes(last)) {
+      end -= 1;
+      continue;
+    }
     const opening = CLOSING_BRACKETS[last];
-    const unbalanced = opening !== undefined && countOf(trimmed, opening) < countOf(trimmed, last);
-    if (!SENTENCE_PUNCTUATION.includes(last) && !unbalanced) break;
-    trimmed = trimmed.slice(0, -1);
+    if (opening === undefined) break;
+    const excess = unmatched.get(last) ?? countOf(slug, last) - countOf(slug, opening);
+    if (excess <= 0) break;
+    unmatched.set(last, excess - 1);
+    end -= 1;
   }
-  return trimmed;
+  return slug.slice(0, end);
 }
 
 /** Finds the `model:<instance>/<model>` references that `formatComposerModelMention` writes. */

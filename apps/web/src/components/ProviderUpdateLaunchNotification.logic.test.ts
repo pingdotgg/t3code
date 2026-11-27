@@ -274,6 +274,59 @@ describe("provider update launch notification logic", () => {
       title: "Claude v1.1.0 update failed",
     });
   });
+
+  it("does not count an already dismissed success again when another provider updates", () => {
+    const claudeUpdated = provider({
+      driver: driver("claudeAgent"),
+      version: "1.1.0",
+      latestVersion: "1.1.0",
+      advisoryStatus: "current",
+      updateState: {
+        status: "succeeded",
+        startedAt: checkedAt,
+        finishedAt: checkedAt,
+        message: "Provider updated.",
+        output: null,
+      },
+    });
+    const claudeView = getProviderUpdateSidebarPillView([claudeUpdated], {
+      visibleAfterIso: sessionStartedAt,
+    });
+    expect(claudeView).toMatchObject({ title: "Claude updated: v1.1.0" });
+
+    const bothUpdated = [
+      claudeUpdated,
+      provider({
+        driver: driver("codex"),
+        version: "1.2.0",
+        latestVersion: "1.2.0",
+        advisoryStatus: "current",
+        updateState: {
+          status: "succeeded",
+          startedAt: laterCheckedAt,
+          finishedAt: laterCheckedAt,
+          message: "Provider updated.",
+          output: null,
+        },
+      }),
+    ];
+    const codexView = getProviderUpdateSidebarPillView(bothUpdated, {
+      visibleAfterIso: sessionStartedAt,
+      dismissedKeys: new Set(claudeView?.dismissKeys),
+    });
+    expect(codexView).toMatchObject({ tone: "success", title: "Codex updated: v1.2.0" });
+
+    const groupedView = getProviderUpdateSidebarPillView(bothUpdated, {
+      visibleAfterIso: sessionStartedAt,
+    });
+    expect(groupedView).toMatchObject({ title: "2 providers updated" });
+    expect(
+      getProviderUpdateSidebarPillView(bothUpdated, {
+        visibleAfterIso: sessionStartedAt,
+        dismissedKeys: new Set(groupedView?.dismissKeys),
+      }),
+    ).toBeNull();
+  });
 });
 
 it("does not offer incompatible latest versions and restores suggestions after policy relaxation", () => {
@@ -316,6 +369,41 @@ describe("getProviderUpdateRunToastView", () => {
     driver: driver(providerDriver),
     instanceId: instanceId(providerDriver),
     result,
+  });
+
+  it("preserves the local server restart instruction after a successful update", () => {
+    const message =
+      "OpenCode CLI updated. Restart the configured local OpenCode server to use the new version.";
+    const updated = {
+      ...provider({
+        driver: driver("opencode"),
+        version: "2.1.2",
+        advisoryStatus: "current",
+        updateState: updateState("succeeded", message),
+      }),
+      installedVersion: "2.2.5",
+    };
+    expect(
+      getProviderUpdateRunToastView([
+        run("Linux", "opencode", AsyncResult.success({ providers: [updated] })),
+        run("Laptop", "opencode", AsyncResult.success({ providers: [updated] })),
+      ]),
+    ).toMatchObject({
+      type: "success",
+      description: `Linux · OpenCode: ${message}\nLaptop · OpenCode: ${message}`,
+    });
+    expect(
+      getProviderUpdateSidebarPillView([updated], {
+        visibleAfterIso: sessionStartedAt,
+      }),
+    ).toMatchObject({ title: "OpenCode updated: v2.2.5", description: message });
+
+    const restarted = { ...updated, version: "2.2.5" };
+    expect(
+      getProviderUpdateRunToastView([
+        run("Linux", "opencode", AsyncResult.success({ providers: [restarted] })),
+      ]),
+    ).toMatchObject({ description: "New sessions will use the updated provider." });
   });
 
   it("lists every failed update and ignores interrupted ones", () => {

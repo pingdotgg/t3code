@@ -213,6 +213,8 @@ describe("Predicate", () => {
   })
 
   it("Struct", () => {
+    const key = Symbol()
+
     expect(
       Predicate.Struct({
         a: hole<Predicate.Refinement<string, "a">>(),
@@ -228,21 +230,35 @@ describe("Predicate", () => {
     expect(
       Predicate.Struct({
         odd: hole<Predicate.Predicate<number>>(),
-        true: hole<Predicate.Refinement<boolean, true>>()
+        [key]: hole<Predicate.Refinement<boolean, true>>()
       })
     ).type.toBe<
       Predicate.Refinement<
-        { readonly odd: number; readonly true: boolean },
-        { readonly odd: number; readonly true: true }
+        { readonly odd: number; readonly [key]: boolean },
+        { readonly odd: number; readonly [key]: true }
       >
     >()
 
     expect(
       Predicate.Struct({
         odd: hole<Predicate.Predicate<number>>(),
-        odd1: hole<Predicate.Predicate<number>>()
+        [key]: hole<Predicate.Predicate<number>>()
       })
-    ).type.toBe<Predicate.Predicate<{ readonly odd: number; readonly odd1: number }>>()
+    ).type.toBe<Predicate.Predicate<{ readonly odd: number; readonly [key]: number }>>()
+
+    expect(Predicate.Struct).type.not.toBeCallableWith({ [key]: 42 })
+    expect(Predicate.Struct).type.not.toBeCallableWith(42)
+    expect(Predicate.Struct).type.not.toBeCallableWith("value")
+    expect(Predicate.Struct).type.not.toBeCallableWith([Predicate.isString])
+  })
+
+  it("Struct accepts string record aliases", () => {
+    type Fields = {
+      [key: string]: Predicate.Predicate<number>
+    }
+    const fields: Fields = { age: (value) => value > 0 }
+
+    expect(Predicate.Struct).type.toBeCallableWith(fields)
   })
 
   it("isUint8Array", () => {

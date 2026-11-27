@@ -4,7 +4,8 @@
  * The {@link Kdf} service derives bytes from a secret with an algorithm value
  * such as {@link hkdfSha256}, {@link pbkdf2Sha256}, or `argon2id()`. The
  * output is plain bytes: turn it into a typed key with the target family's raw
- * constructor, such as `Mac.key`.
+ * constructor, such as `Mac.key`. To store passwords, use `Password`, which
+ * records the algorithm and salt with the hash.
  *
  * **Gotchas**
  *

@@ -4,6 +4,7 @@ import {
   appendTerminalOutput,
   EMPTY_TERMINAL_OUTPUT,
   normalizeTerminalOutput,
+  TERMINAL_OUTPUT_TAIL_CHARS,
   TERMINAL_PALETTES,
   terminalOutputPlainText,
   terminalOutputResumeText,
@@ -22,6 +23,31 @@ function feed(chunks: ReadonlyArray<string>, maxChars?: number): TerminalOutputS
 describe("appendTerminalOutput", () => {
   it("keeps only the latest frame of a carriage-return progress bar", () => {
     expect(feed(["[1/3]", "\r[2/3]", "\r[3/3] done\nnext"]).text).toBe("[3/3] done\nnext");
+  });
+
+  it.each([
+    ["😀\u001b[1Gx", "x "],
+    ["界a\u001b[3GZ", "界Z"],
+    ["e\u0301a\u001b[2GZ", "e\u0301Z"],
+    ["𐐀a\u001b[2GZ", "𐐀Z"],
+    ["界a\bZ", "界Z"],
+    ["界a\u001b[2GZ", " Za"],
+    ["a界b\rXY", "XY b"],
+    ["e\u0301a\rZ", "Za"],
+    ["界a\u001b[2G\u001b[K", " "],
+    ["界a\u001b[1G\u001b[1K", "  a"],
+    ["\u001b[31m界\u001b[32ma\u001b[3GZ", "界Z"],
+    ["e\u001b[31m\u0301a\u001b[1GZ", "Za"],
+  ])("overwrites Unicode at terminal columns: %j", (input, expected) => {
+    expect(terminalOutputPlainText(feed([input]).text)).toBe(expected);
+    for (let cut = 1; cut < input.length; cut += 1) {
+      const source = feed([input.slice(0, cut)]);
+      const chunk = input.slice(cut);
+      expect(terminalOutputPlainText(appendTerminalOutput(source, chunk).text)).toBe(expected);
+      expect(terminalOutputPlainText(feed([terminalOutputResumeText(source), chunk]).text)).toBe(
+        expected,
+      );
+    }
   });
 
   it("redraws several lines in place when the cursor moves up", () => {
@@ -48,6 +74,18 @@ describe("appendTerminalOutput", () => {
     ).toEqual([{ text: "R", style: { color: "rgb(12,34,56)" } }]);
   });
 
+  it.each(["\u001b[3", "\u001b]0;title"])(
+    "keeps output after CAN or SUB cancels %j, wherever the chunk splits",
+    (sequence) => {
+      for (const cancel of ["\u0018", "\u001a"]) {
+        const input = `before${sequence}${cancel}Ready`;
+        for (let cut = 0; cut <= input.length; cut += 1) {
+          expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe("beforeReady");
+        }
+      }
+    },
+  );
+
   it("keeps a bounded tail that starts on a fresh line", () => {
     const lines = Array.from({ length: 2_000 }, (_, index) => `line ${index}`).join("\n");
     const state = feed([lines], 1_000);
@@ -60,19 +98,37 @@ describe("appendTerminalOutput", () => {
     expect(feed(["abcdefgh\nijk\nlmnop"], 8).text).toBe("jk\nlmnop");
   });
 
-  it("stays bounded across many appends of huge output, including one endless line", () => {
-    let state = EMPTY_TERMINAL_OUTPUT;
-    for (let index = 0; index < 5_000; index += 1) {
-      state = appendTerminalOutput(state, "y\n".repeat(200), 4_096);
-    }
-    expect(state.text.length).toBeLessThanOrEqual(4_096);
-    expect(state.truncated).toBe(true);
-    for (let index = 0; index < 1_000; index += 1) {
-      state = appendTerminalOutput(state, ".".repeat(100), 4_096);
-    }
-    expect(state.text.length).toBeLessThanOrEqual(4_096);
-    expect(state.text.endsWith(".")).toBe(true);
+  it("keeps Unicode tails bounded without shifting saved cursor columns", () => {
+    const source = feed(["界界e\u0301\u001b7ab"], 4);
+    expect(source.text).toBe("e\u0301ab");
+    expect(source.screen.col).toBe(3);
+    expect(source.screen.saved?.col).toBe(1);
+    expect(appendTerminalOutput(source, "\u001b8Z", 4).text).toBe("e\u0301Zb");
+    expect(feed([terminalOutputResumeText(source), "\u001b8Z"], 4).text).toBe("e\u0301Zb");
+    expect(feed(["𐐀a"], 2).text).toBe("a");
+    expect(feed(["e\u0301ab"], 3).text).toBe("ab");
+    const wide = feed(["界".repeat(40_000), "\u001b7"]);
+    expect(feed([terminalOutputResumeText(wide)]).screen.col).toBe(wide.screen.col);
   });
+
+  it.each([".", "界", "😀", "\u001b[31m界\u001b[0m"])(
+    "stays bounded across many appends of huge output, including one endless line of %s",
+    (character) => {
+      let state = EMPTY_TERMINAL_OUTPUT;
+      for (let index = 0; index < 5_000; index += 1) {
+        state = appendTerminalOutput(state, "y\n".repeat(200), 4_096);
+      }
+      expect(state.text.length).toBeLessThanOrEqual(4_096);
+      expect(state.truncated).toBe(true);
+      for (let index = 0; index < 1_000; index += 1) {
+        state = appendTerminalOutput(state, character.repeat(100), 4_096);
+      }
+      expect(terminalOutputPlainText(state.text).length).toBeLessThanOrEqual(4_096);
+      expect(terminalOutputPlainText(state.text).endsWith(terminalOutputPlainText(character))).toBe(
+        true,
+      );
+    },
+  );
 
   it("hides a long string sequence's payload however it is split into chunks", () => {
     const input = `a\u001b]0;${"t".repeat(100)}\u0007b`;
@@ -86,6 +142,12 @@ describe("appendTerminalOutput", () => {
     expect(feed(["ok\u001b]0;title\u001b", "\u001b[31mred"]).text).toBe(
       "ok\u001b[0;31mred\u001b[0m",
     );
+    for (const input of ["a\u001b[1;\u001b[32mb\u001b[0m", "a\u001b[\u001b[32mb"]) {
+      expect(normalizeTerminalOutput(input).text).toBe("a\u001b[0;32mb\u001b[0m");
+      for (let cut = 1; cut < input.length; cut += 1) {
+        expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe("a\u001b[0;32mb\u001b[0m");
+      }
+    }
   });
 });
 
@@ -161,6 +223,9 @@ describe("appendTerminalOutput edge cases from review", () => {
     );
     expect(windowChars).toBeLessThanOrEqual(4_096);
     expect(state.text.length).toBeLessThanOrEqual(4_096);
+    for (const prefix of ["😀", "e\u0301"]) {
+      expect(feed([`a\n${prefix}bx\nZ\u001b[2A`], 4).text).toBe("bx\nZ");
+    }
   });
 });
 
@@ -189,6 +254,18 @@ describe("appendTerminalOutput under adversarial output", () => {
     ] as const) {
       for (let cut = 0; cut < interrupted.length; cut += 1) {
         expect(feed([interrupted.slice(0, cut), interrupted.slice(cut)]).text).toBe(expected);
+      }
+    }
+  });
+
+  it("consumes an escape followed by an emoji whole, however it is split", () => {
+    for (const [input, expected] of [
+      ["a\u001b😀b", "ab"],
+      ["a\u001b\ud83dX", "aX"],
+    ] as const) {
+      expect(normalizeTerminalOutput(input).text).toBe(expected);
+      for (let cut = 1; cut < input.length; cut += 1) {
+        expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe(expected);
       }
     }
   });
@@ -228,12 +305,35 @@ describe("terminalOutputResumeText", () => {
 
 describe("terminalOutputResumeText with a saved cursor or trimmed output", () => {
   it("restores a cursor saved before the resync", () => {
-    const source = feed(["abc\u001b7def"]);
+    const source = feed(["界e\u0301\u001b7def"]);
     const viewer = appendTerminalOutput(
       appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, terminalOutputResumeText(source)),
       "\u001b8X",
     );
-    expect(viewer.text).toBe("abcXef");
+    expect(viewer.text).toBe("界e\u0301Xef");
+  });
+
+  it("restores a cursor saved on a row erased before the resync", () => {
+    for (const [prefix, next, expected] of [
+      ["\n\u001b7\u001b[A\u001b[J", "A\nB\u001b8Z", "A\nZ"],
+      [
+        "hello\n\n  \u001b7\u001b[2A\u001b[6G\u001b[J\u001b[2G",
+        "X\n\n1234\u001b8Z",
+        "hXllo\n\n12Z4",
+      ],
+      ["\u0301\n\u001b7\u001b[A\u001b[2G\u001b[J", "\nB\u001b8Z", "\u0301\nZ"],
+      [
+        `Build started\n${"working\n".repeat(63)}\u001b7\u001b[63A\u001b[J`,
+        `A${"\n".repeat(63)}B\u001b8Z`,
+        `Build started\nA${"\n".repeat(63)}Z`,
+      ],
+    ] as const) {
+      const source = feed([prefix]);
+      const viewer = feed([terminalOutputResumeText(source)]);
+      expect(viewer.text).toBe(source.text);
+      expect(appendTerminalOutput(viewer, next).text).toBe(appendTerminalOutput(source, next).text);
+      expect(appendTerminalOutput(viewer, next).text).toBe(expected);
+    }
   });
 
   it("stays on the right line when early output was trimmed away", () => {
@@ -245,6 +345,23 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
       120,
     );
     expect(viewer.text).toBe(appendTerminalOutput(source, " edited", 120).text);
+  });
+
+  it("keeps scrollback when a redraw after a cleared screen moves above the live window", () => {
+    const history = "Build started\n";
+    const source = feed([history + "working\n".repeat(63), "\u001b[2J", "Progress: 10%"]);
+    const redraw = "\u001b[1A\r\u001b[2KProgress: 20%";
+    expect(feed([terminalOutputResumeText(source), redraw]).text).toBe(history + "Progress: 20%");
+  });
+
+  it("recovers scrollback hidden by a full output tail once a redraw shortens it", () => {
+    const history = "Build started\n";
+    const progress = "x".repeat(TERMINAL_OUTPUT_TAIL_CHARS);
+    const source = feed([history + "working\n".repeat(63) + "\u001b[2J" + progress]);
+    const viewer = feed([terminalOutputResumeText(source)]);
+    expect(viewer.text).toBe(progress);
+    const redraw = "\r\u001b[2KProgress: done";
+    expect(appendTerminalOutput(viewer, redraw).text).toBe(history + "Progress: done");
   });
 });
 
@@ -263,5 +380,11 @@ describe("terminalOutputSpans", () => {
     expect(spans.length).toBe(11);
     expect(spans.at(-1)?.style).toBeNull();
     expect(spans.map((span) => span.text).join("")).toBe("xy".repeat(50));
+  });
+
+  it("gives badge text at least 3:1 on the dark palette's coloured backgrounds", () => {
+    const text = normalizeTerminalOutput("\u001b[42m PASS \u001b[1;37;41m FAIL ").text;
+    const spans = terminalOutputSpans(text, TERMINAL_PALETTES.dark);
+    expect(spans.map((span) => span.style?.color)).toEqual(["#1f2328", "#1f2328"]);
   });
 });

@@ -135,13 +135,19 @@ describe("CommandDescriptor", () => {
 
     it("extracts variadic arguments", () => {
       const cmd = Command.make("test", {
-        files: Argument.String("files").pipe(Argument.variadic({ min: 1 }))
+        files: Argument.String("files").pipe(Argument.variadic({ min: 1 })),
+        defaults: Argument.String("defaults").pipe(Argument.variadic()),
+        zero: Argument.String("zero").pipe(Argument.variadic({ min: 0 }))
       })
       const desc = fromCommand(cmd)
-      assert.strictEqual(desc.arguments.length, 1)
-      assert.strictEqual(desc.arguments[0].name, "files")
-      assert.strictEqual(desc.arguments[0].variadic, true)
-      assert.strictEqual(desc.arguments[0].required, true)
+      assert.deepStrictEqual(
+        desc.arguments.map(({ name, required, variadic }) => ({ name, required, variadic })),
+        [
+          { name: "files", required: true, variadic: true },
+          { name: "defaults", required: false, variadic: true },
+          { name: "zero", required: false, variadic: true }
+        ]
+      )
     })
 
     it("extracts optional arguments", () => {
