@@ -15376,7 +15376,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
 
   const readDelegatedChildControls = Effect.fn("Orchestrator.readDelegatedChildControls")(
-    function* (childThreadId: ThreadId, taskIds: ReadonlyArray<NodeId>) {
+    function* (
+      childThreadId: ThreadId,
+      taskIds: ReadonlyArray<NodeId>,
+      options?: Parameters<typeof delegatedTaskProgress>[1],
+    ) {
       // Progress tells a held wake from a held message the user wrote by the run's message.
       const withHeldMessages = Effect.fn("Orchestrator.readHeldRunMessages")(function* <
         A extends Omit<DelegatedChildControls, "runsFloor">,
@@ -15397,14 +15401,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           windowSize: DELEGATED_CHILD_RUN_WINDOW,
         }),
       );
-      const progress = delegatedTaskProgress(controls);
+      const progress = delegatedTaskProgress(controls, options);
       // The latest result may have ended before the runs read above; then read them all.
       if (
         controls.runsFloor !== undefined &&
         (progress.resultRun === undefined || !ranSince(progress.resultRun, controls.runsFloor))
       ) {
         const all = yield* withHeldMessages(yield* readAllDelegatedChildControls(childThreadId));
-        return { controls: all, progress: delegatedTaskProgress(all) };
+        return { controls: all, progress: delegatedTaskProgress(all, options) };
       }
       return { controls, progress };
     },
@@ -15784,6 +15788,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const { controls: childControls, progress } = yield* readDelegatedChildControls(
       childThreadId,
       openTasks.map((task) => task.id),
+      {
+        unsettled: openTasks.some(
+          (task) => task.id === forkedFrom.nodeId && task.cancelledRunId === undefined,
+        ),
+      },
     );
     const cancelAwaitsWork = progress.state === "working" && !progress.onlyAwaitsUserRun;
     for (const task of openTasks) {

@@ -364,6 +364,14 @@ it("waits for nested work and retains the report across monitor acknowledgements
   });
   assert.equal(progress.state, "result_available");
   assert.equal(progress.resultRun?.id, report.id);
+  // A task still waiting when the wake ran gets that run's outcome, not its earlier report.
+  assert.equal(
+    delegatedTaskProgress(
+      { ...projection, runs: [run, report, monitor], messages: [update] },
+      { unsettled: true },
+    ).resultRun?.id,
+    monitor.id,
+  );
   // A monitor-woken run can stop the awaited work itself, so it holds the task until it ends.
   const executing = { ...monitor, status: "running" as const, completedAt: null };
   assert.equal(
