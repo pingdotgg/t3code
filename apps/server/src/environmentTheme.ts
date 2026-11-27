@@ -90,7 +90,10 @@ export class EnvironmentThemeRefusedError extends Schema.TaggedError<Environment
   }
 }
 
-/** Hold through the settings write so CLI and server publishers share one catalog snapshot. */
+/**
+ * Hold through the settings write so CLI and server publishers share one catalog snapshot.
+ * Returns a guard that skips a rollback once a stalled holder has lost the lock to another.
+ */
 export const acquireThemePublishLock = Effect.fn("EnvironmentTheme.acquirePublishLock")(function* (
   themesDir: string,
   themeId: string,
@@ -103,13 +106,16 @@ export const acquireThemePublishLock = Effect.fn("EnvironmentTheme.acquirePublis
         (cause) => new EnvironmentThemeRefusedError({ themeId, problem: NOT_PUBLISHED, cause }),
       ),
     );
+  let compromised = false;
   yield* Effect.acquireRelease(
     Effect.tryPromise({
       try: () =>
         lock(themesDir, {
           lockfilePath: NodePath.join(themesDir, ".t3-theme-publish.lock"),
           stale: 60_000,
-          onCompromised: () => {},
+          onCompromised: () => {
+            compromised = true;
+          },
         }),
       catch: (cause) =>
         new EnvironmentThemeRefusedError({
@@ -123,6 +129,8 @@ export const acquireThemePublishLock = Effect.fn("EnvironmentTheme.acquirePublis
     }),
     (release) => Effect.promise(() => release().catch(() => undefined)),
   );
+  return (rollback: Effect.Effect<void>) =>
+    Effect.suspend(() => (compromised ? Effect.void : rollback));
 });
 
 /** The settings write that makes a theme or mode the default failed. */
@@ -437,7 +445,7 @@ const make = Effect.gen(function* () {
       });
     }
 
-    yield* acquireThemePublishLock(environmentThemesDir, themeId).pipe(
+    const whileLocked = yield* acquireThemePublishLock(environmentThemesDir, themeId).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
     );
     const destination = `${environmentThemesDir}/${themeId}${THEME_FILE_SUFFIX}`;
@@ -465,7 +473,7 @@ const make = Effect.gen(function* () {
     const revert = Option.match(previous, {
       onNone: () => fs.remove(destination, { force: true }),
       onSome: replace,
-    }).pipe(Effect.ignore, Effect.andThen(refresh), Effect.asVoid);
+    }).pipe(Effect.ignore, whileLocked, Effect.andThen(refresh), Effect.asVoid);
 
     yield* replace(contents).pipe(
       Effect.mapError(

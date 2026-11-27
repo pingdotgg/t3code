@@ -323,7 +323,7 @@ const publishThemeFile = Effect.fn(function* (input: {
 
   const destinationPath = path.join(input.themesDir, `${themeId}.json`);
   const stagingPath = `${destinationPath}.staging-${process.pid}`;
-  yield* acquireThemePublishLock(input.themesDir, themeId);
+  const whileLocked = yield* acquireThemePublishLock(input.themesDir, themeId);
 
   const publishFailure = (cause: unknown) =>
     new ThemePublishError({ themesDir: input.themesDir, cause });
@@ -397,30 +397,32 @@ const publishThemeFile = Effect.fn(function* (input: {
     ),
   );
 
-  const revert = Effect.sync(() => {
-    try {
-      NodeFS.unlinkSync(stagingPath);
-    } catch {}
-    try {
-      // Only replace this process's inode or an empty destination; concurrent publishers win.
-      const destinationIno = (() => {
-        try {
-          return NodeFS.lstatSync(destinationPath).ino;
-        } catch {
-          return null;
+  const revert = whileLocked(
+    Effect.sync(() => {
+      try {
+        NodeFS.unlinkSync(stagingPath);
+      } catch {}
+      try {
+        // Only replace this process's inode or an empty destination; concurrent publishers win.
+        const destinationIno = (() => {
+          try {
+            return NodeFS.lstatSync(destinationPath).ino;
+          } catch {
+            return null;
+          }
+        })();
+        if (backupPath !== null) {
+          if (destinationIno === null || destinationIno === stagedIno) {
+            NodeFS.renameSync(backupPath, destinationPath);
+          } else {
+            NodeFS.unlinkSync(backupPath);
+          }
+        } else if (destinationIno === stagedIno) {
+          NodeFS.unlinkSync(destinationPath);
         }
-      })();
-      if (backupPath !== null) {
-        if (destinationIno === null || destinationIno === stagedIno) {
-          NodeFS.renameSync(backupPath, destinationPath);
-        } else {
-          NodeFS.unlinkSync(backupPath);
-        }
-      } else if (destinationIno === stagedIno) {
-        NodeFS.unlinkSync(destinationPath);
-      }
-    } catch {}
-  });
+      } catch {}
+    }),
+  );
   const cleanup = Effect.sync(() => {
     try {
       if (backupPath !== null) NodeFS.unlinkSync(backupPath);
