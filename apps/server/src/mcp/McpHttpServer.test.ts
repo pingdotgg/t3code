@@ -2352,6 +2352,19 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       });
       expect(yield* proxying.listed).toEqual(["delegate_task", "tool_call", "tool_search"]);
 
+      expect(
+        (yield* proxying.call("tool_search", { query: "remind me tomorrow" })).result
+          ?.structuredContent,
+      ).toEqual({
+        tools: [
+          {
+            name: "schedule_task",
+            description: "Schedules a task.",
+            inputSchema: expect.objectContaining({ type: "object" }),
+          },
+        ],
+      });
+
       // An oversized schema falls back to name + description so the whole response stays <= 8 KB, while small matches keep schemas.
       const budgetSearch = yield* proxying.call("tool_search", { query: "budget" });
       const budgetPayload = budgetSearch.result?.structuredContent as {

@@ -95,6 +95,12 @@ export const make = (
         .toLowerCase()
         .split(/[^a-z0-9_]+/u)
         .filter(Boolean);
+      if (
+        options?.mode === "deferred-proxy" &&
+        terms.some((term) => term === "remind" || term === "reminder" || term === "reminders")
+      ) {
+        terms.push("schedule_task");
+      }
       const found = tools()
         .filter(
           (tool) =>
