@@ -6795,16 +6795,25 @@ describe("orchestration v2 provider switching", () => {
             title: "Fork",
           });
           yield* send(forkThreadId, "compact", "/compact", CLAUDE_MODEL_SELECTION);
-          yield* settle(forkThreadId);
-
-          const forkTurns = (yield* Ref.get(capturedTurns)).filter(
-            (turn) => turn.threadId === forkThreadId,
-          );
+          const compacted = yield* settle(forkThreadId);
+          const forkTurns = () =>
+            Ref.get(capturedTurns).pipe(
+              Effect.map((turns) => turns.filter((turn) => turn.threadId === forkThreadId)),
+            );
           // Compacting the fork's empty native session would summarize nothing.
-          if (forkTurns.length > 0) {
-            assert.include(forkTurns[0]!.text, "Prompt source");
-            assert.include(forkTurns[0]!.text, "release marker is violet");
-          }
+          assert.isEmpty(yield* forkTurns());
+          assert.equal(compacted.runs.at(-1)?.status, "failed");
+          assert.isTrue(
+            compacted.turnItems.some(
+              (item) => item.type === "error" && item.title === "Nothing to compact yet",
+            ),
+          );
+
+          yield* send(forkThreadId, "next", "Continue", CLAUDE_MODEL_SELECTION);
+          yield* settle(forkThreadId);
+          const [next] = yield* forkTurns();
+          assert.include(next!.text, "Prompt source");
+          assert.include(next!.text, "release marker is violet");
         }).pipe(
           Effect.provide(
             ProviderReplayHarness.layerWithRegistry(
