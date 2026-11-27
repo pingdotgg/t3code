@@ -12,10 +12,6 @@ import {
   type ThreadIssueLink,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import {
-  compileResolvedKeybindingsConfig,
-  mergeWithDefaultKeybindings,
-} from "@t3tools/shared/keybindings";
 import type * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
@@ -925,14 +921,8 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
 it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel", async () => {
   await page.viewport(1280, 800);
   const thread = threadWithHistory("thread-panel-shortcut", 1);
-  using _environment = installFakeEnvironment([thread], {
-    keybindings: mergeWithDefaultKeybindings(
-      compileResolvedKeybindingsConfig([
-        { key: "ctrl+t", command: "rightPanel.new", when: "rightPanelOpen && !terminalFocus" },
-        { key: "ctrl+t", command: "rightPanel.toggle", when: "!rightPanelOpen" },
-      ]),
-    ),
-  });
+  using _environment = installFakeEnvironment([thread]);
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
@@ -951,7 +941,7 @@ it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel"
   await toggle.click();
   await page.getByRole("button", { name: /^Files/ }).click();
   await composer.click();
-  await userEvent.keyboard("{Control>}t{/Control}");
+  await userEvent.keyboard("{Meta>}t{/Meta}");
   await expect.element(page.getByRole("menuitem", { name: /Files/ })).toBeVisible();
   await expect.element(toggle).toHaveAttribute("aria-pressed", "true");
 });
