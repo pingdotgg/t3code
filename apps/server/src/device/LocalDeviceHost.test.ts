@@ -700,6 +700,17 @@ describe("Android SDK availability", () => {
     }),
   );
 
+  // regression: #43876 distro adb (android-tools, Homebrew) is a standalone binary outside any SDK
+  it.effect("supports connected Android devices with only a system adb on PATH", () =>
+    Effect.gen(function* () {
+      const reason = yield* diagnose(["/usr/bin/adb"], {
+        HOME: "/test/home",
+        PATH: "/usr/local/bin:/usr/bin",
+      });
+      expect(reason).toBeNull();
+    }),
+  );
+
   it.effect("discovers the standard macOS SDK without ANDROID_HOME", () =>
     Effect.gen(function* () {
       const root = "/test/home/Library/Android/sdk";
