@@ -37,7 +37,7 @@ export function ApprovalText({
       />
       {cut ? (
         <>
-          <span className="block font-sans text-xs text-warning-foreground">
+          <span className="block font-sans text-caption text-warning-foreground">
             {gt(
               "{count, plural, one {… {hidden} character in the middle is not shown.} other {… {hidden} characters in the middle are not shown.}} The text ends with:",
               { count: hiddenLength, hidden: hiddenLength.toLocaleString() },
@@ -51,13 +51,13 @@ export function ApprovalText({
             onClipped={setEndClipped}
           />
           {clipped || endClipped ? (
-            <span className="block font-sans text-xs text-warning-foreground">
+            <span className="block font-sans text-caption text-warning-foreground">
               <T>Scroll each part to read all of it.</T>
             </span>
           ) : null}
         </>
       ) : clipped ? (
-        <span className="block font-sans text-xs text-warning-foreground">
+        <span className="block font-sans text-caption text-warning-foreground">
           <T>Scroll to read all of it.</T>
         </span>
       ) : null}
@@ -93,7 +93,7 @@ function ApprovalTextBox({
       ref={watch}
       aria-label={label}
       className={cn(
-        "block max-h-40 min-w-0 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5 text-foreground select-text! wrap-anywhere [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+        "block max-h-40 min-w-0 overflow-auto whitespace-pre-wrap font-mono text-caption leading-5 text-foreground select-text! wrap-anywhere [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
         className,
       )}
       data-approval-detail={detail}
@@ -102,7 +102,7 @@ function ApprovalTextBox({
       {parts.map((part, index) =>
         part.named ? (
           // oxlint-disable-next-line react/no-array-index-key -- parts never reorder and two may read alike
-          <span key={index} className="rounded-xs bg-warning-surface text-warning-foreground">
+          <span key={index} className="rounded-kbd bg-warning-surface text-warning-foreground">
             {part.text}
           </span>
         ) : (
