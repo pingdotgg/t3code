@@ -94,7 +94,7 @@ describe("renderTablePng", () => {
 
   it("draws every line of wrapped text where layout put it", async () => {
     using mounted = mountTable(
-      `<tr><td style="width: 120px">alpha beta gamma delta epsilon zeta</td><td style="padding-left: 24px">done</td></tr>`,
+      `<tr><td style="width: 100px">alpha beta gamma delta epsilon zeta eta theta iota kappa</td><td style="padding-left: 24px">done</td></tr>`,
     );
     const { table } = mounted;
     const pixels = await readPng(await renderTablePng(table), table);
