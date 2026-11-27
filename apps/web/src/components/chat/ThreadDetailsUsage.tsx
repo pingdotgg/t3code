@@ -254,6 +254,7 @@ function PoolRow({ window, now }: { readonly window: LimitPoolWindow; readonly n
       label={window.label}
       fill={left}
       tone={limitTone(left)}
+      tick={window.paceRemainingPercent}
       value={`${left}%`}
       ariaValue={gt("{left}% left", { left })}
       opensUsage
@@ -268,8 +269,11 @@ function PoolRow({ window, now }: { readonly window: LimitPoolWindow; readonly n
                 })
               : gt("{label}: {left}% left", { label: window.label, left })}
           </span>
-          {window.pace ? (
-            <span className="text-muted-foreground">{m(PACE_LABEL[window.pace])}</span>
+          {window.pace && window.paceRemainingPercent !== null ? (
+            <span className="text-muted-foreground">
+              {m(PACE_LABEL[window.pace])} ·{" "}
+              {gt("{timeLeft}% of the window left", { timeLeft: window.paceRemainingPercent })}
+            </span>
           ) : null}
           {next && reset ? (
             <span className="text-muted-foreground">
