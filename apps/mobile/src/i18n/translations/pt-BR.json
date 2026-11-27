@@ -2822,7 +2822,7 @@
   "91e832d25ff2aba9": "{term, select, mr {Merge request} cr {Solicitação de alteração} other {Pull request}} {number}",
   "bbb7d40a7ad7ab71": "Privado",
   "37f84b2c7830febb": "pilha {position} de {size}",
-  "0469747f4bb9caac": "{additions} adições, {deletions} remoções",
+  "3920accacc91683e": "{additions, plural, =1 {{additions} adição} other {{additions} adições}}, {deletions, plural, =1 {{deletions} remoção} other {{deletions} remoções}}",
   "4e3cdb7e814e8962": "Toque duas vezes para abrir. Toque e segure para ver ações rápidas.",
   "d50c8bcf494b1158": "Ver anexo: {caption}",
   "868d7f357f06cdd2": "Reconecte para mesclar.",

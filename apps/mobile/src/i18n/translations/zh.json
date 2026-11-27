@@ -2823,7 +2823,7 @@
   "91e832d25ff2aba9": "{term, select, mr {MR} cr {change request} other {PR}} {number}",
   "bbb7d40a7ad7ab71": "私有",
   "37f84b2c7830febb": "堆叠第 {position}/{size} 层",
-  "0469747f4bb9caac": "{additions} 处新增，{deletions} 处删除",
+  "3920accacc91683e": "{additions} 处新增，{deletions} 处删除",
   "4e3cdb7e814e8962": "轻点两下以打开。长按以执行快捷操作。",
   "d50c8bcf494b1158": "查看附件：{caption}",
   "868d7f357f06cdd2": "重新连接以合并。",
