@@ -821,7 +821,7 @@ describe("copying a table as CSV", () => {
     expect(text).toBe(["```", "A  B", "-  -", "X  P", "Y  Z", "```"].join("\n"));
   });
 
-  it("keeps header rows before rows placed directly in the table", () => {
+  it("orders header, loose and footer rows as the table renders them", () => {
     const table = new FakeElement("TABLE").append(
       new FakeElement("THEAD").append(
         row(
@@ -829,11 +829,12 @@ describe("copying a table as CSV", () => {
           new FakeElement("TH", [], { align: "right" }).append(new FakeText("B")),
         ),
       ),
+      new FakeElement("TFOOT").append(row(td(new FakeText("t")), td(new FakeText("9")))),
       row(td(new FakeText("x")), td(new FakeText("yy"))),
     );
 
     const { text } = serializeTableElementForChat(table as unknown as Element);
-    expect(text).toBe(["```", "A   B", "-  --", "x  yy", "```"].join("\n"));
+    expect(text).toBe(["```", "A   B", "-  --", "x  yy", "t   9", "```"].join("\n"));
   });
 
   it("counts flag and keycap emoji as two columns, and plain digits as one", () => {

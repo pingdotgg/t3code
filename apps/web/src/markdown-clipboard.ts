@@ -577,8 +577,10 @@ function padToWidth(text: string, width: number, align: string): string {
 export function serializeTableElementForChat(table: Element): MarkdownClipboardPayload {
   // Lay cells onto the grid the table renders, so values after a span stay under their headers.
   // As in the HTML table model, a row group bounds every rowspan and an empty row still takes a row.
-  // Row groups in document order; consecutive rows directly in the table form one group.
+  // Row groups in document order, with footers last as rendered; consecutive rows directly in
+  // the table form one group.
   const groups: Element[][] = [];
+  const footers: Element[][] = [];
   let looseRows: Element[] | undefined;
   for (const child of table.children) {
     if (child.tagName === "TR") {
@@ -588,9 +590,11 @@ export function serializeTableElementForChat(table: Element): MarkdownClipboardP
     }
     looseRows = undefined;
     if (TABLE_SECTION_TAGS.has(child.tagName)) {
-      groups.push([...child.children].filter((row) => row.tagName === "TR"));
+      const rows = [...child.children].filter((row) => row.tagName === "TR");
+      (child.tagName === "TFOOT" ? footers : groups).push(rows);
     }
   }
+  groups.push(...footers);
   const grid: Array<{ slots: Array<{ text: string; cell: Element }>; hasCells: boolean }> = [];
   for (const groupRows of groups) {
     const start = grid.length;
