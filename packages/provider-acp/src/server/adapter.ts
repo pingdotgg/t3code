@@ -2247,10 +2247,11 @@ function buildAcpStandardToolTurnItem(input: {
       }
       const pathIsQuery = resolvedPathInfo(toolCall)?.fromQuery === true;
       const outputRecord = unknownRecord(rawOutput);
-      const stdout = textFromUnknown(outputRecord?.stdout);
-      const stderr = textFromUnknown(outputRecord?.stderr);
+      const stdout = textFromUnknown(outputRecord?.stdout) || undefined;
+      const stderr = textFromUnknown(outputRecord?.stderr) || undefined;
       const searchOutput =
-        stdout ?? (stderr === undefined ? textFromUnknown(rawOutput) : undefined);
+        stdout ??
+        textFromUnknown(stderr === undefined ? rawOutput : { ...outputRecord, stderr: undefined });
       const diagnosticOutput = stderr
         ? [searchOutput, stderr].filter(Boolean).join("\n")
         : searchOutput;

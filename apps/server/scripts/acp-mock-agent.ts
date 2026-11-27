@@ -1418,8 +1418,28 @@ const program = Effect.gen(function* () {
             kind: "search",
             status: "failed",
             rawInput: { pattern: "needle", path: "src" },
-            rawOutput: "  Invalid regular expression\n2: unexpected token",
+            rawOutput: {
+              stdout: "",
+              stderr: "",
+              message: "  Invalid regular expression\n2: unexpected token",
+            },
           },
+          ...(
+            [
+              ["empty-channels", { stdout: "", stderr: "" }],
+              ["empty-stderr", { output: "src/a.ts:1:needle", stderr: "" }],
+              ["empty-stdout", { stdout: "", output: "src/a.ts:1:needle" }],
+              ["warning", { output: "src/a.ts:1:needle", stderr: "warning" }],
+            ] as const
+          ).map(([name, rawOutput]) => ({
+            sessionUpdate: "tool_call_update" as const,
+            toolCallId: `structured-search-grep-${name}`,
+            title: "Grep",
+            kind: "search" as const,
+            status: "completed" as const,
+            rawInput: { query: "needle" },
+            rawOutput,
+          })),
           {
             sessionUpdate: "tool_call_update",
             toolCallId: "structured-search-query-no-output",

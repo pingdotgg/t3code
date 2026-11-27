@@ -5410,6 +5410,18 @@ describe("AcpAdapterV2", () => {
           { fileName: "src", preview: "  Invalid regular expression\n2: unexpected token" },
         ],
       });
+      const match = { fileName: "src/a.ts", line: 1, preview: "needle" };
+      for (const [name, results] of [
+        ["empty-channels", undefined],
+        ["empty-stderr", [match]],
+        ["empty-stdout", [match]],
+        ["warning", [match, { fileName: "needle", preview: "warning" }]],
+      ] as const) {
+        assert.deepEqual(fileSearch(`structured-search-grep-${name}`), {
+          pattern: "needle",
+          results,
+        });
+      }
       assert.deepEqual(fileSearch("structured-search-query-no-output"), {
         pattern: "FIXME",
         results: undefined,

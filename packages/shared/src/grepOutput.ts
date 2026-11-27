@@ -44,21 +44,16 @@ export function parseGrepOutput(
     }
     const nextLine = lines[index + 1] ?? "";
     const followedByRipgrepMatch = RIPGREP_NUMBERED_LINE.test(nextLine);
+    // At a file boundary, an indented heading can also look like a match or context line.
+    if (followedByRipgrepMatch && /^\s/.test(line) && (lines[index - 1] ?? "").trim() === "") {
+      file = line;
+      continue;
+    }
     const numbered = file === undefined ? null : NUMBERED_LINE.exec(line);
     // A colon inside a path can look like an inline match. OpenCode's next line identifies the heading.
     const colonHeading = COLON_HEADING.exec(line.trimEnd());
     if (colonHeading && numbered?.[1] === undefined && OPENCODE_NUMBERED_LINE.test(nextLine)) {
       file = colonHeading[1];
-      continue;
-    }
-    // After a blank separator, an indented ripgrep heading can itself look like a match.
-    if (
-      numbered?.[2] !== undefined &&
-      followedByRipgrepMatch &&
-      /^\s/.test(line) &&
-      lines[index - 1]?.trim() === ""
-    ) {
-      file = line;
       continue;
     }
     if (file !== undefined && numbered) {

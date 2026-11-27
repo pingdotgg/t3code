@@ -89,17 +89,26 @@ describe("parseGrepOutput", () => {
         { fileName: " 2026: release notes.txt", line: 3, preview: "needle" },
       ],
     ],
-    [
-      "ripgrep headings that resemble numbered matches",
-      "a.txt\n1:needle\n\n 2026: release notes.txt\n2:needle\n3:another needle",
-      [
-        { fileName: "a.txt", line: 1, preview: "needle" },
-        { fileName: " 2026: release notes.txt", line: 2, preview: "needle" },
-        { fileName: " 2026: release notes.txt", line: 3, preview: "another needle" },
-      ],
-    ],
   ])("preserves leading filename spaces in %s", (_format, output, expected) => {
     expect(parseGrepOutput(output, ".")).toEqual(expected);
+  });
+
+  it.each([
+    " release notes.txt",
+    " 2026: release notes.txt",
+    " 2026-release notes.txt",
+    " release:12:notes.txt",
+  ])("recognizes the ripgrep heading %j at file boundaries", (fileName) => {
+    const block = `${fileName}\n2:needle\n3:another needle\n`;
+    const matches = [
+      { fileName, line: 2, preview: "needle" },
+      { fileName, line: 3, preview: "another needle" },
+    ];
+    expect(parseGrepOutput(block, ".")).toEqual(matches);
+    expect(parseGrepOutput(`a.txt\n1:needle\n\n${block}`, ".")).toEqual([
+      { fileName: "a.txt", line: 1, preview: "needle" },
+      ...matches,
+    ]);
   });
 
   it.each([
