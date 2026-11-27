@@ -18,6 +18,7 @@ import {
   DesktopPreviewSetZoomFactorInputSchema,
   BrowserImportResult,
   BrowserImportSource,
+  DesktopPreviewListBrowserImportSourcesInputSchema,
   DesktopPreviewClearDataInputSchema,
   DesktopPreviewImportCookiesInputSchema,
   DesktopPreviewCreateTabInputSchema,
@@ -430,11 +431,11 @@ const sharesLoopback = DesktopIpc.makeIpcMethod({
 
 export const listBrowserImportSources = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_IMPORT_SOURCES_CHANNEL,
-  payload: Schema.Void,
+  payload: DesktopPreviewListBrowserImportSourcesInputSchema,
   result: Schema.Array(BrowserImportSource),
-  handler: Effect.fn("desktop.ipc.preview.listBrowserImportSources")(function* () {
+  handler: Effect.fn("desktop.ipc.preview.listBrowserImportSources")(function* (input) {
     const browserImport = yield* BrowserImport.BrowserImport;
-    return yield* browserImport.listSources;
+    return yield* browserImport.listSources(input);
   }),
 });
 

@@ -82,7 +82,19 @@ const projects: Project[] = [
 ];
 
 // Profiles, link target and the advanced rows only work in the desktop app.
+const { listBrowserImportSources } = vi.hoisted(() => ({
+  listBrowserImportSources: vi.fn(),
+}));
+
 vi.mock(import("../../env"), async (original) => ({ ...(await original()), isElectron: true }));
+vi.mock("../preview/previewBridge", () => ({
+  previewBridge: {
+    listBrowserImportSources,
+    importBrowserCookies: vi.fn(),
+    clearCookies: vi.fn(),
+    clearCache: vi.fn(),
+  },
+}));
 vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
   useEnvironments: () => ({
@@ -174,4 +186,43 @@ it("saves a typed default viewport size on Enter", async () => {
     width: 1440,
     height: 800,
   });
+});
+
+it("scans for unlisted browsers only when the user clicks Scan for other browsers", async () => {
+  await ensureClientSettingsHydrated();
+  listBrowserImportSources.mockReset();
+  listBrowserImportSources.mockImplementation(async (input?: { readonly scan?: boolean }) => {
+    const known = [
+      { id: "chrome", name: "Chrome", profiles: [{ directory: "Default", name: "Default" }] },
+      { id: "safari", name: "Safari", profiles: [{ directory: ".", name: "Safari" }] },
+    ];
+    return input?.scan
+      ? [
+          ...known,
+          {
+            id: "discovered:firefox:0123456789abcdef",
+            name: "LibreWolf",
+            profiles: [{ directory: "Profiles/main.default", name: "Main" }],
+          },
+        ]
+      : known;
+  });
+
+  await using screen = await render(
+    <SettingsScopeProvider search={{}} onChange={() => {}}>
+      <BrowserSettingsPanel />
+    </SettingsScopeProvider>,
+    { router: "/settings/browser" },
+  );
+
+  await userEvent.click(screen.getByRole("button", { name: "Add profile" }));
+  await expect.element(page.getByRole("menuitem", { name: "Chrome" })).toBeVisible();
+  await expect.element(page.getByRole("menuitem", { name: "LibreWolf" })).not.toBeInTheDocument();
+  expect(listBrowserImportSources).toHaveBeenCalledTimes(1);
+  expect(listBrowserImportSources).toHaveBeenLastCalledWith();
+
+  await userEvent.click(page.getByRole("menuitem", { name: "Scan for other browsers" }));
+  expect(listBrowserImportSources).toHaveBeenCalledTimes(2);
+  expect(listBrowserImportSources).toHaveBeenLastCalledWith({ scan: true });
+  await expect.element(page.getByRole("menuitem", { name: "LibreWolf" })).toBeVisible();
 });

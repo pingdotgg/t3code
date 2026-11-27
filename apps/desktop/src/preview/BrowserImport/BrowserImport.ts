@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/process";
@@ -119,7 +120,9 @@ export class BrowserCookieWriteError extends Schema.TaggedError<BrowserCookieWri
 export class BrowserImport extends Context.Service<
   BrowserImport,
   {
-    readonly listSources: Effect.Effect<ReadonlyArray<BrowserImportSource>>;
+    readonly listSources: (options?: {
+      readonly scan?: boolean | undefined;
+    }) => Effect.Effect<ReadonlyArray<BrowserImportSource>>;
     readonly importCookies: (input: {
       readonly input: BrowserImportInput;
       readonly scope: string;
@@ -218,8 +221,24 @@ export const make = Effect.gen(function* BrowserImportMake() {
   >();
   const pathContext = yield* sourcePathContext;
 
-  const listSources: Effect.Effect<ReadonlyArray<BrowserImportSource>> = Effect.gen(function* () {
-    const definitions = yield* discoverBrowserImportSources(pathContext);
+  // Unlisted browser roots are only populated after an explicit user-triggered scan.
+  const scannedDefinitionsRef = yield* Ref.make<ReadonlyArray<BrowserImportSourceDefinition>>([]);
+
+  const listSources = Effect.fn("BrowserImport.listSources")(function* (options?: {
+    readonly scan?: boolean | undefined;
+  }) {
+    const definitions: ReadonlyArray<BrowserImportSourceDefinition> = options?.scan
+      ? yield* discoverBrowserImportSources(pathContext).pipe(
+          Effect.tap((all) =>
+            Ref.set(
+              scannedDefinitionsRef,
+              all.filter((definition) => definition.id.startsWith("discovered:")),
+            ),
+          ),
+          Effect.provide(platformServices),
+        )
+      : [...BROWSER_IMPORT_SOURCES, ...(yield* Ref.get(scannedDefinitionsRef))];
+
     return yield* Effect.forEach(
       definitions,
       Effect.fnUntraced(function* (definition) {
@@ -232,8 +251,8 @@ export const make = Effect.gen(function* BrowserImportMake() {
           ...(unavailable === undefined ? {} : { unavailable }),
         } satisfies BrowserImportSource;
       }),
-    );
-  }).pipe(Effect.provide(platformServices));
+    ).pipe(Effect.provide(platformServices));
+  });
 
   const importCookies = Effect.fn("BrowserImport.importCookies")(function* (input: {
     readonly input: BrowserImportInput;
@@ -242,11 +261,10 @@ export const make = Effect.gen(function* BrowserImportMake() {
     readonly namespace?: BrowserSession.BrowserSessionPartitionNamespace;
   }) {
     yield* checkBrowserImportPolicy(managedPolicy.read);
+    const scannedDefinitions = yield* Ref.get(scannedDefinitionsRef);
     const definition =
       BROWSER_IMPORT_SOURCES.find((candidate) => candidate.id === input.input.sourceId) ??
-      (yield* discoverBrowserImportSources(pathContext).pipe(
-        Effect.provide(platformServices),
-      )).find((candidate) => candidate.id === input.input.sourceId);
+      scannedDefinitions.find((candidate) => candidate.id === input.input.sourceId);
     if (!definition) {
       return yield* new BrowserImportFailedError({
         sourceId: input.input.sourceId,

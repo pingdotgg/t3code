@@ -70,6 +70,14 @@ export const BrowserImportInput = Schema.Struct({
 });
 export type BrowserImportInput = typeof BrowserImportInput.Type;
 
+export const DesktopPreviewListBrowserImportSourcesInputSchema = Schema.UndefinedOr(
+  Schema.Struct({
+    scan: Schema.optional(Schema.Boolean),
+  }),
+);
+export type DesktopPreviewListBrowserImportSourcesInput =
+  typeof DesktopPreviewListBrowserImportSourcesInputSchema.Type;
+
 export const DesktopPreviewImportCookiesInputSchema = Schema.Struct({
   environmentId: TrimmedNonEmptyString,
   sourceId: BrowserImportSourceId,

@@ -5,7 +5,7 @@ Import cookies from another browser into the desktop app's [preview browser](./b
 ## Import a profile
 
 1. Close the source browser.
-2. Open **Settings → Browser → Browser profiles → Add profile** and choose a browser under **Import from installed browsers**. Installed Chromium- and Firefox-based browsers are detected automatically.
+2. Open **Settings → Browser → Browser profiles → Add profile** and choose a browser under **Import from installed browsers**. Select **Scan for other browsers** to scan for other installed Chromium- and Firefox-based browsers on demand.
 3. Allow any OS keyring unlock prompt.
 
 This is a one-time copy—later login changes stay separate, and some sites may still require signing in again.

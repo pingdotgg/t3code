@@ -39,7 +39,7 @@ import {
 import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
 import { isValidSearchUrlTemplate } from "@t3tools/shared/preview";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
-import { MoreVertical, Plus as PlusIcon } from "lucide-react";
+import { MoreVertical, Plus as PlusIcon, Search as SearchIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useRef, useState } from "react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
@@ -74,6 +74,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
+import { Spinner } from "../ui/spinner";
 import { readLocalApi } from "~/localApi";
 
 import { toastManager } from "../ui/toast";
@@ -1242,6 +1243,10 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   );
   const importInFlightRef = useRef(false);
   const [importInFlight, setImportInFlight] = useState(false);
+  const scanInFlightRef = useRef(false);
+  const sourcesRequestIdRef = useRef(0);
+  const [scanningSources, setScanningSources] = useState(false);
+  const [hasScannedSources, setHasScannedSources] = useState(false);
   const profileWritesDisabled = disabled || !settingsHydrated;
 
   const profiles = resolveBrowserProfiles(userProfiles);
@@ -1337,6 +1342,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     (source) =>
       source.unavailable !== "notInstalled" && source.unavailable !== "unsupportedPlatform",
   );
+  const discoveredImportableCount = importableSources.filter((source) =>
+    source.id.startsWith("discovered:"),
+  ).length;
   const supportsAllChromium = !(
     sources?.some(
       (source) => source.id === "chrome" && source.unavailable === "unsupportedPlatform",
@@ -1344,11 +1352,40 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   );
 
   const loadSources = () => {
-    if (!previewBridge) return;
+    if (!previewBridge || scanInFlightRef.current) return;
+    const requestId = ++sourcesRequestIdRef.current;
     void previewBridge
       .listBrowserImportSources()
-      .then(setSources)
-      .catch(() => setSources((previous) => previous ?? []));
+      .then((next) => {
+        if (sourcesRequestIdRef.current !== requestId) return;
+        setSources(next);
+      })
+      .catch(() => {
+        if (sourcesRequestIdRef.current !== requestId) return;
+        setSources((previous) => previous ?? []);
+      });
+  };
+
+  const scanForOtherBrowsers = () => {
+    if (!previewBridge || scanInFlightRef.current) return;
+    scanInFlightRef.current = true;
+    setScanningSources(true);
+    const requestId = ++sourcesRequestIdRef.current;
+    void previewBridge
+      .listBrowserImportSources({ scan: true })
+      .then((discovered) => {
+        if (sourcesRequestIdRef.current !== requestId) return;
+        setSources(discovered);
+        setHasScannedSources(true);
+      })
+      .catch(() => {
+        if (sourcesRequestIdRef.current !== requestId) return;
+        setSources((previous) => previous ?? []);
+      })
+      .finally(() => {
+        scanInFlightRef.current = false;
+        setScanningSources(false);
+      });
   };
 
   const runWizardImport = async (
@@ -1469,16 +1506,36 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                 </>
               )}
               {cookieImportDenial === undefined && sources !== null ? (
-                <p className="max-w-56 px-2 pt-1.5 pb-1 text-xs leading-snug text-muted-foreground">
-                  {supportsAllChromium ? (
-                    <T>Chromium and Firefox browsers appear here automatically when installed.</T>
-                  ) : (
-                    <T>
-                      Firefox and compatible Chromium browsers appear here automatically when
-                      installed.
-                    </T>
-                  )}
-                </p>
+                <>
+                  <MenuSeparator />
+                  <MenuItem
+                    closeOnClick={false}
+                    disabled={scanningSources}
+                    onClick={scanForOtherBrowsers}
+                  >
+                    {scanningSources ? <Spinner size="sm" /> : <SearchIcon />}
+                    {scanningSources ? (
+                      <T>Scanning for other browsers…</T>
+                    ) : (
+                      <T>Scan for other browsers</T>
+                    )}
+                  </MenuItem>
+                  <p className="max-w-56 px-2 pt-1 pb-1 text-xs leading-snug text-muted-foreground">
+                    {hasScannedSources && discoveredImportableCount === 0 ? (
+                      <T>No other compatible browsers found.</T>
+                    ) : supportsAllChromium ? (
+                      <T>
+                        Scan to detect other Chromium and Firefox browsers installed on this
+                        machine.
+                      </T>
+                    ) : (
+                      <T>
+                        Scan to detect other Firefox and compatible Chromium browsers installed on
+                        this machine.
+                      </T>
+                    )}
+                  </p>
+                </>
               ) : null}
             </MenuGroup>
           </MenuPopup>

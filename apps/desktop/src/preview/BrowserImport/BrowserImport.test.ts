@@ -177,7 +177,7 @@ describe("BrowserImport.importCookies", () => {
             ),
           ),
         );
-        const source = (yield* importer.listSources).find(
+        const source = (yield* importer.listSources()).find(
           (candidate) => candidate.id === "chromium",
         );
         assert.isDefined(source);
@@ -380,13 +380,36 @@ describe("BrowserImport.importCookies", () => {
         ),
       );
 
-      const sources = yield* importer.listSources;
+      // Default listing checks only the known registry without scanning disk.
+      const beforeScan = yield* importer.listSources();
+      assert.isUndefined(beforeScan.find((candidate) => candidate.name === "Comet"));
+      assert.isUndefined(beforeScan.find((candidate) => candidate.name === "LibreWolf"));
+
+      const unscannedError = yield* importer
+        .importCookies({
+          input: {
+            sourceId: "discovered:firefox:0123456789abcdef",
+            sourceProfileDirectory: librewolfProfileDirectory,
+            targetProfileId: "default",
+          },
+          scope: "persist:t3code-preview-test",
+          persistent: true,
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(unscannedError, BrowserImport.BrowserImportFailedError);
+      assert.equal(unscannedError.reason, "unknownSource");
+
+      // Explicit scan discovers unlisted browsers and keeps them available for subsequent reads/imports.
+      const sources = yield* importer.listSources({ scan: true });
       const comet = sources.find((candidate) => candidate.name === "Comet");
       const librewolf = sources.find((candidate) => candidate.name === "LibreWolf");
       assert.isDefined(comet);
       assert.isDefined(librewolf);
       assert.match(comet!.id, /^discovered:chromium:[0-9a-f]{16}$/);
       assert.match(librewolf!.id, /^discovered:firefox:[0-9a-f]{16}$/);
+      assert.isDefined(
+        (yield* importer.listSources()).find((candidate) => candidate.id === librewolf!.id),
+      );
       assert.deepEqual(yield* decodeImportSource(comet!), {
         id: comet!.id,
         name: "Comet",
