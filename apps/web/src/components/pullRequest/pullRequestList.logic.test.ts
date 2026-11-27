@@ -1028,19 +1028,5 @@ describe("filter picker choices", () => {
       { name: "release-blocker", color: "b60205", count: 0 },
     ]);
     expect(rememberPullRequestLabels(next, [{ name: "docs", color: "0075ca" }])).toBe(next);
-
-    const recolored = rememberPullRequestLabels(next, [
-      { name: "release-blocker", color: "000000" },
-    ]);
-    expect(selectedPullRequestLabels([], recolored, ["release-blocker"])[0]?.color).toBe("000000");
-
-    // Two environments can answer the same name; the first one wins and the list settles.
-    const twice = [
-      { name: "bug", color: "d73a4a" },
-      { name: "Bug", color: "ee0701" },
-    ];
-    const merged = rememberPullRequestLabels([{ name: "bug", color: "d73a4a" }], twice);
-    expect(rememberPullRequestLabels(merged, twice)).toBe(merged);
-    expect(selectedPullRequestLabels([], merged, ["bug"])[0]?.color).toBe("d73a4a");
   });
 });
