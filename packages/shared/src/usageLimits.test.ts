@@ -1357,7 +1357,11 @@ describe("pooled account columns", () => {
     const available = account("available", [window]);
     const [before] = collectLimitPools([blocked, available], now);
     expect(before!.accounts.map((account) => account.key)).toEqual(["available", "blocked"]);
-    expect(before!.windows[0]!.remainingPercent).toBe(30);
+    expect(before!.windows[0]).toMatchObject({
+      remainingPercent: 30,
+      pace: "under",
+      paceRemainingPercent: 20,
+    });
     const refreshed = {
       ...blocked,
       limits: {

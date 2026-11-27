@@ -269,11 +269,8 @@ function PoolRow({ window, now }: { readonly window: LimitPoolWindow; readonly n
                 })
               : gt("{label}: {left}% left", { label: window.label, left })}
           </span>
-          {window.pace && window.paceRemainingPercent !== null ? (
-            <span className="text-muted-foreground">
-              {m(PACE_LABEL[window.pace])} ·{" "}
-              {gt("{timeLeft}% of the window left", { timeLeft: window.paceRemainingPercent })}
-            </span>
+          {window.pace ? (
+            <span className="text-muted-foreground">{m(PACE_LABEL[window.pace])}</span>
           ) : null}
           {next && reset ? (
             <span className="text-muted-foreground">

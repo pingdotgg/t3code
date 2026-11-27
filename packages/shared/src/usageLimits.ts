@@ -747,7 +747,13 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       usedPercent: Math.round(usedPercent),
       remainingPercent: Math.round(100 - usedPercent),
       pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),
-      paceRemainingPercent: meanElapsed === null ? null : Math.round((1 - meanElapsed) * 100),
+      // Untimed members keep their spend, so the mark stays on the bar's pooled scale.
+      paceRemainingPercent:
+        meanElapsed === null
+          ? null
+          : Math.round(
+              100 - usedPercent - (timedWeight * (meanElapsed * 100 - timedUsed)) / totalWeight,
+            ),
       resets,
     };
   });
