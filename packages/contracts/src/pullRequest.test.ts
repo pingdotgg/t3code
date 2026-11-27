@@ -11,6 +11,7 @@ import {
   type PullRequestDetail,
   PullRequestListResult,
   PullRequestOperationError,
+  PullRequestReviewThread,
   PullRequestSubmitReviewInput,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
@@ -164,6 +165,8 @@ describe("resolvePullRequestAuthorFilter", () => {
   });
 });
 
+const decodeReviewThread = Schema.decodeSync(PullRequestReviewThread);
+
 describe("PullRequestSubmitReviewInput", () => {
   const codec = Schema.toCodecJson(PullRequestSubmitReviewInput);
   const withPaths = (path: string, oldPath: string) => ({
@@ -181,6 +184,19 @@ describe("PullRequestSubmitReviewInput", () => {
     }
     expect(() => Schema.decodeSync(codec)(withPaths("", "old.txt"))).toThrow();
     expect(() => Schema.decodeSync(codec)(withPaths("note.txt", ""))).toThrow();
+  });
+
+  it("keeps whitespace in a review thread's path so it stays on its diff file", () => {
+    const thread = decodeReviewThread({
+      id: "thread-1",
+      path: " note.txt",
+      line: 3,
+      side: "right",
+      isResolved: false,
+      isOutdated: false,
+      comments: [],
+    });
+    expect(thread.path).toBe(" note.txt");
   });
 });
 

@@ -417,7 +417,7 @@ export function toActivity(input: {
     reviewState: entry.review == null ? null : (REVIEW_STATES[entry.review] ?? entry.review),
   }));
   const reviewThreads = input.threads.flatMap((thread): ReadonlyArray<PullRequestReviewThread> => {
-    if (thread.path.trim() === "" || thread.comments.length === 0) return [];
+    if (thread.path === "" || thread.comments.length === 0) return [];
     return [
       {
         id: String(thread.id),

@@ -190,7 +190,7 @@ export type PullRequestThreadComment = typeof PullRequestThreadComment.Type;
 
 export const PullRequestReviewThread = Schema.Struct({
   id: TrimmedNonEmptyString,
-  path: TrimmedNonEmptyString,
+  path: Schema.NonEmptyString,
   line: Schema.NullOr(PositiveInt),
   side: PullRequestDiffSide,
   isResolved: Schema.Boolean,

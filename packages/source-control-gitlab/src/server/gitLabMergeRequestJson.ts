@@ -1,4 +1,7 @@
-import { trimOptionalString as trimmed } from "@t3tools/source-control-core/server/pullRequestUtils";
+import {
+  nonEmptyOptionalString,
+  trimOptionalString as trimmed,
+} from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
@@ -873,11 +876,11 @@ export function decodeDiscussionsJson(
     let line: number | null | undefined;
     if (position.position_type === "text") {
       side = position.new_line === null || position.new_line === undefined ? "left" : "right";
-      path = trimmed(side === "left" ? position.old_path : position.new_path);
+      path = nonEmptyOptionalString(side === "left" ? position.old_path : position.new_path);
       line = side === "left" ? position.old_line : position.new_line;
     } else if (position.position_type === "file" || position.position_type === "image") {
       side = "right";
-      path = trimmed(position.new_path) ?? trimmed(position.old_path);
+      path = nonEmptyOptionalString(position.new_path) ?? nonEmptyOptionalString(position.old_path);
       line = null;
     } else {
       continue;
@@ -965,7 +968,9 @@ export function decodeNotesJson(
       body,
       createdAt: value.created_at,
       url: null,
-      path: trimmed(value.position?.new_path) ?? trimmed(value.position?.old_path),
+      path:
+        nonEmptyOptionalString(value.position?.new_path) ??
+        nonEmptyOptionalString(value.position?.old_path),
       reviewState: null,
     });
   }

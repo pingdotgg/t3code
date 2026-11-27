@@ -6,6 +6,11 @@ export function trimOptionalString(value: string | null | undefined): string | n
   return trimmed.length > 0 ? trimmed : null;
 }
 
+// Filenames may start or end with whitespace, so a path is only checked for being present.
+export function nonEmptyOptionalString(value: string | null | undefined): string | null {
+  return value === null || value === undefined || value.length === 0 ? null : value;
+}
+
 export function isCommitSha(value: string): boolean {
   return /^[0-9a-f]{7,64}$/i.test(value);
 }
