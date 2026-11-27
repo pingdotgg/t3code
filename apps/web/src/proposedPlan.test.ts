@@ -5,18 +5,16 @@ import { buildCollapsedProposedPlanPreviewMarkdown } from "./proposedPlan";
 describe("buildCollapsedProposedPlanPreviewMarkdown", () => {
   it("closes a code block the preview cuts through, so the ellipsis stays outside it", () => {
     const plan = [
-      "# Plan",
-      "",
-      "```ts",
-      "const a = 1;",
-      "const b = 2;",
-      "const c = 3;",
-      "```",
+      "- Step",
+      "  ```ts",
+      "  const a = 1;",
+      "  const b = 2;",
+      "  ```",
       "",
       "Done.",
     ].join("\n");
     expect(buildCollapsedProposedPlanPreviewMarkdown(plan, { maxLines: 3 })).toBe(
-      ["```ts", "const a = 1;", "const b = 2;", "```", "", "..."].join("\n"),
+      ["- Step", "  ```ts", "  const a = 1;", "  ```", "", "..."].join("\n"),
     );
   });
 

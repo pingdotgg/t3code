@@ -18,7 +18,7 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
   const previewLines: string[] = [];
   let visibleLineCount = 0;
   let hasMoreContent = false;
-  let openFence: string | null = null;
+  let openFence: { marker: string; indent: string } | null = null;
 
   for (const line of lines) {
     const isVisibleLine = line.trim().length > 0;
@@ -30,15 +30,16 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
     if (isVisibleLine) {
       visibleLineCount += 1;
     }
-    const fence = /^ {0,3}(?:(`{3,})[^`]*|(~{3,}).*)$/.exec(line)?.slice(1).find(Boolean);
-    if (fence === undefined) {
+    const match = /^( {0,3})(?:(`{3,})[^`]*|(~{3,}).*)$/.exec(line);
+    const fence = match?.[2] ?? match?.[3];
+    if (match === null || fence === undefined) {
       continue;
     }
     if (openFence === null) {
-      openFence = fence;
+      openFence = { marker: fence, indent: match[1] ?? "" };
     } else if (
-      fence[0] === openFence[0] &&
-      fence.length >= openFence.length &&
+      fence[0] === openFence.marker[0] &&
+      fence.length >= openFence.marker.length &&
       line.trim() === fence
     ) {
       openFence = null;
@@ -54,7 +55,7 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
   }
 
   if (openFence !== null) {
-    previewLines.push(openFence);
+    previewLines.push(openFence.indent + openFence.marker);
   }
 
   if (hasMoreContent) {
