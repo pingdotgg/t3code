@@ -45,7 +45,6 @@ import { copiedComposerAttachmentFile } from "~/lib/copiedComposerAttachments";
 import {
   changeQuestionAttachmentPreparation,
   countQuestionAttachments,
-  openQuestionAttachmentDraft,
   questionAttachmentDraftId,
 } from "../../questionAttachments";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
@@ -492,12 +491,6 @@ export function useComposerContextImport(input: {
             break;
           }
           if (sourceEnvironmentId === null) break;
-          if (
-            questionAttachmentTarget &&
-            (!questionThread ||
-              openQuestionAttachmentDraft(questionThread)?.draftId !== questionAttachmentTarget)
-          )
-            break;
           const localId = dependentAttachmentLocalIds.get(record.contextId) ?? randomUUID();
           rewritten.set(record.contextId, toKindScopedComposerContextId(record.kind, localId));
           void importAttachmentRecord(record, localId, sourceEnvironmentId);
