@@ -102,11 +102,17 @@ describe("colon-namespaced labels typed as a search", () => {
 
   it("leaves a name that already carries its own namespace alone", () => {
     expect(parsePullRequestQuery("size:S,size:XS").filters.labels).toEqual([["size:S", "size:XS"]]);
+    expect(parsePullRequestQuery("security:cve:critical,area:web,low").filters.labels).toEqual([
+      ["security:cve:critical", "area:web", "security:low"],
+    ]);
   });
 
   // regression: #19934 negated key:value qualifiers become namespaced label exclusions
   it("excludes one the same way", () => {
     expect(parsePullRequestQuery("-size:XXL").filters.excludedLabels).toEqual(["size:XXL"]);
+    expect(parsePullRequestQuery("-security:cve:critical").filters.excludedLabels).toEqual([
+      "security:cve:critical",
+    ]);
     expect(parsePullRequestQuery("-size:S,XS").filters.excludedLabels).toEqual([
       "size:S",
       "size:XS",

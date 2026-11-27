@@ -108,8 +108,8 @@ export function parsePullRequestQuery(raw: string): {
       default:
         if (!value.startsWith("/")) {
           const names = boundedNames(
-            splitQualifierList(qualifier?.[3] ?? "").map((name) =>
-              name.includes(":") ? name : `${qualifier?.[2] ?? ""}:${name}`,
+            splitQualifierList(qualifier?.[3] ?? "").map((name, index) =>
+              index > 0 && name.includes(":") ? name : `${qualifier?.[2] ?? ""}:${name}`,
             ),
           );
           if (names.length === 0) break;
