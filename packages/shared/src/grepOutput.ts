@@ -50,14 +50,19 @@ export function parseGrepOutput(
     }
     // ripgrep context lines (`N-text`) can't be told apart from a file named like one.
     if (file !== undefined && CONTEXT_LINE.test(line)) return undefined;
+    const nextLine = lines[index + 1] ?? "";
+    const followedByRipgrepMatch = RIPGREP_NUMBERED_LINE.test(nextLine);
     // `dir/a:12:b.txt:` is both an inline match and an OpenCode heading; an indented `Line N:` next decides.
     const colonHeading = COLON_HEADING.exec(line.trimEnd());
     const inline =
-      colonHeading && OPENCODE_NUMBERED_LINE.test(lines[index + 1] ?? "")
-        ? null
-        : PATH_LINE_TEXT.exec(line);
+      colonHeading && OPENCODE_NUMBERED_LINE.test(nextLine) ? null : PATH_LINE_TEXT.exec(line);
     if (inline) {
-      matches.push({ fileName: inline[1] ?? "", line: Number(inline[2]), text: inline[3] ?? "" });
+      // A ripgrep heading can also look like an inline match when its filename contains `:N:`.
+      if (followedByRipgrepMatch) {
+        file = line.trimEnd();
+      } else {
+        matches.push({ fileName: inline[1] ?? "", line: Number(inline[2]), text: inline[3] ?? "" });
+      }
       continue;
     }
     if (colonHeading) {
@@ -69,10 +74,7 @@ export function parseGrepOutput(
       continue;
     }
     // A bare path with spaces needs a following ripgrep line to distinguish it from prose.
-    if (
-      !/\s/.test(line.trimEnd()) ||
-      (/^\S/.test(line) && RIPGREP_NUMBERED_LINE.test(lines[index + 1] ?? ""))
-    ) {
+    if (!/\s/.test(line.trimEnd()) || (/^\S/.test(line) && followedByRipgrepMatch)) {
       file = line.trimEnd();
       continue;
     }
