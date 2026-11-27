@@ -108,6 +108,10 @@ const listCommand = Command.make("list", {
     Flag.withDescription("Only runs their workflow tagged with this."),
     Flag.optional,
   ),
+  subject: Flag.String("subject").pipe(
+    Flag.withDescription("Only runs about this: the web address of their subject, or a thread id."),
+    Flag.optional,
+  ),
   json: jsonFlag,
 }).pipe(
   Command.withDescription("List workflow runs, newest first."),
@@ -121,6 +125,7 @@ const listCommand = Command.make("list", {
             action: "list",
             ...(Option.isSome(flags.status) ? { status: flags.status.value } : {}),
             ...(Option.isSome(flags.tag) ? { tag: flags.tag.value } : {}),
+            ...(Option.isSome(flags.subject) ? { subject: flags.subject.value } : {}),
           },
           RunsResult,
         );

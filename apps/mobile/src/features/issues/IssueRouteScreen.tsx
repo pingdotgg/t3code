@@ -47,6 +47,7 @@ import { environmentThreadShells } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { usePullToRefresh } from "../../state/use-pull-to-refresh";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { WorkflowRunsAbout } from "../workflows/WorkflowRunsAbout";
 import { useAndroidWorkspaceBack } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { PullRequestDescription } from "../pull-requests/PullRequestDescription";
 import {
@@ -684,7 +685,13 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
             refreshControl={
               <RefreshControl
                 refreshing={pullRefresh.refreshing}
-                onRefresh={() => void pager.refresh(registry, pullRefresh.onRefresh)}
+                onRefresh={() =>
+                  void pager.refresh(registry, () =>
+                    pullRefresh.onRefresh(async () =>
+                      issueEnvironment.oweDetailRefresh(registry, detailAtom),
+                    ),
+                  )
+                }
               />
             }
             contentContainerStyle={{
@@ -746,6 +753,16 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                       <LinkedPullRequests params={params} links={detail.linkedPullRequests} />
                     ) : null}
                     <LinkedThreads params={params} host={detail.host} />
+                    <WorkflowRunsAbout
+                      environmentId={issueTarget(params).environmentId}
+                      item={{
+                        subject: detail.url,
+                        issue: {
+                          ...issueTarget(params).input,
+                          host: params.host ?? detail.host,
+                        },
+                      }}
+                    />
                     <View className="gap-3">
                       <PullRequestSectionHeading>
                         {detail.commentCount > 0

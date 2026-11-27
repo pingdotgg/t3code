@@ -47,7 +47,7 @@ vi.mock(import("@effect/atom-react"), async (original) => ({
     ),
   })) as never,
 }));
-vi.mock(import("@clerk/react"), async (original) => ({
+vi.mock(import("./disabledAuth"), async (original) => ({
   ...(await original()),
   useAuth: (() => ({ getToken: testState.getToken, isSignedIn: true })) as never,
 }));

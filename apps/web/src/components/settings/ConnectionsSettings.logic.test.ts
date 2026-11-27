@@ -246,34 +246,37 @@ describe("Tailscale-first endpoint selection and pairing URLs", () => {
     id: "desktop-lan:http://192.168.1.20:3773",
     label: "Local network",
     httpBaseUrl: "http://192.168.1.20:3773",
+    wsBaseUrl: "ws://192.168.1.20:3773",
     reachability: "lan",
     status: "available",
     isDefault: true,
-    provider: { id: "desktop-core", label: "Desktop", kind: "lan", isAddon: false },
+    provider: { id: "desktop-core", label: "Desktop", kind: "core", isAddon: false },
     source: "desktop-core",
-    compatibility: { hostedHttpsApp: "incompatible" },
+    compatibility: { hostedHttpsApp: "mixed-content-blocked", desktopApp: "compatible" },
   };
   const tailscaleIpEndpoint: AdvertisedEndpoint = {
     id: "tailscale-ip:http://100.74.126.34:3773",
     label: "Tailscale IP",
     httpBaseUrl: "http://100.74.126.34:3773",
+    wsBaseUrl: "ws://100.74.126.34:3773",
     reachability: "private-network",
     status: "available",
     isDefault: false,
     provider: { id: "tailscale", label: "Tailscale", kind: "private-network", isAddon: true },
     source: "desktop-addon",
-    compatibility: { hostedHttpsApp: "incompatible" },
+    compatibility: { hostedHttpsApp: "mixed-content-blocked", desktopApp: "compatible" },
   };
   const tailscaleHttpsEndpoint: AdvertisedEndpoint = {
     id: "tailscale-magicdns:https://mac.tail1234.ts.net",
     label: "Tailscale HTTPS",
     httpBaseUrl: "https://mac.tail1234.ts.net",
+    wsBaseUrl: "wss://mac.tail1234.ts.net",
     reachability: "private-network",
     status: "available",
     isDefault: false,
     provider: { id: "tailscale", label: "Tailscale", kind: "private-network", isAddon: true },
     source: "desktop-addon",
-    compatibility: { hostedHttpsApp: "compatible" },
+    compatibility: { hostedHttpsApp: "compatible", desktopApp: "compatible" },
   };
 
   it("prefers Tailscale HTTPS, then Tailscale IP, then LAN", () => {
