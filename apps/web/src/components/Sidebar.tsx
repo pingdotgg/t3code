@@ -950,6 +950,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
     settleThread,
+    cancelSettleWhenDone,
     unsettleThread,
     snoozeThread,
     unsnoozeThread,
@@ -1663,6 +1664,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         : () => void router.navigate({ to: "/" });
   };
 
+  const attemptCancelSettleWhenDone = async (threadRef: ScopedThreadRef) => {
+    const result = await cancelSettleWhenDone(threadRef);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: gt("Failed to settle thread"),
+          description:
+            thrownErrorMessage(squashAtomCommandFailure(result), m) ?? gt("An error occurred."),
+        }),
+      );
+    }
+  };
+
   const attemptSettle = (
     threadRef: ScopedThreadRef,
     opts: { coSettlingKeys?: ReadonlySet<string> } = {},
@@ -1671,7 +1686,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const threadKey = scopedThreadKey(threadRef);
       if (settlingThreadKeysRef.current.has(threadKey)) return;
       settlingThreadKeysRef.current.add(threadKey);
-      const navigateAfterSettle = planForwardNavigation(threadKey, opts.coSettlingKeys);
+      const thread = threadByKeyRef.current.get(threadKey);
+      const deferred = thread?.settleWhenDone != null || thread?.runtime?.activeRunId != null;
+      const navigateAfterSettle = deferred
+        ? null
+        : planForwardNavigation(threadKey, opts.coSettlingKeys);
       if (navigateAfterSettle) departRouteThread(threadKey);
       const result = await settleThread(threadRef);
       settlingThreadKeysRef.current.delete(threadKey);
@@ -2213,7 +2232,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           : pinnedKeysById,
       assignedKeys: new Map(assignments.map(({ id, orderKey }) => [id, orderKey])),
     };
-    setOptimisticDrop(drop);
+    const deferred =
+      plan.kind === "settle" &&
+      (activeThread.settleWhenDone != null || activeThread.runtime?.activeRunId != null);
+    if (!deferred) setOptimisticDrop(drop);
     void (async () => {
       const run = async (
         operation: Promise<AtomCommandResult<unknown, unknown>>,
@@ -2237,7 +2259,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       switch (plan.kind) {
         case "settle": {
           settlingThreadKeysRef.current.add(activeKey);
-          const navigateAfterSettle = planForwardNavigation(activeKey);
+          const navigateAfterSettle = deferred ? null : planForwardNavigation(activeKey);
           if (navigateAfterSettle) departRouteThread(activeKey);
           const settled = await run(settleThread(threadRef), gt("Failed to settle thread")).finally(
             () => settlingThreadKeysRef.current.delete(activeKey),
@@ -2748,11 +2770,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   : null,
               isPinned,
               isSettled,
+              settleWhenDone: thread.settleWhenDone != null,
               autoSettleEnabled: thread.autoSettleDisabledAt == null,
               isSnoozed,
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
               isRegeneratingTitle,
               isRunning: !threadRuntimeCanArchive(thread.runtime),
+              hasActiveResponse: thread.runtime?.activeRunId != null,
               hasCompletedRun: thread.latestRun?.completedAt != null,
               canShareWithGuest: appAtomRegistry.get(
                 canShareWithGuestAtom(threadRef.environmentId),
@@ -2761,6 +2785,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               canRename: !fromSearch,
               supports: {
                 settlement: configLoaded,
+                settleWhenDone:
+                  serverConfigs.get(thread.environmentId)?.environment.capabilities
+                    .threadSettleWhenDone === true,
                 autoSettleOptOut: supportsAutoSettleOptOut,
                 snooze: configLoaded,
                 pinning: configLoaded,
@@ -2829,6 +2856,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             }
             return;
           }
+          case "cancel-settle-when-done":
+            await attemptCancelSettleWhenDone(threadRef);
+            return;
           case "settle":
             attemptSettle(threadRef);
             return;
@@ -3555,6 +3585,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 : "settle"
                           }
                           settlementSupported={serverConfigs.has(thread.environmentId)}
+                          settleWhenDoneSupported={
+                            serverConfigs.get(thread.environmentId)?.environment.capabilities
+                              .threadSettleWhenDone === true
+                          }
                           snoozeSupported={serverConfigs.has(thread.environmentId)}
                           pinningSupported={serverConfigs.has(thread.environmentId)}
                           isPinned={thread.pinnedAt != null}
@@ -3609,6 +3643,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           renamingTitle={renamingThreadKey === threadKey ? renamingTitle : ""}
                           onContextMenu={handleThreadContextMenu}
                           onSettle={attemptSettle}
+                          onCancelSettleWhenDone={attemptCancelSettleWhenDone}
                           onActionSweepStart={startActionSweep}
                           onUnsettle={attemptUnsettle}
                           onSnooze={attemptSnooze}

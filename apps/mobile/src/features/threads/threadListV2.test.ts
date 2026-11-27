@@ -267,6 +267,7 @@ describe("threadListV2RowAccessibilityLabel", () => {
     providerNameLabel: "Codex",
     hasQueuedMessages: false,
     regeneratingTitle: false,
+    settleWhenDone: false,
   } as const;
 
   it("speaks the status or time the row shows beside its title", () => {
@@ -274,6 +275,9 @@ describe("threadListV2RowAccessibilityLabel", () => {
       "Fix login, Approval, Codex",
     );
     expect(threadListV2RowAccessibilityLabel(row)).toBe("Fix login, 5m, Codex");
+    expect(threadListV2RowAccessibilityLabel({ ...row, settleWhenDone: true })).toBe(
+      "Fix login, 5m, Codex, Settle when done",
+    );
     expect(threadListV2RowAccessibilityLabel({ ...row, woke: true, statusLabel: "Done" })).toBe(
       "Fix login, Woke, Codex",
     );

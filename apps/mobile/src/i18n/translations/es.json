@@ -5712,5 +5712,11 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo"
+  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo",
+  "a4a17a76fdfdd63a": "Conéctate a este entorno para resolver un hilo en curso cuando termine.",
+  "15b65e06186977de": "Actualiza el servidor de este entorno para resolver un hilo en curso cuando termine.",
+  "53e5eaf0be838e68": "Cancelar resolver al terminar",
+  "d57765280bbd2dfc": "Resolver al terminar",
+  "c2792e9899751ddd": "Cancelar resolver {title} al terminar",
+  "207f2a4cc2e91157": "Resolver {title} al terminar"
 }

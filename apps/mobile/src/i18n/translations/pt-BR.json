@@ -5712,5 +5712,11 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "46d614fa7b4bf1e5": "Execuções de workflow"
+  "46d614fa7b4bf1e5": "Execuções de workflow",
+  "a4a17a76fdfdd63a": "Conecte-se a este ambiente para concluir uma thread em execução quando ela terminar.",
+  "15b65e06186977de": "Atualize o servidor deste ambiente para concluir uma thread em execução quando ela terminar.",
+  "53e5eaf0be838e68": "Cancelar conclusão ao terminar",
+  "d57765280bbd2dfc": "Concluir ao terminar",
+  "c2792e9899751ddd": "Cancelar conclusão de {title} ao terminar",
+  "207f2a4cc2e91157": "Concluir {title} ao terminar"
 }

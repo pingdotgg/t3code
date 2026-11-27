@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
   dropBusy: false,
   holdingRows: false,
   failedAction: null as string | null,
+  settleDeferred: false,
   titleOutcome: null as ThreadTitleRegenerationOutcome | null,
   archivedRefreshes: [] as string[],
   onArchivedRefresh: undefined as (() => void) | undefined,
@@ -181,7 +182,13 @@ vi.mock("../../state/threads", () => ({
           if (action === state.failedAction)
             return AsyncResult.failure(Cause.fail(new Error("Server rejected action")));
           state.afterRequest?.();
-          return AsyncResult.success(action === "regenerateTitle" ? state.titleOutcome : undefined);
+          return AsyncResult.success(
+            action === "regenerateTitle"
+              ? state.titleOutcome
+              : action === "settle"
+                ? { sequence: 1, deferred: state.settleDeferred }
+                : undefined,
+          );
         },
       ]),
     ),
@@ -192,6 +199,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { composerDraftsAtom } from "../../state/use-composer-drafts";
 import { dismissThreadUndoNotice, readThreadUndoNotice } from "./thread-undo-notice";
 import { useThreadListActions } from "./useThreadListActions";
+import { registerThreadDismissal } from "./thread-dismissal";
 
 const primaryEnvironmentId = EnvironmentId.make("primary");
 const otherEnvironmentId = EnvironmentId.make("other");
@@ -221,6 +229,7 @@ const mutationCases = [
 beforeEach(() => {
   state.connectedEnvironmentIds = [primaryEnvironmentId, otherEnvironmentId];
   state.failedAction = null;
+  state.settleDeferred = false;
   state.titleOutcome = null;
   state.archivedRefreshes = [];
   state.onArchivedRefresh = undefined;
@@ -438,6 +447,27 @@ describe("thread reorder connection availability", () => {
 });
 
 describe("thread action undo", () => {
+  it("restores a dismissed row and skips undo when a run starts during dismissal", async () => {
+    const thread = makeThread();
+    const dismissal = Promise.withResolvers<void>();
+    const restore = vi.fn();
+    const unregister = registerThreadDismissal(`${thread.environmentId}:${thread.id}`, () => ({
+      finished: dismissal.promise,
+      restore,
+    }));
+    try {
+      const pending = useThreadListActions().settleThread(thread);
+      expect(state.requests).toEqual([]);
+      state.settleDeferred = true;
+      dismissal.resolve();
+      expect(await pending).toBe(true);
+      expect(restore).toHaveBeenCalledOnce();
+      expect(readThreadUndoNotice()).toBeNull();
+    } finally {
+      unregister();
+    }
+  });
+
   it.each([
     ["settleThread", "settle", "Settled", "unsettle"],
     ["snoozeThread", "snooze", "Snoozed", "unsnooze"],
@@ -651,6 +681,7 @@ describe("thread action undo", () => {
     expect(readThreadUndoNotice()?.action).toBe("Settled");
 
     state.failedAction = null;
+    state.settleDeferred = false;
     expect(await actions.archiveThread(thread)).toBe(true);
     expect(readThreadUndoNotice()).toBeNull();
   });

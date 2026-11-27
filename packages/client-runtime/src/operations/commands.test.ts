@@ -49,6 +49,7 @@ import {
   promoteQueuedRun,
   revertThreadCheckpoint,
   resumeThreadQueue,
+  settleThread,
   startThreadTurn,
 } from "./commands.ts";
 
@@ -79,6 +80,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
   readonly advertiseThreadStop?: boolean;
+  readonly advertiseSettleWhenDone?: boolean;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -126,6 +128,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
       environment: {
         capabilities: {
           repositoryIdentity: true,
+          ...(input.advertiseSettleWhenDone ? { threadSettleWhenDone: true } : {}),
           ...(input.advertiseThreadStop === true ? { threadStop: true } : {}),
         },
       },
@@ -1019,3 +1022,37 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestRandom)),
   );
 });
+
+it.effect.each([false, true])(
+  "requires advertised support for completion settlement (%s)",
+  (supported) =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        advertiseSettleWhenDone: supported,
+      });
+      const result = yield* settleThread({
+        threadId: v2ThreadId,
+        whenDone: true,
+        runId: RunId.make("active"),
+      }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provide(layerTestRandom),
+        Effect.exit,
+      );
+      expect(Exit.isSuccess(result)).toBe(supported);
+      expect(commands).toHaveLength(supported ? 1 : 0);
+      if (supported)
+        expect(commands[0]).toMatchObject({
+          type: "thread.settle-when-done.set",
+          enabled: true,
+          runId: RunId.make("active"),
+        });
+      else if (Exit.isFailure(result))
+        expect(Cause.squash(result.cause)).toMatchObject({
+          _tag: "EnvironmentRpcUnavailableError",
+        });
+    }),
+);

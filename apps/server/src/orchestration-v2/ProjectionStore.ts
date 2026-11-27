@@ -232,6 +232,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "settledOverride"
   | "pinnedAt"
   | "autoSettleDisabledAt"
+  | "settleWhenDone"
   | "snoozedUntil"
   | "snoozedAt"
   | "latestRunId"
@@ -2034,6 +2035,7 @@ export function threadShellFromProjection(
     updatedAt: projection.thread.updatedAt,
     archivedAt: projection.thread.archivedAt,
     settledOverride: projection.thread.settledOverride,
+    settleWhenDone: projection.thread.settleWhenDone ?? null,
     settledAt: projection.thread.settledAt,
     unsettledAt: projection.thread.unsettledAt ?? null,
     snoozedUntil: projection.thread.snoozedUntil ?? null,
@@ -2339,6 +2341,7 @@ function shellFromState(input: {
     updatedAt: input.state.updatedAt,
     archivedAt: input.state.thread.archivedAt,
     settledOverride: input.state.thread.settledOverride,
+    settleWhenDone: input.state.thread.settleWhenDone ?? null,
     settledAt: input.state.thread.settledAt,
     unsettledAt: input.state.thread.unsettledAt ?? null,
     snoozedUntil: input.state.thread.snoozedUntil ?? null,
@@ -8989,7 +8992,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             )
             WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}
               AND json_extract(t.payload_json, '$.archivedAt') IS NULL
-              AND json_extract(t.payload_json, '$.settledOverride') IS NULL
+              AND (json_type(t.payload_json, '$.settleWhenDone') = 'object' OR (
+              json_extract(t.payload_json, '$.settledOverride') IS NULL
               AND json_extract(t.payload_json, '$.pinnedAt') IS NULL
               AND json_extract(t.payload_json, '$.autoSettleDisabledAt') IS NULL
               AND (
@@ -9050,6 +9054,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       )
                   )
               )
+              ))
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
             if (rows.length === 0) return [];

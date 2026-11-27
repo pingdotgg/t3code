@@ -13036,5 +13036,11 @@
   "717c1c47a852a1a5": "Pausar narração",
   "0eceb5780908eb6c": "Ler em voz alta",
   "3ee98da81538c6de": "Não foi possível reproduzir a narração.",
-  "95435f0b59cb2193": "Prévia de áudio"
+  "95435f0b59cb2193": "Prévia de áudio",
+  "a4a17a76fdfdd63a": "Conecte-se a este ambiente para concluir uma thread em execução quando ela terminar.",
+  "15b65e06186977de": "Atualize o servidor deste ambiente para concluir uma thread em execução quando ela terminar.",
+  "53e5eaf0be838e68": "Cancelar conclusão ao terminar",
+  "d57765280bbd2dfc": "Concluir ao terminar",
+  "f608874d2e4f182f": "Cancelar conclusão ao terminar",
+  "c271bd3ac5ac9ff3": "Concluir ao terminar"
 }

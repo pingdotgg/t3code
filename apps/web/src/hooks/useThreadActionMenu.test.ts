@@ -35,6 +35,8 @@ function recordEffect(action: string) {
 }
 
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
+vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: { get: () => new Map() } }));
+vi.mock("../state/server", () => ({ environmentServerConfigsAtom: "server-configs" }));
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useMemo: (factory: () => unknown) => factory(),
@@ -126,6 +128,7 @@ vi.mock("./useThreadActions", () => ({
       [
         "markThreadUnread",
         "settleThread",
+        "cancelSettleWhenDone",
         "unsettleThread",
         "snoozeThread",
         "unsnoozeThread",

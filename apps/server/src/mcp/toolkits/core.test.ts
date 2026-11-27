@@ -1778,3 +1778,49 @@ it.effect(
     );
   },
 );
+
+it.effect.each([true, false])(
+  "organizes completion settlement explicitly (enabled: %s)",
+  (enabled) => {
+    const requested: Array<unknown> = [];
+    return Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const result = yield* server
+        .callTool({
+          name: "t3_thread_organize",
+          arguments: {
+            action: enabled ? "settle_when_done" : "cancel_settle_when_done",
+          },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({ sequence: 1 });
+      expect(requested).toEqual([{ threadId, enabled, commandId: expect.any(String) }]);
+    }).pipe(
+      Effect.provide(
+        layerThreadToolkit.pipe(
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+              getProjectThreadRecords: ({ threadId: id }) =>
+                Effect.succeed(
+                  McpToolAccessTestkit.idleThreadProjection(
+                    McpToolAccessTestkit.liveThreadShell(id),
+                  ),
+                ),
+              setSettleWhenDone: (input) => {
+                requested.push(input);
+                return Effect.succeed({ sequence: 1 });
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+  },
+);

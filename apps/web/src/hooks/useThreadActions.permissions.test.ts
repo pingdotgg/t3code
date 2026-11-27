@@ -71,7 +71,7 @@ vi.mock("../state/session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     state.scopes.get(environmentId)?.has(scope) === true,
   readEnvironmentScopeDenied: (environmentId: string, scope: string) =>
-    state.scopes.get(environmentId)?.has(scope) !== true,
+    state.scopes.has(environmentId) && state.scopes.get(environmentId)?.has(scope) !== true,
 }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand:
@@ -84,7 +84,9 @@ vi.mock("../state/use-atom-command", () => ({
         return AsyncResult.failure(Cause.fail(new Error("Server denied the request")));
       }
       state.afterRequest?.(action);
-      return AsyncResult.success(undefined);
+      return AsyncResult.success(
+        action === "settle" ? { sequence: 1, deferred: false } : undefined,
+      );
     },
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
@@ -119,6 +121,7 @@ vi.mock("../state/threads", () => ({
       "unarchive",
       "delete",
       "settle",
+      "cancelSettleWhenDone",
       "unsettle",
       "pin",
       "unpin",
@@ -239,6 +242,10 @@ const operations = [
     run: (actions: ThreadActions, ref: ScopedThreadRef) => actions.settleThread(ref),
   },
   {
+    name: "cancelSettleWhenDone",
+    run: (actions: ThreadActions, ref: ScopedThreadRef) => actions.cancelSettleWhenDone(ref),
+  },
+  {
     name: "unsettle",
     run: (actions: ThreadActions, ref: ScopedThreadRef) => actions.unsettleThread(ref),
   },
@@ -294,6 +301,16 @@ beforeEach(() => {
 });
 
 describe("thread action permissions", () => {
+  it.each(["settleThread", "cancelSettleWhenDone"] as const)(
+    "%s reaches the server while the connection scope is unknown",
+    async (action) => {
+      state.scopes.delete(secondary);
+      await useThreadActions()[action](target);
+      expect(state.requests).toHaveLength(1);
+      expect(state.requests[0]?.environmentId).toBe(secondary);
+    },
+  );
+
   it.each(operations)("$name requires the target environment's grant", async ({ run }) => {
     const result = await run(useThreadActions(), target);
     expect(result._tag).toBe("Failure");

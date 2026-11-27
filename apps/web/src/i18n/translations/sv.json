@@ -13043,5 +13043,11 @@
   "717c1c47a852a1a5": "Pausa uppläsningen",
   "0eceb5780908eb6c": "Läs upp",
   "3ee98da81538c6de": "Det gick inte att spela upp uppläsningen.",
-  "95435f0b59cb2193": "Ljudförhandsvisning"
+  "95435f0b59cb2193": "Ljudförhandsvisning",
+  "a4a17a76fdfdd63a": "Anslut till den här miljön för att markera en arbetande tråd som klar när den är färdig.",
+  "15b65e06186977de": "Uppdatera servern i den här miljön för att markera en arbetande tråd som klar när den är färdig.",
+  "53e5eaf0be838e68": "Avbryt markering som klar när färdig",
+  "d57765280bbd2dfc": "Markera som klar när färdig",
+  "f608874d2e4f182f": "Avbryt markering som klar när färdig",
+  "c271bd3ac5ac9ff3": "Markera som klar när färdig"
 }

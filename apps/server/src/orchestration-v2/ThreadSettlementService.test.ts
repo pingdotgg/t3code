@@ -2,6 +2,7 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import {
+  CommandId,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   GitManagerError,
@@ -485,6 +486,10 @@ describe("autoSettlementSettingsKey", () => {
 });
 
 type AutoSettleCommand = Extract<OrchestrationV2Command, { readonly type: "thread.auto-settle" }>;
+type PendingSettleCommand = Extract<
+  OrchestrationV2Command,
+  { readonly type: "thread.settle" | "thread.settle-when-done.set" }
+>;
 
 const testCrypto = SecureRandom.make((size) => new Uint8Array(size).fill(1));
 
@@ -609,6 +614,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const mergedPullRequests = yield* PubSub.unbounded<PullRequestService.PullRequestMergeEvent>();
   const pullRequestRefreshes = yield* PubSub.unbounded<number>();
   const commands = yield* Ref.make<ReadonlyArray<AutoSettleCommand>>([]);
+  const pendingCommands = yield* Ref.make<ReadonlyArray<PendingSettleCommand>>([]);
   const branchCalls = yield* Ref.make<
     ReadonlyArray<{ readonly cwd: string; readonly branch: string }>
   >([]);
@@ -664,6 +670,11 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     });
 
   const dispatch: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) => {
+    if (command.type === "thread.settle" || command.type === "thread.settle-when-done.set") {
+      return Ref.update(pendingCommands, (recorded) => [...recorded, command]).pipe(
+        Effect.as({ sequence: 1, storedEvents: [] }),
+      );
+    }
     if (command.type !== "thread.auto-settle") {
       return Effect.die(new Error(`Unexpected command: ${command.type}`));
     }
@@ -734,6 +745,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       },
     }),
     Layer.mock(Orchestrator.OrchestratorV2)({
+      getThreadEventSequence: () => Effect.succeed(1),
       streamDomainEvents: Stream.fromPubSub(domainEvents).pipe(
         Stream.tap((event) => Queue.offer(observedEvents, event.id)),
       ),
@@ -790,6 +802,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     snapshotReads,
     candidateReads,
     commands,
+    pendingCommands,
     branchCalls,
     summaryCalls,
     summaryRecovery,
@@ -2650,3 +2663,203 @@ describe("isSnoozed", () => {
     ).toBeNull();
   });
 });
+
+it.effect("settle when done isolates a failing thread from automatic settlement", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse(NOW));
+    const armed = makeThread("broken-explicit", {
+      status: "completed",
+      settleWhenDone: { runId: RunId.make("requested-run"), requestedAt: NOW },
+    });
+    const automatic = makeThread("automatic-after-broken", {
+      updatedAt: at(-10 * DAY_MS),
+      latestUserMessageAt: at(-10 * DAY_MS),
+      latestRunCompletedAt: at(-10 * DAY_MS),
+    });
+    const failedCandidates = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
+    const h = yield* makeHarness({
+      snapshot: makeSnapshot([armed, automatic]),
+      settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 1 },
+      hasActiveSubprocess: ({ threadId }) =>
+        threadId === armed.id
+          ? Ref.update(failedCandidates, (ids) => [...ids, armed.id]).pipe(
+              Effect.andThen(Effect.die(new Error("terminal read failed"))),
+            )
+          : Effect.succeed(false),
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+      yield* startHarness(service, h.activation, h.snapshotReads);
+      assert.deepEqual(yield* Ref.get(failedCandidates), [armed.id]);
+      assert.deepEqual(
+        (yield* Ref.get(h.commands)).map((command) => command.threadId),
+        [automatic.id],
+      );
+    }).pipe(Effect.provide(h.layer));
+  }),
+);
+
+it.effect.each([
+  { name: "completed response", status: "completed" as const, action: "thread.settle" },
+  { name: "running response", status: "running" as const, action: null },
+  { name: "held automatic followup", status: "queued" as const, action: "thread.settle" },
+  { name: "failed response", status: "failed" as const, action: "thread.settle" },
+  {
+    name: "failed response with terminal",
+    status: "failed" as const,
+    terminal: true,
+    action: "thread.settle",
+  },
+  {
+    name: "completed response with terminal",
+    status: "completed" as const,
+    terminal: true,
+    action: null,
+  },
+  {
+    name: "cancelled followup with terminal",
+    status: "cancelled" as const,
+    terminal: true,
+    action: "thread.settle",
+  },
+  {
+    name: "interrupted response",
+    status: "interrupted" as const,
+    action: "thread.settle",
+  },
+  {
+    name: "automatic followup",
+    status: "completed" as const,
+    newerRun: true,
+    action: "thread.settle",
+  },
+  {
+    name: "new input",
+    status: "completed" as const,
+    newInput: true,
+    action: "thread.settle-when-done.set",
+  },
+  {
+    name: "awaited background work",
+    status: "completed" as const,
+    awaited: true,
+    action: null,
+  },
+  {
+    name: "failed response with background work",
+    status: "failed" as const,
+    awaited: true,
+    action: "thread.settle",
+  },
+  { name: "guest message", status: "completed" as const, guest: true, action: null },
+  {
+    name: "existing pull request watch in the same millisecond",
+    status: "completed" as const,
+    watch: true,
+    action: "thread.settle",
+  },
+])("settle when done recovers $name without automatic settlement", (scenario) =>
+  Effect.gen(function* () {
+    const runId = RunId.make("requested-run");
+    const intent = { runId, requestedAt: NOW };
+    const thread = makeThread("explicit-pending", {
+      settledOverride: "active",
+      pinnedAt: DateTime.makeUnsafe(NOW),
+      autoSettleDisabledAt: DateTime.makeUnsafe(NOW),
+      status: scenario.status,
+      latestRunId: scenario.newerRun ? RunId.make("newer-run") : runId,
+      settleWhenDone: intent,
+      ...(scenario.newInput
+        ? { latestResumingMessageAt: DateTime.add(DateTime.makeUnsafe(NOW), { seconds: 1 }) }
+        : {}),
+      ...(scenario.awaited
+        ? {
+            pendingBackgroundTasks: [
+              { taskId: "awaited", kind: "command", description: "working", awaited: true },
+            ],
+          }
+        : {}),
+      ...(scenario.guest ? { pendingGuestMessageCount: 1 } : {}),
+      ...(scenario.watch
+        ? {
+            pullRequests: [
+              {
+                ...persistedLink("open", DateTime.makeUnsafe(NOW)),
+                watch: {
+                  startedAt: NOW,
+                  headSha: null,
+                  failedChecks: [],
+                  passed: false,
+                  passedChecks: [],
+                  remarksThrough: NOW,
+                  remarkIds: [],
+                  conflicting: false,
+                  wakes: 0,
+                },
+              },
+            ],
+          }
+        : {}),
+    });
+    const terminalActive = yield* Ref.make(scenario.terminal === true);
+    const h = yield* makeHarness({
+      snapshot: makeSnapshot([thread]),
+      hasActiveSubprocess: () => Ref.get(terminalActive),
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        sidebarAutoSettleAfterDays: null,
+        sidebarAutoSettleOnMerge: false,
+      },
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+      yield* startHarness(service, h.activation, h.snapshotReads);
+      const commands = yield* Ref.get(h.pendingCommands);
+      assert.equal(commands[0]?.type ?? null, scenario.action);
+      if (commands[0]?.type === "thread.settle") {
+        assert.deepEqual(commands[0].expectedSettleWhenDone, intent);
+        if (scenario.terminal) assert.isTrue(commands[0].hasActiveTerminal);
+      }
+      if (commands[0]?.type === "thread.settle-when-done.set") {
+        assert.isFalse(commands[0].enabled);
+        assert.deepEqual(commands[0].expected, intent);
+      }
+      assert.isEmpty(yield* Ref.get(h.commands));
+      assert.isEmpty(yield* Ref.get(h.branchCalls));
+      if (scenario.name === "completed response") {
+        yield* TestClock.adjust("1 minute");
+        yield* Queue.take(h.snapshotReads);
+        yield* service.drain;
+        const repeated = yield* Ref.get(h.pendingCommands);
+        assert.equal(repeated.length, 2);
+        assert.equal(repeated[0]?.commandId, repeated[1]?.commandId);
+        yield* Ref.set(
+          h.snapshots,
+          makeSnapshot([
+            {
+              ...thread,
+              settleWhenDone: { ...intent, requestId: CommandId.make("rearmed:same-tick") },
+            },
+          ]),
+        );
+        yield* TestClock.adjust("1 minute");
+        yield* Queue.take(h.snapshotReads);
+        yield* service.drain;
+        const rearmed = yield* Ref.get(h.pendingCommands);
+        assert.equal(rearmed.length, 3);
+        assert.notEqual(rearmed[1]?.commandId, rearmed[2]?.commandId);
+      }
+      if (scenario.name === "cancelled followup with terminal") {
+        yield* Ref.set(terminalActive, false);
+        yield* TestClock.adjust("1 minute");
+        yield* Queue.take(h.snapshotReads);
+        yield* service.drain;
+        const repeated = yield* Ref.get(h.pendingCommands);
+        assert.equal(repeated.length, 2);
+        assert.notEqual(repeated[0]?.commandId, repeated[1]?.commandId);
+        const ready = repeated[1];
+        assert.isTrue(ready?.type === "thread.settle" && ready.hasActiveTerminal === false);
+      }
+    }).pipe(Effect.provide(h.layer));
+  }),
+);

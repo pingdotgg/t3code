@@ -48,6 +48,7 @@ export function idleCompactionWindow(
 } | null {
   if (thread.deletedAt !== null || thread.archivedAt !== null) return null;
   if (thread.settledAt !== null || thread.settledOverride === "settled") return null;
+  if (thread.settleWhenDone != null) return null;
   if (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
     return null;
   if (!isListedThreadLineage(thread.lineage)) return null;

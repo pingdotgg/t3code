@@ -24,6 +24,7 @@ import {
   type ModelSelection,
   type OrchestrationV2Actor,
   type OrchestrationV2Command,
+  type OrchestrationV2DispatchCommandResult,
   type OrchestrationV2GetTurnItemResult,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ConversationMessage,
@@ -519,6 +520,14 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly runId: RunId;
   }) => Effect.Effect<void, ThreadManagementFailure>;
+  readonly setSettleWhenDone: (input: {
+    readonly threadId: ThreadId;
+    readonly commandId: CommandId;
+    readonly enabled: boolean;
+  }) => Effect.Effect<
+    OrchestrationV2DispatchCommandResult,
+    Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
+  >;
   readonly settleThread: (input: {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
@@ -1370,6 +1379,12 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const setSettleWhenDone: ThreadManagementServiceShape["setSettleWhenDone"] = Effect.fn(
+    "ThreadManagementService.setSettleWhenDone",
+  )(function* (input) {
+    return yield* dispatch({ type: "thread.settle-when-done.set", ...input });
+  });
+
   const settleThread: ThreadManagementServiceShape["settleThread"] = Effect.fn(
     "orchestrationV2.threadManagement.settleThread",
   )(function* (input) {
@@ -2009,6 +2024,7 @@ const make = Effect.gen(function* () {
     hasReceipt,
     waitForThread,
     settleAfterRun,
+    setSettleWhenDone,
     settleThread,
     interruptThread,
     stopDelegatedTasks,

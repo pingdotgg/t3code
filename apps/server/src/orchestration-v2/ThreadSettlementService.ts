@@ -373,6 +373,66 @@ export const make = Effect.gen(function* () {
     const automaticSettlementEnabled = autoSettlementConfigured(settings);
     const threads = yield* projections.getSettlementCandidates(threadId);
     if (threads.length === 0) return;
+    yield* Effect.forEach(
+      threads.filter((thread) => thread.settleWhenDone != null),
+      (thread) =>
+        Effect.gen(function* () {
+          const intent = thread.settleWhenDone!;
+          const requestedAt = DateTime.toEpochMillis(DateTime.makeUnsafe(intent.requestedAt));
+          const superseded =
+            thread.latestResumingMessageAt != null &&
+            DateTime.toEpochMillis(thread.latestResumingMessageAt) > requestedAt;
+          const uuid = yield* random.uuidV4();
+          if (superseded) {
+            yield* orchestrator.dispatch({
+              type: "thread.settle-when-done.set",
+              commandId: CommandId.make(`server:cancel-settle-when-done:${uuid}`),
+              threadId: thread.id,
+              enabled: false,
+              expected: intent,
+            });
+            return;
+          }
+          if (
+            !["queued", "completed", "failed", "interrupted", "cancelled", "rolled_back"].includes(
+              thread.status,
+            )
+          )
+            return;
+          if (
+            thread.status === "completed" &&
+            (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) ||
+              (thread.pendingGuestMessageCount ?? 0) > 0)
+          )
+            return;
+          const hasActiveTerminal = yield* terminals.hasActiveSubprocess({ threadId: thread.id });
+          if (thread.status === "completed" && hasActiveTerminal) return;
+          const sequence = yield* orchestrator.getThreadEventSequence(thread.id);
+          yield* orchestrator.dispatch({
+            type: "thread.settle",
+            commandId: CommandId.make(
+              `server:settle-when-done:${thread.id}:${intent.requestId ?? intent.requestedAt}:${sequence}:${hasActiveTerminal ? "terminal" : "ready"}`,
+            ),
+            threadId: thread.id,
+            expectedSettleWhenDone: intent,
+            hasActiveTerminal,
+          });
+        }).pipe(
+          Effect.catchTags({
+            OrchestratorDispatchError: () => Effect.void,
+            OrchestratorCommandPreviouslyRejectedError: () => Effect.void,
+          }),
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logWarning("requested thread settlement skipped", {
+                threadId: thread.id,
+                cause: Cause.pretty(cause),
+              }),
+          ),
+        ),
+      { concurrency: 4, discard: true },
+    );
     const projectShells = yield* projectStore.listShells();
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
@@ -382,6 +442,7 @@ export const make = Effect.gen(function* () {
     // Merge events resweep all candidates because unlinked threads settle through branch lookup.
     const candidates = threads.filter(
       (thread) =>
+        thread.settleWhenDone == null &&
         (automaticSettlementEnabled || isDelegatedAppThread(thread)) &&
         isAutoSettlementCandidate(thread, nowMs),
     );
@@ -863,6 +924,7 @@ export const make = Effect.gen(function* () {
       case "thread.archived":
       case "thread.deleted":
         return enqueueFullSweep();
+      case "thread.metadata-updated":
       case "thread.pull-request-link-updated":
       case "thread.pull-request-synced":
       case "thread.issue-synced":

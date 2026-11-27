@@ -333,6 +333,7 @@ export function threadListV2RowAccessibilityLabel(
     readonly providerNameLabel: string | null;
     readonly hasQueuedMessages: boolean;
     readonly regeneratingTitle: boolean;
+    readonly settleWhenDone?: boolean;
   },
   resolve: MessageResolver = m,
 ): string {
@@ -349,6 +350,7 @@ export function threadListV2RowAccessibilityLabel(
     input.providerNameLabel,
     input.hasQueuedMessages ? resolve(msg("messages queued to send")) : null,
     input.regeneratingTitle ? resolve(msg("regenerating title")) : null,
+    input.settleWhenDone ? resolve(msg("Settle when done")) : null,
   ]
     .filter((part) => part !== null)
     .join(", ");

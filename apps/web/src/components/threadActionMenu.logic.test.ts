@@ -27,6 +27,16 @@ const baseState: ThreadActionMenuState = {
 };
 
 describe("buildThreadActionMenuItems", () => {
+  it.each([false, true])("keeps cancellation under the triage permission (%s)", (canTriage) => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: false,
+      canTriage,
+      settleWhenDone: true,
+    });
+    expect(items.find((item) => item.id === "cancel-settle-when-done")?.disabled).toBe(!canTriage);
+  });
+
   it.each([false, true])(
     "disables both lifecycle directions without permission (reversed: %s)",
     (reversed) => {
@@ -70,8 +80,24 @@ describe("buildThreadActionMenuItems", () => {
     const items = buildThreadActionMenuItems({
       ...baseState,
       isRunning: true,
+      hasActiveResponse: true,
       canTurnIntoProject: true,
     });
+    expect(items.find((item) => item.id === "settle")?.disabled).toBe(true);
+    const enabled = buildThreadActionMenuItems({
+      ...baseState,
+      isRunning: true,
+      hasActiveResponse: true,
+      supports: { ...baseState.supports, settleWhenDone: true },
+    });
+    expect(enabled.find((item) => item.id === "settle")).toMatchObject({
+      label: "Settle when done",
+      disabled: false,
+    });
+    const pending = buildThreadActionMenuItems({ ...baseState, settleWhenDone: true });
+    expect(pending.find((item) => item.id === "cancel-settle-when-done")?.label).toBe(
+      "Cancel settle when done",
+    );
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });

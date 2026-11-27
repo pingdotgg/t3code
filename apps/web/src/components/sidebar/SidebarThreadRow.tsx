@@ -612,6 +612,7 @@ type SidebarThreadRowProps = {
   navigationParent?: string | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
+  settleWhenDoneSupported?: boolean;
   snoozeSupported: boolean;
   pinningSupported: boolean;
   isPinned: boolean;
@@ -650,6 +651,7 @@ type SidebarThreadRowProps = {
     source: ContextMenuSource,
   ) => void;
   onSettle: (threadRef: ScopedThreadRef) => void;
+  onCancelSettleWhenDone: (threadRef: ScopedThreadRef) => void;
   onActionSweepStart: (
     threadRef: ScopedThreadRef,
     action: SidebarSweepAction,
@@ -717,6 +719,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     onFileDropThreads,
     onRenameTitleChange,
     onSettle,
+    onCancelSettleWhenDone,
     onActionSweepStart,
     onSnooze,
     onStartRename,
@@ -976,12 +979,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const handleSettleClick = (event: ReactMouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    onSettle(threadRef);
+    if (thread.settleWhenDone != null) onCancelSettleWhenDone(threadRef);
+    else onSettle(threadRef);
   };
   const handleActionPointerDown = (event: ReactPointerEvent) => {
     if (!event.isPrimary || event.button !== 0) return;
     event.stopPropagation();
-    onActionSweepStart(threadRef, variantAction, event.nativeEvent);
+    if (thread.settleWhenDone == null || variantAction !== "settle")
+      onActionSweepStart(threadRef, variantAction, event.nativeEvent);
   };
   const handleUnsettleClick = (event: ReactMouseEvent) => {
     event.preventDefault();
@@ -1399,6 +1404,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             {title}
             {multiline ? titleLineIcons : null}
             {pinIndicator}
+            {thread.settleWhenDone != null ? (
+              <span role="img" aria-label={gt("Settle when done")}>
+                <ClockIcon className="size-3 shrink-0 text-secondary-label" />
+              </span>
+            ) : null}
             {multiline ? null : terminalStatusIcon}
             {multiline ? null : issueBadge}
             {isRegeneratingTitle ? (
@@ -1520,7 +1530,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     render={
                       <button
                         type="button"
-                        aria-label={gt("Settle thread")}
+                        aria-label={
+                          thread.settleWhenDone != null
+                            ? gt("Cancel settle when done")
+                            : thread.runtime?.activeRunId != null
+                              ? gt("Settle when done")
+                              : gt("Settle thread")
+                        }
+                        disabled={
+                          thread.runtime?.activeRunId != null && !props.settleWhenDoneSupported
+                        }
                         onClick={handleSettleClick}
                         onPointerDown={handleActionPointerDown}
                         className={cn(
@@ -1531,7 +1550,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     }
                     label={
                       <>
-                        <T>Settle thread</T>
+                        {thread.settleWhenDone != null ? (
+                          <T>Cancel settle when done</T>
+                        ) : thread.runtime?.activeRunId != null ? (
+                          <T>Settle when done</T>
+                        ) : (
+                          <T>Settle thread</T>
+                        )}
                       </>
                     }
                   >
@@ -1601,6 +1626,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
             {pinIndicator}
+            {thread.settleWhenDone != null ? (
+              <span role="img" aria-label={gt("Settle when done")}>
+                <ClockIcon className="size-3 text-secondary-label" />
+              </span>
+            ) : null}
             {props.projectDisplayName ? (
               <span
                 className={cn("min-w-0 flex-1 truncate font-normal text-secondary-label text-xs")}
@@ -1730,7 +1760,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         render={
                           <button
                             type="button"
-                            aria-label={gt("Settle thread")}
+                            aria-label={
+                              thread.settleWhenDone != null
+                                ? gt("Cancel settle when done")
+                                : thread.runtime?.activeRunId != null
+                                  ? gt("Settle when done")
+                                  : gt("Settle thread")
+                            }
+                            disabled={
+                              thread.runtime?.activeRunId != null && !props.settleWhenDoneSupported
+                            }
                             onClick={handleSettleClick}
                             onPointerDown={handleActionPointerDown}
                             className="-mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
@@ -1738,12 +1777,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         }
                         label={
                           <>
-                            <T>Settle thread</T>
+                            {thread.settleWhenDone != null ? (
+                              <T>Cancel settle when done</T>
+                            ) : thread.runtime?.activeRunId != null ? (
+                              <T>Settle when done</T>
+                            ) : (
+                              <T>Settle thread</T>
+                            )}
                           </>
                         }
                       >
                         <CheckIcon className="size-3.5" />
-                        <T>Settle</T>
+                        {thread.settleWhenDone != null ? <T>Cancel</T> : <T>Settle</T>}
                       </SharedTooltipTrigger>
                     ) : null}
                   </span>

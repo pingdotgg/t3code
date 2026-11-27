@@ -84,13 +84,15 @@ function applySettle(
   accepted: boolean,
 ): OrchestrationV2ThreadShell {
   return !accepted &&
-    (thread.pendingRuntimeRequest !== null ||
+    (thread.settleWhenDone != null ||
+      thread.pendingRuntimeRequest !== null ||
       ["preparing", "queued", "starting", "running", "waiting"].includes(thread.status))
     ? thread
     : {
         ...thread,
         pendingRuntimeRequest: null,
         settledOverride: "settled",
+        settleWhenDone: null,
         settledAt: thread.settledOverride === "settled" ? (thread.settledAt ?? now) : now,
         unsettledAt: null,
         activeOrderKey: null,
@@ -594,6 +596,34 @@ export function createThreadEnvironmentAtoms<R, E>(
         ),
       ),
   };
+  const settleManually = optimistic.wrap(
+    triage.queueWhenOffline(commands.settle, () => ({ type: "settle" as const })),
+    (thread, _input, now, accepted) => applySettle(thread, now, accepted),
+  );
+  const settleOrDefer = {
+    label: commands.settle.label,
+    run: (registry: AtomRegistry.AtomRegistry, target: Parameters<typeof settleManually.run>[1]) =>
+      Effect.suspend(() => {
+        const thread = registry
+          .get(snapshotAtom(target.environmentId))
+          ?.threads.find((thread) => thread.id === target.input.threadId);
+        if (thread?.settleWhenDone != null || thread?.activeRunId != null) {
+          return commands.settle
+            .run(registry, {
+              ...target,
+              input: {
+                ...target.input,
+                whenDone: true,
+                ...(thread.activeRunId == null ? {} : { runId: thread.activeRunId }),
+              },
+            })
+            .pipe(Effect.map((receipt) => ({ ...receipt, deferred: true })));
+        }
+        return settleManually
+          .run(registry, target)
+          .pipe(Effect.map((receipt) => ({ ...receipt, deferred: false })));
+      }),
+  };
   return {
     ...commands,
     regenerateTitle,
@@ -603,10 +633,24 @@ export function createThreadEnvironmentAtoms<R, E>(
     pendingThreadIdsAtom: optimistic.pendingThreadIdsAtom,
     pendingSyncAtom: triage.pendingSyncAtom,
     // Queued inside the optimistic update, so it stays shown until the queued entry replaces it.
-    settle: optimistic.wrap(
-      triage.queueWhenOffline(commands.settle, () => ({ type: "settle" as const })),
-      (thread, _input, now, accepted) => applySettle(thread, now, accepted),
-    ),
+    settle: settleOrDefer,
+    cancelSettleWhenDone: {
+      label: commands.settle.label,
+      run: (registry, target) =>
+        Effect.suspend(() => {
+          const snapshot = registry.get(snapshotAtom(target.environmentId));
+          const expected = snapshot?.threads.find(
+            (thread) => thread.id === target.input.threadId,
+          )?.settleWhenDone;
+          if (expected == null) {
+            return Effect.succeed({ sequence: snapshot?.snapshotSequence ?? 0 });
+          }
+          return commands.settle.run(registry, {
+            ...target,
+            input: { ...target.input, whenDone: false, expected },
+          });
+        }),
+    } satisfies typeof settleManually,
     unsettle: triage.cancelQueued(
       optimistic.wrap(commands.unsettle, (thread, input, now) => ({
         ...thread,
