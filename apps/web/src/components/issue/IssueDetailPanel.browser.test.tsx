@@ -181,10 +181,19 @@ describe("IssueDetailPanel", () => {
 
   it("finds a label when the search has surrounding spaces", async () => {
     setComments([]);
-    await using screen = await render(
+    await using _screen = await render(
       <IssueDetailPanel environmentId={"env-1" as never} reference={reference} />,
     );
-    await screen.getByRole("button", { name: "Change labels" }).click();
+    // The row's control stays visually hidden until the row is hovered.
+    await act(() =>
+      [...document.querySelectorAll<HTMLElement>("[role=combobox]")]
+        .find((element) =>
+          /^(Change|Add) labels$/.test(
+            element.textContent?.trim() ?? element.getAttribute("aria-label") ?? "",
+          ),
+        )
+        ?.click(),
+    );
     await userEvent.fill(page.getByRole("combobox", { name: "Search labels" }), " bug ");
 
     await expect.element(page.getByRole("option", { name: "bug" })).toBeInTheDocument();
@@ -193,10 +202,19 @@ describe("IssueDetailPanel", () => {
 
   it("finds an assignee when the search has surrounding spaces", async () => {
     setComments([]);
-    await using screen = await render(
+    await using _screen = await render(
       <IssueDetailPanel environmentId={"env-1" as never} reference={reference} />,
     );
-    await screen.getByRole("button", { name: "Change assignees" }).click();
+    // The row's control stays visually hidden until the row is hovered.
+    await act(() =>
+      [...document.querySelectorAll<HTMLElement>("[role=combobox]")]
+        .find((element) =>
+          /^(Change|Add) assignees$/.test(
+            element.textContent?.trim() ?? element.getAttribute("aria-label") ?? "",
+          ),
+        )
+        ?.click(),
+    );
     await userEvent.fill(page.getByRole("combobox", { name: "Search people" }), " alice ");
 
     await expect.element(page.getByRole("option", { name: "alice" })).toBeInTheDocument();

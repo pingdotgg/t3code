@@ -374,7 +374,7 @@ describe("ScheduledTasksSettings", () => {
     await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
     await page.getByRole("option", { name: /Plain model/ }).click();
     expect(page.getByRole("button", { name: "High", exact: true }).query()).toBeNull();
-    await page.getByRole("button", { name: "Save task" }).click();
+    await page.getByRole("button", { name: /^Save task/ }).click();
     await vi.waitFor(() =>
       expect(state.upsert).toHaveBeenLastCalledWith(expect.anything(), {
         environmentId,

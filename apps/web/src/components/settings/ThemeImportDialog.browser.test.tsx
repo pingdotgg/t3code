@@ -133,8 +133,13 @@ describe("ThemeImportDialog", () => {
     await userEvent.fill(page.getByRole("searchbox"), "night");
 
     // The download count is in the publisher's tooltip.
+    await userEvent.hover(page.getByRole("searchbox"));
     await userEvent.hover(page.getByText("acme", { exact: true }));
-    await expect.element(page.getByText(line)).toBeVisible();
+    await vi.waitFor(() =>
+      expect(document.querySelector("[data-slot=tooltip-popup]")?.textContent ?? "").toContain(
+        line,
+      ),
+    );
   });
 
   it("clears the search on Escape before closing the dialog", async () => {

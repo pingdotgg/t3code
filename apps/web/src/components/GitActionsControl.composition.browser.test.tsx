@@ -149,7 +149,8 @@ it("keeps edits to a retry selection when branch status arrives after the failur
   await using screen = await render(ui());
   const openCommit = async () => {
     await page.getByRole("button", { name: "Git action options" }).click();
-    await page.getByRole("menuitem", { name: "Commit", exact: true }).click();
+    // The menu item shows how many files it commits.
+    await page.getByRole("menuitem", { name: /^Commit\d/ }).click();
   };
   await openCommit();
   await page.getByRole("checkbox", { name: "Include later.txt", exact: true }).click();

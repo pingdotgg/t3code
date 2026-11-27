@@ -142,10 +142,10 @@ describe("AddProjectToMachineDialog", () => {
     await using screen = await render(<CloneDialogWithToasts />);
 
     await act(() => openAddProjectToMachine({ projectRef, targetEnvironmentId: null }));
-    const folder = screen.getByRole("textbox", { name: /^Folder on/ });
+    const folder = page.getByRole("textbox", { name: /^Folder on/ });
     await folder.fill("/checkout");
     await userEvent.keyboard("{Enter}");
-    await expect.element(screen.getByRole("button", { name: "Starting…" })).toBeDisabled();
+    await expect.element(page.getByRole("button", { name: "Starting…" })).toBeDisabled();
     const projectId = await requested.promise;
     snapshots.mockReturnValue([
       {
@@ -170,29 +170,29 @@ describe("AddProjectToMachineDialog", () => {
       project.set({ ...PROJECT, id: nextProjectRef.projectId, title: "Next repo" });
       openAddProjectToMachine({ projectRef: nextProjectRef, targetEnvironmentId: null });
     });
-    await expect.element(screen.getByText(/Clone Next repo/)).toBeVisible();
+    await expect.element(page.getByText(/Clone Next repo/)).toBeVisible();
     const progress = page.getByText("Cloning checkout", { exact: true });
     await expect.element(progress).not.toBeInTheDocument();
     reply.resolve(projectId);
     await expect.element(progress).toBeVisible();
-    await expect.element(screen.getByText(/Clone Next repo/)).toBeVisible();
+    await expect.element(page.getByText(/Clone Next repo/)).toBeVisible();
   });
 
   it("closes when its project goes away", async () => {
     project.setup(PROJECT);
-    await using screen = await render(<AddProjectToMachineDialogHost />);
+    await using _screen = await render(<AddProjectToMachineDialogHost />);
 
     await act(() => openAddProjectToMachine({ projectRef, targetEnvironmentId: null }));
-    await expect.element(screen.getByText("Add to another machine")).toBeInTheDocument();
+    await expect.element(page.getByText("Add to another machine")).toBeInTheDocument();
 
     await act(() => project.set(null));
     await act(() => project.set(PROJECT));
-    await expect.element(screen.getByText("Add to another machine")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Add to another machine")).not.toBeInTheDocument();
   });
 
   it("does not reopen for a project that vanished before the dialog showed", async () => {
     project.setup(PROJECT);
-    await using screen = await render(<AddProjectToMachineDialogHost />);
+    await using _screen = await render(<AddProjectToMachineDialogHost />);
 
     await act(() => {
       openAddProjectToMachine({ projectRef, targetEnvironmentId: null });
@@ -200,7 +200,7 @@ describe("AddProjectToMachineDialog", () => {
     });
     await act(() => project.set(PROJECT));
 
-    await expect.element(screen.getByText("Add to another machine")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Add to another machine")).not.toBeInTheDocument();
   });
 
   it("clears the ignored file search on Escape before closing", async () => {
@@ -209,16 +209,16 @@ describe("AddProjectToMachineDialog", () => {
       environmentId: searchableProjectRef.environmentId,
       id: searchableProjectRef.projectId,
     });
-    await using screen = await render(<AddProjectToMachineDialogHost />);
+    await using _screen = await render(<AddProjectToMachineDialogHost />);
 
     await act(() =>
       openAddProjectToMachine({ projectRef: searchableProjectRef, targetEnvironmentId: null }),
     );
-    const file = screen.getByRole("checkbox", { name: /\.env/ });
+    const file = page.getByRole("checkbox", { name: /\.env/ });
     await file.click();
     await expect.element(file).not.toBeChecked();
-    const dialog = screen.getByRole("dialog", { name: "Add to another machine" });
-    const search = screen.getByRole("searchbox", { name: "Search ignored files" });
+    const dialog = page.getByRole("dialog", { name: "Add to another machine" });
+    const search = page.getByRole("searchbox", { name: "Search ignored files" });
     await search.fill("env");
     for (const composition of [
       { key: "Escape", isComposing: true, keyCode: 27 },

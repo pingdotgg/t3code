@@ -352,9 +352,9 @@ it("fades a streaming reply's blocks in once, not again when it remounts", async
     await vi.waitFor(() => expect(isFading(first.getByText("Still growing").element())).toBe(true));
   }
   await using screen = await render(message);
-  await expect
-    .element(screen.getByText("Still growing"))
-    .toHaveStyle({ opacity: "1", transitionDuration: "0s" });
+  // The opacity transition stays on after streaming here; the remount must not start it.
+  await expect.element(screen.getByText("Still growing")).toHaveStyle({ opacity: "1" });
+  expect(isFading(screen.getByText("Still growing").element())).toBe(false);
   expect(parsedSources.filter((source) => source.includes("Finished block"))).toHaveLength(1);
 });
 

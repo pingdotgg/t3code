@@ -18,6 +18,17 @@ vi.mock(import("@tanstack/react-router"), async (original) => ({
   ...(await original()),
   useNavigate: (() => state.navigate) as never,
   useSearch: (() => selectedIssue) as never,
+  // The page reads its search from the layout location, which falls back to the router's.
+  useLocation: ((options?: { select?: (location: unknown) => unknown }) => {
+    const location = {
+      href: "/issues",
+      pathname: "/issues",
+      hash: "",
+      search: selectedIssue,
+      state: {},
+    };
+    return options?.select ? options.select(location) : location;
+  }) as never,
 }));
 vi.mock(import("~/state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
@@ -85,6 +96,8 @@ describe("IssuesPage shortcuts", () => {
 
     expect(panelSurfaces()).toEqual([]);
     expect(state.navigate).toHaveBeenCalledOnce();
-    expect(state.navigate).toHaveBeenCalledWith({ search: { who: "all", status: "open" } });
+    expect(state.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({ search: { who: "all", status: "open" } }),
+    );
   });
 });
