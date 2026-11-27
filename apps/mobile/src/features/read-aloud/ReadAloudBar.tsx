@@ -13,7 +13,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { CompactVoiceWaveform } from "../voice-input/ComposerDictationControl";
+import { VoiceWaveform } from "../voice-input/ComposerDictationControl";
 import { VOICE_WAVEFORM_SAMPLE_COUNT } from "../voice-input/voiceInputMetering";
 import { alertReadAloudError } from "./ReadAloudButton";
 import { readAloudController } from "./playback";
@@ -91,27 +91,6 @@ function ReadAloudBarControls(props: {
         accessibilityLabel={gt("Read aloud")}
         className="h-11 flex-row items-center"
       >
-        <View className="h-11 w-11 items-center justify-center">
-          <CompactVoiceWaveform audioLevels={status === "playing" ? levels : silent} />
-        </View>
-        <Menu
-          accessible
-          accessibilityRole="button"
-          accessibilityLabel={gt("Playback speed: {speed}×", { speed: settings.speed })}
-          title={gt("Playback speed")}
-          actions={SPEEDS.map((speed) => ({
-            id: String(speed),
-            title: gt("{speed}×", { speed }),
-            state: speed === settings.speed ? ("on" as const) : ("off" as const),
-          }))}
-          onPressAction={({ nativeEvent }) => changeSpeed(Number(nativeEvent.event))}
-        >
-          <View className="h-11 min-w-11 items-center justify-center px-2">
-            <Text className="font-t3-medium text-sm tabular-nums text-foreground">
-              {speedLabel}
-            </Text>
-          </View>
-        </Menu>
         {status === "loading" ? (
           <View
             accessible
@@ -131,13 +110,13 @@ function ReadAloudBarControls(props: {
             }}
           />
         )}
-        <BarButton label={gt("Stop reading")} icon="stop.fill" onPress={readAloudController.stop} />
-        <View className="min-w-0 flex-1 flex-row justify-end">
+        {/* What it is doing; the way back to the word read takes its place once scrolled away. */}
+        <View className="min-w-0 flex-1 flex-row items-center">
           {away?.id === id ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={gt("Jump to current")}
-              className="h-11 min-w-0 shrink flex-row items-center gap-1 pl-2 pr-4 active:opacity-70"
+              className="h-11 min-w-0 shrink flex-row items-center gap-1 active:opacity-70"
               onPress={scrollToReadAloud}
             >
               <SymbolView
@@ -147,14 +126,54 @@ function ReadAloudBarControls(props: {
                 type="monochrome"
               />
               <Text
-                className="min-w-0 shrink font-t3-medium text-xs text-foreground"
+                className="min-w-0 shrink font-t3-medium text-sm text-foreground"
                 numberOfLines={1}
               >
                 {gt("Jump to current")}
               </Text>
             </Pressable>
-          ) : null}
+          ) : (
+            <Text
+              className="min-w-0 shrink font-t3-medium text-sm text-foreground"
+              numberOfLines={1}
+            >
+              {status === "loading"
+                ? gt("Preparing to read")
+                : status === "paused"
+                  ? gt("Paused")
+                  : gt("Reading aloud")}
+            </Text>
+          )}
         </View>
+        <View className="h-11 w-20 flex-row items-center">
+          <VoiceWaveform audioLevels={status === "playing" ? levels : silent} />
+        </View>
+        <Menu
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel={gt("Playback speed: {speed}×", { speed: settings.speed })}
+          title={gt("Playback speed")}
+          actions={SPEEDS.map((speed) => ({
+            id: String(speed),
+            title: gt("{speed}×", { speed }),
+            state: speed === settings.speed ? ("on" as const) : ("off" as const),
+          }))}
+          onPressAction={({ nativeEvent }) => changeSpeed(Number(nativeEvent.event))}
+        >
+          {/* As wide as the widest speed, so picking one never moves the waveform. */}
+          <View className="h-11 w-17 flex-row items-center justify-end gap-1">
+            <Text className="font-t3-medium text-sm tabular-nums text-foreground-secondary">
+              {speedLabel}
+            </Text>
+            <SymbolView
+              name="chevron.down"
+              size={10}
+              tintColorClassName="accent-icon-muted"
+              type="monochrome"
+            />
+          </View>
+        </Menu>
+        <BarButton label={gt("Stop reading")} icon="stop.fill" onPress={readAloudController.stop} />
       </View>
     </ComposerSurface>
   );
@@ -172,7 +191,12 @@ function BarButton(props: {
       className="h-11 w-11 items-center justify-center active:opacity-70"
       onPress={props.onPress}
     >
-      <SymbolView name={props.icon} size={16} tintColorClassName="accent-icon" type="monochrome" />
+      <SymbolView
+        name={props.icon}
+        size={13}
+        tintColorClassName="accent-foreground-secondary"
+        type="monochrome"
+      />
     </Pressable>
   );
 }
