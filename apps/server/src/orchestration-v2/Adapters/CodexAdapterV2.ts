@@ -9618,10 +9618,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         threadId,
                         threadInput.providerThreadTurns
                           .filter(isTerminalProviderTurn)
-                          .flatMap((turn) => {
-                            const nativeId = turn.nativeTurnRef?.nativeId;
-                            return nativeId == null ? [] : [nativeId];
-                          }),
+                          .flatMap((turn) => turn.nativeTurnRef?.nativeId ?? []),
                       )
                     : keptNativeTurnId === null
                       ? revertCodexThread(client, threadId, numTurns)
