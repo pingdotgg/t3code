@@ -1035,7 +1035,6 @@ function EditableFileSurface({
     const entry = lineAnnotations
       .flatMap((annotation) => annotation.metadata.entries)
       .find((candidate) => candidate.id === entryId);
-    // oxlint-disable-next-line react/purity -- Submission timestamps are read in this event handler (oxc#27309).
     const createdAt = new Date().toISOString();
     if (entry) {
       addReviewComment(composerDraftTarget, {
