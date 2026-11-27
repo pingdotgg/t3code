@@ -443,6 +443,7 @@ export const get: {
           return oentry.value.await(fiber)
         }
       }
+      const clock = fiber.getRef(effect.ClockRef)
       const entry = new EntryImpl(fiber, self.lookup(key))
       entry.onInterrupt = () => removeEntry(self, key, entry)
       let skipCache = false
@@ -458,7 +459,7 @@ export const get: {
           skipCache = true
           removeEntry(self, key, entry)
         } else if (Duration.isFinite(ttl)) {
-          entry.expiresAt = fiber.getRef(effect.ClockRef).currentTimeMillisUnsafe() + Duration.toMillis(ttl)
+          entry.expiresAt = clock.currentTimeMillisUnsafe() + Duration.toMillis(ttl)
         }
       })
       const exit = entry.fiber.pollUnsafe()
@@ -1200,6 +1201,7 @@ export const refresh: {
   2,
   <Key, A, E, R>(self: Cache<Key, A, E, R>, key: Key): Effect.Effect<A, E, R> =>
     core.withFiber((fiber) => {
+      const clock = fiber.getRef(effect.ClockRef)
       const entry = new EntryImpl(fiber, self.lookup(key))
       entry.onInterrupt = () => removeEntry(self, key, entry)
       const existing = getImpl(self, key, fiber, false) !== undefined
@@ -1221,7 +1223,7 @@ export const refresh: {
           return effect.void
         }
         entry.expiresAt = Duration.isFinite(ttl)
-          ? fiber.getRef(effect.ClockRef).currentTimeMillisUnsafe() + Duration.toMillis(ttl)
+          ? clock.currentTimeMillisUnsafe() + Duration.toMillis(ttl)
           : undefined
         if (existing) {
           MutableHashMap.set(self.map, key, entry)

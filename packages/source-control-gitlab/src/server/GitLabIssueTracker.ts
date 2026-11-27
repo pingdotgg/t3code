@@ -10,11 +10,11 @@ import {
   IssueTrackerKind,
   type IssueCapabilities,
   type IssueEvent,
-  type IssueInvolvement,
   type IssueViewerPermissions,
 } from "@t3tools/contracts";
 import {
   IssueTrackerError,
+  type IssueInvolvementFilter,
   type IssueTrackerApi,
 } from "@t3tools/source-control-core/server/IssueTracker";
 
@@ -22,9 +22,10 @@ import * as GitLabCli from "./GitLabCli.ts";
 import {
   decodeCreatedIssueJson,
   decodeUserIdsJson,
-  decodeIssueDetailJson,
+  decodeIssueDetailListJson,
   decodeIssueListJson,
   decodeIssueNotesJson,
+  withMentionReference,
   decodeLabelEventsJson,
   decodeLinkedMergeRequestsJson,
   decodeProjectLabelsJson,
@@ -137,11 +138,9 @@ function query(params: ReadonlyArray<readonly [string, string]>): string {
   return params.map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("&");
 }
 
-function involvementParams(input: {
-  readonly involvement: IssueInvolvement;
-  readonly viewer: string;
-  readonly assignee?: string | undefined;
-}): ReadonlyArray<readonly [string, string]> {
+function involvementParams(
+  input: IssueInvolvementFilter & { readonly assignee?: string | undefined },
+): ReadonlyArray<readonly [string, string]> {
   switch (input.involvement) {
     case "authored":
       return [["author_username", input.viewer]];
@@ -404,7 +403,13 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
           },
         },
         decode: decodeAwardEmojiJson,
-      });
+      }).pipe(
+        // GitLab before 16.1 has no `Note.awardEmoji`; comments then load without reactions.
+        Effect.catchIf(
+          (error) => error.reason === "failed",
+          () => Effect.succeed(null),
+        ),
+      );
 
     const linked = (input: {
       readonly cwd: string;
@@ -466,6 +471,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
               : [["assignee_username", input.assignee] as const]),
             ["order_by", input.sort === "created" ? "created_at" : "updated_at"],
             ["sort", "desc"],
+            ["with_labels_details", "true"],
             ["per_page", String(perPage)],
             ["page", String(page)],
           ])}`,
@@ -492,9 +498,18 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                   cwd: input.cwd,
                   host: input.host,
                   operation: "getIssue",
-                  path,
-                  decode: decodeIssueDetailJson,
-                }),
+                  path: `projects/${projectPath(input.scope)}/issues?${query([
+                    ["iids[]", String(number)],
+                    ["with_labels_details", "true"],
+                    ["per_page", "1"],
+                  ])}`,
+                  decode: decodeIssueDetailListJson,
+                }).pipe(
+                  Effect.filterOrFail(
+                    (issue) => issue !== null,
+                    () => notFound("getIssue"),
+                  ),
+                ),
                 viewer({ cwd: input.cwd, host: input.host, operation: "getIssue" }),
                 notesPage({
                   cwd: input.cwd,
@@ -559,12 +574,15 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                 reactions: awardReactions(issueAwards, viewerLogin),
                 comments: notes.comments.map((comment) => ({
                   ...comment,
-                  reactions: awardPage.reactionsByNoteId.get(comment.id) ?? [],
+                  reactions: awardPage?.reactionsByNoteId.get(comment.id) ?? [],
                 })),
-                commentsCursor: commentsCursor(notes.nextCursor, awardPage.nextCursor),
-                events: [...systemEvents, ...labelEvents].sort((left, right) =>
-                  left.createdAt.localeCompare(right.createdAt),
-                ),
+                commentsCursor: commentsCursor(notes.nextCursor, awardPage?.nextCursor ?? null),
+                events: [
+                  ...systemEvents.map((event) =>
+                    withMentionReference(event, issue.url, input.scope),
+                  ),
+                  ...labelEvents,
+                ].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
                 // A merge request that closes the issue outranks its sighting as a mere mention.
                 linkedPullRequests: [
                   ...closing,

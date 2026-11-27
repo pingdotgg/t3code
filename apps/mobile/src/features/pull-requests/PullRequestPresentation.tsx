@@ -67,7 +67,7 @@ export function PullRequestAvatar(props: {
       style={{ width: size, height: size }}
     >
       <Text className="font-t3-medium text-foreground-muted" style={{ fontSize: size * 0.45 }}>
-        {displayLabel?.slice(0, 1).toUpperCase() ?? "?"}
+        {displayLabel === undefined ? "?" : [...displayLabel][0]?.toUpperCase()}
       </Text>
     </View>
   );

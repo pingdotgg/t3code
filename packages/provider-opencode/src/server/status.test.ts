@@ -10,6 +10,8 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
@@ -20,11 +22,13 @@ import { buildProviderOptionSelectionsFromDescriptors } from "@t3tools/shared/mo
 import { settingsSecretLiteral } from "@t3tools/contracts";
 
 import { OpenCodeSettings } from "../settings.ts";
+import type { ProviderCompatibilityLookup } from "@t3tools/provider-core/server/compatibility";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import {
   checkOpenCodeProviderStatus,
   loadOpenCode2Workspace,
+  makeOpenCode2CatalogWatch,
   makeOpenCode2ModelLoader,
   type OpenCode2Model,
   type OpenCode2Workspace,
@@ -36,6 +40,7 @@ import {
   OPENCODE_2_RESPONSES,
   replayOpenCodeServer,
 } from "./probeResponses.fixture.ts";
+import { DEFAULT_VARIANT_CHOICE_ID } from "@t3tools/shared/model";
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
@@ -507,6 +512,7 @@ const checkProvider = Effect.fn("checkProvider")(function* (
     ReadonlyArray<OpenCode2Model>,
     OpenCodeRuntime.OpenCodeRuntimeError
   > = Effect.succeed([]),
+  compatibility?: ProviderCompatibilityLookup,
 ) {
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -520,9 +526,14 @@ const checkProvider = Effect.fn("checkProvider")(function* (
         Effect.provideService(HttpClient.HttpClient, server),
         Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
       );
-      return yield* checkOpenCodeProviderStatus(settings, cwd, probe, openCode2Models).pipe(
-        Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
-      );
+      return yield* checkOpenCodeProviderStatus(
+        settings,
+        cwd,
+        probe,
+        openCode2Models,
+        environment,
+        compatibility,
+      ).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner));
     }),
   );
 });
@@ -676,6 +687,10 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         variantDescriptor.options.find((option) => option.isDefault === true)?.id,
         "medium",
       );
+      NodeAssert.equal(
+        variantDescriptor.options.find((option) => option.id === "xhigh")?.label,
+        "Extra High",
+      );
       const agentDescriptor = model.capabilities?.optionDescriptors?.find(
         (descriptor) => descriptor.id === "agent" && descriptor.type === "select",
       );
@@ -685,6 +700,68 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         "build",
       );
     }),
+  );
+
+  it.effect.each(["1.x", "2.x"] as const)(
+    "offers a Default reasoning choice for a %s custom model with no inferable default",
+    (generation) =>
+      Effect.gen(function* () {
+        const variants = ["low", "medium", "high"];
+        runtimeMock.state.versionStdout =
+          generation === "2.x" ? "opencode v2.0.18\n" : DEFAULT_VERSION_STDOUT;
+        runtimeMock.state.inventory = {
+          providerList: {
+            connected: ["acme"],
+            all: [
+              {
+                id: "acme",
+                name: "Acme",
+                models: {
+                  "acme-chat": {
+                    id: "acme-chat",
+                    name: "Acme Chat",
+                    variants: Object.fromEntries(variants.map((id) => [id, {}])),
+                  },
+                },
+              },
+            ],
+            default: {},
+          },
+          agents: [],
+        };
+
+        const snapshot = yield* checkProvider(
+          makeOpenCodeSettings(),
+          process.cwd(),
+          undefined,
+          undefined,
+          Effect.succeed([
+            {
+              providerID: "acme",
+              id: "acme-chat",
+              name: "Acme Chat",
+              variants: variants.map((id) => ({ id })),
+            },
+          ]),
+        );
+        const variant = snapshot.models
+          .find((model) => model.slug === "acme/acme-chat")
+          ?.capabilities?.optionDescriptors?.find((descriptor) => descriptor.id === "variant");
+
+        NodeAssert.ok(variant?.type === "select");
+        NodeAssert.deepEqual(
+          variant.options.find((option) => option.id === DEFAULT_VARIANT_CHOICE_ID),
+          { id: DEFAULT_VARIANT_CHOICE_ID, label: "Default" },
+          "OpenCode cannot infer a default variant, so the picker needs a choice that sends none",
+        );
+        NodeAssert.equal(variant.currentValue, DEFAULT_VARIANT_CHOICE_ID);
+        NodeAssert.deepEqual(
+          variant.options
+            .map((option) => option.id)
+            .filter((id) => id !== DEFAULT_VARIANT_CHOICE_ID),
+          variants,
+        );
+      }),
   );
 
   it.effect("keeps Agent without inventing Reasoning for models with no variants", () =>
@@ -846,7 +923,7 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
             providerID: "opencode",
             id: "space-bunny-free",
             name: "Space Bunny Free",
-            variants: [{ id: "low" }, { id: "medium" }, { id: "high" }],
+            variants: [{ id: "low" }, { id: "medium" }, { id: "high" }, { id: "xhigh" }],
           },
           {
             providerID: "opencode-go",
@@ -879,7 +956,13 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         ?.capabilities?.optionDescriptors?.[0];
       NodeAssert.deepEqual(
         variant?.type === "select" ? variant.options.map((option) => option.id) : [],
-        ["low", "medium", "high"],
+        ["low", "medium", "high", "xhigh"],
+      );
+      NodeAssert.equal(
+        variant?.type === "select"
+          ? variant.options.find((option) => option.id === "xhigh")?.label
+          : undefined,
+        "Extra High",
       );
       const goVariant = snapshot.models.find(
         (model) => model.slug === "opencode-go/deepseek-v4.1-flash",
@@ -907,6 +990,13 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         ["opencode", "flash-free", "flash", "2026-09-10", "active"],
         ["opencode", "big-pickle", undefined, "2025-10-17", "active"],
         ["openrouter", "opus-4-5", "claude-opus", "2025-11-24", "active"],
+        ["opencode", "gemini-4-argon", "gemini", "2026-10-13", "active", [2, 10]],
+        ["opencode", "gemini-4-carbon", "gemini", "2026-11-10", "active", [2, 10]],
+        ["opencode", "gemini-4-hydrogen", "gemini", "2026-11-12", "active", [1.5, 7.5]],
+        ["opencode", "muse-wonder-1.0", "muse", "2026-10-12", "active", [4, 20]],
+        ["opencode", "muse-ember-1.0", "muse", "2026-11-09", "active", [0.1, 0.5]],
+        ["opencode", "llama-3.1-8b", "llama", "2026-07-23", "active", [0.05, 0.08]],
+        ["opencode", "llama-3.3-70b", "llama", "2026-12-06", "active", [0.6, 0.8]],
       ] as const;
       const legacySlugs = (
         models: ReadonlyArray<{ readonly slug: string; readonly isLegacy?: boolean | undefined }>,
@@ -915,7 +1005,9 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
           .filter((model) => model.isLegacy)
           .map((model) => model.slug)
           .toSorted();
-      const expected = ["opencode/opus-4-5", "opencode/opus-preview"];
+      // One OpenCode `family` can hold several model sizes: Carbon replaces Argon at its price,
+      // while Hydrogen, Wonder, Ember and the 8b and 70b Llamas are other sizes.
+      const expected = ["opencode/gemini-4-argon", "opencode/opus-4-5", "opencode/opus-preview"];
 
       runtimeMock.state.inventory = {
         providerList: {
@@ -926,9 +1018,17 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
             models: Object.fromEntries(
               releases
                 .filter(([provider]) => provider === providerID)
-                .map(([, id, family, releaseDate, status]) => [
+                .map(([, id, family, releaseDate, status, cost]) => [
                   id,
-                  { id, name: id, family, release_date: releaseDate, status, variants: {} },
+                  {
+                    id,
+                    name: id,
+                    family,
+                    release_date: releaseDate,
+                    status,
+                    variants: {},
+                    ...(cost ? { cost: { input: cost[0], output: cost[1] } } : {}),
+                  },
                 ]),
             ),
           })),
@@ -948,7 +1048,7 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         undefined,
         undefined,
         Effect.succeed(
-          releases.map(([providerID, id, family, releaseDate, status]) => ({
+          releases.map(([providerID, id, family, releaseDate, status, cost]) => ({
             providerID,
             id,
             name: id,
@@ -956,6 +1056,7 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
             family,
             released: Date.parse(releaseDate),
             deprecated: status === "deprecated",
+            ...(cost ? { price: `${cost[0]}/${cost[1]}` } : {}),
           })),
         ),
       );
@@ -1093,18 +1194,39 @@ it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (i
     }),
   );
 
-  it.effect("rejects an unsupported server before loading inventory", () =>
+  it.effect("reports a version the policy rates broken before loading inventory", () =>
     Effect.gen(function* () {
-      runtimeMock.state.connectionError = new Error(
-        "OpenCode v1.14.18 is too old. Upgrade to v1.14.19 or newer.",
+      const snapshot = yield* checkProvider(
+        makeOpenCodeSettings(),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        () =>
+          Effect.succeed({
+            status: "broken",
+            message: null,
+            recommendedVersion: null,
+            recommendedRange: ">=2.0.18",
+          }),
       );
+
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.match(snapshot.message ?? "", /OpenCode 1\.14\.19 does not work/);
+      NodeAssert.equal(runtimeMock.state.sdkClientInputs.length, 0);
+    }),
+  );
+
+  it.effect("reports a failed server connection before loading inventory", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.connectionError = new Error("OpenCode server refused the connection.");
       const snapshot = yield* checkProvider(
         makeOpenCodeSettings({ serverUrl: "http://127.0.0.1:9999" }),
       );
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.models.length, 0);
-      NodeAssert.match(snapshot.message ?? "", /v1\.14\.18 is too old/);
+      NodeAssert.match(snapshot.message ?? "", /refused the connection/);
       NodeAssert.equal(runtimeMock.state.sdkClientInputs.length, 0);
     }),
   );
@@ -1132,15 +1254,18 @@ const scanned: OpenCode2Workspace = {
 };
 
 it.effect(
-  "reads a loaded OpenCode 2 directory listing no commands again once its scan has ended",
+  "waits for the scan of an OpenCode 2 directory that lists built-ins before T3 saw its scan end",
   () =>
     Effect.gen(function* () {
-      const reads: Array<OpenCode2Workspace> = [{ commands: [], skills: [] }, scanned];
+      const reads: Array<OpenCode2Workspace> = [
+        { commands: builtinCommands, skills: builtinSkills },
+        scanned,
+      ];
       const scanEnded = yield* Deferred.make<void>();
       const load = yield* loadOpenCode2Workspace(
         Effect.sync(() => reads.shift()!),
         Deferred.await(scanEnded),
-        Effect.succeed(true),
+        false,
       ).pipe(Effect.forkChild);
       yield* Effect.yieldNow;
       NodeAssert.equal(reads.length, 1);
@@ -1149,30 +1274,13 @@ it.effect(
     }),
 );
 
-it.effect("waits for the scan of a cold OpenCode 2 directory that first lists only built-ins", () =>
-  Effect.gen(function* () {
-    const calls: Array<string> = [];
-    const reads: Array<OpenCode2Workspace> = [
-      { commands: builtinCommands, skills: builtinSkills },
-      scanned,
-    ];
-    const workspace = yield* loadOpenCode2Workspace(
-      Effect.sync(() => (calls.push("read"), reads.shift()!)),
-      Effect.sync(() => void calls.push("scanned")),
-      Effect.sync(() => (calls.push("loaded"), false)),
-    );
-    NodeAssert.deepEqual(workspace, scanned);
-    NodeAssert.deepEqual(calls, ["loaded", "read", "scanned", "read"]);
-  }),
-);
-
-it.effect("reads an already loaded OpenCode 2 directory once without waiting for a scan", () =>
+it.effect("reads an OpenCode 2 directory whose scan T3 saw end once without waiting", () =>
   Effect.gen(function* () {
     const calls: Array<string> = [];
     const workspace = yield* loadOpenCode2Workspace(
       Effect.sync(() => (calls.push("read"), scanned)),
       Effect.sync(() => void calls.push("scanned")),
-      Effect.succeed(true),
+      true,
     );
     NodeAssert.deepEqual(workspace, scanned);
     NodeAssert.deepEqual(calls, ["read"]);
@@ -1193,5 +1301,163 @@ it.effect("lists a catalog whose cold server start outlasts the settle budget", 
     const fiber = yield* Effect.forkChild(load);
     yield* TestClock.adjust("10 seconds");
     NodeAssert.deepEqual(yield* Fiber.join(fiber), catalog);
+  }),
+);
+
+const model = (id: string): OpenCode2Model => ({
+  providerID: "github-copilot",
+  id,
+  name: id,
+  variants: [],
+});
+
+it.effect("publishes the catalog OpenCode lists after its startup snapshot had settled", () =>
+  Effect.gen(function* () {
+    const startup = [model("startup-only")];
+    const live = [model("live-only")];
+    let listed = startup;
+    const read = Effect.sync(() => listed);
+    const events = yield* Queue.unbounded<{ readonly type: string }>();
+    const watch = yield* makeOpenCode2CatalogWatch();
+    const seen: Array<ReadonlyArray<OpenCode2Model> | undefined> = [];
+    yield* Stream.runForEach(watch.changes, (catalog) =>
+      Effect.sync(() => seen.push(catalog)),
+    ).pipe(Effect.forkScoped);
+    const load = yield* makeOpenCode2ModelLoader(
+      watch
+        .follow("server", Effect.succeed(Stream.fromQueue(events)), read)
+        .pipe(Effect.andThen(read)),
+    );
+    const check = yield* Effect.forkChild(load);
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(yield* Fiber.join(check), startup);
+
+    // Discovery ends long after two reads agreed, and only the event says so.
+    yield* TestClock.adjust("6 seconds");
+    listed = live;
+    yield* Queue.offer(events, { type: "session.updated" });
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(seen.at(-1), startup);
+    yield* Queue.offer(events, { type: "model.updated" });
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(seen.at(-1), live);
+  }),
+);
+
+it.effect("lists a newly followed server's catalog once its startup snapshot has passed", () =>
+  Effect.gen(function* () {
+    const startup = [model("startup-only")];
+    const live = [model("live-only")];
+    const listings = [[], [], startup];
+    const read = Effect.sync(() => listings.shift() ?? live);
+    const watch = yield* makeOpenCode2CatalogWatch();
+    const seen: Array<ReadonlyArray<OpenCode2Model> | undefined> = [];
+    yield* Stream.runForEach(watch.changes, (catalog) =>
+      Effect.sync(() => seen.push(catalog)),
+    ).pipe(Effect.forkScoped);
+
+    yield* watch.follow("server", Effect.succeed(Stream.never), read);
+    yield* TestClock.adjust("3 seconds");
+    NodeAssert.deepEqual(seen, [undefined, live]);
+  }),
+);
+
+it.effect("keeps the last listed catalog once its server has stopped", () =>
+  Effect.gen(function* () {
+    const live = [model("live-only")];
+    let running = true;
+    const read = Effect.suspend(() =>
+      running
+        ? Effect.succeed(live)
+        : Effect.fail(
+            new OpenCodeRuntime.OpenCodeRuntimeError({
+              operation: "model.list",
+              detail: "stopped",
+            }),
+          ),
+    );
+    const events = yield* Queue.unbounded<{ readonly type: string }, "closed">();
+    const watch = yield* makeOpenCode2CatalogWatch();
+    const seen: Array<ReadonlyArray<OpenCode2Model> | undefined> = [];
+    yield* Stream.runForEach(watch.changes, (catalog) =>
+      Effect.sync(() => seen.push(catalog)),
+    ).pipe(Effect.forkScoped);
+    const follow = watch.follow("server", Effect.succeed(Stream.fromQueue(events)), read);
+    yield* follow;
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(seen.at(-1), live);
+
+    running = false;
+    yield* Queue.offer(events, { type: "model.updated" });
+    yield* Queue.fail(events, "closed");
+    yield* TestClock.adjust("10 seconds");
+    NodeAssert.deepEqual(seen.at(-1), live);
+
+    // The next check's read follows the restarted server instead of the ended stream.
+    running = true;
+    const restarted = yield* Queue.unbounded<{ readonly type: string }>();
+    const next = [model("after-restart")];
+    yield* watch.follow(
+      "server",
+      Effect.succeed(Stream.fromQueue(restarted)),
+      Effect.succeed(next),
+    );
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(seen.at(-1), next);
+  }),
+);
+
+it.effect("rescans a directory whose catalog changes after its scan settled", () =>
+  Effect.gen(function* () {
+    const startup = [model("startup-only")];
+    const live = [model("live-only")];
+    let listed = startup;
+    const read = Effect.sync(() => listed);
+    const events = yield* Queue.unbounded<{ readonly type: string }>();
+    const watch = yield* makeOpenCode2CatalogWatch();
+    const rescans: Array<string> = [];
+    yield* Stream.runForEach(watch.rescans, (cwd) => Effect.sync(() => rescans.push(cwd))).pipe(
+      Effect.forkScoped,
+    );
+    const subscribe = Effect.succeed(Stream.fromQueue(events));
+    yield* watch.follow("server", subscribe, read, { cwd: "/project", settled: startup });
+    // A scan that never settled keeps what the watch last read, so it cannot rescan forever.
+    yield* watch.follow("server", subscribe, read, { cwd: "/unsettled" });
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(rescans, ["/unsettled"]);
+    yield* watch.follow("server", subscribe, read, { cwd: "/unsettled" });
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(rescans, ["/unsettled"]);
+
+    listed = live;
+    yield* Queue.offer(events, { type: "model.updated" });
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(rescans, ["/unsettled", "/project", "/unsettled"]);
+
+    // The rescan settles on the live catalog, and its own follow asks for nothing more.
+    yield* watch.follow("server", subscribe, read, { cwd: "/project", settled: live });
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(rescans, ["/unsettled", "/project", "/unsettled"]);
+  }),
+);
+
+it.effect("reads later changes after a catalog read that never answered", () =>
+  Effect.gen(function* () {
+    const live = [model("live-only")];
+    let answering = false;
+    const read = Effect.suspend(() => (answering ? Effect.succeed(live) : Effect.never));
+    const events = yield* Queue.unbounded<{ readonly type: string }>();
+    const watch = yield* makeOpenCode2CatalogWatch();
+    const seen: Array<ReadonlyArray<OpenCode2Model> | undefined> = [];
+    yield* Stream.runForEach(watch.changes, (catalog) =>
+      Effect.sync(() => seen.push(catalog)),
+    ).pipe(Effect.forkScoped);
+    yield* watch.follow("server", Effect.succeed(Stream.fromQueue(events)), read);
+    // The new server's settle gives up after 5 seconds, then the queued re-read hangs for 30.
+    yield* TestClock.adjust("36 seconds");
+    answering = true;
+    yield* Queue.offer(events, { type: "model.updated" });
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(seen.at(-1), live);
   }),
 );

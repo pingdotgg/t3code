@@ -129,6 +129,13 @@ const emptyCmd = Command.make("noop").pipe(
   Command.withDescription("Does nothing")
 )
 
+const withColonSubcommand = Command.make("tool").pipe(
+  Command.withSubcommands([
+    Command.make("test:unit").pipe(Command.withDescription("Run unit tests")),
+    Command.make("build")
+  ])
+)
+
 const leaf = (name: string, flag: string): Completions.CommandDescriptor => ({
   name,
   description: undefined,
@@ -155,9 +162,12 @@ const hasReadline = spawnSync("bash", ["--noprofile", "--norc", "-c", "compgen -
 
 /**
  * Type `line`, a tab and Enter into interactive Bash in a directory of
- * `process` fixtures, and return the arguments `process` receives.
+ * `process` fixtures, and return the arguments the command receives.
  */
-const replayBashCompletion = (line: string): Array<string> => {
+const replayBashCompletion = (
+  line: string,
+  descriptor: Completions.CommandDescriptor = fromCommand(withPaths)
+): Array<string> => {
   const directory = mkdtempSync(join(tmpdir(), "effect-cli-bash-"))
   try {
     mkdirSync(join(directory, "project files"))
@@ -166,8 +176,11 @@ const replayBashCompletion = (line: string): Array<string> => {
     writeFileSync(join(directory, "report.txt"), "")
     writeFileSync(
       join(directory, "rc.bash"),
-      [Bash.generate("process", fromCommand(withPaths)), `process() { printf '<%s>\\n' "$@"; }`, `PS1='$ ' TMOUT=1`]
-        .join("\n")
+      [
+        Bash.generate(descriptor.name, descriptor),
+        `${descriptor.name}() { printf '<%s>\\n' "$@"; }`,
+        `PS1='$ ' TMOUT=1`
+      ].join("\n")
     )
     // Ctrl-D exits, or ends a quote left open; TMOUT exits once input runs out.
     return spawnSync("script", scriptArgs("bash --noprofile --rcfile rc.bash -i"), {
@@ -294,6 +307,10 @@ describe("Bash completions", () => {
   it.skipIf(!hasReadline)("keeps an expandable or quoted directory as typed", () => {
     assert.deepStrictEqual(replayBashCompletion("process --input $HOME/report\\ d"), ["--input", "~/report data.txt"])
     assert.deepStrictEqual(replayBashCompletion(`process --input "./"rep`), ["--input", "./report"])
+  })
+
+  it.skipIf(!hasReadline)("completes subcommand names containing a colon", () => {
+    assert.deepStrictEqual(replayBashCompletion("tool test:u", fromCommand(withColonSubcommand)), ["test:unit"])
   })
 
   it("inlines choice values for choice flags", () => {
@@ -458,6 +475,11 @@ describe("Zsh completions", () => {
     assert.include(script, "_describe")
     assert.include(script, "Start the server")
     assert.include(script, "Stop the server")
+  })
+
+  it("escapes colons in subcommand names for _describe", () => {
+    const script = Zsh.generate("tool", fromCommand(withColonSubcommand))
+    assert.include(script, `'test\\:unit:Run unit tests'`)
   })
 
   it("generates --no-<flag> for boolean flags", () => {
@@ -1162,5 +1184,60 @@ describe("Boolean flags with a custom or disabled negation", () => {
     const completions = replayPowerShell(descriptor, "app --skip ")
     assert.include(completions, "--force")
     assert.notInclude(completions, "--validate")
+  }, 20_000)
+})
+
+describe("Repeatable flags", () => {
+  const descriptor = Completions.fromCommand(Command.make("app", {
+    tag: Flag.String("tag").pipe(Flag.withAlias("t"), Flag.atLeast(1)),
+    pair: Flag.String("pair").pipe(Flag.between(1, 2)),
+    label: Flag.String("label").pipe(Flag.atMost(1)),
+    env: Flag.KeyValuePair("env").pipe(Flag.optional),
+    verbose: Flag.Boolean("verbose"),
+    source: Flag.String("repo").pipe(Flag.atLeast(1), Flag.orElse(() => Flag.String("file"))),
+    target: Flag.String("url").pipe(Flag.orElse(() => Flag.String("host").pipe(Flag.atLeast(1))))
+  }))
+
+  it("are flags that accept more than one occurrence", () => {
+    assert.deepStrictEqual(descriptor.flags.map((flag) => [flag.name, flag.repeatable === true]), [
+      ["tag", true],
+      ["pair", true],
+      ["label", false],
+      ["env", true],
+      ["verbose", false],
+      ["repo", true],
+      ["file", false],
+      ["url", false],
+      ["host", true]
+    ])
+  })
+
+  it("stay offered after they are used", () => {
+    const zsh = Completions.generate("app", "zsh", descriptor)
+    assert.include(zsh, "'*--tag:value:'")
+    assert.include(zsh, "'*-t:value:'")
+    assert.include(zsh, "'(--label)--label:value:'")
+
+    const bash = Completions.generate("app", "bash", descriptor)
+    assert.strictEqual(linesWith(bash, `_filtered_flags+=" --tag -t"`), `_filtered_flags+=" --tag -t"`)
+    assert.match(linesWith(bash, `_filtered_flags+=" --label"`), /^\[\[ -n "\$_used_\d+" \]\] \|\| /)
+
+    const fish = Completions.generate("app", "fish", descriptor).split("\n")
+    const tagEntries = fish.filter((line) => line.includes("-l tag") || line.includes("-a '--tag'"))
+    assert.strictEqual(tagEntries.length, 2)
+    for (const entry of tagEntries) assert.notInclude(entry, "__fish_contains_opt")
+    const labelEntries = fish.filter((line) => line.includes("-l label") || line.includes("-a '--label'"))
+    assert.strictEqual(labelEntries.length, 2)
+    for (const entry of labelEntries) assert.include(entry, "__fish_contains_opt")
+
+    const powershell = Completions.generate("app", "powershell", descriptor)
+    assert.include(linesWith(powershell, "name = 'tag'"), "repeatable = $true;")
+    assert.notInclude(linesWith(powershell, "name = 'label'"), "repeatable")
+  })
+
+  it.skipIf(!hasPwsh)("PowerShell replay offers a repeatable flag again", () => {
+    const completions = replayPowerShell(descriptor, "app --tag x --label y -")
+    assert.include(completions, "--tag")
+    assert.notInclude(completions, "--label")
   }, 20_000)
 })

@@ -9,7 +9,7 @@ import {
 import type { ClientSettings } from "@t3tools/contracts/settings";
 
 import type { EnvironmentProject } from "./models.ts";
-import { normalizeProjectPathForComparison } from "./projects.ts";
+import { normalizeProjectPathForComparison, preferredPathSeparator } from "./projects.ts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
@@ -61,13 +61,30 @@ function deriveRepositoryRelativeProjectPath(
     return "";
   }
 
-  const separator = normalizedRootPath.includes("\\") ? "\\" : "/";
-  const rootPrefix = `${normalizedRootPath}${separator}`;
+  const separator = preferredPathSeparator(normalizedRootPath);
+  // A volume root such as `/` or `d:\` already ends with its separator.
+  const rootPrefix = normalizedRootPath.endsWith(separator)
+    ? normalizedRootPath
+    : `${normalizedRootPath}${separator}`;
   if (!normalizedProjectPath.startsWith(rootPrefix)) {
     return null;
   }
 
   return normalizedProjectPath.slice(rootPrefix.length).replaceAll("\\", "/");
+}
+
+/** The project's workspace root is its repository's git top-level, not a sub-folder. */
+export function isRepositoryRootProject(
+  project: Pick<EnvironmentProject, "workspaceRoot" | "repositoryIdentity">,
+): boolean {
+  return deriveRepositoryRelativeProjectPath(project) === "";
+}
+
+/** A group's default checkout for new threads: its repository root, else its first member. */
+export function selectGroupDefaultProject<
+  TProject extends Pick<EnvironmentProject, "workspaceRoot" | "repositoryIdentity">,
+>(projects: ReadonlyArray<TProject>): TProject | undefined {
+  return projects.find(isRepositoryRootProject) ?? projects[0];
 }
 
 export function derivePhysicalProjectKeyFromPath(environmentId: string, cwd: string): string {
@@ -163,6 +180,23 @@ export function deriveLogicalProjectKeyFromSettings(
     groupingMode: resolveProjectGroupingMode(project, settings),
     groupScratchProjects: options?.groupScratchProjects ?? false,
   });
+}
+
+/** The checkout a new thread in `project`'s group starts in on its environment: the group's root. */
+export function resolveGroupDefaultProject<TProject extends EnvironmentProject>(
+  project: TProject,
+  projects: ReadonlyArray<TProject>,
+  settings: ProjectGroupingSettings,
+): TProject {
+  const groupKey = deriveLogicalProjectKeyFromSettings(project, settings);
+  return (
+    projects.find(
+      (candidate) =>
+        candidate.environmentId === project.environmentId &&
+        isRepositoryRootProject(candidate) &&
+        deriveLogicalProjectKeyFromSettings(candidate, settings) === groupKey,
+    ) ?? project
+  );
 }
 
 export function resolveScratchProjectScopeKey(
@@ -273,6 +307,10 @@ export function pickableProjectGroups<
   return [...open.filter((group) => group.pinned), ...open.filter((group) => !group.pinned)];
 }
 
+export function isPickableProjectMember(member: Pick<EnvironmentProject, "archivedAt">): boolean {
+  return member.archivedAt == null;
+}
+
 function projectFreshnessTime(project: EnvironmentProject): number {
   const updatedAtTime = Date.parse(project.updatedAt);
   if (Number.isFinite(updatedAtTime)) {
@@ -377,10 +415,13 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(
 
   const preferredEnvironmentId = input.preferredEnvironmentId ?? null;
   return Array.from(groupedMembers, ([key, members]) => {
+    const projects = members.map((member) => member.project);
     const representative =
       (preferredEnvironmentId
-        ? members.find((member) => member.project.environmentId === preferredEnvironmentId)?.project
-        : null) ?? members[0]!.project;
+        ? selectGroupDefaultProject(
+            projects.filter((project) => project.environmentId === preferredEnvironmentId),
+          )
+        : undefined) ?? selectGroupDefaultProject(projects)!;
     return {
       key,
       label:
@@ -397,7 +438,7 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(
       members,
       memberProjectRefs: projectRefsByLogicalKey.get(key) ?? [],
       pinned: members.some((member) => member.project.pinnedAt != null),
-      archived: members.every((member) => member.project.archivedAt != null),
+      archived: !members.some(({ project }) => isPickableProjectMember(project)),
     };
   });
 }

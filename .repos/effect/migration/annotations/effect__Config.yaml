@@ -8,8 +8,8 @@
   replacement: "Config.Boolean"
   note: "Direct constructor rename."
 "effect/Config#branded":
-  replacement: "Config.schema(schema.pipe(Schema.brand(brand)), path)"
-  note: "Brand validation moved to Schema; define the branded schema and construct the Config with Config.schema."
+  replacement: "Config.schema(schema.pipe(Schema.fromBrand(key, constructor)), path)"
+  note: "Brand validation moved to Schema; Schema.fromBrand takes the brand key and the existing Brand.Constructor and applies its checks. Schema.brand is type-only."
 "effect/Config#chunk":
   replacement: "Config.schema(Schema.Chunk(valueSchema), path)"
   note: "Collection parsing is schema-based in v4; use Schema.Chunk when a Chunk result is still required."

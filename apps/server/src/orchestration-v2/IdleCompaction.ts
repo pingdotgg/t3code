@@ -71,12 +71,15 @@ export function idleCompactionWindow(
         transfer.targetThreadId === thread.id &&
         transfer.status === "pending",
     ) ||
-    // Background work reports into the next turn; compaction would swallow it.
+    // Background work reports into the next turn; compaction would swallow it. A delegated
+    // child's result arrives later as its own message, so it does not count.
     derivePendingBackgroundWork({
       latestRun,
       runs,
       providerThreads,
-      turnItems,
+      turnItems: turnItems.filter(
+        (item) => item.type !== "subagent" || item.origin !== "app_owned",
+      ),
       activeProviderThreadId: thread.activeProviderThreadId,
     }).length > 0
   )

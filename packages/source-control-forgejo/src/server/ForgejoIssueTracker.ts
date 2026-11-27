@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import {
   IssueTrackerKind,
   type IssueCapabilities,
+  type IssueInvolvement,
   type IssueLinkedPullRequest,
   type IssueViewerPermissions,
 } from "@t3tools/contracts";
@@ -61,6 +62,12 @@ const PAGE_SIZE = 50;
 /** How many pages of a listing with no cursor of its own are read before giving up on the rest. */
 const MAX_PAGES = 10;
 
+const INVOLVEMENT_PARAM: Record<Exclude<IssueInvolvement, "all">, string> = {
+  assigned: "assigned_by",
+  authored: "created_by",
+  mentioned: "mentioned_by",
+};
+
 const repoPath = (scope: string) => `repos/${scope.split("/").map(encodeURIComponent).join("/")}`;
 const issuePath = (scope: string, number: number) => `${repoPath(scope)}/issues/${number}`;
 
@@ -76,6 +83,7 @@ function parsePage(cursor: string | undefined): number | null {
 function reasonFor(error: ForgejoCli.ForgejoCliError): IssueTrackerError["reason"] {
   switch (error.reason) {
     case "missing-cli":
+    case "wrong-cli":
       return "missing-tool";
     case "authentication":
       return "unauthenticated";
@@ -400,15 +408,9 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
         if (labels.length > 0) params.set("labels", labels.join(","));
         const text = input.query?.trim() ?? "";
         if (text.length > 0) params.set("q", text);
-        const involvement =
-          input.involvement === "assigned"
-            ? "assigned_by"
-            : input.involvement === "authored"
-              ? "created_by"
-              : input.involvement === "mentioned"
-                ? "mentioned_by"
-                : null;
-        if (involvement !== null) params.set(involvement, input.viewer);
+        if (input.involvement !== "all") {
+          params.set(INVOLVEMENT_PARAM[input.involvement], input.viewer);
+        }
         if (input.assignee !== undefined) params.set("assigned_by", input.assignee);
         // `assigned_by` names one person, so "assigned to me" is kept here beside a named assignee.
         const alsoAssignedTo =

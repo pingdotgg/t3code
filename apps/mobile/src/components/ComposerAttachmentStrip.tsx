@@ -10,6 +10,7 @@ import { Paths } from "expo-file-system";
 import { Image, Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "./ui/AppText";
+import { AppActivityIndicator } from "./ui/AppActivityIndicator";
 import { MaterializedPreviewKey, materializedPreviewAtom } from "../lib/composerImagePreview";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import {
@@ -44,6 +45,8 @@ export interface ComposerAttachmentStripProps {
   readonly imageSize?: number;
   readonly imageBorderRadius?: number;
   readonly removeButtonPlacement?: "overlay" | "gutter";
+  /** Pasted images still being prepared, shown as placeholders after the attachments. */
+  readonly pendingImageCount?: number;
 }
 
 type ComposerAttachmentThumbnailProps = {
@@ -66,6 +69,13 @@ export function ComposerAttachmentThumbnail(props: ComposerAttachmentThumbnailPr
   return (
     <View style={{ width: props.size, height: props.size }}>
       <ComposerAttachmentContent {...props} />
+      {upload?.status === "failed" ? (
+        <View
+          pointerEvents="none"
+          className="absolute inset-0 border-2 border-danger-foreground"
+          style={{ borderRadius: props.borderRadius }}
+        />
+      ) : null}
       {upload && upload.status !== "ready" ? (
         <Pressable
           accessibilityRole={upload.status === "failed" ? "button" : "text"}
@@ -215,6 +225,8 @@ function ComposerFileAttachment(
   const canPreview = isPdfFile(attachment) && props.onPressPreview !== undefined;
   const sourceIdentifier = `draft-file:${attachment.id}`;
   const onPressDocument = props.onPressDocument;
+  const upload = useComposerAttachmentUploadState(props.environmentId, attachment.id);
+  const showsUploadBadge = upload !== undefined && upload.status !== "ready";
   return (
     <>
       <PresentationSource identifier={sourceIdentifier}>
@@ -235,7 +247,7 @@ function ComposerFileAttachment(
           className={
             props.compact
               ? "items-center justify-center bg-subtle"
-              : "items-center justify-center gap-1 bg-subtle px-2"
+              : `items-center justify-center gap-1 bg-subtle px-2${showsUploadBadge ? " pb-4" : ""}`
           }
           style={style}
         >
@@ -292,7 +304,8 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
   const removeButtonPlacement = props.removeButtonPlacement ?? "overlay";
   const removeButtonGutter = removeButtonPlacement === "gutter" ? 10 : 0;
 
-  if (props.attachments.length === 0) {
+  const pendingImageCount = props.pendingImageCount ?? 0;
+  if (props.attachments.length === 0 && pendingImageCount === 0) {
     return null;
   }
 
@@ -342,6 +355,21 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
                   weight="bold"
                 />
               </Pressable>
+            </View>
+          ))}
+          {Array.from({ length: pendingImageCount }, (_, index) => (
+            <View
+              key={`pending-${index}`}
+              accessibilityLabel={gt("Preparing pasted image")}
+              className="items-center justify-center bg-subtle"
+              style={{
+                width: size,
+                height: size,
+                borderRadius: radius,
+                marginTop: removeButtonGutter,
+              }}
+            >
+              <AppActivityIndicator />
             </View>
           ))}
         </View>

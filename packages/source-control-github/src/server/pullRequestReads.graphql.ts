@@ -23,6 +23,8 @@ export interface StatusContext extends Schema.Struct.Type<typeof StatusContext.f
 
 /** A workflow contains meta information about an Actions workflow file. */
 export const Workflow = Schema.Struct({
+  /** The Node ID of the Workflow object */
+  id: Shared.ID,
   /** The name of the workflow. */
   name: Schema.String
 })
@@ -30,6 +32,10 @@ export interface Workflow extends Schema.Struct.Type<typeof Workflow.fields> {}
 
 /** A workflow run. */
 export const WorkflowRun = Schema.Struct({
+  /** The event that triggered the workflow run */
+  event: Schema.String,
+  /** A number that uniquely identifies this workflow run in its parent workflow. */
+  runNumber: Shared.Int,
   /** The workflow executed in this workflow run. */
   workflow: Workflow
 })
@@ -206,6 +212,35 @@ export declare namespace ActorAvatars {
   export type Result = typeof ActorAvatars.result.Type
 }
 
+/** Represents a Git commit. */
+export const MergeCommitCommit = Schema.Struct({
+  /** The Git object ID */
+  oid: Shared.GitObjectID
+})
+export interface MergeCommitCommit extends Schema.Struct.Type<typeof MergeCommitCommit.fields> {}
+
+/** A user is an individual's account on GitHub that owns repositories and can make new content. */
+export const MergedByUser = Schema.Struct({
+  __typename: Schema.Literal("User"),
+  /** The username used to login. */
+  login: Schema.String,
+  /** A URL pointing to the user's public avatar. */
+  avatarUrl: Shared.URI,
+  /** The user's public profile name. */
+  name: Schema.NullOr(Schema.String)
+})
+export interface MergedByUser extends Schema.Struct.Type<typeof MergedByUser.fields> {}
+
+/** Represents an object which can take actions on GitHub. Typically a User or Bot. */
+export const ActorOther = Schema.Struct({
+  __typename: GraphQL.otherTypename<Shared.Typename.Actor>()(["User"]),
+  /** The username of the actor. */
+  login: Schema.String,
+  /** A URL pointing to the actor's public avatar. */
+  avatarUrl: Shared.URI
+})
+export interface ActorOther extends Schema.Struct.Type<typeof ActorOther.fields> {}
+
 /** Represents an owner of a Repository. */
 export const RepositoryOwner = Schema.Struct({
   __typename: GraphQL.otherTypename<Shared.Typename.RepositoryOwner>()([]),
@@ -231,7 +266,7 @@ export const HeadRefRef = Schema.Struct({
 export interface HeadRefRef extends Schema.Struct.Type<typeof HeadRefRef.fields> {}
 
 /** A user is an individual's account on GitHub that owns repositories and can make new content. */
-export const PullRequestCoreRepositoryPullRequestAuthorUser = Schema.Struct({
+export const AuthorUser = Schema.Struct({
   __typename: Schema.Literal("User"),
   /** The username used to login. */
   login: Schema.String,
@@ -242,17 +277,7 @@ export const PullRequestCoreRepositoryPullRequestAuthorUser = Schema.Struct({
   /** The user's public profile name. */
   name: Schema.NullOr(Schema.String)
 })
-export interface PullRequestCoreRepositoryPullRequestAuthorUser extends Schema.Struct.Type<typeof PullRequestCoreRepositoryPullRequestAuthorUser.fields> {}
-
-/** Represents an object which can take actions on GitHub. Typically a User or Bot. */
-export const ActorOther = Schema.Struct({
-  __typename: GraphQL.otherTypename<Shared.Typename.Actor>()(["User"]),
-  /** The username of the actor. */
-  login: Schema.String,
-  /** A URL pointing to the actor's public avatar. */
-  avatarUrl: Shared.URI
-})
-export interface ActorOther extends Schema.Struct.Type<typeof ActorOther.fields> {}
+export interface AuthorUser extends Schema.Struct.Type<typeof AuthorUser.fields> {}
 
 /** Represents an auto-merge request for a pull request */
 export const AutoMergeRequest = Schema.Struct({
@@ -459,6 +484,13 @@ export const PullRequestCoreRepositoryPullRequestPullRequest = Schema.Struct({
   updatedAt: Shared.DateTime,
   /** The date and time that the pull request was merged. */
   mergedAt: Schema.NullOr(Shared.DateTime),
+  /** The commit that was created when this pull request was merged. */
+  mergeCommit: Schema.NullOr(MergeCommitCommit),
+  /** The actor who merged the pull request. */
+  mergedBy: Schema.NullOr(Schema.Union([
+    MergedByUser,
+    ActorOther
+  ])),
   /** Identifies the date and time when the object was closed. */
   closedAt: Schema.NullOr(Shared.DateTime),
   /** Identifies the name of the head Ref associated with the pull request, even if the ref has been deleted. */
@@ -479,7 +511,7 @@ export const PullRequestCoreRepositoryPullRequestPullRequest = Schema.Struct({
   headRef: Schema.NullOr(HeadRefRef),
   /** The actor who authored the comment. */
   author: Schema.NullOr(Schema.Union([
-    PullRequestCoreRepositoryPullRequestAuthorUser,
+    AuthorUser,
     ActorOther
   ])),
   /** Returns the auto-merge request object if one exists for this pull request. */
@@ -536,10 +568,10 @@ export const PullRequestCore = GraphQL.query("PullRequestCore", {
       { name: "mergeQueue", body: "Boolean!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission pullRequest(number:$", "number", "){number title url body state isDraft mergeable mergeStateStatus reviewDecision additions deletions changedFiles createdAt updatedAt mergedAt closedAt headRefName baseRefName headRefOid isCrossRepository maintainerCanModify headRepositoryOwner{__typename login}headRepository{nameWithOwner viewerPermission}headRef{id}author{__typename login avatarUrl...on User{id name}}autoMergeRequest{mergeMethod}mergeQueueRemovals:timelineItems(last:1 itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT])@include(if:$", "mergeQueue", "){nodes{__typename...on RemovedFromMergeQueueEvent{id createdAt reason}}}viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch baseRef{compare(headRef:$", "headRef", "){behindBy}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name}...on Bot{login}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}labels(first:100){nodes{name color description}}commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage endCursor}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission pullRequest(number:$", "number", "){number title url body state isDraft mergeable mergeStateStatus reviewDecision additions deletions changedFiles createdAt updatedAt mergedAt mergeCommit{oid}mergedBy{__typename login avatarUrl...on User{name}}closedAt headRefName baseRefName headRefOid isCrossRepository maintainerCanModify headRepositoryOwner{__typename login}headRepository{nameWithOwner viewerPermission}headRef{id}author{__typename login avatarUrl...on User{id name}}autoMergeRequest{mergeMethod}mergeQueueRemovals:timelineItems(last:1 itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT])@include(if:$", "mergeQueue", "){nodes{__typename...on RemovedFromMergeQueueEvent{id createdAt reason}}}viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch baseRef{compare(headRef:$", "headRef", "){behindBy}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name}...on Bot{login}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}labels(first:100){nodes{name color description}}commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage endCursor}}}}}}}}"] }
     ],
     fragments: [
-      { name: "CheckContext", body: ["on StatusCheckRollupContext{__typename...on StatusContext{context state targetUrl createdAt description isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")}...on CheckRun{name status conclusion startedAt completedAt detailsUrl isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")checkSuite{workflowRun{workflow{name}}}}}"] }
+      { name: "CheckContext", body: ["on StatusCheckRollupContext{__typename...on StatusContext{context state targetUrl createdAt description isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")}...on CheckRun{name status conclusion startedAt completedAt detailsUrl isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")checkSuite{workflowRun{event runNumber workflow{id name}}}}}"] }
     ]
   },
   variables: {
@@ -591,7 +623,7 @@ export const PullRequestCheckContexts = GraphQL.query("PullRequestCheckContexts"
       { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){headRefOid commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100 after:$", "after", "){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage endCursor}}}}}}}}"] }
     ],
     fragments: [
-      { name: "CheckContext", body: ["on StatusCheckRollupContext{__typename...on StatusContext{context state targetUrl createdAt description isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")}...on CheckRun{name status conclusion startedAt completedAt detailsUrl isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")checkSuite{workflowRun{workflow{name}}}}}"] }
+      { name: "CheckContext", body: ["on StatusCheckRollupContext{__typename...on StatusContext{context state targetUrl createdAt description isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")}...on CheckRun{name status conclusion startedAt completedAt detailsUrl isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")checkSuite{workflowRun{event runNumber workflow{id name}}}}}"] }
     ]
   },
   variables: {
@@ -611,18 +643,6 @@ export declare namespace PullRequestCheckContexts {
   export type Result = typeof PullRequestCheckContexts.result.Type
 }
 
-/** A user is an individual's account on GitHub that owns repositories and can make new content. */
-export const PullRequestPreviewRepositoryPullRequestAuthorUser = Schema.Struct({
-  __typename: Schema.Literal("User"),
-  /** The username used to login. */
-  login: Schema.String,
-  /** A URL pointing to the user's public avatar. */
-  avatarUrl: Shared.URI,
-  /** The user's public profile name. */
-  name: Schema.NullOr(Schema.String)
-})
-export interface PullRequestPreviewRepositoryPullRequestAuthorUser extends Schema.Struct.Type<typeof PullRequestPreviewRepositoryPullRequestAuthorUser.fields> {}
-
 /** A repository pull request. */
 export const PullRequestPreviewRepositoryPullRequestPullRequest = Schema.Struct({
   /** Identifies the pull request number. */
@@ -639,7 +659,7 @@ export const PullRequestPreviewRepositoryPullRequestPullRequest = Schema.Struct(
   createdAt: Shared.DateTime,
   /** The actor who authored the comment. */
   author: Schema.NullOr(Schema.Union([
-    PullRequestPreviewRepositoryPullRequestAuthorUser,
+    MergedByUser,
     ActorOther
   ]))
 })
@@ -762,7 +782,7 @@ export const NodesIssueComment = Schema.Struct({
   isMinimized: Schema.Boolean,
   /** The actor who authored the comment. */
   author: Schema.NullOr(Schema.Union([
-    PullRequestPreviewRepositoryPullRequestAuthorUser,
+    MergedByUser,
     ActorOther
   ]))
 })
@@ -795,7 +815,7 @@ export const NodesPullRequestReview = Schema.Struct({
   isMinimized: Schema.Boolean,
   /** The actor who authored the comment. */
   author: Schema.NullOr(Schema.Union([
-    PullRequestPreviewRepositoryPullRequestAuthorUser,
+    MergedByUser,
     ActorOther
   ]))
 })
@@ -814,7 +834,7 @@ export interface PullRequestReviewConnection extends Schema.Struct.Type<typeof P
 export const PullRequestActivityRepositoryPullRequestPullRequest = Schema.Struct({
   /** The actor who authored the comment. */
   author: Schema.optionalKey(Schema.NullOr(Schema.Union([
-    PullRequestPreviewRepositoryPullRequestAuthorUser,
+    MergedByUser,
     ActorOther
   ]))),
   /** A list of commits present in this pull request's head branch not present in the base branch. */
@@ -1050,9 +1070,19 @@ export const NodePullRequestReview = Schema.Struct({
 })
 export interface NodePullRequestReview extends Schema.Struct.Type<typeof NodePullRequestReview.fields> {}
 
+/** A threaded list of comments for a given pull request. */
+export const PullRequestReviewThread = Schema.Struct({
+  __typename: Schema.Literal("PullRequestReviewThread"),
+  /** The Node ID of the PullRequestReviewThread object */
+  id: Shared.ID,
+  /** Identifies the pull request associated with this thread. */
+  threadPullRequest: PullRequestNodeIdRepositoryPullRequestPullRequest
+})
+export interface PullRequestReviewThread extends Schema.Struct.Type<typeof PullRequestReviewThread.fields> {}
+
 /** An object with an ID. */
 export const PullRequestSubjectNodeNodeOther = Schema.Struct({
-  __typename: GraphQL.otherTypename<Shared.Typename.Node>()(["IssueComment", "PullRequestReviewComment", "PullRequestReview"]),
+  __typename: GraphQL.otherTypename<Shared.Typename.Node>()(["IssueComment", "PullRequestReviewComment", "PullRequestReview", "PullRequestReviewThread"]),
   /** ID of the object. */
   id: Shared.ID
 })
@@ -1069,7 +1099,7 @@ export const PullRequestSubject = GraphQL.query("PullRequestSubject", {
     ],
     selections: [
       { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){id}}"] },
-      { name: "node", body: ["(id:$", "subjectId", "){__typename id...on IssueComment{pullRequest{id}}...on PullRequestReviewComment{reviewCommentPullRequest:pullRequest{id}}...on PullRequestReview{reviewPullRequest:pullRequest{id}}}"] }
+      { name: "node", body: ["(id:$", "subjectId", "){__typename id...on IssueComment{pullRequest{id}}...on PullRequestReviewComment{reviewCommentPullRequest:pullRequest{id}}...on PullRequestReview{reviewPullRequest:pullRequest{id}}...on PullRequestReviewThread{threadPullRequest:pullRequest{id}}}"] }
     ],
     fragments: []
   },
@@ -1087,6 +1117,7 @@ export const PullRequestSubject = GraphQL.query("PullRequestSubject", {
       NodeIssueComment,
       PullRequestReviewComment,
       NodePullRequestReview,
+      PullRequestReviewThread,
       PullRequestSubjectNodeNodeOther
     ]))
   })
@@ -1198,7 +1229,7 @@ export interface Actor extends Schema.Struct.Type<typeof Actor.fields> {}
 export const ReviewerCandidatesRepositoryPullRequestReviewRequestsNodesReviewRequest = Schema.Struct({
   /** The reviewer that is requested. */
   requestedReviewer: Schema.NullOr(Schema.Union([
-    PullRequestPreviewRepositoryPullRequestAuthorUser,
+    MergedByUser,
     Team,
     NodesBot,
     RequestedReviewerOther
