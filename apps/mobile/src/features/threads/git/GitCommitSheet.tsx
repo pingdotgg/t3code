@@ -31,7 +31,7 @@ type GitCommitSheetProps = StaticScreenProps<
 >;
 
 // The sheet unmounts on submit, but a reopened sheet needs to observe the action settling.
-const retainedExclusionsAtom = Atom.make<
+const retainedCommitDraftAtom = Atom.make<
   ReadonlyMap<
     string,
     {
@@ -70,10 +70,10 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
     selectedThread !== null && selectedThreadCwd !== null
       ? `${selectedThread.environmentId}\u0000${selectedThreadCwd}`
       : null;
-  const retained = useAtomValue(retainedExclusionsAtom, (entries) =>
+  const retained = useAtomValue(retainedCommitDraftAtom, (entries) =>
     selectionKey === null ? undefined : entries.get(selectionKey),
   );
-  const setRetainedExclusions = useAtomSet(retainedExclusionsAtom);
+  const setRetainedCommitDraft = useAtomSet(retainedCommitDraftAtom);
   const [dialogCommitMessage, setDialogCommitMessage] = useState(retained?.commitMessage ?? "");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(
     retained?.excluded ?? new Set(),
@@ -123,7 +123,7 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
       createdBranch: featureBranch ? null : createdBranch,
     };
     if (selectionKey !== null) {
-      setRetainedExclusions((entries) => new Map(entries).set(selectionKey, submitted));
+      setRetainedCommitDraft((entries) => new Map(entries).set(selectionKey, submitted));
     }
     navigation.goBack();
     let checkedOutBranch: string | undefined;
@@ -137,7 +137,7 @@ export function GitCommitSheet(props: GitCommitSheetProps) {
       },
     });
     if (selectionKey !== null) {
-      setRetainedExclusions((entries) => {
+      setRetainedCommitDraft((entries) => {
         if (entries.get(selectionKey) !== submitted) return entries;
         const next = new Map(entries);
         if (result?.commit.status === "created") {
