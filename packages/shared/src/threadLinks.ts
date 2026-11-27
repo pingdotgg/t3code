@@ -299,7 +299,7 @@ export function threadLinkRefs(
 // GFM like the chat renderer, so footnotes and other GFM containers hold prose, not code.
 const markdownParser = unified().use(remarkParse).use(remarkGfm);
 const FENCE_LIKE_LINE =
-  /^(?:[ \t>*+\-\d.)]*(?<footnote>\[\^(?:\\[^\r\n]|[^\\\]\r\n])+\]:))?[ \t>*+\-\d.)]*(?:`{3}|~{3})/m;
+  /^(?:[ \t>*+\-\d.)]*(?<footnote>\[\^(?:\\[^\r\n]|[^\\\]\r\n])+\]:))*[ \t>*+\-\d.)]*(?:`{3}|~{3})/m;
 const LIST_ITEM_LINE = /^[ \t>]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|\r?$)/m;
 
 function parsedCodeRanges(markdown: string) {

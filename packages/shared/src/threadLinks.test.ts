@@ -330,6 +330,12 @@ describe("thread links", () => {
       ["- ```text", `  ${hidden}`, "", after],
       ["- item", "", "  ```text", `  ${hidden}`, "", after],
       ["[^note]: - ```text", "      https://app.t3.codes/threads/local/in-code", "", after],
+      [
+        "[^outer]: [^inner]: - ```text",
+        "          https://app.t3.codes/threads/local/in-code",
+        "",
+        after,
+      ],
       ["- > ```md", `  > ${hidden}`, "  > ```", "", after],
       [">> ```md", `> > ${hidden}`, ">> ```", `> ${after}`],
       ["> > ~~~", `>> ${hidden}`, ">> ~~~", after],
