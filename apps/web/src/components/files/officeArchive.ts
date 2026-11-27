@@ -962,7 +962,13 @@ async function wordExpansion(
       }
       if (tag.local === "altChunk") cost.bytes = Infinity;
       if (tag.local !== "blip" && tag.local !== "imagedata") return;
-      const target = parts.relationships.get(path)?.get(attr("embed") || attr("id"));
+      // VML imagedata also carries an unprefixed shape `id`; only `r:id` names the relationship.
+      const relId =
+        attr("embed") ||
+        Object.values(tag.attributes).find(
+          (a) => a.local === "id" && a.uri === WORD_RELATIONSHIP.slice(0, -1),
+        )?.value;
+      const target = parts.relationships.get(path)?.get(relId ?? "");
       if (target) {
         cost.media += mediaSizes.get(target) ?? OFFICE_PREVIEW_MAX_BYTES + 1;
         cost.images.add(target);
