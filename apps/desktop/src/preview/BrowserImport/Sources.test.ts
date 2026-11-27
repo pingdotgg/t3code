@@ -25,6 +25,7 @@ import {
   discoveredLinuxSecretApplications,
   firefoxSymlinkLockIsHeld,
   resolveCookieDatabase,
+  resolveWindowsLocalState,
   isSourceInstalled,
   isSourceRunning,
   listSourceProfiles,
@@ -1229,10 +1230,29 @@ describe("Ardia, Dia, and discoverBrowserImportSources", () => {
             os_crypt: { encrypted_key: dpapiKey },
             ...defaultState,
           });
-          assert.deepEqual(yield* discoveredSummary(win), [
-            ["Floorp", "firefox"],
-            ["Thorium", "chromium"],
-          ]);
+          const winDiscovered = yield* discoverBrowserImportSources(win);
+          assert.deepEqual(
+            winDiscovered
+              .filter((source) => source.id.startsWith("discovered:"))
+              .map((source) => [source.name, source.engine]),
+            [
+              ["Floorp", "firefox"],
+              ["Thorium", "chromium"],
+            ],
+          );
+          if (symlinksSupported) {
+            const thorium = winDiscovered.find((source) => source.name === "Thorium")!;
+            const thoriumLocalState = path.join(
+              localAppData,
+              "Thorium",
+              "User Data",
+              "Local State",
+            );
+            assert.isDefined(yield* resolveWindowsLocalState(thorium, win));
+            yield* fileSystem.remove(thoriumLocalState);
+            yield* fileSystem.symlink(path.join(outsideRoot, "Local State"), thoriumLocalState);
+            assert.isUndefined(yield* resolveWindowsLocalState(thorium, win));
+          }
         }),
       ),
   );

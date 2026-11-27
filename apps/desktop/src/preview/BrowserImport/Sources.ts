@@ -278,10 +278,7 @@ const resolveFileWithinRoot = Effect.fnUntraced(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* Effect.all([fileSystem.realPath(root), fileSystem.realPath(candidate)]).pipe(
     Effect.map(([realRoot, realCandidate]) => {
-      if (
-        requirePinnedRoot &&
-        normalizeRootKey(context, realRoot) !== normalizeRootKey(context, root)
-      ) {
+      if (requirePinnedRoot && realRoot !== root) {
         return undefined;
       }
       return isWithinRoot(context.path, realRoot, realCandidate) ? realCandidate : undefined;
@@ -290,17 +287,23 @@ const resolveFileWithinRoot = Effect.fnUntraced(function* (
   );
 });
 
-const isPinnedRootUnchanged = Effect.fnUntraced(function* (
-  root: string,
-  context: BrowserImportPathContext,
-) {
+const isPinnedRootUnchanged = Effect.fnUntraced(function* (root: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.realPath(root).pipe(
-    Effect.map(
-      (realRoot) => normalizeRootKey(context, realRoot) === normalizeRootKey(context, root),
-    ),
+    Effect.map((realRoot) => realRoot === root),
     Effect.orElseSucceed(() => false),
   );
+});
+
+export const resolveWindowsLocalState = Effect.fnUntraced(function* (
+  definition: BrowserImportSourceDefinition,
+  context: BrowserImportPathContext,
+) {
+  const root = definition.userDataDirectory(context);
+  if (root === undefined) return undefined;
+  const candidate = context.path.join(root, "Local State");
+  if (!definition.id.startsWith("discovered:")) return candidate;
+  return yield* resolveFileWithinRoot(root, candidate, context, true);
 });
 
 export const resolveCookieDatabase = Effect.fnUntraced(function* (
@@ -535,7 +538,7 @@ const listSourceProfilesInDirectory = Effect.fnUntraced(function* (
   }
 
   const isDiscovered = definition.id.startsWith("discovered:");
-  if (isDiscovered && !(yield* isPinnedRootUnchanged(root, context))) return [];
+  if (isDiscovered && !(yield* isPinnedRootUnchanged(root))) return [];
 
   if (definition.engine === "firefox") {
     const profilesIniPath = isDiscovered

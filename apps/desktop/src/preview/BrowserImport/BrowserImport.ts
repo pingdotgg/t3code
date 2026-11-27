@@ -34,6 +34,7 @@ import {
   BROWSER_IMPORT_SOURCES,
   discoverBrowserImportSources,
   resolveCookieDatabase,
+  resolveWindowsLocalState,
   isSourceInstalled,
   isSourceRunning,
   listSourceProfiles,
@@ -311,7 +312,19 @@ export const make = Effect.gen(function* BrowserImportMake() {
       return yield* new BrowserImportFailedError({ sourceId: definition.id, reason: "readFailed" });
     }
 
-    const userDataDirectory = definition.userDataDirectory(pathContext);
+    const windowsLocalStatePath =
+      platform === "win32" && definition.engine === "chromium"
+        ? yield* resolveWindowsLocalState(definition, pathContext).pipe(
+            Effect.provide(platformServices),
+          )
+        : undefined;
+    if (
+      platform === "win32" &&
+      definition.engine === "chromium" &&
+      windowsLocalStatePath === undefined
+    ) {
+      return yield* new BrowserImportFailedError({ sourceId: definition.id, reason: "readFailed" });
+    }
     const read: Effect.Effect<
       CookieReadResult,
       ChromiumCookieReadError | FirefoxCookieReadError | SafariCookieReadError,
@@ -332,11 +345,7 @@ export const make = Effect.gen(function* BrowserImportMake() {
               keychainCandidates: definition.keychainCandidates,
               linuxSecretApplication: definition.linuxSecretApplication,
               linuxSecretApplications: definition.linuxSecretApplications,
-              ...(platform === "win32" && userDataDirectory !== undefined
-                ? {
-                    windowsLocalStatePath: pathContext.path.join(userDataDirectory, "Local State"),
-                  }
-                : {}),
+              ...(windowsLocalStatePath !== undefined ? { windowsLocalStatePath } : {}),
               platform,
             });
 

@@ -195,7 +195,9 @@ const decryptChromiumValueWithOrigin = (
       platform === "darwin" && rejectImplausibleLegacy,
     );
     if (primary !== null) return { value: primary, keyringVerified: platform === "darwin" };
-    const empty = keys.cbcEmpty ? decryptCbc(payload, keys.cbcEmpty, domain, schemaVersion) : null;
+    const empty = keys.cbcEmpty
+      ? decryptCbc(payload, keys.cbcEmpty, domain, schemaVersion, rejectImplausibleLegacy)
+      : null;
     return { value: empty, keyringVerified: false };
   }
   if (prefix === "v11") {
@@ -208,7 +210,9 @@ const decryptChromiumValueWithOrigin = (
       platform === "linux" && rejectImplausibleLegacy,
     );
     if (primary !== null) return { value: primary, keyringVerified: platform === "linux" };
-    const empty = keys.cbcEmpty ? decryptCbc(payload, keys.cbcEmpty, domain, schemaVersion) : null;
+    const empty = keys.cbcEmpty
+      ? decryptCbc(payload, keys.cbcEmpty, domain, schemaVersion, rejectImplausibleLegacy)
+      : null;
     return { value: empty, keyringVerified: false };
   }
   if (platform === "darwin" || platform === "linux") {
