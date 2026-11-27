@@ -122,6 +122,18 @@ function separateRubyReadings(ruby: XmlNode) {
   }
 }
 
+function isXhtmlElement(name: string, node: XmlNode, ancestors: readonly XmlNode[]) {
+  const colon = name.lastIndexOf(":");
+  const binding = colon === -1 ? "xmlns" : `xmlns:${name.slice(0, colon)}`;
+  const namespace =
+    node.attrs[binding] ??
+    ancestors.findLast((ancestor) => Object.hasOwn(ancestor.attrs, binding))?.attrs[binding];
+  return (
+    namespace === "http://www.w3.org/1999/xhtml" ||
+    (namespace === undefined && colon === -1 && ancestors[1]?.name === "html")
+  );
+}
+
 function xml(source: string, extension: string): XmlNode {
   const odf = [".odt", ".ods", ".odp"].includes(extension);
   const root: XmlNode = { name: "root", attrs: {}, children: [] };
@@ -136,8 +148,9 @@ function xml(source: string, extension: string): XmlNode {
       attrs: Object.fromEntries(
         Object.entries(tag.attributes).flatMap(([key, value]) => {
           const local = key.split(":").at(-1)!;
-          // XHTML table spans are unqualified; a prefixed colspan is a foreign attribute.
-          return extension === ".epub" && (local === "colspan" || local === "rowspan")
+          // A foreign attribute must not shadow an XHTML table span or a namespace declaration.
+          return extension === ".epub" &&
+            (local === "colspan" || local === "rowspan" || local === "xmlns")
             ? [[key, String(value)]]
             : [
                 [key, String(value)],
@@ -171,6 +184,9 @@ function xml(source: string, extension: string): XmlNode {
       parent.markupCompatibility;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
+      (extension === ".epub" &&
+        node.name === "template" &&
+        isXhtmlElement(tag.name, node, stack)) ||
       (extension === ".epub" &&
         (stack[1] ?? node).name === "html" &&
         Object.hasOwn(tag.attributes, "hidden") &&
