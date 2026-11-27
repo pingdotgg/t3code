@@ -1,6 +1,9 @@
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  makeThreadRequestsResolvedAnnouncer,
+  type PendingThreadRequests,
+} from "@t3tools/client-runtime/state/thread-requests";
 import { Atom } from "effect/reactivity";
 import { useEffect } from "react";
 import {
@@ -18,7 +21,8 @@ import { formatInlineContextReference } from "../../lib/composerContextReference
 import { rememberCopiedComposerAttachments } from "../../lib/copiedComposerAttachments";
 import {
   questionAttachmentDraftId,
-  trackOpenQuestionAttachmentDraft,
+  countQuestionAttachments,
+  useQuestionAttachmentPreparation,
 } from "../../questionAttachments";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { environmentThreadDetails } from "../../state/threads";
@@ -68,6 +72,7 @@ it.each([
   { kind: "image", edit: "question" },
   { kind: "image", edit: "question-switch" },
   { kind: "image", edit: "question-close" },
+  { kind: "image", edit: "question-close-during-serialization" },
   { kind: "image", edit: "annotation" },
   { kind: "image", edit: "delete-annotation" },
 ] as const)("settles a delayed $kind import after $edit", async ({ kind, edit }) => {
@@ -104,12 +109,13 @@ it.each([
       expect(ref).toEqual(thread);
       return requests;
     });
-  const untrack = isQuestion
-    ? trackOpenQuestionAttachmentDraft(thread, { draftId: target, requestKeys: [target] })
-    : undefined;
-  using _tracked = { [Symbol.dispose]: () => untrack?.() };
   const store = useComposerDraftStore.getState();
-  using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+  using _draft = {
+    [Symbol.dispose]: () => {
+      store.clearComposerContent(target);
+      store.clearComposerContent(thread);
+    },
+  };
   const sourceEnvironmentId = EnvironmentId.make("clipboard-source");
   rememberCopiedComposerAttachments(
     sourceEnvironmentId,
@@ -157,6 +163,20 @@ it.each([
     requested.resolve();
     return downloaded.promise;
   });
+  const pauseSerialization =
+    edit === "question-switch" || edit === "question-close-during-serialization";
+  const serializing = deferred<void>();
+  const resumeSerialization = deferred<void>();
+  const readAsDataURL = FileReader.prototype.readAsDataURL;
+  using _reader = pauseSerialization
+    ? vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (
+        this: FileReader,
+        blob,
+      ) {
+        serializing.resolve();
+        void resumeSerialization.promise.then(() => readAsDataURL.call(this, blob));
+      })
+    : undefined;
   const contextId = ComposerContextId.make(`${kind}_source`);
   const attachmentFields = {
     version: 1 as const,
@@ -220,20 +240,32 @@ it.each([
       store.setPrompt(target, pastedPrompt);
     }
   });
-  if (edit === "switch" || edit === "reload" || edit === "question-switch") {
+  if (edit === "switch" || edit === "reload" || pauseSerialization) {
     await screen.unmount();
-    untrack?.();
   }
   if (edit === "question-close") {
-    untrack?.();
     appAtomRegistry.set(requests, { approvals: [], userInputs: [] });
     store.clearComposerContent(target);
   }
+  let slotsDuringSerialization: number | undefined;
   await act(async () => {
     downloaded.resolve(new Response("notes", { headers: { "Content-Type": attachment.mimeType } }));
+    if (pauseSerialization) {
+      await serializing.promise;
+      slotsDuringSerialization = countQuestionAttachments([target]);
+      if (edit === "question-close-during-serialization") {
+        appAtomRegistry.set(requests, { approvals: [], userInputs: [] });
+        const announce = makeThreadRequestsResolvedAnnouncer(thread.environmentId, thread.threadId);
+        announce([{ id: requestId, status: "pending" }]);
+        announce([{ id: requestId, status: "cancelled" }]);
+      }
+      resumeSerialization.resolve();
+    }
     await settled.promise;
   });
   expect(pendingDraftWork.has(target)).toBe(false);
+  if (pauseSerialization) expect(slotsDuringSerialization).toBe(1);
+  if (isQuestion) expect(useQuestionAttachmentPreparation.getState().counts[target] ?? 0).toBe(0);
   if (edit === "reload") {
     const inMemoryFile = store.getComposerDraft(target)?.images[0]?.file;
     await useComposerDraftStore.persist.rehydrate();
@@ -241,8 +273,9 @@ it.each([
     expect(restored).not.toBe(inMemoryFile);
     expect(await restored?.text()).toBe("notes");
   }
-  if (edit === "question-close") {
+  if (edit === "question-close" || edit === "question-close-during-serialization") {
     expect(store.getComposerDraft(target)).toBeNull();
+    expect(store.getComposerDraft(thread)?.images ?? []).toEqual([]);
     return;
   }
   const draft = store.getComposerDraft(target)!;

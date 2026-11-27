@@ -176,6 +176,7 @@ export function useComposerContextImport(input: {
     localId: string,
     sourceEnvironmentId: EnvironmentId,
     importTargetKey: string,
+    releaseQuestionPreparation: () => void,
   ) => {
     const fail = (reason: string) => {
       toastManager.add({
@@ -184,7 +185,8 @@ export function useComposerContextImport(input: {
         description: m(msg("{reason} Remove the chip or attach the file again.", { reason })),
       });
     };
-    let file = copiedComposerAttachmentFile(sourceEnvironmentId, record.attachmentId);
+    const copiedFile = copiedComposerAttachmentFile(sourceEnvironmentId, record.attachmentId);
+    let file = copiedFile;
     if (!file) {
       const sourceConnection = readPreparedConnection(sourceEnvironmentId);
       if (!sourceConnection) {
@@ -215,6 +217,23 @@ export function useComposerContextImport(input: {
       }
       file = new File([blob], record.name, { type: record.mimeType || blob.type });
       if (record.kind === "image") await readComposerImageBytes(file);
+    }
+    const stagedImage: ComposerImageAttachment | null =
+      record.kind === "image"
+        ? {
+            type: "image",
+            id: localId,
+            name: record.name,
+            mimeType: file.type,
+            sizeBytes: file.size,
+            previewUrl: "",
+            file,
+            ...(record.source ? { source: record.source } : {}),
+          }
+        : null;
+    // Question cleanup can move an accepted image. Prepare its saved record before publishing it.
+    const serialized = stagedImage ? await serializeComposerImages([stagedImage], []) : [];
+    if (!copiedFile || stagedImage) {
       // Question attachments have no inline reference; annotations can own their screenshots.
       const draft = getComposerDraft(composerDraftTarget);
       const references = new Set(collectInlineContextIds(draft?.prompt ?? ""));
@@ -270,16 +289,11 @@ export function useComposerContextImport(input: {
       fail(m(msg("The attachment limit has been reached.")));
       return;
     }
-    if (record.kind === "image") {
+    releaseQuestionPreparation();
+    if (stagedImage) {
       const image: ComposerImageAttachment = {
-        type: "image",
-        id: localId,
-        name: record.name,
-        mimeType: file.type,
-        sizeBytes: file.size,
+        ...stagedImage,
         previewUrl: URL.createObjectURL(file),
-        file,
-        ...(record.source ? { source: record.source } : {}),
       };
       const accepted = addComposerDraftImages(attachmentDraftTarget, [image], {
         allowDuplicates:
@@ -291,7 +305,6 @@ export function useComposerContextImport(input: {
         fail(m(msg("The draft rejected this attachment (duplicate or attachment limit reached).")));
         return;
       }
-      const serialized = await serializeComposerImages([image], []);
       await useComposerDraftStore
         .getState()
         .appendPersistedAttachments(attachmentDraftTarget, [image], serialized);
@@ -321,10 +334,22 @@ export function useComposerContextImport(input: {
     const importTargetKey = attachmentTargetKey;
     pendingDraftWork.begin(importTargetKey);
     const releaseRequests = questionRequests ? appAtomRegistry.mount(questionRequests) : undefined;
+    let preparingQuestion = questionAttachmentTarget !== null;
     if (questionAttachmentTarget) changeQuestionAttachmentPreparation(questionAttachmentTarget, 1);
-    await runAttachmentImport(record, localId, sourceEnvironmentId, importTargetKey).finally(() => {
-      if (questionAttachmentTarget)
+    const releaseQuestionPreparation = () => {
+      if (questionAttachmentTarget && preparingQuestion) {
+        preparingQuestion = false;
         changeQuestionAttachmentPreparation(questionAttachmentTarget, -1);
+      }
+    };
+    await runAttachmentImport(
+      record,
+      localId,
+      sourceEnvironmentId,
+      importTargetKey,
+      releaseQuestionPreparation,
+    ).finally(() => {
+      releaseQuestionPreparation();
       releaseRequests?.();
       pendingDraftWork.end(importTargetKey);
     });
