@@ -4,6 +4,7 @@ import type {
   PullRequestRef,
   RepositoryIdentity,
 } from "@t3tools/contracts";
+import { canonicalRepositoryPath } from "@t3tools/shared/git";
 import type { ChangeRequestLink } from "@t3tools/source-control-core/shared/definition";
 
 import { sourceControlClients } from "./sourceControlClients.ts";
@@ -130,6 +131,18 @@ export function resolvePullRequestPreviewTarget({
   };
 }
 
+function webUrlRepositoryPath(identity: RepositoryIdentity): string | null {
+  if (identity.provider !== "forgejo" || identity.webUrl === undefined) return null;
+  try {
+    const url = new URL(identity.webUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    const path = url.pathname.replace(/^\/+|\/+$/g, "");
+    return path === "" ? null : canonicalRepositoryPath(path);
+  } catch {
+    return null;
+  }
+}
+
 /** The project host's browser URL for one of its change requests, before its detail loads. */
 export function projectChangeRequestUrl(
   identity: RepositoryIdentity | null | undefined,
@@ -140,8 +153,13 @@ export function projectChangeRequestUrl(
   const [host, ...path] = identity.canonicalKey.split("/");
   if (!host) return null;
   // The RPC selector can be shorter than the browser path (Azure's `web` for
-  // `org/project/_git/web`), so the project's own repository uses its full key.
-  const ownRepository = sourceControlClients.repositorySelector(identity) === repository;
+  // `org/project/_git/web`), so the project's own repository uses its full key. A mounted
+  // Forgejo clicked ref also keeps the mount prefix its SSH-derived selector lacks; only
+  // the webUrl path knows it.
+  const ownRepository =
+    sourceControlClients.repositorySelector(identity) === repository ||
+    webUrlRepositoryPath(identity) ===
+      canonicalRepositoryPath(repository.replace(/^\/+|\/+$/g, ""));
   return sourceControlClients.get(identity.provider).changeRequestUrl({
     host,
     repository: ownRepository ? path.join("/") : repository,
