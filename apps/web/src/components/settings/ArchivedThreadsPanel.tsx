@@ -215,8 +215,9 @@ export function ArchivedThreadsPanel() {
   // or its project's name.
   const archivedGroups = (() => {
     if (normalizedArchiveQuery.length === 0) return allArchivedGroups;
+    const filteredGroups = [];
     let firstRow = 0;
-    return allArchivedGroups.flatMap((group) => {
+    for (const group of allArchivedGroups) {
       const projectMatches = group.title.toLowerCase().includes(normalizedArchiveQuery);
       const threads = projectMatches
         ? group.threads
@@ -225,11 +226,11 @@ export function ArchivedThreadsPanel() {
               thread.title.toLowerCase().includes(normalizedArchiveQuery) ||
               thread.projectTitle.toLowerCase().includes(normalizedArchiveQuery),
           );
-      if (threads.length === 0) return [];
-      const filtered = { ...group, firstRow, threads };
+      if (threads.length === 0) continue;
+      filteredGroups.push({ ...group, firstRow, threads });
       firstRow += threads.length;
-      return [filtered];
-    });
+    }
+    return filteredGroups;
   })();
 
   type ArchivedThread = (typeof archivedGroups)[number]["threads"][number];

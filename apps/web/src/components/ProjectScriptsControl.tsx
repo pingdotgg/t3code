@@ -65,7 +65,6 @@ import {
 } from "./ui/menu";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { SharedTooltipTrigger } from "./ui/shared-tooltip";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export type { NewProjectScriptInput, ProjectScriptActionResult };
 
