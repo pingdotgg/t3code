@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ForwardCompatibleOptional, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderDriverKind } from "./providerInstance.ts";
 
 export const ProviderOptionDescriptorType = Schema.Literals(["select", "boolean"]);
@@ -28,10 +28,12 @@ export const SelectProviderOptionDescriptor = Schema.Struct({
   currentValue: Schema.optional(TrimmedNonEmptyString),
   promptInjectedValues: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   /**
-   * `reasoning` marks the reasoning control when its id is an agent's own, such as an ACP
-   * `thought_level`. `mode` marks the agent's own session mode, which can skip approvals.
+   * Marks the reasoning control when its id is an agent's own, such as an ACP `thought_level`.
+   * Older clients reject any other role, so a new marker gets its own key.
    */
-  role: Schema.optional(Schema.Literals(["reasoning", "mode"])),
+  role: ForwardCompatibleOptional(Schema.Literal("reasoning")),
+  /** Marks the agent's own session mode, which can skip approvals. */
+  agentMode: Schema.optional(Schema.Literal(true)),
 });
 export type SelectProviderOptionDescriptor = typeof SelectProviderOptionDescriptor.Type;
 
@@ -39,7 +41,7 @@ export const BooleanProviderOptionDescriptor = Schema.Struct({
   ...ProviderOptionDescriptorBase,
   type: Schema.Literal("boolean"),
   currentValue: Schema.optional(Schema.Boolean),
-  role: Schema.optional(Schema.Literal("mode")),
+  agentMode: Schema.optional(Schema.Literal(true)),
 });
 export type BooleanProviderOptionDescriptor = typeof BooleanProviderOptionDescriptor.Type;
 

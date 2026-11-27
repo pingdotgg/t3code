@@ -5140,7 +5140,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                         id: "_t3/session-mode",
                         label: "Mode",
                         type: "select",
-                        role: "mode",
+                        agentMode: true,
                         options: [
                           { id: "ask", label: "Ask" },
                           { id: "yolo", label: "YOLO" },

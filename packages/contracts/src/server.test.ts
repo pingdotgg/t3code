@@ -18,21 +18,6 @@ import { ServerSettings } from "./settings.ts";
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
 const decodeServerProviders = Schema.decodeUnknownSync(ServerProviders);
 
-describe("provider option descriptor wire format", () => {
-  it("accepts null for descriptors without a special role", () => {
-    const encode = Schema.encodeSync(ProviderOptionDescriptor);
-    expect(
-      encode({
-        id: "sandbox",
-        label: "Sandbox",
-        type: "select",
-        options: [{ id: "workspace", label: "Workspace" }],
-        role: null,
-      }),
-    ).toMatchObject({ role: null });
-  });
-});
-
 const baseProviderSnapshot = {
   instanceId: "codex",
   driver: "codex",
@@ -121,6 +106,27 @@ describe("server config forward compatibility", () => {
     expect(parsed.usageLimits?.windows).toEqual([
       { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
     ]);
+  });
+});
+
+describe("provider option descriptor roles", () => {
+  const decodeDescriptor = Schema.decodeUnknownSync(Schema.toCodecJson(ProviderOptionDescriptor));
+
+  it("drops a role this build does not know instead of failing the provider", () => {
+    expect(
+      decodeDescriptor({
+        id: "mode",
+        label: "Mode",
+        type: "select",
+        options: [{ id: "default", label: "Default" }],
+        role: "some-future-role",
+      }),
+    ).toEqual({
+      id: "mode",
+      label: "Mode",
+      type: "select",
+      options: [{ id: "default", label: "Default" }],
+    });
   });
 });
 

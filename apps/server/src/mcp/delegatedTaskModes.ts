@@ -97,7 +97,7 @@ const isAgentModePick = (
 ) =>
   // The adapter applies the synthetic mode id whether or not the probe advertised it.
   selection.id === ACP_SESSION_MODE_OPTION_ID ||
-  descriptors.some((descriptor) => descriptor.id === selection.id && descriptor.role === "mode");
+  descriptors.some((descriptor) => descriptor.id === selection.id && descriptor.agentMode === true);
 
 /**
  * An agent's own session mode can skip the approvals a runtime mode asks for, and T3 cannot rank

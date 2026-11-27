@@ -120,7 +120,7 @@ describe("ACP Registry probe", () => {
           type: "select",
           options: [{ id: "ask", label: "Ask" }],
           currentValue: "ask",
-          role: "mode",
+          agentMode: true,
         },
       ],
       modelOptionIds: ["effort"],
