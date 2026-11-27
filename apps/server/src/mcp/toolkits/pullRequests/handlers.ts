@@ -16,6 +16,7 @@ import {
   type ThreadPullRequestLink,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
+import { parseGitRemoteRepository } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -615,17 +616,21 @@ const make = Effect.gen(function* () {
     if (project === undefined) {
       return yield* new PullRequestProjectNotFoundError({ repository: input.repository ?? "" });
     }
-    // A repository another registered project holds is on that project's host and forge.
-    const holder =
-      input.number === undefined || input.repository === undefined
-        ? project
-        : (projectHoldingRepository(
-            yield* projects
-              .listShells()
-              .pipe(Effect.mapError((cause) => new PullRequestForgeError({ cause }))),
-            input.repository,
-            project,
-          ) ?? project);
+    // A repository named by URL is on that URL's host. One another registered project holds is on
+    // that project's host and forge.
+    const remote =
+      input.repository === undefined ? null : parseGitRemoteRepository(input.repository);
+    const repository = remote?.path ?? input.repository;
+    let holder = project;
+    if (input.number !== undefined && repository !== undefined) {
+      const known = yield* projects
+        .listShells()
+        .pipe(Effect.mapError((cause) => new PullRequestForgeError({ cause })));
+      holder =
+        (remote === null
+          ? projectHoldingRepository(known, repository, project)
+          : projectForPullRequest(known, { host: remote.host, repository }, project)) ?? project;
+    }
     // Status sync sets branchPullRequest later, so a PR this thread just opened counts too,
     // unless it is another branch's.
     const opened =
@@ -643,7 +648,7 @@ const make = Effect.gen(function* () {
         : (sourceControlDefinitions.repositorySelector(project.repositoryIdentity) ?? undefined);
     const named =
       input.number !== undefined
-        ? { number: input.number, repository: input.repository ?? branchRepository }
+        ? { number: input.number, repository: repository ?? branchRepository, host: remote?.host }
         : branchPullRequest === null
           ? null
           : { number: branchPullRequest.number, repository: branchPullRequest.repository };
