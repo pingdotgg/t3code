@@ -10,6 +10,7 @@ import {
   ZipReader,
   type FileEntry,
 } from "@zip.js/zip.js/index-native.cjs";
+import * as DateTime from "effect/DateTime";
 
 import { ZipError } from "./zipError.ts";
 
@@ -39,6 +40,7 @@ export async function readEncryptedZip(
   try {
     for (const entry of await reader.getEntries()) {
       limits.signal?.throwIfAborted();
+      if (entry.filename.length > 1024) throw new ZipError({ code: "archive-path-too-long" });
       const name = entry.filename
         .split("/")
         .reduce<string[]>((parts, part) => {
@@ -64,7 +66,7 @@ export async function readEncryptedZip(
       }
       files.set(entry.directory ? `${name}/` : name, {
         bytes: content,
-        date: entry.lastModDate,
+        date: dosDateInUtc(Number(entry.rawLastModDate)),
         directory: entry.directory,
       });
     }
@@ -83,6 +85,19 @@ export async function readEncryptedZip(
   } finally {
     await reader.close();
   }
+}
+
+function dosDateInUtc(packed: number) {
+  // The archive viewer treats DOS dates as wall-clock times and uses UTC to store them.
+  const time = Date.UTC(
+    1980 + (packed >>> 25),
+    ((packed >>> 21) & 15) - 1,
+    (packed >>> 16) & 31,
+    (packed >>> 11) & 31,
+    (packed >>> 5) & 63,
+    (packed & 31) * 2,
+  );
+  return DateTime.toDateUtc(DateTime.makeUnsafe(time));
 }
 
 async function readEntry(entry: FileEntry, password: string, signal?: AbortSignal) {

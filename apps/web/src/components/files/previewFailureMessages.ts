@@ -102,6 +102,7 @@ const PREVIEW_FAILURE_MESSAGES = {
   "workbook-sheet-count": msg("This workbook has invalid or too many sheets."),
   "workbook-missing-sheet": msg("This workbook has a missing worksheet."),
   "office-too-large-expanded": msg("The expanded document is too large to preview safely."),
+  "office-decryption-limit": msg("This document requires too much work to decrypt in the preview."),
   "office-invalid": msg("This file is damaged or is not a valid Office document."),
   "epub-drm": msg("This ebook requires a reader that supports its DRM."),
   "office-too-many-entries": msg("This file contains too many archive entries to preview."),

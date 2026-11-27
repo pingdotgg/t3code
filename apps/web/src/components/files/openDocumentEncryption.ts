@@ -87,8 +87,7 @@ export async function unlockOpenDocument(archive: JSZip, password?: string) {
     )
       unsupported();
     const iterations = Number(key[manifest + "iteration-count"]);
-    if (!Number.isSafeInteger(iterations) || iterations < 1 || iterations > 1_000_000)
-      unsupported();
+    if (!Number.isSafeInteger(iterations) || iterations < 1) invalid();
     if (!path || !Number.isSafeInteger(size) || size < 0) invalid();
     return [
       {
@@ -112,7 +111,8 @@ export async function unlockOpenDocument(archive: JSZip, password?: string) {
     (sum, part) => sum + part.iterations * Math.ceil(part.keyBytes / 20),
     0,
   );
-  if (rounds > 4_000_000) unsupported();
+  if (rounds > 4_000_000 || parts.some((part) => part.iterations > 1_000_000))
+    throw new PreviewError({ code: "office-decryption-limit" });
   if (
     total > OFFICE_PREVIEW_MAX_BYTES ||
     parts.some((part) => part.path.endsWith(".xml") && part.size > 8 * 1024 * 1024)

@@ -5874,6 +5874,7 @@
   "87b291f622900431": "This workbook has invalid or too many sheets.",
   "e355efff77791140": "This workbook has a missing worksheet.",
   "13e79167614022e3": "The expanded document is too large to preview safely.",
+  "bbe126c259d4d596": "This document requires too much work to decrypt in the preview.",
   "a6e5ef4b138e6a43": "This file contains too many archive entries to preview.",
   "75315613ba8fdf22": "The Office engine stopped",
   "c5e464f821c84612": "The Office engine sent an unreadable reply",

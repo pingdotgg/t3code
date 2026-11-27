@@ -280,11 +280,12 @@ const adobeObfuscation = "http://ns.adobe.com/pdf/enc#RC";
 export async function openEpub(archive: JSZip) {
   if (archive.file("META-INF/license.lcpl")) throw new PreviewError({ code: "epub-drm" });
   const algorithms = new Map<string, string>();
-  if (archive.file("META-INF/encryption.xml")) {
-    const encryption = parseXml(await readXmlText(archive, "META-INF/encryption.xml"));
+  const encryption = await optionalXml("META-INF/encryption.xml");
+  if (encryption) {
     const ns = "{http://www.w3.org/2001/04/xmlenc#}";
     for (const node of find(encryption, ns + "EncryptedData")) {
       const algorithm = find(node, ns + "EncryptionMethod")[0]?.attrs.Algorithm;
+      if (!algorithm) continue;
       if (algorithm !== idpfObfuscation && algorithm !== adobeObfuscation)
         throw new PreviewError({ code: "epub-drm" });
       const uri = find(node, ns + "CipherReference")[0]?.attrs.URI;

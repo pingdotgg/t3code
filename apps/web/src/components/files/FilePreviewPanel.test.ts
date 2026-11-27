@@ -2,6 +2,7 @@ import JSZip from "jszip";
 import { openRtf, openNotebook, openDocument } from "./extendedDocumentPreview";
 import { openEpub } from "./epubPreview";
 import { parseXml } from "./documentPreviewXml";
+import { unlockOpenDocument } from "./openDocumentEncryption";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { ProjectReadFileError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -207,6 +208,48 @@ describe("document preview contents", () => {
     const book = await openEpub(archive);
     expect(book.chapters).toHaveLength(30);
     expect((await book.page(29)).html).toBe("<figcaption></figcaption>".repeat(30_000));
+  });
+
+  it("skips broken EPUB encryption metadata and reports declared DRM", async () => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="a" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/></spine></package>',
+      )
+      .file("chapter.xhtml", "<html><body><p>Hello</p></body></html>");
+    const namespace = 'xmlns="http://www.w3.org/2001/04/xmlenc#"';
+    for (const metadata of ["<encryption>", `<EncryptedData ${namespace}/>`]) {
+      archive.file("META-INF/encryption.xml", metadata);
+      expect((await (await openEpub(archive)).page(0)).html).toBe("<p>Hello</p>");
+    }
+    archive.file(
+      "META-INF/encryption.xml",
+      `<EncryptedData ${namespace}><EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes256-cbc"/></EncryptedData>`,
+    );
+    await expect(openEpub(archive)).rejects.toMatchObject({ code: "epub-drm" });
+  });
+
+  it("reports the aggregate OpenDocument decryption limit for supported encryption", async () => {
+    const parts = Array.from(
+      { length: 3 },
+      (_, index) => `<m:file-entry m:full-path="part-${index}.xml" m:size="1">
+        <m:encryption-data m:checksum-type="SHA1/1K" m:checksum="AA==">
+          <m:algorithm m:algorithm-name="http://www.w3.org/2001/04/xmlenc#aes256-cbc" m:initialisation-vector="AA=="/>
+          <m:key-derivation m:key-derivation-name="PBKDF2" m:iteration-count="1000000" m:salt="AA=="/>
+        </m:encryption-data>
+      </m:file-entry>`,
+    );
+    const archive = new JSZip().file(
+      "META-INF/manifest.xml",
+      `<m:manifest xmlns:m="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">${parts.join("")}</m:manifest>`,
+    );
+    await expect(unlockOpenDocument(archive, "open me")).rejects.toMatchObject({
+      code: "office-decryption-limit",
+    });
   });
 
   it("decodes rich text formatting and Unicode without showing hidden destinations", () => {

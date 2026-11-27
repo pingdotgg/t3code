@@ -5873,6 +5873,7 @@
   "87b291f622900431": "Ce classeur a des feuilles non valides ou trop nombreuses.",
   "e355efff77791140": "Il manque une feuille dans ce classeur.",
   "13e79167614022e3": "Le document décompressé est trop volumineux pour un aperçu sûr.",
+  "bbe126c259d4d596": "Le déchiffrement de ce document demande trop de calculs pour l’aperçu.",
   "a6e5ef4b138e6a43": "Ce fichier contient trop d’entrées d’archive pour l’aperçu.",
   "75315613ba8fdf22": "Le moteur Office s’est arrêté",
   "c5e464f821c84612": "Le moteur Office a envoyé une réponse illisible",
