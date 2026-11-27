@@ -16,6 +16,7 @@ const LINE_START = Symbol("line-start");
 const THEMATIC_BREAK = Symbol("thematic-break");
 const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
+const ODF_DRAW_NS = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
 type TextPart =
   | string
   | typeof CELL_START
@@ -79,6 +80,7 @@ interface XmlNode {
   epubTable?: boolean;
   mathmlFirstChildSeen?: boolean;
   epubBlock?: boolean;
+  odfTextBox?: boolean;
 }
 
 // ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
@@ -177,6 +179,8 @@ function xml(source: string, extension: string): XmlNode {
     if (odf && node.name === "s") node.spaceCount = repeatCount(node.attrs.c);
     stack.at(-1)!.children.push(node);
     stack.push(node);
+    if (odf && node.name === "text-box" && namespaceOf(tag.name, stack) === ODF_DRAW_NS)
+      node.odfTextBox = true;
     if (
       extension === ".epub" &&
       node.name === "semantics" &&
@@ -343,7 +347,21 @@ function* text(node: XmlNode): Generator<TextPart, void> {
   }
   // Word text boxes hold their own paragraphs inside the anchoring paragraph.
   if (node.name === "txbxContent") yield* paragraphs(node);
-  else if (["tab", "ptab", "cell"].includes(node.name)) yield "\t";
+  else if (node.odfTextBox) {
+    // An ODF box can sit inline, so only add breaks between its own paragraphs.
+    let seenParagraph = false;
+    for (const child of node.children) {
+      if (typeof child === "string") {
+        yield child;
+        continue;
+      }
+      if (child.name === "p" || child.name === "h") {
+        if (seenParagraph) yield "\n";
+        seenParagraph = true;
+      }
+      yield* text(child);
+    }
+  } else if (["tab", "ptab", "cell"].includes(node.name)) yield "\t";
   else if (["br", "line-break", "cr"].includes(node.name)) yield "\n";
   else if (node.name === "noBreakHyphen") yield "\u2011";
   else if (node.spaceCount !== undefined) {
