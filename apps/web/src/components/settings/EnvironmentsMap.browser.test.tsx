@@ -1,5 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
 import * as DateTime from "effect/DateTime";
+import { Option } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -11,6 +13,36 @@ import { FleetDetails } from "./EnvironmentsMapDetails";
 import { buildFleetGraph, type FleetEnvironmentInput, fleetStacks } from "./environmentsMap.logic";
 
 vi.mock("../chat/GlobalVoiceInputIndicator", () => ({ GlobalVoiceInputIndicator: () => null }));
+// One linked machine on the map, so a search can reach a node that is not this browser.
+vi.mock(import("../../state/environments"), async (original) => ({
+  ...(await original()),
+  useEnvironments: () => ({
+    isReady: true,
+    networkStatus: "online" as const,
+    environments: [
+      {
+        environmentId: EnvironmentId.make("desk"),
+        label: "Desk",
+        displayUrl: "http://localhost:12345",
+        relayManaged: false,
+        entry: {
+          target: new PrimaryConnectionTarget({
+            environmentId: EnvironmentId.make("desk"),
+            label: "Desk",
+            httpBaseUrl: "http://localhost:12345",
+            wsBaseUrl: "ws://localhost:12345/ws",
+          }),
+          profile: Option.none(),
+          enabled: true,
+        },
+        connection: { phase: "connected", error: null, traceId: null },
+        refusedRouteIds: [],
+        serverConfig: null,
+      },
+    ],
+    presentationById: new Map(),
+  }),
+}));
 
 const linkedAt = DateTime.makeUnsafe("2026-11-19T12:00:00.000Z");
 const hub: FleetEnvironmentInput = {
@@ -171,6 +203,73 @@ describe("EnvironmentsMap", () => {
 
     await userEvent.keyboard("{Escape}");
     await expect.element(filter).toHaveValue("");
+    await userEvent.keyboard("{Escape}");
+    await expect.element(settings).not.toBeInTheDocument();
+  });
+
+  it("keeps the map search on Escape and Enter that belong to an IME", async () => {
+    await using _screen = await renderSettingsMap();
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    const desk = page.getByRole("button", { name: /^Desk/ });
+    const mapSearch = page.getByRole("searchbox", { name: "Find a machine on the map" });
+
+    await expect.element(mapSearch).toHaveAttribute("type", "text");
+    await mapSearch.fill("Desk");
+
+    // An Escape that cancels an IME composition belongs to the IME, not to the search.
+    for (const composition of [
+      { isComposing: true, keyCode: 27 },
+      { isComposing: false, keyCode: 229 },
+    ]) {
+      await act(() => {
+        mapSearch
+          .element()
+          .dispatchEvent(
+            new KeyboardEvent("keydown", { key: "Escape", ...composition, bubbles: true }),
+          );
+      });
+      await expect.element(mapSearch).toHaveValue("Desk");
+      expect(settings.element()).toHaveAttribute("data-open");
+    }
+
+    // An Enter that confirms an IME composition belongs to the IME too.
+    for (const composition of [
+      { isComposing: true, keyCode: 13 },
+      { isComposing: false, keyCode: 229 },
+    ]) {
+      await act(() => {
+        mapSearch.element().dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Enter",
+            ...composition,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await expect.element(desk).toHaveAttribute("aria-pressed", "false");
+    }
+
+    // The same Enter outside a composition still jumps to the first match.
+    await act(() => {
+      mapSearch.element().dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          isComposing: false,
+          keyCode: 13,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await expect.element(desk).toHaveAttribute("aria-pressed", "true");
+
+    // Jumping to the match moved focus to the node; take it back for the Escape below.
+    await mapSearch.click();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(mapSearch).toHaveValue("");
+    expect(settings.element()).toHaveAttribute("data-open");
+
     await userEvent.keyboard("{Escape}");
     await expect.element(settings).not.toBeInTheDocument();
   });

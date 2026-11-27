@@ -5,14 +5,16 @@ import type {
   RuntimeRequestId,
 } from "@t3tools/contracts";
 import {
+  type ApprovalTextPart,
+  approvalTextParts,
   FULL_ACCESS_OVERRIDE_QUESTION,
   fullAccessOverrideExplanation,
   PUSH_HOOKS_APPROVAL_QUESTION,
   pushHooksApprovalRows,
 } from "@t3tools/client-runtime/state/thread-requests";
 import { T, useGT, useMessages } from "gt-react-native";
-import { useState } from "react";
-import { Pressable, View } from "react-native";
+import { type ComponentRef, useRef, useState } from "react";
+import { Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import type { PendingApproval } from "../../lib/threadActivity";
@@ -44,6 +46,8 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const [explanationOpen, setExplanationOpen] = useState(false);
   // T3 Code's own question reads as the app asking: a plain sentence, then what it names.
   const { pushHooks } = props.approval;
+  const detail =
+    !pushHooks && props.approval.detail ? approvalTextParts(props.approval.detail) : null;
   return (
     <View className="gap-2.5 rounded-[20px] border border-border bg-card-alt p-4">
       <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
@@ -67,10 +71,23 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
             </View>
           ))}
         </View>
-      ) : props.approval.detail ? (
-        <Text className="font-sans text-sm leading-normal text-foreground-secondary">
-          {props.approval.detail}
-        </Text>
+      ) : detail ? (
+        <>
+          {detail.hiddenLength > 0 ? (
+            <>
+              <ApprovalTextScroll parts={detail.parts} />
+              <Text className="font-sans text-xs leading-normal text-warning-foreground">
+                {gt(
+                  "{count, plural, one {… {hidden} character in the middle is not shown.} other {… {hidden} characters in the middle are not shown.}} The text ends with:",
+                  { count: detail.hiddenLength, hidden: detail.hiddenLength.toLocaleString() },
+                )}
+              </Text>
+              <ApprovalTextScroll parts={detail.tail} fromEnd />
+            </>
+          ) : (
+            <ApprovalTextParts parts={detail.parts} />
+          )}
+        </>
       ) : null}
       {props.approval.reason ? (
         <Text className="font-sans text-xs leading-normal text-warning-foreground">
@@ -128,5 +145,47 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
         </Text>
       ) : null}
     </View>
+  );
+}
+
+/**
+ * One end of text too long to show in full, in a box that scrolls on its own, so the note, the
+ * other end and the buttons stay within reach. The end opens on its last line.
+ */
+function ApprovalTextScroll(props: {
+  readonly parts: ReadonlyArray<ApprovalTextPart>;
+  readonly fromEnd?: boolean;
+}) {
+  const box = useRef<ComponentRef<typeof ScrollView>>(null);
+  return (
+    <ScrollView
+      ref={box}
+      className="max-h-40"
+      nestedScrollEnabled
+      onContentSizeChange={
+        props.fromEnd ? () => box.current?.scrollToEnd({ animated: false }) : undefined
+      }
+    >
+      <ApprovalTextParts parts={props.parts} />
+    </ScrollView>
+  );
+}
+
+function ApprovalTextParts(props: { readonly parts: ReadonlyArray<ApprovalTextPart> }) {
+  return (
+    <Text className="font-sans text-sm leading-normal text-foreground-secondary">
+      {props.parts.map((part, index) =>
+        part.named ? (
+          // Tinted only: a second font inside wrapped lines makes Android lay the text out shorter
+          // than it draws, which cuts off its last lines.
+          // oxlint-disable-next-line react/no-array-index-key -- parts never reorder and two may read alike
+          <Text key={index} className="text-warning-foreground">
+            {part.text}
+          </Text>
+        ) : (
+          part.text
+        ),
+      )}
+    </Text>
   );
 }

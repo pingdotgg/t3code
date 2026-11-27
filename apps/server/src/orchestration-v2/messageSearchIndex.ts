@@ -60,8 +60,13 @@ const LINK_LABEL = /(!?\[)([^\]\n]*)(\]\([^)\s]*\))/g;
 export const readableSearchText = (text: string) => {
   const readable = assistantCitationsToPlainText(text).replace(
     LINK_LABEL,
-    (_link, open: string, label: string, close: string) =>
-      open + label.replace(/\\([*_])/g, "$1") + close,
+    (link, _open: string, label: string) => {
+      const decoded = label.replace(
+        /\\([\\*_~&])|&#9(1|3);/g,
+        (_match, escaped?: string, code?: string) => escaped ?? (code === "1" ? "[" : "]"),
+      );
+      return decoded === label ? link : decoded;
+    },
   );
   return readable === text ? null : readable;
 };

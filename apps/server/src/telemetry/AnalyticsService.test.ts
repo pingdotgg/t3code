@@ -40,6 +40,8 @@ interface RecordedBatchRequest {
         readonly serverAppVersion?: string;
         readonly serverMode?: string;
         readonly t3CodeVersion?: string;
+        readonly wsl?: string;
+        readonly serverWslDistro?: string;
       };
     }>;
   } | null;
@@ -56,6 +58,8 @@ interface RecordedBatchBody {
       readonly serverAppVersion?: string;
       readonly serverMode?: string;
       readonly t3CodeVersion?: string;
+      readonly wsl?: string;
+      readonly serverWslDistro?: string;
     };
   }>;
 }
@@ -371,6 +375,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
           T3CODE_TELEMETRY_KEY: "phc_test_key",
           T3CODE_TELEMETRY_HOST: "http://localhost",
           T3CODE_TELEMETRY_FLUSH_BATCH_SIZE: 20,
+          // A name its user chose; only the family may leave the machine.
+          WSL_DISTRO_NAME: "Acme-Client-Secret-Ubuntu",
         }),
       );
       const layerBatchServer = HttpServer.serve(
@@ -452,11 +458,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
               event.properties?.serverOs === "Linux" &&
               event.properties.serverArch === "arm64" &&
               event.properties.serverAppVersion === event.properties.t3CodeVersion &&
-              event.properties.serverMode === "web",
+              event.properties.serverMode === "web" &&
+              event.properties.wsl === "other" &&
+              event.properties.serverWslDistro === "other",
           ),
         ),
         true,
       );
+      assert.equal(JSON.stringify(batchRequests).includes("Acme-Client-Secret-Ubuntu"), false);
     }),
   );
 
@@ -503,4 +512,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
       assert.deepEqual(capturedPaths, []);
     }),
   );
+});
+
+it("reports a WSL distro by its family, never by a name its user chose", () => {
+  assert.equal(AnalyticsService.wslDistroFamily("Ubuntu-24.04"), "Ubuntu");
+  assert.equal(AnalyticsService.wslDistroFamily("openSUSE-Tumbleweed"), "openSUSE");
+  assert.equal(AnalyticsService.wslDistroFamily("Acme-Client-Secret-Ubuntu"), "other");
+  assert.equal(AnalyticsService.wslDistroFamily("  "), undefined);
 });
