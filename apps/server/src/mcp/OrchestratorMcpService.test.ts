@@ -2530,6 +2530,76 @@ describe("OrchestratorMcpService provider resolution", () => {
         ]);
       }),
     );
+
+    it.effect("lists all current antigravity models beyond the large-catalog cap", () =>
+      Effect.gen(function* () {
+        const antigravityInstanceId = ProviderInstanceId.make("antigravity");
+        const antigravityCurrentSlugs = [
+          "gemini-4-neon",
+          "gemini-4-carbon",
+          "gemini-4-argon",
+          "gemini-4-hydrogen",
+          "gemini-pro-orchestrator-neon",
+          "gemini-pro-orchestrator",
+          "gemini-pro-orchestrator-argon",
+          "gemini-3.8-flash",
+          "claude-opus-5-5",
+          "claude-sonnet-5-5",
+          "gpt-oss-120b-medium",
+        ];
+        const antigravityCatalog: ReadonlyArray<ServerProvider> = [
+          {
+            ...providerSnapshot({
+              instanceId: antigravityInstanceId,
+              driver: ProviderDriverKind.make("antigravity"),
+            }),
+            displayName: "Antigravity",
+            models: [
+              ...antigravityCurrentSlugs.map((slug) => model(slug)),
+              model("gemini-2.5-legacy", { isLegacy: true }),
+            ],
+          },
+        ];
+        const capabilities = yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          return yield* service.capabilities(scope, {});
+        }).pipe(
+          Effect.provide(
+            layerOrchestratorService.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  NodeServices.layer,
+                  NodeCrypto.layer,
+                  Layer.mock(ThreadManagementService.ThreadManagementService)({
+                    getThreadRecords: () =>
+                      Effect.succeed(
+                        parentProjection([], {
+                          instanceId: antigravityInstanceId,
+                          model: "gemini-4-neon",
+                        }),
+                      ),
+                  }),
+                  ServerSettings.layerTest({}),
+                  providerRegistryLayer(antigravityCatalog),
+                  adapterRegistryLayer([antigravityInstanceId]),
+                  Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
+                  Layer.mock(SecretRequests.SecretRequests)({}),
+                  Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+                  Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+                ),
+              ),
+            ),
+          ),
+        );
+        assert.deepEqual(listing(capabilities), [
+          {
+            id: antigravityInstanceId,
+            models: antigravityCurrentSlugs,
+            omitted: 1,
+          },
+        ]);
+      }),
+    );
   });
 
   it.effect.each(["already advertised", "newly advertised", "still unavailable"] as const)(
