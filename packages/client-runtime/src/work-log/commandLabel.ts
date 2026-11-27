@@ -685,7 +685,9 @@ function commandWithoutLeadingShellComments(command: string): string | null {
   return remainingCommand || null;
 }
 
-function withoutShellLineContinuations(command: string): string {
+// Bash keeps a backslash before CR, so only labels, not the displayed script,
+// treat backslash-CRLF as a continuation.
+function withoutShellLineContinuations(command: string, joinCrlf = true): string {
   let normalizedCommand = "";
   let quote: ShellQuote | null = null;
   let escaping = false;
@@ -702,7 +704,12 @@ function withoutShellLineContinuations(command: string): string {
         index += 1;
         continue;
       }
-      if (quote !== "$'" && command[index + 1] === "\r" && command[index + 2] === "\n") {
+      if (
+        joinCrlf &&
+        quote !== "$'" &&
+        command[index + 1] === "\r" &&
+        command[index + 2] === "\n"
+      ) {
         index += 2;
         continue;
       }
@@ -1457,10 +1464,15 @@ function withoutShellWrapper(command: string): string {
   const trimmed = command.trim();
   const split = splitFirstShellCommand(trimmed);
   if (split.remainingCommand !== null) return trimmed;
-  const tokens = tokenizeShellCommand(trimmed);
+  const joined = trimmed.includes("\\\n") ? withoutShellLineContinuations(trimmed, false) : trimmed;
+  let tokens = tokenizeShellCommand(joined);
   const executable = tokens?.[0]?.split(/[\\/]/u).at(-1)?.toLowerCase();
   const program = executable?.replace(/\.exe$/u, "");
   if (!tokens || !executable || !program) return trimmed;
+  if (joined !== trimmed && WINDOWS_SHELL_PROGRAMS.has(executable)) {
+    tokens = tokenizeShellCommand(trimmed);
+    if (!tokens || tokens[0]?.split(/[\\/]/u).at(-1)?.toLowerCase() !== executable) return trimmed;
+  }
   const scriptIndex = SHELL_PROGRAMS.has(program)
     ? shellCommandArgumentIndex(program, tokens, 1)
     : WINDOWS_SHELL_PROGRAMS.has(executable)

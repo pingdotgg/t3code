@@ -242,14 +242,14 @@ describe("bounded binary previews", () => {
   });
 
   it("names archive folders whose paths have leading slashes, repeated slashes or ./", async () => {
-    const bytes = new Uint8Array(3072);
+    const bytes = new Uint8Array(3584);
     const write = (offset: number, value: string) =>
       bytes.set(new TextEncoder().encode(value), offset);
-    const member = (offset: number, name: string, content: string) => {
+    const member = (offset: number, name: string, content: string, type = "0") => {
       write(offset, name);
       write(offset + 124, content.length.toString(8).padStart(11, "0") + "\0");
       bytes.fill(32, offset + 148, offset + 156);
-      write(offset + 156, "0");
+      write(offset + 156, type);
       write(
         offset + 148,
         bytes
@@ -264,6 +264,8 @@ describe("bounded binary previews", () => {
     member(1024, "a/hello.txt", "plain hello");
     // `tar cf x.tar .` names every member from "./".
     member(2048, "./a/dot.txt", "dot hello");
+    // ...and starts with a directory member for the root itself, named ".".
+    member(3072, ".", "", "5");
     const src = URL.createObjectURL(new Blob([bytes]));
     try {
       await using screen = await render(<BinaryViewer src={src} name="paths.tar" kind="archive" />);
@@ -1494,10 +1496,11 @@ describe("document output sanitization", () => {
   it("preserves table content and raster data while removing scripts and network resources", () => {
     const wrapped = "data:image/png;base64,iVBORw0K\nGgo=\n";
     const html = sanitizeDocumentHtml(
-      `<script>alert(1)</script><style>@import "https://example.com/style.css";</style><iframe src="https://example.com"></iframe><img src="https://example.com/tracker.png" onerror="alert(1)"><img src="data:image/svg+xml;base64,PHN2Zz4=\n"><img src="data:image/png;base64,iVBORw0KGgo\u00a0="><img src="data:image/png;base64,iVBORw0KGgo="><img src="${wrapped}"><table><tr><td>Research</td></tr></table><a href="https://example.com">Results</a>`,
+      `<script>alert(1)</script><style>@import "https://example.com/style.css";</style><iframe src="https://example.com"></iframe><img src="https://example.com/tracker.png" onerror="alert(1)"><img src="data:image/svg+xml;base64,PHN2Zz4=\n"><img src="data:image/png;base64,iVBORw0KGgo\u00a0="><img src="data:image/png;base64,iVBORw0KGgo="><img src="${wrapped}"><table><tr><td>Research</td></tr></table><ol start="5"><li value="4">Step</li></ol><a href="https://example.com">Results</a>`,
     );
     const doc = new DOMParser().parseFromString(html, "text/html");
     expect(doc.querySelector("td")?.textContent).toBe("Research");
+    expect(doc.querySelector("ol")?.outerHTML).toBe('<ol start="5"><li value="4">Step</li></ol>');
     expect([...doc.images].map((image) => image.getAttribute("src"))).toEqual([
       "data:image/png;base64,iVBORw0KGgo=",
       wrapped.trim(),

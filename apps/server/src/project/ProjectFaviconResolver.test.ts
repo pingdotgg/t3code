@@ -357,6 +357,23 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
+    it.effect("skips icon links inside HTML comments", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        // A template's icon link commented out in favour of the project's own.
+        yield* writeTextFile(
+          cwd,
+          "index.html",
+          '<!-- <link rel="icon" type="image/svg+xml" href="/vite.svg" /> -->\n<link rel="icon" type="image/png" href="/brand.png" />',
+        );
+        yield* writeTextFile(cwd, "public/vite.svg", "<svg>vite</svg>");
+        yield* writeTextFile(cwd, "public/brand.png", "png");
+        expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "public", "brand.png"));
+      }),
+    );
+
     it.effect("skips source metadata beyond the favicon scan limit", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
