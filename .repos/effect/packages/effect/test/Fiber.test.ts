@@ -1,7 +1,26 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Cause, Context, Effect, Exit, Fiber, Latch, References, Scope } from "effect"
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Latch, References, Result, Scope } from "effect"
 
 describe("Fiber", () => {
+  for (const name of ["await", "join", "awaitAll"] as const) {
+    it.effect(`${name} cancellation does not interrupt an independently owned fiber`, () =>
+      Effect.gen(function*() {
+        const release = yield* Deferred.make<number>()
+        const observed = yield* Effect.forkChild(Deferred.await(release))
+        const wait = name === "await" ?
+          Fiber.await(observed)
+          : name === "join" ?
+          Fiber.join(observed)
+          : Fiber.awaitAll([observed])
+        const waiter = yield* Effect.forkChild(wait, { startImmediately: true })
+        yield* Fiber.interrupt(waiter)
+        assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(waiter)))
+        assert.isUndefined(observed.pollUnsafe())
+        yield* Deferred.succeed(release, 42)
+        assert.deepStrictEqual(yield* Fiber.await(observed), Exit.succeed(42))
+      }))
+  }
+
   it("is a fiber", async () => {
     const result = Effect.runFork(Effect.succeed(1))
     assert.isTrue(Fiber.isFiber(result))
@@ -133,6 +152,21 @@ describe("Fiber", () => {
       }))
   })
 
+  it.effect("keeps a finalizer's defect when an interrupted fiber waits for a child", () =>
+    Effect.gen(function*() {
+      const finalizer = Effect.forkChild(Effect.void, { uninterruptible: true }).pipe(
+        Effect.andThen(Effect.die("boom"))
+      )
+      const fiber = yield* Effect.never.pipe(
+        Effect.ensuring(finalizer),
+        Effect.forkChild({ startImmediately: true })
+      )
+      yield* Fiber.interrupt(fiber)
+      const exit = yield* Fiber.await(fiber)
+      assert.isTrue(Exit.hasInterrupts(exit))
+      assert.deepStrictEqual(Exit.findDefect(exit), Result.succeed("boom"))
+    }))
+
   it.effect(
     "delivers a synchronous self-interrupt instead of completing to success",
     () =>
@@ -181,6 +215,7 @@ describe("Fiber", () => {
 
   it.effect("delivers a pending interrupt when interruptibleMask restores interruptibility", () =>
     Effect.gen(function*() {
+      class Note extends Context.Service<Note, string>()("InterruptNote") {}
       const masked = yield* Latch.make()
       const resume = yield* Latch.make()
       const events: Array<string> = []
@@ -200,7 +235,7 @@ describe("Fiber", () => {
       events.push("masked")
 
       yield* Effect.sync(() => {
-        child.interruptUnsafe(123)
+        child.interruptUnsafe(123, Context.make(Note, "cancelled"))
         events.push("interrupted")
       })
       assert.isUndefined(child.pollUnsafe())
@@ -219,6 +254,7 @@ describe("Fiber", () => {
         assert.fail("expected interrupted fiber to exit with failure")
       }
       assert.deepStrictEqual(Cause.interruptors(exit.cause), new Set([123]))
+      assert.strictEqual(Context.getUnsafe(Cause.annotations(exit.cause), Note), "cancelled")
       assert.deepStrictEqual(events, ["masked", "interrupted", "resumed", "interruptibleMask"])
     }))
 

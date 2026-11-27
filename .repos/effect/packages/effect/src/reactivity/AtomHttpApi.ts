@@ -88,6 +88,10 @@ export interface AtomHttpApiClient<Self, Id extends string, Groups extends HttpA
     >
     : never
 
+  /**
+   * Queries an HTTP endpoint. When set, `staleTime` reuses fresh results on mount
+   * and revalidates stale results in the background. Use `timeToLive` to retain results across mounts.
+   */
   readonly query: <
     GroupIdentifier extends HttpApiGroup.Identifier<Groups>,
     EndpointIdentifier extends HttpApiEndpoint.Identifier<HttpApiGroup.Endpoints<Group>>,
@@ -116,6 +120,7 @@ export interface AtomHttpApiClient<Self, Id extends string, Groups extends HttpA
       >
     ] ? HttpApiEndpoint.ClientRequest<_Params, _Query, _Payload, _Headers, ResponseMode> & {
         readonly reactivityKeys?: Reactivity.KeysInput | undefined
+        readonly staleTime?: Duration.Input | undefined
         readonly timeToLive?: Duration.Input | undefined
         readonly serializationKey?: string | undefined
       }
@@ -272,6 +277,7 @@ export const Service =
       if (opts.responseMode === "decoded-only" && opts.serializationKey) {
         const endpoint = groups[opts.group].endpoints[opts.endpoint]
         atom = Atom.serializable(atom, {
+          skipInitialRun: opts.staleTime !== undefined,
           key: `AtomHttpApi:${opts.group}:${opts.endpoint}:${opts.serializationKey}`,
           schema: AsyncResult.Schema({
             success: Schema.Union(HttpApiEndpoint.getSuccessSchemas(endpoint)),
@@ -284,7 +290,7 @@ export const Service =
           ? Atom.setIdleTTL(atom, opts.timeToLive)
           : Atom.keepAlive(atom)
       }
-      return atom
+      return opts.staleTime !== undefined ? Atom.swr(atom, { staleTime: opts.staleTime }) : atom
     })
 
     self.query = ((
@@ -298,6 +304,7 @@ export const Service =
         readonly responseMode?: HttpApiEndpoint.ClientResponseMode
         readonly sseOptions?: Sse.DecodeOptions | undefined
         readonly reactivityKeys?: Reactivity.KeysInput | undefined
+        readonly staleTime?: Duration.Input | undefined
         readonly timeToLive?: Duration.Input | undefined
         readonly serializationKey?: string | undefined
       }
@@ -312,6 +319,7 @@ export const Service =
         responseMode: request.responseMode ?? "decoded-only",
         sseOptions: request.sseOptions,
         reactivityKeys: request.reactivityKeys,
+        staleTime: request.staleTime !== undefined ? Duration.fromInputUnsafe(request.staleTime) : undefined,
         timeToLive: request.timeToLive !== undefined
           ? Duration.fromInputUnsafe(request.timeToLive)
           : undefined,
@@ -339,6 +347,7 @@ interface QueryKey {
   responseMode: HttpApiEndpoint.ClientResponseMode
   reactivityKeys: Reactivity.KeysInput | undefined
   sseOptions: Sse.DecodeOptions | undefined
+  staleTime: Duration.Duration | undefined
   timeToLive: Duration.Duration | undefined
   serializationKey: string | undefined
 }

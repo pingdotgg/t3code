@@ -16,6 +16,7 @@ import {
   environmentShell,
 } from "./shell";
 import { environmentCatalog } from "../connection/catalog";
+import { environmentUnreachableAtom } from "./presentation";
 import { defaultProjectFallbackReadyAtom } from "./projects";
 
 const LOCAL = EnvironmentId.make("local");
@@ -141,6 +142,28 @@ describe("project snapshot readiness", () => {
     expect(registry.get(ready)).toBe(true);
     registry.dispose();
   });
+});
+
+it("calls an environment unreachable only once primary discovery can prove it absent", () => {
+  const UNKNOWN = EnvironmentId.make("unknown");
+  const unreachable = (catalog: EnvironmentCatalogState, environmentId: EnvironmentId) => {
+    const registry = AtomRegistry.make({
+      initialValues: [[environmentCatalog.catalogValueAtom, catalog]],
+    });
+    try {
+      return registry.get(environmentUnreachableAtom(environmentId));
+    } finally {
+      registry.dispose();
+    }
+  };
+  vi.stubGlobal("window", { desktopBridge: { getLocalEnvironmentEnabled: () => true } });
+  try {
+    expect(unreachable(catalogState([REMOTE]), LOCAL)).toBe(false);
+    expect(unreachable(catalogState([LOCAL, REMOTE]), UNKNOWN)).toBe(true);
+    expect(unreachable(catalogState([LOCAL, REMOTE]), REMOTE)).toBe(false);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
 
 it("expects a primary environment only on desktops with the local environment enabled", () => {

@@ -224,6 +224,23 @@ describe("accessibleWindowElementTree", () => {
     expect(tree?.root.children.length).toBeLessThan(10);
     expect(JSON.stringify(tree).length).toBeLessThanOrEqual(32_000);
   });
+
+  it("stops descending a cyclic tree", async () => {
+    const group = {
+      role: "group",
+      name: "Loop",
+      bounds: null,
+      children: async () => [group],
+    };
+    const tree = await accessibleWindowElementTree(
+      { role: "window", name: "Inbox", bounds: null, children: async () => [group] },
+      { x: 0, y: 0, width: 800, height: 600 },
+      { width: 800, height: 600 },
+    );
+
+    expect(tree?.truncated).toBe(true);
+    expect(tree?.root.name).toBe("Inbox");
+  });
 });
 
 describe("compactAccessibilityTree", () => {

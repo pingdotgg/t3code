@@ -64,6 +64,7 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
+import * as ThreadViewers from "./ThreadViewers.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
@@ -491,7 +492,13 @@ it.effect("commits other threads' writes ahead of a thread's queued provider sna
       .pipe(Effect.forkScoped({ startImmediately: true }));
     yield* Queue.offer(input, snapshot);
     yield* Deferred.await(started);
-    yield* Queue.offerAll(input, [snapshot, snapshot]);
+    yield* Queue.offerAll(
+      input,
+      [2, 3].map((n) => ({
+        ...snapshot,
+        node: { ...busyNode.payload, id: NodeId.make(`node:busy:${n}`) },
+      })),
+    );
     yield* Deferred.await(pulled);
     yield* TestClock.adjust(0);
     const writeTo = (event: OrchestrationV2DomainEvent, id: string) =>
@@ -4310,6 +4317,7 @@ it.effect.each(["direct", "provider-batch", "cancel-provider-batch"] as const)(
             layerCommandReceiptStoreProvided,
             ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
             TurnItemPositionStore.layer.pipe(Layer.provide(layerDatabase)),
+            ThreadViewers.layer,
           ),
         ),
       );
@@ -4608,6 +4616,7 @@ it.effect.each(["cancel transaction", "fail transaction", "cancel publication"] 
             layerCommandReceiptStoreProvided,
             ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
             TurnItemPositionStore.layer.pipe(Layer.provide(layerDatabase)),
+            ThreadViewers.layer,
           ),
         ),
       );

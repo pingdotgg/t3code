@@ -1,4 +1,4 @@
-import { describe, it } from "@effect/vitest"
+import { describe, it, vi } from "@effect/vitest"
 import { deepStrictEqual } from "@effect/vitest/utils"
 import { ConfigProvider, Effect, FileSystem, Layer, Path, PlatformError, Result } from "effect"
 
@@ -316,6 +316,53 @@ describe("ConfigProvider", () => {
   })
 
   describe("fromEnv", () => {
+    it.effect("snapshots implicit env when the first lookup runs and shares it with derived providers", () =>
+      Effect.gen(function*() {
+        const prefix = "EFFECTCONFIGPROVIDERSNAPSHOT"
+        const key = `${prefix}_VALUE`
+        const path = [prefix, "VALUE"]
+        const derivedPath = [prefix.toLowerCase(), "value"]
+        vi.stubEnv(key, undefined)
+        try {
+          const provider = ConfigProvider.fromEnv({ preserveEmptyStrings: true })
+          const derived = provider.pipe(ConfigProvider.constantCase)
+          const lookup = derived.load(derivedPath)
+          const independent = ConfigProvider.fromEnv()
+
+          vi.stubEnv(key, "first")
+          deepStrictEqual(yield* lookup, ConfigProvider.makeValue("first"))
+
+          vi.stubEnv(key, "second")
+          deepStrictEqual(yield* lookup, ConfigProvider.makeValue("first"))
+          deepStrictEqual(yield* provider.load(path), ConfigProvider.makeValue("first"))
+          deepStrictEqual(yield* provider.load([prefix]), ConfigProvider.makeRecord(new Set(["VALUE"])))
+          deepStrictEqual(yield* independent.load(path), ConfigProvider.makeValue("second"))
+
+          vi.stubEnv(key, "third")
+          deepStrictEqual(
+            yield* independent.pipe(ConfigProvider.constantCase).load(derivedPath),
+            ConfigProvider.makeValue("second")
+          )
+        } finally {
+          vi.unstubAllEnvs()
+        }
+      }))
+
+    it.effect("captures explicit env names at construction but reads values live", () =>
+      Effect.gen(function*() {
+        const env: Record<string, string> = { A: "initial" }
+        const provider = ConfigProvider.fromEnv({ env })
+        env.A = "before lookup"
+        env.B = "added"
+
+        deepStrictEqual(yield* provider.load([]), ConfigProvider.makeRecord(new Set(["A"])))
+        deepStrictEqual(yield* provider.load(["A"]), ConfigProvider.makeValue("before lookup"))
+
+        env.A = "after lookup"
+        deepStrictEqual(yield* provider.load(["A"]), ConfigProvider.makeValue("after lookup"))
+        deepStrictEqual(yield* provider.load([]), ConfigProvider.makeRecord(new Set(["A"])))
+      }))
+
     it("env without an underscore", async () => {
       const env = { A: "value1" }
       const provider = ConfigProvider.fromEnv({ env })

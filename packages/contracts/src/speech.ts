@@ -293,6 +293,8 @@ export const SpeechTranscriptionOptions = Schema.Struct({
   speechLanguage: SpeechLanguage,
   speechTranslateToEnglish: Schema.Boolean,
   speechCustomWords: SpeechCustomWords,
+  /** Recognition-only terms, such as the project name; never rewrite the transcript. */
+  speechHints: Schema.optionalKey(Schema.Array(SpeechCustomWord).check(Schema.isMaxLength(8))),
   speechRemoveFillerWords: Schema.Boolean,
   /** Preserve this cue for separately consented transcript cleanup. */
   speechCorrectionWord: Schema.optionalKey(SpeechCorrectionCue),

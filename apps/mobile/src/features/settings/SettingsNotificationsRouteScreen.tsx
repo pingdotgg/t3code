@@ -15,7 +15,9 @@ import { useAuth } from "@clerk/expo";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import * as Notifications from "expo-notifications";
 import { useNavigation } from "@react-navigation/native";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState, useSyncExternalStore } from "react";
@@ -58,7 +60,7 @@ import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
 import { runtime } from "../../lib/runtime";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
@@ -89,26 +91,29 @@ const updateEnvironmentPreference = Effect.fn("updateEnvironmentPreference")(fun
   environmentId: EnvironmentId,
   enabled: boolean,
 ) {
-  const result = yield* Effect.promise(() =>
+  const exit = yield* Effect.exit(
     updateLiveActivityPreference.run(appAtomRegistry, { environmentId, input: enabled }),
   );
-  if (result._tag === "Success") return result.value;
+  if (Exit.isSuccess(exit)) return exit.value;
   return yield* toCloudEnvironmentLinkError(
-    squashAtomCommandFailure(result),
+    Cause.squash(exit.cause),
     resolveMessage(msg("Could not update the environment's Live Activity preference.")),
   );
 });
+
+const saveLocalPreference = (liveActivitiesEnabled: boolean) =>
+  saveMobilePreferences.run(appAtomRegistry, { liveActivitiesEnabled });
 
 const linkEnvironmentWithPreference = Effect.fn("linkEnvironmentWithPreference")(function* (
   environmentId: EnvironmentId,
   input: { readonly clerkToken: string; readonly liveActivitiesEnabled: boolean },
 ) {
-  const result = yield* Effect.promise(() =>
+  const exit = yield* Effect.exit(
     linkLiveActivityEnvironment.run(appAtomRegistry, { environmentId, input }),
   );
-  if (result._tag === "Success") return;
+  if (Exit.isSuccess(exit)) return;
   return yield* toCloudEnvironmentLinkError(
-    squashAtomCommandFailure(result),
+    Cause.squash(exit.cause),
     resolveMessage(msg("Could not configure environment relay access.")),
   );
 });
@@ -206,7 +211,6 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   const gt = useGT();
   const m = useMessages();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const agentAwarenessPushAvailable = supportsAgentAwarenessPush();
   const agentAwarenessPlatform = resolveAgentAwarenessPlatformPresentation(Platform.OS, m);
   const agentAwarenessSubtitle =
@@ -383,6 +387,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
         setLiveActivityUpdatesEnabled({
           updateEnvironment: updateEnvironmentPreference,
           linkEnvironment: linkEnvironmentWithPreference,
+          saveLocalPreference,
           canConfigureEnvironment: (id) =>
             canManageConnect(id, AuthRelayConfigureScope) &&
             canManageConnect(id, AuthRelayWriteScope),
@@ -411,7 +416,6 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       return;
     }
 
-    savePreferences({ liveActivitiesEnabled: true });
     refreshManagedRelayEnvironments();
     setLiveActivityStatus("enabled");
     // Environment linking can precede device registration; only registered devices can receive Live Activities.
@@ -481,6 +485,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
         setLiveActivityUpdatesEnabled({
           updateEnvironment: updateEnvironmentPreference,
           linkEnvironment: linkEnvironmentWithPreference,
+          saveLocalPreference,
           canConfigureEnvironment: (id) =>
             canManageConnect(id, AuthRelayConfigureScope) &&
             canManageConnect(id, AuthRelayWriteScope),
@@ -501,7 +506,6 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       }
       return;
     }
-    savePreferences({ liveActivitiesEnabled: false });
     refreshManagedRelayEnvironments();
     setLiveActivityStatus("disabled");
     if (updateResult.value) {

@@ -13,6 +13,10 @@ export type ThreadContentPresentation =
       readonly detail: string;
     };
 
+// Shared so the thread screen's props keep their identity across renders.
+export const THREAD_CONTENT_READY: ThreadContentPresentation = { kind: "ready" };
+const THREAD_CONTENT_LOADING: ThreadContentPresentation = { kind: "loading" };
+
 export function projectThreadContentPresentation(input: {
   readonly hasDetail: boolean;
   readonly detailError: string | null;
@@ -22,7 +26,7 @@ export function projectThreadContentPresentation(input: {
 }): ThreadContentPresentation {
   const resolve = input.resolve ?? m;
   if (input.hasDetail) {
-    return { kind: "ready" };
+    return THREAD_CONTENT_READY;
   }
   if (input.detailDeleted) {
     return {
@@ -43,7 +47,7 @@ export function projectThreadContentPresentation(input: {
     input.connectionState === "connecting" ||
     input.connectionState === "reconnecting"
   ) {
-    return { kind: "loading" };
+    return THREAD_CONTENT_LOADING;
   }
   return {
     kind: "unavailable",
@@ -55,9 +59,12 @@ export function projectThreadContentPresentation(input: {
 export function threadSyncStatusLabel(
   status: EnvironmentThreadStatus,
   presentation: ThreadContentPresentation["kind"],
+  hasError: boolean,
   resolve: MessageResolver = m,
 ): string | null {
   if (status !== "empty" && status !== "cached" && status !== "synchronizing") return null;
-  if (presentation === "ready") return resolve(msg("Syncing messages…"));
+  if (presentation === "ready") {
+    return hasError ? resolve(msg("Could not sync messages")) : resolve(msg("Syncing messages…"));
+  }
   return presentation === "loading" ? resolve(msg("Loading messages…")) : null;
 }

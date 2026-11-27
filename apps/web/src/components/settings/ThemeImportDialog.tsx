@@ -15,6 +15,7 @@ import {
 } from "../../themePalette";
 import {
   humanizeThemeName,
+  numberedThemeName,
   pairVsCodeThemes,
   parseThemeImport,
   resolveThemeLabelCollisions,
@@ -233,19 +234,20 @@ function ThemeImportBody({
   const [isReading, setIsReading] = useState(false);
   const [isDropTarget, setIsDropTarget] = useState(false);
   const [conflicts, setConflicts] = useState<ReadonlyArray<ThemeDefinition> | null>(null);
-  // A newer read supersedes an older one still in flight.
+  // A new file selection supersedes a pending import even if the selection is rejected.
   const importRequestRef = useRef(0);
   const isCurrentRequest = (requestId: number) =>
     requestId === importRequestRef.current && !signal.aborted;
 
   const readThemeFile = async (file: ImportableThemeFile) => {
+    const requestId = ++importRequestRef.current;
     const oversized = describeOversizedThemeFile(file.size);
     if (oversized) {
+      setIsReading(false);
       setError(oversized);
       return;
     }
 
-    const requestId = ++importRequestRef.current;
     setIsReading(true);
     const fileText = await settlePromise(() => file.text());
     if (!isCurrentRequest(requestId)) return;
@@ -276,7 +278,7 @@ function ThemeImportBody({
     for (const file of files) {
       const oversized = describeOversizedThemeFile(file.size);
       if (oversized) {
-        failures.push(`${file.name}: too large`);
+        failures.push(`${file.name}: ${oversized}`);
         continue;
       }
       try {
@@ -361,10 +363,7 @@ function ThemeImportBody({
       if (!isThemeIdTaken(candidate.id)) return candidate;
     }
     for (let copy = 1; copy < 100; copy += 1) {
-      const candidate = renameTheme(
-        theme,
-        `${theme.label.slice(0, 48 - ` (${copy})`.length)} (${copy})`,
-      );
+      const candidate = renameTheme(theme, numberedThemeName(theme.label, ` (${copy})`));
       if (!isThemeIdTaken(candidate.id)) return candidate;
     }
     throw new Error(m(msg('Too many copies of "{label}".', { label: theme.label })));

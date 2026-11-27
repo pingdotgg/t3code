@@ -32,12 +32,6 @@ describe("SchemaRepresentation persisted wire", () => {
     >()
   })
 
-  it("constructs generated code", () => {
-    expect(SchemaRepresentation.makeCode).type.toBe<
-      (runtime: string, Type: string) => SchemaRepresentation.Code
-    >()
-  })
-
   it("keeps representation metadata separate from annotations", () => {
     const declaration = null as unknown as SchemaRepresentation.Declaration
     const filter = null as unknown as SchemaRepresentation.Filter

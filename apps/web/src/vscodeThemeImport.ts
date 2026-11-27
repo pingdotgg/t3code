@@ -454,6 +454,21 @@ export function pairVsCodeThemes(
   return [...passthrough, ...paired].sort((a, b) => a.order - b.order).map((entry) => entry.theme);
 }
 
+export function numberedThemeName(label: string, suffix: string): string {
+  const suffixId = themeIdFromName(suffix);
+  const base = [...label];
+  while (base.length > 0) {
+    const stem = base.join("").trimEnd();
+    const name = `${stem}${suffix}`;
+    const id = themeIdFromName(name);
+    if (name.length <= 48 && id.split("-").at(-1) === suffixId && id !== themeIdFromName(stem)) {
+      return name;
+    }
+    base.pop();
+  }
+  return suffix.trimStart();
+}
+
 export function resolveThemeLabelCollisions(
   entries: ReadonlyArray<{ theme: ThemeDefinition; sourceName?: string | undefined }>,
 ): ReadonlyArray<ThemeDefinition> {
@@ -480,6 +495,7 @@ export function resolveThemeLabelCollisions(
     return renamed ?? theme;
   });
 
+  const inputIds = new Set(relabelled.map(({ id }) => id));
   const seen = new Set<string>();
   return relabelled.map((theme) => {
     if (!seen.has(theme.id)) {
@@ -487,8 +503,8 @@ export function resolveThemeLabelCollisions(
       return theme;
     }
     for (let suffix = 2; suffix < 100; suffix += 1) {
-      const candidate = rename(theme, `${theme.label} ${suffix}`);
-      if (candidate && !seen.has(candidate.id)) {
+      const candidate = rename(theme, numberedThemeName(theme.label, ` ${suffix}`));
+      if (candidate && !inputIds.has(candidate.id) && !seen.has(candidate.id)) {
         seen.add(candidate.id);
         return candidate;
       }
