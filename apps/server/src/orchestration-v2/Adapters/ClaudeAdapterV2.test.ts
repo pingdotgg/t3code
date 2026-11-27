@@ -11096,10 +11096,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       seconds: 246,
     },
     {
-      cooldown: " via provider claude (last error: rate_limit_error (reset after 1h))",
-      seconds: 0,
-    },
-    {
       cooldown: " (last error: Request rejected (429) (reset after 1h) (last error: rate limited))",
       seconds: 0,
     },
