@@ -69,6 +69,9 @@ describe("embeddedScripts", () => {
     [`node -C development -e 'console.log(1)'`, "javascript", "console.log(1)"],
     [`ruby -e 'puts 1'`, "ruby", "puts 1"],
     [`ruby -I lib -e 'puts 1'`, "ruby", "puts 1"],
+    [`ruby -ne 'print if /foo/' input.txt`, "ruby", "print if /foo/"],
+    [`python3 -uc 'print(1)'`, "python", "print(1)"],
+    [`node -pe 'process.version'`, "javascript", "process.version"],
     [`perl -E 'say 1'`, "perl", "say 1"],
     [`perl -pe 's/foo/bar/' input.txt`, "perl", "s/foo/bar/"],
     [`perl -0777ne 'print length' input.txt`, "perl", "print length"],
@@ -115,6 +118,8 @@ describe("embeddedScripts", () => {
     ["an unnamed heredoc into a plain command", `git commit -F - <<'EOF'\nfix: x\nEOF`],
     ["an empty script", `bash -lc '   '`],
     ["a perl -i backup suffix of e", `perl -pie 's/foo/bar/' input.txt`],
+    ["a ruby -i backup suffix of e", `ruby -ie 'puts 1' input.txt`],
+    ["a python -W value of c", `python3 -Wc 'print(1)'`],
     ["a shell whose -c has no script, before a heredoc", `sh -c -- <<'EOF'\necho hi\nEOF`],
     ["a heredoc `cat` sends to stdout while stderr goes to a file", `cat 2>log.ts <<'EOF'\nx\nEOF`],
   ])("finds nothing for %s", (_case, command) => {
