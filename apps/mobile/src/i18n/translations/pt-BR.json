@@ -5707,5 +5707,15 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "46d614fa7b4bf1e5": "Execuções de workflow"
+  "46d614fa7b4bf1e5": "Execuções de workflow",
+  "6c1eddd065401135": "Janelas de horário não estão disponíveis aqui",
+  "0c9ff957da8d75b0": "Atualize este ambiente para usar janelas de horário em intervalos.",
+  "949d09be92f55081": "Janela de horário",
+  "bcc9a4b1c42d2680": "Início",
+  "8d2bf69694db8871": "Fim",
+  "e08770fb8b445af3": "Janela de horário",
+  "dcc72e4732f57181": "O horário de fim deve ser posterior ao de início.",
+  "32f36b059ed73dc0": "A cada {minutes} min",
+  "d965bd18eabb25e4": "todos os dias",
+  "a7700dfd6295f39f": "{interval}, {days} {start}–{end}"
 }

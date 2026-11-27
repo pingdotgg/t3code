@@ -190,6 +190,9 @@ const EMPTY_DRAFT: DraftState = {
   enabled: true,
   scheduleMode: "fixed",
   intervalMinutes: "15",
+  intervalWindowEnabled: false,
+  intervalWindowStart: "10:00",
+  intervalWindowEnd: "20:00",
   timeOfDay: "09:00",
   runAt: "",
   savedRunAt: "",
@@ -340,6 +343,39 @@ function Field({
       </Label>
       {children}
     </div>
+  );
+}
+
+function WeekdayToggleGroup({
+  weekdays,
+  onWeekdaysChange,
+  allowEmpty = false,
+}: {
+  readonly weekdays: ReadonlySet<number>;
+  readonly onWeekdaysChange: (weekdays: ReadonlySet<number>) => void;
+  readonly allowEmpty?: boolean;
+}) {
+  const gt = useGT();
+  const locale = useLocale();
+  const messages = useMessages();
+  return (
+    <ToggleGroup
+      multiple
+      variant="outline"
+      size="sm"
+      aria-label={gt("Days to run")}
+      value={[...weekdays].map(String)}
+      onValueChange={(values) => {
+        if (!allowEmpty && values.length === 0) return;
+        onWeekdaysChange(new Set(values.map(Number)));
+      }}
+    >
+      {WEEKDAY_ORDER.map((day) => (
+        <Toggle key={day} value={String(day)} aria-label={weekdayShortLabel(day, locale)}>
+          {messages(WEEKDAY_SHORT[day])}
+        </Toggle>
+      ))}
+    </ToggleGroup>
   );
 }
 
@@ -1504,7 +1540,6 @@ function ScheduledTaskEditorForm({
   readonly onClose: () => void;
 }) {
   const messages = useMessages();
-  const locale = useLocale();
   const gt = useGT();
   const { scope, connectedEnvironments } = useSettingsScope();
   const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
@@ -1515,6 +1550,8 @@ function ScheduledTaskEditorForm({
     task?.schedule.type === "once";
   const offersThreadModes =
     environment?.serverConfig?.environment.capabilities.scheduledTaskThreadModes === true;
+  const offersIntervalWindow =
+    environment?.serverConfig?.environment.capabilities.intervalScheduleWindows === true;
   const connected =
     environment?.connection.phase === "connected" && environment.serverConfig !== null;
   const tasksQuery = useEnvironmentQuery(
@@ -1615,6 +1652,8 @@ function ScheduledTaskEditorForm({
     shownInstanceId,
     shownModel,
   );
+  const intervalWindowError =
+    draft.scheduleMode === "interval" ? scheduleDraftErrors(draft)[0] : undefined;
 
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
@@ -1676,6 +1715,13 @@ function ScheduledTaskEditorForm({
       (!Number.isSafeInteger(schedule.everyMs) || schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS)
     ) {
       reportFailure(gt("Invalid interval"), gt("Enter an interval of at least one minute."));
+      return;
+    }
+    if (schedule.type === "interval" && schedule.window !== undefined && !offersIntervalWindow) {
+      reportFailure(
+        gt("Time windows are not available here"),
+        gt("Update this environment to use interval time windows."),
+      );
       return;
     }
     if (schedule.type === "once" && !offersOnce) {
@@ -2324,53 +2370,128 @@ function ScheduledTaskEditorForm({
                     </T>
                   </span>
                 </div>
-                <ToggleGroup
-                  multiple
-                  variant="outline"
-                  size="sm"
-                  aria-label={gt("Days to run")}
-                  value={[...draft.weekdays].map(String)}
-                  onValueChange={(values) => {
-                    if (values.length === 0) return;
-                    setDraft((current) => ({
-                      ...current,
-                      weekdays: new Set(values.map(Number)),
-                    }));
-                  }}
-                >
-                  {WEEKDAY_ORDER.map((day) => (
-                    <Toggle
-                      key={day}
-                      value={String(day)}
-                      aria-label={weekdayShortLabel(day, locale)}
-                    >
-                      {messages(WEEKDAY_SHORT[day])}
-                    </Toggle>
-                  ))}
-                </ToggleGroup>
+                <WeekdayToggleGroup
+                  weekdays={draft.weekdays}
+                  onWeekdaysChange={(weekdays) => setDraft((current) => ({ ...current, weekdays }))}
+                />
               </div>
             ) : (
-              <div className="flex items-center gap-2">
-                <Label htmlFor="scheduled-task-interval">
-                  <T>Run every</T>
-                </Label>
-                <Input
-                  type="number"
-                  id="scheduled-task-interval"
-                  nativeInput
-                  min={1}
-                  step="any"
-                  className="w-24"
-                  value={draft.intervalMinutes}
-                  onChange={(event) =>
-                    setDraft((current) => ({ ...current, intervalMinutes: event.target.value }))
-                  }
-                />
-                <span className="text-xs text-muted-foreground">
-                  {gt("{count, plural, one {minute} other {minutes}}", {
-                    count: Number(draft.intervalMinutes),
-                  })}
-                </span>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="scheduled-task-interval">
+                    <T>Run every</T>
+                  </Label>
+                  <Input
+                    type="number"
+                    id="scheduled-task-interval"
+                    nativeInput
+                    min={1}
+                    step="any"
+                    className="w-24"
+                    value={draft.intervalMinutes}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, intervalMinutes: event.target.value }))
+                    }
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    {gt("{count, plural, one {minute} other {minutes}}", {
+                      count: Number(draft.intervalMinutes),
+                    })}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0 space-y-1">
+                    <Label htmlFor="scheduled-task-interval-window">
+                      <T>Time window</T>
+                    </Label>
+                    <p
+                      id="scheduled-task-interval-window-description"
+                      className="text-sm text-muted-foreground"
+                    >
+                      <T>
+                        Run only between these hours on the days below. Off means all day, every
+                        day. Time uses the environment's time zone, which may differ from your
+                        phone's.
+                      </T>
+                    </p>
+                  </div>
+                  <Switch
+                    id="scheduled-task-interval-window"
+                    aria-describedby="scheduled-task-interval-window-description"
+                    disabled={!offersIntervalWindow && !draft.intervalWindowEnabled}
+                    checked={draft.intervalWindowEnabled}
+                    onCheckedChange={(intervalWindowEnabled) =>
+                      setDraft((current) => ({
+                        ...current,
+                        intervalWindowEnabled,
+                        ...(intervalWindowEnabled
+                          ? {
+                              intervalWindowStart: current.intervalWindowStart || "10:00",
+                              intervalWindowEnd: current.intervalWindowEnd || "20:00",
+                            }
+                          : {}),
+                      }))
+                    }
+                  />
+                </div>
+                {draft.intervalWindowEnabled ? (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="scheduled-task-window-start">
+                        <T>Start</T>
+                      </Label>
+                      <div className="w-32">
+                        <Input
+                          type="time"
+                          id="scheduled-task-window-start"
+                          nativeInput
+                          step="60"
+                          value={draft.intervalWindowStart}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              intervalWindowStart: event.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <Label htmlFor="scheduled-task-window-end">
+                        <T>End</T>
+                      </Label>
+                      <div className="w-32">
+                        <Input
+                          type="time"
+                          id="scheduled-task-window-end"
+                          nativeInput
+                          step="60"
+                          value={draft.intervalWindowEnd}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              intervalWindowEnd: event.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <span className="text-xs text-muted-foreground">
+                        <T context="between the run time and the weekday buttons, as in Run at 9:00 on Mon Wed">
+                          on
+                        </T>
+                      </span>
+                    </div>
+                    <WeekdayToggleGroup
+                      weekdays={draft.weekdays}
+                      onWeekdaysChange={(weekdays) =>
+                        setDraft((current) => ({ ...current, weekdays }))
+                      }
+                    />
+                  </div>
+                ) : null}
+                {intervalWindowError ? (
+                  <p className="text-sm text-destructive" role="status">
+                    {intervalWindowError.description}
+                  </p>
+                ) : null}
               </div>
             )}
           </div>
@@ -2407,7 +2528,11 @@ function ScheduledTaskEditorForm({
             !connected ||
             !tasksQuery.data ||
             automaticBaseRefLoading ||
-            (draft.enabled && draft.scheduleMode === "webhook" && webhookDenial !== undefined)
+            (draft.enabled && draft.scheduleMode === "webhook" && webhookDenial !== undefined) ||
+            (draft.scheduleMode === "interval" &&
+              draft.intervalWindowEnabled &&
+              !offersIntervalWindow) ||
+            intervalWindowError !== undefined
           }
           onClick={() => void submit()}
         >

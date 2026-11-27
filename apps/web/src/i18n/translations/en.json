@@ -13032,5 +13032,19 @@
       "v": "v"
     },
     " more in Linked items"
-  ]
+  ],
+  "6c1eddd065401135": "Time windows are not available here",
+  "0c9ff957da8d75b0": "Update this environment to use interval time windows.",
+  "e08770fb8b445af3": "Time window",
+  "5435566ccb3acc50": "Run only between these hours on the days below. Off means all day, every day. Time uses the environment's time zone, which may differ from your phone's.",
+  "7a4e5e17bc86fd03": "Start",
+  "e72a5d4b2081c99a": "End",
+  "d965bd18eabb25e4": "every day",
+  "322d73d513a28913": "{cadence}, {days} {start}–{end}",
+  "b31eca99ca34c7d6": "{cadence}, {days} {start}–{end} {zone}",
+  "a01ea56d4513a549": "Invalid time window",
+  "bf095325c94ec069": "Enter a start and end time.",
+  "a1f0c9ea82f7c05e": "End must be after start.",
+  "93b4649762b66d2f": "Choose days",
+  "0d8459e7d93404fa": "Select at least one day."
 }

@@ -35,7 +35,7 @@ import {
 
 import { checkOutput, rejectionText } from "../orchestration-v2/runOutput.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { isMissedFixedTimeRun, nextScheduledRunAt } from "../scheduledTasks/Schedule.ts";
+import { isMissedScheduledRun, nextScheduledRunAt } from "../scheduledTasks/Schedule.ts";
 import { currentScheduleId } from "./triggers.ts";
 import { constantTimeEquals } from "../scheduledTasks/webhookVerification.ts";
 import {
@@ -409,7 +409,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         if (due !== undefined) {
           const dueAt = DateTime.makeUnsafe(due);
           if (DateTime.isLessThan(now, dueAt)) continue;
-          if (!isMissedFixedTimeRun(trigger.schedule, dueAt, now)) {
+          if (!isMissedScheduledRun(trigger.schedule, dueAt, now)) {
             // The key is the time it was due, so a crash before the next line starts no second run.
             const started = yield* start(
               definition.name,

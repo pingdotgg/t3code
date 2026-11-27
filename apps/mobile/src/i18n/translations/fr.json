@@ -5707,5 +5707,15 @@
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
   "201490988858b511": "retirée par {by}",
-  "46d614fa7b4bf1e5": "Exécutions de workflow"
+  "46d614fa7b4bf1e5": "Exécutions de workflow",
+  "6c1eddd065401135": "Les plages horaires ne sont pas disponibles ici",
+  "0c9ff957da8d75b0": "Mettez à jour cet environnement pour utiliser des plages horaires pour les intervalles.",
+  "949d09be92f55081": "Plage horaire",
+  "bcc9a4b1c42d2680": "Début",
+  "8d2bf69694db8871": "Fin",
+  "e08770fb8b445af3": "Plage horaire",
+  "dcc72e4732f57181": "L’heure de fin doit suivre l’heure de début.",
+  "32f36b059ed73dc0": "Toutes les {minutes} min",
+  "d965bd18eabb25e4": "tous les jours",
+  "a7700dfd6295f39f": "{interval}, {days} {start}–{end}"
 }
