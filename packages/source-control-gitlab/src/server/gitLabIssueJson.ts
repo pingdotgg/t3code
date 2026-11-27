@@ -254,7 +254,9 @@ function toSystemEvent(
     return { kind: "renamed", detail: trimmed(detail) };
   }
   if (text.startsWith("changed title")) {
-    const raw = /\*\* to \*\*(.*)\*\*$/.exec(text.replace(/\{-.*?-\}/g, ""))?.[1];
+    // Skip whole {-…-} runs in the old title so a deleted "** to **" is not the boundary; GitLab
+    // does not escape markers, so only the old side's runs are deletions.
+    const raw = /^changed title from \*\*(?:\{-.*?-\}|.)*?\*\* to \*\*(.*)\*\*$/.exec(text)?.[1];
     return { kind: "renamed", detail: trimmed(raw?.replace(/\{\+(.*?)\+\}/g, "$1")) };
   }
   return null;

@@ -40,6 +40,12 @@ describe("decodeIssueNotesJson", () => {
       "changed title from **Move A to B** to **Move A to {+C+}**",
       "Move A to C",
     ],
+    [
+      "legacy deleted run containing to",
+      "changed title from **{-A ** to ** B-}** to **{+New+}**",
+      "New",
+    ],
+    ["legacy new title with marker text", "changed title from **{-A-}** to **{+{-x-}+}**", "{-x-}"],
   ])("decodes a title change note (%s) into a renamed event", (_label, body, expected) => {
     const decoded = decodeIssueNotesJson(
       JSON.stringify([
