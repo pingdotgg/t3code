@@ -114,6 +114,7 @@ vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
 
 import DiffPanel from "./DiffPanel";
+import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
@@ -362,44 +363,68 @@ it.each([false, true])(
   },
 );
 
-it("switches Changes between the workspace and an initialized submodule", async () => {
-  using context = setup("main");
-  const childCwd = `${cwd}/packages/auth`;
-  state.repositories = Atom.make(
-    AsyncResult.success({
-      repositories: [
-        { cwd, name: "workspace", path: "", branch: "dev" },
-        { cwd: childCwd, name: "auth", path: "packages/auth", branch: "fix-auth" },
-      ],
-      truncated: false,
-    }),
-  );
-  const childPreview = preview();
-  state.repositoryPreviews.set(
-    childCwd,
-    Atom.make(
+it.each(["saved", "draft"] as const)(
+  "switches Changes between the workspace and an initialized submodule in a %s thread",
+  async (threadKind) => {
+    using context = setup("main");
+    const draftId = threadKind === "draft" ? DraftId.make("submodule-review-draft") : undefined;
+    using _draft = draftId
+      ? { [Symbol.dispose]: () => useComposerDraftStore.getState().clearDraftThread(draftId) }
+      : undefined;
+    if (draftId) {
+      useComposerDraftStore
+        .getState()
+        .setProjectDraftThreadId(
+          { environmentId: context.threadRef.environmentId, projectId: ProjectId.make("project") },
+          draftId,
+          { threadId: context.threadRef.threadId, branch: "dev", worktreePath: cwd },
+        );
+      state.thread = null;
+      state.threadRef = null;
+    }
+    const childCwd = `${cwd}/packages/auth`;
+    state.repositories = Atom.make(
       AsyncResult.success({
-        ...childPreview,
-        cwd: childCwd,
-        sources: childPreview.sources.map((source) => ({ ...source, baseRef: "auth-base" })),
+        repositories: [
+          { cwd, name: "workspace", path: "", branch: "dev" },
+          { cwd: childCwd, name: "auth", path: "packages/auth", branch: "fix-auth" },
+        ],
+        truncated: false,
       }),
-    ),
-  );
-  await using screen = await render(
-    <RegistryContext.Provider value={context.registry}>
-      <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
-    </RegistryContext.Provider>,
-  );
-  await userEvent.click(screen.getByRole("combobox", { name: "Repository: Project folder: dev" }));
-  await userEvent.click(page.getByRole("option", { name: /auth: fix-auth/ }));
-  await expect
-    .element(screen.getByRole("combobox", { name: "Repository: auth: fix-auth" }))
-    .toBeVisible();
-  await expect.element(screen.getByLabelText("Comparing dev against auth-base")).toBeVisible();
-  expect(
-    useDiffPanelStore.getState().branchBaseRefByThreadKey[scopedThreadKey(context.threadRef)],
-  ).toBeNull();
-});
+    );
+    const childPreview = preview();
+    state.repositoryPreviews.set(
+      childCwd,
+      Atom.make(
+        AsyncResult.success({
+          ...childPreview,
+          cwd: childCwd,
+          sources: childPreview.sources.map((source) => ({ ...source, baseRef: "auth-base" })),
+        }),
+      ),
+    );
+    await using screen = await render(
+      <RegistryContext.Provider value={context.registry}>
+        <DiffPanel
+          composerDraftTarget={draftId ?? context.threadRef}
+          workspaceMutationId={null}
+          visible
+        />
+      </RegistryContext.Provider>,
+    );
+    await userEvent.click(
+      screen.getByRole("combobox", { name: "Repository: Project folder: dev" }),
+    );
+    await userEvent.click(page.getByRole("option", { name: /auth: fix-auth/ }));
+    await expect
+      .element(screen.getByRole("combobox", { name: "Repository: auth: fix-auth" }))
+      .toBeVisible();
+    await expect.element(screen.getByLabelText("Comparing dev against auth-base")).toBeVisible();
+    expect(
+      useDiffPanelStore.getState().branchBaseRefByThreadKey[scopedThreadKey(context.threadRef)],
+    ).toBeNull();
+  },
+);
 
 it("keeps the loading state while a saved repository is still being discovered", async () => {
   using context = setup(null);
