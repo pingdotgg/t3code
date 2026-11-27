@@ -3024,6 +3024,28 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  // A viewer who may bypass branch rules gets a BLOCKED pull request merged by mergePullRequest,
+  // so a plain Merge must not send it; bypassing is a separate, explicit choice.
+  it.effect("does not merge past branch rules when Merge is asked of a BLOCKED pull request", () =>
+    Effect.gen(function* () {
+      route(
+        ["query PullRequestActionState", actionState({ mergeStateStatus: "BLOCKED" })],
+        ["mergePullRequest(", { data: { mergePullRequest: { pullRequest: null } } }],
+        [
+          "enablePullRequestAutoMerge(",
+          { data: { enablePullRequestAutoMerge: { pullRequest: null } } },
+        ],
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      yield* Effect.exit(
+        cli.runPullRequestAction({ ...pullRequestInput, action: "merge", mergeMethod: "squash" }),
+      );
+
+      expect(variablesOf("mergePullRequest(")).toEqual([]);
+    }),
+  );
+
   it.effect("merges at once when auto-merge is asked of a pull request that is ready now", () =>
     Effect.gen(function* () {
       route(["query PullRequestActionState", actionState({ mergeStateStatus: "CLEAN" })]);
