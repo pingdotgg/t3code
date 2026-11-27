@@ -1,13 +1,6 @@
 import { Toolbar } from "@base-ui/react/toolbar";
 import { type ProviderInstanceId } from "@t3tools/contracts";
-import {
-  memo,
-  type Dispatch,
-  type SetStateAction,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { memo, type Dispatch, type SetStateAction, useLayoutEffect, useRef, useState } from "react";
 import { msg, T, useMessages } from "gt-react";
 import { StarIcon } from "lucide-react";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
@@ -59,9 +52,9 @@ const ModelPickerSidebarItem = memo(function ModelPickerSidebarItem(props: {
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   selected: boolean;
   hovered: boolean;
-  disabledInstanceIds?: ReadonlySet<ProviderInstanceId>;
-  selectableUnavailableInstanceIds?: ReadonlySet<ProviderInstanceId>;
-  getDisabledInstanceTooltip?: (entry: ProviderInstanceEntry) => string;
+  disabledInstanceIds: ReadonlySet<ProviderInstanceId> | undefined;
+  selectableUnavailableInstanceIds: ReadonlySet<ProviderInstanceId> | undefined;
+  getDisabledInstanceTooltip: ((entry: ProviderInstanceEntry) => string) | undefined;
   messageResolver: MessageResolver;
   onSelectInstance: (instanceId: ProviderInstanceId | "favorites") => void;
   setHoveredInstanceId: Dispatch<SetStateAction<ProviderInstanceId | null>>;
@@ -70,8 +63,7 @@ const ModelPickerSidebarItem = memo(function ModelPickerSidebarItem(props: {
   const isContextDisabled = props.disabledInstanceIds?.has(props.entry.instanceId) ?? false;
   const unavailableSelectionIsReachable =
     props.selectableUnavailableInstanceIds?.has(props.entry.instanceId) ?? false;
-  const isDisabled =
-    (isUnavailable && !unavailableSelectionIsReachable) || isContextDisabled;
+  const isDisabled = (isUnavailable && !unavailableSelectionIsReachable) || isContextDisabled;
   const showInstanceBadge = shouldShowInstanceBadge(props.entry, props.instanceEntries);
   const tooltip = isUnavailable
     ? describeUnavailableInstance(props.entry, props.messageResolver)
@@ -121,18 +113,12 @@ const ModelPickerSidebarItem = memo(function ModelPickerSidebarItem(props: {
               ? "var(--background)"
               : "color-mix(in oklab, var(--muted) 30%, transparent)"
         }
-        {...(props.entry.accentColor
-          ? { badgeClassName: "h-3 min-w-3 px-0.5 text-5xs" }
-          : {})}
+        {...(props.entry.accentColor ? { badgeClassName: "h-3 min-w-3 px-0.5 text-5xs" } : {})}
       />
     </Toolbar.Button>
   );
 
-  const trigger = isDisabled ? (
-    <span className="relative block w-full">{button}</span>
-  ) : (
-    button
-  );
+  const trigger = isDisabled ? <span className="relative block w-full">{button}</span> : button;
 
   return (
     <div className="relative w-full" data-model-picker-provider={props.entry.instanceId}>
@@ -249,15 +235,9 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
               instanceEntries={props.instanceEntries}
               selected={props.selectedInstanceId === entry.instanceId}
               hovered={hoveredInstanceId === entry.instanceId}
-              {...(props.disabledInstanceIds
-                ? { disabledInstanceIds: props.disabledInstanceIds }
-                : {})}
-              {...(props.selectableUnavailableInstanceIds
-                ? { selectableUnavailableInstanceIds: props.selectableUnavailableInstanceIds }
-                : {})}
-              {...(props.getDisabledInstanceTooltip
-                ? { getDisabledInstanceTooltip: props.getDisabledInstanceTooltip }
-                : {})}
+              disabledInstanceIds={props.disabledInstanceIds}
+              selectableUnavailableInstanceIds={props.selectableUnavailableInstanceIds}
+              getDisabledInstanceTooltip={props.getDisabledInstanceTooltip}
               messageResolver={m}
               onSelectInstance={props.onSelectInstance}
               setHoveredInstanceId={setHoveredInstanceId}
