@@ -317,7 +317,9 @@ export function openCodeToolTurnItem(
           ? {}
           : {
               results: [
-                ...(parseGrepOutput(output, searchRoot) ?? [
+                ...((base.status === "completed"
+                  ? parseGrepOutput(output, searchRoot)
+                  : undefined) ?? [
                   { fileName: searchRoot, preview: output.slice(0, SEARCH_PREVIEW_MAX_CHARS) },
                 ]),
               ],

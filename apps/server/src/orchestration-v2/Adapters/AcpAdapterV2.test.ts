@@ -5401,8 +5401,32 @@ describe("AcpAdapterV2", () => {
         results: [
           { fileName: "src/a.ts", line: 3, preview: "const needle = 1;" },
           { fileName: "src/b.ts", line: 9, preview: "needle();" },
+          { fileName: "src", preview: "  Permission denied\n2: additional detail" },
         ],
       });
+      assert.deepEqual(fileSearch("structured-search-grep-failure"), {
+        pattern: "needle",
+        results: [
+          { fileName: "src", preview: "  Invalid regular expression\n2: unexpected token" },
+        ],
+      });
+      const match = { fileName: "src/a.ts", line: 1, preview: "needle" };
+      const combinedPreview = [
+        { fileName: "needle", preview: "src/a.ts:1:needle\nripgrep:1:warning" },
+      ];
+      for (const [name, results] of [
+        ["empty-channels", undefined],
+        ["empty-stderr", [match]],
+        ["empty-stdout", [match]],
+        ["warning", [match, { fileName: "needle", preview: "warning" }]],
+        ["combined-output", combinedPreview],
+        ["combined-output-snake-case", combinedPreview],
+      ] as const) {
+        assert.deepEqual(fileSearch(`structured-search-grep-${name}`), {
+          pattern: "needle",
+          results,
+        });
+      }
       assert.deepEqual(fileSearch("structured-search-query-no-output"), {
         pattern: "FIXME",
         results: undefined,

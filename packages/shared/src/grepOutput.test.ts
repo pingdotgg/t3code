@@ -76,6 +76,45 @@ describe("parseGrepOutput", () => {
   });
 
   it.each([
+    [
+      "inline ripgrep matches",
+      " release notes.txt:2:needle",
+      [{ fileName: " release notes.txt", line: 2, preview: "needle" }],
+    ],
+    [
+      "OpenCode headings",
+      "Found 2 matches\n release notes.txt:\n  Line 2: needle:\n\n 2026: release notes.txt:\n  Line 3: needle",
+      [
+        { fileName: " release notes.txt", line: 2, preview: "needle:" },
+        { fileName: " 2026: release notes.txt", line: 3, preview: "needle" },
+      ],
+    ],
+  ])("preserves leading filename spaces in %s", (_format, output, expected) => {
+    expect(parseGrepOutput(output, ".")).toEqual(expected);
+  });
+
+  it.each([
+    " release notes.txt",
+    " 2026: release notes.txt",
+    " 2026-release notes.txt",
+    " release:12:notes.txt",
+    " Found 2 matches.txt",
+    " File: notes.txt",
+    " ---",
+  ])("recognizes the ripgrep heading %j at file boundaries", (fileName) => {
+    const block = `${fileName}\n2:needle\n3:another needle\n`;
+    const matches = [
+      { fileName, line: 2, preview: "needle" },
+      { fileName, line: 3, preview: "another needle" },
+    ];
+    expect(parseGrepOutput(block, ".")).toEqual(matches);
+    expect(parseGrepOutput(`a.txt\n1:needle\n\n${block}`, ".")).toEqual([
+      { fileName: "a.txt", line: 1, preview: "needle" },
+      ...matches,
+    ]);
+  });
+
+  it.each([
     ["a directory listing", "Contents of /repo:\n  [DIR] .git\n  [FILE] README.md"],
     ["an error", "ripgrep failed: invalid regex"],
     ["prose before a tool-specific numbered line", "Text output\n  Line 2: not a grep match"],

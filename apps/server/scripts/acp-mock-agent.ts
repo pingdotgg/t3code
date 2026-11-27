@@ -1406,8 +1406,56 @@ const program = Effect.gen(function* () {
             kind: "search",
             status: "completed",
             rawInput: { pattern: "needle", path: "src" },
-            rawOutput: "src/a.ts:3:const needle = 1;\nsrc/b.ts:9:needle();",
+            rawOutput: {
+              stdout: "src/a.ts:3:const needle = 1;\nsrc/b.ts:9:needle();",
+              stderr: "  Permission denied\n2: additional detail",
+              combinedOutput:
+                "src/a.ts:3:const needle = 1;\nsrc/b.ts:9:needle();\n  Permission denied\n2: additional detail",
+            },
           },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-search-grep-failure",
+            title: "Grep",
+            kind: "search",
+            status: "failed",
+            rawInput: { pattern: "needle", path: "src" },
+            rawOutput: {
+              stdout: "",
+              stderr: "",
+              message: "  Invalid regular expression\n2: unexpected token",
+            },
+          },
+          ...(
+            [
+              ["empty-channels", { stdout: "", stderr: "" }],
+              ["empty-stderr", { output: "src/a.ts:1:needle", stderr: "" }],
+              ["empty-stdout", { stdout: "", output: "src/a.ts:1:needle" }],
+              ["warning", { output: "src/a.ts:1:needle", stderr: "warning" }],
+              [
+                "combined-output",
+                {
+                  combinedOutput: "src/a.ts:1:needle\nripgrep:1:warning",
+                  stderr: "ripgrep:1:warning",
+                },
+              ],
+              [
+                "combined-output-snake-case",
+                {
+                  combined_output: "src/a.ts:1:needle\nripgrep:1:warning",
+                  stderr: "ripgrep:1:warning",
+                },
+              ],
+            ] as const
+          ).map(([name, rawOutput]) => ({
+            sessionUpdate: "tool_call_update" as const,
+            toolCallId: `structured-search-grep-${name}`,
+            title: "Grep",
+            kind: "search" as const,
+            status: "completed" as const,
+            rawInput: { query: "needle" },
+            rawOutput,
+          })),
           {
             sessionUpdate: "tool_call_update",
             toolCallId: "structured-search-query-no-output",
