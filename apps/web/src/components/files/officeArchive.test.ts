@@ -2,6 +2,7 @@ import JSZip from "jszip";
 import { describe, expect, it } from "vite-plus/test";
 
 import { prepareOffice } from "./officeArchive";
+import { unlockOpenDocument } from "./openDocumentEncryption";
 
 const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
 const V = 'xmlns:v="urn:schemas-microsoft-com:vml"';
@@ -278,5 +279,34 @@ describe("Workbook preview limits", () => {
     expect(result.truncated).toBe(true);
     expect(sheet).toContain(`<t>${prefix}</t>`);
     expect(sheet).not.toContain("\ufffd");
+  });
+});
+
+describe("Case-insensitive XML size limits", () => {
+  it("rejects uppercase .XML entries exceeding 8 MiB in office archives", async () => {
+    const zip = new JSZip();
+    zip.file("ppt/slides/slide1.XML", new Uint8Array(8 * 1024 * 1024 + 1));
+    const bytes = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
+    await expect(prepareOffice(bytes, "pptx")).rejects.toMatchObject({
+      code: "office-too-large-expanded",
+    });
+  });
+
+  it("rejects uppercase .XML entries exceeding 8 MiB in encrypted OpenDocument manifests", async () => {
+    const zip = new JSZip();
+    const manifestXml =
+      `<?xml version="1.0" encoding="UTF-8"?>` +
+      `<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">` +
+      `<manifest:file-entry manifest:full-path="content.XML" manifest:size="${8 * 1024 * 1024 + 1}">` +
+      `<manifest:encryption-data manifest:checksum-type="SHA1/1K" manifest:checksum="AAAAAAAAAAAAAAAAAAAAAAAAAAA=">` +
+      `<manifest:algorithm manifest:algorithm-name="http://www.w3.org/2001/04/xmlenc#aes256-cbc" manifest:initialisation-vector="AAAAAAAAAAAAAAAAAAAAAA=="/>` +
+      `<manifest:key-derivation manifest:key-derivation-name="PBKDF2" manifest:iteration-count="1" manifest:salt="AAAAAAAAAAAAAAAAAAAAAA=="/>` +
+      `</manifest:encryption-data>` +
+      `</manifest:file-entry>` +
+      `</manifest:manifest>`;
+    zip.file("META-INF/manifest.xml", manifestXml);
+    await expect(unlockOpenDocument(zip, "open me")).rejects.toMatchObject({
+      code: "office-too-large-expanded",
+    });
   });
 });
