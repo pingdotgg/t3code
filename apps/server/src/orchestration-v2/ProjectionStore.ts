@@ -9896,10 +9896,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             tagScope === undefined
               ? sql``
               : tagScope.type === "untagged"
-                ? sql` AND COALESCE(json_array_length(t.payload_json, '$.tags'), 0) = 0`
-                : sql` AND EXISTS (
-                    SELECT 1 FROM json_each(t.payload_json, '$.tags') tag
-                    WHERE tag.value IN ${sql.in(tagScope.tags)}
+                ? sql` AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_thread_tags tag
+                    WHERE tag.thread_id = t.thread_id
+                  )`
+                : sql` AND t.thread_id IN (
+                    SELECT tag.thread_id FROM orchestration_v2_projection_thread_tags tag
+                    WHERE tag.tag IN ${sql.in(tagScope.tags)}
                   )`
           }
       `;
@@ -9941,11 +9944,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     )(function* (tag) {
       const rows = yield* sql<{ readonly thread_id: string }>`
         SELECT t.thread_id
-        FROM orchestration_v2_projection_threads t
-        WHERE t.deleted_at IS NULL
-          AND EXISTS (
-            SELECT 1 FROM json_each(t.payload_json, '$.tags') tag WHERE tag.value = ${tag}
-          )
+        FROM orchestration_v2_projection_thread_tags tag
+        JOIN orchestration_v2_projection_threads t ON t.thread_id = tag.thread_id
+        WHERE tag.tag = ${tag} AND t.deleted_at IS NULL
         ORDER BY t.thread_id
       `;
       return rows.map((row) => ThreadId.make(row.thread_id));

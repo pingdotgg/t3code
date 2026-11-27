@@ -3394,7 +3394,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
     const now = yield* DateTime.now;
     const id = (name: string) => ThreadId.make(`thread:older:${name}`);
     const at = (day: number) => DateTime.makeUnsafe(Date.UTC(2026, 9, day));
-    const createThread = (input: {
+    type OlderThreadInput = {
       readonly name: string;
       readonly settledDay: number | null;
       readonly project?: string;
@@ -3402,10 +3402,14 @@ it.effect("SQL list older settled threads below a cursor", () =>
       readonly archived?: boolean;
       readonly snoozedUntilDay?: number;
       readonly tags?: ReadonlyArray<string>;
-    }) =>
+    };
+    const writeThread = (
+      type: "thread.created" | "thread.tags-updated" | "thread.deleted",
+      input: OlderThreadInput,
+    ) =>
       store.apply({
-        id: EventId.make(`event:older:${input.name}`),
-        type: "thread.created",
+        id: EventId.make(`event:older:${input.name}:${type}:${input.tags?.join(",") ?? ""}`),
+        type,
         threadId: id(input.name),
         occurredAt: now,
         payload: {
@@ -3434,10 +3438,11 @@ it.effect("SQL list older settled threads below a cursor", () =>
           settledAt: input.settledDay === null ? null : at(input.settledDay),
           snoozedUntil: input.snoozedUntilDay === undefined ? null : at(input.snoozedUntilDay),
           lastVisitedAt: null,
-          deletedAt: null,
+          deletedAt: type === "thread.deleted" ? now : null,
           ...(input.tags === undefined ? {} : { tags: input.tags }),
         },
       });
+    const createThread = (input: OlderThreadInput) => writeThread("thread.created", input);
     yield* createThread({ name: "a", settledDay: 5, tags: ["folder"] });
     yield* createThread({ name: "b", settledDay: 4, tags: ["other", "folder"] });
     yield* createThread({ name: "c", settledDay: 4 });
@@ -3505,6 +3510,22 @@ it.effect("SQL list older settled threads below a cursor", () =>
       id("b"),
     ]);
     assert.deepEqual(yield* store.listThreadIdsWithTag("fold"), []);
+
+    yield* writeThread("thread.tags-updated", { name: "a", settledDay: 5, tags: [] });
+    yield* writeThread("thread.tags-updated", { name: "c", settledDay: 4, tags: ["folder"] });
+    yield* writeThread("thread.deleted", {
+      name: "archived",
+      settledDay: 1,
+      archived: true,
+      tags: ["folder"],
+    });
+    assert.deepEqual(yield* store.listThreadIdsWithTag("folder"), [id("b"), id("c")]);
+    assert.deepEqual((yield* list(before, 10, undefined, folder)).threadIds, [id("b"), id("c")]);
+    assert.deepEqual((yield* list(before, 10, undefined, { type: "untagged" })).threadIds, [
+      id("a"),
+      id("d"),
+      id("snoozed"),
+    ]);
   }).pipe(Effect.provide(layerTest)),
 );
 
