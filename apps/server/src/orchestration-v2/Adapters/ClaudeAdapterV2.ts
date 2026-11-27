@@ -32,9 +32,12 @@ import {
   claudeLedgerDelta,
   claudeModelLedger,
   claudeReportedContextWindows,
+  estimateStoppedClaudeUsage,
   normalizeClaudeTurnTokenUsage,
+  recordClaudeRequestUsage,
   type ClaudeLedgerUsage,
   type ClaudeModelLedger,
+  type ClaudeTurnRequests,
 } from "../../provider/ClaudeTurnTokenUsage.ts";
 import { toMcpElicitationResponse } from "../../provider/CodexMcpElicitation.ts";
 import {
@@ -5665,6 +5668,7 @@ interface ActiveClaudeTurnContext {
     requestedAt?: DateTime.Utc;
     usage: ClaudeMessageUsage | null;
   } | null;
+  readonly requests: ClaudeTurnRequests;
   compactionTokens: number | undefined;
   readonly toolCalls: Map<string, ActiveClaudeToolCall>;
   // A successful status can precede the boundary that supplies its token counts.
@@ -10501,6 +10505,36 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   failure: null,
                   threadDisposition,
                 };
+          const requestUsage = estimateStoppedClaudeUsage(
+            input.context.requests,
+            input.result,
+            input.status,
+          );
+          input.context.requests.clear();
+          const ledger =
+            input.result === undefined
+              ? undefined
+              : addClaudeLedgerUsage(
+                  input.context.steeredLedgerUsage,
+                  resultLedgerUsage.get(input.result),
+                );
+          if (
+            requestUsage !== undefined &&
+            (ledger === undefined ||
+              ledger.inputTokens <
+                requestUsage.inputTokens + (requestUsage.otherUsage?.inputTokens ?? 0) ||
+              ledger.outputTokens <
+                requestUsage.outputTokens + (requestUsage.otherUsage?.outputTokens ?? 0)) &&
+            (yield* Ref.get(activeTurn)) === input.context
+          ) {
+            const liveQuery = yield* Ref.get(queryContext);
+            if (liveQuery === null || liveQuery.lastTurn === input.context) {
+              // A later cumulative result may include these requests; it needs a new anchor.
+              const nativeId = input.context.nativeThreadId;
+              modelLedgers.delete(clearedNativeSessions.get(nativeId) ?? nativeId);
+              if (liveQuery !== null) liveQuery.modelLedger = undefined;
+            }
+          }
           yield* Effect.all(
             [
               emitProviderEvent({
@@ -10520,14 +10554,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     input.context.steeredSegmentUsage,
                     {
                       rootModels: input.context.rootModels,
-                      ...(input.result === undefined
-                        ? {}
-                        : {
-                            ledger: addClaudeLedgerUsage(
-                              input.context.steeredLedgerUsage,
-                              resultLedgerUsage.get(input.result),
-                            ),
-                          }),
+                      stoppedRequestUsage: requestUsage,
+                      ledger,
                     },
                   ),
                 },
@@ -11814,12 +11842,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               context.assistant.streamBlocks.clear();
               const usage: ClaudeMessageUsage = event.message.usage ?? {};
               context.streamUsage = { messageId: event.message.id, usage };
+              recordClaudeRequestUsage(context.requests, event.message.id, usage, false);
               yield* emitContextUsage(context, usage, true);
             } else if (event.type === "message_delta") {
               const usage: typeof event.usage | null | undefined = event.usage;
               const stream = context.streamUsage;
               if (stream?.usage && usage != null) {
                 stream.usage = mergeClaudeStreamUsage(stream.usage, usage);
+                recordClaudeRequestUsage(context.requests, stream.messageId, stream.usage, false);
                 yield* emitContextUsage(context, stream.usage);
               }
             } else if (
@@ -12279,6 +12309,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           if (message.type === "assistant" && input.replayed !== true) {
             if (message.message.model !== "<synthetic>") {
+              if (!context.steersClosed && message.message.usage != null) {
+                recordClaudeRequestUsage(
+                  context.requests,
+                  message.message.id,
+                  message.message.usage,
+                  message.parent_tool_use_id !== null,
+                );
+              }
               const now = yield* DateTime.now;
               yield* completeProviderRetry(context, now);
             }
@@ -14723,6 +14761,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 blocks: new Map(),
               },
               streamUsage: null,
+              requests: new Map(),
               compactionTokens: undefined,
               toolCalls: new Map(),
               compaction: null,

@@ -124,11 +124,87 @@ export function addClaudeLedgerUsage(
       };
 }
 
+type ClaudeRequestUsage = Partial<
+  Record<(typeof BILLED_USAGE_FIELDS)[number], number | null | undefined>
+>;
+
+export type ClaudeTurnRequests = Map<
+  string,
+  { readonly usage: ClaudeRequestUsage; readonly subagent: boolean }
+>;
+
+export function recordClaudeRequestUsage(
+  requests: ClaudeTurnRequests,
+  messageId: string,
+  usage: ClaudeRequestUsage,
+  subagent: boolean,
+): void {
+  // Assistant snapshots can arrive after the stream with lower cumulative counts.
+  const previous = requests.get(messageId)?.usage;
+  const counts: ClaudeRequestUsage = {};
+  for (const field of BILLED_USAGE_FIELDS) {
+    const count = Math.max(
+      finiteNonNegativeInteger(previous?.[field]) ?? 0,
+      finiteNonNegativeInteger(usage[field]) ?? 0,
+    );
+    if (count > 0) counts[field] = count;
+  }
+  if (Object.keys(counts).length > 0) requests.set(messageId, { usage: counts, subagent });
+}
+
+export function estimateStoppedClaudeUsage(
+  requests: ClaudeTurnRequests,
+  result: Pick<SDKResultMessage, "usage"> | undefined,
+  status: RuntimeTurnState,
+) {
+  if (
+    requests.size === 0 ||
+    (result !== undefined &&
+      (status === "completed" ||
+        BILLED_USAGE_FIELDS.some(
+          (field) => (finiteNonNegativeInteger(result.usage?.[field]) ?? 0) > 0,
+        )))
+  ) {
+    return undefined;
+  }
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cachedInputTokens = 0;
+  let cacheCreationTokens = 0;
+  let otherInput = 0;
+  let otherOutput = 0;
+  for (const { usage, subagent } of requests.values()) {
+    const read = usage.cache_read_input_tokens ?? 0;
+    const write = usage.cache_creation_input_tokens ?? 0;
+    const input = (usage.input_tokens ?? 0) + read + write;
+    const output = usage.output_tokens ?? 0;
+    if (subagent) {
+      otherInput += input;
+      otherOutput += output;
+    } else {
+      inputTokens += input;
+      outputTokens += output;
+      cachedInputTokens += read;
+      cacheCreationTokens += write;
+    }
+  }
+  return {
+    inputTokens,
+    outputTokens,
+    cachedInputTokens,
+    cacheCreationTokens,
+    ...(otherInput + otherOutput > 0
+      ? { otherUsage: { inputTokens: otherInput, outputTokens: otherOutput } }
+      : {}),
+  };
+}
+
 export interface ClaudeTurnObservations {
   // Models on the turn's root assistant messages.
   readonly rootModels?: ReadonlySet<string>;
   // Ledger growth across every result this turn consumed, including steered segments.
   readonly ledger?: ClaudeLedgerUsage | undefined;
+  readonly stoppedRequestUsage?: ReturnType<typeof estimateStoppedClaudeUsage>;
 }
 
 export function normalizeClaudeTurnTokenUsage(
@@ -181,6 +257,15 @@ export function normalizeClaudeTurnTokenUsage(
       (rawOutputTokens ?? 0) >
     0;
 
+  if (!hasPositiveUsage && observed.stoppedRequestUsage !== undefined) {
+    return {
+      ...observedFields,
+      ...observed.stoppedRequestUsage,
+      usageStatus: "partial",
+      usageScope: "main_agent",
+      hasSubagents: hasSubagents || observed.stoppedRequestUsage.otherUsage !== undefined,
+    };
+  }
   if (!hasKnownUsage || (result?.subtype !== "success" && !hasPositiveUsage)) {
     return {
       usageStatus: "unavailable",

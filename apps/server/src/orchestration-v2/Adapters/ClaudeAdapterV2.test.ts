@@ -11235,7 +11235,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       session_id: WAKE_NATIVE_SESSION,
       uuid: "usage-stream-frame",
     });
-  const usageSnapshotFrame = (id: string, uuid: string, usage: unknown) =>
+  const usageSnapshotFrame = (
+    id: string,
+    uuid: string,
+    usage: unknown,
+    parentToolUseId: string | null = null,
+  ) =>
     claudeSdkFrame({
       type: "assistant",
       message: {
@@ -11248,7 +11253,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         stop_sequence: null,
         usage,
       },
-      parent_tool_use_id: null,
+      parent_tool_use_id: parentToolUseId,
       uuid,
       session_id: WAKE_NATIVE_SESSION,
     });
@@ -11258,11 +11263,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     cache_creation_input_tokens: 0,
     cache_read_input_tokens: 0,
   };
-  it.effect.each(["reopened", "new runtime", "no anchor", "fresh", "per-process"] as const)(
-    "a resumed process's first result charges only its own growth (%s)",
+  const usageScenarios = [
+    "reopened",
+    "new runtime",
+    "no anchor",
+    "fresh",
+    "per-process",
+    "stopped before first result",
+    "stopped with a restored ledger",
+    "stopped with a reset ledger",
+  ] as const;
+  it.effect.each(usageScenarios)(
+    "Claude only charges each turn for its own observed usage, even if stopped (%s)",
     (scenario) =>
       Effect.gen(function* () {
-        const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true });
+        const harness = yield* makeWakeHarnessWithOptions({
+          freshQueueOnReopen: true,
+          close: Queue.shutdown,
+        });
         const now = yield* DateTime.now;
         const turn = (name: string) =>
           makeClaudeTestTurnInput({
@@ -11285,8 +11303,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         const main = CLAUDE_TEST_MODEL_SELECTION.model;
         const helper = "claude-haiku-4-5";
+        const stopped =
+          scenario === "stopped before first result" ||
+          scenario === "stopped with a restored ledger" ||
+          scenario === "stopped with a reset ledger";
+        const fresh = scenario === "fresh" || scenario === "stopped before first result";
+        const resetLedger =
+          scenario === "per-process" || scenario === "stopped with a reset ledger";
         const reopen =
-          scenario === "reopened" || scenario === "new runtime" || scenario === "per-process";
+          scenario === "reopened" ||
+          scenario === "new runtime" ||
+          resetLedger ||
+          scenario === "stopped with a restored ledger";
         if (reopen) {
           yield* harness.runtime.startTurn(turn("earlier-ledger"));
           yield* Queue.offer(
@@ -11330,12 +11358,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* runtime.startTurn({
           ...input,
           ...(reopen ? { resume: true } : {}),
-          nativeThreadHasTurns: scenario !== "fresh",
+          nativeThreadHasTurns: !fresh,
         });
-        assert.equal(
-          harness.getOpenedOptions()?.resume,
-          scenario === "fresh" ? undefined : WAKE_NATIVE_SESSION,
-        );
+        assert.equal(harness.getOpenedOptions()?.resume, fresh ? undefined : WAKE_NATIVE_SESSION);
         const messages = harness.processQueues[reopen ? 1 : 0]!;
         yield* Queue.offer(
           messages,
@@ -11344,9 +11369,98 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             subtype: "init",
             uuid: "init-current-ledger",
             session_id: WAKE_NATIVE_SESSION,
-            claude_code_version: scenario === "per-process" ? "2.1.111" : "2.1.332",
+            claude_code_version: resetLedger ? "2.1.111" : "2.1.332",
           }),
         );
+        if (stopped) {
+          const usage = {
+            input_tokens: 3,
+            cache_creation_input_tokens: 500,
+            cache_read_input_tokens: 2000,
+            output_tokens: 40,
+          };
+          for (const frame of [
+            usageStreamFrame({ type: "message_start", message: { id: "request-one", usage } }),
+            usageStreamFrame({ type: "message_delta", usage: { output_tokens: 45 } }),
+            usageSnapshotFrame("request-one", "repeated-request", usage),
+            usageSnapshotFrame("request-two", "next-request", {
+              ...zeroUsage,
+              input_tokens: 100,
+              output_tokens: 5,
+            }),
+          ]) {
+            yield* harness.offerAndWait(frame);
+          }
+          if (fresh) {
+            yield* harness.offerAndWait(
+              usageSnapshotFrame(
+                "child-request",
+                "child-usage",
+                {
+                  ...zeroUsage,
+                  input_tokens: 120,
+                  output_tokens: 6,
+                },
+                "child-tool",
+              ),
+            );
+          }
+          if (!resetLedger) {
+            yield* runtime.interruptTurn({
+              providerThread: harness.providerThread,
+              providerTurnId: lastProviderTurn(harness.events).id,
+            });
+          } else {
+            yield* harness.offerAndWait(
+              makeResultFrame({
+                uuid: "result-stopped-ledger",
+                result: "",
+                terminalReason: "aborted_streaming",
+                usage: zeroUsage,
+                modelUsage: { [main]: modelUsage(2603, 50) },
+              }),
+            );
+          }
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+          assert.deepEqual(lastProviderTurn(harness.events).turnTokenUsage, {
+            usageStatus: "partial",
+            usageScope: "main_agent",
+            hasSubagents: fresh,
+            ...(fresh ? { otherUsage: { inputTokens: 120, outputTokens: 6 } } : {}),
+            models: ["claude-sonnet-4-6"],
+            inputTokens: 2603,
+            cachedInputTokens: 2000,
+            cacheCreationTokens: 500,
+            outputTokens: 50,
+          });
+          if (scenario === "stopped with a restored ledger") {
+            yield* runtime.startTurn({ ...turn("after-stop"), resume: true });
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                type: "system",
+                subtype: "init",
+                uuid: "init-after-stop",
+                session_id: WAKE_NATIVE_SESSION,
+                claude_code_version: "2.1.332",
+              }),
+            );
+            yield* harness.offerAndWait(
+              makeResultFrame({
+                uuid: "result-after-stop",
+                result: "Done.",
+                usage: { ...zeroUsage, input_tokens: 600, output_tokens: 10 },
+                modelUsage: { [main]: modelUsage(4903, 110) },
+              }),
+            );
+            assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+            assert.include(lastProviderTurn(harness.events).turnTokenUsage ?? {}, {
+              inputTokens: 600,
+              outputTokens: 10,
+            });
+            assert.isUndefined(lastProviderTurn(harness.events).turnTokenUsage?.otherUsage);
+          }
+          return;
+        }
         // Claude Code restores a resumed session's model totals, so its first result includes them.
         // 2.1.111 restarts them, and here its own main usage outgrows the earlier process's ledger.
         const [historicalInput, historicalOutput] =
