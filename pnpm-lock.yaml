@@ -1239,6 +1239,9 @@ importers:
       lucide-react:
         specifier: ^0.564.0
         version: 0.564.0(react@19.3.0)
+      parse5:
+        specifier: 8.0.1
+        version: 8.0.1
       pdfjs-dist:
         specifier: 6.4.299
         version: 6.4.299
