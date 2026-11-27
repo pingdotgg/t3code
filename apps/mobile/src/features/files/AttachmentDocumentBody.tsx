@@ -8,6 +8,7 @@ import type { useAttachmentDocument } from "../../lib/attachmentDocument";
 import { HtmlRenderWebView } from "../threads/HtmlRenderWebView";
 import { AudioFilePreview } from "./AudioFilePreview";
 import { DelimitedFilePreview } from "./DelimitedFilePreview";
+import { EpubFilePreview } from "./EpubFilePreview";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { FilePreviewLoading, FilePreviewNotice } from "./FilePreviewFeedback";
 import { SourceFileSurface } from "./SourceFileSurface";
@@ -89,6 +90,8 @@ export function AttachmentDocumentBody(props: {
     );
   }
   if (!document.uri) return null;
+  if (document.kind === "epub")
+    return <EpubFilePreview key={document.uri} uri={document.uri} name={props.name} />;
   if (document.kind === "audio") {
     return <AudioFilePreview key={document.revision} uri={document.uri} onRetry={document.retry} />;
   }

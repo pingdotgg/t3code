@@ -9,6 +9,7 @@ import {
 
 import { type OfficeWorkerResult, type NotebookCell } from "./officePreviewProtocol";
 import { PreviewError } from "./previewFailure";
+import { officeXmlDecoder } from "./officeArchive";
 import {
   archivePath,
   escape,
@@ -130,7 +131,9 @@ async function odfHtml(
     "table:table-row": "tr",
     "table:table-cell": "td",
   };
-  const tag = tags[node.name];
+  const level = node.name === "text:h" ? Number(node.attrs["text:outline-level"]) : NaN;
+  const tag =
+    Number.isSafeInteger(level) && level >= 1 ? `h${Math.min(level, 6)}` : tags[node.name];
   if (!tag) return children;
   const count =
     tag === "tr"
@@ -158,9 +161,9 @@ export async function openDocument(
   kind: "odt" | "ods" | "odp",
 ): Promise<OfficeWorkerResult> {
   markupBytes = 0;
-  const source = await archive.file("content.xml")?.async("string");
-  if (!source) throw new PreviewError({ code: "odf-no-content" });
-  const root = parseXml(source);
+  const content = await archive.file("content.xml")?.async("uint8array");
+  if (!content?.length) throw new PreviewError({ code: "odf-no-content" });
+  const root = parseXml(officeXmlDecoder(content).decode(content));
   if (kind === "ods") {
     const tables = find(root, "table:table");
     if (!tables.length || tables.length > 100) throw new PreviewError({ code: "ods-sheet-count" });
@@ -385,7 +388,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   let completedLength = 0;
   const finishPage = () => {
     if (pages.length >= 500) throw new PreviewError({ code: "rtf-too-many-pages" });
-    pages.push({ title: undefined, html: `<p>${html}</p>` });
+    pages.push({ title: undefined, html: `<p data-rtf-whitespace>${html}</p>` });
     completedLength += html.length;
     html = "";
   };

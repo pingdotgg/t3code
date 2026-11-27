@@ -360,7 +360,11 @@ function interpreterArgs(
       optionsEnded = true;
       continue;
     }
-    if (!optionsEnded && flag.startsWith("-") && flag !== "-") {
+    if (
+      !optionsEnded &&
+      (flag.startsWith("-") || (interpreter === SHELL && flag.startsWith("+"))) &&
+      flag !== "-"
+    ) {
       const [name = flag, value] = flag.startsWith("--") ? flag.split(/=(.*)/su) : [flag];
       if (interpreter.scriptFileOptions?.has(name)) {
         if (!interpreter.repeatable) return { scripts, scriptFromFile: true };
@@ -380,7 +384,13 @@ function interpreterArgs(
         if (value === undefined) index += 1;
         continue;
       }
-      if (value === undefined && interpreter.valueOptions?.has(flag)) index += 1;
+      if (
+        value === undefined &&
+        (interpreter.valueOptions?.has(flag) ||
+          (interpreter === SHELL && /^[-+][a-zA-Z]*[oO]$/u.test(flag)))
+      ) {
+        index += 1;
+      }
       continue;
     }
     positionals.push(arg);

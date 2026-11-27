@@ -360,7 +360,9 @@ function serializeChildren(node: Node, inTableCell = false): string {
 
 function serializeNode(node: Node, inTableCell = false): string {
   if (node.nodeType === Node.TEXT_NODE) {
-    const text = node.textContent ?? "";
+    let text = node.textContent ?? "";
+    // A <br> already wrote the line ending that follows it.
+    if (node.previousSibling?.nodeName === "BR") text = text.replace(/^\n/, "");
     if (text.includes("\n") && text.trim().length === 0) return "\n";
     return escapeTablePipes(escapeProse(text), inTableCell);
   }
