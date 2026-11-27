@@ -31,13 +31,14 @@ declare global {
 
 for (const { checkoutSucceeds, switchThreads, transcriptFirst } of [
   { checkoutSucceeds: true, switchThreads: true, transcriptFirst: true },
+  { checkoutSucceeds: true, switchThreads: false, transcriptFirst: true },
   { checkoutSucceeds: false, switchThreads: true, transcriptFirst: false },
   { checkoutSucceeds: false, switchThreads: false, transcriptFirst: true },
   { checkoutSucceeds: false, switchThreads: false, transcriptFirst: false },
 ])
   test(
     checkoutSucceeds
-      ? "A detached dictated prompt waits for its pull request worktree"
+      ? `A dictated prompt waits for its pull request worktree when ${switchThreads ? "switching threads" : "staying on the draft"}`
       : `A failed checkout keeps the dictated prompt when ${switchThreads ? "switching threads" : "staying on the draft"} and ${transcriptFirst ? "transcription finishes first" : "checkout fails first"}`,
     WEB,
     async ({ t3, app, browser, screen }) => {
@@ -245,6 +246,7 @@ for (const { checkoutSucceeds, switchThreads, transcriptFirst } of [
           .getByText("Could not prepare the pull request checkout", { exact: true })
           .waitFor();
         if (!transcriptFirst) transcript.resolve();
+        await screen.getByText("Message not sent", { exact: true }).waitFor();
         await transcriptSaved();
         await expect(await launches()).toEqual([]);
         if (!switchThreads) await expect(composer).toContainText("using the new branch");

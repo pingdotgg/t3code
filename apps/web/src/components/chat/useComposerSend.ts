@@ -1874,7 +1874,13 @@ export function useComposerSend(input: ComposerSendInput) {
         if (checkout !== null) {
           if (sendInFlightRef.current) return;
           const { result: applied, draftReady } = await waitBeforeSend(checkout);
-          if (!applied || !draftReady) return;
+          if (!applied) {
+            toastManager.add(
+              stackedThreadToast({ type: "error", title: m(msg("Message not sent")) }),
+            );
+            return;
+          }
+          if (!draftReady) return;
         }
         resume();
       },
