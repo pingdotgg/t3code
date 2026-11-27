@@ -1,7 +1,7 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import type { ThreadContextRecord, ProjectId } from "@t3tools/contracts";
+import type { OrchestrationV2ThreadLinkMetadata, ThreadContextRecord } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { MessagesSquareIcon } from "lucide-react";
+import { ArchiveIcon, MessagesSquareIcon } from "lucide-react";
 import { useGT } from "gt-react";
 
 import { resolveThreadOpenRoute } from "~/lib/sideChatPane";
@@ -17,7 +17,7 @@ import { Tooltip, TooltipTrigger } from "./ui/tooltip";
 
 export function ThreadContextChip(props: {
   record: Pick<ThreadContextRecord, "environmentId" | "threadId" | "title">;
-  projectId?: ProjectId | null;
+  metadata?: OrchestrationV2ThreadLinkMetadata | null;
   copyMarkdown?: string;
   unreadable?: boolean;
 }) {
@@ -25,15 +25,17 @@ export function ThreadContextChip(props: {
   const { environmentId, threadId } = props.record;
   const shell = useThreadShell({ environmentId, threadId });
   const lookup = useEnvironmentQuery(
-    shell === null && props.projectId === undefined
+    shell === null && props.metadata === undefined
       ? orchestrationEnvironment.threadLinkMetadata({
           environmentId,
           input: { threadIds: [threadId] },
         })
       : null,
   );
-  const metadata = lookup.data?.[threadId];
-  const projectId = shell?.projectId ?? props.projectId ?? metadata?.projectId;
+  const metadata = props.metadata ?? lookup.data?.[threadId];
+  const archived = shell ? shell.archivedAt != null : metadata?.archived === true;
+  const archivedLabel = archived ? gt("Archived thread") : undefined;
+  const projectId = shell?.projectId ?? metadata?.projectId;
   const project = useProject(projectId ? scopeProjectRef(environmentId, projectId) : null);
   const title = shell?.title?.trim() || metadata?.title.trim() || props.record.title;
   const navigate = useNavigate();
@@ -64,10 +66,13 @@ export function ThreadContextChip(props: {
               />
             }
             aria-label={gt("Thread, {title}", { title })}
+            aria-description={archivedLabel}
             data-markdown-copy={props.copyMarkdown}
             className="no-underline"
           >
-            {project ? (
+            {archived ? (
+              <ArchiveIcon />
+            ) : project ? (
               <ProjectFavicon project={project} className="size-[1em] self-center" />
             ) : (
               <MessagesSquareIcon />
@@ -81,6 +86,7 @@ export function ThreadContextChip(props: {
           title={title}
           project={project}
           shell={shell}
+          archived={archived}
           unreadable={props.unreadable === true}
         />
       </ThreadHoverCardPopup>

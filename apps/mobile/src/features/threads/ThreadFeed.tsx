@@ -23,7 +23,7 @@ import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import {
   enrichedContextLinkCustomization,
   enrichedThreadLinkCustomization,
-  withChipIcon,
+  withThreadChipPresentation,
 } from "../../native/useEnrichedLinkVariants";
 import {
   enrichedSkillInstructionsPath,
@@ -295,7 +295,7 @@ import {
   useEnvironmentPreviewTunnelOff,
   useLiveThreadLinkLabels,
   useQuietThreadShell,
-  useThreadChipIcons,
+  useThreadChipPresentations,
 } from "../../state/entities";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useThreadSelection } from "../../state/use-thread-selection";
@@ -1344,7 +1344,8 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
     });
   };
   const models = useModelMentions(props.environmentId, props.markdown);
-  const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
+  const threadChips = useThreadChipPresentations(props.environmentId, liveMarkdown);
+  const archivedThreadLabel = gt("Archived thread");
   const withGallery = useFilePreviewGallery();
   const onImagePress = props.linkHandlers.onImagePress;
   const linkHandlers: MarkdownLinkHandlers = {
@@ -1354,7 +1355,11 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
     onFileContextMenuAction: (href, actionId) =>
       props.linkHandlers.onFileContextMenuAction(href, actionId, props.reply),
     linkCustomization: (href) =>
-      withChipIcon(props.linkHandlers.linkCustomization?.(href), threadIcons.get(href)),
+      withThreadChipPresentation(
+        props.linkHandlers.linkCustomization?.(href),
+        threadChips.get(href),
+        archivedThreadLabel,
+      ),
   };
 
   return (
@@ -2778,7 +2783,12 @@ function UserMessageContent(props: UserMessageContentProps) {
       linkedThreadEnvironmentIds(props.text, props.environmentId),
     ),
   );
-  const threadIcons = useThreadChipIcons(props.environmentId, liveText, props.context?.records);
+  const threadChips = useThreadChipPresentations(
+    props.environmentId,
+    liveText,
+    props.context?.records,
+  );
+  const archivedThreadLabel = gt("Archived thread");
   const text = replaceComposerContextReferences(liveText, (ref) => {
     const available = props.context?.records.some((record) => record.contextId === ref.contextId);
     const label = available ? ref.label : gt("{label} (unavailable)", { label: ref.label });
@@ -2863,10 +2873,11 @@ function UserMessageContent(props: UserMessageContentProps) {
             }
           },
           linkCustomization: (href) =>
-            withChipIcon(
+            withThreadChipPresentation(
               enrichedContextLinkCustomization(href, props.context?.records ?? []) ??
                 props.linkHandlers.linkCustomization?.(href),
-              threadIcons.get(href),
+              threadChips.get(href),
+              archivedThreadLabel,
             ),
         }}
       />
