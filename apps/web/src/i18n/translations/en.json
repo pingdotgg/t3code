@@ -3130,7 +3130,7 @@
   "c646366e142ba05f": "Desktop WSL state is unavailable.",
   "228dcd284ea651b3": "Failed to load WSL state.",
   "b08d105dd2553f8d": "The project did not appear in the desktop app.",
-  "7a4b3f3b83e121d7": "{organization} turned off anonymous usage data.",
+  "bf45d68027d21097": "{organization} turned off product usage data.",
   "d85822b18e9475df": "Managed by {organization}.",
   "a6dd531d58080010": "Connect to this server to check releases.",
   "314cdccee9c14774": "This server does not support registry lookups. Update it before switching tracks.",
@@ -4237,6 +4237,7 @@
   "ac242b57dbfa5259": "Manage scheduled tasks",
   "d93c0db04f4c8e46": "Edit automation",
   "3fe420ed9b5bdb75": "Run now",
+  "fdf273ca647a967f": "Delete",
   "0c433351a8606e50": [
     "Could not load automations: ",
     {
@@ -5370,7 +5371,9 @@
   "4cb21672153c1f18": "No simulators or emulators were found on this environment.",
   "c82410197256eb53": "iOS Simulators",
   "31a71fec6b5f2bf3": "Android Devices",
+  "1bd21d5284dc2d8e": "iOS Devices",
   "ac18a5e35195a258": "Android Emulators",
+  "f28d1d2b5f30a8cd": "Physical",
   "94215375ea2558b8": "Running",
   "f8a65d4d662389b0": "Stopped",
   "b1687c7b2b91e569": "Open {name}",
@@ -6273,8 +6276,8 @@
   ],
   "216ab7514aea1d61": "Start without an agent",
   "501ce2d99da8bfd1": "Set up one agent to start.",
-  "71f3822326109c8e": [
-    "T3 Code collects anonymous usage data to improve the app. To opt out, see the",
+  "b089e0792d542bed": [
+    "T3 Code collects pseudonymous product usage data to improve the app. To opt out, see the",
     " ",
     {
       "t": "a",
@@ -10296,7 +10299,7 @@
   "c424bee294b9f778": "This environment is managed by {organization}. Some settings and features follow its policy.",
   "82d9538af590f58c": "See your agents, import projects, and set up your phone.",
   "6a48fd0a37e725a1": "Legal",
-  "d6d3ea46ac979e1c": "How we handle your data, including the anonymous usage data T3 Code collects.",
+  "bcbd81fcef7fff67": "How we handle your data, including the pseudonymous product usage data T3 Code collects.",
   "e741b1ab9396053a": "How we handle your data. {telemetryOff}",
   "0bffbbf4d7f780c0": "Notices for dependencies, assets, and optional tools used by T3 Code.",
   "e39a57514be028e9": "Review",
@@ -13051,5 +13054,7 @@
   "95435f0b59cb2193": "Audio preview",
   "4a12506938295127": "Enter the {field} first.",
   "5807c08e225c6b3d": "Download",
-  "0d50b5bfe7151ece": "Could not download file"
+  "0d50b5bfe7151ece": "Could not download file",
+  "eb1fd384ad5919dd": "Internal note",
+  "b45f0b467e9406d0": "Reply to customer"
 }

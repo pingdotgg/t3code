@@ -3131,7 +3131,7 @@
   "c646366e142ba05f": "Der WSL-Status des Desktops ist nicht verfügbar.",
   "228dcd284ea651b3": "Der WSL-Status konnte nicht geladen werden.",
   "b08d105dd2553f8d": "Das Projekt ist nicht in der Desktop-App erschienen.",
-  "7a4b3f3b83e121d7": "{organization} hat anonyme Nutzungsdaten deaktiviert.",
+  "bf45d68027d21097": "{organization} hat Produktnutzungsdaten deaktiviert.",
   "d85822b18e9475df": "Verwaltet von {organization}.",
   "a6dd531d58080010": "Verbinde dich mit diesem Server, um nach Releases zu suchen.",
   "314cdccee9c14774": "Dieser Server unterstützt keine Registry-Abfragen. Aktualisiere ihn, bevor du den Kanal wechselst.",
@@ -4239,6 +4239,7 @@
   "ac242b57dbfa5259": "Geplante Aufgaben verwalten",
   "d93c0db04f4c8e46": "Automatisierung bearbeiten",
   "3fe420ed9b5bdb75": "Jetzt ausführen",
+  "fdf273ca647a967f": "Löschen",
   "0c433351a8606e50": [
     "Automatisierungen konnten nicht geladen werden: ",
     {
@@ -5370,7 +5371,9 @@
   "4cb21672153c1f18": "In dieser Umgebung wurden keine Simulatoren oder Emulatoren gefunden.",
   "c82410197256eb53": "iOS-Simulatoren",
   "31a71fec6b5f2bf3": "Android-Geräte",
+  "1bd21d5284dc2d8e": "iOS-Geräte",
   "ac18a5e35195a258": "Android-Emulatoren",
+  "f28d1d2b5f30a8cd": "Physisch",
   "94215375ea2558b8": "Läuft",
   "f8a65d4d662389b0": "Gestoppt",
   "b1687c7b2b91e569": "{name} öffnen",
@@ -6270,8 +6273,8 @@
   ],
   "216ab7514aea1d61": "Ohne Agenten starten",
   "501ce2d99da8bfd1": "Richte einen Agenten ein, um zu starten.",
-  "71f3822326109c8e": [
-    "T3 Code erfasst anonyme Nutzungsdaten, um die App zu verbessern. Wie du widersprichst, steht in der",
+  "b089e0792d542bed": [
+    "T3 Code erfasst pseudonyme Produktnutzungsdaten, um die App zu verbessern. Wie du widersprichst, steht in der",
     " ",
     {
       "t": "a",
@@ -10288,7 +10291,7 @@
   "c424bee294b9f778": "Diese Umgebung wird von {organization} verwaltet. Einige Einstellungen und Funktionen folgen deren Richtlinie.",
   "82d9538af590f58c": "Sieh deine Agenten, importiere Projekte und richte dein Smartphone ein.",
   "6a48fd0a37e725a1": "Rechtliches",
-  "d6d3ea46ac979e1c": "Wie wir mit deinen Daten umgehen, einschließlich der anonymen Nutzungsdaten, die T3 Code erfasst.",
+  "bcbd81fcef7fff67": "Wie wir mit deinen Daten umgehen, einschließlich der pseudonymen Produktnutzungsdaten, die T3 Code erfasst.",
   "e741b1ab9396053a": "Wie wir mit deinen Daten umgehen. {telemetryOff}",
   "0bffbbf4d7f780c0": "Hinweise zu Abhängigkeiten, Assets und optionalen Tools, die T3 Code verwendet.",
   "e39a57514be028e9": "Review",
@@ -13043,5 +13046,7 @@
   "95435f0b59cb2193": "Audiovorschau",
   "4a12506938295127": "Gib zuerst {field} ein.",
   "5807c08e225c6b3d": "Herunterladen",
-  "0d50b5bfe7151ece": "Datei konnte nicht heruntergeladen werden"
+  "0d50b5bfe7151ece": "Datei konnte nicht heruntergeladen werden",
+  "eb1fd384ad5919dd": "Interne Notiz",
+  "b45f0b467e9406d0": "Dem Kunden antworten"
 }

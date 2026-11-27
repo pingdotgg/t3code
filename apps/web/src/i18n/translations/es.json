@@ -3130,7 +3130,7 @@
   "c646366e142ba05f": "El estado de WSL del escritorio no está disponible.",
   "228dcd284ea651b3": "No se pudo cargar el estado de WSL.",
   "b08d105dd2553f8d": "El proyecto no apareció en la app de escritorio.",
-  "7a4b3f3b83e121d7": "{organization} desactivó los datos de uso anónimos.",
+  "bf45d68027d21097": "{organization} desactivó los datos de uso del producto.",
   "d85822b18e9475df": "Gestionado por {organization}.",
   "a6dd531d58080010": "Conéctate a este servidor para comprobar las versiones.",
   "314cdccee9c14774": "Este servidor no permite consultas al registro. Actualízalo antes de cambiar de canal.",
@@ -4235,6 +4235,7 @@
   "ac242b57dbfa5259": "Gestionar tareas programadas",
   "d93c0db04f4c8e46": "Editar automatización",
   "3fe420ed9b5bdb75": "Ejecutar ahora",
+  "fdf273ca647a967f": "Eliminar",
   "0c433351a8606e50": [
     "No se pudieron cargar las automatizaciones: ",
     {
@@ -5368,7 +5369,9 @@
   "4cb21672153c1f18": "No se encontraron simuladores ni emuladores en este entorno.",
   "c82410197256eb53": "Simuladores de iOS",
   "31a71fec6b5f2bf3": "Dispositivos Android",
+  "1bd21d5284dc2d8e": "Dispositivos iOS",
   "ac18a5e35195a258": "Emuladores de Android",
+  "f28d1d2b5f30a8cd": "Físico",
   "94215375ea2558b8": "En ejecución",
   "f8a65d4d662389b0": "Detenido",
   "b1687c7b2b91e569": "Abrir {name}",
@@ -6271,8 +6274,8 @@
   ],
   "216ab7514aea1d61": "Empezar sin agente",
   "501ce2d99da8bfd1": "Configura un agente para empezar.",
-  "71f3822326109c8e": [
-    "T3 Code recopila datos de uso anónimos para mejorar la app. Para desactivarlo, consulta la",
+  "b089e0792d542bed": [
+    "T3 Code recopila datos de uso del producto seudonimizados para mejorar la app. Para desactivarlo, consulta la",
     " ",
     {
       "t": "a",
@@ -10285,7 +10288,7 @@
   "c424bee294b9f778": "Este entorno lo gestiona {organization}. Algunos ajustes y funciones siguen su política.",
   "82d9538af590f58c": "Consulta tus agentes, importa proyectos y configura tu teléfono.",
   "6a48fd0a37e725a1": "Legal",
-  "d6d3ea46ac979e1c": "Cómo tratamos tus datos, incluidos los datos de uso anónimos que recopila T3 Code.",
+  "bcbd81fcef7fff67": "Cómo tratamos tus datos, incluidos los datos de uso del producto seudonimizados que recopila T3 Code.",
   "e741b1ab9396053a": "Cómo tratamos tus datos. {telemetryOff}",
   "0bffbbf4d7f780c0": "Avisos de las dependencias, recursos y herramientas opcionales que usa T3 Code.",
   "e39a57514be028e9": "Revisar",
@@ -13038,5 +13041,7 @@
   "95435f0b59cb2193": "Vista previa de audio",
   "4a12506938295127": "Introduce primero {field}.",
   "5807c08e225c6b3d": "Descargar",
-  "0d50b5bfe7151ece": "No se pudo descargar el archivo"
+  "0d50b5bfe7151ece": "No se pudo descargar el archivo",
+  "eb1fd384ad5919dd": "Nota interna",
+  "b45f0b467e9406d0": "Responder al cliente"
 }

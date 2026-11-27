@@ -320,6 +320,16 @@ describe("question answer paths", () => {
     ],
     ["line break paragraphs", "{\\rtf1\\ansi First\\\nSecond\\\r\nThird}", "First\nSecond\nThird"],
     [
+      "footnote destinations",
+      String.raw`{\rtf1\ansi The north region{\super \chftn{\*\footnote \pard\plain {\super \chftn}\tab Inspect the {\b seals}.\par Do not reopen.\par}} is ready. The south region{\super \chftn}{\footnote \pard\plain \chftn\~Check power.} is ready.}`,
+      "The north region[Note: Inspect the seals.\nDo not reopen.] is ready. The south region[Note: Check power.] is ready.",
+    ],
+    [
+      "hidden footnote bodies",
+      String.raw`{\rtf1\ansi The north region{\*\unknown {\*\footnote \plain Hidden.}}{\*\footnote \v Hidden.} is ready.}`,
+      "The north region is ready.",
+    ],
+    [
       "tracked deletion",
       String.raw`{\rtf1\ansi The fee is {\deleted\revauthdel1\revdttmdel1 $500}{\revised\revauth1 $700}.}`,
       "The fee is $700.",
@@ -338,6 +348,19 @@ describe("question answer paths", () => {
       "tracked deletion table",
       String.raw`{\rtf1\ansi\trowd\cellx1000\cellx2000\intbl A\deleted\cell\deleted0 B\cell\deleted\row\deleted0 C\cell}`,
       "A\tB\t\nC",
+    ],
+    [
+      "nested table cell boundaries",
+      String.raw`{\rtf1\ansi\trowd\cellx3000\cellx5000
+\pard\intbl\itap2 One\nestcell
+\pard\intbl\itap2 Two\nestcell
+{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}
+\pard\intbl\itap1 Tail\cell
+\pard\intbl\itap2 Three\nestcell
+\pard\intbl\itap2 Four\nestcell
+{\*\nesttableprops\trowd\cellx1000\cellx2000\nestrow}{\nonesttables\par}
+\pard\intbl\itap1 Peer\cell\row}`,
+      "One Two Tail\tThree Four\nPeer",
     ],
     [
       "hidden text",
@@ -540,6 +563,8 @@ describe("question answer paths", () => {
             source: ["print(43 * 7)"],
             outputs: [
               { output_type: "stream", name: "stdout", text: "\u001b[32m301\u001b[0m\n" },
+              { output_type: "stream", name: "stdout", text: "Status: 10%" },
+              { output_type: "stream", name: "stdout", text: ["\r", "Status: Done\n"] },
               {
                 output_type: "stream",
                 name: "stderr",
@@ -625,6 +650,8 @@ describe("question answer paths", () => {
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("Vessel: Larkspur");
       const extracted = NodeFS.readFileSync(`${path}.txt`, "utf8");
       expect(extracted).toContain("Output:\n301\n");
+      expect(extracted).toContain("301\nStatus: Done\n");
+      expect(extracted).not.toContain("Status: 10%");
       expect(extracted).toContain("100%|##########|\ndone\n");
       expect(extracted).not.toContain("10%|#");
       expect(extracted).toContain("42\nNext line");
@@ -1221,6 +1248,37 @@ describe("question answer paths", () => {
           ],
           absent: ["Discard", "[Extracted text truncated"],
         })),
+        ...[
+          "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+          "http://purl.oclc.org/ooxml/wordprocessingml/main",
+        ].map((namespace) => ({
+          ext: "docx",
+          parts: {
+            "word/document.xml":
+              `<w:document xmlns:w="${namespace}"><w:body><w:p>` +
+              "<w:r><w:t>次は</w:t></w:r>" +
+              "<w:r><w:ruby><w:rt><w:r><w:t>とうきょう</w:t></w:r></w:rt>" +
+              "<w:rubyBase><w:r><w:t>東京</w:t></w:r></w:rubyBase></w:ruby></w:r>" +
+              "<w:r><w:t>から</w:t></w:r>" +
+              "<w:r><w:ruby><w:rt><w:r><w:t/></w:r></w:rt>" +
+              "<w:rubyBase><w:r><w:t>京都</w:t></w:r></w:rubyBase></w:ruby></w:r>" +
+              "<w:r><w:t>まで。</w:t></w:r></w:p></w:body></w:document>",
+          },
+          expected: [],
+          exact: "次は東京(とうきょう)から京都まで。",
+        })),
+        {
+          ext: "odt",
+          parts: {
+            "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:p>' +
+              "次は<text:ruby><text:ruby-base>東京</text:ruby-base><text:ruby-text>とうきょう</text:ruby-text></text:ruby>" +
+              "から<text:ruby><text:ruby-base>京都</text:ruby-base><text:ruby-text/></text:ruby>まで。" +
+              "</text:p></office:text></office:body></office:document-content>",
+          },
+          expected: [],
+          exact: "次は東京(とうきょう)から京都まで。",
+        },
         {
           ext: "odt",
           bounded: true,
@@ -1417,6 +1475,119 @@ describe("question answer paths", () => {
           absent: ["Omitted", "Draft", "Note", "Aside", "Formula"],
         },
         {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml": [
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="Retired"/></w:rPr><w:t>Old routing</w:t></w:r><w:r><w:rPr><w:rStyle w:val="RetiredChild"/></w:rPr><w:t>Old badge rules</w:t></w:r></w:p>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="VisibleChild"/></w:rPr><w:t>Current instructions</w:t></w:r></w:p>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="Retired"/><w:vanish w:val="0"/></w:rPr><w:t>Bring your badge.</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="WithToggle"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Retired"/></w:rPr><w:t>Both style levels toggle</w:t></w:r></w:p>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="CycleA"/></w:rPr><w:t>Unresolved cycle</w:t></w:r></w:p>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="DoubleToggle"/></w:rPr><w:t>Inherited toggles cancel</w:t></w:r></w:p>',
+              '<w:tbl><w:tblPr><w:tblStyle w:val="ToggleTable"/></w:tblPr><w:tr><w:tc><w:p><w:r><w:rPr><w:rStyle w:val="Retired"/></w:rPr><w:t>Table style combination</w:t></w:r></w:p></w:tc></w:tr></w:tbl>',
+              "</w:body></w:document>",
+            ].join(""),
+            "word/_rels/document.xml.rels":
+              '<Relationships><Relationship Id="style" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="../styles/word.xml"/></Relationships>',
+            "styles/word.xml": [
+              '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+              '<w:style w:type="character" w:styleId="Retired"><w:rPr><w:vanish/></w:rPr></w:style>',
+              '<w:style w:type="character" w:styleId="RetiredChild"><w:basedOn w:val="Retired"/></w:style>',
+              '<w:style w:type="character" w:styleId="VisibleChild"><w:basedOn w:val="Retired"/><w:rPr><w:vanish w:val="false"/></w:rPr></w:style>',
+              '<w:style w:type="paragraph" w:styleId="WithToggle"><w:rPr><w:vanish/></w:rPr></w:style>',
+              '<w:style w:type="character" w:styleId="CycleA"><w:basedOn w:val="CycleB"/></w:style>',
+              '<w:style w:type="character" w:styleId="CycleB"><w:basedOn w:val="CycleA"/></w:style>',
+              '<w:style w:type="character" w:styleId="DoubleToggle"><w:basedOn w:val="Retired"/><w:rPr><w:vanish/></w:rPr></w:style>',
+              '<w:style w:type="table" w:styleId="ToggleTable"><w:rPr><w:vanish/></w:rPr></w:style>',
+              "</w:styles>",
+            ].join(""),
+          },
+          expected: [],
+          exact:
+            "Current instructions\nBring your badge.\nBoth style levels toggle\nUnresolved cycle\nInherited toggles cancel\nTable style combination",
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml": [
+              '<w:document xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"><w:body>',
+              '<w:p><w:r><w:rPr><w:rStyle w:val="Toggle"/></w:rPr><w:t>Default style combination</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="Plain"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Toggle"/></w:rPr><w:t>Hidden by strict document style</w:t></w:r></w:p>',
+              "</w:body></w:document>",
+            ].join(""),
+            "word/styles.xml": [
+              '<text:styles xmlns:text="http://purl.oclc.org/ooxml/wordprocessingml/main">',
+              '<text:style text:type="paragraph" text:styleId="Default" text:default="1"><text:rPr><text:vanish/></text:rPr></text:style>',
+              '<text:style text:type="character" text:styleId="Toggle"><text:rPr><text:vanish/></text:rPr></text:style>',
+              '<text:style text:type="paragraph" text:styleId="Plain"/>',
+              "</text:styles>",
+            ].join(""),
+          },
+          expected: [],
+          exact: "Default style combination",
+        },
+        {
+          ext: "odt",
+          parts: {
+            "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:meta="urn:example:metadata"><office:body><office:text>' +
+              "<text:p>Station timetable</text:p>" +
+              '<text:section text:name="Draft" text:display="none"><text:p>Old timetable</text:p></text:section>' +
+              '<t:section xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0" t:name="Alternate" t:display="none"><t:p>Draft schedule</t:p></t:section>' +
+              '<text:section text:name="Padded" text:display=" &#x9;none&#xD;&#xA; "><text:p>Draft notes</text:p></text:section>' +
+              '<section xmlns="urn:oasis:names:tc:opendocument:xmlns:text:1.0" meta:xmlns="urn:example:metadata" text:name="Default" text:display="none"><text:p>Draft date</text:p></section>' +
+              '<text:section text:name="Published" text:display="true"><text:p>Gates open at nine.</text:p></text:section>' +
+              '<section xmlns="urn:example:metadata" meta:xmlns="urn:oasis:names:tc:opendocument:xmlns:text:1.0" text:display="none"><text:p>Visible section</text:p></section>' +
+              "</office:text></office:body></office:document-content>",
+          },
+          expected: ["Station timetable\nGates open at nine.\n\nVisible section"],
+          absent: ["Old timetable", "Draft schedule", "Draft notes", "Draft date"],
+        },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml": [
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:other="urn:example:metadata"><office:body><office:text>',
+              "<text:p>Warehouse instructions</text:p>",
+              '<text:p>Use the west entrance.<text:hidden-paragraph text:is-hidden="true"/></text:p>',
+              '<text:h text:outline-level="2">Retired schedule<text:span><t:hidden-paragraph xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0" t:is-hidden=" &#x9;1 "/></text:span></text:h>',
+              "<text:p>Use the north entrance.<text:hidden-paragraph/></text:p>",
+              '<text:p><text:hidden-paragraph text:is-hidden="true"/>Deliveries welcome.<text:hidden-paragraph text:is-hidden="false"/></text:p>',
+              '<text:p><text:hidden-paragraph text:is-hidden="0"/>Bring your badge.<text:hidden-paragraph text:is-hidden="true"/></text:p>',
+              '<text:p>Loading dock.<other:hidden-paragraph text:is-hidden="true"/></text:p>',
+              '<text:p>Visitor parking.<text:hidden-paragraph other:is-hidden="true"/></text:p>',
+              '<other:p>Emergency contacts.<text:hidden-paragraph text:is-hidden="true"/></other:p>',
+              "</office:text></office:body></office:document-content>",
+            ].join(""),
+          },
+          expected: [],
+          exact:
+            "Warehouse instructions\nUse the north entrance.\nDeliveries welcome.\nBring your badge.\nLoading dock.\nVisitor parking.\nEmergency contacts.",
+        },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml": [
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:other="urn:example:metadata"><office:body><office:text>',
+              '<text:p>Use the <text:hidden-text text:is-hidden="true" text:string-value="obsolete west or ">obsolete west or </text:hidden-text><text:hidden-text text:string-value="north"/><text:s/>entrance.</text:p>',
+              '<text:p><text:span><t:hidden-text xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0" t:is-hidden=" &#x9;1 ">Retired</t:hidden-text></text:span>Bring your <text:hidden-text text:is-hidden="0">badge</text:hidden-text>.</text:p>',
+              '<text:p><text:hidden-text text:is-hidden="false" text:string-value="Visitor parking" other:string-value="Foreign value">Obsolete parking</text:hidden-text>.</text:p>',
+              '<text:p>Loading <text:hidden-text other:is-hidden="true" other:string-value="Foreign value">dock</text:hidden-text>.</text:p>',
+              '<text:p><other:hidden-text text:is-hidden="true" text:string-value="Foreign value">Emergency contacts</other:hidden-text>.</text:p>',
+              '<text:p><text:hidden-text text:string-value="">Unused content</text:hidden-text>Current instructions.</text:p>',
+              "</office:text></office:body></office:document-content>",
+            ].join(""),
+          },
+          expected: [],
+          exact:
+            "Use the north entrance.\nBring your badge.\nVisitor parking.\nLoading dock.\nEmergency contacts.\nCurrent instructions.",
+        },
+        {
           ext: "odt",
           bounded: true,
           parts: {
@@ -1425,6 +1596,20 @@ describe("question answer paths", () => {
           },
           expected: ["Fee $700"],
           absent: ["Reviewer", "$500"],
+        },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text>' +
+              '<t:p>The shipment left.<t:note t:id="ftn0" t:note-class="footnote"><t:note-citation>1</t:note-citation><t:note-body><t:p>Inspect the seals before departure.</t:p></t:note-body></t:note> Finance booked revenue.</t:p>' +
+              '<t:p>The ledger lists Tokyo<t:note t:id="ftn1" t:note-class="footnote"><t:note-citation>2</t:note-citation><t:note-body><t:p>Includes freight.</t:p><t:p>Duties excluded.</t:p></t:note-body></t:note> and Osaka.</t:p>' +
+              "</office:text></office:body></office:document-content>",
+          },
+          expected: [
+            "The shipment left.[1: Inspect the seals before departure.] Finance booked revenue.\nThe ledger lists Tokyo[2: Includes freight.\nDuties excluded.] and Osaka.",
+          ],
         },
         {
           ext: "odt",
@@ -1952,7 +2137,18 @@ describe("question answer paths", () => {
               '<!DOCTYPE html><html><head><title>My Novel</title><meta name="author" content="Hidden Author"/></head><body><h1>First chapter</h1><p>Larkspur</p><p>Map: <img src="map.png" alt="North &amp; south piers"/> open<img src="blank.png" alt=""/><img src="missing.png"/>.</p><div><img src="cover.png" alt="Cover art"/></div><img hidden="" src="draft.png" alt="Hidden image text"/><img src="none.png" alt="Display none image" style="width: 1em; DISPLAY: none"/><img src="invisible.png" alt="Invisible image" style="visibility:hidden !important"/><div>Direct div<section>Direct section<li>Direct item <em>emphasis</em> trailing</li></section></div><div>Account: A<br/>Balance: 731<line-break/>Currency: USD</div><table><thead><tr><th>Heading</th><th>Total</th></tr></thead><tbody><tr><td>Important value</td><td>731</td></tr><tr><td>Before<table><tr><td>Inner</td></tr></table>After</td><td>Neighbor</td></tr></tbody></table><dl><dt>Port</dt><dd>443</dd><dt>Timeout</dt><dd>30 seconds</dd></dl><p hidden="">Draft note</p><div hidden="hidden">Hidden block<p>Hidden nested</p></div><p hidden="UNTIL-FOUND">Findable note</p><p aria-hidden="true">Decorative note</p><p x:hidden="true">Prefixed note</p><ol><li>Before boarding<ul><li>Check passports<ol><li>Compare names</li></ol></li><li>Confirm gate</li></ul></li><li>Board promptly</li><li><p>Before landing</p><ul><li>Collect bags</li></ul></li></ol>' +
               "<ol><li>Indented\n  <ul><li>Alpha</li></ul></li></ol>" +
               '<div>Board<template><h2>Sample berth</h2><img alt="Sample map"/></template> now.</div>' +
-              "<p>Keep <template>Example sailing at dawn.</template>reading.</p></body></html>",
+              "<p>Keep <template>Example sailing at dawn.</template>reading.</p>" +
+              "<style>.published{display:block!important}</style>" +
+              '<p style="display:none!important; display:block!important">Service charge: $700.</p>' +
+              '<div style="DISPLAY: /* draft */ none ! important; display:block"><p>Cancelled surcharge: $500.</p><img alt="Hidden invoice illustration"/></div>' +
+              '<p>Review <span style="display:none!important">the retired version of </span>this invoice.</p>' +
+              '<p style="display:block !important; display:none">Total due: $700.</p>' +
+              '<p class="published" style="display:none">Bank transfer accepted.</p>' +
+              '<p style="--label: &quot;example;display:none!important;&quot;">Payment due tomorrow.</p>' +
+              '<p style="--options: {label: draft; display:none!important;};">Payment instructions.</p>' +
+              '<p style="--options:[);display:none!important">Accounts contact.</p>' +
+              '<p style="display:none!important;--label:&quot;draft&#10;;display:block!important">Visible total: $700.</p>' +
+              '<img alt="Hidden old payment instructions" style="--label:old\\ payment;display:none"/></body></html>',
             "OEBPS/c.xhtml": '<html hidden=""><body><p>Root hidden</p></body></html>',
             "OEBPS/d.xhtml":
               '<xh:html xmlns:xh="http://www.w3.org/1999/xhtml"><xh:body><xh:p>Start <template>Visible excerpt</template>' +
@@ -1977,6 +2173,8 @@ describe("question answer paths", () => {
             "Before landing\nCollect bags",
             "Indented\n  Alpha",
             "Board now.\nKeep reading.",
+            "Service charge: $700.\nReview this invoice.\nTotal due: $700.",
+            "Bank transfer accepted.\nPayment due tomorrow.\nPayment instructions.\nAccounts contact.\nVisible total: $700.",
             "## Chapter 2",
             "Last chapter",
             "Totals\nTable 1: Revenue\nQ1\tQ2\n100\t200",
@@ -1999,6 +2197,9 @@ describe("question answer paths", () => {
             "Sample berth",
             "Sample map",
             "Example sailing at dawn.",
+            "Cancelled surcharge",
+            "Hidden invoice illustration",
+            "Hidden old payment instructions",
             "Hidden excerpt",
           ],
         },
