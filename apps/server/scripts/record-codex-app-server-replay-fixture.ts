@@ -1317,18 +1317,18 @@ const runReplaySession = Effect.fn("record-codex-app-server-replay-fixture.runRe
       turnIdsByThread.set(threadId, [...(turnIdsByThread.get(threadId) ?? []), turnId]);
     });
 
-    const revertTurns = (
+    const revertTurns = Effect.fn("record-codex-app-server-replay-fixture.revertTurns")(function* (
       client: CodexClient.CodexAppServerClient["Service"],
       threadId: string,
       numTurns: number,
-    ) => {
+    ) {
       const turnIds = turnIdsByThread.get(threadId) ?? [];
       const keptTurnId = turnIds.at(-1 - numTurns);
-      turnIdsByThread.set(threadId, turnIds.slice(0, Math.max(turnIds.length - numTurns, 0)));
-      return keptTurnId === undefined
+      yield* keptTurnId === undefined
         ? revertCodexThread(client, threadId, numTurns)
         : revertCodexThreadAfterTurn(client, threadId, keptTurnId, numTurns);
-    };
+      turnIdsByThread.set(threadId, turnIds.slice(0, Math.max(turnIds.length - numTurns, 0)));
+    });
 
     if (scenario.name === "provider_thread_resume") {
       const firstStep = run.steps[0];
