@@ -7,6 +7,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   CHECKPOINT_DIFF_TRUNCATED_MARKER,
   type ReviewBranchCommitsResult,
@@ -34,7 +35,7 @@ import { useCodeViewScrollRestore } from "./diffs/useCodeViewScrollRestore";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { useFileContextMenuHandler } from "../fileContextMenu";
-import { type DraftId } from "../composerDraftStore";
+import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { toolCallDiff } from "../lib/toolCallDiff";
 import { useCheckpointDiff, useTurnItemDetail } from "~/state/queries";
@@ -263,7 +264,17 @@ export default function DiffPanel({
 
   const routeThreadRef = useThreadRouteRef();
   const activeThreadId = routeThreadRef?.threadId ?? null;
-  const activeThread = useQuietThreadShell(routeThreadRef);
+  const serverThread = useQuietThreadShell(routeThreadRef);
+  // A new thread has no server thread yet; its draft names the checkout to diff.
+  const draftThread = useComposerDraftStore((store) =>
+    routeThreadRef === null && typeof composerDraftTarget === "string"
+      ? store.getDraftSession(composerDraftTarget)
+      : null,
+  );
+  const activeThread = serverThread ?? draftThread;
+  const panelThreadRef =
+    routeThreadRef ??
+    (draftThread ? scopeThreadRef(draftThread.environmentId, draftThread.threadId) : null);
   const fileAccess = useFilesystemReadAccess(activeThread?.environmentId ?? null, messages);
   const { canReadFiles } = fileAccess;
   const activeProjectId = activeThread?.projectId ?? null;
@@ -297,21 +308,22 @@ export default function DiffPanel({
     gitStatusQuery.data?.workingTree.rootPath ??
     (activeThread?.worktreePath ? undefined : activeProject?.repositoryIdentity?.rootPath);
   const storedDiffSelection = useDiffPanelStore((state) =>
-    selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
+    selectThreadDiffPanelSelection(state.byThreadKey, panelThreadRef),
   );
   // The checkout the Git scopes read: the thread's folder, or a repository the thread changed.
   // A plain folder has no history of its own, so it starts on the latest one changed.
   const tracksFolders = (activeProject?.trackedFolders?.length ?? 0) > 0;
   // Unchanged repositories are listed too: work done outside a turn only shows in these scopes.
   const threadWorktreePath = activeThread?.worktreePath ?? null;
-  const chosenGitRepositoryPath = useThreadGitRepositoryPath(routeThreadRef);
+  // Keyed like the commit and base ref it scopes, so a new thread's draft keeps them together.
+  const chosenGitRepositoryPath = useThreadGitRepositoryPath(panelThreadRef);
   const {
     repositories: gitRepositories,
     taskFolder,
     settled: gitRepositoriesSettled,
   } = useThreadGitRepositories({
-    threadRef: routeThreadRef,
-    isServerThread: true,
+    threadRef: panelThreadRef,
+    isServerThread: serverThread != null,
     projectId: activeProjectId,
     worktreePath: threadWorktreePath,
     threadCwd: activeCwd ?? null,
@@ -372,7 +384,7 @@ export default function DiffPanel({
         ? { kind: "branch", baseRef: null }
         : storedDiffSelection;
   const storedBaseRef = useDiffPanelStore((state) =>
-    selectThreadBranchBaseRef(state, routeThreadRef),
+    selectThreadBranchBaseRef(state, panelThreadRef),
   );
   const rememberedBaseRef = chosenRepositoryUnreachable ? null : storedBaseRef;
   const toolCallSelection = diffSelection.kind === "tool-call" ? diffSelection : null;
@@ -429,8 +441,8 @@ export default function DiffPanel({
       : selectedCommitSha !== null
         ? `commit:${selectedCommitSha}`
         : selectedGitScope;
-  const collapseScopeKey = routeThreadRef
-    ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
+  const collapseScopeKey = panelThreadRef
+    ? `${panelThreadRef.environmentId}:${panelThreadRef.threadId}:${reviewSectionId}`
     : null;
   const codeViewMountKey = collapseScopeKey ?? reviewSectionId;
   const selectedCheckpointRange =
@@ -497,8 +509,8 @@ export default function DiffPanel({
     messages,
   );
   const branchCommits = openCommitMenu ?? branchCommitsQuery.data;
-  const activeThreadRefreshKey = routeThreadRef
-    ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
+  const activeThreadRefreshKey = panelThreadRef
+    ? `${panelThreadRef.environmentId}:${panelThreadRef.threadId}`
     : null;
 
   const selectedGitSource = branchDiffPreview.data?.sources.find(
@@ -883,7 +895,7 @@ export default function DiffPanel({
     const repositoryFile = repositoryFileTarget(filePath);
     openDiffFilePrimaryAction({
       // The file viewer reads below the thread's folder; a repository outside it opens in the editor.
-      threadRef: repositoryFile?.insideThreadFolder === false ? null : routeThreadRef,
+      threadRef: repositoryFile?.insideThreadFolder === false ? null : panelThreadRef,
       filePath: repositoryFile?.insideThreadFolder === false ? repositoryFile.path : filePath,
       activeCwd: repositoryFile?.insideThreadFolder === false ? repositoryFile.cwd : activeCwd,
       repositoryRoot: repositoryFile ? undefined : diffPathRepositoryRoot,
@@ -944,24 +956,24 @@ export default function DiffPanel({
     if (chosenRepositoryUnreachable) chooseThreadGitRepository(ref, null);
   };
   const selectGitScope = (scope: "branch" | "unstaged") => {
-    if (!routeThreadRef) return;
-    settleUnreachableRepository(routeThreadRef);
-    useDiffPanelStore.getState().selectGitScope(routeThreadRef, scope);
+    if (!panelThreadRef) return;
+    settleUnreachableRepository(panelThreadRef);
+    useDiffPanelStore.getState().selectGitScope(panelThreadRef, scope);
   };
   const selectBranchBaseRef = (baseRef: string | null) => {
-    if (!routeThreadRef) return;
-    settleUnreachableRepository(routeThreadRef);
-    useDiffPanelStore.getState().selectBranchBaseRef(routeThreadRef, baseRef);
+    if (!panelThreadRef) return;
+    settleUnreachableRepository(panelThreadRef);
+    useDiffPanelStore.getState().selectBranchBaseRef(panelThreadRef, baseRef);
   };
   const selectGitRepository = (value: string) => {
     const nextPath = value === THREAD_FOLDER ? null : value;
-    if (!routeThreadRef || nextPath === chosenGitRepositoryPath) return;
+    if (!panelThreadRef || nextPath === chosenGitRepositoryPath) return;
     // The repository shown is already the choice, unless it only stands in for one out of reach:
     // picking it then replaces that choice, so the panel does not move back when it returns.
     if (!chosenRepositoryUnreachable && nextPath === (gitRepository?.repositoryPath ?? null)) {
       return;
     }
-    chooseThreadGitRepository(routeThreadRef, nextPath);
+    chooseThreadGitRepository(panelThreadRef, nextPath);
   };
   const selectedTurnValue = selectedTurn ? `turn:${selectedTurn.runId}` : "";
   const selectedCommitValue = selectedCommitSha !== null ? `commit:${selectedCommitSha}` : "";
@@ -988,9 +1000,9 @@ export default function DiffPanel({
     } else if (value === selectedCommitValue) {
       selectGitScope("branch");
     } else if (value.startsWith("commit:")) {
-      if (routeThreadRef) {
-        settleUnreachableRepository(routeThreadRef);
-        useDiffPanelStore.getState().selectCommit(routeThreadRef, value.slice("commit:".length));
+      if (panelThreadRef) {
+        settleUnreachableRepository(panelThreadRef);
+        useDiffPanelStore.getState().selectCommit(panelThreadRef, value.slice("commit:".length));
       }
     } else if (value === "latest") {
       if (latestTurn) selectTurn(latestTurn.runId);

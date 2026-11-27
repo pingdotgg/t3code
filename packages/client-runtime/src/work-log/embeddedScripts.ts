@@ -114,7 +114,14 @@ const INTERPRETERS: Record<string, Interpreter> = {
     valueOptions: new Set(["-r", "-I", "-C"]),
     stdin: "without-script-file",
   },
-  perl: { language: "perl", inline: flagIn("-e", "-E"), stdin: "without-script-file" },
+  perl: {
+    language: "perl",
+    // Bundles like -pe and -0777ne; in -pie or -Me the e is the value of -i or -M.
+    inline: (flag) => /^-[0-7acdfglnpsStTuUwWX]*[eE]$/u.test(flag),
+    // -M and -m take their module only attached (`-Mstrict`).
+    valueOptions: new Set(["-I"]),
+    stdin: "without-script-file",
+  },
   osascript: {
     language: "applescript",
     inline: flagIn("-e"),
