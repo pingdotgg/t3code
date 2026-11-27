@@ -15,8 +15,9 @@ const isRuleParent = (rule: CSSRule): rule is CSSRule & RuleParent =>
   "cssRules" in rule && "deleteRule" in rule && !(rule instanceof CSSKeyframesRule);
 
 // A shorthand holding var() leaves its longhands reading "" until substitution.
+// item(), not indexing: Chromium's CSSPositionTryDescriptors returns undefined by index.
 function pendingLonghands(style: CSSStyleDeclaration): string[] {
-  return Array.from(style).filter(
+  return Array.from({ length: style.length }, (_, index) => style.item(index)).filter(
     (property) => !property.startsWith("--") && style.getPropertyValue(property) === "",
   );
 }
@@ -106,12 +107,19 @@ export function applyThemeCss(css: string | undefined): void {
   if (typeof document === "undefined" || typeof CSSStyleSheet === "undefined") return;
   const next = css ?? "";
   if (next === appliedCss) return;
-  appliedCss = next;
   if (!themeSheet) {
     // Adopted sheets order after the document's own, and they cannot hold @import.
     themeSheet = new CSSStyleSheet();
     document.adoptedStyleSheets = [...document.adoptedStyleSheets, themeSheet];
   }
-  themeSheet.replaceSync(withoutFetchingShorthands(next));
-  stripFetches(themeSheet);
+  try {
+    themeSheet.replaceSync(withoutFetchingShorthands(next));
+    stripFetches(themeSheet);
+  } catch (error) {
+    // A half-cleaned sheet can still fetch; leave none applied so the next call retries.
+    themeSheet.replaceSync("");
+    appliedCss = "";
+    throw error;
+  }
+  appliedCss = next;
 }
