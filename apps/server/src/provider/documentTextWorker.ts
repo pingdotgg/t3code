@@ -1426,7 +1426,30 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       const dir = `/${NodePath.posix.dirname(main)}`;
       const stylesPath = NodePath.posix.resolve(dir, target || "styles.xml").slice(1);
       const styles = has(stylesPath) ? read(stylesPath) : undefined;
-      const doc = read(main, styles && wordCharacterStyleVisibility(styles));
+      const styleRunHidden = styles && wordCharacterStyleVisibility(styles);
+      const doc = read(main, styleRunHidden);
+      // Footnotes and endnotes live in their own parts; put each inline where it is referenced.
+      const noteRelations = has(rels) ? [...all(read(rels), "Relationship")] : [];
+      for (const kind of ["footnote", "endnote"]) {
+        const noteTarget = noteRelations.find(
+          (rel) => rel.attrs.Type?.endsWith(`/${kind}s`) && rel.attrs.TargetMode !== "External",
+        )?.attrs.Target;
+        const notePath = noteTarget && NodePath.posix.resolve(dir, noteTarget).slice(1);
+        if (!notePath || !has(notePath)) continue;
+        const bodies = new Map<string, string>();
+        for (const note of all(read(notePath, styleRunHidden), kind)) {
+          const body = Array.from(all(note, "p"), (paragraph) =>
+            [...text(paragraph)].filter((part) => typeof part === "string").join(""),
+          )
+            .join("\n")
+            .trim();
+          if (note.attrs.id !== undefined && body) bodies.set(note.attrs.id, body);
+        }
+        for (const reference of all(doc, `${kind}Reference`)) {
+          const body = bodies.get(reference.attrs.id ?? "");
+          if (body) reference.children = [`[Note: ${body}]`];
+        }
+      }
       if (styles) {
         const outlines = new Map<string, number | string | undefined>();
         const headings = new Map<string, string>();
