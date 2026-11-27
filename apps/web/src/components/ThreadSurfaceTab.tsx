@@ -23,6 +23,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
 import { orchestrationV2WorktreePending } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
   projectScriptCwd,
@@ -41,7 +42,7 @@ import { type ComposerImageAttachment, useComposerDraftStore } from "../composer
 import { useDiffPanelStore } from "../diffPanelStore";
 import { isElectron } from "../env";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
-import { useEnvironmentSettings } from "../hooks/useSettings";
+import { getClientSettings, useEnvironmentSettings } from "../hooks/useSettings";
 import { useLayoutPane } from "../layout/layoutPaneContext";
 import { copyLayoutFilePath } from "../layout/PaneTabs";
 import type { LauncherSurfaceKind } from "./SurfaceLauncher";
@@ -62,7 +63,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../previewMiniPlayerStore";
+import { browserMiniPlayerSource } from "../previewMiniPlayerStore";
 import {
   isPreviewSupportedInRuntime,
   readThreadPreviewState,
@@ -70,6 +71,7 @@ import {
   useThreadPreviewState,
 } from "../previewStateStore";
 import {
+  selectActiveRightPanelSurface,
   selectThreadRightPanelState,
   useRightPanelStore,
   type RightPanelSurface,
@@ -83,6 +85,7 @@ import {
   useQuietThreadShell,
   useQuietThreadProjection,
 } from "../state/entities";
+import { deviceEnvironment } from "../state/device";
 import { previewEnvironment } from "../state/preview";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import {
@@ -114,6 +117,7 @@ import { MAX_TERMINALS_PER_GROUP } from "../types";
 import { agentControlledBrowserCloseConfirmation } from "./ChatView.logic";
 import { FileSurfaceState } from "./files/fileSurfaceChrome";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
+import { floatPanelSurfaceOnClose } from "./preview/agentOpenedPreviews";
 import { closePreviewSession } from "./preview/closePreviewSession";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
@@ -1247,18 +1251,34 @@ export function discardThreadSurfaces(threadRef: ScopedThreadRef): void {
 }
 
 /**
- * Hide a thread's surfaces (alt+cmd+B): a live browser or device on screen
- * floats in its mini player instead of disappearing.
+ * Hide a thread's surfaces (alt+cmd+B): when Auto-show floating preview is on,
+ * a live browser or device on screen floats in its mini player instead of disappearing.
  */
 export function hideThreadSurfaces(threadRef: ScopedThreadRef): void {
-  const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef);
-  const active = state.surfaces.find((surface) => surface.id === state.activeSurfaceId);
-  if (active?.kind === "preview" && active.resourceId) {
-    usePreviewMiniPlayerStore
-      .getState()
-      .open(threadRef, browserMiniPlayerSource(active.resourceId));
-  } else if (active?.kind === "device" && active.target) {
-    usePreviewMiniPlayerStore.getState().open(threadRef, { kind: "device", ...active.target });
+  const active = selectActiveRightPanelSurface(
+    useRightPanelStore.getState().byThreadKey,
+    threadRef,
+  );
+  const source =
+    active?.kind === "preview" && active.resourceId
+      ? browserMiniPlayerSource(active.resourceId)
+      : active?.kind === "device" && active.target
+        ? ({ kind: "device", ...active.target } as const)
+        : null;
+  if (source) {
+    floatPanelSurfaceOnClose(threadRef, source, {
+      autoShowFloatingPreview: getClientSettings().browserAutoShowFloatingPreview,
+      previewState: readThreadPreviewState(threadRef),
+      deviceState:
+        source.kind === "device"
+          ? AsyncResult.getOrElse(
+              appAtomRegistry.get(
+                deviceEnvironment.state({ environmentId: threadRef.environmentId, input: {} }),
+              ),
+              () => null,
+            )
+          : null,
+    });
   }
   useRightPanelStore.getState().close(threadRef);
 }

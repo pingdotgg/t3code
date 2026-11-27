@@ -39,8 +39,11 @@ import {
   useLayoutStore,
 } from "./layoutStore";
 import { LayoutDropZones } from "./DropZones";
+import { toggleThreadSidePane } from "./openRules";
 import { LayoutSurfaceHost, selectSurfaceMounts } from "./SurfaceHost";
 import { requestLayoutSurfacePlacement, useLayoutSurfaceSync } from "./surfaceSync";
+import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../previewMiniPlayerStore";
+import { reconcilePreviewServerSessions, resetPreviewStateForTests } from "../previewStateStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 
 const TOUR_KEY = "t3code:layout-tour:v1";
@@ -1254,4 +1257,127 @@ it("skips hidden and aria-hidden inputs when moving keyboard focus into a surfac
 
   expect(document.activeElement).not.toBe(hiddenInput);
   expect(document.activeElement).toBe(host);
+});
+
+it.each([
+  {
+    name: "floats a navigated browser tab when Auto-show floating preview is on",
+    autoShow: true,
+    navStatus: { _tag: "Loading", url: "http://127.0.0.1:5173/", title: "" } as const,
+    before: null,
+    after: browserMiniPlayerSource("tab_panel"),
+  },
+  {
+    name: "does not float a navigated browser tab when Auto-show floating preview is off",
+    autoShow: false,
+    navStatus: { _tag: "Loading", url: "http://127.0.0.1:5173/", title: "" } as const,
+    before: null,
+    after: undefined,
+  },
+  {
+    name: "keeps a manually floated preview when Auto-show floating preview is off",
+    autoShow: false,
+    navStatus: { _tag: "Loading", url: "http://127.0.0.1:5173/", title: "" } as const,
+    before: browserMiniPlayerSource("tab_manual"),
+    after: browserMiniPlayerSource("tab_manual"),
+  },
+  {
+    name: "does not float an untouched browser tab even when Auto-show floating preview is on",
+    autoShow: true,
+    navStatus: { _tag: "Idle" } as const,
+    before: null,
+    after: undefined,
+  },
+])("toggleThreadSidePane $name", async ({ autoShow, navStatus, before, after }) => {
+  using fixture = setupPullRequestDrop();
+  const { chatPaneId } = fixture;
+  const settings = getClientSettings();
+  const miniPlayerBefore = usePreviewMiniPlayerStore.getState().byThreadKey;
+  using _restore = {
+    [Symbol.dispose]: () => {
+      __setClientSettingsForTests(settings);
+      usePreviewMiniPlayerStore.setState({ byThreadKey: miniPlayerBefore });
+      resetPreviewStateForTests();
+    },
+  };
+  __setClientSettingsForTests({ ...settings, browserAutoShowFloatingPreview: autoShow });
+  usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
+  resetPreviewStateForTests();
+  reconcilePreviewServerSessions(threadRef, {
+    serverEpoch: "test",
+    revision: 1,
+    sessions: [
+      {
+        threadId: threadRef.threadId,
+        tabId: "tab_panel",
+        navStatus,
+        canGoBack: false,
+        canGoForward: false,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+  });
+  if (before) usePreviewMiniPlayerStore.getState().open(threadRef, before);
+  await using _screen = await render(<SurfaceSync />);
+
+  await act(() => {
+    requestLayoutSurfacePlacement(threadRef, { kind: "split", paneId: chatPaneId, side: "right" });
+    useRightPanelStore.getState().openBrowser(threadRef, "tab_panel");
+  });
+  expect(findLayoutSurfaceTabs(useLayoutStore.getState().layout, threadRef)).toHaveLength(1);
+
+  await act(() => {
+    toggleThreadSidePane(threadRef, () => false);
+  });
+  expect(findLayoutSurfaceTabs(useLayoutStore.getState().layout, threadRef)).toHaveLength(0);
+  expect(
+    usePreviewMiniPlayerStore.getState().byThreadKey[scopedThreadKey(threadRef)]?.source,
+  ).toEqual(after);
+});
+
+it.each([
+  {
+    name: "floats a device tab when Auto-show floating preview is on",
+    autoShow: true,
+    floated: true,
+  },
+  {
+    name: "does not float a device tab when Auto-show floating preview is off",
+    autoShow: false,
+    floated: false,
+  },
+])("toggleThreadSidePane $name", async ({ autoShow, floated }) => {
+  using fixture = setupPullRequestDrop();
+  const { chatPaneId } = fixture;
+  const settings = getClientSettings();
+  const miniPlayerBefore = usePreviewMiniPlayerStore.getState().byThreadKey;
+  using _restore = {
+    [Symbol.dispose]: () => {
+      __setClientSettingsForTests(settings);
+      usePreviewMiniPlayerStore.setState({ byThreadKey: miniPlayerBefore });
+    },
+  };
+  __setClientSettingsForTests({ ...settings, browserAutoShowFloatingPreview: autoShow });
+  usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
+  await using _screen = await render(<SurfaceSync />);
+
+  const target = {
+    hostId: "local",
+    deviceId: "pixel",
+    platform: "android" as const,
+    name: "Pixel 8",
+  };
+  await act(() => {
+    requestLayoutSurfacePlacement(threadRef, { kind: "split", paneId: chatPaneId, side: "right" });
+    useRightPanelStore.getState().openDevice(threadRef, target);
+  });
+  expect(findLayoutSurfaceTabs(useLayoutStore.getState().layout, threadRef)).toHaveLength(1);
+
+  await act(() => {
+    toggleThreadSidePane(threadRef, () => false);
+  });
+  expect(findLayoutSurfaceTabs(useLayoutStore.getState().layout, threadRef)).toHaveLength(0);
+  expect(
+    usePreviewMiniPlayerStore.getState().byThreadKey[scopedThreadKey(threadRef)]?.source,
+  ).toEqual(floated ? { kind: "device", ...target } : undefined);
 });
