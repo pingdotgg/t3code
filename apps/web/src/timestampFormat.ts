@@ -176,7 +176,7 @@ export function formatChatTimestampTooltip(
 
 export function formatFullTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
   return new Date(isoDate).toLocaleString(
-    undefined,
+    timestampLocale,
     timestampFormat === "locale" ? undefined : { hour12: timestampFormat === "12-hour" },
   );
 }
