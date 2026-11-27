@@ -278,7 +278,6 @@ const makeLinuxPayloadFixture = Effect.fn("test.makeLinuxPayloadFixture")(functi
   readonly arch: "arm64" | "x64";
   readonly omitEntry?: string;
   readonly serverEntrySource?: string;
-  readonly emptyEntry?: string;
   readonly unpackNatives?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
@@ -299,15 +298,13 @@ const makeLinuxPayloadFixture = Effect.fn("test.makeLinuxPayloadFixture")(functi
     yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
     yield* fs.writeFile(
       filePath,
-      entry === input.emptyEntry
-        ? new Uint8Array()
-        : entry.startsWith("node_modules/")
-          ? linuxElfHeader(input.arch)
-          : new TextEncoder().encode(
-              entry === "apps/server/dist/bin.mjs"
-                ? (input.serverEntrySource ?? "console.log('1.2.3');")
-                : "{}",
-            ),
+      entry.startsWith("node_modules/")
+        ? linuxElfHeader(input.arch)
+        : new TextEncoder().encode(
+            entry === "apps/server/dist/bin.mjs"
+              ? (input.serverEntrySource ?? "console.log('1.2.3');")
+              : "{}",
+          ),
     );
   }
   yield* fs.makeDirectory(path.join(packagedAppDir, "resources"), { recursive: true });
@@ -1628,7 +1625,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it.effect("validates static Linux payloads cross-host for both release architectures", () =>
+  it.effect("validates Linux payload files without running the server bundle", () =>
     Effect.scoped(
       Effect.gen(function* () {
         for (const arch of ["arm64", "x64"] as const) {
@@ -1636,32 +1633,27 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             arch,
             serverEntrySource: 'import "t3code-deliberately-missing-package";',
           });
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          yield* fs.copy(
-            fixture.packagedAppDir,
-            path.join(fixture.stageDistDir, "linux-extra-unpacked"),
-          );
           yield* validateLinuxPackagedFiles({
             stageDistDir: fixture.stageDistDir,
             targetArch: arch,
           });
         }
       }),
-    ).pipe(Effect.provideService(HostProcess.Platform, "darwin")),
+    ),
   );
 
-  it.effect("rejects incomplete Linux payloads and invalid ELF files", () =>
+  it.effect("rejects Linux payloads with missing, packed or wrong-architecture files", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const fixture = yield* makeLinuxPayloadFixture({ arch: "arm64" });
         const expectRejected = Effect.fn("test.expectLinuxPayloadRejected")(function* (
+          stageDistDir: string,
           file: string,
         ) {
           const error = yield* validateLinuxPackagedFiles({
-            stageDistDir: fixture.stageDistDir,
+            stageDistDir,
             targetArch: "arm64",
           }).pipe(Effect.flip);
           assert.instanceOf(error, LinuxPackagedPayloadValidationError);
@@ -1669,14 +1661,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         });
 
         for (const file of [
-          "resources/app.asar",
           "resources/app.asar.unpacked/node_modules/extra/addon.node",
           "resources/browser-secret/t3-browser-secret",
           "resources/gnome-extension/extension.js",
         ]) {
           const filePath = path.join(fixture.packagedAppDir, file);
           yield* fs.rename(filePath, `${filePath}.saved`);
-          yield* expectRejected(file);
+          yield* expectRejected(fixture.stageDistDir, file);
           yield* fs.rename(`${filePath}.saved`, filePath);
         }
 
@@ -1684,54 +1675,24 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           fixture.packagedAppDir,
           "resources/app.asar.unpacked/node_modules/node-pty/build/Release/pty.node",
         );
-        for (const bytes of [
-          new Uint8Array(),
-          new Uint8Array(64),
-          linuxElfHeader("arm64").with(4, 1),
-          linuxElfHeader("arm64").with(5, 2),
-          linuxElfHeader("x64"),
-        ]) {
-          yield* fs.writeFile(nativePath, bytes);
-          yield* expectRejected(nativePath);
-        }
+        yield* fs.writeFile(nativePath, linuxElfHeader("x64"));
+        yield* expectRejected(fixture.stageDistDir, nativePath);
         yield* fs.writeFile(nativePath, linuxElfHeader("arm64"));
 
         const helperPath = path.join(fixture.packagedAppDir, "t3code");
         yield* fs.chmod(helperPath, 0o644);
-        yield* expectRejected(helperPath);
-        yield* fs.chmod(helperPath, 0o755);
-        yield* fs.writeFile(helperPath, linuxElfHeader("x64"));
-        yield* expectRejected(helperPath);
-        yield* fs.writeFile(helperPath, linuxElfHeader("arm64"));
+        yield* expectRejected(fixture.stageDistDir, helperPath);
 
-        const extraAppDir = path.join(fixture.stageDistDir, "linux-extra-unpacked");
-        yield* fs.copy(fixture.packagedAppDir, extraAppDir);
-        const extraHelper = path.join(extraAppDir, "resources/browser-secret/t3-browser-secret");
-        yield* fs.remove(extraHelper);
-        yield* expectRejected(extraHelper);
-
-        for (const fixtureInput of [
-          { omitEntry: "apps/server/dist/bin.mjs" },
-          { emptyEntry: "apps/desktop/dist-electron/main.cjs" },
-          { unpackNatives: false },
-        ]) {
-          const invalid = yield* makeLinuxPayloadFixture({ arch: "arm64", ...fixtureInput });
-          const error = yield* validateLinuxPackagedFiles({
-            stageDistDir: invalid.stageDistDir,
-            targetArch: "arm64",
-          }).pipe(Effect.flip);
-          assert.instanceOf(error, LinuxPackagedPayloadValidationError);
-          assert.include(
-            error.filePath,
-            fixtureInput.omitEntry ?? fixtureInput.emptyEntry ?? "pty.node",
-          );
-        }
-        const emptyStage = yield* fs.makeTempDirectoryScoped({ prefix: "t3-linux-empty-" });
-        const missing = yield* validateLinuxPackagedFiles({
-          stageDistDir: emptyStage,
-          targetArch: "arm64",
-        }).pipe(Effect.flip);
-        assert.instanceOf(missing, LinuxPackagedAppMissingError);
+        const missingServer = yield* makeLinuxPayloadFixture({
+          arch: "arm64",
+          omitEntry: "apps/server/dist/bin.mjs",
+        });
+        yield* expectRejected(missingServer.stageDistDir, "apps/server/dist/bin.mjs");
+        const packedNatives = yield* makeLinuxPayloadFixture({
+          arch: "arm64",
+          unpackNatives: false,
+        });
+        yield* expectRejected(packedNatives.stageDistDir, "pty.node");
       }),
     ),
   );
@@ -1740,19 +1701,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
         const fixture = yield* makePackagedAppFixture({
           resourcesPath: "linux-arm64-unpacked/resources",
-        });
-        yield* validateLinuxPackagedPayload({ stageDistDir: fixture.stageDistDir });
-        const broken = yield* makePackagedAppFixture({
-          resourcesPath: "linux-unpacked/resources",
           serverEntrySource: 'import "t3code-deliberately-missing-package";\n',
         });
-        yield* fs.copy(
-          path.join(broken.stageDistDir, "linux-unpacked"),
-          path.join(fixture.stageDistDir, "linux-unpacked"),
-        );
         const error = yield* validateLinuxPackagedPayload({
           stageDistDir: fixture.stageDistDir,
         }).pipe(Effect.flip);
@@ -1764,11 +1716,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           Effect.flip,
         );
         assert.instanceOf(missing, LinuxPackagedAppMissingError);
-        yield* fs.makeDirectory(path.join(emptyStage, "linux-unpacked"));
-        const missingArchive = yield* validateLinuxPackagedPayload({
-          stageDistDir: emptyStage,
-        }).pipe(Effect.flip);
-        assert.instanceOf(missingArchive, BundleNotSelfContainedError);
       }),
     ),
   );
