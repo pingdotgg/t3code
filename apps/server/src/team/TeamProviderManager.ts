@@ -58,7 +58,7 @@ import {
   resolveTeamProfilePaths,
   selectTeamPrepromptsForDriver,
 } from "./TeamProfileMaterializer.ts";
-import { DEFAULT_TEAM_HARNESS_PROFILE, getTeamHarnessProfile } from "./harnessProfiles.ts";
+import { getTeamHarnessProfile } from "./harnessProfiles.ts";
 import { issueEphemeralTeamProviderLease } from "./TeamProviderLeaseService.ts";
 import * as TeamRepository from "./TeamRepository.ts";
 
@@ -822,7 +822,7 @@ const make = Effect.gen(function* () {
     ) {
       baseConfig.setupMode = harnessSpec.tokenLeaseSetupMode;
     }
-    if (harnessSpec.profileEnvVar === DEFAULT_TEAM_HARNESS_PROFILE.profileEnvVar) {
+    if (harnessSpec.setsTeamSkillsDirEnv) {
       envVars.push({
         name: "T3_TEAM_SKILLS_DIR",
         value: profilePaths.skillsDir,

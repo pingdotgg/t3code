@@ -33,6 +33,8 @@ export interface HarnessProfileSpec {
   readonly extraStrippedAmbientEnv?: ReadonlyArray<string>;
   /** Whether `ProviderInstanceConfig.config.homePath` is set to `profileDir`. */
   readonly setsHomePathConfig: boolean;
+  /** Whether `T3_TEAM_SKILLS_DIR` is injected into the harness environment. */
+  readonly setsTeamSkillsDirEnv: boolean;
   /** Optional `config.setupMode` set when using `token-lease` delivery. */
   readonly tokenLeaseSetupMode?: string;
   /** Optional provider config override applied when using `proxy` delivery. */
@@ -68,6 +70,7 @@ export const DEFAULT_TEAM_HARNESS_PROFILE: HarnessProfileSpec = {
   driver: "default",
   profileEnvVar: "T3_TEAM_PROFILE_DIR",
   setsHomePathConfig: false,
+  setsTeamSkillsDirEnv: true,
   profileStorage: "team-profiles",
   skillsSubdir: TEAM_ANTIGRAVITY_SKILLS_DIRNAME,
   threadInstructionFilename: null,
@@ -88,6 +91,7 @@ export const TEAM_HARNESS_PROFILES: Readonly<Record<string, HarnessProfileSpec>>
       SSH_CONNECTION: "127.0.0.1 0 127.0.0.1 0",
     },
     setsHomePathConfig: false,
+    setsTeamSkillsDirEnv: false,
     proxyConfigMode: "gemini-api-key",
     profileStorage: "antigravity-native",
     skillsSubdir: TEAM_ANTIGRAVITY_SKILLS_DIRNAME,
@@ -115,6 +119,7 @@ export const TEAM_HARNESS_PROFILES: Readonly<Record<string, HarnessProfileSpec>>
     driver: "codex",
     profileEnvVar: "CODEX_HOME",
     setsHomePathConfig: true,
+    setsTeamSkillsDirEnv: false,
     tokenLeaseSetupMode: "managed",
     profileStorage: "team-profiles",
     skillsSubdir: "skills",
@@ -135,6 +140,7 @@ export const TEAM_HARNESS_PROFILES: Readonly<Record<string, HarnessProfileSpec>>
     profileEnvVar: "CLAUDE_CONFIG_DIR",
     extraStrippedAmbientEnv: ["CLAUDE_CODE_OAUTH_TOKEN"],
     setsHomePathConfig: true,
+    setsTeamSkillsDirEnv: false,
     profileStorage: "team-profiles",
     skillsSubdir: "skills",
     threadInstructionFilename: "CLAUDE.md",
@@ -152,6 +158,7 @@ export const TEAM_HARNESS_PROFILES: Readonly<Record<string, HarnessProfileSpec>>
     driver: "opencode",
     profileEnvVar: "OPENCODE_CONFIG_DIR",
     setsHomePathConfig: false,
+    setsTeamSkillsDirEnv: true,
     profileStorage: "team-profiles",
     skillsSubdir: TEAM_ANTIGRAVITY_SKILLS_DIRNAME,
     threadInstructionFilename: null,
@@ -166,6 +173,7 @@ export const TEAM_HARNESS_PROFILES: Readonly<Record<string, HarnessProfileSpec>>
     driver: "pi",
     profileEnvVar: "PI_CODING_AGENT_DIR",
     setsHomePathConfig: false,
+    setsTeamSkillsDirEnv: true,
     profileStorage: "team-profiles",
     skillsSubdir: TEAM_ANTIGRAVITY_SKILLS_DIRNAME,
     threadInstructionFilename: null,

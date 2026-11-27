@@ -1428,7 +1428,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ...trace2Monitor.env,
         };
         const serverEnv = { ...baseEnv, ...serverGitConfigEnv(baseEnv, hostPlatform) };
-        const limits = yield* hookLimits(input);
+        const hooksPolicy = yield* GitVcsDriver.RepositoryHooks;
+        const sandboxCheck =
+          teamBwrapSandbox === true
+            ? canRunHostGitInWorkspaceSandbox({
+                processSandboxEnabled: processSandbox.enabled,
+                cwd: commandInput.cwd,
+                args: commandInput.args,
+                env: serverEnv,
+                ownStateDir: stateDir,
+              })
+            : ({ eligible: false } as const);
+        // Sandboxed non-push commands already disable file and configured hooks via
+        // `resolveSandboxSafeGitConfigEnv` (with `--includes`), avoiding an unsandboxed
+        // `git config` subprocess that would fail on repos using `include.path` / `includeIf`.
+        const limits =
+          teamBwrapSandbox === true &&
+          sandboxCheck.eligible &&
+          (hooksPolicy._tag === "none" ||
+            (hooksPolicy._tag === "approved-push" && input.pushes !== true))
+            ? { hooksPath: "/dev/null", off: [] as ReadonlyArray<string> }
+            : yield* hookLimits(input);
         // Git reads these from the environment since 2.31, well before it had configured hooks.
         const env = { ...serverEnv };
         for (const name of limits?.off ?? []) {
@@ -1458,22 +1478,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             }
           | undefined;
         if (teamBwrapSandbox === true) {
-          const sandboxCheck = canRunHostGitInWorkspaceSandbox({
-            processSandboxEnabled: processSandbox.enabled,
-            cwd: commandInput.cwd,
-            args: commandInput.args,
-            env: longPathEnv,
-            ownStateDir: stateDir,
-          });
           if (sandboxCheck.eligible) {
             sandboxWrapConfig = sandboxCheck;
           }
+          const isReadOnlyHookInspection =
+            commandInput.operation === "GitVcsDriver.pushHooks" ||
+            commandInput.operation === "GitVcsDriver.configuredHooks";
+          const isApprovedPush =
+            hooksPolicy._tag === "approved-push" && input.pushes === true && limits !== undefined;
           const safeOverrides = yield* resolveSandboxSafeGitConfigEnv({
             cwd: commandInput.cwd,
             env: longPathEnv,
             platform: hostPlatform,
             args: commandInput.args,
             allowWorkspaceIncludes: sandboxCheck.eligible,
+            preserveHooksConfig: isReadOnlyHookInspection || isApprovedPush,
             runProbe: ({ args: probeArgs, cwd: probeCwd, env: probeEnv }) =>
               Effect.scoped(
                 Effect.gen(function* () {
@@ -1566,7 +1585,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               ...(extendEnvOption === undefined ? {} : { extendEnv: extendEnvOption }),
               // SIGTERM first lets git remove its lock files; SIGKILL ends one that ignores it.
               forceKillAfter: "1 second",
-              ...(runsGitWithoutConsole(hostPlatform, executable, launchArgs)
+              ...(runsGitWithoutConsole(hostPlatform, executable, commandInput.args)
                 ? { detached: true, windowsHide: true }
                 : {}),
             }),

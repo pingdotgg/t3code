@@ -3518,6 +3518,7 @@ export const layerWsRpc = (
             };
           }),
         [WS_METHODS.serverGetProviderRuntimeModeLimits]: Effect.fnUntraced(function* (input) {
+          yield* teamService.assertCanAccessLocalEnvironment(currentSessionId);
           return {
             limits: yield* providerRegistry.runtimeModeLimits({
               instanceId: input.instanceId,

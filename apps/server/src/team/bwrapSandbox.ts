@@ -1508,10 +1508,27 @@ const SENSITIVE_PLUGIN_TARGET_FILENAMES = [
   "statev2.sqlite",
 ] as const;
 
+const decodeTeamProfileMarkerDriver = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      driver: Schema.optionalKey(Schema.String),
+    }),
+  ),
+);
+
+const decodePersonalAntigravityPluginPrefs = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      plugins: Schema.optional(
+        Schema.Record(Schema.String, Schema.Struct({ enabled: Schema.optional(Schema.Boolean) })),
+      ),
+    }),
+  ),
+);
+
 /**
- * Discovers read-only personal Antigravity plugin target binds for an isolated team profile.
- * Strictly allows direct children of `<homeRoot>/.gemini/config/plugins` and locks `<profileDir>/config/plugins`
- * read-only inside bwrap so sandboxed turns can never expose `~/.gemini` tokens or plant cross-turn symlinks.
+ * Locks `<profileDir>/config` RO for Antigravity team profiles (`driver: "antigravity"`) and binds
+ * only enabled direct children of `<homeRoot>/.gemini/config/plugins` read-only.
  */
 async function collectTeamProfilePersonalPluginRoBinds(input: {
   readonly profileDir: string;
@@ -1528,22 +1545,41 @@ async function collectTeamProfilePersonalPluginRoBinds(input: {
   }
 
   const markerPath = NodePath.posix.join(input.profileDir, TEAM_PROFILE_MARKER_FILENAME);
-  const markerStat = await NodeFSP.lstat(markerPath).catch(() => undefined);
-  if (markerStat === undefined || markerStat.isSymbolicLink() || !markerStat.isFile()) {
+  const markerRaw = await readRegularFileNoFollow(markerPath, 16_384).catch(() => undefined);
+  if (markerRaw === undefined) {
+    return { profileRoSubpaths: [], pluginRoTargets: [] };
+  }
+  const markerOpt = decodeTeamProfileMarkerDriver(markerRaw);
+  if (markerOpt._tag !== "Some" || markerOpt.value.driver !== "antigravity") {
     return { profileRoSubpaths: [], pluginRoTargets: [] };
   }
 
-  const profilePluginsDir = NodePath.posix.join(input.profileDir, "config", "plugins");
+  const profileConfigDir = NodePath.posix.join(input.profileDir, "config");
+  const profileConfigStat = await NodeFSP.lstat(profileConfigDir).catch(() => undefined);
+  if (
+    profileConfigStat === undefined ||
+    profileConfigStat.isSymbolicLink() ||
+    !profileConfigStat.isDirectory()
+  ) {
+    return { profileRoSubpaths: [], pluginRoTargets: [] };
+  }
+
+  // Lock `<profileDir>/config` read-only inside bwrap so a sandboxed turn can neither rename
+  // `config` (EBUSY) nor write/plant symlinks into `config/skills.json` or `config/plugins/`.
+  const profileRoSubpaths: Array<string> = [profileConfigDir];
+
+  const profilePluginsDir = NodePath.posix.join(profileConfigDir, "plugins");
   const profilePluginsStat = await NodeFSP.lstat(profilePluginsDir).catch(() => undefined);
   if (
     profilePluginsStat === undefined ||
     profilePluginsStat.isSymbolicLink() ||
     !profilePluginsStat.isDirectory()
   ) {
-    return { profileRoSubpaths: [], pluginRoTargets: [] };
+    return { profileRoSubpaths, pluginRoTargets: [] };
   }
 
   const allowedPersonalPluginsDirs = new Set<string>();
+  const disabledPlugins = new Set<string>();
   for (const homeRoot of input.homeRoots) {
     const candidate = normalizePosixPath(
       NodePath.posix.join(homeRoot, ...layout.personalPluginsRelativeDir),
@@ -1553,12 +1589,29 @@ async function collectTeamProfilePersonalPluginRoBinds(input: {
     if (resolved !== undefined) {
       allowedPersonalPluginsDirs.add(resolved);
     }
+
+    const personalConfigPath = normalizePosixPath(
+      NodePath.posix.join(homeRoot, ...layout.personalConfigRelativePath),
+    );
+    const personalConfigRaw = await NodeFSP.readFile(personalConfigPath, "utf8").catch(
+      () => undefined,
+    );
+    if (personalConfigRaw !== undefined) {
+      const prefs = decodePersonalAntigravityPluginPrefs(personalConfigRaw);
+      if (prefs._tag === "Some" && prefs.value.plugins !== undefined) {
+        for (const [name, pref] of Object.entries(prefs.value.plugins)) {
+          if (pref.enabled === false) {
+            disabledPlugins.add(name);
+          }
+        }
+      }
+    }
   }
 
   const pluginRoTargets = new Set<string>();
   const entries = await NodeFSP.readdir(profilePluginsDir).catch(() => [] as string[]);
   for (const entry of entries) {
-    if (!isSafePathSegment(entry) || entry.startsWith(".")) continue;
+    if (!isSafePathSegment(entry) || entry.startsWith(".") || disabledPlugins.has(entry)) continue;
     const entryPath = NodePath.posix.join(profilePluginsDir, entry);
     const linkStat = await NodeFSP.lstat(entryPath).catch(() => undefined);
     if (linkStat === undefined || !linkStat.isSymbolicLink()) continue;
@@ -1574,10 +1627,14 @@ async function collectTeamProfilePersonalPluginRoBinds(input: {
     const targetStat = await NodeFSP.stat(canonicalTarget).catch(() => undefined);
     if (targetStat === undefined || !targetStat.isDirectory()) continue;
 
-    // Require canonical target to be a direct child of `<homeRoot>/.gemini/config/plugins`.
+    // Require canonical target to be a direct enabled child of `<homeRoot>/.gemini/config/plugins`.
     const canonicalParent = NodePath.posix.dirname(canonicalTarget);
     const canonicalName = NodePath.posix.basename(canonicalTarget);
-    if (!allowedPersonalPluginsDirs.has(canonicalParent) || !isSafePathSegment(canonicalName)) {
+    if (
+      !allowedPersonalPluginsDirs.has(canonicalParent) ||
+      !isSafePathSegment(canonicalName) ||
+      disabledPlugins.has(canonicalName)
+    ) {
       continue;
     }
     if (
@@ -1607,6 +1664,7 @@ async function collectTeamProfilePersonalPluginRoBinds(input: {
       lexicalTarget !== canonicalTarget &&
       allowedPersonalPluginsDirs.has(NodePath.posix.dirname(lexicalTarget)) &&
       isSafePathSegment(NodePath.posix.basename(lexicalTarget)) &&
+      !disabledPlugins.has(NodePath.posix.basename(lexicalTarget)) &&
       assertLexicalPathNotForbidden({
         candidate: lexicalTarget,
         role: "extra_ro",
@@ -1621,7 +1679,7 @@ async function collectTeamProfilePersonalPluginRoBinds(input: {
   }
 
   return {
-    profileRoSubpaths: [profilePluginsDir],
+    profileRoSubpaths,
     pluginRoTargets: [...pluginRoTargets],
   };
 }
@@ -1701,6 +1759,13 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
 
   const extracted = extractSandboxBindsFromEnv(input.env);
 
+  const antigravityProfileEnvVar = getTeamHarnessProfile("antigravity").profileEnvVar;
+  const rawGeminiHome = input.env?.[antigravityProfileEnvVar]?.trim();
+  const canonicalGeminiHome =
+    rawGeminiHome !== undefined && rawGeminiHome.length > 0
+      ? yield* Effect.promise(() => tryRealpath(rawGeminiHome))
+      : undefined;
+
   const providerProfileDirs: Array<string> = [];
   const providerProfileRoSubpaths: Array<string> = [];
   const discoveredPluginRoBinds: Array<string> = [];
@@ -1714,16 +1779,18 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
       expectedType: "directory",
     });
     providerProfileDirs.push(validated);
-    const pluginBinds = yield* Effect.promise(() =>
-      collectTeamProfilePersonalPluginRoBinds({
-        profileDir: validated,
-        ownStateRoots,
-        foreignForbiddenRoots,
-        homeRoots,
-      }),
-    );
-    providerProfileRoSubpaths.push(...pluginBinds.profileRoSubpaths);
-    discoveredPluginRoBinds.push(...pluginBinds.pluginRoTargets);
+    if (canonicalGeminiHome !== undefined && validated === canonicalGeminiHome) {
+      const pluginBinds = yield* Effect.promise(() =>
+        collectTeamProfilePersonalPluginRoBinds({
+          profileDir: validated,
+          ownStateRoots,
+          foreignForbiddenRoots,
+          homeRoots,
+        }),
+      );
+      providerProfileRoSubpaths.push(...pluginBinds.profileRoSubpaths);
+      discoveredPluginRoBinds.push(...pluginBinds.pluginRoTargets);
+    }
   }
 
   const toolCacheDirs: Array<string> = [];

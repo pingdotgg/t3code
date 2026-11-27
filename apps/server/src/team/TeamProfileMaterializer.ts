@@ -209,6 +209,26 @@ async function syncDirectoryPersonalSkillLinks(input: {
   }
 }
 
+async function ensureContainedRealDirectory(rootRealDir: string, dirPath: string): Promise<string> {
+  assertPathContainedWithin(rootRealDir, dirPath);
+  const existing = await NodeFSP.lstat(dirPath).catch(() => undefined);
+  if (existing !== undefined) {
+    if (existing.isSymbolicLink()) {
+      await NodeFSP.unlink(dirPath);
+    } else if (!existing.isDirectory()) {
+      await NodeFSP.rm(dirPath, { recursive: true, force: true });
+    }
+  }
+  await NodeFSP.mkdir(dirPath, { recursive: true, mode: 0o700 });
+  const postStat = await NodeFSP.lstat(dirPath);
+  if (postStat.isSymbolicLink() || !postStat.isDirectory()) {
+    throw new Error(`Refusing non-directory or symlink parent inside team profile: ${dirPath}`);
+  }
+  const realDir = await NodeFSP.realpath(dirPath);
+  assertPathContainedWithin(rootRealDir, realDir);
+  return realDir;
+}
+
 async function syncAntigravityPersonalConfigAndPlugins(input: {
   readonly profileDir: string;
   readonly skillsDir: string;
@@ -219,10 +239,16 @@ async function syncAntigravityPersonalConfigAndPlugins(input: {
   >;
   readonly platform: NodeJS.Platform;
 }): Promise<void> {
+  // Validate every parent directory inside `<teamProfile>` against symlinks before any host-side
+  // writes so a sandboxed agent can never redirect writes outside the isolated profile.
+  const realProfileDir = await NodeFSP.realpath(input.profileDir);
+  const configDir = await ensureContainedRealDirectory(
+    realProfileDir,
+    NodePath.join(realProfileDir, "config"),
+  );
+
   // Register `<teamProfile>/team-skills` FIRST in `<teamProfile>/config/skills.json`,
   // followed by the user's personal `~/.gemini` skill directories (read-only).
-  const configDir = NodePath.join(input.profileDir, "config");
-  await NodeFSP.mkdir(configDir, { recursive: true, mode: 0o700 });
   const entries: Array<{ readonly path: string }> = [{ path: input.skillsDir }];
   for (const segments of input.layout.personalSkillRelativeDirs) {
     const candidate = NodePath.join(input.userHome, ...segments);
@@ -232,9 +258,12 @@ async function syncAntigravityPersonalConfigAndPlugins(input: {
     }
   }
   const skillsConfigPath = NodePath.join(configDir, "skills.json");
+  assertPathContainedWithin(configDir, skillsConfigPath);
   const existingSkillsConfig = await NodeFSP.lstat(skillsConfigPath).catch(() => undefined);
   if (existingSkillsConfig?.isSymbolicLink()) {
     await NodeFSP.unlink(skillsConfigPath);
+  } else if (existingSkillsConfig !== undefined && !existingSkillsConfig.isFile()) {
+    await NodeFSP.rm(skillsConfigPath, { recursive: true, force: true });
   }
   const nextSkillsConfig = `${encodeJsonUnknown({ entries })}\n`;
   const currentSkillsConfig = await NodeFSP.readFile(skillsConfigPath, "utf8").catch(
@@ -280,32 +309,23 @@ async function syncAntigravityPersonalConfigAndPlugins(input: {
     }
   }
 
-  const targetPluginsDir = NodePath.join(configDir, "plugins");
-  const targetPluginsLstat = await NodeFSP.lstat(targetPluginsDir).catch(() => undefined);
-  if (targetPluginsLstat?.isSymbolicLink()) {
-    await NodeFSP.unlink(targetPluginsDir);
-  }
-  if (desiredPlugins.size === 0) {
-    if (targetPluginsLstat?.isDirectory()) {
-      const existingEntries = await NodeFSP.readdir(targetPluginsDir).catch(() => [] as string[]);
-      for (const existing of existingEntries) {
-        const entryPath = NodePath.join(targetPluginsDir, existing);
-        const stat = await NodeFSP.lstat(entryPath).catch(() => undefined);
-        if (stat?.isSymbolicLink()) {
-          await NodeFSP.unlink(entryPath).catch(() => undefined);
-        }
-      }
-    }
-    return;
-  }
-
-  await NodeFSP.mkdir(targetPluginsDir, { recursive: true, mode: 0o700 });
+  // Always create `<teamProfile>/config/plugins` as a real contained directory (even when empty)
+  // so bwrap can lock `<teamProfile>/config` read-only and stale/shadowing entries are purged.
+  const targetPluginsDir = await ensureContainedRealDirectory(
+    configDir,
+    NodePath.join(configDir, "plugins"),
+  );
   const existingEntries = await NodeFSP.readdir(targetPluginsDir).catch(() => [] as string[]);
   const linkType = input.platform === "win32" ? "junction" : "dir";
   for (const existing of existingEntries) {
     const entryPath = NodePath.join(targetPluginsDir, existing);
+    assertPathContainedWithin(targetPluginsDir, entryPath);
     const stat = await NodeFSP.lstat(entryPath).catch(() => undefined);
-    if (!stat?.isSymbolicLink()) continue;
+    if (stat === undefined) continue;
+    if (!stat.isSymbolicLink()) {
+      await NodeFSP.rm(entryPath, { recursive: true, force: true }).catch(() => undefined);
+      continue;
+    }
     const expectedTarget = desiredPlugins.get(existing);
     if (expectedTarget === undefined) {
       await NodeFSP.unlink(entryPath).catch(() => undefined);

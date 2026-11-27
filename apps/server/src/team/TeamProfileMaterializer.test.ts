@@ -528,4 +528,103 @@ describe("TeamProfileMaterializer", () => {
         }
       }).pipe(Effect.provide(platformLayer)),
   );
+
+  it.effect(
+    "replaces a symlinked config parent without writing outside the profile on unchanged assetsHash and clears non-symlink plugin shadows",
+    () =>
+      Effect.gen(function* () {
+        const tmp = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-team-parent-symlink-")),
+        );
+        try {
+          const stateDir = NodePath.join(tmp, "state");
+          const fakeHome = NodePath.join(tmp, "home");
+          const externalHostDir = NodePath.join(tmp, "outside-host-dir");
+          const personalPluginDir = NodePath.join(
+            fakeHome,
+            ".gemini",
+            "config",
+            "plugins",
+            "real-plugin",
+          );
+          yield* Effect.promise(async () => {
+            await NodeFSP.mkdir(externalHostDir, { recursive: true });
+            await NodeFSP.mkdir(NodePath.join(personalPluginDir, "skills", "real-skill"), {
+              recursive: true,
+            });
+            await NodeFSP.writeFile(
+              NodePath.join(personalPluginDir, "plugin.json"),
+              JSON.stringify({ name: "real-plugin" }),
+              "utf8",
+            );
+            await NodeFSP.writeFile(
+              NodePath.join(personalPluginDir, "skills", "real-skill", "SKILL.md"),
+              "---\nname: real-skill\ndescription: Real plugin skill\n---\nBody\n",
+              "utf8",
+            );
+          });
+
+          const teamId = TeamId.make("team-alpha");
+          const virtualId = makeTeamProviderInstanceId(teamId, ProviderInstanceId.make("team-agy"));
+          const paths = yield* materializeTeamProfileAssets({
+            stateDir,
+            teamId,
+            virtualInstanceId: virtualId,
+            driver: ProviderDriverKind.make("antigravity"),
+            skills: [],
+            preprompts: [],
+            revision: 1,
+            userHome: fakeHome,
+          });
+
+          // Simulate a compromised turn replacing `<teamProfile>/config` with a symlink to an external host directory.
+          const configDir = NodePath.join(paths.profileDir, "config");
+          yield* Effect.promise(async () => {
+            await NodeFSP.rm(configDir, { recursive: true, force: true });
+            await NodeFSP.symlink(externalHostDir, configDir, "dir");
+          });
+
+          // Re-materialize with identical team assets (unchanged assetsHash fast path):
+          yield* materializeTeamProfileAssets({
+            stateDir,
+            teamId,
+            virtualInstanceId: virtualId,
+            driver: ProviderDriverKind.make("antigravity"),
+            skills: [],
+            preprompts: [],
+            revision: 1,
+            userHome: fakeHome,
+          });
+
+          // External host directory must remain completely untouched, and `config` must be a real directory again.
+          const outsideEntries = yield* Effect.promise(() => NodeFSP.readdir(externalHostDir));
+          expect(outsideEntries).toEqual([]);
+          const configStat = yield* Effect.promise(() => NodeFSP.lstat(configDir));
+          expect(configStat.isSymbolicLink()).toBe(false);
+          expect(configStat.isDirectory()).toBe(true);
+
+          // Plant a non-symlink directory shadowing `real-plugin` inside `config/plugins`, then re-sync:
+          const shadowedPath = NodePath.join(configDir, "plugins", "real-plugin");
+          yield* Effect.promise(async () => {
+            await NodeFSP.unlink(shadowedPath);
+            await NodeFSP.mkdir(shadowedPath, { recursive: true });
+            await NodeFSP.writeFile(NodePath.join(shadowedPath, "decoy.txt"), "shadow", "utf8");
+          });
+          yield* materializeTeamProfileAssets({
+            stateDir,
+            teamId,
+            virtualInstanceId: virtualId,
+            driver: ProviderDriverKind.make("antigravity"),
+            skills: [],
+            preprompts: [],
+            revision: 1,
+            userHome: fakeHome,
+          });
+          const restoredStat = yield* Effect.promise(() => NodeFSP.lstat(shadowedPath));
+          expect(restoredStat.isSymbolicLink()).toBe(true);
+        } finally {
+          yield* Effect.promise(() => NodeFSP.rm(tmp, { recursive: true, force: true }));
+        }
+      }).pipe(Effect.provide(platformLayer)),
+  );
 });

@@ -184,7 +184,7 @@ const SANDBOX_SAFE_FIXED_GIT_CONFIG = [
 ] as const;
 
 const SANDBOX_GIT_DANGEROUS_KEY_REGEX =
-  "^(filter\\.|diff\\..+\\.(textconv|command)$|merge\\..+\\.driver$|credential(\\..+)?\\.helper$|remote\\..+\\.(uploadpack|receivepack|proxy)$|difftool\\..+\\.cmd$|mergetool\\..+\\.cmd$|gpg(\\..+)?\\.(program|defaultkeycommand)$|submodule\\..+\\.update$|core\\.(sshcommand|gitproxy)$|include\\.path$|includeif\\..+\\.path$)";
+  "^(filter\\.|diff\\..+\\.(textconv|command)$|merge\\..+\\.driver$|credential(\\..+)?\\.helper$|remote\\..+\\.(uploadpack|receivepack|proxy)$|difftool\\..+\\.cmd$|mergetool\\..+\\.cmd$|gpg(\\..+)?\\.(program|defaultkeycommand)$|submodule\\..+\\.update$|core\\.(sshcommand|gitproxy)$|hook\\..+\\.(command|event|enabled)$|include\\.path$|includeif\\..+\\.path$)";
 
 const GIT_GLOBAL_VALUE_OPTIONS = new Set([
   "-c",
@@ -565,6 +565,7 @@ interface SandboxGitConfigProbeResult {
 function parseScopedGitConfigProbeOutput(
   stdout: string,
   allowWorkspaceIncludes: boolean,
+  options?: { readonly preserveHooksConfig?: boolean },
 ): Effect.Effect<
   {
     readonly configOverrides: ReadonlyArray<readonly [string, string]>;
@@ -584,6 +585,7 @@ function parseScopedGitConfigProbeOutput(
   const gpgProgramKeys = new Set<string>();
   const gpgDefaultKeyCmdKeys = new Set<string>();
   const submoduleUpdates = new Set<string>();
+  const configuredHooks = new Set<string>();
   let hasSshCommand = false;
   let hasGitProxy = false;
 
@@ -593,11 +595,20 @@ function parseScopedGitConfigProbeOutput(
   for (let i = 0; i + 1 < tokens.length; i += 2) {
     const scope = tokens[i]!;
     const keyVal = tokens[i + 1]!;
-    if (scope !== "local" && scope !== "worktree") continue;
     const nlIdx = keyVal.indexOf("\n");
     const rawKey = nlIdx === -1 ? keyVal : keyVal.slice(0, nlIdx);
     const rawVal = nlIdx === -1 ? "" : keyVal.slice(nlIdx + 1);
     if (rawKey.length === 0) continue;
+
+    // Neutralize Git 2.54+ configured hooks across all scopes unless the caller explicitly preserves hooks.
+    if (options?.preserveHooksConfig !== true && rawKey.startsWith("hook.")) {
+      const hookMatch = /^hook\.(.+)\.(command|event|enabled)$/.exec(rawKey);
+      if (hookMatch !== null) {
+        configuredHooks.add(hookMatch[1]!);
+      }
+    }
+
+    if (scope !== "local" && scope !== "worktree") continue;
 
     // Refuse unsandboxed host Git whenever repo-local/worktree config uses include.path or
     // includeIf (eliminates TOCTOU symlink/file swaps between inspection and execution).
@@ -698,6 +709,9 @@ function parseScopedGitConfigProbeOutput(
   for (const name of submoduleUpdates) {
     configOverrides.push([`submodule.${name}.update`, "none"]);
   }
+  for (const name of configuredHooks) {
+    configOverrides.push([`hook.${name}.enabled`, "false"]);
+  }
   if (hasSshCommand) {
     configOverrides.push(["core.sshCommand", "false"]);
   }
@@ -717,6 +731,7 @@ export const resolveSandboxSafeGitConfigEnv = Effect.fn(
   readonly platform: NodeJS.Platform;
   readonly args?: ReadonlyArray<string> | undefined;
   readonly allowWorkspaceIncludes: boolean;
+  readonly preserveHooksConfig?: boolean;
   readonly runProbe: (probe: {
     readonly args: ReadonlyArray<string>;
     readonly cwd: string | undefined;
@@ -775,6 +790,7 @@ export const resolveSandboxSafeGitConfigEnv = Effect.fn(
       const parsedProbe = yield* parseScopedGitConfigProbeOutput(
         probeResult.stdout,
         input.allowWorkspaceIncludes,
+        { preserveHooksConfig: input.preserveHooksConfig === true },
       );
       dynamicOverrides = parsedProbe.configOverrides;
       disableGitProxyEnv = parsedProbe.disableGitProxyEnv;
@@ -785,8 +801,12 @@ export const resolveSandboxSafeGitConfigEnv = Effect.fn(
     }
   }
 
+  const fixedOverrides =
+    input.preserveHooksConfig === true
+      ? SANDBOX_SAFE_FIXED_GIT_CONFIG.filter(([key]) => key !== "core.hooksPath")
+      : SANDBOX_SAFE_FIXED_GIT_CONFIG;
   const added: NodeJS.ProcessEnv = {};
-  for (const [key, value] of [...SANDBOX_SAFE_FIXED_GIT_CONFIG, ...dynamicOverrides]) {
+  for (const [key, value] of [...fixedOverrides, ...dynamicOverrides]) {
     Object.assign(added, gitConfigEnv({ ...input.env, ...added }, key, value, input.platform));
   }
   if (disableGitProxyEnv) {
