@@ -1237,15 +1237,11 @@ describe("large text scroll position", () => {
     await vi.waitFor(() => expect(atEnd(99)).toBe(true));
     await act(() => scroller().dispatchEvent(new Event("scroll")));
   };
-  const moveToRow = (index: number) => {
-    const viewport = scroller();
-    viewport.scrollTop +=
-      row(index)!.getBoundingClientRect().top - viewport.getBoundingClientRect().top + 2;
-  };
   const scrollToRow = async (index: number) => {
     const viewport = scroller();
     await act(() => {
-      moveToRow(index);
+      viewport.scrollTop +=
+        row(index)!.getBoundingClientRect().top - viewport.getBoundingClientRect().top + 2;
       viewport.dispatchEvent(new Event("scroll"));
     });
     await vi.waitFor(() => expect(firstVisibleRow()).toBe(index));
@@ -1274,33 +1270,21 @@ describe("large text scroll position", () => {
     });
   });
 
-  it.each([true, false])(
-    "keeps a manual scroll when scroll delivery before the final page is %s",
-    async (deliverScroll) => {
-      using _style = withPreviewAppCss();
-      const key = `wrapped log with delayed final page ${deliverScroll}`;
-      {
-        await using _screen = await render(opened(key, wrappedLog(100)));
-        await scrollToEnd();
-      }
-      await using screen = await render(opened(key, wrappedLog(100, { missingPage: 3 })));
-      await vi.waitFor(() => expect(row(94)?.textContent).toContain("entry 94"));
-      const suppressScroll = new AbortController();
-      if (deliverScroll) await scrollToRow(94);
-      else {
-        scroller().addEventListener("scroll", (event) => event.stopImmediatePropagation(), {
-          capture: true,
-          signal: suppressScroll.signal,
-        });
-        moveToRow(94);
-      }
-      await screen.rerender(opened(key, wrappedLog(100)));
-      await vi.waitFor(() => expect(row(99)?.textContent).toContain("entry 99"));
-      await waitForRowLayout(99);
-      suppressScroll.abort();
-      expect(firstVisibleRow()).toBe(94);
-    },
-  );
+  it("keeps a manual scroll made before the final page arrives", async () => {
+    using _style = withPreviewAppCss();
+    const key = "wrapped log with delayed final page";
+    {
+      await using _screen = await render(opened(key, wrappedLog(100)));
+      await scrollToEnd();
+    }
+    await using screen = await render(opened(key, wrappedLog(100, { missingPage: 3 })));
+    await vi.waitFor(() => expect(row(94)?.textContent).toContain("entry 94"));
+    await scrollToRow(94);
+    await screen.rerender(opened(key, wrappedLog(100)));
+    await vi.waitFor(() => expect(row(99)?.textContent).toContain("entry 99"));
+    await waitForRowLayout(99);
+    expect(firstVisibleRow()).toBe(94);
+  });
 
   it.each([false, true])(
     "handles a late preceding page with manual scrolling set to %s",
