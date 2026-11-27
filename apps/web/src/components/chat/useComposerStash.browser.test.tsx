@@ -1,15 +1,18 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, PROVIDER_SEND_TURN_MAX_ATTACHMENTS, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { removeLocalStorageItem } from "../../hooks/useLocalStorage";
+import { verifyStashedAttachmentUpload } from "../../lib/attachmentUploadQueue";
 import { isMacPlatform } from "../../lib/utils";
 import {
   PROMPT_STASH_STORAGE_KEY,
   usePromptStashStore,
   writePromptStashStorageForTest,
 } from "../../promptStashStore";
+import { ToastProvider } from "../ui/toast";
 import {
   addPreparingComposerImages,
   countPreparingComposerImages,
@@ -18,12 +21,100 @@ import {
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useComposerStash } from "./useComposerStash";
 
+vi.mock(import("../../lib/attachmentUploadQueue"), { spy: true });
+
 type StashInput = Parameters<typeof useComposerStash>[0];
 
 function Harness({ input }: { input: StashInput }) {
-  useComposerStash(input);
-  return null;
+  const { stashQueue, restoreStashEntryStable } = useComposerStash(input);
+  const entry = stashQueue[0];
+  return entry ? (
+    <button onClick={() => void restoreStashEntryStable(entry)}>Restore</button>
+  ) : null;
 }
+
+it("reports a skipped expired file only as over the attachment limit", async () => {
+  const target = DraftId.make("stash-attachment-limit");
+  const draft = useComposerDraftStore.getState();
+  using _cleanup = {
+    [Symbol.dispose]: () => {
+      draft.clearComposerContent(target);
+      writePromptStashStorageForTest("");
+      removeLocalStorageItem(PROMPT_STASH_STORAGE_KEY);
+    },
+  };
+  const environmentId = EnvironmentId.make("stash-env");
+  vi.mocked(verifyStashedAttachmentUpload).mockResolvedValueOnce({ status: "missing" });
+  usePromptStashStore.getState().stashEntry({
+    id: "expired-file-stash",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    prompt: "Review this report",
+    attachments: [],
+    droppedImageNames: [],
+    files: [
+      {
+        id: "report-file",
+        name: "report.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 10,
+        attachmentId: "expired-report-upload",
+        environmentId,
+      },
+    ],
+  });
+  draft.addFiles(
+    target,
+    Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS }, (_, index) => ({
+      type: "file",
+      id: `existing-${index}`,
+      name: `existing-${index}.txt`,
+      mimeType: "text/plain",
+      sizeBytes: 1,
+      file: new File(["x"], `existing-${index}.txt`, { type: "text/plain" }),
+    })),
+  );
+  const promptRef = { current: "" };
+  await using screen = await render(
+    <ToastProvider timeout={0}>
+      <Harness
+        input={{
+          environmentId,
+          composerDraftTarget: target,
+          promptRef,
+          readAttachmentDraft: () => draft.getComposerDraft(target) ?? { images: [], files: [] },
+          readTerminalContexts: () => [],
+          routeThreadRef: { environmentId, threadId: ThreadId.make("stash-thread") },
+          projectSelectionRequired: false,
+          pendingUserInputs: [],
+          activePendingProgress: null,
+          prompt: promptRef.current,
+          composerMenuOpen: false,
+          isComposerCollapsedMobile: false,
+          composerPreviewAnnotations: [],
+          composerReviewComments: [],
+          composerThreadContexts: [],
+          attachmentTargetKey: target,
+          isComposerDraftTargetOpen: () => true,
+          composerEditorRef: { current: null },
+          isRevertingCheckpoint: () => false,
+          pendingThreadImportsRef: { current: new Map() },
+          setComposerCursor: vi.fn(),
+          setComposerTrigger: vi.fn(),
+          importContextRecords: () => new Map(),
+          expandMobileComposer: vi.fn(),
+        }}
+      />
+    </ToastProvider>,
+  );
+
+  await screen.getByRole("button", { name: "Restore" }).click();
+
+  const warning = page.getByText(/^report\.pdf could not be restored/);
+  await expect.element(warning).toBeVisible();
+  expect(warning.element().textContent).toBe(
+    `report.pdf could not be restored: the composer is at its ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}-attachment limit.`,
+  );
+});
 
 it("keeps the draft when stashing while a pasted image is still compressing", async () => {
   const target = DraftId.make("stash-preparing-image");

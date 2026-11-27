@@ -339,9 +339,7 @@ export function useComposerStash(input: {
         }
         existingFileIds.add(file.id);
         existingFileKeys.add(key);
-        if (expired) {
-          expiredFileNames.push(file.name);
-        } else {
+        if (!expired) {
           retainedUploadIds.add(file.attachmentId);
         }
         appendedFiles.push(restored);
@@ -352,6 +350,9 @@ export function useComposerStash(input: {
       );
       const filesToAppend = appendedFiles.slice(0, capacity);
       const skippedFiles = appendedFiles.slice(capacity);
+      expiredFileNames.push(
+        ...filesToAppend.filter(composerFileNeedsReattach).map((file) => file.name),
+      );
       unrestoredFileNames = skippedFiles.map((file) => file.name);
       // A non-durable take can resurrect the stash entry after a reload;
       // deleting these uploads would leave it pointing at nothing.
