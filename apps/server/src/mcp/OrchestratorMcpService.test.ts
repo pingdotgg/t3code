@@ -36,6 +36,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -5072,6 +5073,122 @@ describe("OrchestratorMcpService provider resolution", () => {
           }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
         }
       }),
+  );
+
+  it.effect("a task may pick the agent's own mode only from a full-access parent", () =>
+    Effect.gen(function* () {
+      const agentId = ProviderInstanceId.make("acp-agent");
+      const mode = [{ id: "_t3/session-mode", value: "yolo" }] as const;
+      const delegateFrom = (
+        runtimeMode: "approval-required" | "full-access",
+        held: ReadonlyArray<{ readonly id: string; readonly value: unknown }> | undefined,
+      ) => {
+        const commands: Array<unknown> = [];
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          origin: "app_owned",
+          childThreadId,
+          providerInstanceId: agentId,
+          model: "default",
+          status: "running",
+          result: null,
+        };
+        const parent = () =>
+          parentProjection(commands.length > 0 ? [task] : [], {
+            instanceId: agentId,
+            model: "default",
+            ...(held === undefined ? {} : { options: held }),
+          });
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            assertProviderInstanceEnabled: () => Effect.void,
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? { ...parent(), thread: { ...parent().thread, runtimeMode } }
+                  : childProjection,
+              ),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commands.push(command);
+                return {
+                  sequence: 1,
+                  storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+                } as never;
+              }),
+          }),
+          ServerSettings.layerTest(),
+          providerRegistryLayer([
+            {
+              ...providerSnapshot({
+                instanceId: agentId,
+                driver: ProviderDriverKind.make("acpRegistry"),
+                model: "default",
+              }),
+              models: [
+                {
+                  slug: "default",
+                  name: "Default",
+                  isCustom: false,
+                  capabilities: {
+                    optionDescriptors: [
+                      {
+                        id: "_t3/session-mode",
+                        label: "Mode",
+                        type: "select",
+                        role: "mode",
+                        options: [
+                          { id: "ask", label: "Ask" },
+                          { id: "yolo", label: "YOLO" },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ]),
+          adapterRegistryLayer([agentId]),
+          Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        return Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const outcome = yield* service
+            .delegateTask(scope, {
+              task: "Review the change.",
+              target: yield* decodeTarget({ options: mode }),
+              mode: "async",
+              clientRequestId: `mode-${runtimeMode}-${held === undefined ? "new" : "held"}`,
+            })
+            .pipe(Effect.exit);
+          return { outcome, commands };
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+      };
+
+      const refused = yield* delegateFrom("approval-required", undefined);
+      assert.isTrue(Exit.isFailure(refused.outcome));
+      assert.include(JSON.stringify(refused.outcome), "runtime_mode_escalation_denied");
+      assert.lengthOf(refused.commands, 0);
+
+      // A parent already running in that mode hands it on; a full-access parent may pick it.
+      for (const allowed of [
+        yield* delegateFrom("approval-required", mode),
+        yield* delegateFrom("full-access", undefined),
+      ]) {
+        assert.isTrue(Exit.isSuccess(allowed.outcome), JSON.stringify(allowed.outcome));
+        assert.deepEqual(
+          (allowed.commands[0] as { modelSelection: { options: unknown } }).modelSelection.options,
+          mode,
+        );
+      }
+    }),
   );
 
   it.effect("accepts the inherited options it reports back as a delegate target", () =>

@@ -67,6 +67,17 @@ export function resolveFileLinkPath(
   return isAbsolutePath(targetPath) ? targetPath : normalizeRelativePath(targetPath);
 }
 
+export function resolveMarkdownFileLinkPath(
+  workspaceRoot: string,
+  markdownDirectory: string,
+  targetPath: string,
+): string | null {
+  if (targetPath.startsWith("~/") || targetPath.startsWith("~\\")) {
+    return resolveFileLinkPath(workspaceRoot, targetPath);
+  }
+  return resolveWorkspaceFilePath(markdownDirectory, targetPath);
+}
+
 export function resolveWorkspaceRelativeFilePath(
   workspaceRoot: string | null | undefined,
   targetPath: string,

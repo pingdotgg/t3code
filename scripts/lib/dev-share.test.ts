@@ -41,6 +41,7 @@ const spawnerLayer = (input: {
   const net = Layer.succeed(NetService.NetService, {
     hasListenerOnHost: (port: number) => Effect.succeed(live.has(port)),
     canListenOnHost: () => unused,
+    probeListenOnHost: () => unused,
     isPortAvailableOnLoopback: () => unused,
     reserveLoopbackPort: () => unused,
     findAvailablePort: () => unused,

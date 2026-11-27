@@ -350,6 +350,8 @@ async function playTurn(prompt) {
               isError: true,
             }));
         answer(id, [{ type: "text", text }], {}, isError);
+        if (step.as)
+          local[step.as] = step.pick ? (new RegExp(step.pick).exec(text)?.[0] ?? text) : text;
       }
       // Real edits, so checkpoints and diffs show them. Paths are relative to the session's cwd.
       if (step.edit || step.write) {
