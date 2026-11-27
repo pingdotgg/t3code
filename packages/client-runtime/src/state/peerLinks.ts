@@ -101,6 +101,23 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
   return {
     list,
     names,
+    /**
+     * Rereads `environmentId`'s link names when they lack one of `wanted`, however fresh they
+     * are. Links made elsewhere (the CLI, another client, a batch) are not pushed, so a reader
+     * that meets a machine the names lack asks once more; a read under way already answers it.
+     */
+    refreshNamesLacking: (
+      registry: AtomRegistry.AtomRegistry,
+      environmentId: EnvironmentId,
+      wanted: ReadonlyArray<EnvironmentId>,
+    ) => {
+      const atom = names({ environmentId, input: {} });
+      const result = registry.get(atom);
+      if (!AsyncResult.isSuccess(result) || result.waiting) return;
+      const known = new Set(result.value.links.map((link) => link.environmentId));
+      if (wanted.every((id) => known.has(id))) return;
+      registry.refresh(atom);
+    },
     link: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:peer-links:link",
       tag: WS_METHODS.peerLinksLink,

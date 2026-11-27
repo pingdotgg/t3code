@@ -262,18 +262,20 @@ export const layer: Layer.Layer<
             return;
           }
           // A Stop accepted once the provider's turn had ended stored only its request: the
-          // terminal already wrote `waiting`. That Stop still wins, and gets its result here.
-          const stopSignals = stoppedNow
-            ? []
-            : (yield* projections.getThreadRecords(input.threadId, ["turnItems"], {
-                turnItemTypes: ["run_interrupt_request", "run_interrupt_result"],
-                turnItemRunIds: [run.id],
-              })).turnItems;
+          // terminal already wrote `completed` (or legacy `waiting`). That Stop still wins here.
+          const stopSignals =
+            !legacyWaiting && currentRun.status !== "completed"
+              ? []
+              : (yield* projections.getThreadRecords(input.threadId, ["turnItems"], {
+                  turnItemTypes: ["run_interrupt_request", "run_interrupt_result"],
+                  turnItemRunIds: [run.id],
+                })).turnItems;
           const stopRequest = stopSignals.some((item) => item.type === "run_interrupt_result")
             ? undefined
             : stopSignals.find((item) => item.type === "run_interrupt_request");
           const settledStatus =
             stopRequest === undefined ? ("completed" as const) : ("interrupted" as const);
+          const settlesRun = legacyWaiting || stopRequest !== undefined;
           // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
           const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } =
             currentRun;
@@ -372,7 +374,7 @@ export const layer: Layer.Layer<
                 nodeId: rootNode.id,
                 providerInstanceId: run.providerInstanceId,
                 occurredAt: capturedAt,
-                payload: legacyWaiting
+                payload: settlesRun
                   ? {
                       ...runWithoutDelegatedCompletion,
                       status: settledStatus,
@@ -381,7 +383,7 @@ export const layer: Layer.Layer<
                     }
                   : { ...runWithoutDelegatedCompletion, checkpointId: checkpoint.id },
               },
-              ...(!legacyWaiting
+              ...(!settlesRun
                 ? []
                 : [
                     {

@@ -1,5 +1,8 @@
 import { expect, it, vi } from "vite-plus/test";
-import { render } from "../../../test/render";
+import { userEvent } from "vite-plus/test/browser";
+
+import { RightPanelSheet } from "~/components/RightPanelSheet";
+import { act, render } from "../../../test/render";
 import "~/index.css";
 
 // Vite serves the worker module through its transform with an inline source map (6.8 MB for
@@ -329,6 +332,51 @@ it("follows a link to another page and exposes a web link", async () => {
     });
     internal.click();
     await expect.element(screen.getByText("2 / 2 pages")).toBeVisible();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+});
+
+it("Escape in Find in PDF clears it without closing the panel sheet", async () => {
+  const url = URL.createObjectURL(testPdf());
+  const onCloseSheet = vi.fn();
+  try {
+    await using screen = await render(
+      <RightPanelSheet animationDurationMs={0} open onClose={onCloseSheet}>
+        <PdfViewer src={url} title="Planning PDF" />
+      </RightPanelSheet>,
+    );
+    const find = screen.getByRole("searchbox", { name: "Find in PDF" });
+    await find.fill("quarterly");
+    for (const composition of [
+      { key: "Escape", isComposing: true, keyCode: 27 },
+      { key: "Escape", isComposing: false, keyCode: 229 },
+    ]) {
+      // Safari ends the composition just before the Escape keydown.
+      await act(() => {
+        find.element().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+        find
+          .element()
+          .dispatchEvent(new KeyboardEvent("keydown", { ...composition, bubbles: true }));
+      });
+      await expect.element(find).toHaveValue("quarterly");
+    }
+    expect(find.element().getAttribute("type")).toBe("text");
+
+    await userEvent.keyboard("{Escape}");
+    await expect.element(find).toHaveValue("");
+    // Holding Escape repeats the keydown, which must not also close the sheet.
+    await act(() => {
+      find
+        .element()
+        .dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", repeat: true, bubbles: true }),
+        );
+    });
+    expect(onCloseSheet).not.toHaveBeenCalled();
+
+    await userEvent.keyboard("{Escape}");
+    await vi.waitFor(() => expect(onCloseSheet).toHaveBeenCalledOnce());
   } finally {
     URL.revokeObjectURL(url);
   }

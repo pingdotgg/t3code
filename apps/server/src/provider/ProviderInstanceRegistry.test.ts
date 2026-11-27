@@ -22,6 +22,7 @@ import {
 } from "@t3tools/contracts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
+import { PiDriver } from "@t3tools/provider-pi/server";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
@@ -380,6 +381,30 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         yield* PubSub.take(changes);
         expect(yield* instance!.snapshot.getSnapshot).toMatchObject(presentation);
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("restores the default Pi name after clearing a saved custom label", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("pi-account");
+      const entry = {
+        driver: PiDriver.driverKind,
+        enabled: true,
+        config: { ...PiDriver.defaultConfig(), binaryPath: "unused-pi" },
+      };
+      const { registry, mutator } = yield* makeProviderInstanceRegistry({
+        drivers: [PiDriver],
+        configMap: { [instanceId]: { ...entry, displayName: "My Pi account" } },
+      });
+      const initial = yield* registry.getInstance(instanceId);
+      const before = yield* initial!.snapshot.getSnapshot;
+      expect(before.displayName).toBe("My Pi account");
+
+      yield* mutator.reconcile({ [instanceId]: entry });
+
+      const updated = yield* registry.getInstance(instanceId);
+      const after = yield* updated!.snapshot.getSnapshot;
+      expect(after.displayName).toBe("Pi");
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("treats an explicit in-config enabled:false as disabling despite the envelope", () =>

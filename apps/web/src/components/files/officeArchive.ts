@@ -44,7 +44,7 @@ function xmlParser() {
   return parser;
 }
 
-function officeXmlDecoder(bytes: Uint8Array) {
+export function officeXmlDecoder(bytes: Uint8Array) {
   if ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0x3c && bytes[1] === 0))
     return new TextDecoder("utf-16le");
   if ((bytes[0] === 0xfe && bytes[1] === 0xff) || (bytes[0] === 0 && bytes[1] === 0x3c))
@@ -411,7 +411,11 @@ function boundedWorksheet(
       const end = cell.selfClosing ? cell.start : xml.lastIndexOf("<", parser.position - 1);
       const raw = cell.opening + xml.slice(cell.start, end) + `</${cell.name}>`;
       const shown = cell.shared ? (strings[Number(cell.value)] ?? "") : cell.text || cell.value;
-      const kept = shown.slice(0, Math.min(4096, budget.remaining));
+      let limit = Math.min(4096, budget.remaining);
+      const before = shown.charCodeAt(limit - 1);
+      const after = shown.charCodeAt(limit);
+      if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) limit--;
+      const kept = shown.slice(0, limit);
       budget.remaining -= kept.length;
       if (kept.length < shown.length) {
         truncated = true;
@@ -1146,12 +1150,13 @@ export async function boundedArchive(input: Extract<OfficeWorkerRequest, { type:
   const spreadsheet = input.kind === "xlsx";
   if (bytes.byteLength > OFFICE_PREVIEW_MAX_BYTES)
     throw new PreviewError({ code: "file-too-large" });
-  checkZipDirectory(bytes);
+  const entryLimit = input.kind === "epub" ? 8192 : 2048;
+  checkZipDirectory(bytes, entryLimit);
   const source = await JSZip.loadAsync(bytes).catch(() => {
     throw new PreviewError({ code: "office-invalid" });
   });
   const allEntries = Object.values(source.files);
-  if (allEntries.length > 2048) throw new PreviewError({ code: "office-too-many-entries" });
+  if (allEntries.length > entryLimit) throw new PreviewError({ code: "office-too-many-entries" });
   const entries = allEntries.filter((entry) => !entry.dir);
   if (
     input.kind === "docx" &&
