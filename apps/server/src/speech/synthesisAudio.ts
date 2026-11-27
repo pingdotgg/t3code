@@ -31,8 +31,8 @@ export function mp3Kbps(sampleRate: number) {
  * The sentences of `text`'s lines, and where each sits in `text`. Each is spoken and timed on its
  * own, so its first audio comes sooner and its words are timed once it is said, not its paragraph.
  */
-export function speechSentenceSpans(text: string, locale?: string) {
-  const sentences = new Intl.Segmenter(locale, { granularity: "sentence" });
+export function speechSentenceSpans(text: string) {
+  const sentences = new Intl.Segmenter(undefined, { granularity: "sentence" });
   return [...text.matchAll(/[^\n]+/g)].flatMap((line) =>
     [...sentences.segment(line[0])].flatMap(({ segment, index }) => {
       const sentence = segment.trim();

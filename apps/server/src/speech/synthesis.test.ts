@@ -83,7 +83,7 @@ it("encodes model samples as clipped mono 16-bit PCM", () => {
 it("speaks one sentence at a time and halves a refused one at its latest break before the middle", () => {
   const text = "Fixed it.\n\nIt took 2.06 min. Version v1.2.3 ships.\n设定已确认。好的";
   expect(
-    speechSentenceSpans(text, "en").map((span) => [span.text, text.slice(span.start, span.end)]),
+    speechSentenceSpans(text).map((span) => [span.text, text.slice(span.start, span.end)]),
   ).toEqual(
     ["Fixed it.", "It took 2.06 min.", "Version v1.2.3 ships.", "设定已确认。", "好的"].map(
       (sentence) => [sentence, sentence],

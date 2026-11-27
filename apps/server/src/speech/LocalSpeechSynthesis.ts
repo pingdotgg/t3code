@@ -1806,7 +1806,7 @@ const make = Effect.gen(function* () {
       definition.takesLanguage === false
         ? undefined
         : localSynthesisLanguage(request.language, model.languages);
-    const lines = speechSentenceSpans(request.text, language)
+    const lines = speechSentenceSpans(request.text)
       .map((line) => ({ ...line, text: definition.speakable?.(line.text) ?? line.text }))
       .filter((line) => line.text.trim());
     // One encoder spans the whole reply, so PCM time is MP3 time.
