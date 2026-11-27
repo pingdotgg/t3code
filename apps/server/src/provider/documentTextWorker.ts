@@ -122,20 +122,23 @@ function separateRubyReadings(ruby: XmlNode) {
   }
 }
 
-function isXhtmlElement(
-  name: string,
+function namespaceOf(tagName: string, scope: readonly XmlNode[]) {
+  const colon = tagName.lastIndexOf(":");
+  const binding = colon === -1 ? "xmlns" : `xmlns:${tagName.slice(0, colon)}`;
+  return scope.findLast((node) => Object.hasOwn(node.attrs, binding))?.attrs[binding];
+}
+
+function isXhtmlTemplate(
+  tagName: string,
   node: XmlNode,
   ancestors: readonly XmlNode[],
   rootTagName: string | undefined,
 ) {
-  const colon = name.lastIndexOf(":");
-  const binding = colon === -1 ? "xmlns" : `xmlns:${name.slice(0, colon)}`;
-  const namespace =
-    node.attrs[binding] ??
-    ancestors.findLast((ancestor) => Object.hasOwn(ancestor.attrs, binding))?.attrs[binding];
+  if (node.name !== "template") return false;
+  const namespace = namespaceOf(tagName, [...ancestors, node]);
   return (
     namespace === "http://www.w3.org/1999/xhtml" ||
-    (namespace === undefined && colon === -1 && rootTagName === "html")
+    (namespace === undefined && !tagName.includes(":") && rootTagName === "html")
   );
 }
 
@@ -171,15 +174,11 @@ function xml(source: string, extension: string): XmlNode {
     if (odf && node.name === "s") node.spaceCount = repeatCount(node.attrs.c);
     stack.at(-1)!.children.push(node);
     stack.push(node);
-    if (node.name === "AlternateContent" || node.name === "Choice") {
-      const colon = tag.name.lastIndexOf(":");
-      const binding = colon === -1 ? "xmlns" : `xmlns:${tag.name.slice(0, colon)}`;
-      if (
-        stack.findLast((ancestor) => Object.hasOwn(ancestor.attrs, binding))?.attrs[binding] ===
-        MARKUP_COMPATIBILITY_NS
-      )
-        node.markupCompatibility = true;
-    }
+    if (
+      (node.name === "AlternateContent" || node.name === "Choice") &&
+      namespaceOf(tag.name, stack) === MARKUP_COMPATIBILITY_NS
+    )
+      node.markupCompatibility = true;
   });
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
@@ -191,9 +190,7 @@ function xml(source: string, extension: string): XmlNode {
       parent.markupCompatibility;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
-      (extension === ".epub" &&
-        node.name === "template" &&
-        isXhtmlElement(tag.name, node, stack, rootTagName)) ||
+      (extension === ".epub" && isXhtmlTemplate(tag.name, node, stack, rootTagName)) ||
       (extension === ".epub" &&
         (stack[1] ?? node).name === "html" &&
         Object.hasOwn(tag.attributes, "hidden") &&
