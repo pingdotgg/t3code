@@ -81,7 +81,9 @@ test(
       });
 
       await t3.open(source);
-      await screen.getByRole("button", "Edit queued message").tap();
+      const editQueued = screen.getByRole("button", "Edit queued message");
+      await expect(editQueued).toBeEnabled({ timeout: 60_000 });
+      await editQueued.tap();
       await screen.getByRole("textbox").fill("Edited queued message");
       await screen.getByRole("button", "Update queued message", { exact: false }).tap();
       await browser.evaluate(() => window.pendingQueueEdit.requested.then(() => null));
