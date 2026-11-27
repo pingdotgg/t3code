@@ -58,7 +58,8 @@ export function parseGrepOutput(
       colonHeading && OPENCODE_NUMBERED_LINE.test(nextLine) ? null : PATH_LINE_TEXT.exec(line);
     if (inline) {
       // A ripgrep heading can also look like an inline match when its filename contains `:N:`.
-      if (followedByRipgrepMatch) {
+      // Without a current heading, prefer inline when the next line also fits that form.
+      if (followedByRipgrepMatch && (file !== undefined || !PATH_LINE_TEXT.test(nextLine))) {
         file = line.trimEnd();
       } else {
         matches.push({ fileName: inline[1] ?? "", line: Number(inline[2]), text: inline[3] ?? "" });
