@@ -51,7 +51,7 @@ Connect to a [Simlock](https://incubator.callstack.com/simlock/) device pool (re
 
 ### Enrolled phones and tablets
 
-The phones and tablets enrolled in the pool appear in the list next to its simulators and emulators, marked **Physical**, one entry per model and OS version. Worker setup is covered in Simlock's [Use a real phone](https://incubator.callstack.com/simlock/docs/using-devices/agent-device#use-a-real-phone).
+The enrolled phones and tablets that are ready on a connected, undrained worker appear in the list next to its simulators and emulators, marked **Physical**, one entry per model and OS version. Worker setup is covered in Simlock's [Use a real phone](https://incubator.callstack.com/simlock/docs/using-devices/agent-device#use-a-real-phone).
 
 - A phone is not wiped when its lease ends. Simlock removes apps that weren't on the phone when it was enrolled, except App Store and TestFlight apps on an iPhone; settings, files, accounts, keychain items, and the data of every other app stay for whoever leases it next.
 - A leased phone has no stop button in the device list. Open it and choose **Return device to the pool**.

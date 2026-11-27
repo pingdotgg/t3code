@@ -84,7 +84,7 @@ const Status = Schema.Struct({
   ),
 });
 const decodeStatus = Schema.decodeUnknownEffect(Status);
-// Any other state (absent, quarantined, deleted) needs an operator before the phone can be leased.
+// A phone in any other state (absent, quarantined, deleted) cannot be leased right now.
 const LEASABLE_PHONE_STATES = new Set(["ready", "leased", "reclaiming"]);
 const decodeSessionRecord = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ leaseId: Schema.String })),
