@@ -1,4 +1,5 @@
 import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
+import { characterEntities } from "character-entities";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -87,6 +88,7 @@ const HTML_ATTRIBUTE_RE =
   /([^\t\n\f\r "'<>/=]+)(?:[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"|'([^']*)'|([^\t\n\f\r >]+)))?/g;
 const ICON_REL_RE = new RegExp(String.raw`\brel\s*:\s*${ICON_REL_VALUE}`, "i");
 const ICON_HREF_RE = /\bhref\s*:\s*["']([^"'?#]+)/i;
+const htmlLegacyCharacterDecoder = new TextDecoder("windows-1252");
 
 export class ProjectFaviconResolutionError extends Schema.TaggedError<ProjectFaviconResolutionError>()(
   "ProjectFaviconResolutionError",
@@ -125,6 +127,25 @@ export class ProjectFaviconResolver extends Context.Service<
   }
 >()("t3/project/ProjectFaviconResolver") {}
 
+function decodeHtmlHref(href: string): string {
+  return href.replace(
+    /&(?:([a-z][a-z\d]*);|#(?:(\d+)|x([a-f\d]+));?)/gi,
+    (reference, name: string | undefined, decimal: string | undefined, hex: string | undefined) => {
+      if (name !== undefined) {
+        return Object.hasOwn(characterEntities, name) ? characterEntities[name]! : reference;
+      }
+      const codePoint = hex === undefined ? Number(decimal) : Number.parseInt(hex, 16);
+      if (codePoint === 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) {
+        return "\uFFFD";
+      }
+      if (codePoint >= 0x80 && codePoint <= 0x9f) {
+        return htmlLegacyCharacterDecoder.decode(Uint8Array.of(codePoint));
+      }
+      return String.fromCodePoint(codePoint);
+    },
+  );
+}
+
 function* extractIconHrefs(source: string): Generator<string> {
   for (const [tag] of source.matchAll(HTML_LINK_RE)) {
     const attributes = new Map<string, { value: string; quoted: boolean }>();
@@ -147,7 +168,7 @@ function* extractIconHrefs(source: string): Generator<string> {
     const href = attributes.get("href");
     // An unquoted `{...}` is a JSX expression, not a path.
     if (!href || (!href.quoted && href.value.startsWith("{"))) continue;
-    const path = href.value.split(/[?#]/, 1)[0];
+    const path = decodeHtmlHref(href.value).split(/[?#]/, 1)[0];
     if (path) yield path;
   }
   for (const run of source.split("}")) {
