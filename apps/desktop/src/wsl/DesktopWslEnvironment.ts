@@ -1119,13 +1119,56 @@ const getUserHomeImpl = (
     Effect.orElseSucceed(() => Option.none<string>()),
   );
 
+// Store/MSI WSL registers WSLService and inbox WSL registers LxssManager; either key means installed.
+const WSL_SERVICE_KEYS = [
+  "HKLM\\SYSTEM\\CurrentControlSet\\Services\\WSLService",
+  "HKLM\\SYSTEM\\CurrentControlSet\\Services\\LxssManager",
+] as const;
+// Always present; when reg.exe cannot read it (e.g. "Prevent access to registry editing tools"),
+// a failed service query says nothing about WSL, so fall back to trusting wsl.exe.
+const SERVICES_ROOT_KEY = "HKLM\\SYSTEM\\CurrentControlSet\\Services";
+const SERVICE_QUERY_TIMEOUT = Duration.seconds(5);
+
+const wslServiceRegistered = Effect.scoped(
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const [rootReadable, ...servicesFound] = yield* Effect.forEach(
+      [SERVICES_ROOT_KEY, ...WSL_SERVICE_KEYS],
+      (key) =>
+        spawner
+          .spawn(
+            ChildProcess.make("reg.exe", ["query", key], {
+              stdin: "ignore",
+              stdout: "ignore",
+              stderr: "ignore",
+              killSignal: "SIGTERM",
+              forceKillAfter: PROCESS_TERMINATE_GRACE,
+            }),
+          )
+          .pipe(
+            Effect.flatMap((handle) => handle.exitCode),
+            Effect.map((exitCode) => (exitCode as unknown as number) === 0),
+          ),
+      { concurrency: "unbounded" },
+    );
+    return rootReadable === false || servicesFound.includes(true);
+  }),
+).pipe(
+  Effect.timeoutOption(SERVICE_QUERY_TIMEOUT),
+  Effect.map(Option.getOrElse(() => false)),
+  Effect.orElseSucceed(() => false),
+);
+
 export const makeIsAvailable = Effect.fn("DesktopWslEnvironment.makeIsAvailable")(function* (
   platform: NodeJS.Platform,
   windir: string,
 ): Effect.fn.Return<
   boolean,
   never,
-  FileSystem.FileSystem | Path.Path | DesktopManagedPolicy.DesktopManagedPolicy
+  | FileSystem.FileSystem
+  | Path.Path
+  | DesktopManagedPolicy.DesktopManagedPolicy
+  | ChildProcessSpawner.ChildProcessSpawner
 > {
   if (platform !== "win32") return false;
   const path = yield* Path.Path;
@@ -1134,6 +1177,8 @@ export const makeIsAvailable = Effect.fn("DesktopWslEnvironment.makeIsAvailable"
   if (!(yield* fileSystem.exists(wslExePath).pipe(Effect.orElseSucceed(() => false)))) {
     return false;
   }
+  // System32\wsl.exe is also an install stub on Windows without WSL, so check for its service.
+  if (!(yield* wslServiceRegistered)) return false;
   // A server in WSL reads Linux's policy, never this machine's, so a managed machine runs none.
   return yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
     Effect.map((found) => found === undefined),
@@ -1245,6 +1290,7 @@ export const layer = Layer.effect(
     // Cache availability so synchronous IPC bootstrap can read it without yielding to filesystem I/O.
     const wslAvailable = yield* makeIsAvailable(environment.platform, windir).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(Path.Path, environment.path),
       Effect.provideService(
         DesktopManagedPolicy.DesktopManagedPolicy,

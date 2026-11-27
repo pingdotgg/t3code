@@ -18,6 +18,47 @@ const state = vi.hoisted(() => ({
   configLoaded: true,
 }));
 
+// The read of t3.json is a cache: a re-read is the only way to see what is on disk now.
+const t3File = vi.hoisted(() => ({
+  disk: "",
+  cached: "",
+  listeners: new Set<() => void>(),
+}));
+
+vi.mock(import("~/components/files/projectFilesQueryState"), async (importOriginal) => {
+  const actual = await importOriginal();
+  const { useSyncExternalStore } = await import("react");
+  return {
+    ...actual,
+    useProjectFileQuery: ((_environmentId: unknown, _cwd: string, relativePath: string | null) => {
+      const contents = useSyncExternalStore(
+        (listener) => {
+          t3File.listeners.add(listener);
+          return () => t3File.listeners.delete(listener);
+        },
+        () => t3File.cached,
+      );
+      const refresh = () => {
+        t3File.cached = t3File.disk;
+        for (const listener of t3File.listeners) listener();
+      };
+      const data =
+        relativePath === "t3.json" && contents !== ""
+          ? { relativePath, contents, byteLength: contents.length, truncated: false }
+          : null;
+      return {
+        data,
+        error: null,
+        isPending: false,
+        readError: null,
+        isNotFile: false,
+        isFile: data !== null,
+        refresh,
+      };
+    }) as never,
+  };
+});
+
 vi.mock(import("~/state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   useProject: ((ref: unknown) =>
@@ -125,7 +166,26 @@ function setup(input: {
   };
 }
 
-function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
+const machines = (["This Mac", "Server"] as const).map((label, index) => ({
+  environmentId: EnvironmentId.make(index === 0 ? "environment" : "other"),
+  projectId: ProjectId.make("project"),
+  label,
+  isPrimary: index === 0,
+  machine: "server" as const,
+}));
+
+function Panel({
+  fixture,
+  draftEnvMode,
+  onMachines = false,
+  withScripts = false,
+}: {
+  fixture: ReturnType<typeof setup>;
+  /** Renders an unsent draft in this mode instead of a started thread. */
+  draftEnvMode?: "local" | "worktree";
+  onMachines?: boolean;
+  withScripts?: boolean;
+}) {
   const noop = () => {};
   const scriptResult = async () => ({ ok: true }) as never;
   return (
@@ -149,10 +209,10 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
         threadId={threadRef.threadId}
         projectId={ProjectId.make("project")}
         composerDraftTarget={threadRef}
-        worktreePath={state.folder}
-        isServerThread
+        worktreePath={draftEnvMode === undefined ? state.folder : null}
+        isServerThread={draftEnvMode === undefined}
         activeProjectName={state.workspaceRoot === SCRATCH_ROOT ? "No project" : "plain"}
-        activeProjectScripts={undefined}
+        activeProjectScripts={withScripts ? [] : undefined}
         preferredScriptId={null}
         keybindings={[]}
         availableEditors={[]}
@@ -161,10 +221,12 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
         gitCwd={state.folder}
         workspaceMutationId={null}
         isGitRepo={false}
-        envLocked
-        availableEnvironments={[]}
+        offersWorkspaceModes={false}
+        envLocked={draftEnvMode === undefined}
+        availableEnvironments={onMachines ? machines : []}
+        {...(onMachines ? { onEnvironmentChange: noop } : {})}
         onEnvModeChange={noop}
-        envMode="local"
+        envMode={draftEnvMode ?? "local"}
         startFromOrigin={false}
         onStartFromOriginChange={noop}
         onComposerFocusRequest={noop}
@@ -191,6 +253,23 @@ it("offers no git controls in a No project thread, but shows its linked pull req
     .not.toBeInTheDocument();
 });
 
+it("shows Current checkout where no worktree can come from, even when New worktree is the default", async () => {
+  using fixture = setup({ workspaceRoot: SCRATCH_ROOT, folder: SCRATCH_ROOT });
+  await using _screen = await render(<Panel fixture={fixture} draftEnvMode="worktree" />);
+  await expect.element(page.getByLabelText("Run context: Current checkout")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: /Run context/ })).not.toBeInTheDocument();
+});
+
+it("offers only machines where no worktree can come from and several machines exist", async () => {
+  using fixture = setup({ workspaceRoot: SCRATCH_ROOT, folder: SCRATCH_ROOT });
+  await using _screen = await render(
+    <Panel fixture={fixture} draftEnvMode="worktree" onMachines />,
+  );
+  await page.getByRole("button", { name: "Run context: This Mac, Current checkout" }).click();
+  await expect.element(page.getByText("Run on")).toBeVisible();
+  await expect.element(page.getByText("New worktree")).not.toBeInTheDocument();
+});
+
 it("shows a linked pull request in a folder that is not a git repository", async () => {
   using fixture = setup({
     workspaceRoot: "/work/plain",
@@ -214,4 +293,25 @@ it("offers no Initialize Git before the server config says where No project live
   await expect
     .element(page.getByRole("button", { name: "Initialize Git" }))
     .not.toBeInTheDocument();
+});
+
+it("lists the t3.json actions on disk when the actions menu opens again after the file changed", async () => {
+  using fixture = setup({ workspaceRoot: "/work/plain", folder: "/work/plain" });
+  const t3Json = (name: string) =>
+    JSON.stringify({ scripts: [{ name, command: `npm run dev -- --port ${name.slice(-4)}` }] });
+  t3File.disk = t3Json("Dev 4100");
+  t3File.cached = t3File.disk;
+  await using _screen = await render(<Panel fixture={fixture} withScripts />);
+
+  const chooser = page.getByRole("button", { name: "Choose project action" });
+  await chooser.click();
+  await expect.element(page.getByRole("menuitem", { name: /Dev 4100/ })).toBeVisible();
+  await chooser.click();
+  await expect.element(page.getByRole("menu")).not.toBeInTheDocument();
+
+  // A setup hook rewrites this checkout's t3.json outside T3 Code.
+  t3File.disk = t3Json("Dev 4200");
+
+  await chooser.click();
+  await expect.element(page.getByRole("menuitem", { name: /Dev 4200/ })).toBeVisible();
 });
