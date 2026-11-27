@@ -10,6 +10,7 @@ import {
   canMemberMutateTeamScheduledTask,
   canMemberPromoteTeamQueuedRun,
   canMemberReadTeamView,
+  canMemberRespondToTeamRuntimeRequest,
   canMemberSteerActiveTeamTurn,
   canToggleTeamThreadLock,
   isTeamAdminRole,
@@ -516,7 +517,11 @@ export function canCurrentMemberInterruptThread(input: {
     userMessageId: activeUserMessageId,
   });
   const activeTurnAuthorMemberId: TeamMemberId | null =
-    activeTurn !== undefined ? activeTurn.authorMemberId : attribution.creatorMemberId;
+    activeTurn !== undefined
+      ? activeTurn.authorMemberId
+      : attribution.locked
+        ? null
+        : attribution.creatorMemberId;
   const canInterrupt = canMemberInterruptTeamTurn({
     member,
     attribution,
@@ -525,10 +530,43 @@ export function canCurrentMemberInterruptThread(input: {
   });
   const isExplicitAdminInterrupt =
     canInterrupt &&
-    isTeamAdminRole(member.role) &&
+    (isTeamAdminRole(member.role) || member.role === "modo") &&
     attribution.creatorMemberId !== member.id &&
     activeTurnAuthorMemberId !== member.id;
   return { canInterrupt, isExplicitAdminInterrupt };
+}
+
+function canCurrentMemberRespondToRuntimeRequest(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+  readonly activeRunId?: string | null | undefined;
+  readonly activeUserMessageId?: string | null | undefined;
+}): boolean {
+  const { teamState, threadId, activeRunId, activeUserMessageId } = input;
+  if (!teamState || teamState.team === null) return true;
+  const member = teamState.currentMember;
+  if (member === null || member.status !== "active") return false;
+  const attribution = teamState.attributionByThreadId.get(threadId) ?? null;
+  if (attribution === null) return true;
+  const view = resolveTeamThreadView({ teamState, threadId });
+  const activeTurn = resolveTurnAttribution({
+    teamState,
+    threadId,
+    runId: activeRunId,
+    userMessageId: activeUserMessageId,
+  });
+  const activeTurnAuthorMemberId: TeamMemberId | null =
+    activeTurn !== undefined
+      ? activeTurn.authorMemberId
+      : attribution.locked
+        ? null
+        : attribution.creatorMemberId;
+  return canMemberRespondToTeamRuntimeRequest({
+    member,
+    attribution,
+    view,
+    activeTurnAuthorMemberId,
+  });
 }
 
 export function canCurrentMemberManageQueuedRun(input: {
@@ -556,6 +594,7 @@ export interface TeamThreadTurnControls {
   readonly canSteerActiveTurn: boolean;
   readonly canPromoteQueuedRun: boolean;
   readonly canInterrupt: boolean;
+  readonly canRespondToRuntimeRequest: boolean;
   readonly isExplicitAdminInterrupt: boolean;
 }
 
@@ -564,6 +603,7 @@ export const TEAM_THREAD_TURN_CONTROLS_DEFAULT: TeamThreadTurnControls = {
   canSteerActiveTurn: true,
   canPromoteQueuedRun: true,
   canInterrupt: true,
+  canRespondToRuntimeRequest: true,
   isExplicitAdminInterrupt: false,
 };
 
@@ -598,6 +638,12 @@ export function resolveTeamThreadTurnControls(input: {
       activeUserMessageId,
     }),
     canInterrupt: interrupt.canInterrupt,
+    canRespondToRuntimeRequest: canCurrentMemberRespondToRuntimeRequest({
+      teamState,
+      threadId,
+      activeRunId,
+      activeUserMessageId,
+    }),
     isExplicitAdminInterrupt: interrupt.isExplicitAdminInterrupt,
   };
 }

@@ -324,6 +324,7 @@ export const recordTeamDispatchEvents = (
   storedEvents: ReadonlyArray<{ readonly event: OrchestrationV2DomainEvent }>,
   command?: OrchestrationV2Command,
   noteReservationToken?: string | null,
+  activeRunIdBeforeDispatch?: string | null,
 ) =>
   Effect.forEach(
     storedEvents,
@@ -353,6 +354,37 @@ export const recordTeamDispatchEvents = (
     },
     { discard: true },
   ).pipe(
+    Effect.andThen(() => {
+      if (typeof teamService.notifyQueuedMessage !== "function") {
+        return Effect.void;
+      }
+      const queuedRunEntry = storedEvents.find(
+        ({ event }) => event.type === "run.created" && event.payload.status === "queued",
+      );
+      if (!queuedRunEntry || queuedRunEntry.event.type !== "run.created") {
+        return Effect.void;
+      }
+      const queuedRun = queuedRunEntry.event.payload;
+      const userMessageEntry = storedEvents.find(
+        ({ event }) => event.type === "message.updated" && event.payload.role === "user",
+      );
+      const messageText =
+        userMessageEntry && userMessageEntry.event.type === "message.updated"
+          ? userMessageEntry.event.payload.text
+          : command?.type === "message.dispatch"
+            ? command.text
+            : "";
+      return teamService
+        .notifyQueuedMessage({
+          actor: { kind: "session", sessionId },
+          threadId: queuedRun.threadId,
+          queuedRunId: queuedRun.id,
+          ...(command !== undefined ? { commandId: command.commandId } : {}),
+          ...(activeRunIdBeforeDispatch != null ? { activeRunId: activeRunIdBeforeDispatch } : {}),
+          messageText,
+        })
+        .pipe(Effect.asVoid);
+    }),
     Effect.andThen(
       command?.type === "message.dispatch"
         ? (() => {

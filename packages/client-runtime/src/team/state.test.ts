@@ -769,6 +769,7 @@ describe("team client-runtime state and presentation", () => {
       canSteerActiveTurn: false,
       canPromoteQueuedRun: false,
       canInterrupt: true,
+      canRespondToRuntimeRequest: true,
       isExplicitAdminInterrupt: true,
     });
     expect(canCurrentMemberPromoteQueuedRun({ teamState: aliceState, threadId: bobThreadId })).toBe(
@@ -797,10 +798,11 @@ describe("team client-runtime state and presentation", () => {
       canSteerActiveTurn: true,
       canPromoteQueuedRun: true,
       canInterrupt: true,
+      canRespondToRuntimeRequest: true,
       isExplicitAdminInterrupt: false,
     });
 
-    // Charlie (modo) on Bob's thread: cannot Send now, cannot steer, cannot interrupt Bob's turn.
+    // Charlie (modo) on Bob's UNLOCKED thread: cannot Send now / steer / approve, DOES get explicit Interrupt!
     expect(
       resolveTeamThreadTurnControls({
         teamState: charlieState,
@@ -811,14 +813,96 @@ describe("team client-runtime state and presentation", () => {
       isTeamThread: true,
       canSteerActiveTurn: false,
       canPromoteQueuedRun: false,
-      canInterrupt: false,
-      isExplicitAdminInterrupt: false,
+      canInterrupt: true,
+      canRespondToRuntimeRequest: false,
+      isExplicitAdminInterrupt: true,
     });
-    // Even if activeRunId is null while Charlie has the newest queued turn on Bob's thread,
-    // Charlie must NOT be misidentified as the active turn author and still cannot interrupt!
+    // On a LOCKED thread, Charlie (modo) CANNOT interrupt; Alice (owner) still gets explicit Interrupt.
+    const lockedBobAttribution = {
+      ...bobState.attributionByThreadId.get(bobThreadId)!,
+      locked: true,
+      lockedByMemberId: alice.id,
+    };
+    const charlieLockedState = applyTeamStreamEvent(charlieState, {
+      version: 1,
+      type: "threadAttributed",
+      payload: lockedBobAttribution,
+    });
     expect(
       resolveTeamThreadTurnControls({
-        teamState: charlieState,
+        teamState: charlieLockedState,
+        threadId: bobThreadId,
+        activeRunId: "run-bob-active",
+      }),
+    ).toEqual({
+      isTeamThread: true,
+      canSteerActiveTurn: false,
+      canPromoteQueuedRun: false,
+      canInterrupt: false,
+      canRespondToRuntimeRequest: false,
+      isExplicitAdminInterrupt: false,
+    });
+    const aliceLockedState = applyTeamStreamEvent(aliceState, {
+      version: 1,
+      type: "threadAttributed",
+      payload: lockedBobAttribution,
+    });
+    expect(
+      resolveTeamThreadTurnControls({
+        teamState: aliceLockedState,
+        threadId: bobThreadId,
+        activeRunId: "run-bob-active",
+      }),
+    ).toEqual({
+      isTeamThread: true,
+      canSteerActiveTurn: false,
+      canPromoteQueuedRun: false,
+      canInterrupt: true,
+      canRespondToRuntimeRequest: true,
+      isExplicitAdminInterrupt: true,
+    });
+
+    // Regular non-creator (Eve) on Bob's thread: cannot Send now, steer, approve, or interrupt —
+    // even if activeRunId is null while Eve has the newest queued turn!
+    const eve: TeamMember = {
+      id: TeamMemberId.make("member-eve"),
+      teamId: team.id,
+      pseudo: "eve" as TeamPseudo,
+      role: "regular",
+      status: "active",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const eveState = applyTeamStreamEvent(
+      applyTeamStreamEvent(charlieState, {
+        version: 1,
+        type: "snapshot",
+        payload: {
+          team,
+          currentMember: eve,
+          members: [alice, bob, charlie, eve],
+          views: [defaultView],
+          invites: [],
+          threadAttributions: [...charlieState.attributionByThreadId.values()],
+          followedThreadIds: [],
+          latestTurnAttributions: [...charlieState.turnAuthorByTurnId.values()],
+        },
+      }),
+      {
+        version: 1,
+        type: "turnAttributed",
+        payload: {
+          turnId: "run-eve-queued",
+          threadId: bobThreadId,
+          authorMemberId: eve.id,
+          authorPseudo: eve.pseudo,
+          createdAt: "2026-01-01T00:05:00.000Z",
+        },
+      },
+    );
+    expect(
+      resolveTeamThreadTurnControls({
+        teamState: eveState,
         threadId: bobThreadId,
         activeRunId: null,
         activeUserMessageId: null,
@@ -828,8 +912,33 @@ describe("team client-runtime state and presentation", () => {
       canSteerActiveTurn: false,
       canPromoteQueuedRun: false,
       canInterrupt: false,
+      canRespondToRuntimeRequest: false,
       isExplicitAdminInterrupt: false,
     });
+
+    // Queued-message notification events are deduplicated by queuedRunId and cleaned up on threadRemoved.
+    const queuedNotifEvent = {
+      version: 1 as const,
+      type: "queuedMessageNotification" as const,
+      payload: {
+        threadId: bobThreadId,
+        queuedRunId: "run-charlie-queued-notif",
+        senderMemberId: charlie.id,
+        senderPseudo: "charlie",
+        recipientMemberIds: [bob.id],
+        messagePreview: "Please check tests",
+        createdAt: "2026-01-01T00:06:00.000Z",
+      },
+    };
+    const bobWithNotif = applyTeamStreamEvent(bobState, queuedNotifEvent);
+    expect(bobWithNotif.queuedMessageNotifications).toHaveLength(1);
+    expect(applyTeamStreamEvent(bobWithNotif, queuedNotifEvent)).toBe(bobWithNotif);
+    const bobAfterRemove = applyTeamStreamEvent(bobWithNotif, {
+      version: 1,
+      type: "threadRemoved",
+      payload: { threadId: bobThreadId },
+    });
+    expect(bobAfterRemove.queuedMessageNotifications).toHaveLength(0);
 
     // Queued run management: Charlie can manage his own queued message, not Alice's.
     expect(
@@ -868,6 +977,7 @@ describe("team client-runtime state and presentation", () => {
       canSteerActiveTurn: true,
       canPromoteQueuedRun: true,
       canInterrupt: true,
+      canRespondToRuntimeRequest: true,
       isExplicitAdminInterrupt: false,
     });
   });
@@ -1488,7 +1598,8 @@ describe("team client-runtime state and presentation", () => {
       }),
     ).toBe("Ops Bot");
 
-    // Modo cannot steer/promote or interrupt an active automation turn on the team-owned thread.
+    // Modo cannot steer/promote an active automation turn on the team-owned thread,
+    // DOES get explicit Interrupt on an UNLOCKED team-owned thread, and loses Interrupt when LOCKED.
     expect(
       canCurrentMemberSteerActiveTurn({
         teamState: state,
@@ -1508,8 +1619,58 @@ describe("team client-runtime state and presentation", () => {
         teamState: state,
         threadId: teamThreadId,
         activeRunId: "run-auto-1",
-      }).canInterrupt,
-    ).toBe(false);
+      }),
+    ).toEqual({ canInterrupt: true, isExplicitAdminInterrupt: true });
+    const lockedTeamState = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "threadAttributed",
+      payload: {
+        ...state.attributionByThreadId.get(teamThreadId)!,
+        locked: true,
+        lockedByMemberId: alice.id,
+      },
+    });
+    expect(
+      canCurrentMemberInterruptThread({
+        teamState: lockedTeamState,
+        threadId: teamThreadId,
+        activeRunId: "run-auto-1",
+      }),
+    ).toEqual({ canInterrupt: false, isExplicitAdminInterrupt: false });
+
+    // On a locked member-owned thread before turnAttributed lands, the locked-out regular creator
+    // must fail closed for interrupt and runtime-request controls (no speculative creator fallback).
+    const lockedMemberThreadId = ThreadId.make("thread-m8-locked-member");
+    const lockedMemberState = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "threadAttributed",
+      payload: {
+        threadId: lockedMemberThreadId,
+        teamId,
+        ownerKind: "member",
+        creatorMemberId: state.currentMember!.id,
+        creatorPseudo: state.currentMember!.pseudo,
+        teamDisplayName: "Ops Bot",
+        viewId,
+        locked: true,
+        lockedByMemberId: alice.id,
+        executionEnvironmentId: envId,
+        executionEnvironmentLabel: "Main Server",
+        isLocalSynced: false,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    expect(
+      resolveTeamThreadTurnControls({
+        teamState: lockedMemberState,
+        threadId: lockedMemberThreadId,
+        activeRunId: "run-unattributed-locked",
+      }),
+    ).toMatchObject({
+      canInterrupt: false,
+      canRespondToRuntimeRequest: false,
+      isExplicitAdminInterrupt: false,
+    });
 
     // Scheduled task RBAC for modo: can create & mutate minimal task, cannot configure privileged or mutate elevated task.
     expect(canCurrentMemberCreateTeamScheduledTask(state, envId)).toBe(true);

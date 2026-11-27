@@ -91,7 +91,7 @@ export const layer = McpToolAccess.toLayer(
         (input) => [input.threadId],
         (input) =>
           Effect.gen(function* () {
-            const { caller, projection } = yield* readThread(input.threadId, ["messages"]);
+            const { caller, projection } = yield* readThread(input.threadId, ["messages", "runs"]);
             yield* TeamMcpAccess.assertCanPostInThread(projection.thread.id);
             yield* assertLocalAgentMcpExecutionAllowed;
             if (projection.thread.archivedAt !== null)
@@ -99,6 +99,13 @@ export const layer = McpToolAccess.toLayer(
                 code: "invalid_request",
                 message: "Unarchive the target thread before sending attachments.",
               });
+            const supersededActiveRunId = projection.runs.findLast(
+              (candidate) =>
+                candidate.status === "preparing" ||
+                candidate.status === "starting" ||
+                candidate.status === "running" ||
+                candidate.status === "waiting",
+            )?.id;
             const attachments = yield* resolveAttachmentReferences(
               input.attachments,
               projection.messages.flatMap((message) => message.attachments),
@@ -138,6 +145,20 @@ export const layer = McpToolAccess.toLayer(
               threadId: projection.thread.id,
               turnId: result.run.id,
             });
+            if (
+              result.dispatch?.replayed !== true &&
+              (result.run.status === "queued" || result.delivery === "queued")
+            ) {
+              yield* TeamMcpAccess.notifyQueuedMessageByCaller({
+                threadId: projection.thread.id,
+                queuedRunId: result.run.id,
+                commandId,
+                ...(supersededActiveRunId !== undefined
+                  ? { activeRunId: supersededActiveRunId }
+                  : {}),
+                messageText: input.message ?? "",
+              });
+            }
             return {
               threadId: projection.thread.id,
               messageId,

@@ -195,7 +195,28 @@ it("swaps the collapsed composer's send button for Stop while a turn can be stop
   await expect.element(screen.getByRole("button", { name: "Send message" })).toBeVisible();
 });
 
-it("shows explicit Interrupt button for owner/admin on a colleague's active turn even while drafting, and hides stop when canInterrupt is false", async () => {
+it("keeps CollapsedComposerStopAction clickable for explicit admin/modo interrupt when read-only", async () => {
+  const onInterrupt = vi.fn();
+  await using screen = await render(
+    <CollapsedComposerStopAction
+      canOperateThread={false}
+      canInterrupt
+      isExplicitAdminInterrupt
+      runId="run-ro"
+      hasSendableContent={false}
+      isEditingQueuedMessage={false}
+      onInterrupt={onInterrupt}
+    >
+      <button type="button">Send message</button>
+    </CollapsedComposerStopAction>,
+  );
+  const interruptBtn = screen.getByTestId("team-admin-interrupt-button");
+  await expect.element(interruptBtn).toBeEnabled();
+  await act(() => (interruptBtn.element() as HTMLButtonElement).click());
+  expect(onInterrupt).toHaveBeenCalledTimes(1);
+});
+
+it("shows explicit Interrupt button for owner/admin/modo on an unlocked foreign active turn even while drafting or read-only, and hides stop when canInterrupt is false", async () => {
   const props = setup();
   await using screen = await render(
     <ComposerPrimaryActions
@@ -217,7 +238,25 @@ it("shows explicit Interrupt button for owner/admin on a colleague's active turn
   await act(() => (interruptBtn.element() as HTMLButtonElement).click());
   expect(props.onInterrupt).toHaveBeenCalledTimes(1);
 
-  // Regular/modo non-creator (canInterrupt=false) sees no Stop/Interrupt button while running.
+  // Explicit Interrupt remains clickable even when canOperateThread is false (e.g. modo in read-only View).
+  await screen.rerender(
+    <ComposerPrimaryActions
+      {...props}
+      runId="run-2"
+      canOperateThread={false}
+      isRunning
+      canSteer={false}
+      canInterrupt
+      isExplicitAdminInterrupt
+      hasSendableContent={false}
+    />,
+  );
+  const readOnlyInterruptBtn = screen.getByTestId("team-admin-interrupt-button");
+  await expect.element(readOnlyInterruptBtn).toBeEnabled();
+  await act(() => (readOnlyInterruptBtn.element() as HTMLButtonElement).click());
+  expect(props.onInterrupt).toHaveBeenCalledTimes(2);
+
+  // Regular non-creator or modo on locked thread (canInterrupt=false) sees no Stop/Interrupt button while running.
   await screen.rerender(
     <ComposerPrimaryActions
       {...props}

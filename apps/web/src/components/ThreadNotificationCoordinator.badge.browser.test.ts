@@ -588,6 +588,7 @@ it("gates team thread notifications by creator, follow state, and completing tur
     automationGitHubIdentity: null,
     scheduledTaskMetas: [],
     scheduledTaskMetaByTaskId: new Map(),
+    queuedMessageNotifications: [],
   };
 
   state.teamStates.set("one", baseTeamState);
@@ -736,6 +737,7 @@ it("defers notifications and sound across team stream races without leaking coll
     automationGitHubIdentity: null,
     scheduledTaskMetas: [],
     scheduledTaskMetaByTaskId: new Map(),
+    queuedMessageNotifications: [],
   };
 
   // Race A: Shell completes while team metadata is still loading -> must NOT notify or play sound.
@@ -841,4 +843,179 @@ it("defers notifications and sound across team stream races without leaking coll
   });
   expect(TestNotification.sent).toHaveLength(1);
   expect(state.sound).toHaveBeenCalledTimes(1);
+});
+
+it("notifies creator and active turn author on queued messages without duplicating or silencing on queued turn attribution", async () => {
+  await using app = setup();
+  state.mode = "notifications-and-sound";
+  const teamId = TeamId.make("team-queue-notif");
+  const viewId = TeamViewId.make("view-queue-notif");
+  const aliceId = TeamMemberId.make("member-alice-q");
+  const bobId = TeamMemberId.make("member-bob-q");
+  const charlieId = TeamMemberId.make("member-charlie-q");
+  const threadId = ThreadId.make("thread");
+  const alice: TeamMember = {
+    id: aliceId,
+    teamId,
+    pseudo: "alice" as TeamPseudo,
+    role: "owner",
+    status: "active",
+    createdAt: "2026-09-13T07:00:00.000Z",
+    updatedAt: "2026-09-13T07:00:00.000Z",
+  };
+  const bob: TeamMember = {
+    id: bobId,
+    teamId,
+    pseudo: "bob" as TeamPseudo,
+    role: "regular",
+    status: "active",
+    createdAt: "2026-09-13T07:00:00.000Z",
+    updatedAt: "2026-09-13T07:00:00.000Z",
+  };
+  const charlie: TeamMember = {
+    id: charlieId,
+    teamId,
+    pseudo: "charlie" as TeamPseudo,
+    role: "modo",
+    status: "active",
+    createdAt: "2026-09-13T07:00:00.000Z",
+    updatedAt: "2026-09-13T07:00:00.000Z",
+  };
+  const attribution = {
+    threadId,
+    teamId,
+    creatorMemberId: aliceId,
+    creatorPseudo: alice.pseudo,
+    viewId,
+    locked: false,
+    lockedByMemberId: null,
+    createdAt: "2026-09-13T07:00:00.000Z",
+  };
+  const baseTeamState: TeamEnvironmentState = {
+    ...EMPTY_TEAM_ENVIRONMENT_STATE,
+    team: {
+      id: teamId,
+      name: "Queue Team",
+      displayName: "Queue Team",
+      defaultViewId: viewId,
+      createdAt: "2026-09-13T07:00:00.000Z",
+      updatedAt: "2026-09-13T07:00:00.000Z",
+    },
+    // Bob is the active turn author on Alice's unfollowed thread.
+    currentMember: bob,
+    members: [alice, bob, charlie],
+    threadAttributions: [attribution],
+    memberById: new Map([
+      [aliceId, alice],
+      [bobId, bob],
+      [charlieId, charlie],
+    ]),
+    attributionByThreadId: new Map([[threadId, attribution]]),
+  };
+
+  state.teamStates.set("one", baseTeamState);
+  app.start();
+  state.shells.set(
+    "one",
+    shell({
+      title: "Deploy pipeline",
+      latestTurn: { turnId: "run-bob-active", state: "running", completedAt: null },
+    }),
+  );
+
+  // Charlie queues a message while Bob's turn is running -> Bob (active turn author) receives notification!
+  const queuedNotification = {
+    threadId,
+    queuedRunId: "run-charlie-queued-1" as never,
+    senderMemberId: charlieId,
+    senderPseudo: "charlie" as never,
+    recipientMemberIds: [aliceId, bobId],
+    messagePreview: "Wait for smoke tests",
+    createdAt: "2026-09-13T07:01:00.000Z",
+  };
+  state.teamStates.set("one", {
+    ...baseTeamState,
+    queuedMessageNotifications: [queuedNotification],
+  });
+  expect(TestNotification.sent).toHaveLength(1);
+  expect(TestNotification.sent[0]?.title).toBe('charlie queued a message in "Deploy pipeline"');
+  expect(TestNotification.sent[0]?.options.body).toBe("Wait for smoke tests");
+  expect(state.badge).toHaveBeenLastCalledWith(1);
+
+  // Subsequent turnAttributed for Charlie's queued run MUST NOT duplicate or prematurely close Bob's alert!
+  const charlieQueuedTurn = {
+    turnId: "run-charlie-queued-1",
+    threadId,
+    authorMemberId: charlieId,
+    authorPseudo: charlie.pseudo,
+    createdAt: "2026-09-13T07:01:00.000Z",
+  };
+  state.shells.set(
+    "one",
+    shell({
+      title: "Deploy pipeline",
+      latestTurn: { turnId: "run-charlie-queued-1", state: "running", completedAt: null },
+    }),
+  );
+  state.teamStates.set("one", {
+    ...baseTeamState,
+    latestTurnByThreadId: new Map([[threadId, charlieQueuedTurn]]),
+    turnAuthorByTurnId: new Map([[charlieQueuedTurn.turnId, charlieQueuedTurn]]),
+    queuedMessageNotifications: [queuedNotification],
+  });
+  expect(TestNotification.sent).toHaveLength(1);
+  expect(TestNotification.sent[0]?.close).not.toHaveBeenCalled();
+
+  // Notification authored by Bob himself or excluding Bob is ignored.
+  state.teamStates.set("one", {
+    ...baseTeamState,
+    queuedMessageNotifications: [
+      queuedNotification,
+      {
+        threadId,
+        queuedRunId: "run-bob-self" as never,
+        senderMemberId: bobId,
+        senderPseudo: "bob" as never,
+        recipientMemberIds: [aliceId],
+        messagePreview: "Self queued",
+        createdAt: "2026-09-13T07:02:00.000Z",
+      },
+    ],
+  });
+  expect(TestNotification.sent).toHaveLength(1);
+
+  // Suspending Bob immediately closes his open queued-message notification and clears the badge.
+  state.teamStates.set("one", {
+    ...baseTeamState,
+    currentMember: { ...bob, status: "suspended" },
+    queuedMessageNotifications: [queuedNotification],
+  });
+  expect(TestNotification.sent[0]?.close).toHaveBeenCalledTimes(1);
+  expect(state.badge).toHaveBeenLastCalledWith(0);
+
+  // Re-activating Bob, receiving a new queued notification, and then losing thread access also clears it.
+  const secondNotification = {
+    threadId,
+    queuedRunId: "run-charlie-queued-2" as never,
+    senderMemberId: charlieId,
+    senderPseudo: "charlie" as never,
+    recipientMemberIds: [aliceId, bobId],
+    messagePreview: "Second update",
+    createdAt: "2026-09-13T07:03:00.000Z",
+  };
+  state.teamStates.set("one", {
+    ...baseTeamState,
+    queuedMessageNotifications: [queuedNotification, secondNotification],
+  });
+  expect(TestNotification.sent).toHaveLength(2);
+  expect(state.badge).toHaveBeenLastCalledWith(1);
+
+  state.teamStates.set("one", {
+    ...baseTeamState,
+    threadAttributions: [],
+    attributionByThreadId: new Map(),
+    queuedMessageNotifications: [queuedNotification, secondNotification],
+  });
+  expect(TestNotification.sent[1]?.close).toHaveBeenCalledTimes(1);
+  expect(state.badge).toHaveBeenLastCalledWith(0);
 });

@@ -87,6 +87,7 @@ const makeTeamState = (
     automationGitHubIdentity: null,
     scheduledTaskMetas: [],
     scheduledTaskMetaByTaskId: new Map(),
+    queuedMessageNotifications: [],
   };
 };
 

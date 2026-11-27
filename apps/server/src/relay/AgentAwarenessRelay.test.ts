@@ -1397,4 +1397,537 @@ describe("AgentAwarenessRelay team notification gating", () => {
         assert.isNull(publications[3]?.state);
       }),
   );
+
+  it.effect(
+    "publishes prefixed mobile push notification on queuedMessage trigger only for eligible recipients and deduplicates per queuedRunId",
+    () =>
+      Effect.gen(function* () {
+        let allowQueued = false;
+        const triggers = yield* PubSub.unbounded<TeamService.TeamNotificationTriggerEvent>();
+        const teamService = {
+          shouldPublishRelayNotificationForThread: () => Effect.succeed(true),
+          shouldPublishRelayQueuedMessageNotification: () => Effect.sync(() => allowQueued),
+          formatUpstreamCompatThreadTitle: (_threadId: ThreadId, title: string) =>
+            Effect.succeed(`alice: ${title}`),
+          subscribeNotificationEvents: () => Stream.fromPubSub(triggers),
+        } as unknown as TeamService.TeamService["Service"];
+
+        const { relay, publications } = yield* makeTestRelay({
+          readShell: () => Effect.succeed(shell({ status: "running", title: "Release prep" })),
+          teamService,
+        });
+
+        yield* relay.start();
+        yield* Effect.yieldNow;
+
+        // Disallowed recipient (e.g. sender or unrelated colleague) produces 0 push publications.
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: THREAD_ID,
+          queuedRunId: "run-queued-denied",
+          senderMemberId: null,
+          senderPseudo: "bob",
+          recipientMemberIds: [],
+          messagePreview: "Hold deploy",
+          createdAt: "2026-04-06T12:01:00.000Z",
+        });
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        assert.equal(publications.length, 0);
+
+        // Eligible recipient (thread creator / active turn author) receives prefixed push notification once.
+        allowQueued = true;
+        const allowedTrigger: TeamService.TeamNotificationTriggerEvent = {
+          type: "queuedMessage",
+          threadId: THREAD_ID,
+          queuedRunId: "run-queued-1",
+          senderMemberId: null,
+          senderPseudo: "bob",
+          recipientMemberIds: [],
+          messagePreview: "Wait for green CI",
+          createdAt: "2026-04-06T12:02:00.000Z",
+        };
+        yield* PubSub.publish(triggers, allowedTrigger);
+        yield* PubSub.publish(triggers, allowedTrigger);
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+
+        assert.equal(publications.length, 1);
+        const notifThread1 = ThreadId.make(`${THREAD_ID}:queued:run-queued-1`);
+        assert.include(publications[0]?.state, {
+          threadId: notifThread1,
+          threadTitle: "bob queued a message · alice: Release prep",
+          phase: "waiting_for_input",
+          headline: "bob queued a message",
+          detail: "Wait for green CI",
+          deepLink: `/threads/${encodeURIComponent("relay-environment")}/${encodeURIComponent(THREAD_ID)}`,
+        });
+
+        // A second distinct queued message publishes its own synthetic notification row so
+        // delayed APNs/FCM consumers can deliver both alerts without staleness suppression.
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: THREAD_ID,
+          queuedRunId: "run-queued-2",
+          senderMemberId: null,
+          senderPseudo: "charlie",
+          recipientMemberIds: [],
+          messagePreview: "Also check migrations",
+          createdAt: "2026-04-06T12:03:00.000Z",
+        });
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+
+        assert.equal(publications.length, 2);
+        const notifThread2 = ThreadId.make(`${THREAD_ID}:queued:run-queued-2`);
+        assert.include(publications[1]?.state, {
+          threadId: notifThread2,
+          threadTitle: "charlie queued a message · alice: Release prep",
+          phase: "waiting_for_input",
+          headline: "charlie queued a message",
+          detail: "Also check migrations",
+          deepLink: `/threads/${encodeURIComponent("relay-environment")}/${encodeURIComponent(THREAD_ID)}`,
+        });
+
+        // Concurrent normal thread publish updates only the real thread row and leaves
+        // queued-message notification rows intact for delayed APNs/FCM consumers.
+        yield* relay.publishThread(THREAD_ID);
+        assert.equal(publications.length, 3);
+        assert.equal(publications[2]?.state?.threadId, THREAD_ID);
+        assert.equal(publications[2]?.state?.phase, "running");
+        assert.equal(publications[2]?.state?.threadTitle, "alice: Release prep");
+
+        // Delayed consumer verification: reconstruct current relay row store after all publishes
+        // and confirm both queued-message jobs still match the live relay DB (never stale).
+        const extractPublishedThreadId = (url: string) =>
+          decodeURIComponent(url.split("/threads/")[1]?.split("/")[0] ?? "");
+        const relayRows = new Map<string, (typeof publications)[number]["state"]>();
+        for (const pub of publications) {
+          const urlThreadId = extractPublishedThreadId(pub.url);
+          if (pub.state === null) relayRows.delete(urlThreadId);
+          else relayRows.set(urlThreadId, pub.state);
+        }
+        for (const jobState of [publications[0]!.state!, publications[1]!.state!]) {
+          const liveRow = relayRows.get(jobState.threadId);
+          assert.isDefined(liveRow);
+          assert.equal(liveRow?.phase, jobState.phase);
+          assert.equal(liveRow?.updatedAt, jobState.updatedAt);
+        }
+
+        // Delayed consumer verification beyond 60s (e.g. 2 minutes later): rows are still live
+        // in the relay store because the TTL spans the 5-minute async delivery window.
+        yield* TestClock.adjust("2 minutes");
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        assert.equal(publications.length, 3);
+
+        // After the full 5-minute TTL window, both synthetic notification rows are tombstoned
+        // cleanly without disturbing the real running thread row.
+        yield* TestClock.adjust("3 minutes");
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        const tombstones = publications.slice(3);
+        assert.equal(tombstones.length, 2);
+        assert.isNull(tombstones[0]?.state);
+        assert.isNull(tombstones[1]?.state);
+        assert.deepEqual(
+          tombstones.map((entry) => extractPublishedThreadId(entry.url)).toSorted(),
+          [notifThread1, notifThread2].toSorted(),
+        );
+      }),
+  );
+
+  it.effect(
+    "caps concurrent synthetic rows during approval waits, flushes on revocation, and skips completed/idle threads",
+    () =>
+      Effect.gen(function* () {
+        let allowThread = true;
+        let allowQueued = true;
+        const triggers = yield* PubSub.unbounded<TeamService.TeamNotificationTriggerEvent>();
+        const teamService = {
+          shouldPublishRelayNotificationForThread: () => Effect.sync(() => allowThread),
+          shouldPublishRelayQueuedMessageNotification: () => Effect.sync(() => allowQueued),
+          formatUpstreamCompatThreadTitle: (_threadId: ThreadId, title: string) =>
+            Effect.succeed(`alice: ${title}`),
+          subscribeNotificationEvents: () => Stream.fromPubSub(triggers),
+        } as unknown as TeamService.TeamService["Service"];
+
+        let currentShell = shell({
+          status: "waiting",
+          title: "Deploy prod",
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("req-approval-1"),
+            kind: "command",
+            createdAt: DateTime.makeUnsafe(NOW),
+          },
+        });
+        const { relay, publications } = yield* makeTestRelay({
+          readShell: () => Effect.sync(() => currentShell),
+          teamService,
+        });
+
+        const extractPublishedThreadId = (url: string) =>
+          decodeURIComponent(url.split("/threads/")[1]?.split("/")[0] ?? "");
+
+        yield* relay.start();
+        yield* Effect.yieldNow;
+        yield* relay.publishThread(THREAD_ID);
+        assert.equal(publications.length, 1);
+        assert.equal(publications[0]?.state?.threadId, THREAD_ID);
+        assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
+
+        // Queue 5 messages while the thread is awaiting approval: at most 2 synthetic rows stay
+        // live simultaneously (never filling the relay's 5-row aggregate or evicting the approval row).
+        for (let i = 1; i <= 5; i += 1) {
+          yield* PubSub.publish(triggers, {
+            type: "queuedMessage",
+            threadId: THREAD_ID,
+            queuedRunId: `run-queued-approval-${i}`,
+            senderMemberId: null,
+            senderPseudo: "bob",
+            recipientMemberIds: [],
+            messagePreview: `Wait #${i}`,
+            createdAt: `2026-04-06T12:0${i}:00.000Z`,
+          });
+        }
+        yield* relay.publishThread(THREAD_ID);
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+
+        // Reconstruct live relay rows at every step and confirm total live rows never exceeded 3
+        // (1 approval + at most 2 queued notifications) and the approval row was never evicted.
+        const liveRows = new Map<string, (typeof publications)[number]["state"]>();
+        let maxLiveRows = 0;
+        for (const pub of publications) {
+          const id = extractPublishedThreadId(pub.url);
+          if (pub.state === null) liveRows.delete(id);
+          else liveRows.set(id, pub.state);
+          maxLiveRows = Math.max(maxLiveRows, liveRows.size);
+        }
+        assert.isAtMost(maxLiveRows, 3);
+        assert.equal(liveRows.get(THREAD_ID)?.phase, "waiting_for_approval");
+        assert.isTrue(liveRows.has(`${THREAD_ID}:queued:run-queued-approval-4`));
+        assert.isTrue(liveRows.has(`${THREAD_ID}:queued:run-queued-approval-5`));
+
+        // When latestRunId advances to the queued run (so shouldPublishRelayNotificationForThread
+        // becomes false for an active turn author who doesn't own/follow the thread), the synthetic
+        // queued-message notifications MUST NOT self-tombstone.
+        const countBeforeRunAdvance = publications.length;
+        allowThread = false;
+        yield* relay.publishThread(THREAD_ID);
+        yield* relay.drain;
+        const advanceTombstones = publications
+          .slice(countBeforeRunAdvance)
+          .filter((entry) => entry.state === null)
+          .map((entry) => extractPublishedThreadId(entry.url));
+        assert.deepEqual(advanceTombstones, []);
+
+        // Revoking access to the thread (shouldPublishRelayQueuedMessageNotification -> false)
+        // immediately tombstones its remaining synthetic rows without waiting for the 5-minute TTL.
+        const countBeforeRevoke = publications.length;
+        allowQueued = false;
+        yield* relay.publishThread(THREAD_ID);
+        yield* relay.drain;
+        const revokeTombstones = publications
+          .slice(countBeforeRevoke)
+          .filter((entry) => entry.state === null)
+          .map((entry) => extractPublishedThreadId(entry.url))
+          .toSorted();
+        assert.deepEqual(revokeTombstones, [
+          `${THREAD_ID}:queued:run-queued-approval-4`,
+          `${THREAD_ID}:queued:run-queued-approval-5`,
+        ]);
+
+        // Once the thread completes, late queued-message triggers are skipped so idle/completed
+        // cards are never resurrected.
+        allowThread = true;
+        allowQueued = true;
+        currentShell = shell({ status: "completed", title: "Deploy prod" });
+        const countBeforeCompleted = publications.length;
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: THREAD_ID,
+          queuedRunId: "run-queued-after-complete",
+          senderMemberId: null,
+          senderPseudo: "charlie",
+          recipientMemberIds: [],
+          messagePreview: "Too late",
+          createdAt: "2026-04-06T12:10:00.000Z",
+        });
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        assert.equal(publications.length, countBeforeCompleted);
+      }),
+  );
+
+  it.effect(
+    "flushes all synthetic queued rows when publishing is disabled, retries transient tombstone failures, and preserves cleanup across credential rotation",
+    () =>
+      Effect.gen(function* () {
+        const triggers = yield* PubSub.unbounded<TeamService.TeamNotificationTriggerEvent>();
+        const teamService = {
+          shouldPublishRelayNotificationForThread: () => Effect.succeed(true),
+          shouldPublishRelayQueuedMessageNotification: () => Effect.succeed(true),
+          formatUpstreamCompatThreadTitle: (_threadId: ThreadId, title: string) =>
+            Effect.succeed(`alice: ${title}`),
+          subscribeNotificationEvents: () => Stream.fromPubSub(triggers),
+        } as unknown as TeamService.TeamService["Service"];
+
+        let failNextTombstone = true;
+        const { relay, publications, secrets } = yield* makeTestRelay({
+          readShell: () => Effect.succeed(shell({ status: "running", title: "Release" })),
+          teamService,
+          respond: (attempt) => {
+            // Fail the first tombstone (attempt #3) once to prove non-blocking retry recovery.
+            if (attempt === 3 && failNextTombstone) {
+              failNextTombstone = false;
+              return new Response("upstream timeout", { status: 503 });
+            }
+            return Response.json({ ok: true, deliveries: [] });
+          },
+        });
+        const extractPublishedThreadId = (url: string) =>
+          decodeURIComponent(url.split("/threads/")[1]?.split("/")[0] ?? "");
+
+        yield* relay.start();
+        yield* Effect.yieldNow;
+
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: THREAD_ID,
+          queuedRunId: "run-disable-1",
+          senderMemberId: null,
+          senderPseudo: "bob",
+          recipientMemberIds: [],
+          messagePreview: "First",
+          createdAt: "2026-04-06T12:01:00.000Z",
+        });
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: THREAD_ID,
+          queuedRunId: "run-disable-2",
+          senderMemberId: null,
+          senderPseudo: "charlie",
+          recipientMemberIds: [],
+          messagePreview: "Second",
+          createdAt: "2026-04-06T12:02:00.000Z",
+        });
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        assert.equal(publications.length, 2);
+
+        // Rotate credential on the same relay AND disable publishing: BOTH rows must still be
+        // tombstoned (the first fails transiently with 503 and retries 1s later; the second
+        // succeeds immediately with the rotated credential).
+        yield* secrets.set(
+          RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+          new TextEncoder().encode("credential-rotated"),
+        );
+        yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
+        yield* relay.publishThread(THREAD_ID);
+        yield* relay.drain;
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+
+        const successfulTombstones = publications
+          .slice(2)
+          .filter((entry) => entry.state === null)
+          .map((entry) => ({
+            id: extractPublishedThreadId(entry.url),
+            auth: entry.authorization,
+          }));
+        // Attempt #3 failed (row 1), attempt #4 succeeded (row 2), retry attempt #5 succeeded (row 1).
+        assert.equal(successfulTombstones.length, 3);
+        assert.isTrue(
+          successfulTombstones.every((entry) => entry.auth === "Bearer credential-rotated"),
+        );
+        assert.deepEqual([...new Set(successfulTombstones.map((entry) => entry.id))].toSorted(), [
+          `${THREAD_ID}:queued:run-disable-1`,
+          `${THREAD_ID}:queued:run-disable-2`,
+        ]);
+      }),
+  );
+
+  it.effect(
+    "reconciles synthetic row capacity as real approval rows arrive, aborts on eviction failure, and preserves backoff during outages",
+    () =>
+      Effect.gen(function* () {
+        const triggers = yield* PubSub.unbounded<TeamService.TeamNotificationTriggerEvent>();
+        const teamService = {
+          shouldPublishRelayNotificationForThread: () => Effect.succeed(true),
+          shouldPublishRelayQueuedMessageNotification: () => Effect.succeed(true),
+          formatUpstreamCompatThreadTitle: (_threadId: ThreadId, title: string) =>
+            Effect.succeed(`alice: ${title}`),
+          subscribeNotificationEvents: () => Stream.fromPubSub(triggers),
+        } as unknown as TeamService.TeamService["Service"];
+
+        const threadIds = [1, 2, 3, 4, 5].map((n) => ThreadId.make(`approval-thread-${n}`));
+        const shellsById = new Map<ThreadId, OrchestrationV2ThreadShell>(
+          threadIds.map((id, idx) => [
+            id,
+            shell({
+              id,
+              status: "waiting",
+              title: `Approval ${idx + 1}`,
+              pendingRuntimeRequest: {
+                id: RuntimeRequestId.make(`req-cap-${idx + 1}`),
+                kind: "command",
+                createdAt: DateTime.makeUnsafe(NOW),
+              },
+            }),
+          ]),
+        );
+
+        let failEviction = false;
+        const { relay, publications, secrets } = yield* makeTestRelay({
+          readShell: (id) => Effect.succeed(shellsById.get(id) ?? null),
+          teamService,
+          respond: () =>
+            failEviction
+              ? new Response("relay outage", { status: 503 })
+              : Response.json({ ok: true, deliveries: [] }),
+        });
+        const extractPublishedThreadId = (url: string) =>
+          decodeURIComponent(url.split("/threads/")[1]?.split("/")[0] ?? "");
+
+        yield* relay.start();
+        yield* Effect.yieldNow;
+
+        // Publish 3 real approval rows + 2 synthetic queued rows (= 5 total priority-0 rows).
+        for (const id of threadIds.slice(0, 3)) {
+          yield* relay.publishThread(id);
+        }
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: threadIds[0]!,
+          queuedRunId: "run-cap-1",
+          senderMemberId: null,
+          senderPseudo: "bob",
+          recipientMemberIds: [],
+          messagePreview: "Queued 1",
+          createdAt: "2026-04-06T12:01:00.000Z",
+        });
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: threadIds[0]!,
+          queuedRunId: "run-cap-2",
+          senderMemberId: null,
+          senderPseudo: "charlie",
+          recipientMemberIds: [],
+          messagePreview: "Queued 2",
+          createdAt: "2026-04-06T12:02:00.000Z",
+        });
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+
+        // Failed cap eviction aborts publishing the 3rd synthetic row instead of exceeding the cap.
+        failEviction = true;
+        const beforeFailedEvict = publications.length;
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: threadIds[0]!,
+          queuedRunId: "run-cap-3-aborted",
+          senderMemberId: null,
+          senderPseudo: "dana",
+          recipientMemberIds: [],
+          messagePreview: "Should abort",
+          createdAt: "2026-04-06T12:03:00.000Z",
+        });
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        // Only the failed eviction tombstone attempt was sent; run-cap-3-aborted was NOT published.
+        assert.equal(publications.length, beforeFailedEvict + 1);
+        assert.isNull(publications.at(-1)?.state);
+        assert.equal(
+          extractPublishedThreadId(publications.at(-1)!.url),
+          `${threadIds[0]!}:queued:run-cap-1`,
+        );
+
+        // Subsequent queued-message traffic while run-cap-1 is already flushing in backoff MUST NOT
+        // cancel its backoff timer or issue another tombstone attempt during the outage.
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: threadIds[0]!,
+          queuedRunId: "run-cap-4-while-flushing",
+          senderMemberId: null,
+          senderPseudo: "eve",
+          recipientMemberIds: [],
+          messagePreview: "Should also abort without spinning",
+          createdAt: "2026-04-06T12:03:30.000Z",
+        });
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        assert.equal(publications.length, beforeFailedEvict + 1);
+
+        // Repeated flush attempts (via both publishThread and requestCatchUp) while disabled during
+        // an outage must NOT cancel backoff or wipe livePhaseRelayIdentity.
+        yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
+        yield* relay.publishThread(threadIds[0]!);
+        yield* relay.requestCatchUp();
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        const afterFirstDisableFlush = publications.length;
+        // Row 2 was flushed once (failed 503); calling requestCatchUp again immediately must NOT re-attempt either row.
+        yield* relay.requestCatchUp();
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+        assert.equal(publications.length, afterFirstDisableFlush);
+
+        // Recover relay and re-enable publishing: backoff retry clears both rows cleanly.
+        failEviction = false;
+        yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+
+        // Re-publish 2 synthetic rows alongside 3 approvals, then rotate credentials on the same
+        // relay and publish a 4th & 5th real approval: synthetic rows shrink to 1, then 0!
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: threadIds[0]!,
+          queuedRunId: "run-shrink-1",
+          senderMemberId: null,
+          senderPseudo: "bob",
+          recipientMemberIds: [],
+          messagePreview: "Shrink 1",
+          createdAt: "2026-04-06T12:04:00.000Z",
+        });
+        yield* PubSub.publish(triggers, {
+          type: "queuedMessage",
+          threadId: threadIds[0]!,
+          queuedRunId: "run-shrink-2",
+          senderMemberId: null,
+          senderPseudo: "charlie",
+          recipientMemberIds: [],
+          messagePreview: "Shrink 2",
+          createdAt: "2026-04-06T12:05:00.000Z",
+        });
+        yield* Effect.yieldNow;
+        yield* relay.drain;
+
+        // Same-relay credential rotation preserves live attention phase accounting.
+        yield* secrets.set(
+          RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+          new TextEncoder().encode("credential-same-relay"),
+        );
+        const beforeFourthApproval = publications.length;
+        yield* relay.publishThread(threadIds[3]!);
+        yield* relay.drain;
+        const fourthTombstones = publications
+          .slice(beforeFourthApproval)
+          .filter((entry) => entry.state === null)
+          .map((entry) => extractPublishedThreadId(entry.url));
+        assert.deepEqual(fourthTombstones, [`${threadIds[0]!}:queued:run-shrink-1`]);
+
+        const beforeFifthApproval = publications.length;
+        yield* relay.publishThread(threadIds[4]!);
+        yield* relay.drain;
+        const fifthTombstones = publications
+          .slice(beforeFifthApproval)
+          .filter((entry) => entry.state === null)
+          .map((entry) => extractPublishedThreadId(entry.url));
+        assert.deepEqual(fifthTombstones, [`${threadIds[0]!}:queued:run-shrink-2`]);
+      }),
+  );
 });

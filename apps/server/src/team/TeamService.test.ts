@@ -1885,34 +1885,56 @@ describe("TeamService", () => {
           runId: charlieQueuedRunId,
         });
 
-        // 4. Interrupt matrix: Charlie (modo non-creator) rejected; Alice (owner), Dana (admin), Bob (creator) allowed.
+        // 4. Interrupt matrix:
+        //    - Alice (owner), Dana (admin), Bob (creator), and Charlie (modo on unlocked thread) allowed.
+        //    - Regular non-creator (Eve) rejected even on unlocked thread.
+        //    - On a LOCKED thread, Charlie (modo) is rejected while Alice (owner) & Dana (admin) remain allowed.
+        const eve = yield* inviteMember("regular", "eve");
         const interruptCmd = {
           type: "run.interrupt" as const,
           commandId: CommandId.make("cmd-interrupt"),
           threadId: bobThreadId,
           runId: bobActiveRunId,
         };
-        const charlieInterruptExit = yield* Effect.exit(
-          team.assertAndNormalizeDispatchCommand(charlie.sessionId, interruptCmd),
+        const eveInterruptExit = yield* Effect.exit(
+          team.assertAndNormalizeDispatchCommand(eve.sessionId, interruptCmd),
         );
-        expect(charlieInterruptExit._tag).toBe("Failure");
+        expect(eveInterruptExit._tag).toBe("Failure");
+        yield* team.assertAndNormalizeDispatchCommand(charlie.sessionId, interruptCmd);
         yield* team.assertAndNormalizeDispatchCommand(aliceSession.sessionId, interruptCmd);
         yield* team.assertAndNormalizeDispatchCommand(dana.sessionId, interruptCmd);
         yield* team.assertAndNormalizeDispatchCommand(bob.sessionId, interruptCmd);
 
-        // 4a. Past completed run authored by Charlie cannot grant interrupt rights; subagent.stop follows interrupt matrix.
-        const charliePastRunId = RunId.make("run-m4-charlie-completed");
+        // Locking the thread blocks modo (Charlie) from interrupting Bob's active turn, while owner/admin remain allowed.
+        yield* team.setThreadLocked({
+          sessionId: aliceSession.sessionId,
+          payload: { threadId: bobThreadId, locked: true },
+        });
+        expect(
+          (yield* Effect.exit(
+            team.assertAndNormalizeDispatchCommand(charlie.sessionId, interruptCmd),
+          ))._tag,
+        ).toBe("Failure");
+        yield* team.assertAndNormalizeDispatchCommand(aliceSession.sessionId, interruptCmd);
+        yield* team.assertAndNormalizeDispatchCommand(dana.sessionId, interruptCmd);
+        yield* team.setThreadLocked({
+          sessionId: aliceSession.sessionId,
+          payload: { threadId: bobThreadId, locked: false },
+        });
+
+        // 4a. Past completed run authored by a regular non-creator cannot grant interrupt rights; subagent.stop follows interrupt matrix.
+        const evePastRunId = RunId.make("run-m4-eve-completed");
         yield* team.recordTurnAuthored({
-          sessionId: charlie.sessionId,
+          sessionId: eve.sessionId,
           threadId: bobThreadId,
-          turnId: charliePastRunId,
+          turnId: evePastRunId,
         });
         yield* sql`
           INSERT INTO orchestration_v2_projection_runs (
             run_id, thread_id, ordinal, provider, provider_thread_id,
             status, requested_at, completed_at, payload_json
           ) VALUES (
-            ${charliePastRunId},
+            ${evePastRunId},
             ${bobThreadId},
             99,
             'codex',
@@ -1920,30 +1942,37 @@ describe("TeamService", () => {
             'completed',
             '2026-01-01T00:00:00.000Z',
             '2026-01-01T00:00:02.000Z',
-            ${JSON.stringify({ id: charliePastRunId, threadId: bobThreadId, status: "completed", userMessageId: "msg-charlie-past" })}
+            ${JSON.stringify({ id: evePastRunId, threadId: bobThreadId, status: "completed", userMessageId: "msg-eve-past" })}
           )
         `;
         expect(
           (yield* Effect.exit(
-            team.assertAndNormalizeDispatchCommand(charlie.sessionId, {
+            team.assertAndNormalizeDispatchCommand(eve.sessionId, {
               type: "run.interrupt",
               commandId: CommandId.make("cmd-interrupt-past"),
               threadId: bobThreadId,
-              runId: charliePastRunId,
+              runId: evePastRunId,
             }),
           ))._tag,
         ).toBe("Failure");
         expect(
           (yield* Effect.exit(
-            team.assertAndNormalizeDispatchCommand(charlie.sessionId, {
+            team.assertAndNormalizeDispatchCommand(eve.sessionId, {
               type: "subagent.stop",
-              commandId: CommandId.make("cmd-subagent-stop-charlie"),
+              commandId: CommandId.make("cmd-subagent-stop-eve"),
               threadId: bobThreadId,
               runId: bobActiveRunId,
               subagentId: NodeId.make("node-sub-1"),
             }),
           ))._tag,
         ).toBe("Failure");
+        yield* team.assertAndNormalizeDispatchCommand(charlie.sessionId, {
+          type: "subagent.stop",
+          commandId: CommandId.make("cmd-subagent-stop-charlie"),
+          threadId: bobThreadId,
+          runId: bobActiveRunId,
+          subagentId: NodeId.make("node-sub-1"),
+        });
         yield* team.assertAndNormalizeDispatchCommand(bob.sessionId, {
           type: "subagent.stop",
           commandId: CommandId.make("cmd-subagent-stop-bob"),
@@ -1952,7 +1981,7 @@ describe("TeamService", () => {
           subagentId: NodeId.make("node-sub-1"),
         });
 
-        // 4b. Pending tool-approval / user-input responses follow the same non-creator containment.
+        // 4b. Pending tool-approval / user-input responses stay restricted to owner/admin, creator, or active turn author (never modo on foreign turns!).
         const respondCmd = {
           type: "runtime-request.respond" as const,
           commandId: CommandId.make("cmd-respond"),
@@ -1979,6 +2008,217 @@ describe("TeamService", () => {
         yield* team.assertAndNormalizeDispatchCommand(bob.sessionId, respondCmd);
         yield* team.assertAndNormalizeDispatchCommand(aliceSession.sessionId, respondCmd);
         yield* team.assertAndNormalizeDispatchCommand(bob.sessionId, dismissCmd);
+
+        // 4c. Queued-message notification emits to thread creator AND distinct active turn author (never sender or unrelated colleague),
+        //     filters per session stream, and is idempotent per queuedRunId and commandId.
+        const bobEvents: Array<TeamStateStreamEvent> = [];
+        const eveEvents: Array<TeamStateStreamEvent> = [];
+        const charlieEvents: Array<TeamStateStreamEvent> = [];
+        const triggerEvents: Array<TeamService.TeamNotificationTriggerEvent> = [];
+        const bobFiber = yield* team.streamState(bob.sessionId).pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              bobEvents.push(event);
+            }),
+          ),
+          Effect.forkChild,
+        );
+        const eveFiber = yield* team.streamState(eve.sessionId).pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              eveEvents.push(event);
+            }),
+          ),
+          Effect.forkChild,
+        );
+        const charlieFiber = yield* team.streamState(charlie.sessionId).pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              charlieEvents.push(event);
+            }),
+          ),
+          Effect.forkChild,
+        );
+        const triggerFiber = yield* team.subscribeNotificationEvents!().pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              triggerEvents.push(event);
+            }),
+          ),
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+
+        // Make Eve the active turn author on Bob's thread so Charlie queuing notifies BOTH Bob (creator) AND Eve (active turn author).
+        const eveActiveRunId = RunId.make("run-m4-eve-active");
+        yield* team.recordTurnAuthored({
+          sessionId: eve.sessionId,
+          threadId: bobThreadId,
+          turnId: eveActiveRunId,
+        });
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_runs (
+            run_id, thread_id, ordinal, provider, provider_thread_id,
+            status, requested_at, completed_at, payload_json
+          ) VALUES (
+            ${eveActiveRunId},
+            ${bobThreadId},
+            100,
+            'codex',
+            NULL,
+            'running',
+            '2026-01-01T00:01:00.000Z',
+            NULL,
+            ${JSON.stringify({ id: eveActiveRunId, threadId: bobThreadId, status: "running", userMessageId: "msg-eve-active" })}
+          )
+        `;
+        const queuedNotifyRes = yield* team.notifyQueuedMessage({
+          actor: { kind: "session", sessionId: charlie.sessionId },
+          threadId: bobThreadId,
+          queuedRunId: "run-m4-charlie-queued-notif",
+          commandId: "cmd-m4-charlie-queued-notif",
+          messageText: "  Please check the CI failure  ",
+        });
+        expect(queuedNotifyRes.notifiedMemberIds).toEqual([bob.member.id, eve.member.id]);
+
+        // Duplicate call with same queuedRunId OR same commandId is a no-op (idempotent).
+        expect(
+          (yield* team.notifyQueuedMessage({
+            actor: { kind: "session", sessionId: charlie.sessionId },
+            threadId: bobThreadId,
+            queuedRunId: "run-m4-charlie-queued-notif",
+            commandId: "cmd-m4-different",
+            messageText: "duplicate run",
+          })).notifiedMemberIds,
+        ).toEqual([]);
+        expect(
+          (yield* team.notifyQueuedMessage({
+            actor: { kind: "session", sessionId: charlie.sessionId },
+            threadId: bobThreadId,
+            queuedRunId: "run-m4-different",
+            commandId: "cmd-m4-charlie-queued-notif",
+            messageText: "duplicate cmd",
+          })).notifiedMemberIds,
+        ).toEqual([]);
+
+        // Verify Bob and Eve receive the stream event; sender Charlie does NOT; relay trigger emitted once.
+        for (let i = 0; i < 5; i += 1) {
+          yield* Effect.yieldNow;
+        }
+        expect(bobEvents.filter((e) => e.type === "queuedMessageNotification")).toHaveLength(1);
+        expect(eveEvents.filter((e) => e.type === "queuedMessageNotification")).toHaveLength(1);
+        expect(charlieEvents.filter((e) => e.type === "queuedMessageNotification")).toHaveLength(0);
+        expect(triggerEvents.filter((e) => e.type === "queuedMessage")).toHaveLength(1);
+
+        // When Bob (creator) queues while Eve's turn is running, ONLY Eve is notified (never sender Bob!).
+        const bobQueueRes = yield* team.notifyQueuedMessage({
+          actor: { kind: "session", sessionId: bob.sessionId },
+          threadId: bobThreadId,
+          queuedRunId: "run-m4-bob-queued-while-eve",
+          messageText: "Heads up Eve",
+        });
+        expect(bobQueueRes.notifiedMemberIds).toEqual([eve.member.id]);
+
+        // Concurrent duplicate notifications for the same queuedRunId emit only once (no TOCTOU race).
+        const [raceA, raceB] = yield* Effect.all(
+          [
+            team.notifyQueuedMessage({
+              actor: { kind: "session", sessionId: charlie.sessionId },
+              threadId: bobThreadId,
+              queuedRunId: "run-m4-concurrent-dedup",
+              commandId: "cmd-m4-concurrent-dedup",
+              activeRunId: eveActiveRunId,
+              messageText: "Concurrent test",
+            }),
+            team.notifyQueuedMessage({
+              actor: { kind: "session", sessionId: charlie.sessionId },
+              threadId: bobThreadId,
+              queuedRunId: "run-m4-concurrent-dedup",
+              commandId: "cmd-m4-concurrent-dedup",
+              activeRunId: eveActiveRunId,
+              messageText: "Concurrent test",
+            }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect([raceA.notifiedMemberIds.length, raceB.notifiedMemberIds.length].toSorted()).toEqual(
+          [0, 2],
+        );
+
+        // If Eve's active run completes and Charlie's queued run advances to running before notification
+        // processing, supplying the captured activeRunId still resolves Eve (not Charlie).
+        yield* sql`
+          UPDATE orchestration_v2_projection_runs
+          SET status = 'completed'
+          WHERE run_id = ${eveActiveRunId}
+        `;
+        const charliePromotedRunId = "run-m4-charlie-promoted";
+        yield* team.recordTurnAuthored({
+          sessionId: charlie.sessionId,
+          threadId: bobThreadId,
+          turnId: charliePromotedRunId,
+        });
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_runs (
+            run_id, thread_id, ordinal, provider, provider_thread_id,
+            status, requested_at, completed_at, payload_json
+          ) VALUES (
+            ${charliePromotedRunId},
+            ${bobThreadId},
+            101,
+            'codex',
+            NULL,
+            'running',
+            '2026-01-01T00:02:00.000Z',
+            NULL,
+            ${JSON.stringify({ id: charliePromotedRunId, threadId: bobThreadId, status: "running", userMessageId: "msg-charlie-promoted" })}
+          )
+        `;
+        const capturedActiveRunRes = yield* team.notifyQueuedMessage({
+          actor: { kind: "session", sessionId: charlie.sessionId },
+          threadId: bobThreadId,
+          queuedRunId: charliePromotedRunId,
+          activeRunId: eveActiveRunId,
+          messageText: "Queued before Eve finished",
+        });
+        expect(capturedActiveRunRes.notifiedMemberIds).toEqual([bob.member.id, eve.member.id]);
+
+        // Idle thread (no active run in projection and no captured activeRunId) notifies nobody.
+        yield* sql`
+          UPDATE orchestration_v2_projection_runs
+          SET status = 'completed'
+          WHERE thread_id = ${bobThreadId}
+        `;
+        const idleQueueRes = yield* team.notifyQueuedMessage({
+          actor: { kind: "session", sessionId: charlie.sessionId },
+          threadId: bobThreadId,
+          queuedRunId: "run-m4-idle-thread",
+          messageText: "Should not notify on idle thread",
+        });
+        expect(idleQueueRes.notifiedMemberIds).toEqual([]);
+
+        // Suspended candidate recipient is excluded even when named as active turn author.
+        yield* team.updateMemberStatus({
+          sessionId: aliceSession.sessionId,
+          payload: { memberId: eve.member.id, status: "suspended" },
+        });
+        const suspendedActiveRes = yield* team.notifyQueuedMessage({
+          actor: { kind: "session", sessionId: charlie.sessionId },
+          threadId: bobThreadId,
+          queuedRunId: "run-m4-eve-suspended",
+          activeRunId: eveActiveRunId,
+          messageText: "Eve suspended",
+        });
+        expect(suspendedActiveRes.notifiedMemberIds).toEqual([bob.member.id]);
+        yield* team.updateMemberStatus({
+          sessionId: aliceSession.sessionId,
+          payload: { memberId: eve.member.id, status: "active" },
+        });
+
+        yield* Fiber.interrupt(bobFiber);
+        yield* Fiber.interrupt(eveFiber);
+        yield* Fiber.interrupt(charlieFiber);
+        yield* Fiber.interrupt(triggerFiber);
 
         // 5. Queued run management (cancel/edit): Charlie can cancel his own queued message, not Bob's; Alice can cancel any.
         yield* team.assertAndNormalizeDispatchCommand(charlie.sessionId, {
@@ -2048,9 +2288,9 @@ describe("TeamService", () => {
         const resolvedContinuation = yield* team.resolveTurnAuthorMemberId({
           threadId: bobThreadId,
           runId: "run-unrecorded-continuation",
-          continuedFromRunId: charliePastRunId,
+          continuedFromRunId: evePastRunId,
         });
-        expect(Option.getOrThrow(resolvedContinuation)).toBe(charlie.member.id);
+        expect(Option.getOrThrow(resolvedContinuation)).toBe(eve.member.id);
         const unattributedAuthor = yield* team.resolveTurnAuthorMemberId({
           threadId: bobThreadId,
           runId: "run-missing-attribution",
@@ -3621,7 +3861,7 @@ describe("TeamService", () => {
         });
         expect(Option.getOrThrow(resolvedPrincipal).kind).toBe("team_automation");
 
-        // Zero default notifications on team-owned thread; owner can interrupt, modo cannot.
+        // Zero default notifications on team-owned thread; owner and modo (on unlocked thread) can interrupt, regular cannot, and locked blocks modo.
         const defaultRecipients = yield* team.listNotificationRecipientsForThread({
           threadId: autoThreadId,
           turnId: "run-m8-1",
@@ -3629,11 +3869,26 @@ describe("TeamService", () => {
         expect(defaultRecipients.isTeamThread).toBe(true);
         expect(defaultRecipients.recipientMemberIds).toHaveLength(0);
         yield* team.assertCanInterruptThread(ownerSession.sessionId, autoThreadId, "run-m8-1");
+        yield* team.assertCanInterruptThread(modoSession.sessionId, autoThreadId, "run-m8-1");
+        expect(
+          (yield* Effect.exit(
+            team.assertCanInterruptThread(regularSession.sessionId, autoThreadId, "run-m8-1"),
+          ))._tag,
+        ).toBe("Failure");
+        yield* team.setThreadLocked({
+          sessionId: ownerSession.sessionId,
+          payload: { threadId: autoThreadId, locked: true },
+        });
         expect(
           (yield* Effect.exit(
             team.assertCanInterruptThread(modoSession.sessionId, autoThreadId, "run-m8-1"),
           ))._tag,
         ).toBe("Failure");
+        yield* team.assertCanInterruptThread(ownerSession.sessionId, autoThreadId, "run-m8-1");
+        yield* team.setThreadLocked({
+          sessionId: ownerSession.sessionId,
+          payload: { threadId: autoThreadId, locked: false },
+        });
 
         // Webhook delivery logs follow the same visibility rules as the live webhook URL.
         yield* team.assertCanReadScheduledTaskWebhooks(modoSession.sessionId, minTaskId);

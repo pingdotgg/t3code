@@ -188,6 +188,7 @@ describe("team notification gating helpers", () => {
       automationGitHubIdentity: null,
       scheduledTaskMetas: [],
       scheduledTaskMetaByTaskId: new Map(),
+      queuedMessageNotifications: [],
       ...overrides,
     };
   };
@@ -288,5 +289,46 @@ describe("team notification gating helpers", () => {
         latestRunId: "run-bob-2",
       }),
     ).toBe(true);
+  });
+
+  it("formats queued-message notifications and builds stable short tags", async () => {
+    const { EnvironmentId } = await import("@t3tools/contracts");
+    const { formatTeamQueuedMessageNotification, teamQueuedMessageNotificationTag } =
+      await import("./threadNotifications");
+
+    expect(
+      formatTeamQueuedMessageNotification({
+        senderPseudo: "bob",
+        threadTitle: "Release checklist",
+        messagePreview: "Please run the migration check",
+      }),
+    ).toEqual({
+      title: 'bob queued a message in "Release checklist"',
+      body: "Please run the migration check",
+    });
+
+    expect(
+      formatTeamQueuedMessageNotification({
+        senderPseudo: "bob",
+        threadTitle: "",
+        messagePreview: "   ",
+      }),
+    ).toEqual({
+      title: "bob queued a message",
+      body: "Open thread to review or click Send now.",
+    });
+
+    const tagA = teamQueuedMessageNotificationTag(
+      EnvironmentId.make("env-1"),
+      aliceThreadId,
+      "run-queued-1",
+    );
+    const tagB = teamQueuedMessageNotificationTag(
+      EnvironmentId.make("env-1"),
+      aliceThreadId,
+      "run-queued-2",
+    );
+    expect(tagA).toHaveLength(16);
+    expect(tagA).not.toBe(tagB);
   });
 });

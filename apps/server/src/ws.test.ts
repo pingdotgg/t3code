@@ -911,6 +911,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
     assertCanUseScheduledTasks: () => Effect.void,
     recordThreadCreated: () => Effect.void,
     recordTurnAuthored: () => Effect.void,
+    notifyQueuedMessage: () => Effect.succeed({ notifiedMemberIds: [] }),
   }),
   Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({}),
   Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({}),

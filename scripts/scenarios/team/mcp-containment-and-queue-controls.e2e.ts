@@ -379,8 +379,15 @@ test("enforces Milestone 4 mid-turn queueing, creator-only Send now, explicit ow
     .getByTestId("team-view-row-Staff Only")
     .waitFor({ state: "visible", timeout: 15_000 });
 
-  // Enable colleagues toggle for all three browsers.
+  // Enable desktop notifications and colleagues toggle for all three browsers so we can verify
+  // mid-turn queued-message notifications fire strictly for the creator / active turn author.
   for (const member of [alice, charlie, bob]) {
+    await member.open("/settings/general");
+    const notificationSelect = member.page.getByLabel("Thread notifications");
+    await notificationSelect.waitFor({ state: "visible", timeout: 15_000 });
+    await notificationSelect.click();
+    await member.page.getByRole("option", { name: "Notifications only" }).click();
+
     await member.open("/");
     await member.page
       .getByTestId("team-colleagues-toggle")
@@ -461,6 +468,15 @@ test("enforces Milestone 4 mid-turn queueing, creator-only Send now, explicit ow
   expect(await bob.page.getByRole("button", { name: "Stop generation" }).count()).toBe(0);
   expect(await bob.page.getByTestId("team-admin-interrupt-button").count()).toBe(0);
 
+  // Prepare browser Notification recorders before Bob queues a mid-turn message on Alice's thread:
+  // Alice (thread creator & active turn author) MUST be notified; Bob (sender) and Charlie (unrelated) MUST NOT!
+  await alice.clearNotifications();
+  await charlie.clearNotifications();
+  await bob.clearNotifications();
+  await alice.setWindowFocused(false);
+  await charlie.setWindowFocused(false);
+  await bob.setWindowFocused(false);
+
   await bobComposer.click();
   await bobComposer.fill("Bob queued follow-up");
   await bobComposer.press("Enter");
@@ -479,11 +495,32 @@ test("enforces Milestone 4 mid-turn queueing, creator-only Send now, explicit ow
   expect(await bob.page.getByTestId("queued-send-now-button").count()).toBe(0);
   expect(await bob.page.getByRole("button", { name: "Stop generation" }).count()).toBe(0);
   expect(await bob.page.getByTestId("team-admin-interrupt-button").count()).toBe(0);
+
+  // Verify browser Notification fired for Alice (creator), NOT for Bob (sender) or Charlie (unrelated non-follower).
+  await expect
+    .poll(async () => (await alice.notifications()).length, { timeout: 20_000 })
+    .toBeGreaterThanOrEqual(1);
+  const aliceQueuedNotifications = await alice.notifications();
+  expect(
+    aliceQueuedNotifications.some(
+      (n) =>
+        n.title.includes('bob queued a message in "Alice running turn"') &&
+        n.body.includes("Bob queued follow-up"),
+    ),
+  ).toBe(true);
+  expect(await bob.notifications()).toEqual([]);
+  expect(await charlie.notifications()).toEqual([]);
+
+  await alice.setWindowFocused(true);
+  await charlie.setWindowFocused(true);
+  await bob.setWindowFocused(true);
+
   // Alice's pending approval was NOT touched or declined by Bob's queued send.
   expect(await alice.page.getByRole("button", { name: /^Approve/ }).count()).toBeGreaterThan(0);
 
-  // Charlie (modo) opens Alice's running thread:
-  // - Sees Bob's queued message with author "bob", NO "Send now", NO Stop/Interrupt!
+  // Charlie (modo) opens Alice's UNLOCKED running thread:
+  // - Sees Bob's queued message with author "bob", NO "Send now", and DOES see explicit "Interrupt"!
+  // - When Alice locks the thread, Charlie's "Interrupt" button disappears; when unlocked, it returns!
   const charlieAliceRow = charlie.page
     .locator("aside, [data-sidebar='sidebar']")
     .first()
@@ -507,8 +544,21 @@ test("enforces Milestone 4 mid-turn queueing, creator-only Send now, explicit ow
     )
     .toContain("bob");
   expect(await charlie.page.getByTestId("queued-send-now-button").count()).toBe(0);
-  expect(await charlie.page.getByRole("button", { name: "Stop generation" }).count()).toBe(0);
-  expect(await charlie.page.getByTestId("team-admin-interrupt-button").count()).toBe(0);
+  const charlieInterruptBtn = charlie.page.getByTestId("team-admin-interrupt-button");
+  await charlieInterruptBtn.waitFor({ state: "visible", timeout: 15_000 });
+  expect((await charlieInterruptBtn.textContent()) ?? "").toContain("Interrupt");
+
+  // Locking Alice's thread hides explicit Interrupt for modo (Charlie); unlocking restores it.
+  const aliceLockBtn = alice.page.getByTestId("team-thread-lock-button");
+  await aliceLockBtn.waitFor({ state: "visible", timeout: 15_000 });
+  await aliceLockBtn.click();
+  await expect
+    .poll(async () => await charlie.page.getByTestId("team-admin-interrupt-button").count(), {
+      timeout: 15_000,
+    })
+    .toBe(0);
+  await aliceLockBtn.click();
+  await charlieInterruptBtn.waitFor({ state: "visible", timeout: 15_000 });
 
   // Alice (creator!) DOES see Bob's queued message with "bob" pseudo AND DOES see "Send now"!
   await expect

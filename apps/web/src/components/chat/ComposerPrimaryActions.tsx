@@ -45,7 +45,7 @@ interface ComposerPrimaryActionsProps {
   pendingAction: PendingActionState | null;
   isRunning: boolean;
   canInterrupt: boolean;
-  /** True when an owner/admin is viewing another member's active turn and receives an explicit Interrupt control. */
+  /** True when an owner/admin/modo is viewing another member's or team-owned active turn and receives an explicit Interrupt control. */
   isExplicitAdminInterrupt?: boolean;
   runId?: string | null;
   followUpBehavior?: "queue" | "steer";
@@ -159,6 +159,7 @@ function StopGenerationButton({
 }) {
   const gt = useGT();
   const isStopDisabled = stopPhase === "pending";
+  const canInvokeStop = canOperateThread || isExplicitAdminInterrupt;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -175,9 +176,9 @@ function StopGenerationButton({
                   : "size-8 sm:h-8 sm:w-8",
             )}
             onPointerDown={preserveComposerFocusOnPointerDown ? preventPointerFocus : undefined}
-            disabled={!canOperateThread || isStopDisabled}
+            disabled={!canInvokeStop || isStopDisabled}
             onClick={() => {
-              if (!canOperateThread || isStopDisabled) return;
+              if (!canInvokeStop || isStopDisabled) return;
               onStopRequested();
               onInterrupt();
             }}
@@ -218,6 +219,7 @@ export function CollapsedComposerStopAction({
   children,
   canOperateThread,
   canInterrupt,
+  isExplicitAdminInterrupt = false,
   runId,
   hasSendableContent,
   isEditingQueuedMessage,
@@ -226,12 +228,17 @@ export function CollapsedComposerStopAction({
   children: ReactNode;
   canOperateThread: boolean;
   canInterrupt: boolean;
+  isExplicitAdminInterrupt?: boolean;
   runId: string | null;
   hasSendableContent: boolean;
   isEditingQueuedMessage: boolean;
   onInterrupt: () => void;
 }) {
-  const [stopPhase, setStopPhase] = useStopPhase({ runId, canInterrupt, canOperateThread });
+  const [stopPhase, setStopPhase] = useStopPhase({
+    runId,
+    canInterrupt,
+    canOperateThread: canOperateThread || isExplicitAdminInterrupt,
+  });
   if (
     !(canInterrupt || stopPhase === "pending" || stopPhase === "timedOut") ||
     hasSendableContent ||
@@ -249,6 +256,7 @@ export function CollapsedComposerStopAction({
         stopPhase={stopPhase}
         canOperateThread={canOperateThread}
         insidePendingAction={false}
+        isExplicitAdminInterrupt={isExplicitAdminInterrupt}
         preserveComposerFocusOnPointerDown
         onStopRequested={() => setStopPhase("pending")}
         onInterrupt={onInterrupt}
@@ -290,7 +298,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 }: ComposerPrimaryActionsProps) {
   const gt = useGT();
   const m = useMessages();
-  const [stopPhase, setStopPhase] = useStopPhase({ runId, canInterrupt, canOperateThread });
+  const [stopPhase, setStopPhase] = useStopPhase({
+    runId,
+    canInterrupt,
+    canOperateThread: canOperateThread || isExplicitAdminInterrupt,
+  });
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
     : undefined;

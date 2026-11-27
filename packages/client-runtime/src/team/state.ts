@@ -13,6 +13,7 @@ import {
   type TeamPreprompt,
   type TeamProjectAssignment,
   type TeamProvider,
+  type TeamQueuedMessageNotification,
   type TeamScheduledTaskMeta,
   type TeamSkill,
   type TeamStateSnapshot,
@@ -80,6 +81,7 @@ export interface TeamEnvironmentState {
   readonly automationGitHubIdentity: TeamAutomationGitHubIdentity | null;
   readonly scheduledTaskMetas: ReadonlyArray<TeamScheduledTaskMeta>;
   readonly scheduledTaskMetaByTaskId: ReadonlyMap<ScheduledTaskId, TeamScheduledTaskMeta>;
+  readonly queuedMessageNotifications: ReadonlyArray<TeamQueuedMessageNotification>;
 }
 
 export const EMPTY_TEAM_ENVIRONMENT_STATE: TeamEnvironmentState = {
@@ -109,6 +111,7 @@ export const EMPTY_TEAM_ENVIRONMENT_STATE: TeamEnvironmentState = {
   automationGitHubIdentity: null,
   scheduledTaskMetas: [],
   scheduledTaskMetaByTaskId: new Map(),
+  queuedMessageNotifications: [],
 };
 
 function sortTeamEnvironments(
@@ -214,6 +217,7 @@ function buildStateFromSnapshot(snapshot: TeamStateSnapshot): TeamEnvironmentSta
     automationGitHubIdentity: snapshot.automationGitHubIdentity ?? null,
     scheduledTaskMetas,
     scheduledTaskMetaByTaskId,
+    queuedMessageNotifications: [],
   };
 }
 
@@ -434,7 +438,12 @@ export function applyTeamStreamEvent(
       }
       const threadNotesByThreadId = new Map(current.threadNotesByThreadId);
       const hadNotes = threadNotesByThreadId.delete(threadId);
-      if (!hadAttribution && !hadFollow && !turnsChanged && !hadNotes) {
+      const filteredQueuedNotifications = current.queuedMessageNotifications.filter(
+        (item) => item.threadId !== threadId,
+      );
+      const hadQueuedNotifications =
+        filteredQueuedNotifications.length !== current.queuedMessageNotifications.length;
+      if (!hadAttribution && !hadFollow && !turnsChanged && !hadNotes && !hadQueuedNotifications) {
         return current;
       }
       return {
@@ -448,6 +457,9 @@ export function applyTeamStreamEvent(
         ...(hadFollow ? { followedThreadIds } : {}),
         ...(turnsChanged ? { latestTurnByThreadId, turnAuthorByTurnId } : {}),
         ...(hadNotes ? { threadNotesByThreadId } : {}),
+        ...(hadQueuedNotifications
+          ? { queuedMessageNotifications: filteredQueuedNotifications }
+          : {}),
       };
     }
 
@@ -664,10 +676,30 @@ export function applyTeamStreamEvent(
         scheduledTaskMetaByTaskId,
       };
     }
+
+    case "queuedMessageNotification": {
+      const notification = event.payload;
+      if (
+        current.queuedMessageNotifications.some(
+          (existing) => existing.queuedRunId === notification.queuedRunId,
+        )
+      ) {
+        return current;
+      }
+      const next = [...current.queuedMessageNotifications, notification];
+      if (next.length > MAX_TRACKED_QUEUED_MESSAGE_NOTIFICATIONS) {
+        next.splice(0, next.length - MAX_TRACKED_QUEUED_MESSAGE_NOTIFICATIONS);
+      }
+      return {
+        ...current,
+        queuedMessageNotifications: next,
+      };
+    }
   }
 }
 
 const MAX_TRACKED_TURN_ATTRIBUTIONS = 1_000;
+const MAX_TRACKED_QUEUED_MESSAGE_NOTIFICATIONS = 100;
 
 export function scanTeamStateStream<E, R>(
   stream: Stream.Stream<TeamStateStreamEvent, E, R>,

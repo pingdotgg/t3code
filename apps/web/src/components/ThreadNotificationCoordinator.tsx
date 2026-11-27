@@ -8,7 +8,12 @@ import {
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import type { AnyRouter } from "@tanstack/react-router";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
-import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ThreadShell,
+  TeamQueuedMessageNotification,
+  ThreadId,
+} from "@t3tools/contracts";
 import { monitorHoldsWakeCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
@@ -16,6 +21,7 @@ import type { AtomRegistry } from "effect/reactivity";
 import {
   CircleAlertIcon,
   CircleCheckIcon,
+  ListPlusIcon,
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
 } from "lucide-react";
@@ -28,11 +34,13 @@ import { readTeamEnvironmentStateFromRegistry, teamEnvironment } from "../state/
 import { environmentThreadShells } from "../state/threads";
 import {
   formatTeamNotificationThreadTitle,
+  formatTeamQueuedMessageNotification,
   hasDesktopNotifications,
   hasNotificationSound,
   playNotificationSound,
   resolveTeamEnvironmentThreadNotificationDecision,
   setNotificationBadge,
+  teamQueuedMessageNotificationTag,
   threadNotificationTag,
   unlockNotificationAudio,
 } from "../threadNotifications";
@@ -82,7 +90,12 @@ export function startThreadNotifications(
 ): () => void {
   const pending = new Map<
     string,
-    { environmentId: EnvironmentId; threadId: ThreadId; notification: Notification }
+    {
+      environmentId: EnvironmentId;
+      threadId: ThreadId;
+      notification: Notification;
+      isQueuedMessage?: boolean;
+    }
   >();
   const watched = new Map<EnvironmentId, WatchedEnvironment>();
 
@@ -90,23 +103,44 @@ export function startThreadNotifications(
     environmentId: EnvironmentId,
     threadId: ThreadId,
     notification: Notification,
+    options?: { readonly isQueuedMessage?: boolean },
   ) => {
     pending.get(notification.tag)?.notification.close();
-    pending.set(notification.tag, { environmentId, threadId, notification });
+    pending.set(notification.tag, {
+      environmentId,
+      threadId,
+      notification,
+      ...(options?.isQueuedMessage === true ? { isQueuedMessage: true } : {}),
+    });
     setNotificationBadge(pending.size);
   };
   // Toast ids by thread key, so hiding or opening a thread, or removing its environment, closes them.
-  const openToasts = new Map<string, Array<ToastId>>();
+  const openToasts = new Map<
+    string,
+    Array<{ readonly id: ToastId; readonly isQueuedMessage?: boolean }>
+  >();
   const forgetToast = (key: string, toastId: ToastId) => {
-    const remaining = (openToasts.get(key) ?? []).filter((id) => id !== toastId);
+    const remaining = (openToasts.get(key) ?? []).filter((entry) => entry.id !== toastId);
     if (remaining.length === 0) openToasts.delete(key);
     else openToasts.set(key, remaining);
   };
-  const closeToasts = (shouldClose: (key: string) => boolean) => {
-    for (const [key, toastIds] of openToasts) {
-      if (!shouldClose(key)) continue;
-      for (const toastId of toastIds) toastManager.close(toastId);
-      openToasts.delete(key);
+  const closeToasts = (
+    shouldClose: (
+      key: string,
+      entry: { readonly id: ToastId; readonly isQueuedMessage?: boolean },
+    ) => boolean,
+  ) => {
+    for (const [key, toastEntries] of openToasts) {
+      const remaining: Array<{ readonly id: ToastId; readonly isQueuedMessage?: boolean }> = [];
+      for (const toastEntry of toastEntries) {
+        if (shouldClose(key, toastEntry)) {
+          toastManager.close(toastEntry.id);
+        } else {
+          remaining.push(toastEntry);
+        }
+      }
+      if (remaining.length === 0) openToasts.delete(key);
+      else openToasts.set(key, remaining);
     }
   };
   const activeThread = () =>
@@ -239,7 +273,7 @@ export function startThreadNotifications(
           },
         },
       });
-      openToasts.set(toastKey, [...(openToasts.get(toastKey) ?? []), toastId]);
+      openToasts.set(toastKey, [...(openToasts.get(toastKey) ?? []), { id: toastId }]);
       return;
     }
     if (
@@ -265,6 +299,92 @@ export function startThreadNotifications(
         void router.navigate({
           to: "/$environmentId/$threadId",
           params: { environmentId, threadId: thread.id },
+        });
+      });
+    } catch {
+      // Some browsers expose Notification but reject desktop presentation.
+    }
+  };
+
+  const presentQueuedMessage = (
+    environmentId: EnvironmentId,
+    item: TeamQueuedMessageNotification,
+    rawThreadTitle: string | null,
+  ) => {
+    if (
+      registry
+        .get(environmentThreadShells.hiddenThreadKeysAtom)
+        .has(threadKey({ environmentId, threadId: item.threadId }))
+    ) {
+      return;
+    }
+    const { title, body } = formatTeamQueuedMessageNotification({
+      senderPseudo: item.senderPseudo,
+      threadTitle: rawThreadTitle,
+      messagePreview: item.messagePreview,
+    });
+    const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
+    const active = activeThread();
+    if (hasNotificationSound(mode)) {
+      void playNotificationSound("input", () =>
+        hasNotificationSound(getClientSettings().notificationMode),
+      );
+    }
+    if (
+      inAppNotificationsEnabled &&
+      document.visibilityState === "visible" &&
+      document.hasFocus() &&
+      (active.environmentId !== environmentId || active.threadId !== item.threadId)
+    ) {
+      const toastKey = threadKey({ environmentId, threadId: item.threadId });
+      const toastId: ToastId = toastManager.add({
+        onRemove: (): void => forgetToast(toastKey, toastId),
+        type: "info",
+        title,
+        description: body,
+        data: {
+          hideCopyButton: true,
+          leadingIcon: <ListPlusIcon aria-hidden className="size-4 text-info-foreground" />,
+        },
+        actionProps: {
+          children: m(msg("Open thread")),
+          onClick: () => {
+            toastManager.close(toastId);
+            void router.navigate({
+              to: "/$environmentId/$threadId",
+              params: { environmentId, threadId: item.threadId },
+            });
+          },
+        },
+      });
+      openToasts.set(toastKey, [
+        ...(openToasts.get(toastKey) ?? []),
+        { id: toastId, isQueuedMessage: true },
+      ]);
+      return;
+    }
+    if (
+      !hasDesktopNotifications(mode) ||
+      (document.visibilityState === "visible" && document.hasFocus()) ||
+      typeof Notification === "undefined" ||
+      Notification.permission !== "granted"
+    ) {
+      return;
+    }
+    try {
+      const notification = new Notification(title, {
+        body,
+        tag: teamQueuedMessageNotificationTag(environmentId, item.threadId, item.queuedRunId),
+        silent: true,
+      });
+      trackNotification(environmentId, item.threadId, notification, { isQueuedMessage: true });
+      notification.addEventListener("click", () => {
+        notification.close();
+        window.focus();
+        void window.desktopBridge?.revealWindow().catch(() => undefined);
+        void router.navigate({
+          to: "/$environmentId/$threadId",
+          params: { environmentId, threadId: item.threadId },
         });
       });
     } catch {
@@ -408,9 +528,44 @@ export function startThreadNotifications(
       environmentThreadShells.delegatedUnderParentAtom,
       reobserve,
     );
+    const MAX_SEEN_QUEUED_RUN_IDS = 1_000;
+    const seenQueuedRunIds = new Set<string>();
+    const rememberSeenQueuedRunId = (queuedRunId: string) => {
+      seenQueuedRunIds.delete(queuedRunId);
+      seenQueuedRunIds.add(queuedRunId);
+      while (seenQueuedRunIds.size > MAX_SEEN_QUEUED_RUN_IDS) {
+        const oldest = seenQueuedRunIds.values().next().value;
+        if (oldest === undefined) break;
+        seenQueuedRunIds.delete(oldest);
+      }
+    };
+    const initialTeamState = readTeamEnvironmentStateFromRegistry(registry, environmentId);
+    if (initialTeamState !== null) {
+      for (const item of initialTeamState.queuedMessageNotifications) {
+        rememberSeenQueuedRunId(item.queuedRunId);
+      }
+    }
     const unsubscribeTeam = registry.subscribe(teamEnvironment.state(environmentId), () => {
       const teamState = readTeamEnvironmentStateFromRegistry(registry, environmentId);
       if (teamState === null) return;
+      if (
+        teamState.team !== null &&
+        teamState.currentMember !== null &&
+        teamState.currentMember.status === "active"
+      ) {
+        const currentMemberId = teamState.currentMember.id;
+        for (const item of teamState.queuedMessageNotifications) {
+          if (seenQueuedRunIds.has(item.queuedRunId)) continue;
+          rememberSeenQueuedRunId(item.queuedRunId);
+          if (item.senderMemberId === currentMemberId) continue;
+          if (!item.recipientMemberIds.includes(currentMemberId)) continue;
+          const rawThreadTitle =
+            entry.previous.get(item.threadId)?.thread.title ??
+            threads?.find((candidate) => candidate.id === item.threadId)?.title ??
+            null;
+          presentQueuedMessage(environmentId, item, rawThreadTitle);
+        }
+      }
       for (const [threadId, deferred] of entry.deferred) {
         const latestRunId = deferred.state.thread.latestRun?.runId ?? null;
         if (deferred.reason === "turn_attribution") {
@@ -469,13 +624,26 @@ export function startThreadNotifications(
           }) !== "allow"
         );
       };
-      closeToasts((key) => {
+      const isRevokedTeamThread = (threadId: ThreadId) =>
+        teamState.team !== null &&
+        (teamState.currentMember === null ||
+          teamState.currentMember.status !== "active" ||
+          !teamState.attributionByThreadId.has(threadId));
+      closeToasts((key, toastEntry) => {
         const parsed = parseThreadKey(key);
-        return parsed.environmentId === environmentId && isSilenced(parsed.threadId);
+        if (parsed.environmentId !== environmentId) return false;
+        return toastEntry.isQueuedMessage === true
+          ? isRevokedTeamThread(parsed.threadId)
+          : isSilenced(parsed.threadId);
       });
       const count = pending.size;
       for (const [tag, item] of pending) {
-        if (item.environmentId === environmentId && isSilenced(item.threadId)) {
+        if (item.environmentId !== environmentId) continue;
+        const shouldCloseItem =
+          item.isQueuedMessage === true
+            ? isRevokedTeamThread(item.threadId)
+            : isSilenced(item.threadId);
+        if (shouldCloseItem) {
           item.notification.close();
           pending.delete(tag);
         }

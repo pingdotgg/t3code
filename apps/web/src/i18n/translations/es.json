@@ -13482,5 +13482,8 @@
   "f83b990c1244d596": "Nombre para mostrar del equipo",
   "32bbfee4ac2f750f": "Se muestra como prefijo en los hilos de tareas programadas del equipo (por ejemplo, {displayName}: Daily triage).",
   "6c037e26ecbefe2e": "Nombre para mostrar (opcional)",
-  "7d63b70705da219f": "Usa el nombre del equipo si se deja vacío. Se muestra como prefijo en los hilos de tareas programadas del equipo."
+  "7d63b70705da219f": "Usa el nombre del equipo si se deja vacío. Se muestra como prefijo en los hilos de tareas programadas del equipo.",
+  "d8a2bbf28fcd8545": "{sender} puso un mensaje en cola en \"{threadTitle}\"",
+  "d5e1f1c902f3beec": "{sender} puso un mensaje en cola",
+  "ffa3612b1d59dc0e": "Abre el hilo para revisarlo o haz clic en Enviar ahora."
 }

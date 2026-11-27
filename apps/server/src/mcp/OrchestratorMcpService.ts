@@ -4029,17 +4029,23 @@ const make = Effect.gen(function* () {
           mode = "queue";
         }
       }
-      const preSendRuns =
-        mode === "queue"
-          ? []
-          : yield* threadManagement.getThreadRecords(input.threadId, ["runs"]).pipe(
-              Effect.map((records) => records.runs),
-              Effect.catchCause(() => Effect.succeed([] as const)),
-            );
+      const preSendRuns = yield* threadManagement.getThreadRecords(input.threadId, ["runs"]).pipe(
+        Effect.map((records) => records.runs),
+        Effect.catchCause(() => Effect.succeed([] as const)),
+      );
       const supersededActiveRunId = preSendRuns.findLast(
-        (candidate) => candidate.status === "running" || candidate.status === "starting",
+        (candidate) =>
+          candidate.status === "preparing" ||
+          candidate.status === "starting" ||
+          candidate.status === "running" ||
+          candidate.status === "waiting",
       )?.id;
       const key = yield* requestKey(input.clientRequestId);
+      const sendCommandId = stableCommandId({
+        scope,
+        requestKey: key,
+        operation: "thread-send",
+      });
       const messageId = stableOperationMessageId({
         scope,
         requestKey: key,
@@ -4052,11 +4058,7 @@ const make = Effect.gen(function* () {
       const result = yield* threadManagement
         .sendToThread({
           projectId: target.thread.projectId,
-          commandId: stableCommandId({
-            scope,
-            requestKey: key,
-            operation: "thread-send",
-          }),
+          commandId: sendCommandId,
           threadId: input.threadId,
           ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
           // A linked environment's agent has no thread here; the link names it.
@@ -4102,6 +4104,18 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         turnId: result.run.id,
       });
+      if (
+        result.dispatch?.replayed !== true &&
+        (result.run.status === "queued" || result.delivery === "queued")
+      ) {
+        yield* TeamMcpAccess.notifyQueuedMessageByCaller({
+          threadId: input.threadId,
+          queuedRunId: result.run.id,
+          commandId: sendCommandId,
+          ...(supersededActiveRunId !== undefined ? { activeRunId: supersededActiveRunId } : {}),
+          messageText: input.message,
+        });
+      }
       return {
         threadId: input.threadId,
         link: threadLinkFor(scope, input.threadId, target.thread.title),
