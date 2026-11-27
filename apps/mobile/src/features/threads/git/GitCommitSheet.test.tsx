@@ -1,3 +1,7 @@
+import type {
+  GitActionRequestInput,
+  RunVcsStackedActionInput,
+} from "@t3tools/client-runtime/state/vcs";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
@@ -8,12 +12,24 @@ type PressProps = {
   accessibilityState?: { checked?: boolean };
   onPress: () => void;
 };
+type InputProps = {
+  value?: string;
+  onChangeText?: (text: string) => void;
+};
 const state = vi.hoisted(() => ({
-  refName: "main",
+  refName: "main" as string | null,
+  cwd: "/repo",
+  files: [
+    { path: "include.ts", insertions: 1, deletions: 0 },
+    { path: "later.ts", insertions: 1, deletions: 0 },
+  ],
   result: null as object | null,
   pressables: [] as PressProps[],
   buttons: [] as PressProps[],
+  inputs: [] as InputProps[],
   ran: [] as object[],
+  createdBranch: undefined as string | undefined,
+  waitBeforeProgress: null as Promise<void> | null,
 }));
 
 vi.mock("react-native", () => ({
@@ -31,7 +47,10 @@ vi.mock("../../../components/ui/FitSheet", () => ({
 vi.mock("../../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../../../components/ui/AppText", () => ({
   AppText: () => null,
-  AppTextInput: () => null,
+  AppTextInput: (props: InputProps) => {
+    state.inputs.push(props);
+    return null;
+  },
 }));
 vi.mock("../../../components/ui/Button", () => ({
   Button: (props: PressProps) => {
@@ -45,10 +64,7 @@ vi.mock("../../../state/query", () => ({
       refName: state.refName,
       isDefaultRef: false,
       workingTree: {
-        files: [
-          { path: "include.ts", insertions: 1, deletions: 0 },
-          { path: "later.ts", insertions: 1, deletions: 0 },
-        ],
+        files: [...state.files],
       },
     },
   }),
@@ -57,7 +73,7 @@ vi.mock("../../../state/use-thread-selection", () => ({
   useThreadSelection: () => ({ selectedThread: { environmentId: "environment" } }),
 }));
 vi.mock("../../../state/use-selected-thread-worktree", () => ({
-  useSelectedThreadWorktree: () => ({ selectedThreadCwd: "/repo" }),
+  useSelectedThreadWorktree: () => ({ selectedThreadCwd: state.cwd }),
 }));
 vi.mock("../../../state/use-selected-thread-git-state", () => ({
   useSelectedThreadGitState: () => ({ gitOperationLabel: null }),
@@ -66,9 +82,24 @@ vi.mock("../../../state/use-selected-thread-git-actions", () => ({
   useSelectedThreadGitActions: () => ({
     canWriteSourceControl: true,
     canCreateFeatureBranch: true,
-    onRunSelectedThreadGitAction: (input: object) => {
+    onRunSelectedThreadGitAction: async ({
+      onProgress,
+      ...input
+    }: GitActionRequestInput & Pick<RunVcsStackedActionInput, "onProgress">) => {
       state.ran.push(input);
-      return Promise.resolve(state.result);
+      if (state.waitBeforeProgress) await state.waitBeforeProgress;
+      if (state.createdBranch) {
+        onProgress?.({
+          actionId: "commit",
+          cwd: state.cwd,
+          action: "commit",
+          kind: "action_failed",
+          phase: "commit",
+          message: "Commit rejected",
+          createdBranch: state.createdBranch,
+        });
+      }
+      return state.result;
     },
   }),
 }));
@@ -82,38 +113,214 @@ function openSheet() {
   const render = () => {
     state.pressables = [];
     state.buttons = [];
+    state.inputs = [];
     root.render(
       <GitCommitSheet route={{ params: { environmentId: "environment", threadId: "thread" } }} />,
     );
   };
   act(render);
   const row = (path: string) => state.pressables.findLast((p) => p.accessibilityLabel === path)!;
+  const toggleAllButton = () =>
+    state.buttons.findLast((b) => b.label === "Select all" || b.label === "Deselect all");
   return {
     isIncluded: (path: string) => row(path).accessibilityState?.checked,
     toggle: (path: string) => act(() => row(path).onPress()),
+    toggleAllLabel: () => toggleAllButton()?.label,
+    toggleAll: () => act(() => toggleAllButton()!.onPress()),
+    message: () => state.inputs.at(-1)?.value,
+    setMessage: (text: string) => act(() => state.inputs.at(-1)?.onChangeText?.(text)),
+    refresh: () => act(render),
     // The sheet closes on submit, so it unmounts once the commit settles.
-    commit: async () => {
-      await act(async () => state.buttons.findLast((b) => b.label === "Commit changes")!.onPress());
+    commit: async (label = "Commit changes") => {
+      await act(async () => state.buttons.findLast((b) => b.label === label)!.onPress());
       act(() => root.unmount());
     },
+    close: () => act(() => root.unmount()),
   };
 }
 
-it("keeps excluded files after a failed commit until a commit succeeds", async () => {
+it("keeps excluded files and commit message after a failed commit until a commit succeeds", async () => {
+  state.refName = "main";
+  state.result = null;
+  state.ran = [];
+
   const first = openSheet();
   first.toggle("later.ts");
-  state.result = null;
+  first.setMessage("  fix: preserve commit message  ");
   await first.commit();
 
   const retry = openSheet();
   expect(retry.isIncluded("later.ts")).toBe(false);
   expect(retry.isIncluded("include.ts")).toBe(true);
+  expect(retry.message()).toBe("  fix: preserve commit message  ");
   state.result = { commit: { status: "created" } };
   await retry.commit();
   expect(state.ran).toEqual([
-    { action: "commit", featureBranch: false, filePaths: ["include.ts"] },
-    { action: "commit", featureBranch: false, filePaths: ["include.ts"] },
+    {
+      action: "commit",
+      featureBranch: false,
+      commitMessage: "fix: preserve commit message",
+      filePaths: ["include.ts"],
+    },
+    {
+      action: "commit",
+      featureBranch: false,
+      commitMessage: "fix: preserve commit message",
+      filePaths: ["include.ts"],
+    },
   ]);
 
-  expect(openSheet().isIncluded("later.ts")).toBe(true);
+  const afterSuccess = openSheet();
+  expect(afterSuccess.isIncluded("later.ts")).toBe(true);
+  expect(afterSuccess.message()).toBe("");
+  afterSuccess.close();
+});
+
+it("resets excluded files when moving from detached HEAD to a named branch", async () => {
+  state.refName = null;
+  state.result = null;
+  state.ran = [];
+
+  const detached = openSheet();
+  detached.toggle("later.ts");
+  await detached.commit();
+
+  const retryDetached = openSheet();
+  expect(retryDetached.isIncluded("later.ts")).toBe(false);
+  expect(retryDetached.isIncluded("include.ts")).toBe(true);
+  retryDetached.close();
+
+  state.refName = "feature";
+  const onBranch = openSheet();
+  expect(onBranch.isIncluded("include.ts")).toBe(true);
+  expect(onBranch.isIncluded("later.ts")).toBe(true);
+
+  state.result = { commit: { status: "created" } };
+  await onBranch.commit();
+  expect(state.ran).toEqual([
+    { action: "commit", featureBranch: false, filePaths: ["include.ts"] },
+    { action: "commit", featureBranch: false },
+  ]);
+});
+
+it.each(["before reopening", "after reopening"])(
+  "keeps retry exclusions when new branch status arrives %s",
+  async (arrival) => {
+    state.cwd = `/repo/${arrival}`;
+    state.refName = "main";
+    state.result = null;
+    state.ran = [];
+    state.createdBranch = "feature/retry";
+
+    const first = openSheet();
+    first.toggle("later.ts");
+    await first.commit("Commit on a new branch");
+    state.createdBranch = undefined;
+
+    if (arrival === "before reopening") state.refName = "feature/retry";
+    const retry = openSheet();
+    expect(retry.isIncluded("later.ts")).toBe(false);
+    state.refName = "feature/retry";
+    retry.refresh();
+    expect(retry.isIncluded("later.ts")).toBe(false);
+    state.result = { commit: { status: "created" } };
+    await retry.commit();
+    expect(state.ran).toEqual([
+      { action: "commit", featureBranch: true, filePaths: ["include.ts"] },
+      { action: "commit", featureBranch: false, filePaths: ["include.ts"] },
+    ]);
+  },
+);
+
+it.each([
+  { checkedOut: "feature/retry", includedAfterFailure: false },
+  { checkedOut: "feature/other", includedAfterFailure: true },
+])("reconciles an open retry sheet when the action settles on $checkedOut", async (scenario) => {
+  state.cwd = `/repo/pending/${scenario.checkedOut}`;
+  state.refName = "main";
+  state.result = null;
+  state.ran = [];
+  state.createdBranch = "feature/retry";
+  const failure = Promise.withResolvers<void>();
+  state.waitBeforeProgress = failure.promise;
+
+  const first = openSheet();
+  first.toggle("later.ts");
+  await first.commit("Commit on a new branch");
+
+  const retry = openSheet();
+  state.refName = scenario.checkedOut;
+  retry.refresh();
+  const includedWhileRunning = retry.isIncluded("later.ts");
+  await act(async () => failure.resolve());
+  state.waitBeforeProgress = null;
+  state.createdBranch = undefined;
+
+  expect(includedWhileRunning).toBe(false);
+  expect(retry.isIncluded("later.ts")).toBe(scenario.includedAfterFailure);
+  state.result = { commit: { status: "created" } };
+  await retry.commit();
+  expect(state.ran.at(-1)).toEqual({
+    action: "commit",
+    featureBranch: false,
+    ...(scenario.includedAfterFailure ? {} : { filePaths: ["include.ts"] }),
+  });
+});
+
+it("clears inherited exclusions and message on success with stale branch status", async () => {
+  state.cwd = "/repo/pending/success";
+  state.refName = "main";
+  state.result = { commit: { status: "created" } };
+  state.createdBranch = undefined;
+  const success = Promise.withResolvers<void>();
+  state.waitBeforeProgress = success.promise;
+
+  const first = openSheet();
+  first.toggle("later.ts");
+  first.setMessage("fix: stale branch commit");
+  await first.commit("Commit on a new branch");
+
+  const reopened = openSheet();
+  expect(reopened.isIncluded("later.ts")).toBe(false);
+  expect(reopened.message()).toBe("fix: stale branch commit");
+  await act(async () => success.resolve());
+  state.waitBeforeProgress = null;
+
+  expect(reopened.isIncluded("later.ts")).toBe(true);
+  expect(reopened.message()).toBe("");
+  reopened.close();
+});
+
+it("treats remaining files as all selected when an excluded file disappears", async () => {
+  const initialFiles = state.files;
+  state.cwd = "/repo/stale-excluded";
+  state.refName = "main";
+  state.result = { commit: { status: "created" } };
+  state.ran = [];
+  state.createdBranch = undefined;
+  state.waitBeforeProgress = null;
+
+  const sheet = openSheet();
+  try {
+    sheet.toggle("later.ts");
+    state.files = initialFiles.slice(0, 1);
+    sheet.refresh();
+
+    expect(sheet.toggleAllLabel()).toBe("Deselect all");
+    sheet.toggleAll();
+    state.files = initialFiles;
+    sheet.refresh();
+    expect(sheet.isIncluded("later.ts")).toBe(false);
+    expect(sheet.isIncluded("include.ts")).toBe(false);
+
+    sheet.toggle("include.ts");
+    state.files = initialFiles.slice(0, 1);
+    sheet.refresh();
+    await sheet.commit();
+    expect(state.ran).toEqual([
+      { action: "commit", featureBranch: false, filePaths: ["include.ts"] },
+    ]);
+  } finally {
+    state.files = initialFiles;
+  }
 });

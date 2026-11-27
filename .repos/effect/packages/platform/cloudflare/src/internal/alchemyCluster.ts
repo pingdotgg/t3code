@@ -28,14 +28,28 @@ export interface ClusterHandleOptions {
   readonly layer: Layer.Layer<never, any, any>
   readonly env: Record<string, unknown>
   readonly keepAliveHeartbeat?: Duration.Input | undefined
+  readonly jurisdiction?: DurableObjectJurisdiction | undefined
 }
 
 /** @internal */
 export const makeClusterHandle = Effect.fnUntraced(function*(options: ClusterHandleOptions) {
-  const entityNamespace = options.env.ClusterEntity as DurableObjectNamespace
-  const workflowNamespace = options.env.ClusterWorkflow as DurableObjectNamespace
-  const queueNamespace = options.env.ClusterDurableQueue as DurableObjectNamespace
-  const singletonNamespace = options.env.ClusterSingleton as DurableObjectNamespace
+  const binding = (name: string) => {
+    const namespace = options.env[name] as DurableObjectNamespace
+    if (options.jurisdiction === undefined) return namespace
+    try {
+      return namespace.jurisdiction(options.jurisdiction)
+    } catch (error) {
+      if (error instanceof Error && error.message === "Jurisdiction restrictions are not implemented in workerd.") {
+        return namespace
+      }
+      throw error
+    }
+  }
+
+  const entityNamespace = binding("ClusterEntity")
+  const workflowNamespace = binding("ClusterWorkflow")
+  const queueNamespace = binding("ClusterDurableQueue")
+  const singletonNamespace = binding("ClusterSingleton")
 
   // The isolate-lifetime scope. workerd has no isolate-teardown hook, so it
   // is never closed; the built services live for the isolate, exactly like

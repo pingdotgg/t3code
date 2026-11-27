@@ -387,6 +387,7 @@ export interface ProjectionRecordFilter {
   readonly providerTurnIds?: ReadonlyArray<ProviderTurnId>;
   readonly providerTurnAttemptIds?: ReadonlyArray<RunAttemptId>;
   readonly attemptIds?: ReadonlyArray<RunAttemptId>;
+  readonly checkpointIds?: ReadonlyArray<CheckpointId>;
   readonly messageRoles?: ReadonlyArray<OrchestrationV2ConversationMessage["role"]>;
   readonly monitorNotificationsOnly?: boolean;
   /** User messages that are monitor notifications or delegated-completion wakes, through their partial index. */
@@ -1857,22 +1858,22 @@ function secretRequestAsPendingInput(
 /**
  * A secret card is answered while its agent waits in the run. A link card's
  * agent asked without waiting, so the card waits on the user after its run,
- * until the user writes in the thread again and so has moved past it.
+ * until the user writes in the thread again or a later run completes, either of
+ * which moves past it. The shell SQL checks the later run in its link queries.
  */
 const waitsOnUser = (
   item: OrchestrationV2TurnItem,
   liveRunIds: ReadonlySet<RunId>,
   latestUserAuthoredMessageAt: DateTime.Utc | null,
+  latestCompletedRunRequestedAt: DateTime.Utc | null,
 ) =>
-  (item.type === "link_request" && linkCardStillAsks(item, latestUserAuthoredMessageAt)) ||
+  (item.type === "link_request" &&
+    linkCardStillAsks(item, latestUserAuthoredMessageAt) &&
+    linkCardStillAsks(item, latestCompletedRunRequestedAt)) ||
   (item.type === "secret_request" && item.runId !== null && liveRunIds.has(item.runId));
 
-const linkCardStillAsks = (
-  item: OrchestrationV2TurnItem,
-  latestUserAuthoredMessageAt: DateTime.Utc | null,
-) =>
-  latestUserAuthoredMessageAt === null ||
-  !DateTime.isGreaterThan(latestUserAuthoredMessageAt, item.startedAt ?? item.updatedAt);
+const linkCardStillAsks = (item: OrchestrationV2TurnItem, movedOnAt: DateTime.Utc | null) =>
+  movedOnAt === null || !DateTime.isGreaterThan(movedOnAt, item.startedAt ?? item.updatedAt);
 
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
@@ -1919,12 +1920,25 @@ export function threadShellFromProjection(
     );
   const latestUserAuthoredMessageAt =
     userMessages.find((message) => message.createdBy === "user")?.updatedAt ?? null;
+  const latestCompletedRunRequestedAt =
+    runs
+      .filter((run) => run.status === "completed")
+      .toSorted(
+        (left, right) =>
+          DateTime.toEpochMillis(right.requestedAt) - DateTime.toEpochMillis(left.requestedAt),
+      )[0]?.requestedAt ?? null;
   if (pendingRuntimeRequest === null || pendingRuntimeRequest.kind === "user_input") {
     const waitingCard = secretRequestAsPendingInput(
       projection.turnItems
         .filter(
           (item) =>
-            item.status === "waiting" && waitsOnUser(item, liveRunIds, latestUserAuthoredMessageAt),
+            item.status === "waiting" &&
+            waitsOnUser(
+              item,
+              liveRunIds,
+              latestUserAuthoredMessageAt,
+              latestCompletedRunRequestedAt,
+            ),
         )
         .toSorted(
           (left, right) =>
@@ -3832,8 +3846,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
         ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
         ${filter?.turnItemNodeIds === undefined ? sql`` : sql`AND node_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemNodeIds)}))`}
-        ${filter?.turnItemRunIds === undefined ? sql`` : sql`AND (run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))})) OR (${filter.turnItemRunIds.includes(null) ? 1 : 0} = 1 AND run_id IS NULL))`}
+        ${filter?.turnItemRunIds === undefined ? sql`` : turnItemRunIdsMatch(threadId, filter.turnItemRunIds)}
     `;
+
+    // SQLite seeks no OR of `run_id IN (...)` and `run_id IS NULL` on the run index and walks the
+    // whole thread instead, so a mixed list seeks each part on its own.
+    const turnItemRunIdsMatch = (threadId: ThreadId, runIds: ReadonlyArray<RunId | null>) => {
+      const ids = runIds.filter((id): id is RunId => id !== null);
+      const inRuns = sql`run_id IN (SELECT value FROM json_each(${encodeIdList(ids)}))`;
+      if (!runIds.includes(null)) return sql`AND ${inRuns}`;
+      if (ids.length === 0) return sql`AND run_id IS NULL`;
+      return sql`AND rowid IN (
+        SELECT rowid FROM orchestration_v2_projection_turn_items
+        WHERE thread_id = ${threadId} AND ${inRuns}
+        UNION ALL
+        SELECT rowid FROM orchestration_v2_projection_turn_items
+        WHERE thread_id = ${threadId} AND run_id IS NULL
+      )`;
+    };
 
     // An id filter reads by primary key. `+` keeps SQLite off the thread index, which walks
     // every row of the thread to find the few ids.
@@ -3999,9 +4029,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT payload_json
                 FROM orchestration_v2_projection_turn_items
                 ${
-                  filter?.turnItemTypes === undefined && filter?.turnItemStatuses === undefined
+                  filter?.turnItemTypes === undefined &&
+                  filter?.turnItemStatuses === undefined &&
+                  filter?.turnItemRunId === undefined &&
+                  filter?.turnItemRunIds === undefined
                     ? sql`WHERE ${turnItemMatch(threadId, filter)}`
-                    : // Matches on the type/status index and fetches only those payloads. Sorted, SQLite would walk the thread by ordinal instead.
+                    : // Matches on the type/status or run index and fetches only those payloads. Sorted, SQLite would walk the thread by ordinal instead.
                       sql`WHERE rowid IN (
                     SELECT rowid FROM orchestration_v2_projection_turn_items
                     WHERE ${turnItemMatch(threadId, filter)}
@@ -4631,13 +4664,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 OR kind = 'manual')
             ORDER BY ordinal_within_parent ASC, scope_id ASC
           `,
-          fields !== undefined && !fields.includes("checkpoints")
+          (fields !== undefined && !fields.includes("checkpoints")) ||
+          (window === undefined && matchesNothing(filter?.checkpointIds))
             ? Effect.succeed([])
             : window === undefined
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_checkpoints
-            WHERE thread_id = ${threadId}
+            WHERE ${threadColumn(filter?.checkpointIds)} = ${threadId}
+              ${filter?.checkpointIds === undefined ? sql`` : sql`AND checkpoint_id IN (SELECT value FROM json_each(${encodeIdList(filter.checkpointIds)}))`}
             ORDER BY scope_id ASC, ordinal_within_scope ASC
           `
               : sql<PayloadRow>`
@@ -8610,6 +8645,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   INDEXED BY orchestration_v2_projection_turn_items_waiting_link_idx
                 WHERE link.thread_id = t.thread_id
                   AND link.type = 'link_request' AND link.status = 'waiting'
+                  -- linkCardStillAsks: a later completed run has moved past the card.
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs later
+                    WHERE later.thread_id = t.thread_id AND later.status = 'completed'
+                      AND later.requested_at > COALESCE(
+                        json_extract(link.payload_json, '$.startedAt'), link.updated_at
+                      )
+                      AND NOT ${isSilentShellRun("later")}
+                  )
                 ORDER BY link.updated_at DESC, link.turn_item_id DESC
                 LIMIT 1
               ) AS pending_link_request_payload_json,
@@ -8979,6 +9023,29 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     AND json_extract(parent.payload_json, '$.archivedAt') IS NULL
                     AND json_extract(parent.payload_json, '$.settledOverride') IS NOT 'settled'
                 )
+                -- A pinned or long-lived parent may never settle, so a child also settles once
+                -- its own run has ended and its parent holds every result it produced. A
+                -- provider-native child has no run of its own; its task record carries its state.
+                OR (
+                  (
+                    r.status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
+                    OR (
+                      r.run_id IS NULL
+                      AND EXISTS (
+                        SELECT 1 FROM orchestration_v2_projection_subagents task
+                        WHERE task.child_thread_id = t.thread_id
+                      )
+                    )
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_subagents task
+                    WHERE task.child_thread_id = t.thread_id
+                      AND (
+                        task.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted')
+                        OR task.completion_delivery_state IN ('pending', 'claimed')
+                      )
+                  )
+                )
               )
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_runs active
@@ -8994,7 +9061,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   INDEXED BY orchestration_v2_projection_turn_items_waiting_link_idx
                 WHERE link.thread_id = t.thread_id
                   AND link.type = 'link_request' AND link.status = 'waiting'
-                  -- linkCardStillAsks: once the user writes after the card, it stops asking.
+                  -- linkCardStillAsks: once the user writes or a later run completes after the
+                  -- card, it stops asking.
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs later
+                    WHERE later.thread_id = t.thread_id AND later.status = 'completed'
+                      AND later.requested_at > COALESCE(
+                        json_extract(link.payload_json, '$.startedAt'), link.updated_at
+                      )
+                      AND NOT ${isSilentShellRun("later")}
+                  )
                   AND NOT EXISTS (
                     SELECT 1 FROM orchestration_v2_projection_messages message
                     WHERE message.thread_id = t.thread_id AND message.role = 'user'
@@ -9104,8 +9180,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT payload_json
           FROM orchestration_v2_projection_threads
           WHERE deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND thread_id = ${threadId}`}
-            ${options?.includeArchived === true ? sql`` : sql`AND json_extract(payload_json, '$.archivedAt') IS NULL`}
-            AND json_array_length(payload_json, '$.pullRequests') > 0
+            ${
+              options?.includeArchived === true
+                ? sql`AND json_type(payload_json, '$.pullRequests[0]') IS NOT NULL`
+                : // Keep identical to migration 098's active_shell_idx expression and WHERE so sweeps walk that index.
+                  sql`AND archived_at IS NULL
+                    AND (CASE WHEN json_valid(payload_json) THEN json_type(payload_json, '$.pullRequests[0]') END) IS NOT NULL`
+            }
           ORDER BY updated_at ASC, thread_id ASC
         `;
           return yield* Effect.forEach(rows, (row) =>

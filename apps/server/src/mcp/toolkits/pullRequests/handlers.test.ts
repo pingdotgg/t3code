@@ -695,6 +695,10 @@ describe("listThreadPullRequests", () => {
     );
     expect(open.nextCursor).toBeNull();
     expect(listThreadPullRequests(thread, undefined, ["merged"]).nextCursor).toBeNull();
+    const unfiltered = listThreadPullRequests(thread);
+    expect(unfiltered.pullRequests).toHaveLength(50);
+    expect(unfiltered.nextCursor).not.toBeNull();
+    expect(listThreadPullRequests(thread, undefined, [])).toEqual(unfiltered);
   });
 });
 

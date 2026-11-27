@@ -1484,6 +1484,21 @@ describe("ScopedCache", () => {
           assert.isTrue(yield* ScopedCache.has(cache, "d"))
         }))
 
+      it.effect("reloading an expired entry makes it most recently used", () =>
+        Effect.gen(function*() {
+          const { cache, cleanupTracker } = yield* makeManagedResourceCache(2, "1 second")
+
+          yield* ScopedCache.get(cache, "a")
+          yield* TestClock.adjust("500 millis")
+          yield* ScopedCache.get(cache, "b")
+          yield* TestClock.adjust("600 millis")
+          yield* ScopedCache.get(cache, "a")
+          yield* ScopedCache.get(cache, "c")
+
+          assert.deepStrictEqual(yield* ScopedCache.keys(cache), ["a", "c"])
+          assert.deepStrictEqual(cleanupTracker.cleanedUp, ["a", "b"])
+        }))
+
       it.effect("capacity of 1", () =>
         Effect.gen(function*() {
           const cache = yield* ScopedCache.make({

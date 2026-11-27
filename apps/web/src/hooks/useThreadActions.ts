@@ -1003,7 +1003,12 @@ export function useThreadActions() {
     return ThreadUndo.executeThreadUndo(
       plan,
       async (step) => {
-        if (cancelledOnDevice) return AsyncResult.success(undefined);
+        if (
+          cancelledOnDevice &&
+          !ThreadUndo.restoresAfterDeviceCancel(step, readThreadShell(target))
+        ) {
+          return AsyncResult.success(undefined);
+        }
         switch (step.action) {
           case "unsettle": {
             const result = await unsettleThread(target, step.restoreUnsettledAt);
