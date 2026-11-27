@@ -23,7 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { Argument, Command } from "effect/cli";
+import { Argument, Command, Flag } from "effect/cli";
 
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag } from "./config.ts";
@@ -55,7 +55,7 @@ export class DesktopAppUnreachableError extends Schema.TaggedError<DesktopAppUnr
   {
     candidateAddresses: Schema.Array(Schema.String),
     requestId: Schema.String,
-    workspaceRoot: Schema.String,
+    workspaceRoot: Schema.optional(Schema.String),
     cause: Schema.Defect(),
   },
 ) {
@@ -75,6 +75,33 @@ export class DesktopAppRequestFailedError extends Schema.TaggedError<DesktopAppR
 ) {
   override get message(): string {
     return `T3 Code could not open ${this.workspaceRoot} (${this.code}).`;
+  }
+}
+
+export class DesktopAppUsageError extends Schema.TaggedError<DesktopAppUsageError>()(
+  "DesktopAppUsageError",
+  { detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+export class DesktopAppPairFailedError extends Schema.TaggedError<DesktopAppPairFailedError>()(
+  "DesktopAppPairFailedError",
+  {
+    code: DesktopAppActivationErrorCode,
+    requestId: Schema.String,
+    detail: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    // A desktop app from before `--pair` rejects the request type as invalid.
+    if (this.code === "invalid-request") {
+      return "The running T3 Code desktop app does not support `t3 app --pair`. Update the desktop app, then try again.";
+    }
+    return `T3 Code could not add the backend: ${this.detail} (${this.code})`;
   }
 }
 
@@ -200,7 +227,13 @@ const appEnvironment = Config.all({
 const runAppCommand = Effect.fn("cli.app")(function* (flags: {
   readonly baseDir: Option.Option<string>;
   readonly workspaceRoot: Option.Option<string>;
+  readonly pair: Option.Option<string>;
 }) {
+  if (Option.isSome(flags.pair) && Option.isSome(flags.workspaceRoot)) {
+    return yield* new DesktopAppUsageError({
+      detail: "Give a project path or --pair, not both.",
+    });
+  }
   const environment = yield* appEnvironment;
   const hostPlatform = yield* HostProcess.Platform;
   if (Option.isSome(environment.sshConnection) || Option.isSome(environment.sshTty)) {
@@ -214,9 +247,11 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
   const configuredBaseDir = Option.getOrUndefined(flags.baseDir) ?? environment.t3Home;
   const baseDir = yield* resolveBaseDir(configuredBaseDir);
   const allowDevFallback = Option.isNone(flags.baseDir) && !environment.t3Home?.trim();
-  const rawWorkspaceRoot =
-    Option.getOrUndefined(flags.workspaceRoot) ?? (yield* HostProcess.WorkingDirectory);
-  const workspaceRoot = path.resolve(yield* expandHomePath(rawWorkspaceRoot));
+  const resolveWorkspaceRoot = Effect.gen(function* () {
+    const rawWorkspaceRoot =
+      Option.getOrUndefined(flags.workspaceRoot) ?? (yield* HostProcess.WorkingDirectory);
+    return path.resolve(yield* expandHomePath(rawWorkspaceRoot));
+  });
   const userId = yield* HostProcess.UserId;
   const resolveAddress = (stateSubdirectory: "userdata" | "dev") =>
     resolveDesktopAppControlAddress({
@@ -228,13 +263,21 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
     });
   const random = yield* SecureRandom.SecureRandom;
   const requestId = yield* random.uuidV4();
-  const request: DesktopAppActivationRequest = {
-    version: DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION,
-    requestId,
-    type: "open-workspace",
-    workspaceRoot,
-    platform: hostPlatform,
-  };
+  const request: DesktopAppActivationRequest = Option.isSome(flags.pair)
+    ? {
+        version: DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION,
+        requestId,
+        type: "pair-environment",
+        pairingUrl: flags.pair.value,
+      }
+    : {
+        version: DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION,
+        requestId,
+        type: "open-workspace",
+        workspaceRoot: yield* resolveWorkspaceRoot,
+        platform: hostPlatform,
+      };
+  const workspaceRoot = request.type === "open-workspace" ? request.workspaceRoot : undefined;
   const address = resolveAddress("userdata");
   const fallbackAddress = allowDevFallback ? resolveAddress("dev") : undefined;
 
@@ -253,11 +296,19 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
             ? [address.address]
             : [address.address, fallbackAddress.address],
         requestId: request.requestId,
-        workspaceRoot,
+        ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
         cause,
       }),
   });
   if (!response.ok) {
+    if (workspaceRoot === undefined) {
+      return yield* new DesktopAppPairFailedError({
+        code: response.code,
+        requestId: response.requestId,
+        detail: response.message,
+        cause: response,
+      });
+    }
     return yield* new DesktopAppRequestFailedError({
       code: response.code,
       requestId: response.requestId,
@@ -266,7 +317,11 @@ const runAppCommand = Effect.fn("cli.app")(function* (flags: {
     });
   }
 
-  yield* Console.log(`Opened ${workspaceRoot} in T3 Code.`);
+  if ("environmentId" in response) {
+    yield* Console.log(`Added the backend ${response.environmentId} to T3 Code.`);
+  } else {
+    yield* Console.log(`Opened ${workspaceRoot} in T3 Code.`);
+  }
 });
 
 export const appCommand = Command.make("app", {
@@ -275,7 +330,15 @@ export const appCommand = Command.make("app", {
     Argument.withDescription("Project directory. Default: current directory."),
     Argument.optional,
   ),
+  pair: Flag.String("pair").pipe(
+    Flag.withDescription(
+      "Save a backend in the running desktop app from its pairing URL (`t3 pair` there), without the prompt a t3code:// link shows.",
+    ),
+    Flag.optional,
+  ),
 }).pipe(
-  Command.withDescription("Open a project in the running T3 Code desktop app."),
+  Command.withDescription(
+    "Open a project in the running T3 Code desktop app, or save a backend there with --pair.",
+  ),
   Command.withHandler(runAppCommand),
 );

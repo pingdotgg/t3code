@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   handleDesktopAppActivationRequest,
+  handleDesktopAppPairRequest,
   type DesktopAppActivationDependencies,
 } from "./desktopAppActivation";
 
@@ -66,5 +67,56 @@ describe("desktop app activation", () => {
     );
 
     expect(response).toMatchObject({ ok: false, code: "platform-mismatch" });
+  });
+});
+
+describe("desktop app pairing", () => {
+  const pairRequest = {
+    version: 1,
+    requestId: "request-pair",
+    type: "pair-environment",
+    pairingUrl: "https://vps.example.com/pair#token=abc",
+  } as const;
+  const remoteId = EnvironmentId.make("remote");
+
+  it("saves the backend without asking and answers with its environment", async () => {
+    const pair = vi.fn(async () => remoteId);
+
+    const response = await handleDesktopAppPairRequest(pairRequest, {
+      savedEnvironmentIds: () => new Set([environmentId]),
+      pair,
+    });
+
+    expect(pair).toHaveBeenCalledWith(pairRequest.pairingUrl);
+    expect(response).toEqual({
+      version: 1,
+      requestId: "request-pair",
+      ok: true,
+      environmentId: remoteId,
+    });
+  });
+
+  it("reports a backend that was already saved", async () => {
+    const response = await handleDesktopAppPairRequest(pairRequest, {
+      savedEnvironmentIds: () => new Set([environmentId, remoteId]),
+      pair: async () => remoteId,
+    });
+
+    expect(response).toMatchObject({ ok: false, code: "environment-already-saved" });
+  });
+
+  it("passes on why pairing failed", async () => {
+    const response = await handleDesktopAppPairRequest(pairRequest, {
+      savedEnvironmentIds: () => new Set(),
+      pair: async () => {
+        throw new Error("The pairing code has already been used.");
+      },
+    });
+
+    expect(response).toMatchObject({
+      ok: false,
+      code: "pairing-failed",
+      message: "The pairing code has already been used.",
+    });
   });
 });

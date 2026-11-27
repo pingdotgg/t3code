@@ -4,7 +4,7 @@ import {
   inferProjectTitleFromPath,
 } from "@t3tools/client-runtime/state/projects";
 import { useAtomValue } from "@effect/atom-react";
-import type { DesktopAppActivationRequest } from "@t3tools/contracts";
+import type { DesktopAppOpenWorkspaceRequest } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
 import { handleDesktopAppActivationRequest } from "../desktopAppActivation";
@@ -39,7 +39,7 @@ export function useOpenLocalWorkspace() {
     localEnvironment.serverConfig !== null &&
     shellHasSnapshot;
 
-  const open = (request: DesktopAppActivationRequest) =>
+  const open = (request: DesktopAppOpenWorkspaceRequest) =>
     handleDesktopAppActivationRequest(request, {
       getTarget: () => {
         if (

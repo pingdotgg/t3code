@@ -10,7 +10,7 @@ See [Install T3 Code](./install.md#command-line) for installation (`curl -fsSL h
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
 | `t3 [path]` / `t3 start` | Start a foreground server and open the web app (optionally in a project directory).                                              |
 | `t3 serve`               | Start the server without opening a browser (`--lan`, `--tailscale-serve`, `--host`, `--port`, `--base-dir`).                     |
-| `t3 app [path]`          | Open a directory as a project/thread in the running desktop app.                                                                 |
+| `t3 app [path]`          | Open a directory as a project/thread in the running desktop app, or save a backend there from its pairing URL (`--pair <url>`).  |
 | `t3 up`                  | Interactive setup for remote access (T3 Connect and/or LAN) plus background service (`--connect`, `--lan`, `--no-lan`, `--yes`). |
 | `t3 connect`             | Manage T3 Connect (`t3 connect`, `status`, `login`, `logout`, `link`, `unlink`).                                                 |
 | `t3 status`              | Show how other devices can reach this host (`--json`).                                                                           |

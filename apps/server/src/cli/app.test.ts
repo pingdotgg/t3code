@@ -298,11 +298,16 @@ describe("t3 app", () => {
         yield* runCli(["app"], { T3CODE_HOME: baseDir });
         yield* runCli(["app", explicitPath, "--base-dir", baseDir]);
 
-        expect(desktop.received.map((request) => request.workspaceRoot)).toEqual([
-          workingDirectory,
-          explicitPath,
-        ]);
-        expect(desktop.received.every((request) => request.platform === platform)).toBe(true);
+        expect(
+          desktop.received.map((request) =>
+            request.type === "open-workspace" ? request.workspaceRoot : null,
+          ),
+        ).toEqual([workingDirectory, explicitPath]);
+        expect(
+          desktop.received.every(
+            (request) => request.type === "open-workspace" && request.platform === platform,
+          ),
+        ).toBe(true);
       }).pipe(Effect.scoped),
     ),
   );
@@ -399,5 +404,120 @@ describe("t3 app", () => {
           }
         }).pipe(Effect.provideService(HostProcess.HomeDirectory, root), Effect.scoped),
       ),
+  );
+
+  it.effect("sends --pair as a pairing request, so the desktop app saves it without a prompt", () =>
+    withTempDirectory("t3-app-pair-test-", (root) =>
+      Effect.gen(function* () {
+        const baseDir = NodePath.join(root, ".t3");
+        const pairingUrl = "https://vps.example.com/pair#token=abc";
+        const desktop = yield* fakeDesktop({
+          baseDir,
+          reply: (request) => ({
+            version: 1,
+            requestId: request.requestId,
+            ok: true,
+            environmentId: "environment-remote",
+          }),
+        });
+
+        yield* runCli(["app", "--pair", pairingUrl]);
+
+        expect(desktop.received).toMatchObject([{ type: "pair-environment", pairingUrl }]);
+        expect(yield* TestConsole.logLines).toContainEqual(
+          "Added the backend environment-remote to T3 Code.",
+        );
+      }).pipe(
+        Effect.provideService(HostProcess.HomeDirectory, root),
+        Effect.provide(Layer.fresh(TestConsole.layer)),
+        Effect.scoped,
+      ),
+    ),
+  );
+
+  it.effect.each([
+    {
+      code: "environment-already-saved",
+      message: "That backend is already saved in T3 Code.",
+      expected: "T3 Code could not add the backend: That backend is already saved in T3 Code.",
+    },
+    {
+      code: "pairing-failed",
+      message: "The pairing code has already been used.",
+      expected: "T3 Code could not add the backend: The pairing code has already been used.",
+    },
+    {
+      code: "renderer-unavailable",
+      message: "The T3 Code window closed before it finished the request.",
+      expected: "T3 Code could not add the backend: The T3 Code window closed",
+    },
+    // A desktop app from before --pair rejects the unknown request type.
+    {
+      code: "invalid-request",
+      message: "The desktop app request is invalid.",
+      expected: "does not support `t3 app --pair`",
+    },
+  ] as const)("fails --pair when the desktop app answers $code", (failure) =>
+    withTempDirectory("t3-app-pair-failure-test-", (root) =>
+      Effect.gen(function* () {
+        const baseDir = NodePath.join(root, ".t3");
+        yield* fakeDesktop({
+          baseDir,
+          reply: (request) => ({
+            version: 1,
+            requestId: request.requestId,
+            ok: false,
+            code: failure.code,
+            message: failure.message,
+          }),
+        });
+
+        const error = yield* runCli(["app", "--pair", "https://vps.example.com/pair"]).pipe(
+          Effect.flip,
+        );
+
+        expect(error).toMatchObject({
+          _tag: "DesktopAppPairFailedError",
+          code: failure.code,
+          message: expect.stringContaining(failure.expected),
+        });
+      }).pipe(Effect.provideService(HostProcess.HomeDirectory, root), Effect.scoped),
+    ),
+  );
+
+  it.effect("fails --pair when no desktop app is running", () =>
+    withTempDirectory("t3-app-pair-unreachable-test-", (root) =>
+      Effect.gen(function* () {
+        const error = yield* runCli([
+          "app",
+          "--pair",
+          "https://vps.example.com/pair",
+          "--base-dir",
+          NodePath.join(root, ".t3"),
+        ]).pipe(Effect.flip);
+
+        expect(error).toMatchObject({ _tag: "DesktopAppUnreachableError" });
+        expect(error).not.toHaveProperty("workspaceRoot");
+      }),
+    ),
+  );
+
+  it.effect("refuses a project path together with --pair before contacting the desktop app", () =>
+    withTempDirectory("t3-app-pair-usage-test-", (root) =>
+      Effect.gen(function* () {
+        const baseDir = NodePath.join(root, ".t3");
+        const desktop = yield* fakeDesktop({ baseDir });
+
+        const error = yield* runCli([
+          "app",
+          NodePath.join(root, "project"),
+          "--pair",
+          "https://vps.example.com/pair",
+        ]).pipe(Effect.flip);
+
+        expect(error).toMatchObject({ _tag: "DesktopAppUsageError" });
+        expect(desktop.received).toEqual([]);
+      }).pipe(Effect.provideService(HostProcess.HomeDirectory, root), Effect.scoped),
+    ),
   );
 });

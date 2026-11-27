@@ -7,6 +7,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  EnvironmentId,
   ProjectId,
   ThreadId,
   type DesktopAppActivationRequest,
@@ -167,6 +168,49 @@ describe("desktop app control server", () => {
           ok: true,
           requestId: "reclaimed",
         });
+        await NodeFSP.rm(root, { recursive: true, force: true });
+      });
+    }),
+  );
+
+  it.effect("hands a pairing request to the renderer and returns its answer", () =>
+    Effect.gen(function* () {
+      const platform = yield* HostProcess.Platform;
+      const userId = yield* HostProcess.UserId;
+      yield* Effect.promise(async () => {
+        const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-app-pair-test-"));
+        const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
+        const handled: DesktopAppActivationRequest[] = [];
+        const server = await startDesktopAppControlServer({
+          ...target,
+          userId,
+          handle: async (input) => {
+            handled.push(input);
+            return {
+              version: 1,
+              requestId: input.requestId,
+              ok: true,
+              environmentId: EnvironmentId.make("environment-remote"),
+            };
+          },
+          cancel: () => undefined,
+          onReclaimError: () => undefined,
+        });
+        openServers.push(server);
+        const pair: DesktopAppActivationRequest = {
+          version: 1,
+          requestId: "request-pair",
+          type: "pair-environment",
+          pairingUrl: "https://vps.example.com/pair#token=abc",
+        };
+
+        await expect(exchange(target.address, pair)).resolves.toEqual({
+          version: 1,
+          requestId: "request-pair",
+          ok: true,
+          environmentId: "environment-remote",
+        });
+        expect(handled).toEqual([pair]);
         await NodeFSP.rm(root, { recursive: true, force: true });
       });
     }),

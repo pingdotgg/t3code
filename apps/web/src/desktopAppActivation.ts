@@ -1,7 +1,8 @@
 import type {
   DesktopAppActivationFailure,
-  DesktopAppActivationRequest,
   DesktopAppActivationResponse,
+  DesktopAppOpenWorkspaceRequest,
+  DesktopAppPairEnvironmentRequest,
   EnvironmentId,
   ExecutionEnvironmentPlatformOs,
   ProjectId,
@@ -45,7 +46,7 @@ function failure(
 }
 
 function desktopPlatformToEnvironmentOs(
-  platform: DesktopAppActivationRequest["platform"],
+  platform: DesktopAppOpenWorkspaceRequest["platform"],
 ): ExecutionEnvironmentPlatformOs {
   return platform === "win32" ? "windows" : platform;
 }
@@ -55,7 +56,7 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 export async function handleDesktopAppActivationRequest(
-  request: DesktopAppActivationRequest,
+  request: DesktopAppOpenWorkspaceRequest,
   dependencies: DesktopAppActivationDependencies,
 ): Promise<DesktopAppActivationResponse> {
   const target = dependencies.getTarget();
@@ -116,4 +117,41 @@ export async function handleDesktopAppActivationRequest(
       errorMessage(error, "T3 Code could not open a new thread for the project."),
     );
   }
+}
+
+export interface DesktopAppPairDependencies {
+  /** Every environment the app has saved, including this machine's own. */
+  readonly savedEnvironmentIds: () => ReadonlySet<EnvironmentId>;
+  /** Pairs and saves the backend, resolving with its environment id. */
+  readonly pair: (pairingUrl: string) => Promise<EnvironmentId>;
+}
+
+/**
+ * `t3 app --pair` already proved it runs as this user on this machine, so unlike a
+ * `t3code://pair` link it saves the backend without asking first.
+ */
+export async function handleDesktopAppPairRequest(
+  request: DesktopAppPairEnvironmentRequest,
+  dependencies: DesktopAppPairDependencies,
+): Promise<DesktopAppActivationResponse> {
+  const savedBefore = dependencies.savedEnvironmentIds();
+  let environmentId: EnvironmentId;
+  try {
+    environmentId = await dependencies.pair(request.pairingUrl);
+  } catch (error) {
+    return failure(
+      request.requestId,
+      "pairing-failed",
+      errorMessage(error, "T3 Code could not add the backend."),
+    );
+  }
+  // The pairing URL names an address, not an environment, so a saved one only shows once paired.
+  if (savedBefore.has(environmentId)) {
+    return failure(
+      request.requestId,
+      "environment-already-saved",
+      "That backend is already saved in T3 Code.",
+    );
+  }
+  return { version: 1, requestId: request.requestId, ok: true, environmentId };
 }

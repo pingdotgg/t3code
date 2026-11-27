@@ -59,7 +59,7 @@ export class DesktopAppActivationBroker {
           failure(
             request.requestId,
             "request-timeout",
-            "The desktop app did not finish opening the project in time.",
+            "The desktop app did not finish the request in time.",
           ),
         );
       }, this.#requestTimeoutMs);
@@ -89,7 +89,7 @@ export class DesktopAppActivationBroker {
           failure(
             pending.request.requestId,
             "renderer-unavailable",
-            "The T3 Code window closed before it opened the project.",
+            "The T3 Code window closed before it finished the request.",
           ),
         );
       }
