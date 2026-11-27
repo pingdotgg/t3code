@@ -73,6 +73,8 @@ vi.mock(import("./office/WordDocument"), async () => {
 });
 
 import { __setClientSettingsForTests, getClientSettings } from "~/hooks/useSettings";
+import { refreshTheme, setAppearanceMode } from "~/hooks/useTheme";
+import { THEME_APPEARANCE_MODE_STORAGE_KEY } from "~/themePalette";
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import LargeTextViewer from "./LargeTextViewer";
 import VirtualTablePreview from "./VirtualTablePreview";
@@ -82,7 +84,7 @@ import JSZip from "jszip";
 import { boundedZip } from "@t3tools/client-runtime/zip/bounded-zip";
 import BinaryViewer from "./BinaryViewer";
 import { decodeImagePreview } from "./decodeImagePreview";
-import type { BinaryWorkerResult } from "./binaryPreviewProtocol";
+import { formatArchiveModifiedDate, type BinaryWorkerResult } from "./binaryPreviewProtocol";
 import type { TextPreviewResult } from "./largeTextProtocol";
 import type { ReactElement } from "react";
 import type { OfficeWorkerRequest, OfficeWorkerResult } from "./officePreviewProtocol";
@@ -321,6 +323,32 @@ describe("bounded binary previews", () => {
     }
   });
 
+  it("dates an archive folder by its own ZIP record when its children come first", async () => {
+    const zip = new JSZip();
+    const fileDate = new Date("2022-01-02T00:00:00Z");
+    zip.file("docs/readme.txt", "a".repeat(1024), { createFolders: false, date: fileDate });
+    zip.file("docs/sub/nested.txt", "b".repeat(1024), { createFolders: false, date: fileDate });
+    zip.file("docs/", null, { dir: true, date: new Date("2024-10-19T00:00:00Z") });
+    zip.file("docs/sub/", null, { dir: true, date: new Date("2023-07-08T00:00:00Z") });
+    zip.file("docs/later.txt", "c".repeat(1024), {
+      createFolders: false,
+      date: new Date("2025-05-06T00:00:00Z"),
+    });
+    const src = URL.createObjectURL(new Blob([await zip.generateAsync({ type: "arraybuffer" })]));
+    try {
+      await using screen = await render(<BinaryViewer src={src} name="dates.zip" kind="archive" />);
+      await vi.waitFor(() => {
+        expect(
+          [...screen.container.querySelectorAll("tbody td")].map((cell) =>
+            cell.textContent?.trim(),
+          ),
+        ).toEqual(["docs", "3 KB", formatArchiveModifiedDate("2024-10-19T00:00:00.000")]);
+      }, 10_000);
+    } finally {
+      URL.revokeObjectURL(src);
+    }
+  });
+
   it("uses a PAX size override for the following TAR payload and bounds it", async () => {
     const archive = (size: string) => {
       const header = (name: string, size: number, type: string) => {
@@ -541,6 +569,35 @@ describe("bounded binary previews", () => {
       expect(buttons.map((button) => button.textContent)).toEqual(["foo.txt", "foo.txt"]);
       await act(() => buttons[1]!.click());
       await vi.waitFor(() => expect(screen.container.textContent).toContain("root file"), 10_000);
+    } finally {
+      URL.revokeObjectURL(src);
+    }
+  });
+
+  it("opens extensionless UTF-8 text archive entries while rejecting binary ones", async () => {
+    const bytes = await new JSZip()
+      .file("CHANGELOG", "Release 1.2.3 notes")
+      .file("firmware", new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 0x00, 0x01]))
+      .generateAsync({ type: "arraybuffer" });
+    const src = URL.createObjectURL(new Blob([bytes]));
+    try {
+      await using screen = await render(<BinaryViewer src={src} name="pkg.zip" kind="archive" />);
+      await vi.waitFor(
+        () => expect(screen.container.querySelectorAll("tbody button")).toHaveLength(2),
+        10_000,
+      );
+      await screen.getByRole("button", { name: "CHANGELOG" }).click();
+      await vi.waitFor(
+        () => expect(screen.container.textContent).toContain("Release 1.2.3 notes"),
+        10_000,
+      );
+      await screen.getByRole("button", { name: "Back to archive" }).click();
+      await screen.getByRole("button", { name: "firmware" }).click();
+      await vi.waitFor(() =>
+        expect(screen.container.querySelector('[role="alert"]')?.textContent).toContain(
+          "Only UTF-8 text and images can be opened inside an archive.",
+        ),
+      );
     } finally {
       URL.revokeObjectURL(src);
     }
@@ -1670,6 +1727,18 @@ it.each(["archive", "sqlite"] as const)(
 );
 
 it("loads a font attachment through the lazy preview", async () => {
+  const previousAppearanceMode = window.localStorage.getItem(THEME_APPEARANCE_MODE_STORAGE_KEY);
+  using _theme = {
+    [Symbol.dispose]() {
+      if (previousAppearanceMode === null) {
+        window.localStorage.removeItem(THEME_APPEARANCE_MODE_STORAGE_KEY);
+      } else {
+        window.localStorage.setItem(THEME_APPEARANCE_MODE_STORAGE_KEY, previousAppearanceMode);
+      }
+      refreshTheme();
+    },
+  };
+  setAppearanceMode("light");
   const { loadBundledFontBytes, resolveBundledFamilyFace } = await import("@betteroffice/fonts");
   const bytes = await loadBundledFontBytes(resolveBundledFamilyFace("Carlito", false, false)!);
   const file = new Blob([bytes], { type: "font/ttf" });
@@ -1691,6 +1760,18 @@ it("loads a font attachment through the lazy preview", async () => {
     },
     { timeout: 10_000 },
   );
+  const rootBackground = () =>
+    getComputedStyle(document.documentElement).getPropertyValue("--background");
+  const frameBackground = () =>
+    screen.container.querySelector("iframe")?.srcdoc.match(/background:([^;}]+)/)?.[1];
+  const lightBackground = rootBackground();
+  expect(frameBackground()).toBe(lightBackground);
+  await act(() => {
+    setAppearanceMode("dark");
+  });
+  const darkBackground = rootBackground();
+  expect(darkBackground).not.toBe(lightBackground);
+  await vi.waitFor(() => expect(frameBackground()).toBe(darkBackground));
   expect(screen.container.querySelector('[role="alert"]')).toBeNull();
 });
 
@@ -2106,12 +2187,15 @@ it.each([
   expect(new DOMParser().parseFromString(html, "text/html").body.textContent).toBe(expected);
 });
 
-it.each(["odt", "odp"] as const)("preserves rendered %s spaces and tabs", async (kind) => {
+it.each(["odt", "odp", "rtf"] as const)("preserves rendered %s spaces and tabs", async (kind) => {
   const archive = new JSZip().file(
     "content.xml",
     `<office:document>${kind === "odt" ? "<office:text>" : "<draw:page>"}<text:p>A<text:s text:c="3"/>B<text:tab/>C</text:p>${kind === "odt" ? "</office:text>" : "</draw:page>"}</office:document>`,
   );
-  const bytes = await archive.generateAsync({ type: "arraybuffer" });
+  const bytes =
+    kind === "rtf"
+      ? new TextEncoder().encode(String.raw`{\rtf1\ansi A\tab B  C}`).buffer
+      : await archive.generateAsync({ type: "arraybuffer" });
   const worker = new Worker(new URL("./officePreview.worker.ts", import.meta.url), {
     type: "module",
   });
@@ -2126,18 +2210,23 @@ it.each(["odt", "odp"] as const)("preserves rendered %s spaces and tabs", async 
     });
     if (result.type !== "document") throw new Error("Expected document");
     await using screen = await render(
-      <DocumentPages html={result.pages[0]!.html} name="spacing" output />,
+      <DocumentPages html={result.pages[0]!.html + "<p>A\tB  C</p>"} name="spacing" output />,
     );
     await vi.waitFor(() => {
       const doc = screen.container.querySelector("iframe")?.contentDocument;
-      const spans = doc?.querySelectorAll<HTMLElement>("span[data-odf-whitespace]");
-      expect(doc?.querySelector("p")?.textContent).toBe("A   B\tC");
-      expect(spans).toHaveLength(2);
+      const spans = doc?.querySelectorAll<HTMLElement>(
+        kind === "rtf" ? "p[data-rtf-whitespace]" : "span[data-odf-whitespace]",
+      );
+      expect(doc?.querySelector("p")?.innerText).toBe(kind === "rtf" ? "A\tB  C" : "A   B\tC");
+      expect(spans).toHaveLength(kind === "rtf" ? 1 : 2);
       for (const span of spans!) {
         expect(doc!.defaultView!.getComputedStyle(span).whiteSpace).toBe("pre-wrap");
         expect(span.getBoundingClientRect().width).toBeGreaterThan(0);
       }
       expect(spans![0]!.getBoundingClientRect().width).toBeGreaterThan(10);
+      const plain = doc!.querySelector<HTMLElement>("p:last-child")!;
+      expect(plain.innerText).toBe("A B C");
+      expect(doc!.defaultView!.getComputedStyle(plain).whiteSpace).toBe("normal");
     });
   } finally {
     worker.terminate();
@@ -2310,11 +2399,11 @@ it("renders EPUB publisher styles and follows an anchored link to a fixed-layout
     .file(
       "OPS/illustration.svg",
       `<?xml-stylesheet href="styles/poster.css" type="text/css"?>
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">
+        <svg xmlns="http://www.w3.org/2000/svg" xmlns:epub="http://www.idpf.org/2007/ops" epub:type="figure" viewBox="0 0 200 100">
           <defs><marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" orient="auto">
             <path d="M 0 0 L 10 5 L 0 10 z" />
           </marker></defs>
-          <rect id="poster" width="200" height="100"/>
+          <rect id="poster" epub:type="cover-image" width="200" height="100"/>
           <line x1="10" y1="10" x2="100" y2="10" stroke="black" marker-end="url(#arrow)"/>
         </svg>`,
     )
@@ -2447,6 +2536,77 @@ it("renders EPUB publisher styles and follows an anchored link to a fixed-layout
   );
   await screen.getByRole("button", { name: "Previous chapter" }).click();
   await vi.waitFor(() => expect(frame()?.contentDocument?.querySelector("#opening")).toBeTruthy());
+});
+
+it("highlights EPUB narration cues during playback and pauses on chapter change", async () => {
+  const sampleRate = 8_000;
+  const pcm = new Uint8Array(44 + sampleRate * 2 * 8);
+  const header = new DataView(pcm.buffer);
+  const encoder = new TextEncoder();
+  pcm.set(encoder.encode("RIFF"), 0);
+  pcm.set(encoder.encode("WAVEfmt "), 8);
+  pcm.set(encoder.encode("data"), 36);
+  header.setUint32(4, pcm.length - 8, true);
+  header.setUint32(16, 16, true);
+  header.setUint16(20, 1, true);
+  header.setUint16(22, 1, true);
+  header.setUint32(24, sampleRate, true);
+  header.setUint32(28, sampleRate * 2, true);
+  header.setUint16(32, 2, true);
+  header.setUint16(34, 16, true);
+  header.setUint32(40, pcm.length - 44, true);
+  const { default: JSZip } = await import("jszip");
+  const file = await new JSZip()
+    .file(
+      "META-INF/container.xml",
+      '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+    )
+    .file(
+      "book.opf",
+      `<package><manifest>
+      <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml" media-overlay="read"/>
+      <item id="end" href="end.xhtml" media-type="application/xhtml+xml"/>
+      <item id="read" href="read.smil" media-type="application/smil+xml"/>
+    </manifest><spine><itemref idref="chapter"/><itemref idref="end"/></spine></package>`,
+    )
+    .file(
+      "chapter.xhtml",
+      '<html><body><p id="first">First phrase</p><p id="second">Second phrase</p></body></html>',
+    )
+    .file("end.xhtml", "<html><body><p>End</p></body></html>")
+    .file(
+      "read.smil",
+      `<smil xmlns="http://www.w3.org/ns/SMIL"><body>
+      <par><text src="chapter.xhtml#first"/><audio src="audio.wav" clipEnd="4s"/></par>
+      <par><text src="chapter.xhtml#second"/><audio src="audio.wav" clipBegin="4s" clipEnd="8s"/></par>
+    </body></smil>`,
+    )
+    .file("audio.wav", pcm)
+    .generateAsync({ type: "blob" });
+  await using screen = await render(
+    <div className="flex h-[480px] w-[360px]">
+      <AttachmentFilePreview
+        name="read-along.epub"
+        mimeType="application/epub+zip"
+        sizeBytes={file.size}
+        file={file}
+      />
+    </div>,
+  );
+  const read = screen.getByRole("button", { name: "Read aloud" });
+  await expect.element(read).toBeVisible();
+  const player = screen.container.querySelector("audio")!;
+  player.muted = true;
+  const activePhrase = () =>
+    screen.container
+      .querySelector("iframe")
+      ?.contentDocument?.querySelector(".t3-epub-narration-active")?.id;
+  await read.click();
+  await vi.waitFor(() => expect(activePhrase()).toBe("first"));
+  player.currentTime = 4.1;
+  await vi.waitFor(() => expect(activePhrase()).toBe("second"));
+  await screen.getByRole("button", { name: "Next chapter" }).click();
+  await vi.waitFor(() => expect(player.paused).toBe(true));
 });
 
 it.each(["epub", "odt", "ipynb", "html", "encoded-html"] as const)(

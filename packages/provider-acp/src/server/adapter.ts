@@ -46,6 +46,8 @@ import {
   compactT3McpToolOutput,
   htmlRenderFromToolItem,
   mcpToolResultOutput,
+  omitToolOutputImageData,
+  toolOutputImages,
 } from "@t3tools/shared/toolOutput";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
@@ -605,8 +607,8 @@ export interface AcpAdapterV2Flavor {
   readonly subagentsIdleOnTurnCompletion?: boolean;
   /**
    * Subagents the agent goes on running after its prompt, with no update when one ends. Asked
-   * when the prompt ends and when a reply the agent started by itself ends; the native task ids
-   * it returns hold the turn open and the rest become idle.
+   * when the prompt ends and whenever a reply ends, including mid-prompt and in a steered prompt
+   * that stays open; the native task ids it returns hold the turn open and the rest become idle.
    */
   readonly subagentsOutlivingPrompt?: (input: {
     readonly sessionId: string;
@@ -748,6 +750,8 @@ export interface AcpAdapterV2Flavor {
    * through `ACP_OPEN_REPLY_QUIET_LIMIT` instead of closing early.
    */
   readonly hasPendingReply?: (sessionId: string) => Effect.Effect<boolean>;
+  /** The model the agent ran the session's latest reply on, when ACP does not report it. */
+  readonly executedModel?: (sessionId: string) => Effect.Effect<string | undefined>;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
   /** Interrupt the local prompt fiber before `session/cancel` (Grok wedged prompts). */
   readonly interruptPromptOnCancel?: boolean;
@@ -1349,6 +1353,25 @@ function appendToolContentText(content: unknown, text: string): unknown[] {
   return next;
 }
 
+// Claims live until the turn ends; past this, recovered screenshots keep their details only.
+const MAX_RECOVERED_IMAGE_CHARS_PER_TURN = 32 * 1024 * 1024;
+
+function withinRecoveredImageBudget(
+  context: Pick<ActiveAcpTurn, "recoveredImageChars">,
+  output: unknown,
+): unknown {
+  const chars = toolOutputImages(output).reduce(
+    (total, image) => total + (image.data?.length ?? 0),
+    0,
+  );
+  if (chars === 0) return output;
+  if (context.recoveredImageChars + chars > MAX_RECOVERED_IMAGE_CHARS_PER_TURN) {
+    return omitToolOutputImageData(output);
+  }
+  context.recoveredImageChars += chars;
+  return output;
+}
+
 function acpMcpToolCallOutput(rawOutput: unknown): unknown {
   const record = unknownRecord(rawOutput);
   if (record === undefined) return rawOutput;
@@ -1824,6 +1847,8 @@ interface ActiveAcpTurn {
   readonly tools: Map<string, AcpToolCallState & { readonly backgroundCommandTaskId?: string }>;
   /** Confirmed T3 MCP tool outputs keyed by `${toolCallId}\0${tool}\0${inputHash}`. */
   readonly claimedToolResults: Map<string, unknown>;
+  /** Image characters recovered into `claimedToolResults` this turn. */
+  recoveredImageChars: number;
   /** `${toolCallId}\0${tool}\0${inputHash}` keys that already drained a recorded MCP result. */
   readonly drainedToolResultKeys: Set<string>;
   /** `${toolCallId}\0${tool}\0${inputHash}` keys that reached terminal failure and must never do input-only recovery. */
@@ -2421,6 +2446,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  yield* mcpSessions.recoversToolResultImages(options.instanceId);
   const { flavor, selfInvocation: self } = options;
   const callLauncher = yield* writeAcpMcpCallLauncher(host.paths.stateDir);
   const readMcpContext = (threadId: ThreadId | null) =>
@@ -5844,6 +5870,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   );
                   if (recoveredOutput !== undefined) {
                     context.drainedToolResultKeys.add(callInputKey);
+                    recoveredOutput = withinRecoveredImageBudget(context, recoveredOutput);
                   }
                 }
                 if (recoveredOutput !== undefined) {
@@ -6720,7 +6747,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             } else if (context.nativeThreadId === notification.sessionId) {
               if (update.sessionUpdate === "usage_update") {
                 context.replyOpen = false;
-                if (context.promptSettled) yield* idleReportedSubagents(context);
+                yield* idleReportedSubagents(context);
                 yield* rearmDeferredFinalize(context);
               } else if (acpRootSessionUpdateIngestsOutput(notification)) {
                 context.replyOpen = true;
@@ -9657,7 +9684,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
           }
           yield* reportAgentModeChanges(context.input.threadId);
-          const turn = providerTurnPayload(context, settledStatus, now);
+          const executedModel =
+            flavor.executedModel === undefined
+              ? undefined
+              : yield* flavor.executedModel(context.nativeThreadId);
+          const settledTurn = providerTurnPayload(context, settledStatus, now);
+          const turn: OrchestrationV2ProviderTurn =
+            executedModel === undefined
+              ? settledTurn
+              : {
+                  ...settledTurn,
+                  model: executedModel,
+                  ...(settledTurn.turnTokenUsage === undefined
+                    ? {}
+                    : {
+                        turnTokenUsage: { ...settledTurn.turnTokenUsage, models: [executedModel] },
+                      }),
+                };
           yield* emitProviderEvent({
             type: "provider_turn.updated",
             driver,
@@ -10603,6 +10646,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
               claimedToolResults: new Map(),
+              recoveredImageChars: 0,
               drainedToolResultKeys: new Set(),
               blockedInputRecoveryKeys: new Set(),
               attemptedInputRecoveryKeys: new Set(),

@@ -1125,6 +1125,7 @@ it.each([
   await password.fill("wrong");
   await screen.getByRole("button", { name: "Unlock" }).click();
   await expect.element(screen.getByText("Incorrect password. Try again.")).toBeVisible();
+  await expect.element(password).toHaveFocus();
   await password.fill("open me");
   await screen.getByRole("button", { name: "Unlock" }).click();
   if (kind === "docx") await expect.element(screen.getByText(content)).toBeVisible();

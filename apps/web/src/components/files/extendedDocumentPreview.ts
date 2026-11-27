@@ -131,7 +131,9 @@ async function odfHtml(
     "table:table-row": "tr",
     "table:table-cell": "td",
   };
-  const tag = tags[node.name];
+  const level = node.name === "text:h" ? Number(node.attrs["text:outline-level"]) : NaN;
+  const tag =
+    Number.isSafeInteger(level) && level >= 1 ? `h${Math.min(level, 6)}` : tags[node.name];
   if (!tag) return children;
   const count =
     tag === "tr"
@@ -386,7 +388,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   let completedLength = 0;
   const finishPage = () => {
     if (pages.length >= 500) throw new PreviewError({ code: "rtf-too-many-pages" });
-    pages.push({ title: undefined, html: `<p>${html}</p>` });
+    pages.push({ title: undefined, html: `<p data-rtf-whitespace>${html}</p>` });
     completedLength += html.length;
     html = "";
   };

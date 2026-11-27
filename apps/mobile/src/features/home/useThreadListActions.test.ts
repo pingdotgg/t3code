@@ -35,6 +35,7 @@ const state = vi.hoisted(() => ({
     buttons?: { text: string; onPress?: () => void }[];
   }[],
   afterRequest: undefined as (() => void) | undefined,
+  unsettleValue: undefined as unknown,
   heldActions: new Map<string, Promise<void>>(),
 }));
 
@@ -181,7 +182,13 @@ vi.mock("../../state/threads", () => ({
           if (action === state.failedAction)
             return AsyncResult.failure(Cause.fail(new Error("Server rejected action")));
           state.afterRequest?.();
-          return AsyncResult.success(action === "regenerateTitle" ? state.titleOutcome : undefined);
+          return AsyncResult.success(
+            action === "regenerateTitle"
+              ? state.titleOutcome
+              : action === "unsettle"
+                ? state.unsettleValue
+                : undefined,
+          );
         },
       ]),
     ),
@@ -236,6 +243,7 @@ beforeEach(() => {
   state.dialogs = [];
   state.alerts = [];
   state.afterRequest = undefined;
+  state.unsettleValue = undefined;
   state.heldActions = new Map();
 });
 
@@ -456,6 +464,19 @@ describe("thread action undo", () => {
       expect(state.requests.map(({ action }) => action)).toEqual([action, inverse]);
     },
   );
+
+  it("re-snoozes a thread whose queued snooze an offline settle replaced", async () => {
+    const snoozedUntil = "2099-01-01T09:00:00.000Z";
+    const thread = makeThread({ pinnedAt: "2026-01-01T00:00:00.000Z", snoozedUntil });
+    state.shells = [thread];
+    await useThreadListActions().settleThread(thread);
+    // Cancelling the queued settle also drops the snooze it replaced on the device.
+    state.shells = [{ ...thread, snoozedUntil: null }];
+    state.unsettleValue = { sequence: 0, cancelledOnDevice: true };
+    await readThreadUndoNotice()!.undo();
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unsettle", "snooze"]);
+    expect(state.requests[2]?.input.snoozedUntil).toBe(snoozedUntil);
+  });
 
   it("keeps the latest unpin undo after concurrent unpin requests", async () => {
     const actions = useThreadListActions();

@@ -22,8 +22,8 @@ describe("PR attachments", () => {
       { uri: "https://drop.example.com/demo.mp4", caption: "Video", kind: "video" },
       {
         uri: "https://github.com/user-attachments/assets/123-abc",
-        caption: "Video",
-        kind: "video",
+        caption: "123-abc",
+        kind: "unknown",
       },
     ]);
   });
