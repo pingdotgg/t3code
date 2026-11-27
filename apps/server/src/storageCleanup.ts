@@ -1460,7 +1460,14 @@ const make = Effect.gen(function* () {
         if (!group.every((member) => storageCleanupThreadIdle(member, now, serverSettings)))
           return keep(waitForStop("thread is running or has pending work"));
         if (thread.branch === null && !scratch) return keep("thread has no branch");
-        if (group.some((member) => member.branch !== thread.branch))
+        const branchesDiffer = group.some((member) => member.branch !== thread.branch);
+        // A branchless subagent cannot get a removed checkout back, because restore only recreates
+        // scratch folders without a branch. Task and scratch folders skip the branch sync below,
+        // so they keep this guard.
+        if (
+          branchesDiffer &&
+          (scratch || taskFolder !== null || group.some((member) => member.branch === null))
+        )
           return keep("a subagent thread's branch differs from this worktree's branch");
         if (yield* hasTerminal(guardedPaths)) return keep(waitForStop("open terminal"));
         if (
@@ -1560,7 +1567,7 @@ const make = Effect.gen(function* () {
               const previous = group.find((member) => member.id === shell.id);
               return (
                 previous === undefined ||
-                shell.branch !== thread.branch ||
+                shell.branch !== previous.branch ||
                 !Equal.equals(shell.settledAt, previous.settledAt) ||
                 (shell.settledAt !== null && !Equal.equals(shell.updatedAt, previous.updatedAt)) ||
                 !storageCleanupThreadIdle(shell, now, serverSettings) ||
@@ -1731,6 +1738,12 @@ const make = Effect.gen(function* () {
           // A deleted owner cannot follow, so its remaining subagents stay on its branch.
           if (!deleted) yield* followBranch(worktreePath);
           return keep("repository or branch changed");
+        }
+        // Subagents keep the branch they last saw, so record the checked-out one on them and let
+        // the next sweep decide. A clean detached HEAD has no branch to record and falls through.
+        if (branchesDiffer && (yield* gitWorkflow.currentBranch(worktreePath)) !== null) {
+          yield* followBranch(worktreePath);
+          return keep("a subagent thread's branch differs from this worktree's branch");
         }
         const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
         if (!eligible) {
