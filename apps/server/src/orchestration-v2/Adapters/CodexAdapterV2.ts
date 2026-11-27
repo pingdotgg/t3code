@@ -9591,21 +9591,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 };
               }
               const keptNativeTurnId = nativeConversationHeadRef?.nativeId ?? null;
-              let revert;
-              if (keptNativeTurnId === null) {
-                const nativeTurnIds = rollbackTurns.flatMap(
-                  (turn) => turn.nativeTurnRef?.nativeId ?? [],
-                );
-                if (nativeTurnIds.length === 0) {
-                  return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
-                    driver: CODEX_PROVIDER,
-                    providerThreadId: threadInput.providerThread.id,
-                    cause: `Cannot roll back Codex thread ${threadId}: no recorded native turn IDs are available for the turns being removed.`,
-                  });
-                }
-                revert = revertCodexThreadFromKnownTurns(client, threadId, nativeTurnIds);
-              } else {
-                revert = revertCodexThreadAfterTurn(client, threadId, keptNativeTurnId, numTurns);
+              const nativeTurnIds = rollbackTurns.flatMap(
+                (turn) => turn.nativeTurnRef?.nativeId ?? [],
+              );
+              if (keptNativeTurnId === null && nativeTurnIds.length === 0) {
+                return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                  driver: CODEX_PROVIDER,
+                  providerThreadId: threadInput.providerThread.id,
+                  cause: `Cannot roll back Codex thread ${threadId}: no recorded native turn IDs are available for the turns being removed.`,
+                });
               }
               const { historyMode, loaded } = yield* ensureInitialized.pipe(
                 Effect.andThen(readCodexThreadHistoryMetadata(client.raw, threadId)),
@@ -9629,7 +9623,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }),
                 });
               }
-              const response = yield* revert;
+              const response = yield* ensureInitialized.pipe(
+                Effect.andThen(
+                  keptNativeTurnId === null
+                    ? revertCodexThreadFromKnownTurns(client, threadId, nativeTurnIds)
+                    : revertCodexThreadAfterTurn(client, threadId, keptNativeTurnId, numTurns),
+                ),
+              );
               turnTokenUsageByThread.delete(threadId);
               return {
                 providerThread: {
