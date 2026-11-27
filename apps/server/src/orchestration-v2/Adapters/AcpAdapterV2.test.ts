@@ -6425,6 +6425,79 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("finalizes the turn when the start effect is cancelled mid-start", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const holdBeforePrompt = yield* Deferred.make<void, never>();
+      const reachedBeforePrompt = yield* Deferred.make<void, never>();
+      const instanceId = ProviderInstanceId.make("acp-start-cancelled");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+            environment: () => ({}),
+          }),
+        },
+        selfInvocation: yield* resolveSelfInvocation(),
+        testHooks: {
+          beforePromptDispatch: () =>
+            Deferred.succeed(reachedBeforePrompt, undefined).pipe(
+              Effect.andThen(Deferred.await(holdBeforePrompt)),
+            ),
+        },
+      });
+      const threadId = ThreadId.make("thread-acp-start-cancelled");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-start-cancelled"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const start = yield* runtime
+        .startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(reachedBeforePrompt);
+      // Cancelling the in-flight start effect interrupts its fiber, the same
+      // path an interrupt-before-provider-start takes through the effect worker.
+      yield* Fiber.interrupt(start);
+      yield* Deferred.succeed(holdBeforePrompt, undefined);
+      yield* runtime.startTurn(
+        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 2 }),
+      );
+      const terminals = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.map((events) =>
+          Array.from(events, (event) => {
+            if (event.type !== "turn.terminal") throw new Error("Expected a turn terminal");
+            return event;
+          }),
+        ),
+      );
+      assert.equal(terminals[0]?.status, "interrupted");
+      assert.equal(terminals[1]?.status, "completed");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("sends no more prompts once a follow-up waiting on a busy agent is stopped", () =>
     Effect.gen(function* () {
       let promptCalls = 0;
