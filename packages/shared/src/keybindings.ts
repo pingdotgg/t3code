@@ -120,8 +120,9 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+alt+end", command: "layout.focusLastColumn" },
   { key: "mod+alt+r", command: "layout.cycleColumnWidth" },
   { key: "mod+alt+c", command: "layout.centerColumn" },
-  { key: "mod+alt+[", command: "layout.pullLeft" },
-  { key: "mod+alt+]", command: "layout.pullRight" },
+  // Off macOS these are ctrl+alt+[ and ], which cycle terminals while one has focus.
+  { key: "mod+alt+[", command: "layout.pullLeft", when: "!terminalFocus || isMac" },
+  { key: "mod+alt+]", command: "layout.pullRight", when: "!terminalFocus || isMac" },
   { key: "mod+/", command: "layout.shortcutSheet" },
   // Workspaces stack vertically: U goes down to the next, I up (niri).
   { key: "mod+alt+u", command: "layout.focusWorkspaceDown" },
