@@ -607,8 +607,8 @@ export interface AcpAdapterV2Flavor {
   readonly subagentsIdleOnTurnCompletion?: boolean;
   /**
    * Subagents the agent goes on running after its prompt, with no update when one ends. Asked
-   * when the prompt ends and when a reply the agent started by itself ends; the native task ids
-   * it returns hold the turn open and the rest become idle.
+   * when the prompt ends and whenever a reply ends, including mid-prompt and in a steered prompt
+   * that stays open; the native task ids it returns hold the turn open and the rest become idle.
    */
   readonly subagentsOutlivingPrompt?: (input: {
     readonly sessionId: string;
@@ -6745,7 +6745,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             } else if (context.nativeThreadId === notification.sessionId) {
               if (update.sessionUpdate === "usage_update") {
                 context.replyOpen = false;
-                if (context.promptSettled) yield* idleReportedSubagents(context);
+                yield* idleReportedSubagents(context);
                 yield* rearmDeferredFinalize(context);
               } else if (acpRootSessionUpdateIngestsOutput(notification)) {
                 context.replyOpen = true;
