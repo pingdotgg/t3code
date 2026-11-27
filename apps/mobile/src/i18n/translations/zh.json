@@ -2730,8 +2730,8 @@
   "322f9f6712e4a3a7": "{count, plural, other {已查看 {count} 个}}",
   "ccd5fc4db08374d7": "{count, plural, other {已隐藏 {count} 个测试文件}}",
   "cb1e1e72fc3d2382": "包含测试文件",
-  "2ab7e87f961a419e": "查看 {path} 的差异，新增 {additions} 行，删除 {deletions} 行，已查看",
-  "e6fef106eeaa76ce": "查看 {path} 的差异，新增 {additions} 行，删除 {deletions} 行",
+  "71828d9827de3793": "查看 {path} 的差异，新增 {additions} 行，删除 {deletions} 行，已查看",
+  "9103c6fa7accc088": "查看 {path} 的差异，新增 {additions} 行，删除 {deletions} 行",
   "a52407bfe5da5df2": "审查文件",
   "a7764874320578a8": "隐藏测试文件",
   "186b7ac75ed4674c": "筛选审查文件",
@@ -5703,5 +5703,8 @@
   "99451a5d2d40440f": "已由 {by} 撤回。",
   "3ee30a50b70fffab": "已由 {by} 撤回：{reason}",
   "201490988858b511": "已由 {by} 撤回",
-  "46d614fa7b4bf1e5": "工作流运行"
+  "46d614fa7b4bf1e5": "工作流运行",
+  "f6cf1627f4acc5ef": "评论可见范围",
+  "eb1fd384ad5919dd": "内部备注",
+  "b45f0b467e9406d0": "回复客户"
 }

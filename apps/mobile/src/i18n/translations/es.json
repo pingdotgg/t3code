@@ -2729,8 +2729,8 @@
   "322f9f6712e4a3a7": "{count, plural, one {{count} visto} other {{count} vistos}}",
   "ccd5fc4db08374d7": "{count, plural, one {{count} archivo de prueba oculto} other {{count} archivos de prueba ocultos}}",
   "cb1e1e72fc3d2382": "Archivos de pruebas incluidos",
-  "2ab7e87f961a419e": "Ver diff de {path}, {additions} adiciones, {deletions} eliminaciones, visto",
-  "e6fef106eeaa76ce": "Ver diff de {path}, {additions} adiciones, {deletions} eliminaciones",
+  "71828d9827de3793": "Ver diff de {path}, {additions, plural, one {{additions} adición} other {{additions} adiciones}}, {deletions, plural, one {{deletions} eliminación} other {{deletions} eliminaciones}}, visto",
+  "9103c6fa7accc088": "Ver diff de {path}, {additions, plural, one {{additions} adición} other {{additions} adiciones}}, {deletions, plural, one {{deletions} eliminación} other {{deletions} eliminaciones}}",
   "a52407bfe5da5df2": "Revisar archivos",
   "a7764874320578a8": "Ocultar archivos de prueba",
   "186b7ac75ed4674c": "Filtrar archivos de la revisión",
@@ -5716,5 +5716,8 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo"
+  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo",
+  "f6cf1627f4acc5ef": "Visibilidad del comentario",
+  "eb1fd384ad5919dd": "Nota interna",
+  "b45f0b467e9406d0": "Responder al cliente"
 }

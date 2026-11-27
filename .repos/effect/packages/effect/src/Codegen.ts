@@ -509,11 +509,16 @@ export class Module {
    * Returned keys preserve the requested names even when declaration names must change to avoid collisions.
    * A root that references a definition of the same name reuses that definition's binding.
    * The module remains open for further declarations; imports and initialization order are resolved when printing.
+   * Built-in declarations and filters use their recorded representation ID and payload, including after a JSON
+   * round trip. A custom `toCode` annotation takes precedence. Replacing a built-in ID with a custom ID requires
+   * supplying a callback for that ID.
    *
    * **Gotchas**
    *
-   * Recursive representations must contain explicit suspensions. Custom declarations and checks require supported
-   * `toCode` callbacks. Each callback is called once and its exceptions pass through unchanged.
+   * Recursive representations must contain explicit suspensions. Custom declarations and individual filters require
+   * supported `toCode` callbacks. Each callback is called once and its exceptions pass through unchanged.
+   * An explicit `toCode: undefined` disables built-in lookup on a live declaration or filter.
+   * Mutable arguments such as date bounds are printed from the values recorded at schema creation.
    * Callback output supports imports, qualified names, generic and structural types, API calls,
    * literal/object/array arguments, and zero-argument arrows. Unsupported syntax throws with its document path.
    * When another declaration eagerly uses a returned binding, include it in that declaration's dependencies.

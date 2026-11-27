@@ -2726,8 +2726,8 @@
   "322f9f6712e4a3a7": "{count, plural, other {{count} 件を確認済み}}",
   "ccd5fc4db08374d7": "{count, plural, other {{count} 個のテストファイルを非表示}}",
   "cb1e1e72fc3d2382": "テストファイルを含む",
-  "2ab7e87f961a419e": "{path} の差分を表示、{additions} 行追加、{deletions} 行削除、確認済み",
-  "e6fef106eeaa76ce": "{path} の差分を表示、{additions} 行追加、{deletions} 行削除",
+  "71828d9827de3793": "{path} の差分を表示、{additions} 行追加、{deletions} 行削除、確認済み",
+  "9103c6fa7accc088": "{path} の差分を表示、{additions} 行追加、{deletions} 行削除",
   "a52407bfe5da5df2": "ファイルをレビュー",
   "a7764874320578a8": "テストファイルを非表示",
   "186b7ac75ed4674c": "レビューするファイルを絞り込む",
@@ -5693,5 +5693,8 @@
   "99451a5d2d40440f": "{by} が取り下げました。",
   "3ee30a50b70fffab": "{by} が取り下げました: {reason}",
   "201490988858b511": "{by} が取り下げ",
-  "46d614fa7b4bf1e5": "ワークフローの実行"
+  "46d614fa7b4bf1e5": "ワークフローの実行",
+  "f6cf1627f4acc5ef": "コメントの公開範囲",
+  "eb1fd384ad5919dd": "内部メモ",
+  "b45f0b467e9406d0": "顧客に返信"
 }
