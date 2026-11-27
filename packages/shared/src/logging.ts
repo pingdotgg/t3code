@@ -253,13 +253,8 @@ export const makeAsyncRotatingFileSink = Effect.fnUntraced(function* (
   });
   const recoverStaged = Effect.gen(function* () {
     if (!(yield* fs.exists(stagedPath))) return;
-    if (!(yield* fs.exists(options.filePath))) {
-      yield* fs.rename(stagedPath, options.filePath);
-    } else if (yield* fs.exists(`${options.filePath}.1`)) {
-      yield* publishStaged;
-    } else {
-      yield* fs.rename(stagedPath, `${options.filePath}.1`);
-    }
+    if (yield* fs.exists(options.filePath)) yield* publishStaged;
+    else yield* fs.rename(stagedPath, options.filePath);
   });
   yield* recoverStaged.pipe(Effect.mapError(failure("rotate")));
   let currentSize = yield* readSize;
