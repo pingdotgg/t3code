@@ -468,6 +468,42 @@ it("keeps an unfinished inline comment when a background refresh changes another
   await expect.element(input()).toHaveValue("Unsent review note");
 });
 
+it("keeps a source file expanded when a background refresh changes another file", async () => {
+  setup({ paged: false });
+  mocks.withTestFile = true;
+  const backgroundTab = (backgroundRefreshToken: number) => (
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      detail={detail}
+      selectedCommitOid={null}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+      backgroundRefreshToken={backgroundRefreshToken}
+    />
+  );
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(backgroundTab(0), { container });
+  const diffToggle = async (path: string) => {
+    const header = screen.getByText(path, { exact: true }).first();
+    await expect.element(header).toBeVisible();
+    const { host } = header.element().getRootNode() as ShadowRoot;
+    return page.elementLocator(host).getByRole("button", { name: /^(Expand|Collapse) diff$/ });
+  };
+  const toggle = await diffToggle("early-0.ts");
+  await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
+  await toggle.click();
+  await expect.element(toggle).toHaveAttribute("aria-expanded", "true");
+
+  mocks.refreshed = true;
+  await screen.rerender(backgroundTab(1));
+
+  await expect.element(screen.getByText("4 files", { exact: true })).toBeVisible();
+  await expect.element(await diffToggle("early-0.ts")).toHaveAttribute("aria-expanded", "true");
+});
+
 // Two short pages of a source and a test file each; the next page loads only through the file tree.
 async function renderShortPages(stack: AsyncDisposableStack) {
   setup({ paged: true });
