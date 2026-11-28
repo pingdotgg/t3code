@@ -203,10 +203,10 @@ export function roundCoarsely(bytes: number): number {
   return Math.ceil(bytes / step) * step;
 }
 
-/** Half a core below two cores, whole cores above. */
+/** Half a core below two cores, whole cores above; a busy agent never reads as 0 cores. */
 function roundCores(cores: number): number {
   if (!Number.isFinite(cores) || cores <= 0) return 0;
-  return cores < 2 ? Math.round(cores * 2) / 2 : Math.round(cores);
+  return cores < 2 ? Math.max(0.5, Math.round(cores * 2) / 2) : Math.round(cores);
 }
 
 /** Ranked by exact size: rounding first would tie close agents and could drop the largest. */

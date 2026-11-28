@@ -58,7 +58,11 @@ function setup() {
   mocks.reachable = Atom.make(false);
   mocks.connectedSession = Atom.make(1);
   let view!: ReturnType<typeof useDirectoryEntries>;
-  const calls: Array<{ path: string; resolve: (entries: readonly ProjectEntry[]) => void }> = [];
+  const calls: Array<{
+    path: string;
+    resolve: (entries: readonly ProjectEntry[]) => void;
+    reject: (error: Error) => void;
+  }> = [];
   let activeQueries = 0;
   let peakQueries = 0;
   function HookProbe() {
@@ -72,16 +76,21 @@ function setup() {
   async function settle(index: number, entries: readonly ProjectEntry[] = []) {
     await act(async () => calls[index]!.resolve(entries));
   }
+  const fail = (index: number, error: Error) => act(async () => calls[index]!.reject(error));
 
   listEntries.mockReset().mockImplementation((request) => {
     activeQueries++;
     peakQueries = Math.max(peakQueries, activeQueries);
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       calls.push({
         path: request.input.directoryPath,
         resolve: (entries) => {
           activeQueries--;
           resolve({ entries });
+        },
+        reject: (error) => {
+          activeQueries--;
+          reject(error);
         },
       });
     });
@@ -93,6 +102,7 @@ function setup() {
       </RegistryContext.Provider>
     ),
     settle,
+    fail,
     calls,
     get view() {
       return view;
@@ -241,6 +251,36 @@ it("refreshes the root, and another folder only once one of its rows is on scree
   await state.settle(7, listing(""));
   expect(state.calls).toHaveLength(8); // The second refresh reads the root once more; `docs` is never read.
   expect(state.view.entries.map((entry) => entry.path)).toEqual(["src", "src/ui", "docs"]);
+  expect(state.view.isPending).toBe(false);
+});
+
+it("retries failed folders on refresh even when collapsed or off screen", async () => {
+  const state = setup();
+  // The hook probe does not navigate.
+  await using _screen = await render(<state.Probe />, { router: false });
+  const dir = (path: string): ProjectEntry => ({ path, kind: "directory" });
+  const listings: Record<string, readonly ProjectEntry[]> = {
+    "": [dir("parent"), dir("docs")],
+    parent: [dir("parent/locked")],
+    "parent/locked": [{ path: "parent/locked/ok.txt", kind: "file" }],
+  };
+  await state.settle(0, listings[""]);
+  await act(async () => {
+    for (const path of ["parent", "docs", "parent/locked"]) void state.view.load(path);
+  });
+  await state.settle(1, listings.parent);
+  await state.settle(2);
+  await state.fail(3, new Error("Permission denied"));
+  expect(state.view.error).toBe("Permission denied");
+
+  const retryStart = state.calls.length;
+  await act(async () => state.view.refresh());
+  for (let i = retryStart; i < state.calls.length; i++)
+    await state.settle(i, listings[state.calls[i]!.path]);
+  const retried = state.calls.slice(retryStart).map((call) => call.path);
+  expect(retried.sort()).toEqual(["", "parent", "parent/locked"]);
+  expect(state.view.error).toBeNull();
+  expect(state.view.entries.map((entry) => entry.path)).toContain("parent/locked/ok.txt");
   expect(state.view.isPending).toBe(false);
 });
 
