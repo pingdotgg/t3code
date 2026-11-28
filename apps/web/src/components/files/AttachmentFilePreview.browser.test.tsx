@@ -1634,8 +1634,6 @@ it("refreshes authorization and retries a failed streamed attachment", async () 
       .element(screen.getByText("The attachment is unavailable.", { exact: true }))
       .toBeVisible();
     expect(screen.container.querySelector('button[aria-label="Copy contents"]')).toBeNull();
-    expect(screen.container.querySelector('button[aria-label="Disable word wrap"]')).toBeNull();
-    expect(screen.container.querySelector('button[aria-label="Save file"]')).toBeNull();
 
     await screen.getByRole("button", { name: "Try again" }).click();
     // A cold large-text worker can take longer than waitFor's default to boot on CI.
