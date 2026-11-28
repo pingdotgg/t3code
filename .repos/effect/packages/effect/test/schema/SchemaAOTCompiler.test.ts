@@ -190,6 +190,7 @@ describe("SchemaAOTCompiler", { concurrent: false }, () => {
     const schema = Schema.Struct({
       required: Schema.UndefinedOr(Schema.String),
       plain: Schema.String,
+      constructor: Schema.String,
       optional: Schema.optionalKey(Schema.String),
       ["__proto__"]: Schema.String
     })
@@ -199,6 +200,7 @@ describe("SchemaAOTCompiler", { concurrent: false }, () => {
     assert.notInclude(decode, "if(!(\"optional\" in i))")
     assert.include(decode, "if(\"optional\" in i){")
     assert.include(decode, "if(!(Object.hasOwn(i,\"__proto__\")))return I")
+    assert.include(decode, "if(!(Object.hasOwn(i,\"constructor\")))return I")
 
     const guard = SchemaAOTCompiler.compile([{ ast: schema.ast, operations: ["is"] }])
     assert.include(guard, "if(!(\"required\" in i))return false")

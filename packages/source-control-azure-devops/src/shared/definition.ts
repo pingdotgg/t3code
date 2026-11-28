@@ -21,7 +21,7 @@ const WORK_ITEM_PATH = /^\/([^/]+\/[^/]+)\/_workitems\/edit\/(\d+)(?:\/|$)/u;
 const LEGACY_WORK_ITEM_PATH = /^\/([^/]+)\/_workitems\/edit\/(\d+)(?:\/|$)/u;
 const CHECKOUT_COMMAND = /^az\s+repos\s+pr\s+checkout\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
-  /^https:\/\/(?:dev\.azure\.com\/[^/\s]+\/[^/\s]+|[^/\s]+\.visualstudio\.com\/(?:DefaultCollection\/)?[^/\s]+)\/_git\/[^/\s]+\/pullrequest\/(\d+)(?:[/?#].*)?$/i;
+  /^https:\/\/(?:dev\.azure\.com\/[^/\s]+(?:\/[^/\s]+)?|[^/\s]+\.visualstudio\.com(?:\/DefaultCollection)?(?:\/[^/\s]+)?)\/_git\/[^/\s]+\/pullrequest\/(\d+)(?:[/?#].*)?$/i;
 
 // `ssh.dev.azure.com` is the default SSH clone host (git@ssh.dev.azure.com:v3/org/project/repo),
 // so any `*.dev.azure.com` subdomain is Azure. Legacy hosts stay under `.visualstudio.com`,
@@ -61,9 +61,11 @@ function canonicalRepositoryKey(key: string): string | null {
       "dev.azure.com/$1/$2/_git/$3",
     )
     .replace(
-      /^([^.]+)\.visualstudio\.com\/(?:defaultcollection\/)?([^/]+)\/_git\/([^/]+)$/u,
-      "dev.azure.com/$1/$2/_git/$3",
-    );
+      /^([^./]+)\.visualstudio\.com\/(?:defaultcollection\/)?((?:[^/]+\/)?_git\/[^/]+)$/u,
+      "dev.azure.com/$1/$2",
+    )
+    // Shorthand URLs omit a project named like its repository; DefaultCollection is reserved.
+    .replace(/^(dev\.azure\.com\/[^/]+)\/(?:defaultcollection\/)?_git\/([^/]+)$/u, "$1/$2/_git/$2");
   return canonical.startsWith("dev.azure.com/") ? canonical : null;
 }
 

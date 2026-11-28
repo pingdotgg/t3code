@@ -23,6 +23,9 @@ import {
   DesktopPreviewCreateTabInputSchema,
   DesktopPreviewTabInputSchema,
   DesktopPreviewTunnelAccessResolutionInputSchema,
+  DesktopPortForwardInputSchema,
+  DesktopPortForwardSchema,
+  DesktopSharesLoopbackInputSchema,
   DesktopPreviewWebviewConfigSchema,
   PreviewAnnotationSubmissionResultSchema,
   PreviewCaptureFailure,
@@ -36,6 +39,7 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as NodeURL from "node:url";
 
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as BrowserImport from "../../preview/BrowserImport/BrowserImport.ts";
 import * as LoopbackTunnel from "../../preview/LoopbackTunnel.ts";
@@ -65,6 +69,10 @@ export const installPreviewEventForwarding = Effect.fn(
   );
   yield* manager.subscribeFindResults((event) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, event),
+  );
+  const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+  yield* tunnel.subscribeForwards((forwards) =>
+    electronWindow.sendAll(IpcChannels.PORT_FORWARD_CHANGE_CHANNEL, forwards),
   );
 });
 
@@ -356,6 +364,7 @@ const getPreviewConfig = DesktopIpc.makeIpcMethod({
   }) {
     const manager = yield* PreviewManager.PreviewManager;
     const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
     // Session creation installs UA and permission handlers before a guest can attach.
     const session = yield* manager.getBrowserSession(scope, persistent, namespace);
@@ -364,7 +373,7 @@ const getPreviewConfig = DesktopIpc.makeIpcMethod({
     return {
       partition: yield* manager.getBrowserPartition(scope, persistent, namespace),
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
-      preloadUrl: NodeURL.pathToFileURL(`${__dirname}/preview-pick-preload.cjs`).href,
+      preloadUrl: NodeURL.pathToFileURL(environment.previewPickPreloadPath).href,
     };
   }),
 });
@@ -376,6 +385,46 @@ const resolveTunnelAccess = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.resolveTunnelAccess")(function* (input) {
     const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
     yield* tunnel.resolveAccess(input);
+  }),
+});
+
+const forwardPort = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PORT_FORWARD_START_CHANNEL,
+  payload: DesktopPortForwardInputSchema,
+  result: DesktopPortForwardSchema,
+  handler: Effect.fn("desktop.ipc.preview.forwardPort")(function* (input) {
+    const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    return yield* tunnel.forward(input);
+  }),
+});
+
+const stopPortForward = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PORT_FORWARD_STOP_CHANNEL,
+  payload: DesktopPortForwardInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.stopPortForward")(function* (input) {
+    const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    yield* tunnel.stopForward(input);
+  }),
+});
+
+const listPortForwards = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PORT_FORWARD_LIST_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Array(DesktopPortForwardSchema),
+  handler: Effect.fn("desktop.ipc.preview.listPortForwards")(function* () {
+    const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    return yield* tunnel.forwards;
+  }),
+});
+
+const sharesLoopback = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PORT_FORWARD_SHARES_LOOPBACK_CHANNEL,
+  payload: DesktopSharesLoopbackInputSchema,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.preview.sharesLoopback")(function* ({ environmentId }) {
+    const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    return yield* tunnel.sharesLoopback(environmentId);
   }),
 });
 
@@ -523,6 +572,10 @@ export const methods = [
   clearCache,
   getPreviewConfig,
   resolveTunnelAccess,
+  forwardPort,
+  stopPortForward,
+  listPortForwards,
+  sharesLoopback,
   setAnnotationTheme,
   setAnnotationSendEnabled,
   pickElement,

@@ -15,6 +15,7 @@ import { pipeArguments } from "../Pipeable.ts"
 import type * as Predicate from "../Predicate.ts"
 import * as Result from "../Result.ts"
 import type { Unify } from "../Unify.ts"
+import * as InternalRecord from "./record.ts"
 
 /** @internal */
 export const TypeId = "~effect/Match/Matcher"
@@ -22,16 +23,12 @@ export const TypeId = "~effect/Match/Matcher"
 /** @internal */
 export type Contextual<P, Fallback> = [P] extends [never] ? Fallback : P
 
-type TagHandlers<D extends string, R, Ret> = {
-  readonly [Tag in Types.Tags<D, R> & string]: (_: Extract<R, Record<D, Tag>>) => Ret
-}
-
-type PartialTagHandlers<D extends string, R, Ret> = {
-  readonly [Tag in Types.Tags<D, R> & string]?: ((_: Extract<R, Record<D, Tag>>) => Ret) | undefined
-}
-
 type ValueTagHandlers<I> = {
   readonly [Tag in Types.Tags<"_tag", I> & string]: (_: Extract<I, { readonly _tag: Tag }>) => any
+}
+
+type InternalTypeMatcher = TypeMatcher<any, any, any, any, any, any> & {
+  readonly forwardArgs: boolean
 }
 
 const TypeMatcherProto: Omit<TypeMatcher<any, any, any, any, any, any>, "cases" | "select"> = {
@@ -45,10 +42,10 @@ const TypeMatcherProto: Omit<TypeMatcher<any, any, any, any, any, any>, "cases" 
   },
   _tag: "TypeMatcher",
   add<I, R, RA, A>(
-    this: TypeMatcher<any, any, any, any, any, any>,
+    this: InternalTypeMatcher,
     _case: Case
   ): TypeMatcher<I, R, RA, A, any, any> {
-    return makeTypeMatcher(this.select, [...this.cases, _case])
+    return makeTypeMatcher(this.select, [...this.cases, _case], this.forwardArgs)
   },
   pipe() {
     return pipeArguments(this, arguments)
@@ -57,11 +54,13 @@ const TypeMatcherProto: Omit<TypeMatcher<any, any, any, any, any, any>, "cases" 
 
 function makeTypeMatcher<I, R, RA, A, Ret, Args extends Array<any>>(
   select: (...args: any) => I,
-  cases: ReadonlyArray<Case>
+  cases: ReadonlyArray<Case>,
+  forwardArgs: boolean
 ): TypeMatcher<I, R, RA, A, Ret, Args> {
   const matcher = Object.create(TypeMatcherProto)
   matcher.select = select
   matcher.cases = cases
+  matcher.forwardArgs = forwardArgs
   return matcher
 }
 
@@ -132,6 +131,8 @@ const makeNot = (
   evaluate
 })
 
+const matches = (_case: Case, input: unknown): boolean => _case.guard(input) === (_case._tag === "When")
+
 const makePredicate = (pattern: unknown): Predicate.Predicate<unknown> => {
   if (typeof pattern === "function") {
     return pattern as Predicate.Predicate<unknown>
@@ -153,7 +154,7 @@ const makePredicate = (pattern: unknown): Predicate.Predicate<unknown> => {
       return true
     }
   } else if (pattern !== null && typeof pattern === "object") {
-    const keysAndPredicates = Reflect.ownKeys(pattern).map(
+    const keysAndPredicates = InternalRecord.ownEnumerableKeys(pattern).map(
       (key) => [key, makePredicate((pattern as any)[key])] as const
     )
     const len = keysAndPredicates.length
@@ -218,12 +219,12 @@ export const type = <I>(): Matcher<
   I,
   never,
   never
-> => makeTypeMatcher(identity, [])
+> => makeTypeMatcher(identity, [], false)
 
 /** @internal */
 export const fn = <Args extends Array<any>, I>(
   select: (...args: Args) => I
-): Matcher<I, Types.Without<never>, I, never, never, any, Args> => makeTypeMatcher(select, [])
+): Matcher<I, Types.Without<never>, I, never, never, any, Args> => makeTypeMatcher(select, [], true)
 
 /** @internal */
 export const value = <const I>(
@@ -260,7 +261,7 @@ export const valueTags: {
     input: I,
     fields: Contextual<P, ValueTagHandlers<I>>
   ): Unify<ReturnType<P[keyof P]>> => {
-    const match: any = tagsExhaustive(fields as any)(makeTypeMatcher(identity, []))
+    const match: any = tagsExhaustive(fields as any)(type())
     return match(input)
   }
 )
@@ -276,7 +277,7 @@ export const typeTags = <I>() =>
 >(
   fields: P
 ) => {
-  const match: any = tagsExhaustive(fields as any)(makeTypeMatcher(identity, []))
+  const match: any = tagsExhaustive(fields as any)(type())
   return (input: I): Unify<ReturnType<P[keyof P]>> => match(input)
 }
 
@@ -371,111 +372,38 @@ export const whenAnd = <
 }
 
 /** @internal */
-export const discriminator = <D extends string>(field: D) =>
-<
-  R,
-  P extends Types.Tags<D, R> & string,
-  Ret,
-  Fn extends (_: Extract<R, Record<D, P>>) => Ret
->(
-  ...pattern: [
-    first: P,
-    ...values: Array<P>,
-    f: Fn
-  ]
-) => {
+export const discriminator = (field: string) => (...pattern: Array<any>) => {
   const f = pattern[pattern.length - 1]
-  const values: Array<P> = pattern.slice(0, -1) as any
+  const values = pattern.slice(0, -1)
   const pred = values.length === 1
     ? (_: any) => _ != null && _[field] === values[0]
     : (_: any) => _ != null && values.includes(_[field])
 
-  return <I, F, A, Pr>(
-    self: Matcher<I, F, R, A, Pr, Ret>
-  ): Matcher<
-    I,
-    Types.AddWithout<F, Extract<R, Record<D, P>>>,
-    Types.ApplyFilters<I, Types.AddWithout<F, Extract<R, Record<D, P>>>>,
-    A | ReturnType<Fn>,
-    Pr,
-    Ret
-  > => (self as any).add(makeWhen(pred, f as any)) as any
+  return (self: any): any => self.add(makeWhen(pred, f))
 }
 
 /** @internal */
-export const discriminatorStartsWith = <D extends string>(field: D) =>
-<
-  R,
-  P extends string,
-  Ret,
-  Fn extends (_: Extract<R, Record<D, `${P}${string}`>>) => Ret
->(
-  pattern: P,
-  f: Fn
-) => {
+export const discriminatorStartsWith = (field: string) => (pattern: string, f: (...args: Array<any>) => any) => {
   const pred = (_: any) => _ != null && typeof _[field] === "string" && _[field].startsWith(pattern)
 
-  return <I, F, A, Pr>(
-    self: Matcher<I, F, R, A, Pr, Ret>
-  ): Matcher<
-    I,
-    Types.AddWithout<F, Extract<R, Record<D, `${P}${string}`>>>,
-    Types.ApplyFilters<
-      I,
-      Types.AddWithout<F, Extract<R, Record<D, `${P}${string}`>>>
-    >,
-    A | ReturnType<Fn>,
-    Pr,
-    Ret
-  > => (self as any).add(makeWhen(pred, f as any)) as any
+  return (self: any): any => self.add(makeWhen(pred, f))
 }
 
 /** @internal */
-export const discriminators = <D extends string>(field: D) =>
-<
-  R,
-  Ret,
-  P extends
-    & PartialTagHandlers<D, R, Ret>
-    & { readonly [Tag in Exclude<keyof P, Types.Tags<D, R>>]: never }
->(
-  fields: Contextual<P, PartialTagHandlers<D, R, Ret>>
-) => {
+export const discriminators = (field: string) => (fields: object) => {
   const predicate = makeWhen(
-    (arg: any) => arg != null && Object.hasOwn(fields, arg[field]),
-    (data: any) => (fields as any)[data[field]](data)
+    (arg: any) => arg != null && Object.hasOwn(fields, arg[field]) && (fields as any)[arg[field]] !== undefined,
+    (data: any, ...args: Array<any>) => (fields as any)[data[field]](data, ...args)
   )
 
-  return <I, F, A, Pr>(
-    self: Matcher<I, F, R, A, Pr, Ret>
-  ): Matcher<
-    I,
-    Types.AddWithout<F, Extract<R, Record<D, keyof P>>>,
-    Types.ApplyFilters<I, Types.AddWithout<F, Extract<R, Record<D, keyof P>>>>,
-    A | ReturnType<P[keyof P] & {}>,
-    Pr,
-    Ret
-  > => (self as any).add(predicate)
+  return (self: any): any => self.add(predicate)
 }
 
 /** @internal */
-export const discriminatorsExhaustive: <D extends string>(
-  field: D
-) => <
-  R,
-  Ret,
-  P extends
-    & TagHandlers<D, R, Ret>
-    & { readonly [Tag in Exclude<keyof P, Types.Tags<D, R>>]: never }
->(
-  fields: Contextual<P, TagHandlers<D, R, Ret>>
-) => <I, F, A, Pr>(
-  self: Matcher<I, F, R, A, Pr, Ret>
-) => [Pr] extends [never] ? (u: I) => Unify<A | ReturnType<P[keyof P]>>
-  : Unify<A | ReturnType<P[keyof P]>> = (field: string) => (fields: object) => {
-    const addCases = discriminators(field)(fields)
-    return (matcher: any) => exhaustive(addCases(matcher))
-  }
+export const discriminatorsExhaustive = (field: string) => (fields: object) => {
+  const addCases = discriminators(field)(fields)
+  return (matcher: any): any => exhaustive(addCases(matcher))
+}
 
 /** @internal */
 export const tag: <
@@ -517,7 +445,7 @@ export const literals = (fields: object) => {
     (arg: any) =>
       (typeof arg === "string" || typeof arg === "number") && Object.hasOwn(fields, arg) &&
       (fields as any)[arg] !== undefined,
-    (data: any) => (fields as any)[data](data)
+    (data: any, ...args: Array<any>) => (fields as any)[data](data, ...args)
   )
   return (self: any): any => self.add(predicate)
 }
@@ -598,10 +526,11 @@ export const orElse =
       return toResult._tag === "Success" ? toResult.success as any : (f as any)(toResult.failure)
     }
 
+    const forwardArgs = (self as InternalTypeMatcher).forwardArgs
     // @ts-expect-error
     return (...args: Array<any>) => {
       const a = (toResult as any)(...args)
-      return Result.isSuccess(a) ? a.success : (f as any)(a.failure, ...args)
+      return Result.isSuccess(a) ? a.success : forwardArgs ? (f as any)(a.failure, ...args) : (f as any)(a.failure)
     }
   }
 
@@ -628,15 +557,14 @@ export const result: <I, F, R, A, Pr, Ret, Args extends Array<any>>(
       return self.value
     }
 
+    const forwardArgs = (self as InternalTypeMatcher).forwardArgs
     const len = self.cases.length
     if (len === 1) {
       const _case = self.cases[0]
       return (...args: Array<any>): Result.Result<A, RA> => {
         const input = self.select(...args)
-        if (_case._tag === "When" && _case.guard(input) === true) {
-          return Result.succeed(_case.evaluate(input, ...args))
-        } else if (_case._tag === "Not" && _case.guard(input) === false) {
-          return Result.succeed(_case.evaluate(input, ...args))
+        if (matches(_case, input)) {
+          return Result.succeed(forwardArgs ? _case.evaluate(input, ...args) : _case.evaluate(input))
         }
         return Result.fail(input as any)
       }
@@ -645,10 +573,8 @@ export const result: <I, F, R, A, Pr, Ret, Args extends Array<any>>(
       const input = self.select(...args)
       for (let i = 0; i < len; i++) {
         const _case = self.cases[i]
-        if (_case._tag === "When" && _case.guard(input) === true) {
-          return Result.succeed(_case.evaluate(input, ...args))
-        } else if (_case._tag === "Not" && _case.guard(input) === false) {
-          return Result.succeed(_case.evaluate(input, ...args))
+        if (matches(_case, input)) {
+          return Result.succeed(forwardArgs ? _case.evaluate(input, ...args) : _case.evaluate(input))
         }
       }
 

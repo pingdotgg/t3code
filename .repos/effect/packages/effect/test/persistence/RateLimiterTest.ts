@@ -115,6 +115,27 @@ export const suite = (
           [1, 60_000]
         )
       }))
+
+    it.effect("fail mode keeps one full-window lifetime across admissions", () =>
+      Effect.gen(function*() {
+        const limiter = yield* RateLimiter.make
+        const consume = limiter.consume({
+          algorithm: "fixed-window",
+          onExceeded: "fail",
+          key: "fixed-window-full-lifetime",
+          limit: 5,
+          window: "1 minute"
+        })
+        const results = yield* Effect.forEach([0, 1, 2, 3, 4], () => consume)
+        const error = exceeded(yield* Effect.flip(consume))
+
+        assert.deepStrictEqual(results.map((result) => result.remaining), [4, 3, 2, 1, 0])
+        // Redis TTLs use wall time rather than TestClock.
+        for (const result of results) {
+          assert.approximately(Duration.toMillis(result.resetAfter), 60_000, 1_000)
+        }
+        assert.approximately(Duration.toMillis(error.retryAfter), 60_000, 1_000)
+      }))
   })
 
   it.layer(layer, { timeout: "30 seconds", concurrent: false })(`RateLimiter token-bucket timing (${name})`, (it) => {

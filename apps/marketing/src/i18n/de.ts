@@ -34,7 +34,7 @@ export const de: Messages = {
     screenshotAlt:
       "T3 Code führt Subagenten von Claude, Codex, Muse und Gemini in einem Thread aus",
     endorsementsTitle: "Toleriert von über {users} Devs",
-    endorsementsSub: "Manche haben sogar darüber getwittert.",
+    endorsementsSub: "Ein paar haben sogar Nettes getwittert.",
     endorsementsLabel: "Stimmen von Entwicklern",
     readPost: "Beitrag von {handle} auf X lesen",
     harnessTitle: "Bring dein eigenes Abo mit",
@@ -76,7 +76,7 @@ export const de: Messages = {
     browseSource: "Quellcode ansehen",
     ctaTitle: "Deine Agenten verdienen Besseres als ein Terminal.",
     ctaSub:
-      "T3 Code ist kostenlos, Open Source und schnell. Installier es, binde das Tool ein, für das du schon zahlst, und lass deine Agenten loslegen.",
+      "T3 Code ist kostenlos, Open Source und schnell. Installier es, verbinde die Agenten, für die du schon zahlst, und lass sie direkt loslegen.",
     otherPlatforms: "Andere Plattformen",
   },
   download: {

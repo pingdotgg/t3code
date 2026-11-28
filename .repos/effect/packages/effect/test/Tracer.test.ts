@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { assertNone, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
-import { Cause, Context, Duration, Effect, Exit, Fiber, Layer, Scheduler, Tracer } from "effect"
+import { Cause, Context, Duration, Effect, Exit, Fiber, Layer, Logger, Scheduler, Tracer } from "effect"
 import { HttpBody, HttpClient, HttpClientResponse } from "effect/http"
 import { OtlpSerialization, OtlpTracer } from "effect/observability"
 import { TestClock } from "effect/testing"
@@ -403,10 +403,10 @@ describe("Tracer", () => {
       )
     }
 
-    it.effect("marks an empty cause Ok without a description", () =>
+    it.effect("leaves an empty cause Unset without a description", () =>
       Effect.gen(function*() {
         const span = yield* exportSpan(Exit.failCause(Cause.empty))
-        deepStrictEqual(span.status, { code: 1 })
+        deepStrictEqual(span.status, { code: 0 })
         deepStrictEqual(span.events, [])
         deepStrictEqual(span.attributes, [])
       }))
@@ -422,7 +422,7 @@ describe("Tracer", () => {
     it.effect("exports a span once when end is called again", () =>
       Effect.gen(function*() {
         const span = yield* exportSpan(Exit.void, (span) => span.end(span.status.startTime + 2n, Exit.fail("late")))
-        deepStrictEqual(span.status, { code: 1 })
+        deepStrictEqual(span.status, { code: 0 })
       }))
   })
 
@@ -489,6 +489,32 @@ describe("Tracer", () => {
           annotations: Context.empty()
         })
       ))
+
+    it.effect("treats an external span as parent context rather than a recording target", () =>
+      Effect.gen(function*() {
+        const external = Tracer.externalSpan({ traceId: "trace", spanId: "span" })
+        yield* Effect.gen(function*() {
+          const outer = (yield* Effect.currentSpan) as Tracer.NativeSpan
+          yield* Effect.gen(function*() {
+            yield* Effect.log("under external")
+            yield* Effect.annotateCurrentSpan("key", "value")
+            assert.isTrue(Cause.isNoSuchElementError(yield* Effect.flip(Effect.currentSpan)))
+            strictEqual(yield* Effect.currentParentSpan, external)
+            const child = (yield* Effect.log("under child").pipe(
+              Effect.andThen(Effect.currentSpan),
+              Effect.withSpan("child")
+            )) as Tracer.NativeSpan
+            strictEqual(getParent(child), external)
+            deepStrictEqual(child.events.map(([name]) => name), ["under child"])
+          }).pipe(Effect.withParentSpan(external))
+          strictEqual(outer.attributes.has("key"), false)
+          deepStrictEqual(outer.events, [])
+        }).pipe(
+          Effect.withSpan("outer"),
+          Effect.provide(Logger.layer([Logger.tracerLogger]))
+        )
+        deepStrictEqual(external, Tracer.externalSpan({ traceId: "trace", spanId: "span" }))
+      }))
   })
 
   describe("Effect.withTracerEnabled", () => {

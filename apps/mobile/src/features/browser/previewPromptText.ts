@@ -5,6 +5,7 @@ type Dialog = PreviewStreamControl["dialog"];
 export function previewPromptText(previous: Dialog, next: Dialog, draft: string) {
   if (
     next?.type !== previous?.type ||
+    next?.authChallengeId !== previous?.authChallengeId ||
     next?.message !== previous?.message ||
     next?.defaultValue !== previous?.defaultValue
   ) {

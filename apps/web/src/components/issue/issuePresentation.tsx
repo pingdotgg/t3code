@@ -3,7 +3,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { CircleCheckIcon, CircleDotIcon, CircleSlashIcon, TicketIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
-import { LinearIcon, type Icon } from "~/components/Icons";
+import { JiraIcon, LinearIcon, type Icon } from "~/components/Icons";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -14,6 +14,7 @@ export const IssueGlyph = { issue: CircleDotIcon } as const;
 /** Name and mark per standalone tracker kind; one missing here falls back to its kind and a ticket. */
 const STANDALONE_TRACKERS: Partial<Record<string, { providerName: string; Icon: Icon }>> = {
   linear: { providerName: "Linear", Icon: LinearIcon },
+  jira: { providerName: "Jira", Icon: JiraIcon },
 };
 
 /** A git host's tracker wears the host's own icon and name; a standalone tracker wears its kind. */
