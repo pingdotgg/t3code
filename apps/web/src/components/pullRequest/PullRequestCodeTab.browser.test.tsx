@@ -62,6 +62,24 @@ const diffAtoms = await vi.hoisted(async () => {
     onlyTestFilesDiffAtom: Atom.make(
       AsyncResult.success({ ...firstPage, patch: filePatch("a.test.ts") }),
     ),
+    leadingSpaceDiffAtom: Atom.make(
+      AsyncResult.success({
+        ...firstPage,
+        patch: [" note.txt", "note.txt"]
+          .map((path) =>
+            [
+              `diff --git a/${path} b/${path}`,
+              "new file mode 100644",
+              "--- /dev/null",
+              `+++ b/${path}`,
+              "@@ -0,0 +1 @@",
+              `+Added ${JSON.stringify(path)}`,
+              "",
+            ].join("\n"),
+          )
+          .join(""),
+      }),
+    ),
     testFileDiffAtom: Atom.make(() =>
       AsyncResult.success({
         patch:
@@ -76,13 +94,15 @@ const diffAtoms = await vi.hoisted(async () => {
     pagedDiffAtom,
   };
 });
-const { diffAtom, onlyTestFilesDiffAtom, testFileDiffAtom, pagedDiffAtom } = diffAtoms;
+const { diffAtom, onlyTestFilesDiffAtom, leadingSpaceDiffAtom, testFileDiffAtom, pagedDiffAtom } =
+  diffAtoms;
 
 const mocks = vi.hoisted(() => ({
   paged: false,
   shortPages: false,
   withTestFile: false,
   onlyTestFiles: false,
+  withLeadingSpaceFile: false,
   refreshed: false,
   diffCommits: [] as Array<string | undefined>,
   viewedPaths: null as ReadonlySet<string> | null,
@@ -135,6 +155,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
         mocks.diffCommits.push(input.commit);
         if (mocks.paged) return pagedDiffAtom(mocks.shortPages)(input.cursor ?? "first");
         if (mocks.onlyTestFiles) return onlyTestFilesDiffAtom;
+        if (mocks.withLeadingSpaceFile) return leadingSpaceDiffAtom;
         return mocks.withTestFile ? testFileDiffAtom : diffAtom;
       }) as never,
     },
@@ -143,7 +164,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
 
 import { WorkerPoolManager } from "@pierre/diffs/worker";
 import { createWorkspaceFocusController, workspaceAreaProps } from "~/lib/workspaceFocus";
-import { render, stubGlobal } from "../../../test/render";
+import { act, render, stubGlobal } from "../../../test/render";
 import PullRequestCodeTab from "./PullRequestCodeTab";
 
 const detail: PullRequestDetailView = {
@@ -205,6 +226,7 @@ function setup({ paged }: { paged: boolean }) {
   mocks.shortPages = false;
   mocks.withTestFile = false;
   mocks.onlyTestFiles = false;
+  mocks.withLeadingSpaceFile = false;
   mocks.refreshed = false;
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
@@ -223,7 +245,7 @@ const tab = (
     reference={detail}
     detail={{
       ...detail,
-      changedFiles: mocks.paged ? (mocks.shortPages ? 4 : 41) : 1,
+      changedFiles: mocks.paged ? (mocks.shortPages ? 4 : 41) : mocks.withLeadingSpaceFile ? 2 : 1,
       capabilities: { ...detail.capabilities, viewedFiles: "host" },
     }}
     selectedCommitOid={null}
@@ -262,6 +284,35 @@ it("can show test files again from the narrow Code tab empty state", async () =>
   await expect.element(screen.getByText("1 test file hidden", { exact: true })).toBeVisible();
   await screen.getByRole("button", { name: "Show test files", exact: true }).click();
   await expect.element(screen.getByText("a.test.ts", { exact: true }).first()).toBeVisible();
+});
+
+it("folds only the diff whose title has a leading space", async () => {
+  setup({ paged: false });
+  mocks.withLeadingSpaceFile = true;
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(tab(0), { container });
+  await screen.getByRole("button", { name: "Expand all files", exact: true }).click();
+
+  const toggles = screen.getByRole("button", { name: /^(Expand|Collapse) diff$/ });
+  await expect.element(toggles.nth(0)).toHaveAttribute("aria-expanded", "true");
+  await expect.element(toggles.nth(1)).toHaveAttribute("aria-expanded", "true");
+  const titles = await vi.waitFor(() => {
+    const elements = toggles
+      .elements()
+      .map((toggle) =>
+        toggle.closest("diffs-container")?.shadowRoot?.querySelector<HTMLElement>("[data-title]"),
+      );
+    expect(elements.map((title) => title?.textContent)).toEqual([" note.txt", "note.txt"]);
+    return elements;
+  });
+
+  await act(() => {
+    titles[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true, composed: true }));
+  });
+
+  await expect.element(toggles.nth(0)).toHaveAttribute("aria-expanded", "false");
+  await expect.element(toggles.nth(1)).toHaveAttribute("aria-expanded", "true");
 });
 
 it("restores saved Viewed folds, follows cleared marks, and allows explicit expansion", async () => {

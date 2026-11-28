@@ -1200,6 +1200,7 @@ function PullRequestCodeTab({
       <Button
         size="icon-micro"
         variant="ghost-muted"
+        data-diff-file-key={item.id}
         aria-expanded={!collapsed}
         aria-label={collapsed ? gt("Expand diff") : gt("Collapse diff")}
         className="mr-1"
@@ -2058,12 +2059,14 @@ function PullRequestCodeTab({
               }
               if (node.hasAttribute("data-viewed-toggle")) return;
               if (node.hasAttribute("data-diffs-header")) {
-                const filePath = node.querySelector("[data-title]")?.textContent?.trim();
-                if (filePath === undefined || filePath === "") return;
-                const item = items.find(
-                  (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
-                );
-                if (item !== undefined) toggleFile(item.id);
+                const root = node.getRootNode();
+                const fileKey =
+                  root instanceof ShadowRoot
+                    ? root.host
+                        .querySelector("[data-diff-file-key]")
+                        ?.getAttribute("data-diff-file-key")
+                    : null;
+                if (fileKey) toggleFile(fileKey);
                 return;
               }
             }
