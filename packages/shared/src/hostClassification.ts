@@ -26,8 +26,18 @@ const parseIpv4MappedIpv6Address = (host: string): readonly number[] | null => {
 };
 
 const parseIpv6Address = (host: string): readonly number[] | null => {
-  const normalized = normalizeHostname(host);
+  let normalized = normalizeHostname(host);
   if (!normalized.includes(":")) return null;
+  if (normalized.includes(".")) {
+    const suffixStart = normalized.lastIndexOf(":") + 1;
+    const suffix = normalized.slice(suffixStart);
+    if (!/^(?:0|[1-9]\d{0,2})(?:\.(?:0|[1-9]\d{0,2})){3}$/u.test(suffix)) return null;
+    const ipv4 = parseIpv4Address(suffix);
+    if (!ipv4) return null;
+    const high = ((ipv4[0]! << 8) | ipv4[1]!).toString(16);
+    const low = ((ipv4[2]! << 8) | ipv4[3]!).toString(16);
+    normalized = `${normalized.slice(0, suffixStart)}${high}:${low}`;
+  }
   const halves = normalized.split("::");
   if (halves.length > 2) return null;
   const head = halves[0] ? halves[0].split(":") : [];
@@ -75,7 +85,9 @@ const isSpecialPurposeIpv4Address = (parts: readonly number[]): boolean =>
 
 export const isLocalLoopbackHost = (host: string): boolean => {
   const normalized = normalizeHostname(host);
-  if (normalized === "localhost" || normalized === "::1") return true;
+  if (normalized === "localhost") return true;
+  const ipv6 = parseIpv6Address(normalized);
+  if (ipv6) return ipv6.slice(0, 7).every((part) => part === 0) && ipv6[7] === 1;
   return parseIpv4Address(normalized)?.[0] === 127;
 };
 
@@ -95,7 +107,7 @@ export const isSharedAddressSpaceHost = (host: string): boolean => {
 export const isPrivateNetworkHost = (host: string): boolean => {
   const normalized = normalizeHostname(host);
   if (
-    normalized === "::" ||
+    isWildcardHost(normalized) ||
     isLocalLoopbackHost(normalized) ||
     normalized.endsWith(".localhost") ||
     normalized.endsWith(".local") ||
@@ -177,7 +189,8 @@ export const isPublicFaviconHost = (host: string): boolean => {
 };
 
 export const isWildcardHost = (host: string | undefined): boolean =>
-  host === "0.0.0.0" || host === "::" || host === "[::]";
+  host === "0.0.0.0" ||
+  (host !== undefined && parseIpv6Address(host)?.every((part) => part === 0) === true);
 
 /** An unset, loopback, or wildcard bind host shares the port that `localhost` clients reach. */
 export const listensOnLoopback = (host: string | undefined): boolean =>

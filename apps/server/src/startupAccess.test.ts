@@ -76,6 +76,11 @@ it("names the bound loopback address instead of localhost", () => {
   expect(resolveLocalOrigin(undefined, 3773)).toBe("http://127.0.0.1:3773");
   expect(resolveLocalOrigin("0.0.0.0", 3773)).toBe("http://127.0.0.1:3773");
   expect(resolveLocalOrigin("[::]", 3773)).toBe("http://[::1]:3773");
+  expect(resolveLocalOrigin("::0", 3773)).toBe("http://[::1]:3773");
+  expect(resolveLocalOrigin("::0.0.0.0", 3773)).toBe("http://[::1]:3773");
+  expect(resolveHeadlessConnectionString("0:0:0:0:0:0:0:0", 3773, options)).toBe(
+    "http://[::1]:3773",
+  );
   expect(resolveLocalOrigin("192.168.1.42", 3773)).toBe("http://192.168.1.42:3773");
 });
 

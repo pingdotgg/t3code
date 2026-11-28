@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isPublicFaviconHost } from "./hostClassification.ts";
+import {
+  isLocalLoopbackHost,
+  isPrivateNetworkHost,
+  isPublicFaviconHost,
+  isWildcardHost,
+  listensOnLoopback,
+} from "./hostClassification.ts";
 
 describe("isPublicFaviconHost", () => {
   it("treats public hosts as public", () => {
@@ -108,5 +114,62 @@ describe("isPublicFaviconHost", () => {
   it("rejects malformed IPv4 text as a public host", () => {
     expect(isPublicFaviconHost("10.0.0.999")).toBe(true);
     expect(isPublicFaviconHost("10.0.0")).toBe(true);
+  });
+});
+
+describe("IPv6 bind host spellings", () => {
+  it("classifies every spelling of the IPv6 wildcard address", () => {
+    for (const host of [
+      "::",
+      "[::]",
+      "::0",
+      "[::0]",
+      "0:0:0:0:0:0:0:0",
+      "::0.0.0.0",
+      "[::0.0.0.0]",
+      "0:0:0:0:0:0:0.0.0.0",
+    ]) {
+      expect({ host, wildcard: isWildcardHost(host) }).toEqual({ host, wildcard: true });
+      expect({ host, loopback: listensOnLoopback(host) }).toEqual({ host, loopback: true });
+      expect({ host, private: isPrivateNetworkHost(host) }).toEqual({ host, private: true });
+    }
+    for (const host of ["::1", "::0.0.0.1", "::0.0.1.0", "::ffff:0.0.0.0"]) {
+      expect(isWildcardHost(host), host).toBe(false);
+    }
+  });
+
+  it("classifies every spelling of the IPv6 loopback address", () => {
+    for (const host of [
+      "::1",
+      "[::1]",
+      "0:0:0:0:0:0:0:1",
+      "::0:1",
+      "::0.0.0.1",
+      "[::0.0.0.1]",
+      "0:0:0:0:0:0:0.0.0.1",
+    ]) {
+      expect({ host, loopback: isLocalLoopbackHost(host) }).toEqual({ host, loopback: true });
+      expect({ host, private: isPrivateNetworkHost(host) }).toEqual({ host, private: true });
+    }
+    for (const host of ["::2", "1::1", "::0.0.0.0", "::0.0.1.1", "::ffff:127.0.0.1"]) {
+      expect(isLocalLoopbackHost(host), host).toBe(false);
+    }
+  });
+
+  it("rejects malformed dotted IPv6 suffixes", () => {
+    for (const host of [
+      "::0.0.0.256",
+      "::0.0..0",
+      "::0.0.0.01",
+      "::0.0.0.-0",
+      "::0.0.0.1e0",
+      "::0.0.0.1:0",
+      "::0.0.0.0::",
+      "0:0:0:0:0:0:0:0.0.0.0",
+      "0:0:0:0:0:0.0.0.1",
+    ]) {
+      expect(isWildcardHost(host), host).toBe(false);
+      expect(isLocalLoopbackHost(host), host).toBe(false);
+    }
   });
 });
