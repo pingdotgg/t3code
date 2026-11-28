@@ -22,6 +22,7 @@ export const OrchestrationCommandReceipt = Schema.Struct({
   resultSequence: NonNegativeInt,
   status: Schema.Literals(["accepted", "rejected"]),
   error: Schema.NullOr(Schema.String),
+  archiveSourceCommandId: Schema.optional(Schema.NullOr(CommandId)),
 });
 export type OrchestrationCommandReceipt = typeof OrchestrationCommandReceipt.Type;
 
@@ -29,6 +30,17 @@ export const GetByCommandIdInput = Schema.Struct({
   commandId: CommandId,
 });
 export type GetByCommandIdInput = typeof GetByCommandIdInput.Type;
+
+const LifecycleCommandType = Schema.Literals([
+  "thread.archive",
+  "thread.unarchive",
+  "thread.delete",
+]);
+export type LifecycleCommandType = typeof LifecycleCommandType.Type;
+const GetLatestLifecycleInput = Schema.Struct({
+  threadId: ThreadId,
+  commandTypes: Schema.optional(Schema.Array(LifecycleCommandType)),
+});
 
 export class OrchestrationCommandReceiptRepository extends Context.Service<
   OrchestrationCommandReceiptRepository,
@@ -40,6 +52,20 @@ export class OrchestrationCommandReceiptRepository extends Context.Service<
     readonly upsert: (
       receipt: OrchestrationCommandReceipt,
     ) => Effect.Effect<void, OrchestrationCommandReceiptRepositoryError>;
+
+    readonly setArchiveSourceIfMissing: (input: {
+      readonly commandId: CommandId;
+      readonly threadId: ThreadId;
+      readonly resultSequence: number;
+      readonly sourceCommandId: CommandId;
+    }) => Effect.Effect<boolean, OrchestrationCommandReceiptRepositoryError>;
+
+    readonly getLatestLifecycle: (
+      input: typeof GetLatestLifecycleInput.Type,
+    ) => Effect.Effect<
+      Option.Option<OrchestrationCommandReceipt>,
+      OrchestrationCommandReceiptRepositoryError
+    >;
 
     readonly getByCommandId: (
       input: GetByCommandIdInput,
@@ -65,7 +91,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
           accepted_at,
           result_sequence,
           status,
-          error
+          error,
+          archive_source_command_id
         )
         VALUES (
           ${receipt.commandId},
@@ -75,7 +102,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
           ${receipt.acceptedAt},
           ${receipt.resultSequence},
           ${receipt.status},
-          ${receipt.error}
+          ${receipt.error},
+          ${receipt.archiveSourceCommandId ?? null}
         )
         ON CONFLICT (command_id)
         DO UPDATE SET
@@ -85,7 +113,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
           accepted_at = excluded.accepted_at,
           result_sequence = excluded.result_sequence,
           status = excluded.status,
-          error = excluded.error
+          error = excluded.error,
+          archive_source_command_id = excluded.archive_source_command_id
       `,
   });
 
@@ -102,10 +131,27 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
           accepted_at AS "acceptedAt",
           result_sequence AS "resultSequence",
           status,
-          error
+          error,
+          archive_source_command_id AS "archiveSourceCommandId"
         FROM orchestration_command_receipts
         WHERE command_id = ${commandId}
       `,
+  });
+
+  const findLatestLifecycle = SqlSchema.findOneOption({
+    Request: GetLatestLifecycleInput,
+    Result: OrchestrationCommandReceipt,
+    execute: ({ threadId, commandTypes }) => sql`
+      SELECT command_id AS "commandId", aggregate_kind AS "aggregateKind",
+        aggregate_id AS "aggregateId", command_type AS "commandType",
+        accepted_at AS "acceptedAt", result_sequence AS "resultSequence", status, error,
+        archive_source_command_id AS "archiveSourceCommandId"
+      FROM orchestration_command_receipts
+      WHERE aggregate_kind = 'thread' AND aggregate_id = ${threadId}
+        AND status = 'accepted' AND command_type IN ('thread.archive', 'thread.unarchive', 'thread.delete')
+        ${commandTypes === undefined ? sql`` : sql`AND command_type IN ${sql.in(commandTypes)}`}
+      ORDER BY result_sequence DESC LIMIT 1
+    `,
   });
 
   const upsert: OrchestrationCommandReceiptRepository["Service"]["upsert"] = (receipt) =>
@@ -125,7 +171,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
         accepted_at,
         result_sequence,
         status,
-        error
+        error,
+        archive_source_command_id
       )
       VALUES (
         ${receipt.commandId},
@@ -135,7 +182,8 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
         ${receipt.acceptedAt},
         ${receipt.resultSequence},
         ${receipt.status},
-        ${receipt.error}
+        ${receipt.error},
+        ${receipt.archiveSourceCommandId ?? null}
       )
       ON CONFLICT(command_id) DO NOTHING
       RETURNING command_id
@@ -157,6 +205,32 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
     );
 
   return {
+    setArchiveSourceIfMissing: Effect.fn(
+      "OrchestrationCommandReceiptRepository.setArchiveSourceIfMissing",
+    )(({ commandId, threadId, resultSequence, sourceCommandId }) =>
+      sql<{ readonly command_id: string }>`
+          UPDATE orchestration_command_receipts
+          SET archive_source_command_id = ${sourceCommandId}
+          WHERE command_id = ${commandId}
+            AND aggregate_kind = 'thread' AND aggregate_id = ${threadId}
+            AND status = 'accepted' AND command_type = 'thread.archive'
+            AND result_sequence = ${resultSequence} AND archive_source_command_id IS NULL
+          RETURNING command_id
+        `.pipe(
+        Effect.map((rows) => rows.length === 1),
+        Effect.mapError(
+          toPersistenceSqlError(
+            "OrchestrationCommandReceiptRepository.setArchiveSourceIfMissing:query",
+          ),
+        ),
+      ),
+    ),
+    getLatestLifecycle: (input) =>
+      findLatestLifecycle(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError("OrchestrationCommandReceiptRepository.getLatestLifecycle:query"),
+        ),
+      ),
     insertIfAbsent,
     upsert,
     getByCommandId,
