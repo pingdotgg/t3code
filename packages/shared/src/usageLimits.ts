@@ -12,6 +12,7 @@ import {
   PROVIDER_DISPLAY_NAMES,
   type ServerProvider,
   type ServerProviderUsageLimits,
+  type ServerProviderResetCredits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceAccount,
   type UsageLimitSourceSnapshot,
@@ -764,6 +765,17 @@ function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   return limits.windows.length === 0 ? "No limits reported." : null;
 }
 
+/** What narrower windows, such as Fable's share of Weekly, used of this window. */
+export function sharedUsage(
+  window: ServerProviderUsageWindow,
+  windows: ReadonlyArray<ServerProviderUsageWindow>,
+): { readonly percent: number; readonly labels: ReadonlyArray<string> } | null {
+  const sharing = windows.filter((other) => other.share?.ofWindowId === window.id);
+  const used = sharing.reduce((sum, other) => sum + (other.share?.usedPercent ?? 0), 0);
+  const percent = Math.min(Math.round(used), 100 - remainingPercent(window));
+  return percent > 0 ? { percent, labels: sharing.map((other) => other.label) } : null;
+}
+
 export function remainingPercent(window: ServerProviderUsageWindow): number {
   return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
 }
@@ -1089,4 +1101,24 @@ export function collectProviderUsageLimits(
     }
   }
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
+}
+
+export interface WindowResetCredits {
+  readonly count: number;
+  /** Set when every counted reset only clears part of the account, e.g. "Fable". */
+  readonly scope: string | undefined;
+}
+
+/** Resets without a clears list count against every window. */
+export function resetCreditsForWindow(
+  credits: ServerProviderResetCredits | undefined,
+  windowId: string,
+): WindowResetCredits {
+  if (!credits?.options) return { count: credits?.availableCount ?? 0, scope: undefined };
+  const counted = credits.options.filter(
+    (option) => option.clearsWindowIds?.includes(windowId) ?? true,
+  );
+  const count = counted.reduce((sum, option) => sum + option.availableCount, 0);
+  const scopes = new Set(counted.map((option) => option.scope));
+  return { count, scope: scopes.size === 1 ? [...scopes][0] : undefined };
 }

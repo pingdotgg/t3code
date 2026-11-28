@@ -1,7 +1,12 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- a synchronous hash for the cache key and file name.
+import * as NodeCrypto from "node:crypto";
+
 import type {
   ProviderConsumeResetCreditOutcome,
   ServerProviderResetCreditOption,
   ServerProviderResetCredits,
+  ServerProviderUsageLimits,
+  ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
@@ -11,6 +16,12 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+
+import {
+  claudeScopedWindowId,
+  claudeUsageWindowId,
+  OVERAGE_INCLUDED_EVENT_TYPE,
+} from "./claudeUsageLimits.ts";
 
 const API_BASE = "https://api.anthropic.com";
 const PROGRAM = "cedar_ember";
@@ -47,8 +58,31 @@ const CedarEmber = Schema.Struct({
 });
 const UsageResponse = Schema.Struct({
   cedar_ember: Schema.optional(Schema.NullOr(Schema.Unknown)),
+  limits: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
+  weekly_scoped_shares: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
 });
 const decodeCedarEmber = Schema.decodeUnknownOption(CedarEmber);
+const ScopedLimit = Schema.Struct({
+  kind: Schema.Literal("weekly_scoped"),
+  scope: Schema.Struct({
+    model: Schema.Struct({ display_name: Schema.String.check(Schema.isNonEmpty()) }),
+  }),
+});
+const decodeScopedLimit = Schema.decodeUnknownOption(ScopedLimit);
+const Percent = Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 }));
+const WeeklyShare = Schema.Struct({
+  limit_index: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  used_percent_of_weekly: Percent,
+  allowance_percent_of_weekly: Percent,
+});
+const decodeWeeklyShare = Schema.decodeUnknownOption(WeeklyShare);
+const GRANTS_CACHE_TTL_MS = 2 * 60_000;
+const CachedUsage = Schema.fromJsonString(
+  Schema.Struct({ at: Schema.Number, key: Schema.String, body: UsageResponse }),
+);
+const decodeCachedUsage = Schema.decodeEffect(CachedUsage);
+const encodeCachedUsage = Schema.encodeEffect(CachedUsage);
+const sha256 = (value: string) => NodeCrypto.createHash("sha256").update(value).digest("hex");
 const ClaimResponse = Schema.Struct({
   result: Schema.Literals([
     "reset",
@@ -115,6 +149,12 @@ const RESET_KINDS = {
   full: { label: "Full reset", description: "Refills your 5-hour and weekly limits." },
 } as const;
 type ResetKind = keyof typeof RESET_KINDS;
+const KIND_BUCKETS: Record<ResetKind, ReadonlyArray<string>> = {
+  session: ["five_hour"],
+  weekly: ["seven_day"],
+  fable: [OVERAGE_INCLUDED_EVENT_TYPE],
+  full: ["five_hour", "seven_day"],
+};
 
 const grantKind = (grant: typeof Grant.Type): ResetKind => {
   if (grant.gives_back_weekly) return "fable";
@@ -130,6 +170,7 @@ const grantKind = (grant: typeof Grant.Type): ResetKind => {
 export function claudeResetCreditsToContract(
   block: unknown,
   nowMs: number,
+  overageIncluded?: string,
 ): ServerProviderResetCredits | undefined {
   const parsed = decodeCedarEmber(block);
   if (Option.isNone(parsed) || !parsed.value.eligible) return undefined;
@@ -146,27 +187,60 @@ export function claudeResetCreditsToContract(
     const at = grant?.ends_at ? DateTime.make(grant.ends_at) : Option.none();
     return Option.isSome(at) ? DateTime.formatIso(at.value) : undefined;
   };
-  const byKind = new Map<ResetKind, Array<typeof Grant.Type>>();
+  // Grants of one kind can still clear different limits, so they group by what they clear too.
+  const groups = new Map<
+    string,
+    {
+      kind: ResetKind;
+      cleared: Array<string>;
+      modelOnly: boolean;
+      grants: Array<typeof Grant.Type>;
+    }
+  >();
   for (const grant of live) {
     if (grant.resets_left === 0) continue;
     const kind = grantKind(grant);
-    byKind.set(kind, [...(byKind.get(kind) ?? []), grant]);
+    const listed = (grant.clears ?? []).flatMap((bucket) =>
+      typeof bucket === "string" && bucket.trim() ? [bucket.trim()] : [],
+    );
+    const buckets = new Set(listed.length > 0 ? listed : KIND_BUCKETS[kind]);
+    // Claude lists the shared Session in a model-scoped reset's clears, but redeeming leaves it.
+    const modelOnly =
+      buckets.has(OVERAGE_INCLUDED_EVENT_TYPE) &&
+      [...buckets].every(
+        (bucket) => bucket === OVERAGE_INCLUDED_EVENT_TYPE || bucket === "five_hour",
+      );
+    // A model's row only counts that model's own resets, so a wider reset stays off it.
+    const cleared = [...buckets]
+      .filter((bucket) => (bucket === OVERAGE_INCLUDED_EVENT_TYPE) === modelOnly)
+      .toSorted();
+    const key = `${kind}\n${cleared.join("\n")}`;
+    const group = groups.get(key);
+    if (group) group.grants.push(grant);
+    else groups.set(key, { kind, cleared, modelOnly, grants: [grant] });
   }
-  const options = (Object.keys(RESET_KINDS) as Array<ResetKind>).flatMap(
-    (kind): Array<ServerProviderResetCreditOption> => {
-      const grants = byKind.get(kind);
-      const target = grants?.[0];
-      if (!grants || !target) return [];
-      const optionExpiresAt = expiresAt(target);
-      return [
-        {
+  const options = (Object.keys(RESET_KINDS) as Array<ResetKind>).flatMap((kind) =>
+    [...groups.values()]
+      .filter((group) => group.kind === kind)
+      .map(({ cleared, modelOnly, grants }): ServerProviderResetCreditOption => {
+        const target = grants[0]!;
+        const optionExpiresAt = expiresAt(target);
+        const scope = modelOnly ? overageIncluded?.trim() : undefined;
+        return {
           creditId: target.id,
           ...RESET_KINDS[kind],
+          ...(modelOnly && kind !== "fable"
+            ? {
+                label: `${scope ?? "Model"} weekly reset`,
+                description: `Refills your ${scope ?? "model"} weekly allowance.`,
+              }
+            : {}),
           availableCount: grants.reduce((sum, grant) => sum + grant.resets_left, 0),
           ...(optionExpiresAt ? { expiresAt: optionExpiresAt } : {}),
-        },
-      ];
-    },
+          clearsWindowIds: cleared.map((bucket) => claudeUsageWindowId(bucket, overageIncluded)),
+          ...(scope ? { scope } : {}),
+        };
+      }),
   );
   const nextExpiresAt = expiresAt(next);
   return {
@@ -174,6 +248,82 @@ export function claudeResetCreditsToContract(
     ...(nextExpiresAt ? { nextExpiresAt } : {}),
     ...(next ? { nextCreditId: next.id } : {}),
     ...(next ? { options } : {}),
+  };
+}
+
+export type ClaudeWindowShare = NonNullable<ServerProviderUsageWindow["share"]>;
+
+/** Claude caps a model's weekly usage at a share of Weekly, such as Fable at 50%. */
+function claudeWeeklySharesByWindowId(
+  limits: ReadonlyArray<unknown> | null | undefined,
+  shares: ReadonlyArray<unknown> | null | undefined,
+): ReadonlyMap<string, ClaudeWindowShare> {
+  const byWindowId = new Map<string, ClaudeWindowShare>();
+  for (const share of (shares ?? []).flatMap((raw) => Option.toArray(decodeWeeklyShare(raw)))) {
+    const limit = decodeScopedLimit(limits?.[share.limit_index]);
+    if (Option.isNone(limit)) continue;
+    byWindowId.set(claudeScopedWindowId(limit.value.scope.model.display_name), {
+      ofWindowId: "seven_day",
+      usedPercent: share.used_percent_of_weekly,
+      allowancePercent: share.allowance_percent_of_weekly,
+    });
+  }
+  return byWindowId;
+}
+
+export interface ClaudeAccountUsage {
+  readonly resetCredits: ServerProviderResetCredits | undefined;
+  readonly sharesByWindowId: ReadonlyMap<string, ClaudeWindowShare>;
+}
+
+// A Fable reset gives back what that model used of Weekly, so say how much.
+const describeShare = (
+  option: ServerProviderResetCreditOption,
+  sharesByWindowId: ReadonlyMap<string, ClaudeWindowShare>,
+): ServerProviderResetCreditOption => {
+  const share =
+    option.scope && option.label === RESET_KINDS.fable.label
+      ? option.clearsWindowIds?.flatMap((id) => sharesByWindowId.get(id) ?? [])[0]
+      : undefined;
+  if (!share || !option.scope) return option;
+  const used = Math.round(share.usedPercent);
+  return {
+    ...option,
+    description: `Refills your ${option.scope} allowance${used > 0 ? ` and gives back the ${used}% of your weekly limit ${option.scope} used` : ""}. It doesn't reset the rest of your weekly limit.`,
+  };
+};
+
+const accountUsageFromResponse = (
+  body: typeof UsageResponse.Type,
+  nowMs: number,
+  overageIncluded: string | undefined,
+): ClaudeAccountUsage => {
+  const sharesByWindowId = claudeWeeklySharesByWindowId(body.limits, body.weekly_scoped_shares);
+  const resetCredits = claudeResetCreditsToContract(body.cedar_ember, nowMs, overageIncluded);
+  return {
+    resetCredits: resetCredits?.options
+      ? {
+          ...resetCredits,
+          options: resetCredits.options.map((option) => describeShare(option, sharesByWindowId)),
+        }
+      : resetCredits,
+    sharesByWindowId,
+  };
+};
+
+export function withClaudeAccountUsage(
+  usageLimits: ServerProviderUsageLimits,
+  accountUsage: ClaudeAccountUsage | undefined,
+): ServerProviderUsageLimits {
+  if (!accountUsage) return usageLimits;
+  const { resetCredits, sharesByWindowId } = accountUsage;
+  return {
+    ...usageLimits,
+    windows: usageLimits.windows.map((window) => {
+      const share = sharesByWindowId.get(window.id);
+      return share ? { ...window, share } : window;
+    }),
+    ...(resetCredits ? { resetCredits } : {}),
   };
 }
 
@@ -207,10 +357,36 @@ const withClaudeHeaders = (token: string, version: string) =>
     "user-agent": `claude-cli/${version} (external, cli)`,
   });
 
-export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
-  function* (configDir: string, version: string) {
+export const claudeResetCreditsCacheFile = (path: Path.Path, stateDir: string, configDir: string) =>
+  path.join(stateDir, `claude-reset-credits-${sha256(configDir).slice(0, 16)}.json`);
+
+export const forgetClaudeResetCredits = Effect.fn("claudeResetCredits.forget")(function* (
+  cacheFile: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  yield* fs.remove(cacheFile, { force: true }).pipe(Effect.ignore);
+});
+
+// The cache is on disk because a restart refetches, and a dev server restarting on each edit gets
+// the account rate limited.
+export const readClaudeAccountUsage = Effect.fn("readClaudeAccountUsage")(
+  function* (configDir: string, version: string, overageIncluded?: string, cacheFile?: string) {
     const token = yield* readAccessToken(configDir);
     if (!token) return undefined;
+    const fs = yield* FileSystem.FileSystem;
+    const now = DateTime.toEpochMillis(yield* DateTime.now);
+    const key = sha256(`${token}\n${version}`);
+    const cached = cacheFile
+      ? yield* fs.readFileString(cacheFile).pipe(Effect.flatMap(decodeCachedUsage), Effect.option)
+      : Option.none();
+    if (
+      Option.isSome(cached) &&
+      cached.value.key === key &&
+      now >= cached.value.at &&
+      now - cached.value.at < GRANTS_CACHE_TTL_MS
+    ) {
+      return accountUsageFromResponse(cached.value.body, now, overageIncluded);
+    }
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
       HttpClientRequest.get(`${API_BASE}/api/oauth/usage`, {
@@ -220,10 +396,18 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
     const body = yield* HttpClientResponse.schemaBodyJson(UsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );
-    return claudeResetCreditsToContract(
-      body.cedar_ember,
-      DateTime.toEpochMillis(yield* DateTime.now),
-    );
+    if (cacheFile) {
+      const { cedar_ember, limits, weekly_scoped_shares } = body;
+      yield* encodeCachedUsage({
+        at: now,
+        key,
+        body: { cedar_ember, limits, weekly_scoped_shares },
+      }).pipe(
+        Effect.flatMap((json) => fs.writeFileString(cacheFile, json)),
+        Effect.ignore,
+      );
+    }
+    return accountUsageFromResponse(body, now, overageIncluded);
   },
   Effect.timeout("10 seconds"),
   Effect.orElseSucceed(() => undefined),

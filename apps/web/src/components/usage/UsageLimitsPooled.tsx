@@ -1,3 +1,5 @@
+import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
+import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   CHATGPT_USAGE_URL,
   collectHttpQuotaSources,
@@ -11,13 +13,14 @@ import {
   paceRemainingPercent,
   remainingPercent,
   type ResetCreditChoice,
+  resetCreditsForWindow,
+  sharedUsage,
 } from "@t3tools/shared/usageLimits";
 import { T, Var, useGT, useMessages } from "gt-react";
-import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
-import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
 import {
   createContext,
+  type CSSProperties,
   Fragment,
   type ReactNode,
   type RefObject,
@@ -27,19 +30,20 @@ import {
   useState,
 } from "react";
 
-import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { ensureLocalApi } from "../../localApi";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { OpenAI } from "../Icons";
 import { providerClients } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
-import { Button } from "../ui/button";
-import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
+import { Button } from "../ui/button";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { PaceIcon, ResetCreditDialog, barColor, usePaceMark, useResetCredit } from "./UsageLimits";
 import {
+  usageShareSummary,
   collectExternalUsageLinks,
   collectLimitNotices,
   cursorUsageWindowDetails,
@@ -155,6 +159,7 @@ function SegmentPopover({
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
   const resetsIn = formatResetsIn(window, now, m, "in");
+  const shared = sharedUsage(window, account.limits.windows);
   const where =
     account.environments.length > 0
       ? account.environments.map((environment) => environment.label).join(", ")
@@ -200,6 +205,13 @@ function SegmentPopover({
       </div>
       <div className="flex flex-col gap-1 border-t border-border/60 pt-2.5">
         <Row label={gt("Left", { $context: "remaining usage" })}>{remaining}%</Row>
+        {shared ? (
+          <Row
+            label={shared.labels.map((label) => label.replace(`${window.label} · `, "")).join(", ")}
+          >
+            {gt("{percent}% of weekly limit", { percent: shared.percent })}
+          </Row>
+        ) : null}
         {window.resetsAt ? (
           <Row label={gt("Resets", { $context: "when the usage window resets" })}>
             {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m)}
@@ -349,6 +361,19 @@ function RedeemableSegment({
   );
 }
 
+// Reaches back under the fill's rounded end and paints only the two corners it leaves bare,
+// so the translucent layers never overlap.
+const fillCornerNotches = {
+  maskImage: [
+    "linear-gradient(to right, transparent var(--radius-md), #000 var(--radius-md))",
+    "radial-gradient(circle at 0 100%, transparent calc(var(--radius-md) - 0.5px), #000 calc(var(--radius-md) + 0.5px))",
+    "radial-gradient(circle at 0 0, transparent calc(var(--radius-md) - 0.5px), #000 calc(var(--radius-md) + 0.5px))",
+  ].join(", "),
+  maskSize: "100% 100%, var(--radius-md) var(--radius-md), var(--radius-md) var(--radius-md)",
+  maskPosition: "0 0, 0 0, 0 100%",
+  maskRepeat: "no-repeat",
+} satisfies CSSProperties;
+
 function SegmentTriggers({
   account,
   window,
@@ -374,7 +399,7 @@ function SegmentTriggers({
   const m = useMessages();
   const resetsIn = formatResetsIn(window, now, m);
   const refillIn = formatResetsIn(window, now, m, "refill");
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const { count: credits, scope } = resetCreditsForWindow(account.limits.resetCredits, window.id);
   const gt = useGT();
   const segmentLabel = [
     gt("{name}: {remaining}% left", {
@@ -383,6 +408,7 @@ function SegmentTriggers({
       remaining,
     }),
     resetsIn,
+    credits ? scope : null,
     timeLeft === null ? null : gt("{timeLeft}% of the window left", { timeLeft }),
     credits
       ? gt(
@@ -393,6 +419,7 @@ function SegmentTriggers({
   ]
     .filter(Boolean)
     .join(", ");
+  const shared = sharedUsage(window, account.limits.windows);
   return (
     <>
       <PopoverTrigger
@@ -412,9 +439,28 @@ function SegmentTriggers({
         <div aria-hidden className="absolute inset-0 overflow-hidden rounded-md">
           {/* Clipped inside the rounded clip so the bar's own corners keep their antialiasing. */}
           <div className="absolute inset-0" style={paceMark?.gap}>
+            {shared ? (
+              <div
+                aria-hidden
+                className="absolute inset-y-0 rounded-r-md opacity-20"
+                style={{
+                  ...(remaining > 0 ? fillCornerNotches : undefined),
+                  left: remaining > 0 ? `calc(${remaining}% - var(--radius-md))` : 0,
+                  width:
+                    remaining > 0
+                      ? `calc(${shared.percent}% + var(--radius-md))`
+                      : `${shared.percent}%`,
+                  backgroundColor: color,
+                }}
+              />
+            ) : null}
             <div
               aria-hidden
-              className="absolute inset-y-0 left-0 rounded-md opacity-35"
+              className={cn(
+                "absolute inset-y-0 left-0 rounded-md",
+                window.share ? "opacity-50" : "opacity-35",
+              )}
+              // A window drawing from a shared limit takes the tint of its part of that limit.
               style={{ width: `${remaining}%`, backgroundColor: color }}
             />
             {remaining < 100 && reset && refillPercent > 0 ? (
@@ -470,6 +516,9 @@ function SegmentTriggers({
                   <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
                     <TicketIcon className="size-3" aria-hidden />
                     {credits}
+                    {scope ? (
+                      <span className="font-normal text-muted-foreground">{scope}</span>
+                    ) : null}
                   </span>
                 </>
               ) : null}
@@ -498,7 +547,7 @@ function LegendRow({
   const remaining = remainingPercent(window);
   const m = useMessages();
   const resetsIn = formatResetsIn(window, now, m, "refill");
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const { count: credits, scope } = resetCreditsForWindow(account.limits.resetCredits, window.id);
   const gt = useGT();
   return (
     <PopoverTrigger
@@ -530,8 +579,10 @@ function LegendRow({
             >
               <TicketIcon className="size-3" aria-hidden />
               {credits}
+              {scope ? <span className="font-normal text-muted-foreground">{scope}</span> : null}
             </span>
             <span className="sr-only">
+              {scope ? `${scope} ` : ""}
               {gt(
                 "{count, plural, one {{count} reset credit banked} other {{count} reset credits banked}}",
                 { count: credits },
@@ -664,6 +715,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
       {windows.map((window) => {
         const details =
           pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool, m) : undefined;
+        const share = window.members.find((member) => member.window.share)?.window.share;
         return (
           <PoolWindowCard
             key={`${window.kind}:${window.id}`}
@@ -671,7 +723,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
             color={color}
             now={now}
             label={details?.label}
-            description={details?.description}
+            description={details?.description ?? usageShareSummary(share, windows, m) ?? undefined}
           />
         );
       })}

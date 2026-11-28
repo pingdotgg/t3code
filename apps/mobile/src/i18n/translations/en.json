@@ -1321,6 +1321,8 @@
   "732708950237004e": "This client is older than the server on {environment}; its usage is excluded from totals.",
   "9758c2ede06aa19b": "{hour} today",
   "9102fd47fc686f0f": "{hour} yesterday",
+  "a645030d190791e2": "Up to {percent}% of your weekly limit",
+  "d9d3e9b17c602345": "Up to {percent}% of your {limit} limit",
   "72777a9fb1f7f637": "Overall",
   "cb42b8946f737f0c": "All usage on your plan this billing cycle.",
   "935292957f8578fb": "Cursor Models",

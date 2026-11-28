@@ -158,6 +158,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         ? configDir
         : undefined,
     );
+    const resetCreditsCacheFile = ClaudeResetCredits.claudeResetCreditsCacheFile(
+      path,
+      stateDir,
+      configDir,
+    );
     const stampIdentity = withInstanceIdentity({
       instanceId,
       driverKind: DRIVER_KIND,
@@ -306,11 +311,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               catalog,
               scopedLimitNames,
               // Reset credits need Claude's sign-in token, which T3 reads only with usage access.
-              (version) =>
+              (version, overageIncluded) =>
                 usageAccess.pipe(
                   Effect.flatMap((allowed) =>
                     allowed
-                      ? ClaudeResetCredits.readClaudeResetCredits(configDir, version)
+                      ? ClaudeResetCredits.readClaudeAccountUsage(
+                          configDir,
+                          version,
+                          overageIncluded,
+                          resetCreditsCacheFile,
+                        )
                       : Effect.undefined,
                   ),
                   Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -384,12 +394,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         checkedAt: capabilities.usageCheckedAt ?? checkedAt,
       });
       // Reset credits need Claude's sign-in token, which T3 reads only with usage access.
-      const resetCredits =
+      const accountUsage =
         usesSavedOAuth && !usageLimits.unavailable && version && (yield* usageAccess)
-          ? yield* ClaudeResetCredits.readClaudeResetCredits(configDir, version)
+          ? yield* ClaudeResetCredits.readClaudeAccountUsage(
+              configDir,
+              version,
+              (yield* Ref.get(scopedLimitNames)).overageIncluded,
+              resetCreditsCacheFile,
+            )
           : undefined;
       return {
-        usageLimits: resetCredits ? { ...usageLimits, resetCredits } : usageLimits,
+        usageLimits: ClaudeResetCredits.withClaudeAccountUsage(usageLimits, accountUsage),
         ...(auth ? { auth } : {}),
       };
     }).pipe(
@@ -398,6 +413,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       Effect.provideService(Path.Path, path),
     );
 
+    const invalidateUsageCache = Cache.invalidateAll(capabilitiesProbeCache).pipe(
+      Effect.andThen(ClaudeResetCredits.forgetClaudeResetCredits(resetCreditsCacheFile)),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+    );
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<ClaudeSettings>>({
       resolveMaintenance,
@@ -411,7 +430,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         ),
       checkProvider,
       checkUsageLimits,
-      invalidateUsageCache: Cache.invalidateAll(capabilitiesProbeCache),
+      invalidateUsageCache,
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>
@@ -488,13 +507,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
             cause,
           }),
       ),
+      // A failed claim may still have spent the reset.
+      Effect.tapError(() => invalidateUsageCache),
       Effect.tap((outcome) =>
         ResetCreditCoordinator.refreshAfterRedemption({
           outcome,
           getSnapshot: snapshot.getSnapshot,
-          refresh: Cache.invalidateAll(capabilitiesProbeCache).pipe(
-            Effect.andThen(snapshot.refresh),
-          ),
+          refresh: invalidateUsageCache.pipe(Effect.andThen(snapshot.refresh)),
         }).pipe(
           Effect.filterOrFail(
             (confirmed) => confirmed,
@@ -521,7 +540,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       accentColor,
       enabled,
       snapshot,
-      invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
+      invalidateCaches: invalidateUsageCache,
       workspaceRescans: Stream.fromQueue(workspaceRescans),
       // Unreadable settings report no limit; the thread's own notice covers a refused mode.
       runtimeModeLimitsForCwd: (cwd: string) =>
