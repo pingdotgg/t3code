@@ -294,6 +294,25 @@ async function odfHtml(
   reserveMarkup(count * markup.length - children.length);
   return markup.repeat(count);
 }
+// A drawing can contain paragraphs of its own, even when anchored inside cell text.
+function withoutOdsDrawings(node: XmlNode): XmlNode | undefined {
+  if (node.name.startsWith("draw:")) return undefined;
+  let children: XmlNode[] | undefined;
+  for (const [index, child] of node.children.entries()) {
+    const content = withoutOdsDrawings(child);
+    if (content !== child) children ??= node.children.slice(0, index);
+    if (content) children?.push(content);
+  }
+  return children ? { ...node, children } : node;
+}
+function odsCellText(cell: XmlNode): string {
+  const paragraphs = cell.children
+    .filter((child) => child.name !== "office:annotation")
+    .map(withoutOdsDrawings)
+    .flatMap((child) => (!child ? [] : child.name === "text:p" ? [child] : find(child, "text:p")))
+    .map(text);
+  return paragraphs.some(Boolean) ? paragraphs.join("\n") : "";
+}
 export async function openDocument(
   archive: JSZip,
   kind: "odt" | "ods" | "odp",
@@ -328,15 +347,7 @@ export async function openDocument(
             const value =
               cell.name === "table:covered-table-cell"
                 ? ""
-                : cell.children
-                    // Shapes anchored to a cell float over the sheet; their text is not the cell's value.
-                    .filter(
-                      (child) =>
-                        child.name !== "office:annotation" && !child.name.startsWith("draw:"),
-                    )
-                    .flatMap((child) => (child.name === "text:p" ? [child] : find(child, "text:p")))
-                    .map(text)
-                    .join("\n") ||
+                : odsCellText(cell) ||
                   cell.attrs["office:value"] ||
                   cell.attrs["office:date-value"] ||
                   cell.attrs["office:time-value"] ||
