@@ -10,6 +10,7 @@ import {
   isBareGitConfig,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
+  parseGitRemoteRepository,
   parseOriginUrlFromGitConfig,
   resolveAutoFeatureBranchName,
   sanitizeFeatureBranchName,
@@ -106,6 +107,25 @@ describe("normalizeGitRemoteUrl", () => {
       "https://git.example.com/repo",
     );
     expect(normalizeGitRemoteUrl("/srv/git/Repo.git")).toBe("/srv/git/repo");
+  });
+});
+
+describe("parseGitRemoteRepository", () => {
+  it("drops an encoded .git suffix like a literal one", () => {
+    expect(parseGitRemoteRepository("ssh://git@gitlab.com/team/repo%2Egit")).toEqual({
+      host: "gitlab.com",
+      path: "team/repo",
+    });
+    // A non-bare repository's `.git` directory names the checkout it sits in.
+    for (const remote of [
+      "ssh://me@myserver/home/me/project/.git",
+      "ssh://me@myserver/home/me/project/%2Egit/",
+    ]) {
+      expect(parseGitRemoteRepository(remote)).toEqual({
+        host: "myserver",
+        path: "home/me/project",
+      });
+    }
   });
 });
 
@@ -239,15 +259,18 @@ describe("parseOriginUrlFromGitConfig", () => {
     ).toBe("git@github.com:a/b.git");
   });
 
-  it("falls back to the first remote when there is no origin", () => {
-    const config = [
-      '[remote "upstream"]',
-      "\turl = https://github.com/acme/repo.git",
-      '[remote "fork"]',
-      "\turl = https://github.com/me/repo.git",
-    ].join("\n");
-    expect(parseOriginUrlFromGitConfig(config)).toBe("https://github.com/acme/repo.git");
-  });
+  it.each(["upstream", String.raw`team\"mirror`])(
+    "falls back to the first remote when there is no origin: %s",
+    (remoteName) => {
+      const config = [
+        `[remote "${remoteName}"]`,
+        "\turl = https://github.com/acme/repo.git",
+        '[remote "fork"]',
+        "\turl = https://github.com/me/repo.git",
+      ].join("\n");
+      expect(parseOriginUrlFromGitConfig(config)).toBe("https://github.com/acme/repo.git");
+    },
+  );
 });
 
 describe("isTemporaryWorktreeBranch", () => {

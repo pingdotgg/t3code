@@ -337,6 +337,7 @@ describe("provider usage reporting", () => {
   it("maps vendor catalog aliases to their slug and user-configured models to their driver", () => {
     expect(label("antigravity", "gemini-4-hydrogen")).toBe("gemini-4-hydrogen");
     expect(label("antigravity", "antigravity-default")).toBe("gemini-4-neon");
+    expect(label("antigravity", "gemini-4-neon-low")).toBe("gemini-4-neon");
     expect(label("pi", "pi-local")).toBe("custom:pi");
     expect(label("pi", "/Users/jane/models/qwen-coder.gguf")).toBe("custom:pi");
   });
