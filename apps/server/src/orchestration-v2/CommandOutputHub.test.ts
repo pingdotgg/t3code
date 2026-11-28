@@ -290,7 +290,6 @@ layer("CommandOutputHub", (it) => {
       const frames = yield* subscribeFrames(threadId);
       const final = yield* takeFrame(frames);
       const normalized = normalizeTerminalOutput(output);
-      assert.equal(final.text.length, normalized.text.length);
       assert.deepEqual(final, {
         kind: "replace",
         text: normalized.text,
