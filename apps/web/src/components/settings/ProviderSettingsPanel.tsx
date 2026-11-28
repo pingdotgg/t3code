@@ -39,6 +39,7 @@ import {
 } from "@t3tools/shared/backgroundActivitySettings";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
+import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
 import { PlusIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
@@ -129,6 +130,7 @@ import {
   buildProviderEnvironmentOptions,
   buildProviderInstanceOverridePatch,
   classifyProviderEnvironmentAccess,
+  defaultInstanceResetBaseline,
   isProviderSettingsEnvironmentAvailable,
   type ProviderEnvironmentAccess,
   type ProviderOperateAccess,
@@ -771,7 +773,9 @@ export function EnvironmentProviderSettings({
     const driver = providerSettings.provider;
     const defaultInstanceId = defaultInstanceIdForDriver(driver);
     const explicitInstance = settings.providerInstances?.[defaultInstanceId];
-    const isDirty = explicitInstance !== undefined;
+    const isDirty =
+      explicitInstance !== undefined &&
+      !Equal.equals(explicitInstance, defaultInstanceResetBaseline(explicitInstance));
     const hasDefaultSlot = providerSettings.hasDefaultInstance || explicitInstance !== undefined;
     if (
       hasDefaultSlot &&
@@ -926,9 +930,10 @@ export function EnvironmentProviderSettings({
   const resetDefaultInstance = useStableCallback(async (driverKind: ProviderDriverKind) => {
     const instanceId = defaultInstanceIdForDriver(driverKind);
     const instance = settings.providerInstances?.[instanceId] ?? { driver: driverKind };
+    const baseline = defaultInstanceResetBaseline(instance);
     const turnsOff =
       resolveProviderInstanceEnabled(instance) &&
-      !resolveProviderInstanceEnabled({ driver: driverKind });
+      !resolveProviderInstanceEnabled(baseline ?? { driver: driverKind });
     const confirmed = await confirmProviderInstanceRemoval(
       gt("Reset the {provider} provider to its defaults?", {
         provider: providerInstanceName(instance),
@@ -936,7 +941,11 @@ export function EnvironmentProviderSettings({
       turnsOff ? ` ${gt("It will also be turned off.")}` : "",
     );
     if (!confirmed) return;
-    const result = await persistProviderInstance({ operation: "remove", instanceId });
+    const result = await persistProviderInstance(
+      baseline === undefined
+        ? { operation: "remove", instanceId }
+        : { operation: "upsert", instanceId, instance: baseline },
+    );
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
