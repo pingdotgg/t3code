@@ -13153,5 +13153,16 @@
   "5d9bc70d1cb3b596": "{count, plural, one {Na {count} maszynie prawie brak miejsca na dysku} other {Na {count} maszynach prawie brak miejsca na dysku}}",
   "7bb6d3c4fe5cea0f": "{count, plural, one {{count} maszyna jest przeciążona} few {{count} maszyny są przeciążone} many {{count} maszyn jest przeciążonych} other {{count} maszyny są przeciążone}}",
   "b48a4b390016a4f0": "Zajmuje {usage}, gdy pamięć spowalnia agentów. Zatrzymanie go pomoże pozostałym.",
-  "0d23483df1d6fc87": "Zajmuje {usage}, gdy ta maszyna jest przeciążona. Zatrzymanie go pomoże pozostałym."
+  "0d23483df1d6fc87": "Zajmuje {usage}, gdy ta maszyna jest przeciążona. Zatrzymanie go pomoże pozostałym.",
+  "aa178bd3094f0e60": "Wolne: {free}",
+  "4c5abe08ddf306a2": "Dysk",
+  "09d64bd5fdc06a60": "{count, plural, one {{count} procesor} few {{count} procesory} many {{count} procesorów} other {{count} procesora}}",
+  "c51c980459a069c6": "Pamięć",
+  "f2794ede6bf61adb": "Dostępne: {available}",
+  "7bf57d0b2a7d6fa1": "Obciążenie maszyny",
+  "393308c663f983cb": "Obciążenie maszyny",
+  "236911500e5aff7c": "Agenci ciągle czekają, aż system zwolni pamięć.",
+  "81aafe06d7fede9a": "Miejsce, w którym T3 Code trzyma dane i worktree",
+  "9429f8ff8866edac": "CPU",
+  "79a21371b8db96da": "Praca czeka na wolny procesor lub na dysk, więc agenci działają wolno."
 }
