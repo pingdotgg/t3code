@@ -130,5 +130,15 @@
   "8af79268f2349f4c": "Copy Email Address",
   "a9f9254d458e49fe": "Copy Image",
   "9c1b20fbc881de5d": "Desktop config",
-  "1b14230874f19eb9": "Images"
+  "1b14230874f19eb9": "Images",
+  "1563171edd71951d": "Create a passkey",
+  "f5d9f93a368d596b": "Sign in with a passkey",
+  "84ef64cc5aaa140d": "Scan this code to create a passkey for this site.",
+  "8f45f6ad418368ca": "Scan this code to sign in to this site.",
+  "bff5dfa05f9e8e35": "Use your phone or tablet",
+  "2e4ea6b3d61a4ff6": "Passkey sign-in QR code",
+  "e096b9f45c035a75": "Keep your phone nearby with Bluetooth enabled on both devices.",
+  "6c7ae713f1e59fb2": "Use a security key",
+  "c7b94f5dcb2a8bed": "Couldn't use your phone's passkey",
+  "ef37703321b0d5c4": "Complete the request on your phone."
 }

@@ -39,6 +39,7 @@ import {
 } from "../ipc/channels.ts";
 import {
   PASSKEY_BRIDGE_ARGUMENT,
+  PASSKEY_PHONE_BRIDGE_ARGUMENT,
   PRIMARY_PASTE_DISABLED_ARGUMENT,
 } from "../preview/GuestProtocol.ts";
 import * as PreviewManager from "../preview/Manager.ts";
@@ -656,6 +657,7 @@ export const make = Effect.gen(function* () {
         webPreferences.additionalArguments = [
           ...(webPreferences.additionalArguments ?? []),
           PASSKEY_BRIDGE_ARGUMENT,
+          ...(environment.platform === "linux" ? [PASSKEY_PHONE_BRIDGE_ARGUMENT] : []),
         ];
       }
       if (!primaryPaste.enabled) {

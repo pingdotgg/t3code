@@ -5,6 +5,8 @@ import { installPasskeyBridge } from "./PasskeyBridge.ts";
 export interface PageWorldHost {
   /** Absent when this guest has no passkey bridge. */
   readonly invokePasskey?: Parameters<typeof installPasskeyBridge>[0];
+  /** False when passkeys come from a phone rather than this computer. */
+  readonly platformAuthenticator?: boolean;
 }
 
 /**
@@ -14,7 +16,7 @@ export interface PageWorldHost {
  * returns is page-controlled data.
  */
 export function installPageWorld(host: PageWorldHost) {
-  if (host.invokePasskey) installPasskeyBridge(host.invokePasskey);
+  if (host.invokePasskey) installPasskeyBridge(host.invokePasskey, host.platformAuthenticator);
   return {
     elementContext: async (element: Element) => {
       const context = await getElementContext(element);
