@@ -6,10 +6,12 @@ import {
   COMPOSER_CONTEXT_KINDS,
   ComposerContextRecord,
   OrchestrationMessageContext,
+  ResponseContextRecord,
 } from "./composerContext.ts";
 
 const decodeRecord = Schema.decodeUnknownOption(ComposerContextRecord);
 const decodeContext = Schema.decodeUnknownSync(OrchestrationMessageContext);
+const decodeResponse = Schema.decodeUnknownSync(ResponseContextRecord);
 
 const base = { version: 1, contextId: "ctx_1" } as const;
 
@@ -230,6 +232,27 @@ describe("OrchestrationMessageContext", () => {
     const encodeOrchestrationMessageContext = Schema.encodeUnknownSync(
       Schema.toCodecJson(OrchestrationMessageContext),
     );
+    const source = {
+      kind: "snap-shot",
+      capturedAt: "2026-01-01T00:00:00.000Z",
+      appName: "App",
+      windowTitle: "Win",
+      accessibleText: "Save",
+      accessibility: {
+        format: "element-tree",
+        coordinateSpace: "captured-image",
+        imageSize: { width: 100, height: 100 },
+        truncated: false,
+        root: { role: "button", bounds: null, state: { active: true }, children: [] },
+      },
+    };
+    const response = decodeResponse(knownRecords.response);
+    const validImage = { ...knownRecords.image, contextId: "ctx_image", source };
+    const validResponse = {
+      ...response,
+      contextId: "ctx_response",
+      citation: { ...response.citation, comment: "Check this" },
+    };
 
     const wire = encodeOrchestrationMessageContext({
       version: 1,
@@ -244,9 +267,35 @@ describe("OrchestrationMessageContext", () => {
         },
         { ...knownRecords["review-comment"], contextId: "ctx_3", fenceLanguage: undefined },
         { ...base, contextId: "ctx_4", kind: "future-kind", label: "y", payload: { n: 1n } },
+        { ...knownRecords.image, contextId: "ctx_5", source: undefined },
+        { ...knownRecords.response, contextId: "ctx_6", subagents: undefined },
+        {
+          ...knownRecords.response,
+          contextId: "ctx_7",
+          subagents: [{ threadId: "thread-2", title: "sub", environmentId: undefined }],
+        },
+        { ...validImage, contextId: "ctx_8", source: { ...source, accessibleText: undefined } },
+        {
+          ...validImage,
+          contextId: "ctx_9",
+          source: {
+            ...source,
+            accessibility: {
+              ...source.accessibility,
+              root: { ...source.accessibility.root, state: { active: undefined } },
+            },
+          },
+        },
+        {
+          ...validResponse,
+          contextId: "ctx_10",
+          citation: { ...response.citation, comment: undefined },
+        },
+        validImage,
+        validResponse,
       ],
     });
-    expect(decodeContext(wire).records.map((record) => record.contextId)).toEqual(["ctx_1"]);
+    expect(decodeContext(wire).records).toEqual([knownRecords.terminal, validImage, validResponse]);
   });
 
   it("rejects oversized arrays before dropping malformed records", () => {

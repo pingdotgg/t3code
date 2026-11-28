@@ -72,6 +72,7 @@ const ContextLabel = Schema.String.check(Schema.isMaxLength(COMPOSER_CONTEXT_LAB
 const BoundedString = (max: number) => Schema.String.check(Schema.isMaxLength(max));
 const ShortString = BoundedString(2_048);
 const NullableShortString = Schema.NullOr(ShortString);
+const isJson = Schema.is(Schema.Json);
 
 export const PullRequestContextMetadata = Schema.Struct({
   number: PositiveInt,
@@ -101,7 +102,7 @@ export const ImageContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("image"),
   ...attachmentBinding,
-  source: Schema.optional(SnapShotSource),
+  source: Schema.optionalKey(SnapShotSource.check(Schema.makeFilter(isJson))),
 });
 export type ImageContextRecord = typeof ImageContextRecord.Type;
 
@@ -238,23 +239,21 @@ export const ResponseContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("response"),
   /** Where the response is and how it starts, as the reader saw it. */
-  citation: AssistantCitation,
+  citation: AssistantCitation.check(Schema.makeFilter(isJson)),
   itemId: TurnItemId,
   /** The subagents whose results that response reported on. */
-  subagents: Schema.optional(
+  subagents: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
         threadId: ThreadId,
         title: ContextLabel,
         /** Set when the subagent's thread lives on a linked environment. */
-        environmentId: Schema.optional(EnvironmentId),
+        environmentId: Schema.optionalKey(EnvironmentId),
       }),
     ).check(Schema.isMaxLength(20)),
   ),
 });
 export type ResponseContextRecord = typeof ResponseContextRecord.Type;
-
-const isJson = Schema.is(Schema.Json);
 
 /** Excludes known discriminators so malformed known records fail their own schema. */
 export const UnknownContextRecord = Schema.Struct({
