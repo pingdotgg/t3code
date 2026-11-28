@@ -1465,13 +1465,13 @@ describe("question answer paths", () => {
             "ppt/slides/a.xml":
               '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
               "<p:cSld><p:spTree><p:graphicFrame><a:graphic><a:graphicData><a:tbl><a:tblGrid><a:gridCol/><a:gridCol/><a:gridCol/></a:tblGrid>" +
-              '<a:tr><a:tc gridSpan="2"><a:txBody><a:p><a:r><a:t>Route</a:t></a:r></a:p></a:txBody></a:tc><a:tc hMerge="1"><a:txBody><a:p><a:r><a:t>Old spare</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Status</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
+              '<a:tr><a:tc gridSpan="2"><a:txBody><a:p><a:r><a:t>Route</a:t></a:r></a:p></a:txBody></a:tc><a:tc hMerge=" true "><a:txBody><a:p><a:r><a:t>Old spare</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Status</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
               '<a:tr><a:tc rowSpan="2"><a:txBody><a:p><a:r><a:t>North</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Gate A</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Open</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
-              '<a:tr><a:tc vMerge="1"><a:txBody><a:p><a:r><a:t>Old north</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Gate B</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Closed</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
+              '<a:tr><a:tc vMerge=" 1 "><a:txBody><a:p><a:r><a:t>Old north</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Gate B</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Closed</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
               "</a:tbl></a:graphicData></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>",
           },
-          expected: ["## Slide 1", "Route\t\tStatus\nNorth\tGate A\tOpen\n\tGate B\tClosed"],
-          absent: ["Old spare", "Old north"],
+          expected: [],
+          exact: "## Slide 1\nRoute\t\tStatus\nNorth\tGate A\tOpen\n\tGate B\tClosed",
         },
         {
           ext: "docx",
@@ -1741,19 +1741,54 @@ describe("question answer paths", () => {
           exact:
             "Use the north entrance.\nWait near the red marker.\nBring your badge.\nVisible control.\nKeep common parent.",
         },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml": [
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:s="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:foreign="urn:example">',
+              '<office:automatic-styles><s:style s:name="P1" s:family="paragraph"><s:text-properties text:display="none"/></s:style>',
+              '<s:style s:name="HiddenChild" s:family="paragraph" s:parent-style-name="HiddenBase"/>',
+              '<s:style s:name="ShowSpan" s:family="text"><s:text-properties text:display="true"/></s:style>',
+              '<s:style s:name="ForeignHidden" s:family="paragraph"><s:text-properties foreign:display="none"/></s:style></office:automatic-styles>',
+              "<office:body><office:text>",
+              '<text:p text:style-name="P1">Retired <text:line-break/> route.</text:p>',
+              '<text:h text:outline-level="2" text:style-name="HiddenBase">Retired section</text:h>',
+              '<text:p text:style-name="HiddenChild">Draft <text:span text:style-name="ShowSpan">North entrance</text:span> only.</text:p>',
+              '<text:p text:style-name="Shared">Hidden shared paragraph.</text:p>',
+              '<text:p>Keep <text:span text:style-name="Shared">shared text</text:span>.</text:p>',
+              '<text:p text:style-name="TextOnly">Paragraph ignores text family.</text:p>',
+              '<text:p text:style-name="ForeignHidden">Foreign display control.</text:p>',
+              '<text:p foreign:style-name="P1">Foreign style control.</text:p>',
+              "</office:text></office:body></office:document-content>",
+            ].join(""),
+            "styles.xml": [
+              '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"><office:styles>',
+              '<style:style style:name="HiddenBase" style:family="paragraph"><style:text-properties t:display="none"/></style:style>',
+              '<style:style style:name="Shared" style:family="paragraph"><style:text-properties t:display="none"/></style:style>',
+              '<style:style style:name="Shared" style:family="text"><style:text-properties t:display="true"/></style:style>',
+              '<style:style style:name="TextOnly" style:family="text"><style:text-properties t:display="none"/></style:style>',
+              "</office:styles></office:document-styles>",
+            ].join(""),
+          },
+          expected: [],
+          exact:
+            "North entrance\nKeep shared text.\nParagraph ignores text family.\nForeign display control.\nForeign style control.",
+        },
         ...["<mismatch>", "<nested>".repeat(129) + "</nested>".repeat(129)].map((trailer) => ({
           ext: "odt",
           parts: {
             "styles.xml":
               '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:s="urn:oasis:names:tc:opendocument:xmlns:style:1.0"><office:styles>' +
-              '<s:style s:name="Retired" s:family="text"><s:text-properties text:display="none"/></s:style></office:styles>' +
+              '<s:style s:name="Retired" s:family="text"><s:text-properties text:display="none"/></s:style>' +
+              '<s:style s:name="Retired" s:family="paragraph"><s:text-properties text:display="none"/></s:style></office:styles>' +
               trailer +
               "</office:document-styles>",
             "content.xml":
-              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:p>Bring your <text:span text:style-name="Retired">badge</text:span>.</text:p></office:text></office:body></office:document-content>',
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:p>Bring your <text:span text:style-name="Retired">badge</text:span>.</text:p><text:p text:style-name="Retired">Check in at reception.</text:p></office:text></office:body></office:document-content>',
           },
           expected: [],
-          exact: "Bring your badge.",
+          exact: "Bring your badge.\nCheck in at reception.",
         })),
         {
           ext: "odt",
