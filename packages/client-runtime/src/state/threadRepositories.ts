@@ -16,7 +16,7 @@ import type {
   VcsStatusResult,
   WorkspaceFolder,
 } from "@t3tools/contracts";
-import { isAbsolutePath } from "@t3tools/shared/path";
+import { fileBasename, isAbsolutePath } from "@t3tools/shared/path";
 
 type ChangedFiles = OrchestrationV2Checkpoint["files"];
 
@@ -122,9 +122,10 @@ export function rewindFileRestore(input: {
 }
 
 function pathSegments(path: string): { root: string; segments: string[] } | undefined {
-  const normalized = path.replaceAll("\\", "/");
+  const posix = path.startsWith("/");
+  const normalized = posix ? path : path.replaceAll("\\", "/");
   const segments = normalized.split("/").filter((segment) => segment.length > 0);
-  if (normalized.startsWith("/")) return { root: "/", segments };
+  if (normalized.startsWith("/")) return { root: posix ? "/" : "\\", segments };
   const drive = segments[0];
   if (drive === undefined || !/^[a-zA-Z]:$/.test(drive)) return undefined;
   return { root: drive.toLowerCase(), segments: segments.slice(1) };
@@ -137,7 +138,7 @@ function relativeFolderPath(from: string, to: string): string | undefined {
     return undefined;
   }
   const same = (left: string, right: string) =>
-    source.root === "/" ? left === right : left.toLowerCase() === right.toLowerCase();
+    source.root.endsWith(":") ? left.toLowerCase() === right.toLowerCase() : left === right;
   let shared = 0;
   while (
     shared < source.segments.length &&
@@ -152,8 +153,12 @@ function relativeFolderPath(from: string, to: string): string | undefined {
 }
 
 /** Whether a `/`-separated path from a folder stays inside that folder. */
-export function isRelativePathInsideFolder(relativePath: string): boolean {
-  return relativePath !== ".." && !relativePath.startsWith("../") && !isAbsolutePath(relativePath);
+export function isRelativePathInsideFolder(relativePath: string, folder?: string): boolean {
+  return (
+    relativePath !== ".." &&
+    !relativePath.startsWith("../") &&
+    !(folder?.startsWith("/") ? relativePath.startsWith("/") : isAbsolutePath(relativePath))
+  );
 }
 
 function repositoryScope(
@@ -165,7 +170,7 @@ function repositoryScope(
     threadCwd === undefined ? undefined : relativeFolderPath(threadCwd, scope.cwd);
   return {
     scopeId: scope.id,
-    name: scope.label ?? scope.cwd.replaceAll("\\", "/").split("/").findLast(Boolean) ?? scope.cwd,
+    name: scope.label ?? fileBasename(scope.cwd),
     repositoryPath,
     cwd: scope.cwd,
     ...(relativePath === undefined ? {} : { relativePath }),
@@ -507,7 +512,7 @@ function taskFolderSections(
     const relative = relativeFolderPath(taskFolder.root, scope.cwd);
     return byPath.has(scope.repositoryPath) ||
       relative === undefined ||
-      !isRelativePathInsideFolder(relative)
+      !isRelativePathInsideFolder(relative, taskFolder.root)
       ? []
       : [
           {
@@ -641,7 +646,7 @@ export function worktreeRepositoryChoices(input: {
         name: folder.name,
         ...(relativePath === undefined ||
         relativePath === "" ||
-        !isRelativePathInsideFolder(relativePath)
+        !isRelativePathInsideFolder(relativePath, input.projectRoot)
           ? {}
           : { relativePath }),
       },
