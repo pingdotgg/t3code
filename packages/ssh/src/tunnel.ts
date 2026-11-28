@@ -9,9 +9,11 @@ import type {
 import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 import { cliReleaseDownloadBaseUrl } from "@t3tools/shared/cliRelease";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
@@ -20,6 +22,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -66,6 +69,7 @@ const REMOTE_LAUNCH_BASE_TIMEOUT_MS = 90_000;
 // Matches the node-script launch command's ssh run without the launch lock wait.
 const SSH_TUNNEL_CONNECT_TIMEOUT_MS = REMOTE_LAUNCH_BASE_TIMEOUT_MS;
 const SSH_TUNNEL_FORWARD_PROBE_INTERVAL_MS = 100;
+const SSH_TUNNEL_MASTER_PROBE_INTERVAL_MS = 250;
 // Cold archive launches download and extract ~70 MB and may wait on an install lock.
 // Lock waits must outlast both downloads and extraction; SSH must outlast install or wait plus readiness.
 // Leave slack for verification and extraction, which have no timeout.
@@ -1493,13 +1497,43 @@ const reserveLocalTunnelPort = Effect.fn("ssh/tunnel.reserveLocalTunnelPort")(fu
 const waitForTunnelForward = Effect.fn("ssh/tunnel.waitForTunnelForward")(function* (input: {
   readonly target: DesktopSshEnvironmentTarget;
   readonly localPort: number;
+  /** The tunnel's own ControlMaster, which opens without the forward until asked for it. */
+  readonly ownControlPath: string | null;
+  readonly forward: string;
 }) {
   const net = yield* NetService.NetService;
-  yield* net.hasListenerOnHost(input.localPort, "127.0.0.1").pipe(
-    Effect.repeat({
-      schedule: Schedule.spaced(Duration.millis(SSH_TUNNEL_FORWARD_PROBE_INTERVAL_MS)),
-      until: (listening) => listening,
-    }),
+  const { ownControlPath } = input;
+  const openForward =
+    ownControlPath === null
+      ? Effect.void
+      : runSshCommand(input.target, {
+          preHostArgs: [...controlMasterArgs(ownControlPath), "-O", "check"],
+        }).pipe(
+          // The control socket listens once the master has signed in.
+          Effect.retry({
+            schedule: Schedule.spaced(Duration.millis(SSH_TUNNEL_MASTER_PROBE_INTERVAL_MS)),
+          }),
+          Effect.andThen(
+            runSshCommand(input.target, {
+              preHostArgs: [
+                ...controlMasterArgs(ownControlPath),
+                "-O",
+                "forward",
+                "-L",
+                input.forward,
+              ],
+            }),
+          ),
+        );
+  yield* openForward.pipe(
+    Effect.andThen(
+      net.hasListenerOnHost(input.localPort, "127.0.0.1").pipe(
+        Effect.repeat({
+          schedule: Schedule.spaced(Duration.millis(SSH_TUNNEL_FORWARD_PROBE_INTERVAL_MS)),
+          until: (listening) => listening,
+        }),
+      ),
+    ),
     Effect.timeoutOrElse({
       duration: Duration.millis(SSH_TUNNEL_CONNECT_TIMEOUT_MS),
       orElse: () =>
@@ -1511,6 +1545,48 @@ const waitForTunnelForward = Effect.fn("ssh/tunnel.waitForTunnelForward")(functi
     }),
   );
 });
+
+const SSH_FORWARD_DIRECTIVE = /^\s*(?:localforward|remoteforward|dynamicforward)(?:[\s=]|$)/iu;
+
+// Windows OpenSSH has no ControlMaster to add a forward through, so the tunnel reads a copy of the
+// user's config without its forward lines. Forwards set in Included files still apply.
+const writeSshConfigWithoutForwards = Effect.fn("ssh/tunnel.writeSshConfigWithoutForwards")(
+  function* (scope: Scope.Scope) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const pathService = yield* Path.Path;
+    const env = yield* Config.all({
+      userProfile: Config.String("USERPROFILE").pipe(Config.option),
+      programData: Config.String("PROGRAMDATA").pipe(Config.option),
+    }).pipe(
+      Effect.orElseSucceed(() => ({ userProfile: Option.none(), programData: Option.none() })),
+    );
+    if (Option.isNone(env.userProfile)) return null;
+    const lines = yield* fileSystem
+      .readFileString(pathService.join(env.userProfile.value, ".ssh", "config"))
+      .pipe(
+        Effect.map((contents) => contents.split(/\r?\n/u)),
+        Effect.orElseSucceed((): ReadonlyArray<string> => []),
+      );
+    const kept = lines.filter((line) => !SSH_FORWARD_DIRECTIVE.test(line));
+    if (kept.length === lines.length) return null;
+    // -F skips the system config, which ssh would otherwise read after the user's.
+    const systemConfig = pathService
+      .join(
+        Option.getOrElse(env.programData, () => "C:\\ProgramData"),
+        "ssh",
+        "ssh_config",
+      )
+      .replaceAll("\\", "/");
+    const configPath = yield* fileSystem
+      .makeTempFileScoped({ prefix: "t3-ssh-config-" })
+      .pipe(Effect.provideService(Scope.Scope, scope));
+    yield* fileSystem.writeFileString(
+      configPath,
+      [...kept, "Match all", `Include "${systemConfig}"`, ""].join("\n"),
+    );
+    return configPath;
+  },
+);
 
 const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: {
   readonly key: string;
@@ -1554,16 +1630,63 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
         }),
     ),
   );
+  const { controlPath, scope } = input;
+  // The master's own GatewayPorts would otherwise decide the bind address.
+  const controlMasterForward = `127.0.0.1:${input.localPort}:127.0.0.1:${input.remotePort}`;
+  // The host's configured LocalForward/RemoteForward lines would take the user's own ports, and
+  // a held one stops the tunnel. ClearAllForwardings also drops -L, so the tunnel is a private
+  // ControlMaster with no forwards and T3's one forward is added through it.
+  const ownControlPath =
+    controlPath === null && (yield* HostProcess.Platform) !== "win32"
+      ? yield* Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ssh-" });
+          return pathService.join(directory, "m");
+        }).pipe(
+          Effect.provideService(Scope.Scope, scope),
+          Effect.mapError(
+            (cause) =>
+              new SshCommandError({
+                command: ["ssh"],
+                exitCode: null,
+                stderr: "",
+                message: "Failed to prepare the SSH tunnel control socket.",
+                cause,
+              }),
+          ),
+        )
+      : null;
+  const forwardFreeConfigPath =
+    controlPath === null && ownControlPath === null
+      ? yield* writeSshConfigWithoutForwards(scope).pipe(
+          Effect.mapError(
+            (cause) =>
+              new SshCommandError({
+                command: ["ssh"],
+                exitCode: null,
+                stderr: "",
+                message: "Failed to prepare the SSH tunnel configuration.",
+                cause,
+              }),
+          ),
+        )
+      : null;
   const directArgs = [
+    ...(forwardFreeConfigPath === null ? [] : ["-F", forwardFreeConfigPath]),
     ...baseSshArgs(input.resolvedTarget, {
       batchMode: input.authOptions.batchMode ?? "no",
     }),
-    "-o",
-    "ExitOnForwardFailure=yes",
-    "-o",
-    "ControlMaster=no",
-    "-o",
-    "ControlPath=none",
+    ...(ownControlPath === null
+      ? ["-o", "ExitOnForwardFailure=yes", "-o", "ControlMaster=no", "-o", "ControlPath=none"]
+      : [
+          "-o",
+          "ClearAllForwardings=yes",
+          "-o",
+          "ControlMaster=yes",
+          "-o",
+          `ControlPath=${ownControlPath}`,
+        ]),
     "-o",
     "ControlPersist=no",
     "-o",
@@ -1572,14 +1695,10 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     "ServerAliveCountMax=3",
     "-n",
     "-N",
-    "-L",
-    `${input.localPort}:127.0.0.1:${input.remotePort}`,
+    ...(ownControlPath === null ? ["-L", `${input.localPort}:127.0.0.1:${input.remotePort}`] : []),
     "--",
     hostSpec,
   ];
-  const { controlPath, scope } = input;
-  // The master's own GatewayPorts would otherwise decide the bind address.
-  const controlMasterForward = `127.0.0.1:${input.localPort}:127.0.0.1:${input.remotePort}`;
   const { args, stdin } =
     controlPath === null
       ? { args: directArgs, stdin: { stream: Stream.empty, endOnDone: true } }
@@ -1732,7 +1851,12 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     }),
   );
   yield* Effect.raceFirst(
-    waitForTunnelForward({ target: input.resolvedTarget, localPort: input.localPort }).pipe(
+    waitForTunnelForward({
+      target: input.resolvedTarget,
+      localPort: input.localPort,
+      ownControlPath,
+      forward: controlMasterForward,
+    }).pipe(
       Effect.andThen(
         waitForHttpReady({
           baseUrl: input.httpBaseUrl,

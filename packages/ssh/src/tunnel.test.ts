@@ -11,6 +11,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Clock from "effect/Clock";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -966,6 +967,112 @@ describe("ssh tunnel scripts", () => {
     }),
   );
 
+  it.effect("the tunnel requests only its own forward, not the host's configured ones", () =>
+    Effect.gen(function* () {
+      const sshCalls: Array<ReadonlyArray<string>> = [];
+      const spawner = ChildProcessSpawner.make((command) => {
+        const args = commandArgs(command);
+        sshCalls.push(args);
+        if (args.includes("-N")) return Effect.succeed(makeRunningProcess(() => undefined));
+        if (args.includes("-O")) return Effect.succeed(makeSuccessfulProcess(""));
+        return Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n'));
+      });
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        // Windows OpenSSH has no ControlMaster, so the tunnel keeps its -L there.
+        Layer.succeed(HostProcess.Platform, "linux"),
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const environment = yield* manager.ensureEnvironment({
+          alias: "devbox",
+          hostname: "devbox",
+          username: null,
+          port: null,
+        });
+        const tunnel = sshCalls.find((args) => args.includes("-N"));
+        assert.isDefined(tunnel);
+        if (tunnel === undefined) return;
+        // ClearAllForwardings drops -L as well, so T3's forward goes through the tunnel's master.
+        assert.include(tunnel, "ClearAllForwardings=yes");
+        assert.notInclude(tunnel, "-L");
+        const controlPath = tunnel.find((arg) => arg.startsWith("ControlPath="));
+        const forward = sshCalls.find((args) => args.includes("forward"));
+        assert.isDefined(forward);
+        if (forward === undefined || controlPath === undefined) return;
+        const localPort = new URL(environment.httpBaseUrl).port;
+        // -F none keeps the client from sending the host's configured forwards with it.
+        assert.includeMembers([...forward], ["-F", "none", controlPath]);
+        assert.equal(forward[forward.indexOf("-L") + 1], `127.0.0.1:${localPort}:127.0.0.1:3773`);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("on Windows the tunnel reads the user's config without its forwards", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-home-" });
+      yield* fs.makeDirectory(path.join(home, ".ssh"));
+      yield* fs.writeFileString(
+        path.join(home, ".ssh", "config"),
+        [
+          "Host devbox",
+          "  HostName devbox.example.com",
+          "  LocalForward 127.0.0.1:8080 127.0.0.1:8080",
+          "  RemoteForward=127.0.0.1:9090 127.0.0.1:9090",
+          "  dynamicforward 1080",
+          "",
+        ].join("\r\n"),
+      );
+      let tunnelArgs: ReadonlyArray<string> | undefined;
+      let tunnelConfig: string | undefined;
+      const spawner = ChildProcessSpawner.make((command) => {
+        const args = commandArgs(command);
+        if (args.includes("-N")) {
+          tunnelArgs = args;
+          tunnelConfig = NodeFS.readFileSync(args[args.indexOf("-F") + 1] ?? "", "utf8");
+          return Effect.succeed(makeRunningProcess(() => undefined));
+        }
+        return Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n'));
+      });
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(HostProcess.Platform, "win32"),
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { USERPROFILE: home, PROGRAMDATA: "C:\\ProgramData" } }),
+        ),
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        yield* manager.ensureEnvironment({
+          alias: "devbox",
+          hostname: "devbox",
+          username: null,
+          port: null,
+        });
+      }).pipe(Effect.provide(layer), Effect.scoped);
+      assert.include(tunnelArgs ?? [], "-L");
+      assert.notMatch(tunnelConfig ?? "", /forward/iu);
+      assert.include(tunnelConfig ?? "", "HostName devbox.example.com");
+      assert.isTrue(
+        (tunnelConfig ?? "").endsWith('Match all\nInclude "C:/ProgramData/ssh/ssh_config"\n'),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("fails with a readiness error when ssh never connects", () =>
     Effect.gen(function* () {
       const tunnelSpawned = yield* Deferred.make<void>();
@@ -1149,6 +1256,7 @@ describe("ssh tunnel scripts", () => {
               }
               return makeSuccessfulProcess('{"remotePort":3773}\n');
             }
+            if (args.includes("-O")) return makeSuccessfulProcess("");
             const stop = makeSuccessfulProcess('{"stopped":true}\n');
             if (!isTarget) return stop;
             const pause = ++stops === 1 && stalledStep === "remote server";
@@ -1230,8 +1338,9 @@ describe("ssh tunnel scripts", () => {
           if (args.includes("-G")) {
             return makeSuccessfulProcess("hostname devbox\ncontrolpath /tmp/t3-cm\n");
           }
+          const userMaster = masterLive && args.includes("ControlPath=/tmp/t3-cm");
           if (muxCommand === "check") {
-            return masterLive
+            return userMaster
               ? makeSuccessfulProcess("")
               : failed("Control socket connect: ENOENT\n");
           }
@@ -1239,9 +1348,11 @@ describe("ssh tunnel scripts", () => {
             cancelledForwards.push(forward);
             return makeSuccessfulProcess("");
           }
+          // A fresh login, the tunnel's own ControlMaster included, cannot pass the host's
+          // one-time-code prompt; only the user's signed-in master can.
+          if (args.includes("-N")) return failed(denied);
           if (forward !== undefined) {
-            // Only the signed-in master can pass the host's one-time-code prompt.
-            if (!masterLive || args.includes("ControlPath=none")) return failed(denied);
+            if (!userMaster) return failed(denied);
             openedForwards.push(forward);
             return muxCommand === "forward"
               ? makeSuccessfulProcess("")
