@@ -1444,8 +1444,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           config.stdout,
           "core.sparsecheckout",
         );
-        let sparseCheckout =
+        const sparseCheckoutConfigured =
           sparseValue !== undefined && CheckpointCaptureIndex.gitBool(sparseValue);
+        let sparseCheckout = sparseCheckoutConfigured;
         if (sparseCheckout) {
           const help = yield* execute({
             operation,
@@ -1507,13 +1508,41 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             const indexTime = Math.floor((mtime.value.getTime() - 1) / 1000);
             if (indexTime <= 0) return false;
             yield* fileSystem.copyFile(userIndexPath, tempIndexPath);
-            yield* execute({
-              operation,
-              cwd: input.cwd,
-              args: [...indexConfig, "read-tree", "--reset", "HEAD"],
-              env: commitEnv,
-            });
-            // read-tree can rewrite the index, so restore its racy timestamp afterward.
+            // Reset drops staged entries before add, including changes outside its pathspec.
+            // A cached diff only checks tree entries, so keep the reset for sparse checkouts.
+            const matchesHead =
+              !sparseCheckoutConfigured &&
+              (yield* execute({
+                operation,
+                cwd: input.cwd,
+                args: [
+                  ...indexConfig,
+                  "diff-index",
+                  "--cached",
+                  "--quiet",
+                  "--no-relative",
+                  "--no-renames",
+                  "--no-ext-diff",
+                  "--ignore-submodules=none",
+                  "--ita-visible-in-index",
+                  "HEAD",
+                  "--",
+                ],
+                env: commitEnv,
+                allowNonZeroExit: true,
+              }).pipe(
+                Effect.map(({ exitCode }) => exitCode === 0),
+                Effect.orElseSucceed(() => false),
+              ));
+            if (!matchesHead) {
+              yield* execute({
+                operation,
+                cwd: input.cwd,
+                args: [...indexConfig, "read-tree", "--reset", "HEAD"],
+                env: commitEnv,
+              });
+            }
+            // Both copying and resetting the index can move its racy timestamp forward.
             yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
             // Manually flagged entries hide edits from add -A, so they are re-added below
             // with no stat cache. Every other entry keeps its stat data and is not rehashed.

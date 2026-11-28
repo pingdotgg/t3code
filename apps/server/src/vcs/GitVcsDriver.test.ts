@@ -1286,6 +1286,7 @@ it.effect("a capture through a kept index skips the index rebuild and its scan",
     ];
     assert.deepStrictEqual(rebuilt, [
       ...start,
+      "diff-index",
       "read-tree",
       "ls-files",
       "add",
@@ -2679,6 +2680,44 @@ const captureRecordingGitCommands = Effect.fn("test.captureRecordingGitCommands"
   return commands;
 });
 
+it.effect("checkpoint capture skips resetting an index that matches HEAD", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-index-reset-" });
+    const { git } = yield* makeCheckpointFixture(driver, cwd);
+    const scope = path.join(cwd, "scope");
+    const edit = path.join(scope, "edit.txt");
+    yield* git(["reset", "--quiet", "HEAD"]);
+    yield* fs.makeDirectory(scope);
+    yield* fs.writeFileString(edit, "committed\n");
+    yield* git(["add", "scope/edit.txt"]);
+    yield* git(["commit", "-m", "Track scoped file"]);
+    yield* git(["config", "diff.relative", "true"]);
+
+    const withoutStaging = CheckpointRef.make("refs/t3/checkpoints/without-staging/1");
+    const withStaging = CheckpointRef.make("refs/t3/checkpoints/with-staging/1");
+    yield* fs.writeFileString(edit, "worktree edit\n");
+    const cleanCommands = yield* captureRecordingGitCommands(scope, withoutStaging);
+
+    // Stage outside the capture directory, where git add will not replace the index entry.
+    yield* git(["add", "file.txt"]);
+    const stagedCommands = yield* captureRecordingGitCommands(scope, withStaging);
+    assert.strictEqual(
+      (yield* git(["show", `${withoutStaging}:scope/edit.txt`])).stdout,
+      "worktree edit\n",
+    );
+    assert.strictEqual((yield* git(["show", `${withStaging}:file.txt`])).stdout, "initial\n");
+    assert.strictEqual(
+      (yield* git(["rev-parse", `${withoutStaging}^{tree}`])).stdout,
+      (yield* git(["rev-parse", `${withStaging}^{tree}`])).stdout,
+    );
+    assert.include(stagedCommands, "read-tree");
+    assert.notInclude(cleanCommands, "read-tree");
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect.each(["committed", "unborn"] as const)(
   "checkpoint capture reads the repository with one rev-parse (HEAD=%s)",
   (head) =>
@@ -2703,7 +2742,7 @@ it.effect.each(["committed", "unborn"] as const)(
         "rev-parse",
         ...(head === "committed" ? ["log"] : []),
         "config",
-        ...(head === "committed" ? ["read-tree", "ls-files"] : []),
+        ...(head === "committed" ? ["diff-index", "read-tree", "ls-files"] : []),
         "add",
         "write-tree",
         "commit-tree",
@@ -2761,6 +2800,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         "rev-parse",
         "config",
         "rev-parse",
+        "diff-index",
         "read-tree",
         "ls-files",
         "add",
