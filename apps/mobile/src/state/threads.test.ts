@@ -44,6 +44,11 @@ vi.mock("./server", async () => {
   const noHiddenTags = Atom.make(null);
   return { serverEnvironment: { hiddenThreadTagsAtom: () => noHiddenTags } };
 });
+vi.mock("./presentation", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const connected = Atom.make("connected");
+  return { environmentPresentations: { connectionPhaseAtom: () => connected } };
+});
 vi.mock("@t3tools/client-runtime/state/threads", async (importOriginal) => {
   const { Atom } = await import("effect/reactivity");
   const stateAtom = Atom.family((key: string) =>

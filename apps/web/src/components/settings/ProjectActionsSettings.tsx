@@ -100,12 +100,16 @@ export function ProjectActionsSettings() {
       previewUrl: fileScript.previewUrl ?? null,
       autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
     };
-    const result = await submit(null, payload);
+    let createdScriptId: string | undefined;
+    const result = await submit(null, payload, (id) => {
+      createdScriptId = id;
+    });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       setRequest({
         scriptId: null,
         initial: payload,
+        ...(createdScriptId ? { createdScriptId } : {}),
         error:
           error instanceof Error
             ? (thrownErrorMessage(error, m) ?? error.message)

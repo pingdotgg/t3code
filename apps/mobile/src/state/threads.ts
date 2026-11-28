@@ -25,6 +25,7 @@ import {
 } from "./pending-thread-creation";
 import { serverEnvironment } from "./server";
 import { environmentShell } from "./shell";
+import { environmentPresentations } from "./presentation";
 import { threadOutboxManager } from "./thread-outbox";
 
 export const threadFamilies = createThreadFamilyAtoms(
@@ -46,6 +47,7 @@ export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
 );
 export const environmentThreadShells = createEnvironmentThreadShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
+  connectionPhaseAtom: environmentPresentations.connectionPhaseAtom,
   snapshotAtom: threadEnvironment.snapshotAtom,
   hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
 });
@@ -63,6 +65,7 @@ const steadyShells = createSteadyShellAtoms({
 export const steadyShellsHoldingAtom = steadyShells.holdingAtom;
 export const steadyNavigationThreadShellsAtom = createEnvironmentThreadShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
+  connectionPhaseAtom: environmentPresentations.connectionPhaseAtom,
   // Only lists drop threads removed from the list: the outbox reads environmentThreadShells and
   // deletes queued messages for a thread it is missing. Filtered after the hold, which can keep
   // showing an older snapshot that still has the row.
