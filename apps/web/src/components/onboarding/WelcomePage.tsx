@@ -2052,6 +2052,7 @@ const IMPORT_SOURCE_NAMES: Record<AgentSessionSource, string> = {
   claudeAgent: "Claude Code",
   codex: "Codex",
   pi: "Pi",
+  opencode: "OpenCode",
 };
 // The scan reads only agents that are turned on, so name only those.
 function useImportSourcesLabel(environmentId: EnvironmentId) {
