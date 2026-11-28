@@ -112,8 +112,9 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  // An organization with SAML SSO answers a token-authenticated upload request with its sign-in
-  // page. Rendering the link as markdown in the repository's context hands back a signed URL.
+  // A SAML SSO organization answers a token-authenticated upload request with its sign-in page,
+  // a private repository with 404. Rendering the link in the repository's context hands back a
+  // signed URL.
   const renderSignedUrl = Effect.fnUntraced(function* (url: string, repository: string) {
     const rendered = yield* rest
       .rest({
@@ -178,7 +179,12 @@ export const make = Effect.gen(function* () {
           return lfs;
         }
       }
-      if (response === null || contentTypeOf(response) !== "text/html") return response;
+      if (
+        response === null ||
+        (response.status !== 404 && contentTypeOf(response) !== "text/html")
+      ) {
+        return response;
+      }
     }
     if (cacheKey === null || repository === undefined || signedIn === null) return response;
     const signed = yield* renderSignedUrl(request.url, repository);

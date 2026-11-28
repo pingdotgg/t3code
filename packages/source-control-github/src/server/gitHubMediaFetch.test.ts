@@ -12,7 +12,13 @@ import * as GitHubRest from "./GitHubRest.ts";
 const PR_REPOSITORY = "enterprise/private";
 
 /** An SSO organization: the upload URL answers with a sign-in page, a rendered signed URL with bytes. */
-const makeSsoFixture = (uploadUrl: string) => {
+const makeSsoFixture = (
+  uploadUrl: string,
+  uploadResponse = () =>
+    new Response("<html>Sign in with SSO</html>", {
+      headers: { "content-type": "text/html; charset=utf-8" },
+    }),
+) => {
   const state = { account: "account-a", expired: new Set<string>() };
   const rendered: Array<GitHubRest.GitHubRestInput> = [];
   const signedUrls: Array<string> = [];
@@ -55,12 +61,7 @@ const makeSsoFixture = (uploadUrl: string) => {
             ...(request.headers.range ? { range: request.headers.range } : {}),
           });
           if (request.url === uploadUrl) {
-            return HttpClientResponse.fromWeb(
-              request,
-              new Response("<html>Sign in with SSO</html>", {
-                headers: { "content-type": "text/html; charset=utf-8" },
-              }),
-            );
+            return HttpClientResponse.fromWeb(request, uploadResponse());
           }
           expect(signedUrls).toContain(request.url);
           const status = state.expired.has(request.url) ? 403 : request.headers.range ? 206 : 200;
@@ -266,6 +267,27 @@ describe("GitHubMediaFetch", () => {
       }).pipe(Effect.provide(fixture.layer));
     },
   );
+
+  it.effect("renders an upload a private repository answers with 404 to the token", () => {
+    const url = "https://github.com/user-attachments/assets/private-repository";
+    const fixture = makeSsoFixture(
+      url,
+      () =>
+        new Response("Not Found", {
+          status: 404,
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        }),
+    );
+    return Effect.gen(function* () {
+      const fetchMedia = yield* GitHubMediaFetch.make;
+      const response = yield* fetchMedia({ url, headers: {}, repository: PR_REPOSITORY });
+      expect(response?.status).toBe(200);
+      expect(fixture.requests).toEqual([
+        { url, authorization: "Bearer account-a" },
+        { url: fixture.signedUrls[0] },
+      ]);
+    }).pipe(Effect.provide(fixture.layer));
+  });
 
   it.effect("renders a legacy upload in the repository its path names", () => {
     const url = `https://github.com/${PR_REPOSITORY}/assets/123/legacy`;
