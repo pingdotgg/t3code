@@ -1,5 +1,6 @@
 import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { rollupCheckStatuses } from "@t3tools/source-control-core/server/pullRequestChecks";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
@@ -10,6 +11,7 @@ import {
   type ProviderChangeRequest,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
+  type ProviderChangeRequestSummary,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import type { BitbucketPullRequest } from "./bitbucketPullRequestJson.ts";
@@ -22,22 +24,25 @@ const CAPABILITIES: PullRequestCapabilities = {
   mergeMethods: ["merge", "squash", "rebase"],
   search: true,
   reactions: false,
+  mentions: false,
+  referenceSigils: [],
   review: {
     inlineComment: true,
     reply: true,
     resolve: true,
     verdicts: ["comment", "approve", "request-changes"],
   },
-  reviewers: { request: true, listCandidates: true },
+  reviewers: { request: true, listCandidates: true, searchCandidates: false },
   edit: { changeRequest: true, comment: true },
   // Bitbucket PR properties are shared, not per-reader viewed marks.
   viewedFiles: "environment",
 };
 
 const UNAVAILABLE_REQUIREMENT = {
-  missing: "Bitbucket needs API credentials on the server. Add them in Settings → Source Control.",
+  missing:
+    "Bitbucket needs API credentials on the server. Add them in Settings → Source control & issues.",
   unauthenticated:
-    "Bitbucket rejected the configured credentials. Check them in Settings → Source Control.",
+    "Bitbucket rejected the configured credentials. Check them in Settings → Source control & issues.",
 };
 
 /**
@@ -60,7 +65,10 @@ export function bitbucketViewerPermissions(input: {
 export function bitbucketProviderFailure(
   error: BitbucketPullRequestApi.BitbucketPullRequestApiError,
 ): PullRequestProviderFailure {
-  if (error._tag === "BitbucketResponseError" && error.status === 401) {
+  if (
+    (error._tag === "BitbucketResponseError" && error.status === 401) ||
+    error._tag === "SettingsSecretUnresolvedError"
+  ) {
     return { reason: "unauthenticated" };
   }
   if (error._tag === "SourceControlRateLimitPausedError") {
@@ -108,6 +116,22 @@ function toChangeRequest(pullRequest: BitbucketPullRequest): ProviderChangeReque
   };
 }
 
+/** The write's reply has no `closed_on`, line counts, or conflict state, so those stay absent. */
+function toActionSummary(pullRequest: BitbucketPullRequest): ProviderChangeRequestSummary {
+  return {
+    number: pullRequest.number,
+    title: pullRequest.title,
+    url: pullRequest.url,
+    author: pullRequest.author,
+    headBranch: pullRequest.headBranch,
+    baseBranch: pullRequest.baseBranch,
+    state: pullRequest.state,
+    isDraft: pullRequest.isDraft,
+    updatedAt: pullRequest.updatedAt,
+    ...(pullRequest.headSha ? { headSha: pullRequest.headSha } : {}),
+  };
+}
+
 export const make = Effect.gen(function* () {
   const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
   const servesHost = yield* BitbucketApi.BitbucketServesHost.pipe(Effect.orDie);
@@ -118,7 +142,7 @@ export const make = Effect.gen(function* () {
         provider: SourceControlProviderKind.make("bitbucket"),
         operation,
         ...bitbucketProviderFailure(error),
-        detail: error.detail,
+        detail: error._tag === "SettingsSecretUnresolvedError" ? error.message : error.detail,
         cause: error,
       });
 
@@ -206,7 +230,8 @@ export const make = Effect.gen(function* () {
           api.getPullRequest(target),
           api.getDiffStat(target),
           recoverRead(api.getMergeability(target), "unknown" as const),
-          recoverRead(api.listChecks(target), []),
+          // Null keeps the last known checks state; an empty list would claim no checks exist.
+          recoverRead(api.listChecks(target), null),
           recoverRead(api.getRepositoryPermission(target), true),
         ],
         { concurrency: 5 },
@@ -229,7 +254,10 @@ export const make = Effect.gen(function* () {
             mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
             closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
             reviewers: pullRequest.reviewers,
-            checks,
+            checks: checks ?? [],
+            ...(checks === null
+              ? {}
+              : { checksState: rollupCheckStatuses(checks.map((check) => check.status)) }),
             // Bitbucket exposes no strategy permissions; unsupported strategies fail at merge.
             mergeCapabilities: { merge: true, squash: true, rebase: true },
             viewerPermissions: bitbucketViewerPermissions({ canWrite }),
@@ -313,7 +341,10 @@ export const make = Effect.gen(function* () {
           action: input.action,
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
         })
-        .pipe(Effect.mapError(fail("runAction"))),
+        .pipe(
+          Effect.mapError(fail("runAction")),
+          Effect.map((pullRequest) => pullRequest && toActionSummary(pullRequest)),
+        ),
 
     updateChangeRequest: (input) =>
       api

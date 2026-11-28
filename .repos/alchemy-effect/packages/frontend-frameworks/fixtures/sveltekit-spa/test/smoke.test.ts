@@ -25,16 +25,12 @@ for (const mode of Playwright.SERVER_METHODS) {
     }) => {
       const response = await page.goto(server.url.toString());
       expect(response?.status()).toBe(200);
-      await expect(page.locator("#home-title")).toHaveText(
-        "sveltekit-spa-home",
-      );
+      await expect(page.locator("#home-title")).toHaveText("sveltekit-spa-home");
       await expect(page.locator("#hydrated")).toHaveText("hydrated:yes");
       // The user preprocess registered in vite.config.ts's `sveltekit(...)`
       // call (kit v3 forbids svelte.config.js) rewrote the literal — only
       // observable if the user's config file was loaded.
-      await expect(page.locator("#svelte-config")).toHaveText(
-        "marker:svelte-config-loaded",
-      );
+      await expect(page.locator("#svelte-config")).toHaveText("marker:svelte-config-loaded");
     });
 
     it("deep link to a client route serves the SPA shell, then hydrates the right view", async ({
@@ -53,24 +49,15 @@ for (const mode of Playwright.SERVER_METHODS) {
       // universal +page.ts load ran CLIENT-side and fetched the server-run
       // API endpoint.
       await page.goto(new URL("/widgets", server.url).toString());
-      await expect(page.locator("#widgets-title")).toHaveText(
-        "sveltekit-spa-widgets",
-      );
+      await expect(page.locator("#widgets-title")).toHaveText("sveltekit-spa-widgets");
       await expect(page.locator("#widgets-server")).toHaveText("server:yes");
-      await expect(page.locator("#widgets-message")).toHaveText(
-        `message:${MESSAGE}`,
-      );
-      // `$spa/widgets` — user alias from vite.config.ts resolved.
-      await expect(page.locator("#widgets-description")).toHaveText(
-        "widgets-via-user-alias:3",
-      );
+      await expect(page.locator("#widgets-message")).toHaveText(`message:${MESSAGE}`);
+      // `#lib/widgets.js` — package.json subpath import resolved.
+      await expect(page.locator("#widgets-description")).toHaveText("widgets-via-subpath-import:3");
       await expect(page.locator("#widgets-list li")).toHaveCount(3);
     });
 
-    it("client-side routes between views without a full navigation", async ({
-      page,
-      server,
-    }) => {
+    it("client-side routes between views without a full navigation", async ({ page, server }) => {
       await page.goto(server.url.toString());
       await expect(page.locator("#hydrated")).toHaveText("hydrated:yes");
       // Plant a marker a full-page navigation would lose.
@@ -78,22 +65,14 @@ for (const mode of Playwright.SERVER_METHODS) {
         (window as { __spa?: boolean }).__spa = true;
       });
       await page.click("#nav-about");
-      await expect(page.locator("#about-title")).toHaveText(
-        "sveltekit-spa-about",
-      );
+      await expect(page.locator("#about-title")).toHaveText("sveltekit-spa-about");
       await page.click("#nav-widgets");
-      await expect(page.locator("#widgets-title")).toHaveText(
-        "sveltekit-spa-widgets",
-      );
+      await expect(page.locator("#widgets-title")).toHaveText("sveltekit-spa-widgets");
       await expect(page.locator("#widgets-list li")).toHaveCount(3);
-      expect(
-        await page.evaluate(() => (window as { __spa?: boolean }).__spa),
-      ).toBe(true);
+      expect(await page.evaluate(() => (window as { __spa?: boolean }).__spa)).toBe(true);
     });
 
-    it("runs the API endpoint server-side despite ssr=false pages", async ({
-      server,
-    }) => {
+    it("runs the API endpoint server-side despite ssr=false pages", async ({ server }) => {
       const body = await server.fetchJson<{
         server: boolean;
         message: string | null;
@@ -123,9 +102,7 @@ for (const mode of Playwright.SERVER_METHODS) {
       const raw = await server.fetch("/definitely/not/a/route");
       expect(await raw.text()).toContain(SHELL_MARKER);
 
-      await page.goto(
-        new URL("/definitely/not/a/route", server.url).toString(),
-      );
+      await page.goto(new URL("/definitely/not/a/route", server.url).toString());
       await expect(page.locator("#error-title")).toHaveText("spa-error:404");
     });
   });

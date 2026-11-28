@@ -1,13 +1,19 @@
 import * as Console from "effect/Console";
+import type { ManagedPolicyDocument } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as References from "effect/References";
-import { Argument, Command, GlobalFlag } from "effect/cli";
+import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import { listManageableSettings } from "../policy/managedSettings.ts";
+import { macosProfile, windowsAdml, windowsAdmx } from "../policy/policyTemplates.ts";
+import { expandHomePath } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
@@ -90,20 +96,91 @@ const checkCommand = Command.make("check", {
   Command.withDescription("Validate a policy file before deploying it."),
   Command.withHandler(
     Effect.fn("cli.policy.check")(function* ({ file }) {
+      const policyFile = yield* expandHomePath(file);
       // Startup treats a missing file as no policy; a draft that is not there checks nothing.
-      if (!(yield* (yield* FileSystem.FileSystem).exists(file))) {
+      if (!(yield* (yield* FileSystem.FileSystem).exists(policyFile))) {
         return yield* new CliError.UserError({
           cause: file,
           userMessage: `No policy file at ${file}.`,
         });
       }
-      const policy = yield* ManagedPolicy.load(file);
+      const policy = yield* ManagedPolicy.load(policyFile);
       yield* Console.log(describePolicy(policy, yield* ManagedPolicy.loadedPolicy(policy)));
     }),
   ),
 );
 
+const SAMPLE_POLICY: ManagedPolicyDocument = {
+  schemaVersion: 1,
+  organization: "Example Corp",
+  limits: { maxRuntimeMode: "auto-accept-edits", clients: ["desktop"], telemetry: false },
+};
+
+const templatesCommand = Command.make("templates", {
+  directory: Argument.String("directory").pipe(
+    Argument.withDescription("Directory to write the templates to."),
+  ),
+  policy: Flag.String("policy").pipe(
+    Flag.withDescription("Policy file to put in the macOS profile. Default: a small sample."),
+    Flag.optional,
+  ),
+}).pipe(
+  Command.withDescription(
+    "Write the Windows Group Policy template and a macOS configuration profile.",
+  ),
+  Command.withHandler(
+    Effect.fn("cli.policy.templates")(function* ({ directory, policy }) {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      let document = SAMPLE_POLICY;
+      if (Option.isSome(policy)) {
+        const file = yield* expandHomePath(policy.value);
+        if (!(yield* fs.exists(file))) {
+          return yield* new CliError.UserError({
+            cause: policy.value,
+            userMessage: `No policy file at ${policy.value}.`,
+          });
+        }
+        const loaded = (yield* ManagedPolicy.load(file)).document;
+        if (loaded !== undefined) document = loaded;
+      }
+      const random = yield* SecureRandom.SecureRandom;
+      const profile = macosProfile(document, {
+        profile: yield* random.uuidV4().pipe(Effect.orDie),
+        payload: yield* random.uuidV4().pipe(Effect.orDie),
+      });
+      if (profile._tag === "Invalid") {
+        return yield* new CliError.UserError({ cause: document, userMessage: profile.reason });
+      }
+      const outputDir = yield* expandHomePath(directory);
+      const files = [
+        [path.join(outputDir, "windows", "t3code.admx"), windowsAdmx()],
+        [path.join(outputDir, "windows", "en-US", "t3code.adml"), windowsAdml()],
+        [path.join(outputDir, "macos", "t3code.mobileconfig"), profile.profile],
+      ] as const;
+      for (const [file, contents] of files) {
+        yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+        yield* fs.writeFileString(file, contents);
+        yield* Console.log(file);
+      }
+    }),
+  ),
+);
+
+const describeManageableSettings = () =>
+  listManageableSettings()
+    .map(
+      ([path, value]) =>
+        `${path} = ${value === undefined ? "(no default)" : JSON.stringify(value)}`,
+    )
+    .join("\n");
+
+const settingsCommand = Command.make("settings").pipe(
+  Command.withDescription("List the settings a policy can manage, with their defaults."),
+  Command.withHandler(() => Console.log(describeManageableSettings())),
+);
+
 export const policyCommand = Command.make("policy").pipe(
   Command.withDescription("Inspect the administrator's managed policy."),
-  Command.withSubcommands([showCommand, checkCommand]),
+  Command.withSubcommands([showCommand, checkCommand, settingsCommand, templatesCommand]),
 );

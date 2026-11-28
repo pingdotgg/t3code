@@ -32,6 +32,14 @@ export function updateThreadOutboxMessage(
   return threadOutboxManager.update(message, expectedRevision);
 }
 
+/** Changes the message as it is when its turn comes; false when it is gone or `change` returns null. */
+export function modifyThreadOutboxMessage(
+  messageId: QueuedThreadMessage["messageId"],
+  change: (message: QueuedThreadMessage) => QueuedThreadMessage | null,
+): Promise<boolean> {
+  return threadOutboxManager.modify(messageId, change);
+}
+
 export function threadOutboxRevision(messageId: QueuedThreadMessage["messageId"]): number {
   return threadOutboxManager.revisionOf(messageId);
 }

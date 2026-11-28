@@ -5,6 +5,8 @@ import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "../i18n/messages";
 import {
   isAtomCommandInterrupted,
   type AtomCommandResult,
@@ -16,17 +18,18 @@ import {
   type ThreadSearchShell,
 } from "@t3tools/client-runtime/state/thread-search";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
-import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
-  isListedThreadLineage,
   type ContextMenuItem,
   type EnvironmentId,
+  type ResolvedKeybindingsConfig,
+  type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
 import {
   effectiveSnoozed,
+  hasUnseenRunFailure,
   type ThreadSnoozeShell,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
@@ -39,10 +42,19 @@ import {
 import type { SidebarThreadSummary, Thread } from "../types";
 import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
+import { THREAD_STATUS_TEXT } from "@t3tools/client-runtime/state/thread-activity-announcement";
 import { observeIntersection } from "../lib/observeIntersection";
-import { deadlineAfter, deadlineStore } from "@t3tools/client-runtime/clock";
+import { deadlineAfter, deadlineStore, type ClockStore } from "@t3tools/client-runtime/clock";
 import { useDeadlinePassed } from "../hooks/useDeadline";
 import { legacyProjectCwdPreferenceKey } from "../uiStateStore";
+import { isElectron } from "../env";
+import { shouldShowThreadJumpHintsForModifiers } from "../keybindings";
+import { isTerminalFocused, subscribeToTerminalFocusChanges } from "../lib/terminalFocus";
+import { isPreviewFocused } from "../lib/previewFocus";
+import { isModelPickerOpen, subscribeToModelPickerVisibility } from "../modelPickerVisibility";
+import { shortcutModifierStore } from "../shortcutModifierState";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 
 export function shouldNavigateAfterThreadPark(input: {
   readonly threadKey: string;
@@ -60,7 +72,7 @@ export function shouldNavigateAfterThreadPark(input: {
   );
 }
 
-const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
+export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 
 export function resolveSidebarRowAccessibility(input: {
   readonly title: string;
@@ -154,6 +166,20 @@ export function useSnoozeWakeClock(
   return clockMs;
 }
 
+// Live status that says the cwd is not a repository means the checkout was removed. A worktree
+// thread of a project with tracked folders may sit in a plain task folder, which never is one.
+export function withoutRemovedCheckout<
+  T extends { readonly branch: string | null; readonly worktreePath: string | null },
+>(
+  thread: T,
+  gitStatus: { readonly isRepo?: boolean | undefined } | null,
+  project: { readonly trackedFolders?: ReadonlyArray<unknown> | undefined } | null,
+): T {
+  if (gitStatus?.isRepo !== false) return thread;
+  if (thread.worktreePath !== null && (project?.trackedFolders?.length ?? 0) > 0) return thread;
+  return { ...thread, branch: null, worktreePath: null };
+}
+
 export function useRetainedValue<T>(key: string | null, value: T | null): T | null {
   const [retained, setRetained] = React.useState<{
     readonly key: string;
@@ -183,29 +209,6 @@ export function resolveSidebarThreadSection(input: {
   if (input.settled) return "settled";
   if (input.pinned) return "pinned";
   return "active";
-}
-
-// Keep cached placement on the first connection attempt, matching mobile's threadRouteIsHydrating.
-export function isSidebarEnvironmentDisconnected(
-  phase: EnvironmentConnectionPhase,
-  shellIsLive: boolean,
-): boolean {
-  return phase !== "connecting" && (phase !== "connected" || !shellIsLive);
-}
-
-export function belongsInSidebarWorkingShelf<T extends { readonly environmentId: EnvironmentId }>(
-  thread: T,
-  input: {
-    readonly enabled: boolean;
-    readonly disconnectedEnvironmentIds: ReadonlySet<EnvironmentId>;
-    readonly isWorking: (thread: T) => boolean;
-  },
-): boolean {
-  return (
-    input.enabled &&
-    !input.disconnectedEnvironmentIds.has(thread.environmentId) &&
-    input.isWorking(thread)
-  );
 }
 
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
@@ -587,30 +590,6 @@ export async function deleteSelectedThreadEntries<
   return { deletedThreadKeys, firstFailure };
 }
 
-export function isSidebarHiddenThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
-  return !isListedThreadLineage(thread.lineage);
-}
-
-// Subagent and side-chat threads have no sidebar row, so an open one is represented by
-// its nearest listed ancestor. A broken chain (missing parent, cycle,
-// other environment) resolves to the thread itself, which then matches no row.
-export function resolveSidebarRowThreadId(
-  threadId: ThreadId,
-  environmentId: EnvironmentId,
-  threads: readonly Pick<SidebarThreadSummary, "id" | "environmentId" | "lineage">[],
-): ThreadId {
-  const findThread = (id: ThreadId) =>
-    threads.find((thread) => thread.id === id && thread.environmentId === environmentId);
-  const visited = new Set<ThreadId>();
-  let thread = findThread(threadId);
-  while (thread !== undefined && isSidebarHiddenThread(thread)) {
-    if (thread.lineage.parentThreadId === null || visited.has(thread.id)) return threadId;
-    visited.add(thread.id);
-    thread = findThread(thread.lineage.parentThreadId);
-  }
-  return thread?.id ?? threadId;
-}
-
 /**
  * `delegatedUnderParent` holds the tasks linked environments run for a thread
  * the sidebar lists, by thread key; they show under that thread, as subagents do.
@@ -645,13 +624,13 @@ export function buildBulkTitleRegenerationContextMenuItem(input: {
   if (input.actionableCount === 0) {
     return {
       id: "regenerate-title",
-      label: `Regenerating… (${input.supportedCount})`,
+      label: m(msg("Regenerating… ({count})", { count: input.supportedCount })),
       disabled: true,
     };
   }
   return {
     id: "regenerate-title",
-    label: `Regenerate titles (${input.actionableCount})`,
+    label: m(msg("Regenerate titles ({count})", { count: input.actionableCount })),
   };
 }
 
@@ -659,20 +638,12 @@ export function buildBulkUnpinContextMenuItem(input: {
   pinnedCount: number;
 }): ContextMenuItem<"unpin"> | null {
   if (input.pinnedCount === 0) return null;
-  return { id: "unpin", label: `Unpin (${input.pinnedCount})` };
+  return { id: "unpin", label: m(msg("Unpin ({count})", { count: input.pinnedCount })) };
 }
 
 export interface ThreadStatusPill {
-  label:
-    | "Working"
-    | "Connecting"
-    | "Completed"
-    | "Failed"
-    | "Pending Approval"
-    | "Awaiting Input"
-    | "Guest Request"
-    | "Waiting"
-    | "Plan Ready";
+  /** A `msg()` string; render it through `useMessages()`. */
+  label: string;
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -694,19 +665,105 @@ type ThreadStatusInput = Pick<
   blockedOnThreadWait?: boolean | undefined;
 };
 
+// Read at event time: subscribing Sidebar to terminal or modifier state re-renders every row.
+export function threadShortcutContext(routeThreadRef: ScopedThreadRef | null) {
+  return {
+    terminalFocus: isTerminalFocused(),
+    terminalOpen:
+      routeThreadRef !== null &&
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        routeThreadRef,
+      ).terminalOpen,
+    previewFocus: isPreviewFocused(),
+    previewOpen:
+      selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, routeThreadRef) ===
+      "preview",
+    modelPickerOpen: isModelPickerOpen(),
+    isWeb: !isElectron,
+    isDesktop: isElectron,
+  };
+}
+
+/** Whether the current modifier combination, including none, has been held unchanged for `delayMs`. */
+function createModifierHoldStore(delayMs: number): ClockStore<boolean> {
+  const listeners = new Set<() => void>();
+  let held = false;
+  let stopDeadline = () => {};
+  let stopModifiers: (() => void) | null = null;
+
+  const setHeld = (next: boolean) => {
+    if (held === next) return;
+    held = next;
+    for (const listener of listeners) listener();
+  };
+  const onModifiersChange = () => {
+    stopDeadline();
+    const deadline = deadlineStore(deadlineAfter(delayMs));
+    stopDeadline = deadline.subscribe(() => setHeld(true));
+    // A deadline another subscriber already passed never notifies a late joiner.
+    setHeld(deadline.getSnapshot());
+  };
+
+  return {
+    subscribe: (listener) => {
+      listeners.add(listener);
+      if (stopModifiers === null) {
+        stopModifiers = shortcutModifierStore.subscribe(onModifiersChange);
+        onModifiersChange();
+      }
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size > 0) return;
+        stopModifiers?.();
+        stopModifiers = null;
+        stopDeadline();
+        stopDeadline = () => {};
+        held = false;
+      };
+    },
+    getSnapshot: () => held,
+  };
+}
+
+const threadJumpModifierHold = createModifierHoldStore(THREAD_JUMP_HINT_SHOW_DELAY_MS);
+
+function subscribeToThreadJumpHintInputs(listener: () => void): () => void {
+  const unsubscribeHold = threadJumpModifierHold.subscribe(listener);
+  // The snapshot reads the modifiers; the hold stays silent when it is true across a change.
+  const unsubscribeModifiers = shortcutModifierStore.subscribe(listener);
+  const unsubscribeFocus = subscribeToTerminalFocusChanges(listener);
+  const unsubscribeTerminals = useTerminalUiStateStore.subscribe(listener);
+  const unsubscribeRightPanels = useRightPanelStore.subscribe(listener);
+  const unsubscribeModelPicker = subscribeToModelPickerVisibility(listener);
+  return () => {
+    unsubscribeHold();
+    unsubscribeModifiers();
+    unsubscribeFocus();
+    unsubscribeTerminals();
+    unsubscribeRightPanels();
+    unsubscribeModelPicker();
+  };
+}
+
 /**
  * Thread jump hints appear once the jump modifier has been held for a moment,
  * so a quick shortcut never flashes them, and hide as soon as it is released.
+ * The snapshot is the visibility itself, so a quick shortcut never re-renders the caller.
  */
-export function useThreadJumpHintsVisible(shouldShow: boolean): boolean {
-  const [showAt, setShowAt] = React.useState<number | null>(null);
-  // The clock is read inside the updater: the compiler caches a bare clock read
-  // in render once per instance, so a second hold would reuse the first deadline.
-  // React discards this render and re-runs with the update.
-  if (shouldShow !== (showAt !== null)) {
-    setShowAt(shouldShow ? () => deadlineAfter(THREAD_JUMP_HINT_SHOW_DELAY_MS) : null);
-  }
-  return useDeadlinePassed(showAt);
+export function useThreadJumpHintsVisible(
+  keybindings: ResolvedKeybindingsConfig,
+  routeThreadRef: ScopedThreadRef | null,
+): boolean {
+  return React.useSyncExternalStore(
+    subscribeToThreadJumpHintInputs,
+    () =>
+      threadJumpModifierHold.getSnapshot() &&
+      shouldShowThreadJumpHintsForModifiers(shortcutModifierStore.getSnapshot(), keybindings, {
+        platform: navigator.platform,
+        context: threadShortcutContext(routeThreadRef),
+      }),
+  );
 }
 
 export function resolveThreadLastVisitedAt(
@@ -721,22 +778,15 @@ export function resolveThreadLastVisitedAt(
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestRun?.completedAt) return false;
+  if (thread.latestRun.status === "interrupted" || thread.latestRun.status === "cancelled") {
+    return false;
+  }
   const completedAt = Date.parse(thread.latestRun.completedAt);
   if (Number.isNaN(completedAt)) return false;
   if (!thread.lastVisitedAt) return false;
 
   const lastVisitedAt = Date.parse(thread.lastVisitedAt);
   if (Number.isNaN(lastVisitedAt)) return true;
-  return completedAt > lastVisitedAt;
-}
-
-/** Unopened threads' failures still count as unseen, unlike completions. */
-function hasUnseenFailure(thread: ThreadStatusInput): boolean {
-  if (thread.latestRun?.status !== "failed") return false;
-  if (!thread.lastVisitedAt) return true;
-  const completedAt = Date.parse(thread.latestRun.completedAt ?? "");
-  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
-  if (Number.isNaN(completedAt) || Number.isNaN(lastVisitedAt)) return true;
   return completedAt > lastVisitedAt;
 }
 
@@ -769,6 +819,35 @@ export function shouldCreateNewThreadInCurrentProject(
   projectGroupCount: number,
 ): boolean {
   return shiftKey || openProjectGroupCount === 1 || projectGroupCount === 0;
+}
+
+/**
+ * A sidebar filtered to one project already says where the next thread belongs,
+ * so New skips the picker there. A project grouped across environments keeps the
+ * viewed thread's environment when that thread belongs to the group.
+ */
+export function resolveScopedNewThreadProjectRef<
+  TRef extends { readonly environmentId: string; readonly projectId: string },
+>(input: {
+  shiftKey: boolean;
+  scopedProjectGroups: readonly {
+    readonly environmentId: string;
+    readonly id: string;
+    readonly memberProjectRefs: readonly TRef[];
+  }[];
+  viewed: { readonly environmentId: string; readonly projectId: string } | null | undefined;
+}): TRef | null {
+  const [group, ...otherGroups] = input.scopedProjectGroups;
+  if (input.shiftKey || !group || otherGroups.length > 0) return null;
+  const memberAt = (environmentId: string, projectId: string) =>
+    group.memberProjectRefs.find(
+      (ref) => ref.environmentId === environmentId && ref.projectId === projectId,
+    );
+  return (
+    (input.viewed && memberAt(input.viewed.environmentId, input.viewed.projectId)) ??
+    memberAt(group.environmentId, group.id) ??
+    null
+  );
 }
 
 export function orderItemsByPreferredIds<TItem, TId>(input: {
@@ -841,6 +920,7 @@ export type SidebarThreadStatus =
   | "approval"
   | "input"
   | "request"
+  | "preparing"
   | "working"
   | "waiting"
   | "failed"
@@ -862,7 +942,9 @@ export function shouldRecedeSidebarThread(input: {
   ) {
     return false;
   }
-  if (input.status === "working" || input.status === "waiting") return true;
+  if (input.status === "preparing" || input.status === "working" || input.status === "waiting") {
+    return true;
+  }
   if (input.status === "ready" || input.status === "approval") {
     return !input.isUnread && !input.isWoke;
   }
@@ -893,9 +975,12 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
     return "waiting";
   }
+  if (thread.runtime?.status === "preparing") {
+    return "preparing";
+  }
   if (
     thread.runtime !== null &&
-    ["preparing", "queued", "starting", "running", "waiting"].includes(thread.runtime.status)
+    ["queued", "starting", "running", "waiting"].includes(thread.runtime.status)
   ) {
     return "working";
   }
@@ -908,6 +993,38 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   return "ready";
 }
 
+/** Sidebar row status: a failure the user has already opened settles to ready, like Done. */
+export function resolveSidebarRowStatus(
+  thread: ThreadStatusInput & SidebarThreadStatusInput,
+): SidebarThreadStatus {
+  const status = resolveSidebarThreadStatus(thread);
+  // A runtime failure without a failed run has nothing to date it, so it stays.
+  if (status !== "failed" || thread.latestRun?.status !== "failed") return status;
+  return hasUnseenRunFailure(thread) ? status : "ready";
+}
+
+/** What the window title says the open thread is doing, in the words its announcer uses. */
+export function resolveWindowTitleThreadStatus(
+  thread: SidebarThreadStatusInput,
+  resolve: MessageResolver = m,
+): string | null {
+  // A guest waiting doesn't hide that the agent is still working.
+  switch (resolveSidebarThreadStatus({ ...thread, pendingGuestMessageCount: 0 })) {
+    case "approval":
+      return resolve(THREAD_STATUS_TEXT.approval);
+    case "input":
+      return resolve(THREAD_STATUS_TEXT.input);
+    case "preparing":
+    case "working":
+      return resolve(THREAD_STATUS_TEXT.working);
+    case "waiting":
+      // Waiting on a child thread is still this turn, so it must not read as finished.
+      return thread.runtime?.status === "running" ? resolve(THREAD_STATUS_TEXT.working) : null;
+    default:
+      return null;
+  }
+}
+
 /**
  * The dot on a closed boring-sidebar folder: the most urgent state among its
  * hidden threads. Waiting threads stay quiet, like their rows.
@@ -915,7 +1032,7 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
 export function resolveSidebarFolderDot(
   threads: ReadonlyArray<ThreadStatusInput & SidebarThreadStatusInput>,
 ): "attention" | "failed" | "unread" | "working" | null {
-  const statuses = new Set(threads.map(resolveSidebarThreadStatus));
+  const statuses = new Set(threads.map(resolveSidebarRowStatus));
   if (
     statuses.has("input") ||
     statuses.has("approval") ||
@@ -927,10 +1044,10 @@ export function resolveSidebarFolderDot(
   if (statuses.has("failed")) return "failed";
   // Rows show Done only for ready threads, so the dot follows the same rule.
   const hasUnread = threads.some(
-    (thread) => resolveSidebarThreadStatus(thread) === "ready" && hasUnseenCompletion(thread),
+    (thread) => resolveSidebarRowStatus(thread) === "ready" && hasUnseenCompletion(thread),
   );
   if (hasUnread) return "unread";
-  if (statuses.has("working")) return "working";
+  if (statuses.has("working") || statuses.has("preparing")) return "working";
   return null;
 }
 
@@ -1066,6 +1183,8 @@ export function pullRequestMatchesSearchQuery(
   return normalizedQuery.split(" ").every((token) => haystack.includes(token));
 }
 
+export const ADD_PROJECT_SCOPE_ITEM_VALUE = "add-project";
+
 export function filterSidebarProjectScopeItems<TItem extends { readonly value: string }>(input: {
   items: readonly TItem[];
   query: string;
@@ -1073,7 +1192,12 @@ export function filterSidebarProjectScopeItems<TItem extends { readonly value: s
 }): readonly TItem[] {
   const query = input.query.trim();
   if (query.length === 0) return input.items;
-  return input.items.filter((item) => item.value !== "all" && input.matches(item, query));
+  return input.items.filter(
+    (item) =>
+      item.value !== "all" &&
+      item.value !== ADD_PROJECT_SCOPE_ITEM_VALUE &&
+      input.matches(item, query),
+  );
 }
 
 interface SidebarProjectScopeMenuState {
@@ -1113,7 +1237,7 @@ export function resolveThreadStatusPill(input: {
 
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
     return {
-      label: "Pending Approval",
+      label: msg("Pending Approval"),
       colorClass: "text-amber-600 dark:text-amber-300/90",
       dotClass: "bg-amber-500 dark:bg-amber-300/90",
       pulse: false,
@@ -1122,7 +1246,7 @@ export function resolveThreadStatusPill(input: {
 
   if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
     return {
-      label: "Awaiting Input",
+      label: msg("Awaiting Input"),
       colorClass: "text-indigo-600 dark:text-indigo-300/90",
       dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
       pulse: false,
@@ -1131,7 +1255,7 @@ export function resolveThreadStatusPill(input: {
 
   if ((thread.pendingGuestMessageCount ?? 0) > 0) {
     return {
-      label: "Guest Request",
+      label: msg("Guest Request"),
       colorClass: "text-guest-foreground",
       dotClass: "bg-guest",
       pulse: false,
@@ -1143,7 +1267,7 @@ export function resolveThreadStatusPill(input: {
     thread.runtime?.status === "waiting"
   ) {
     return {
-      label: "Working",
+      label: msg("Working"),
       colorClass: "text-sky-600 dark:text-sky-300/80",
       dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: true,
@@ -1156,33 +1280,32 @@ export function resolveThreadStatusPill(input: {
     thread.runtime?.status === "queued"
   ) {
     return {
-      label: "Connecting",
+      label: msg("Connecting"),
       colorClass: "text-sky-600 dark:text-sky-300/80",
       dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: true,
     };
   }
 
-  if (
-    (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) ||
-    backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
-  ) {
-    return {
-      label: "Waiting",
-      colorClass: "text-sidebar-muted-foreground",
-      dotClass: "bg-sidebar-muted-foreground",
-      pulse: false,
-    };
-  }
+  const waiting = {
+    label: msg("Waiting"),
+    colorClass: "text-sidebar-muted-foreground",
+    dotClass: "bg-sidebar-muted-foreground",
+    pulse: false,
+  };
+  if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) return waiting;
 
-  if (hasUnseenFailure(thread)) {
+  // A failed run goes to the inbox even while background work holds the thread.
+  if (hasUnseenRunFailure(thread)) {
     return {
-      label: "Failed",
+      label: msg("Failed"),
       colorClass: "text-red-600 dark:text-red-300/90",
       dotClass: "bg-red-500 dark:bg-red-300/90",
       pulse: false,
     };
   }
+
+  if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return waiting;
 
   const hasPlanReadyPrompt =
     !thread.hasPendingUserInput &&
@@ -1191,7 +1314,7 @@ export function resolveThreadStatusPill(input: {
     thread.hasActionableProposedPlan;
   if (hasPlanReadyPrompt) {
     return {
-      label: "Plan Ready",
+      label: msg("Plan Ready"),
       colorClass: "text-violet-600 dark:text-violet-300/90",
       dotClass: "bg-violet-500 dark:bg-violet-300/90",
       pulse: false,
@@ -1200,7 +1323,7 @@ export function resolveThreadStatusPill(input: {
 
   if (hasUnseenCompletion(thread)) {
     return {
-      label: "Completed",
+      label: msg("Completed"),
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
       dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
       pulse: false,
@@ -1211,14 +1334,23 @@ export function resolveThreadStatusPill(input: {
 }
 
 export function getFallbackThreadIdAfterDelete<
-  T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
+  T extends Pick<
+    Thread,
+    "id" | "projectId" | "createdAt" | "updatedAt" | "settledOverride" | "lineage"
+  > &
+    ThreadSortInput &
+    ThreadSnoozeShell &
+    Pick<Thread, "environmentId">,
 >(input: {
   threads: readonly T[];
   deletedThreadId: T["id"];
   sortOrder: SidebarThreadSortOrder;
+  now: string;
   deletedThreadIds?: ReadonlySet<T["id"]>;
+  delegatedUnderParent: ReadonlySet<string>;
 }): T["id"] | null {
-  const { deletedThreadId, deletedThreadIds, sortOrder, threads } = input;
+  const { deletedThreadId, deletedThreadIds, sortOrder, now, threads, delegatedUnderParent } =
+    input;
   const deletedThread = threads.find((thread) => thread.id === deletedThreadId);
   if (!deletedThread) {
     return null;
@@ -1230,7 +1362,14 @@ export function getFallbackThreadIdAfterDelete<
         (thread) =>
           thread.projectId === deletedThread.projectId &&
           thread.id !== deletedThreadId &&
-          !deletedThreadIds?.has(thread.id),
+          !deletedThreadIds?.has(thread.id) &&
+          thread.settledOverride !== "settled" &&
+          !effectiveSnoozed(thread, { now }) &&
+          !isShownUnderParent(
+            { environmentId: thread.environmentId, threadId: thread.id },
+            thread.lineage,
+            delegatedUnderParent,
+          ),
       ),
       sortOrder,
     )[0]?.id ?? null

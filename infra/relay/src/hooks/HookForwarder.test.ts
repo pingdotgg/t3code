@@ -4,10 +4,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "node:crypto";
 import * as EffectNodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
-import { RelayApi } from "@t3tools/contracts/relay";
+import { RelayApi, RelayHookDeliveryProofPayload } from "@t3tools/contracts/relay";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Tracer from "effect/Tracer";
@@ -23,6 +24,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
+import * as CloudMintSigner from "../auth/CloudMintSigner.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
@@ -108,6 +110,7 @@ function makeHarness(options: Harness = {}) {
       ));
   const layerForwarder = HookForwarder.layer.pipe(
     Layer.provideMerge(HeldHooks.layer),
+    Layer.provide(CloudMintSigner.layer),
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(RelayConfiguration.RelayConfiguration, settings),
@@ -256,14 +259,13 @@ describe("HookForwarder", () => {
         }),
       );
       const sent = harness.sent[0]!;
-      const payload = yield* verifyRelayJwt({
+      const payload = yield* verifyRelayJwt(RelayHookDeliveryProofPayload, {
         publicKey: mintKeys.publicKey,
         token: sent.headers["x-t3-relay-delivery"]!,
         typ: RELAY_HOOK_DELIVERY_TYP,
         issuer: settings.relayIssuer,
         audience: `t3-env:${environmentId}`,
-        nowEpochSeconds: Math.floor((yield* Clock.currentTimeMillis) / 1_000),
-      });
+      }).pipe(Effect.provide(EffectNodeCrypto.layerSignature));
       expect(payload).toMatchObject({
         environmentId,
         hookId: "hook-1",
@@ -495,6 +497,35 @@ describe("HookForwarder", () => {
       expect(serialized).not.toContain("header-secret");
       const server = spans.find((span) => span.kind === "server");
       expect(server?.attributes.get("url.path")).toBe(`/v1/hooks/${endpointKey}/hook-1/redacted`);
+
+      spans.length = 0;
+      const failing = makeHarness({
+        execute: (request) =>
+          Effect.fail(
+            new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({ request, cause: new Error("reset") }),
+            }),
+          ),
+      });
+      const unavailable = yield* traceRelayHttpRequestWith(
+        yield* failing.httpEffect,
+        Layer.succeed(Tracer.Tracer, tracer),
+      ).pipe(
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(
+            new Request(hookUrl("hook-1/super-secret-token"), { method: "POST" }),
+          ),
+        ),
+      );
+      expect(unavailable.status).toBe(503);
+      const failures = spans.flatMap((span) =>
+        span.status._tag === "Ended" && Exit.isFailure(span.status.exit)
+          ? [`${span.name}: ${Cause.pretty(span.status.exit.cause)}`]
+          : [],
+      );
+      expect(failures.join("\n")).toContain("upstream.sendUpstream: ");
+      expect(failures.join("\n")).not.toContain("super-secret-token");
     }),
   );
 

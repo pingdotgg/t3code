@@ -34,13 +34,8 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import {
-  base64UrlDecodeUtf8,
-  base64UrlEncode,
-  signPayload,
-  timingSafeEqualBase64Url,
-} from "../auth/utils.ts";
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { base64UrlDecodeUtf8, base64UrlEncode, timingSafeEqualBase64Url } from "../auth/utils.ts";
+import * as PayloadSigner from "../auth/PayloadSigner.ts";
 import {
   attachmentFileExtension,
   createAttachmentId,
@@ -56,10 +51,10 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { coalesceThreadLiveStream } from "../orchestration-v2/ThreadLiveEventCoalescer.ts";
 import { buildBoundedThreadStreamSnapshot } from "../orchestration-v2/ThreadStream.ts";
 import {
-  projectDomainEventForWire,
   projectTurnItemForDetail,
-  projectTurnItemForWire,
+  threadStreamEventItem,
 } from "../orchestration-v2/WireProjection.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
@@ -140,15 +135,6 @@ const SessionClaims = Schema.Struct({
 });
 type SessionClaims = typeof SessionClaims.Type;
 const decodeSessionClaims = Schema.decodeUnknownOption(Schema.fromJsonString(SessionClaims));
-
-/** A truncated HMAC keeps invite links short. 128 bits is still far beyond guessing range. */
-const inviteSignature = (shareId: string, key: Uint8Array) =>
-  base64UrlEncode(
-    Buffer.from(signPayload(`guest-invite:${shareId}`, key), "base64url").subarray(
-      0,
-      INVITE_SIGNATURE_BYTES,
-    ),
-  );
 
 const inactive = new GuestShareAccessError({ reason: "inactive" });
 
@@ -231,6 +217,16 @@ const threadOf = (event: OrchestrationV2DomainEvent): OrchestrationV2AppThread |
   }
 };
 
+/** A guest sees that a file changed, never the text of the change, whatever its status. */
+const withoutFileText = (item: OrchestrationV2TurnItem): OrchestrationV2TurnItem => {
+  if (item.type !== "file_change") return item;
+  const { diffStr: _diff, oldStr: _old, newStr: _new, ...shown } = item;
+  return shown;
+};
+const rowWithoutFileText = <Row extends { readonly item: OrchestrationV2TurnItem }>(
+  row: Row,
+): Row => ({ ...row, item: withoutFileText(row.item) });
+
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const commandOutputs = yield* CommandOutputHub.CommandOutputHub;
@@ -240,23 +236,31 @@ const make = Effect.gen(function* () {
   const { attachmentsDir } = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const random = yield* SecureRandom.SecureRandom;
-  const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const analytics = yield* AnalyticsService.AnalyticsService;
-  const signingKey = yield* Effect.cached(
-    secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(Effect.orDie),
-  );
+  const documents = yield* DocumentText.DocumentText;
+  const signer = yield* PayloadSigner.make(SIGNING_SECRET_NAME);
+  /** A truncated HMAC keeps invite links short. 128 bits is still far beyond guessing range. */
+  const inviteSignature = (shareId: string) =>
+    signer.sign(`guest-invite:${shareId}`).pipe(
+      Effect.orDie,
+      Effect.map((signature) =>
+        base64UrlEncode(Buffer.from(signature, "base64url").subarray(0, INVITE_SIGNATURE_BYTES)),
+      ),
+    );
 
   // Tokens are derived from the share id, so nothing secret is stored and replacing or closing
   // the share in the thread projection revokes every token for it. An invite is
   // `<shareId>.<signature>` and the thread is looked up by share id; a session token carries
   // signed claims.
   const signInvite = (shareId: GuestShareId) =>
-    Effect.map(signingKey, (key) => `${shareId}.${inviteSignature(shareId, key)}`);
-  const signSession = (claims: SessionClaims) =>
-    Effect.map(signingKey, (key) => {
-      const payload = base64UrlEncode(JSON.stringify(claims));
-      return `${payload}.${signPayload(payload, key)}`;
-    });
+    inviteSignature(shareId).pipe(Effect.map((signature) => `${shareId}.${signature}`));
+  const signSession = (claims: SessionClaims) => {
+    const payload = base64UrlEncode(JSON.stringify(claims));
+    return signer.sign(payload).pipe(
+      Effect.orDie,
+      Effect.map((signature) => `${payload}.${signature}`),
+    );
+  };
   const splitToken = (token: string) => {
     const [payload, signature, extra] = token.split(".");
     return payload && signature && extra === undefined ? { payload, signature } : null;
@@ -264,8 +268,8 @@ const make = Effect.gen(function* () {
   const verifyInvite = Effect.fn("GuestShareService.verifyInvite")(function* (token: string) {
     const parts = splitToken(token);
     if (parts === null) return Option.none<SessionClaims>();
-    const key = yield* signingKey;
-    if (!timingSafeEqualBase64Url(parts.signature, inviteSignature(parts.payload, key))) {
+    const expected = yield* inviteSignature(parts.payload);
+    if (!timingSafeEqualBase64Url(parts.signature, expected)) {
       return Option.none<SessionClaims>();
     }
     const shareId = GuestShareId.make(parts.payload);
@@ -276,15 +280,15 @@ const make = Effect.gen(function* () {
       ? Option.none<SessionClaims>()
       : Option.some<SessionClaims>({ kind: "session", threadId, shareId });
   });
-  const verifySession = (token: string) =>
-    Effect.map(signingKey, (key) => {
-      const parts = splitToken(token);
-      if (parts === null) return Option.none<SessionClaims>();
-      if (!timingSafeEqualBase64Url(parts.signature, signPayload(parts.payload, key))) {
-        return Option.none<SessionClaims>();
-      }
-      return decodeSessionClaims(base64UrlDecodeUtf8(parts.payload));
-    });
+  // Untraced: runs on every guest request, like the Effect.map it replaced.
+  const verifySession = Effect.fnUntraced(function* (token: string) {
+    const parts = splitToken(token);
+    if (parts === null) return Option.none<SessionClaims>();
+    if (!(yield* signer.verify(parts.payload, parts.signature).pipe(Effect.orDie))) {
+      return Option.none<SessionClaims>();
+    }
+    return decodeSessionClaims(base64UrlDecodeUtf8(parts.payload));
+  });
 
   const connectHostname = managedEndpoint.inspectConnector.pipe(
     Effect.map((facts) => facts?.hostname ?? null),
@@ -400,7 +404,12 @@ const make = Effect.gen(function* () {
         const path = resolveAttachmentPath({ attachmentsDir, attachment });
         return path === null
           ? Effect.void
-          : fileSystem.remove(path, { force: true }).pipe(Effect.ignore);
+          : fileSystem
+              .remove(path, { force: true })
+              .pipe(
+                Effect.andThen(fileSystem.remove(`${path}.txt`, { force: true })),
+                Effect.ignore,
+              );
       },
       { discard: true },
     );
@@ -446,6 +455,7 @@ const make = Effect.gen(function* () {
           yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
           yield* fileSystem.copyFile(uploads[index]!.path, path);
           stored.push(attachment);
+          yield* documents.ensure(path);
         }).pipe(Effect.mapError(() => uploadFailed)),
       { discard: true },
     ).pipe(Effect.onError(() => removeStored(stored)));
@@ -479,6 +489,12 @@ const make = Effect.gen(function* () {
       variant: attachments.length === 0 ? "text_only" : "with_files",
     });
   });
+
+  const endsShareFor = (shareId: GuestShareId) => (event: OrchestrationV2DomainEvent) => {
+    if (event.type === "thread.archived" || event.type === "thread.deleted") return true;
+    const updated = threadOf(event);
+    return updated !== null && updated.guestShare?.id !== shareId;
+  };
 
   /** Completes once the session no longer opens its share, so open reads end with it. */
   const untilRevoked = (session: string) =>
@@ -549,19 +565,11 @@ const make = Effect.gen(function* () {
     if (initialView === null) return yield* inactive;
 
     const ended: GuestStreamEvent = { type: "ended" };
-    const endsShare = (event: OrchestrationV2DomainEvent) => {
-      if (event.type === "thread.archived" || event.type === "thread.deleted") return true;
-      const updated = threadOf(event);
-      return updated !== null && updated.guestShare?.id !== share.id;
-    };
+    const endsShare = endsShareFor(share.id);
     const live = orchestrator
       .streamStoredEventsFrom({ threadId: thread.id, afterSequence: snapshot.snapshotSequence })
       .pipe(
-        Stream.map((stored) => ({
-          kind: "event" as const,
-          sequence: stored.sequence,
-          event: projectDomainEventForWire(stored.event),
-        })),
+        Stream.map(threadStreamEventItem),
         // Ending the source here flushes what the coalescer holds, so `ended` is not held back.
         Stream.takeUntil((item) => endsShare(item.event)),
         coalesceThreadLiveStream,
@@ -569,12 +577,16 @@ const make = Effect.gen(function* () {
           if (item.kind !== "event") return [];
           if (endsShare(item.event)) return [ended];
           if (item.event.type === "turn-item.updated") rememberSent(share.id, [item.event.payload]);
+          const shown =
+            item.event.type === "turn-item.updated"
+              ? { ...item, event: { ...item.event, payload: withoutFileText(item.event.payload) } }
+              : item;
           const updated = threadOf(item.event);
           const view = updated === null ? null : viewOf(updated);
           return view === null
-            ? [{ type: "thread", item }]
+            ? [{ type: "thread", item: shown }]
             : [
-                { type: "thread", item },
+                { type: "thread", item: shown },
                 { type: "view", view },
               ];
         }),
@@ -588,7 +600,11 @@ const make = Effect.gen(function* () {
     );
     const openingSnapshot = buildBoundedThreadStreamSnapshot({
       snapshotSequence: snapshot.snapshotSequence,
-      projection: snapshot.projection,
+      projection: {
+        ...snapshot.projection,
+        turnItems: snapshot.projection.turnItems.map(withoutFileText),
+        visibleTurnItems: snapshot.projection.visibleTurnItems.map(rowWithoutFileText),
+      },
     });
     const opening: ReadonlyArray<GuestStreamEvent> = [
       { type: "view", view: initialView },
@@ -641,18 +657,27 @@ const make = Effect.gen(function* () {
     session: string,
     itemId: string,
   ) {
-    const { thread } = yield* authorize(session, "session");
-    const item = yield* orchestrator
-      .getTurnItem({ threadId: thread.id, itemId: TurnItemId.make(itemId) })
-      .pipe(Effect.mapError(() => unavailable));
-    return item === null ? yield* unavailable : { thread, item };
+    const { thread, share } = yield* authorize(session, "session");
+    const id = TurnItemId.make(itemId);
+    const item =
+      (yield* orchestrator
+        .getTurnItem({ threadId: thread.id, itemId: id })
+        .pipe(Effect.mapError(() => unavailable))) ??
+      // A fork shows its source's earlier items, which stay in the source thread.
+      (thread.forkedFrom === null
+        ? null
+        : yield* orchestrator.getTimelinePage(thread.id, { itemId: id, limit: 1 }).pipe(
+            Effect.map((page) => page.items[0]?.item ?? null),
+            Effect.mapError(() => unavailable),
+          ));
+    return item === null ? yield* unavailable : { thread, share, item };
   });
 
   const render = Effect.fn("GuestShareService.render")(function* (session: string, itemId: string) {
-    const { thread, item } = yield* threadItem(session, itemId);
+    const { item } = yield* threadItem(session, itemId);
     if (item.type !== "dynamic_tool") return yield* unavailable;
     const reference = htmlRenderFromToolItem(item);
-    const [attachmentId] = threadHtmlRenderAttachmentIds(thread.id, [item]);
+    const [attachmentId] = threadHtmlRenderAttachmentIds(item.threadId, [item]);
     const path =
       attachmentId === undefined
         ? null
@@ -663,10 +688,7 @@ const make = Effect.gen(function* () {
 
   const item = Effect.fn("GuestShareService.item")(function* (session: string, itemId: string) {
     const { item } = yield* threadItem(session, itemId);
-    return {
-      item:
-        item.type === "file_change" ? projectTurnItemForWire(item) : projectTurnItemForDetail(item),
-    };
+    return { item: projectTurnItemForDetail(withoutFileText(item)) };
   });
 
   const history = Effect.fn("GuestShareService.history")(function* (
@@ -681,19 +703,36 @@ const make = Effect.gen(function* () {
       share.id,
       page.items.map((row) => row.item),
     );
-    return page;
+    return { ...page, items: page.items.map(rowWithoutFileText) };
   });
 
   const commandOutput = Effect.fn("GuestShareService.commandOutput")(function* (
     session: string,
     itemId: string,
   ) {
-    const { thread, item } = yield* threadItem(session, itemId);
+    const { thread, share, item } = yield* threadItem(session, itemId);
     if (item.type !== "command_execution") return yield* unavailable;
-    return commandOutputs.subscribe({ threadId: thread.id, itemId: item.id }).pipe(
+    const afterSequence = yield* orchestrator
+      .getThreadEventSequence(thread.id)
+      .pipe(Effect.mapError(() => unavailable));
+    // A share that ends before the cursor is read fails this check; one that ends after it ends
+    // `shareEnded`.
+    yield* authorize(session, "session");
+    const endsShare = endsShareFor(share.id);
+    const shareEnded = orchestrator
+      .streamStoredEventsFrom({ threadId: thread.id, afterSequence })
+      .pipe(
+        Stream.filter((stored) => endsShare(stored.event)),
+        Stream.runHead,
+        Effect.ignore,
+      );
+    const untilExpiry = Effect.sleep(
+      Math.max(0, Date.parse(share.expiresAt) - DateTime.toEpochMillis(yield* DateTime.now)),
+    );
+    return commandOutputs.subscribe({ threadId: item.threadId, itemId: item.id }).pipe(
       // A lost hub stream ends the output; the row reloads it when reopened.
       Stream.catchCause(() => Stream.empty),
-      Stream.interruptWhen(untilRevoked(session)),
+      Stream.interruptWhen(Effect.raceAll([shareEnded, untilExpiry, untilRevoked(session)])),
     );
   });
 
@@ -715,7 +754,18 @@ const make = Effect.gen(function* () {
             .find((candidate) => candidate.id === attachmentId),
         ),
         Effect.mapError(() => unavailable),
-      ));
+      )) ??
+      // A fork shows its source's earlier messages, which stay in the source thread.
+      (thread.forkedFrom === null
+        ? undefined
+        : yield* orchestrator.getTimelinePage(thread.id, { attachmentId, limit: 1 }).pipe(
+            Effect.map(({ items }) =>
+              items
+                .flatMap(({ item }) => (item.type === "user_message" ? item.attachments : []))
+                .find((candidate) => candidate.id === attachmentId),
+            ),
+            Effect.mapError(() => unavailable),
+          ));
     const path =
       found === undefined ? null : resolveAttachmentPath({ attachmentsDir, attachment: found });
     if (found === undefined || path === null) return yield* unavailable;

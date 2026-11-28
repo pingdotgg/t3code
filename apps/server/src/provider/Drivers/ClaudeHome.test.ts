@@ -49,6 +49,26 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       }),
     );
 
+    it.effect("gives a symlinked Claude home the continuation key of its target", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped());
+        const target = path.join(root, ".claude");
+        const link = path.join(root, ".claude-second-account");
+        yield* fileSystem.makeDirectory(target);
+        yield* fileSystem.symlink(target, link);
+
+        const direct = yield* makeClaudeContinuationGroupKey({ homePath: target });
+        expect(yield* makeClaudeContinuationGroupKey({ homePath: link })).toBe(direct);
+        expect(
+          yield* makeClaudeContinuationGroupKey({ homePath: "" }, { CLAUDE_CONFIG_DIR: link }),
+        ).toBe(direct);
+        // The spawned process keeps the literal path, because Claude keys its login by that path.
+        expect((yield* makeClaudeEnvironment({ homePath: link })).CLAUDE_CONFIG_DIR).toBe(link);
+      }).pipe(Effect.scoped),
+    );
+
     it.effect("separates capability probes by cwd", () =>
       Effect.gen(function* () {
         const config = { binaryPath: "claude", homePath: "" };
@@ -60,7 +80,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
   });
 
   it.effect(
-    "drops the launching Claude session and labels processes t3-code unless overridden",
+    "drops the launching Claude session and Electron's run-as-Node flag, and labels processes t3-code unless overridden",
     () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -72,6 +92,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
           CLAUDE_CODE_SESSION_ID: "host-session",
           CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/host-claude.sock",
           CLAUDE_EFFORT: "high",
+          ELECTRON_RUN_AS_NODE: "1",
           KEEP: "1",
         };
         const instance = [

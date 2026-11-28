@@ -70,7 +70,7 @@ export const loadedPolicy = Effect.fn("ManagedPolicy.loadedPolicy")(function* (
  */
 export function deniedBy(
   policy: Pick<ManagedPolicy["Service"], "document">,
-  capability: "webhookTasks" | "telemetry",
+  capability: "webhookTasks" | "telemetry" | "previewTunnel" | "worktreeLayoutCommands",
 ): string | undefined {
   return policy.document?.limits?.[capability] === false ? policy.document.organization : undefined;
 }
@@ -135,6 +135,8 @@ function summarizeLimits(
     webhookTasks,
     telemetry,
     browserCookieImport,
+    previewTunnel,
+    worktreeLayoutCommands,
     providers,
     updates,
   } = document.limits ?? {};
@@ -146,6 +148,8 @@ function summarizeLimits(
     ...(webhookTasks === undefined ? {} : { webhookTasks }),
     ...(telemetry === undefined ? {} : { telemetry }),
     ...(browserCookieImport === undefined ? {} : { browserCookieImport }),
+    ...(previewTunnel === undefined ? {} : { previewTunnel }),
+    ...(worktreeLayoutCommands === undefined ? {} : { worktreeLayoutCommands }),
     ...(providers?.allowedDrivers === undefined && Object.keys(lockedInstanceFields).length === 0
       ? {}
       : {
@@ -185,7 +189,10 @@ const make = Effect.gen(function* () {
   const policy = yield* Option.match(devPath, {
     onSome: load,
     onNone: () =>
-      readManagedPolicy(platform).pipe(
+      readManagedPolicy(
+        platform,
+        ManagedProviders.knownDriverLabels().map(({ driver }) => driver),
+      ).pipe(
         Effect.flatMap((found) =>
           fromDocument(found?.source ?? managedPolicyPath(platform), found?.document),
         ),

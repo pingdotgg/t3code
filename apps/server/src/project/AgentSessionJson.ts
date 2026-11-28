@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
 import { none, type Many } from "stream-chain/defs.js";
 import { Assembler } from "stream-json/core/assembler.js";
@@ -40,12 +41,19 @@ export function createTranscriptJsonSelector(schema: { readonly ast: SchemaAST.A
   return (path: JsonPath) => includes(ast, path, 0);
 }
 
-export class TranscriptJsonLimitError extends Error {}
+export class TranscriptJsonLimitError extends Schema.TaggedError<TranscriptJsonLimitError>()(
+  "TranscriptJsonLimitError",
+  { message: Schema.String },
+) {}
 
 export function createTranscriptJsonReader(
   reserve: (bytes: number) => void,
   selectPath: (path: JsonPath) => boolean,
-  options?: { readonly maxDepth?: number },
+  options?: {
+    readonly maxDepth?: number;
+    // Reports each selected top-level string field as soon as it ends, before the record does.
+    readonly onTopLevelString?: (key: string, value: string) => void;
+  },
 ) {
   // 3.6.0 omits the synchronous tokenizer from types; parser() adds an unnecessary async generator.
   const { jsonParser } = StreamJson as typeof StreamJson & {
@@ -129,7 +137,13 @@ export function createTranscriptJsonReader(
         return;
       case "endString":
       case "endNumber":
-        if (selectedValue) assemble(token);
+        if (selectedValue) {
+          const parent = stack[0];
+          if (token.name === "endString" && stack.length === 1 && typeof parent?.key === "string") {
+            options?.onTopLevelString?.(parent.key, value);
+          }
+          assemble(token);
+        }
         endValue();
         return;
       case "nullValue":
@@ -150,7 +164,9 @@ export function createTranscriptJsonReader(
       for (const token of tokens.values) {
         if (token.name === "startObject" || token.name === "startArray") {
           if (++depth > (options?.maxDepth ?? 128))
-            throw new TranscriptJsonLimitError("Transcript JSON nesting exceeds the depth limit");
+            throw new TranscriptJsonLimitError({
+              message: "Transcript JSON nesting exceeds the depth limit",
+            });
         } else if (token.name === "endObject" || token.name === "endArray") {
           if (--depth === 0) complete = true;
         }

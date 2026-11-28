@@ -37,6 +37,7 @@ import {
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import { claudeTaskOutputRoot } from "./ClaudeTaskOutputTail.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
@@ -837,6 +838,8 @@ function makeReplayQueryRunner(
               mode,
             });
           }),
+        // Recorded sessions already hold their title, and no replay asserts rename frames.
+        renameSession: () => Effect.void,
         stopTask: (taskId) =>
           replayEffect(() => {
             assertNextOutboundFrame({ type: "query.stop_task", taskId });
@@ -845,6 +848,15 @@ function makeReplayQueryRunner(
           replayEffect(() => {
             assertNextOutboundFrame({ type: "query.background_tasks", toolUseId });
           }).pipe(Effect.as(true)),
+        // A result looks for servers that need a sign-in; the replay reports none.
+        mcpServerStatus: Effect.succeed([]),
+        // Recorded CLIs predate MCP Apps capabilities, so replays never reach these.
+        readMcpResource: () => Effect.die("unexpected MCP resource read in replay"),
+        mcpAuthenticate: () => Effect.die("unexpected MCP sign-in in replay"),
+        mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in in replay"),
+        reconnectMcpServer: () => Effect.die("unexpected MCP reconnect in replay"),
+        callMcpTool: () => Effect.die("unexpected MCP tool call in replay"),
+        listPermissionRules: Effect.die("unexpected permission rules read in replay"),
         interrupt: replayEffect(() => {
           assertNextOutboundFrame({ type: "query.interrupt" });
         }),
@@ -937,6 +949,7 @@ function replayQueryRunnerService(
     open: (input) => replay(() => queryRunner.open(input)),
     forkSession: (input) => replay(() => queryRunner.forkSession(input)),
     subagentLaunchToolUseId: (input) => replay(() => queryRunner.subagentLaunchToolUseId(input)),
+    subagentModel: () => Effect.succeed(null),
     assertComplete: replay(() => queryRunner.assertComplete()),
   });
 }
@@ -1049,6 +1062,7 @@ function layerClaudeProviderAdapterRegistryReplay(
       Layer.mergeAll(
         layerClaudeAgentSdkReplay(transcript, options),
         IdAllocator.layer,
+        ProviderInstallationGate.layer,
         NodeServices.layer,
         NodeCrypto.layer,
         layerServerConfig,
@@ -1482,7 +1496,9 @@ const resolveClaudeRecordingExecutablePath = Effect.fn("resolveClaudeRecordingEx
   function* (environment: NodeJS.ProcessEnv) {
     const resolveExecutable = yield* SpawnExecutableResolution;
     const platform = yield* HostProcess.Platform;
-    const resolved = resolveExecutable("claude", platform, environment);
+    const resolved = yield* Effect.promise(async () =>
+      resolveExecutable("claude", platform, environment),
+    );
     if (resolved === undefined) {
       return undefined;
     }
@@ -2170,15 +2186,11 @@ async function recordClaudeForkSessionQuery(input: {
           type: "session.fork",
           sessionId: input.sessionId,
           options: {
-            dir: sanitizedReplayCwd(input.scenario),
             upToMessageId,
           },
         },
       });
-      const forked = await forkSession(input.sessionId, {
-        dir: input.cwd,
-        upToMessageId,
-      });
+      const forked = await forkSession(input.sessionId, { upToMessageId });
       forkedNativeSessionIds.push(forked.sessionId);
       input.entries.push({
         type: "emit_inbound",

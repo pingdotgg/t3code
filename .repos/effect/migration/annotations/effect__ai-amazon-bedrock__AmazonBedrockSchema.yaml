@@ -1,0 +1,268 @@
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema":
+  replacement: "AmazonBedrockSchema"
+  note: "The module now exposes plain schemas for the provider-supported Converse subset. Replace schema-class construction with plain objects or schema decoding. Most schemas no longer export a same-named type; use typeof SchemaName.Type (or .Encoded for requests). Response structs preserve unknown fields, but removed guardrail and trace schemas no longer validate those fields."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#BedrockFoundationModelId":
+  replacement: "AmazonBedrockLanguageModel.Model"
+  note: "Model identifiers are now arbitrary strings, allowing inference profile IDs and ARNs. Use Schema.String if you need a runtime schema; there is no fixed model-id literal schema."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#CachePointBlock":
+  replacement: "AmazonBedrockSchema.CachePointBlock"
+  note: "Use the CachePointBlock schema value to validate plain data instead of relying on the v3 schema class. The same-named type is now inferred from the schema."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#DocumentFormat":
+  replacement: "AmazonBedrockSchema.DocumentFormat"
+  note: "Keep the DocumentFormat schema value. The separate type alias is removed; use typeof AmazonBedrockSchema.DocumentFormat.Type in type positions."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#DocumentBlock":
+  replacement: "AmazonBedrockSchema.DocumentBlock"
+  note: "Use the DocumentBlock schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.DocumentBlock.Type; the same-named type export is gone. The modeled source is base64 bytes; other source fields are not typed by this schema."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailConverseImageBlock":
+  replacement: "none"
+  note: "This standalone guardrail-content schema is removed. Define an application schema for the payload you need; response content preserves unmodeled fields as unknown. For request fields outside the provider subset, use the authenticated service.client or the AWS SDK."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailConverseTextBlock":
+  replacement: "none"
+  note: "This standalone guardrail-content schema is removed. Define an application schema for the payload you need; response content preserves unmodeled fields as unknown. For request fields outside the provider subset, use the authenticated service.client or the AWS SDK."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailConverseContentBlock":
+  replacement: "none"
+  note: "This standalone guardrail-content schema is removed. Define an application schema for the payload you need; response content preserves unmodeled fields as unknown. For request fields outside the provider subset, use the authenticated service.client or the AWS SDK."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ImageFormat":
+  replacement: "AmazonBedrockSchema.ImageFormat"
+  note: "Keep the ImageFormat schema value. The separate type alias is removed; use typeof AmazonBedrockSchema.ImageFormat.Type in type positions."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ImageBlock":
+  replacement: "AmazonBedrockSchema.ImageBlock"
+  note: "Use the ImageBlock schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.ImageBlock.Type; the same-named type export is gone. The modeled source is base64 bytes; other source fields are not typed by this schema."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#JsonBlock":
+  replacement: "AmazonBedrockSchema.ToolResultContentBlock"
+  note: "For tool-result JSON use { json: value } with ToolResultContentBlock. The JSON value remains unknown; there is no JsonBlock class."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ReasoningContentBlock":
+  replacement: "AmazonBedrockSchema.ReasoningContentBlock"
+  note: "Use the ReasoningContentBlock schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.ReasoningContentBlock.Type; the same-named type export is gone. Union members are modeled as optional fields on a struct; check each field before reading it and stop relying on v3 decoded type discriminators."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#VideoBlock":
+  replacement: "none"
+  note: "There is no dedicated video schema or high-level video conversion. Unmodeled response content fields are preserved as unknown; validate video payloads with your own schema. Use the authenticated service.client for request shapes outside the modeled Converse subset."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ToolResultBlock":
+  replacement: "AmazonBedrockSchema.ToolResultBlock"
+  note: "Use the ToolResultBlock schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.ToolResultBlock.Type; the same-named type export is gone."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ToolUseBlock":
+  replacement: "AmazonBedrockSchema.ToolUseBlock"
+  note: "Use the ToolUseBlock schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.ToolUseBlock.Type; the same-named type export is gone."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ContentBlock":
+  replacement: "AmazonBedrockSchema.ContentBlock"
+  note: "Use the ContentBlock schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.ContentBlock.Type; the same-named type export is gone. Union members are modeled as optional fields on a struct; check each field before reading it and stop relying on v3 decoded type discriminators."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#Message":
+  replacement: "AmazonBedrockSchema.Message"
+  note: "Use the Message schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.Message.Type; the same-named type export is gone."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ConverseOutput":
+  replacement: "AmazonBedrockSchema.ConverseResponse"
+  note: "The standalone output schema is removed. Read response.output or derive its type as AmazonBedrockSchema.ConverseResponse[\"output\"]; validate the full response with ConverseResponse."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ConverseMetrics":
+  replacement: "AmazonBedrockSchema.ConverseMetrics"
+  note: "Use the ConverseMetrics schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.ConverseMetrics.Type; the same-named type export is gone."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailContentFilter":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailContentPolicyAssessment":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailContextualGroundingFilter":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailContextualGroundingPolicyAssessment":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailImageCoverage":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailTextCharactersCoverage":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailCoverage":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailUsage":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailInvocationMetrics":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailPiiEntityFilter":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailRegexFilter":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailSensitiveInformationPolicyAssessment":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailTopic":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailTopicPolicyAssessment":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailCustomWord":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailManagedWord":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailWordPolicyAssessment":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailAssessment":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailTraceAssessment":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#PromptRouterTrace":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ConverseTrace":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#IntZeroOrGreater":
+  replacement: "Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))"
+  note: "Compose the nonnegative integer schema from effect/Schema. Bedrock response integer schemas no longer impose this nonnegative check."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#TokenUsage":
+  replacement: "AmazonBedrockSchema.TokenUsage"
+  note: "Use the TokenUsage schema value to validate plain data instead of relying on the v3 schema class. The same-named type is now inferred from the schema."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#SystemContentBlock":
+  replacement: "AmazonBedrockSchema.SystemContentBlock"
+  note: "Use the SystemContentBlock schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.SystemContentBlock.Type; the same-named type export is gone. Union members are modeled as optional fields on a struct; check each field before reading it and stop relying on v3 decoded type discriminators."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#GuardrailConfiguration":
+  replacement: "AmazonBedrockSchema.GuardrailConfiguration"
+  note: "Use the GuardrailConfiguration schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.GuardrailConfiguration.Type; the same-named type export is gone."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#InferenceConfiguration":
+  replacement: "AmazonBedrockSchema.InferenceConfiguration"
+  note: "Use the InferenceConfiguration schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.InferenceConfiguration.Type; the same-named type export is gone."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#PerformanceConfiguration":
+  replacement: "none"
+  note: "There is no provider request schema for performanceConfig. For unsupported Bedrock Runtime request fields, construct and encode an HTTP request using the authenticated service.client, or use the AWS SDK directly."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ToolSpecification":
+  replacement: "AmazonBedrockSchema.ToolSpecification"
+  note: "Use the ToolSpecification schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.ToolSpecification.Type; the same-named type export is gone."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#Tool":
+  replacement: "AmazonBedrockSchema.Tool"
+  note: "Use the Tool schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.Tool.Type; the same-named type export is gone. Union members are modeled as optional fields on a struct; check each field before reading it and stop relying on v3 decoded type discriminators."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ToolChoice":
+  replacement: "AmazonBedrockSchema.ToolChoice"
+  note: "Use the ToolChoice schema value to validate plain data instead of relying on the v3 schema class. The same-named type is now inferred from the schema."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ToolConfiguration":
+  replacement: "AmazonBedrockSchema.ToolConfiguration"
+  note: "Use the ToolConfiguration schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.ToolConfiguration.Type; the same-named type export is gone."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ConverseRequest":
+  replacement: "AmazonBedrockSchema.ConverseRequest"
+  note: "Use the ConverseRequest schema value to validate plain data instead of relying on the v3 schema class. The same-named type is now inferred from the schema."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ConverseResponse":
+  replacement: "AmazonBedrockSchema.ConverseResponse"
+  note: "Use the ConverseResponse schema value to validate plain data instead of relying on the v3 schema class. The same-named type is now inferred from the schema."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ReasoningContentBlockDelta":
+  replacement: "AmazonBedrockSchema.ContentBlockDelta"
+  note: "Use the optional reasoningContent field of ContentBlockDelta. Its text, signature and redactedContent fields are optional strings, not a separately exported union schema."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ToolUseBlockStart":
+  replacement: "AmazonBedrockSchema.ContentBlockStartEvent"
+  note: "The tool-use start schema is now inline at ContentBlockStartEvent.start.toolUse. Check both optional fields before reading toolUseId and name; there is no separate class or schema export."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ContentBlockStart":
+  replacement: "AmazonBedrockSchema.ContentBlockStartEvent"
+  note: "The start payload is now inline in ContentBlockStartEvent and optional. Use its start field, checking for undefined, rather than constructing a ContentBlockStart class."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ContentBlockStartEvent":
+  replacement: "AmazonBedrockSchema.ContentBlockStartEvent"
+  note: "Use the ContentBlockStartEvent schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.ContentBlockStartEvent.Type; the same-named type export is gone."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ContentBlockStopEvent":
+  replacement: "AmazonBedrockSchema.ContentBlockStopEvent"
+  note: "Use the ContentBlockStopEvent schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.ContentBlockStopEvent.Type; the same-named type export is gone."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ToolUseBlockDelta":
+  replacement: "AmazonBedrockSchema.ContentBlockDelta"
+  note: "The tool-use delta schema is now inline at ContentBlockDelta.toolUse. Check the optional field before reading its input string; there is no separate class or schema export."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ContentBlockDelta":
+  replacement: "AmazonBedrockSchema.ContentBlockDelta"
+  note: "Use the ContentBlockDelta schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.ContentBlockDelta.Type; the same-named type export is gone. Union members are modeled as optional fields on a struct; check each field before reading it and stop relying on v3 decoded type discriminators."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ContentBlockDeltaEvent":
+  replacement: "AmazonBedrockSchema.ContentBlockDeltaEvent"
+  note: "Use the ContentBlockDeltaEvent schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.ContentBlockDeltaEvent.Type; the same-named type export is gone."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#MessageStartEvent":
+  replacement: "AmazonBedrockSchema.MessageStartEvent"
+  note: "Use the MessageStartEvent schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.MessageStartEvent.Type; the same-named type export is gone."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#StopReason":
+  include: true
+  replacement: "AmazonBedrockSchema.StopReason"
+  note: "StopReason now accepts unknown strings as well as known reasons. Use KnownStopReason when you need the closed set of named stop reasons."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#MessageStopEvent":
+  replacement: "AmazonBedrockSchema.MessageStopEvent"
+  note: "Use the MessageStopEvent schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.MessageStopEvent.Type; the same-named type export is gone."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ConverseStreamMetrics":
+  replacement: "AmazonBedrockSchema.ConverseMetrics"
+  note: "Streaming metadata now uses ConverseMetrics. Use typeof ConverseMetrics.Type for the decoded type; latencyMs is a number and unmodeled response fields are preserved."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ConverseStreamTrace":
+  replacement: "none"
+  note: "This standalone trace or guardrail assessment schema is removed. ConverseResponse.trace and ConverseStreamMetadataEvent.trace are unknown and response structs preserve unmodeled fields. Define an application schema to validate the trace or assessment fields you consume."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ConverseStreamMetadataEvent":
+  replacement: "AmazonBedrockSchema.ConverseStreamMetadataEvent"
+  note: "Use the ConverseStreamMetadataEvent schema value to validate plain data instead of relying on the v3 schema class. For type positions use typeof AmazonBedrockSchema.ConverseStreamMetadataEvent.Type; the same-named type export is gone."
+
+"@effect/ai-amazon-bedrock/AmazonBedrockSchema#ConverseResponseStreamEvent":
+  replacement: "AmazonBedrockSchema.ConverseStreamEvent"
+  note: "Use ConverseStreamEvent for both the schema and its type. The union now also preserves unknown event types; narrow known events before reading their payloads. Exception frames fail the client stream instead of being returned as normal events."

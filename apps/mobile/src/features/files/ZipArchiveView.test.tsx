@@ -102,40 +102,45 @@ vi.mock("@react-navigation/native", () => ({
     navigation.remove = enabled ? remove : null;
   },
 }));
-vi.mock("react-native-safe-area-context", () => ({
-  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
-}));
 vi.mock("../../native/NativeScrollViewMarker", () => ({ NativeScrollView: () => null }));
-vi.mock("../../native/StackHeader", () => ({ NativeStackScreenOptions: () => null }));
-vi.mock("../../components/ui/Toolbar", () => {
-  const Slot = (props: { readonly children?: ReactNode }) => <div>{props.children}</div>;
-  return {
-    Toolbar: Object.assign(Slot, {
-      Button: () => null,
-      Menu: Slot,
-      MenuAction: (props: {
-        readonly children?: ReactNode;
-        readonly disabled?: boolean;
-        readonly onPress?: () => void;
-      }) => (
-        <button disabled={props.disabled} onClick={props.onPress}>
-          {props.children}
+vi.mock("../../components/ui/AppBar", () => {
+  interface Item {
+    readonly id: string;
+    readonly title?: string;
+    readonly disabled?: boolean;
+    readonly onPress?: () => void;
+    readonly items?: ReadonlyArray<Item>;
+  }
+  const renderItems = (items: ReadonlyArray<Item>): ReactNode =>
+    items.map((item) =>
+      item.items ? (
+        renderItems(item.items)
+      ) : (
+        <button key={item.id} disabled={item.disabled} onClick={item.onPress}>
+          {item.title}
         </button>
       ),
-    }),
+    );
+  return {
+    AppBar: (props: {
+      readonly menus?: ReadonlyArray<{ readonly items: ReadonlyArray<Item> }>;
+    }) => <div>{props.menus?.map((menu) => renderItems(menu.items))}</div>,
   };
 });
-vi.mock("../../components/ui/AndroidScreenHeader", () => ({ AndroidScreenHeader: () => null }));
-vi.mock("../../components/ui/Menu", () => ({ Menu: () => null }));
+vi.mock("../../components/ui/useBarInset", () => ({
+  useContentTopInset: () => 0,
+  useContentBottomInset: () => 0,
+}));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../../components/ui/Progress", () => ({ Progress: () => null }));
 vi.mock("../../components/PierreEntryIcon", () => ({ PierreEntryIcon: () => null }));
-vi.mock("../../components/FilePreviewModal", () => ({ FilePreviewModal: () => null }));
+vi.mock("../../components/ui/FilePreviewModal", () => ({ FilePreviewModal: () => null }));
 vi.mock("../../lib/copyTextWithHaptic", () => ({}));
 vi.mock("./SourceFileSurface", () => ({
   SourceFileSurface: (props: { readonly contents: string }) => <pre>{props.contents}</pre>,
 }));
 vi.mock("./AudioFilePreview", () => ({ AudioFilePreview: () => null }));
+vi.mock("./EpubFilePreview", () => ({ EpubFilePreview: () => null }));
 vi.mock("./FileMarkdownPreview", () => ({ FileMarkdownPreview: () => null }));
 vi.mock("./WorkspaceFileWebPreview", () => ({ WorkspaceFileWebPreview: () => null }));
 vi.mock("../threads/HtmlRenderWebView", () => ({ HtmlRenderWebView: () => null }));
@@ -181,7 +186,6 @@ function setup() {
   const props: ComponentProps<typeof ZipArchiveView> = {
     name: "archive.zip",
     subtitle: "ZIP",
-    tintColor: "#000000",
     sizeBytes: 0,
     uri: "file:///first.zip",
     isLocal: true,
@@ -282,14 +286,16 @@ it("keeps the ZIP filter and archive open when native Back closes a selected ent
   ).toBe("first");
 });
 
-it("explains why an encrypted ZIP cannot be browsed", async () => {
+it("asks for a password before browsing encrypted entries", async () => {
   const screen = setup();
   const bytes = files.get("file:///first.zip")!;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const directory = view.getUint32(bytes.length - 6, true);
   view.setUint16(directory + 8, view.getUint16(directory + 8, true) | 1, true);
   await screen.render();
-  await screen.settle(() => expect(screen.container.textContent).toContain("Encrypted zip"));
+  await screen.settle(() =>
+    expect(screen.container.textContent).toContain("This file requires a password."),
+  );
   expect(screen.container.querySelector('[aria-label="first.txt"]')).toBeNull();
 });
 

@@ -1,7 +1,8 @@
 import { act, render, type Screen } from "../../../test/render";
-import { AuthSourceControlWriteScope, EnvironmentId } from "@t3tools/contracts";
+import { AuthSourceControlWriteScope, EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 const permissions = vi.hoisted(() => ({
   allowed: new Set<string>(),
@@ -26,6 +27,30 @@ vi.mock(import("~/state/session"), async (original) => {
   };
 });
 
+vi.mock(import("~/state/pullRequests"), async (original) => ({
+  ...(await original()),
+  usePullRequestFilterOptions: (targets: ReadonlyArray<unknown>) => ({
+    labels: [],
+    authors:
+      targets.length === 0
+        ? []
+        : [
+            { login: "julius", name: "Julius", avatarUrl: null },
+            { login: "theo", name: "Theo", avatarUrl: null },
+          ],
+    references:
+      targets.length === 0
+        ? []
+        : [
+            { reference: "#12", kind: "issue", number: 12, title: "Crash", state: "open" },
+            { reference: "!12", kind: "change-request", number: 12, title: "Fix", state: "open" },
+          ],
+    error: null,
+    isPending: false,
+  }),
+}));
+
+import { RightPanelSheet } from "../RightPanelSheet";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 
 const secondary = EnvironmentId.make("secondary");
@@ -45,6 +70,11 @@ async function openEditor(options?: { value?: string; allowEmpty?: boolean }) {
       value={options?.value ?? "Original description"}
       cwd="/repo"
       environmentId={secondary}
+      completionScope={{
+        environmentId: secondary,
+        projectId: ProjectId.make("project"),
+        support: { mentions: true, referenceSigils: ["#", "!"] },
+      }}
       label="Pull request description"
       saving={false}
       allowEmpty={options?.allowEmpty ?? false}
@@ -87,4 +117,99 @@ it("keeps an edited draft through revocation and saves it after access returns w
   await grant(true);
   await clickSave(screen);
   expect(onSave).toHaveBeenCalledExactlyOnceWith("Keep these unsaved edits");
+});
+
+it("completes @mentions and !references on Enter, and Escape closes the list until the next keystroke", async () => {
+  setup();
+  permissions.allowed.add(secondary);
+  await using screen = await openEditor({ value: "" });
+  const textarea = screen.container.querySelector("textarea")!;
+  await userEvent.type(textarea, "Thanks @ju");
+  await expect.element(page.getByRole("option", { name: /julius/ })).toBeVisible();
+
+  await userEvent.keyboard("{Enter}");
+  expect(textarea.value).toBe("Thanks @julius ");
+  await expect.element(page.getByRole("listbox")).not.toBeInTheDocument();
+
+  await userEvent.type(textarea, "and @");
+  await expect.element(page.getByRole("option", { name: /theo/ })).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(page.getByRole("listbox")).not.toBeInTheDocument();
+  await userEvent.type(textarea, "t");
+  await expect.element(page.getByRole("option", { name: /theo/ })).toBeVisible();
+
+  await userEvent.type(textarea, " fixes !1");
+  await expect.element(page.getByRole("option", { name: /Fix/ })).toBeVisible();
+  await userEvent.keyboard("{Enter}");
+  expect(textarea.value).toBe("Thanks @julius and @t fixes !12 ");
+  expect(onCancel).not.toHaveBeenCalled();
+  expect(onSave).not.toHaveBeenCalled();
+});
+
+it.each(["ArrowUp", "ArrowDown"])(
+  "keeps Shift+%s available for native selection while completing mentions",
+  async (key) => {
+    setup();
+    permissions.allowed.add(secondary);
+    await using screen = await openEditor({ value: "previous line\n\nnext line" });
+    const textarea = screen.container.querySelector("textarea")!;
+    await userEvent.click(textarea);
+    const middle = "previous line\n".length;
+    textarea.setSelectionRange(middle, middle);
+    await userEvent.keyboard("@");
+    const first = page.getByRole("option", { name: /julius/ });
+    const second = page.getByRole("option", { name: /theo/ });
+    await expect.element(first).toHaveAttribute("aria-selected", "true");
+    await userEvent.keyboard("{ArrowDown}");
+    await expect.element(second).toHaveAttribute("aria-selected", "true");
+    await userEvent.keyboard("{ArrowUp}");
+    await expect.element(first).toHaveAttribute("aria-selected", "true");
+
+    await userEvent.keyboard(`{Shift>}{${key}}{/Shift}`);
+
+    expect(textarea.selectionStart).toBeLessThan(textarea.selectionEnd);
+    expect(textarea.value).toBe("previous line\n@\nnext line");
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onCancel).not.toHaveBeenCalled();
+  },
+);
+
+it("Escape cancels the edit without closing the right panel sheet", async () => {
+  setup();
+  permissions.allowed.add(secondary);
+  const onCloseSheet = vi.fn();
+  function EditableComment() {
+    const [editing, setEditing] = useState(true);
+    if (!editing) return <p>Original description</p>;
+    return (
+      <PullRequestMarkdownEditor
+        value="Original description"
+        cwd="/repo"
+        environmentId={secondary}
+        completionScope={null}
+        label="Pull request description"
+        saving={false}
+        onSave={onSave}
+        onCancel={() => {
+          onCancel();
+          setEditing(false);
+        }}
+      />
+    );
+  }
+  await using _screen = await render(
+    <RightPanelSheet animationDurationMs={0} open onClose={onCloseSheet}>
+      <EditableComment />
+    </RightPanelSheet>,
+  );
+  const textarea = page.getByRole("textbox", { name: "Pull request description" });
+  await expect.element(textarea).toHaveFocus();
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(textarea).not.toBeInTheDocument();
+  expect(onCancel).toHaveBeenCalledTimes(1);
+  expect(onCloseSheet).not.toHaveBeenCalled();
+
+  await userEvent.keyboard("{Escape}");
+  expect(onCloseSheet).toHaveBeenCalledTimes(1);
 });

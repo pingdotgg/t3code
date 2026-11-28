@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -100,10 +101,12 @@ const refreshedSnapshotSecond: ServerProvider = {
 function layerProviderHost(input: {
   readonly runBackgroundWork: boolean;
   readonly settings?: Pick<ProviderHost.ProviderHost["Service"], "settings">["settings"];
+  readonly awaitServerReady?: Effect.Effect<void>;
 }) {
   return Layer.succeed(
     ProviderHost.ProviderHost,
     ProviderHost.ProviderHost.of({
+      compatibility: () => Effect.undefined,
       paths: {
         cwd: process.cwd(),
         baseDir: "/t3",
@@ -118,6 +121,7 @@ function layerProviderHost(input: {
         subscribe: Effect.succeed(Stream.empty),
       },
       shouldRunBackgroundWork: () => Effect.succeed(input.runBackgroundWork),
+      ...(input.awaitServerReady ? { awaitServerReady: input.awaitServerReady } : {}),
       resolveAttachmentPath: () => null,
       credentials: () => Effect.die("unused"),
     }),
@@ -272,6 +276,7 @@ describe("makeManagedServerProvider", () => {
 
           const initial = yield* provider.getSnapshot;
           assert.deepStrictEqual(initial, initialSnapshot);
+          assert.strictEqual(yield* provider.isAwaitingFirstCheck!, true);
 
           const updatesFiber = yield* Stream.take(provider.streamChanges, 1).pipe(
             Stream.runCollect,
@@ -287,9 +292,53 @@ describe("makeManagedServerProvider", () => {
 
           assert.deepStrictEqual(updates, [refreshedSnapshot]);
           assert.deepStrictEqual(latest, refreshedSnapshot);
+          assert.strictEqual(yield* provider.isAwaitingFirstCheck!, false);
           assert.strictEqual(yield* Ref.get(checkCalls), 1);
         }),
       ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect("holds the first provider check until server startup finishes", () =>
+    Effect.gen(function* () {
+      const serverReady = yield* Deferred.make<void>();
+      const checkStarted = yield* Deferred.make<void>();
+      const checkCalls = yield* Ref.make(0);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const provider = yield* makeManagedServerProvider<TestSettings>({
+            resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+            getSettings: Effect.succeed({ enabled: true }),
+            streamSettings: Stream.empty,
+            haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
+            checkProvider: Ref.update(checkCalls, (count) => count + 1).pipe(
+              Effect.andThen(Deferred.succeed(checkStarted, undefined)),
+              Effect.as(refreshedSnapshot),
+            ),
+            refreshInterval: "1 hour",
+          });
+
+          yield* TestClock.adjust("10 seconds");
+          assert.strictEqual(yield* Ref.get(checkCalls), 0);
+          assert.deepStrictEqual(yield* provider.getSnapshot, initialSnapshot);
+          assert.isTrue(yield* provider.isAwaitingFirstCheck!);
+
+          yield* Deferred.succeed(serverReady, undefined);
+          yield* Deferred.await(checkStarted);
+          assert.strictEqual(yield* Ref.get(checkCalls), 1);
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerProviderHost({
+              runBackgroundWork: false,
+              awaitServerReady: Deferred.await(serverReady),
+            }),
+            TestClock.layer(),
+          ),
+        ),
+      );
+    }),
   );
 
   it.effect("skips periodic provider refreshes without foreground provider-status demand", () =>
@@ -362,6 +411,89 @@ describe("makeManagedServerProvider", () => {
         ]);
         yield* TestClock.adjust("3 seconds");
         assert.strictEqual(yield* Ref.get(checkCalls), 2);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
+  );
+
+  it.effect("keeps full interval checks for a usage probe that has not opted into recovery", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const usageChecks = yield* Ref.make(0);
+        const usageFailed: ServerProvider = {
+          ...refreshedSnapshot,
+          installed: true,
+          status: "ready",
+          auth: { status: "authenticated" },
+          usageLimits: {
+            checkedAt: refreshedSnapshot.checkedAt,
+            windows: [],
+            unavailable: { reason: "probeFailed" },
+          },
+        };
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: () => false,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.update(checkCalls, (count) => count + 1).pipe(Effect.as(usageFailed)),
+          checkUsageLimits: Ref.update(usageChecks, (count) => count + 1).pipe(
+            Effect.as(usageFailed.usageLimits),
+          ),
+          refreshInterval: "1 second",
+        });
+        yield* provider.streamChanges.pipe(Stream.take(1), Stream.runDrain);
+        yield* TestClock.adjust("1 second");
+        assert.strictEqual(yield* Ref.get(checkCalls), 2);
+        assert.strictEqual(yield* Ref.get(usageChecks), 0);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
+  );
+
+  it.effect("rechecks a ready provider after one failed periodic check before publishing it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const initialCheckDone = yield* Deferred.make<void>();
+        const failedSnapshot: ServerProvider = {
+          ...refreshedSnapshot,
+          status: "error",
+          auth: { status: "unknown" },
+          message: "Codex app-server provider probe failed: workspace routing discovery timed out.",
+        };
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.tap((count) =>
+              count === 1
+                ? Deferred.succeed(initialCheckDone, undefined).pipe(Effect.ignore)
+                : Effect.void,
+            ),
+            Effect.map((count) => (count === 2 ? failedSnapshot : refreshedSnapshot)),
+          ),
+          refreshInterval: "5 minutes",
+        });
+        yield* Deferred.await(initialCheckDone);
+        const published = yield* Ref.make<ReadonlyArray<ServerProvider>>([]);
+        yield* provider.streamChanges.pipe(
+          Stream.runForEach((snapshot) => Ref.update(published, (all) => [...all, snapshot])),
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+
+        yield* TestClock.adjust("5 minutes");
+        yield* TestClock.adjust("1 minute");
+
+        assert.strictEqual((yield* provider.getSnapshot).status, "ready");
+        assert.deepStrictEqual(
+          (yield* Ref.get(published)).filter((snapshot) => snapshot.status === "error"),
+          [],
+        );
       }),
     ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
   );
@@ -472,6 +604,66 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
+  it.effect(
+    "rechecks an auth failure when settings are applied, even if this provider's did not change",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const settingsChanges = yield* PubSub.unbounded<
+            TestSettings & { readonly revision: number }
+          >();
+          const checkCalls = yield* Ref.make(0);
+          const seenRevisions: Array<number> = [];
+          const releaseInitialCheck = yield* Deferred.make<void>();
+          const markerApplied = yield* Deferred.make<void>();
+          const unauthenticatedSnapshot: ServerProvider = {
+            ...refreshedSnapshot,
+            status: "error",
+            auth: { status: "unauthenticated" },
+            message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+          };
+          const provider = yield* makeManagedServerProvider<
+            TestSettings & { readonly revision: number }
+          >({
+            resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+            getSettings: Effect.succeed({ enabled: true, revision: 0 }),
+            streamSettings: Stream.fromPubSub(settingsChanges),
+            haveSettingsChanged: (previous, next) => {
+              seenRevisions.push(next.revision);
+              if (next.revision === 2) Deferred.doneUnsafe(markerApplied, Effect.void);
+              return previous.enabled !== next.enabled;
+            },
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
+            // The credential is fixed (e.g. `codex login`) after the first, failed probe.
+            checkProvider: Deferred.await(releaseInitialCheck).pipe(
+              Effect.andThen(Ref.updateAndGet(checkCalls, (count) => count + 1)),
+              Effect.map((count) => (count === 1 ? unauthenticatedSnapshot : refreshedSnapshot)),
+            ),
+            refreshInterval: "1 hour",
+          });
+          const initialProbe = yield* provider.streamChanges.pipe(
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* Deferred.succeed(releaseInitialCheck, undefined);
+          yield* Fiber.join(initialProbe);
+          assert.deepStrictEqual(yield* provider.getSnapshot, unauthenticatedSnapshot);
+
+          // A settings apply that does not touch this provider's settings, then a marker:
+          // the consumer is sequential, so the first apply has finished once the marker is seen.
+          yield* PubSub.publish(settingsChanges, { enabled: true, revision: 1 });
+          yield* PubSub.publish(settingsChanges, { enabled: true, revision: 2 });
+          yield* Deferred.await(markerApplied);
+
+          assert.deepStrictEqual(seenRevisions, [1, 2]);
+          assert.isAtLeast(yield* Ref.get(checkCalls), 2);
+          assert.deepStrictEqual((yield* provider.getSnapshot).auth, refreshedSnapshot.auth);
+        }),
+      ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
   it.effect("streams supplemental snapshot updates after the base provider check completes", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -506,6 +698,55 @@ describe("makeManagedServerProvider", () => {
 
         assert.deepStrictEqual(updates, [refreshedSnapshot, enrichedSnapshot]);
         assert.deepStrictEqual(latest, enrichedSnapshot);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect("keeps a known update through a recheck of the same installed version", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const advisory = (currentVersion: string, latestVersion: string | null) => ({
+          status: latestVersion === null ? ("unknown" as const) : ("behind_latest" as const),
+          currentVersion,
+          latestVersion,
+          updateCommand: maintenanceCapabilities.update.command,
+          canUpdate: true,
+          checkedAt: null,
+          message: null,
+        });
+        const installedVersion = yield* Ref.make("1.0.0");
+        const enrichments =
+          yield* Queue.unbounded<(snapshot: ServerProvider) => Effect.Effect<void>>();
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          // Like a real probe, this reports the installed version but not the latest one.
+          checkProvider: Ref.get(installedVersion).pipe(
+            Effect.map((version) => ({
+              ...refreshedSnapshot,
+              version,
+              versionAdvisory: advisory(version, null),
+            })),
+          ),
+          enrichSnapshot: ({ publishSnapshot }) => Queue.offer(enrichments, publishSnapshot),
+          refreshInterval: "1 hour",
+        });
+        const publishFirstEnrichment = yield* Queue.take(enrichments);
+        yield* publishFirstEnrichment({
+          ...refreshedSnapshot,
+          version: "1.0.0",
+          versionAdvisory: advisory("1.0.0", "2.0.0"),
+        });
+
+        const rechecked = yield* provider.refresh;
+        assert.deepStrictEqual(rechecked.versionAdvisory, advisory("1.0.0", "2.0.0"));
+
+        yield* Ref.set(installedVersion, "2.0.0");
+        const updated = yield* provider.refresh;
+        assert.deepStrictEqual(updated.versionAdvisory, advisory("2.0.0", null));
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
@@ -609,10 +850,16 @@ describe("makeManagedServerProvider", () => {
         yield* provider.applyUsageLimits({
           checkedAt: "2026-04-10T00:05:00.000Z",
           windows: [{ id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 25 }],
+          authLabel: "tier-1",
         });
-        yield* provider.applyUsageLimits({ checkedAt: "2026-04-10T00:06:00.000Z", windows: [] });
+        yield* provider.applyUsageLimits({
+          checkedAt: "2026-04-10T00:06:00.000Z",
+          windows: [],
+          authLabel: "tier-2",
+        });
 
         const [update] = Array.from(yield* Fiber.join(updatesFiber));
+        assert.strictEqual(update?.auth.label, "tier-1");
         assert.deepStrictEqual(update?.usageLimits, {
           checkedAt: "2026-04-10T00:05:00.000Z",
           windows: [
@@ -631,7 +878,10 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
-  it.effect("keeps live usage windows across a failed probe and a stale enrichment", () =>
+  it.effect.each([
+    { name: "a live plan", clearPlan: false },
+    { name: "a cleared plan", clearPlan: true },
+  ])("keeps $name and usage across a failed probe and stale enrichment", ({ clearPlan }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const releaseEnrichment = yield* Deferred.make<void>();
@@ -651,7 +901,7 @@ describe("makeManagedServerProvider", () => {
               count === 1
                 ? {
                     ...refreshedSnapshot,
-                    auth: { ...refreshedSnapshot.auth, workspaceId: "ws-a" },
+                    auth: { ...refreshedSnapshot.auth, workspaceId: "ws-a", label: "tier-1" },
                     usageLimits: probedLimits,
                   }
                 : {
@@ -689,8 +939,17 @@ describe("makeManagedServerProvider", () => {
         } as const;
         yield* provider.applyUsageLimits({
           checkedAt: "2026-04-10T00:00:02.000Z",
+          authLabel: "tier-2",
           windows: [liveWindow],
         });
+
+        if (clearPlan) {
+          yield* provider.applyUsageLimits({
+            checkedAt: "2026-04-10T00:00:02.000Z",
+            complete: true,
+            windows: [liveWindow],
+          });
+        }
 
         yield* Deferred.succeed(releaseEnrichment, undefined);
         const enriched = yield* Stream.take(provider.streamChanges, 1).pipe(
@@ -699,15 +958,102 @@ describe("makeManagedServerProvider", () => {
         );
         assert.deepStrictEqual(enriched.models, enrichedSnapshot.models);
         assert.deepStrictEqual(enriched.usageLimits?.windows, [liveWindow]);
+        assert.strictEqual(enriched.auth.label, clearPlan ? undefined : "tier-2");
 
         const refreshed = yield* provider.refresh;
         assert.strictEqual(refreshed.message, refreshedSnapshotSecond.message);
         assert.deepStrictEqual(refreshed.usageLimits?.windows, [liveWindow]);
         assert.strictEqual(refreshed.auth.workspaceId, "ws-a");
+        assert.strictEqual(refreshed.auth.label, clearPlan ? undefined : "tier-2");
 
         const switched = yield* provider.refresh;
         assert.strictEqual(switched.auth.workspaceId, "ws-b");
         assert.strictEqual(switched.usageLimits?.unavailable?.reason, "probeFailed");
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect.each([
+    { name: "an empty reading", hasUsage: true, clearPlan: false },
+    { name: "no reading", hasUsage: false, clearPlan: false },
+    { name: "an empty reading after clearing the plan", hasUsage: true, clearPlan: true },
+    { name: "no reading after clearing the plan", hasUsage: false, clearPlan: true },
+  ])("keeps the live plan and limits after $name", ({ hasUsage, clearPlan }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const count = yield* Ref.make(0);
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.gen(function* () {
+            if ((yield* Ref.updateAndGet(count, (n) => n + 1)) > 1) {
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+            }
+            return {
+              ...refreshedSnapshot,
+              auth: { status: "authenticated", label: "tier-1" },
+              ...(hasUsage
+                ? { usageLimits: { checkedAt: refreshedSnapshot.checkedAt, windows: [] } }
+                : {}),
+            } satisfies ServerProvider;
+          }),
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+        const refresh = yield* provider.refresh.pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        yield* provider.applyUsageLimits({
+          checkedAt: "2026-04-10T00:00:04.000Z",
+          authLabel: "tier-2",
+          complete: true,
+          windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 70 }],
+        });
+        if (clearPlan) {
+          yield* provider.applyUsageLimits({
+            checkedAt: "2026-04-10T00:00:04.000Z",
+            complete: true,
+            windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 70 }],
+          });
+        }
+        yield* Deferred.succeed(release, undefined);
+        const refreshed = yield* Fiber.join(refresh);
+        assert.strictEqual(refreshed.auth.label, clearPlan ? undefined : "tier-2");
+        assert.strictEqual(refreshed.usageLimits?.windows[0]?.usedPercent, 70);
+        assert.strictEqual(refreshed.usageLimits?.unavailable, undefined);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect("drops an earlier plan override after a complete reading without a label", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const usageLimits = {
+          checkedAt: "2026-04-10T00:00:04.000Z",
+          windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 70 }],
+        } as const;
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.succeed({ ...refreshedSnapshot, usageLimits }),
+          refreshOnInterval: false,
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+        yield* provider.applyUsageLimits({ ...usageLimits, complete: true, authLabel: "tier-2" });
+        assert.strictEqual((yield* provider.refresh).auth.label, "tier-2");
+
+        yield* provider.applyUsageLimits({ ...usageLimits, complete: true });
+        assert.strictEqual((yield* provider.getSnapshot).auth.label, undefined);
+        const refreshed = yield* provider.refresh;
+        assert.strictEqual(refreshed.auth.label, undefined);
+        assert.deepStrictEqual(refreshed.usageLimits, usageLimits);
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
@@ -769,5 +1115,72 @@ describe("makeManagedServerProvider", () => {
         assert.deepStrictEqual((yield* provider.refresh).usageLimits, completeLimits);
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect(
+    "refreshUsage uses checkUsageLimits directly without probing provider or maintenance",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const providerChecks = yield* Ref.make(0);
+          const usageChecks = yield* Ref.make(0);
+          const updatedLimits = {
+            checkedAt: "2026-04-10T00:05:00.000Z",
+            windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 42 }],
+          } as const;
+          const switchedFailure = {
+            checkedAt: "2026-04-10T00:06:00.000Z",
+            windows: [],
+            unavailable: { reason: "probeFailed" as const },
+          };
+          const probeResults = yield* Ref.make<
+            ReadonlyArray<{
+              readonly usageLimits: ServerProvider["usageLimits"];
+              readonly auth: { readonly email: string; readonly label?: string };
+            }>
+          >([
+            { usageLimits: updatedLimits, auth: { email: "a@example.com", label: "Pro" } },
+            { usageLimits: switchedFailure, auth: { email: "b@example.com" } },
+          ]);
+          const staleEnrichment = yield* Deferred.make<() => Effect.Effect<void>>();
+          const provider = yield* makeManagedServerProvider<TestSettings>({
+            resolveMaintenance: () => Effect.die("usage refresh must not resolve maintenance"),
+            getSettings: Effect.succeed({ enabled: true }),
+            streamSettings: Stream.empty,
+            haveSettingsChanged: () => false,
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
+            checkProvider: Ref.update(providerChecks, (count) => count + 1).pipe(
+              Effect.as({
+                ...refreshedSnapshot,
+                auth: { status: "authenticated", email: "a@example.com", label: "Plus" },
+                usageLimits: {
+                  checkedAt: "2026-04-10T00:00:01.000Z",
+                  windows: [],
+                  unavailable: { reason: "unsupported" },
+                },
+              }),
+            ),
+            checkUsageLimits: Ref.update(usageChecks, (count) => count + 1).pipe(
+              Effect.andThen(Ref.modify(probeResults, ([head, ...rest]) => [head, rest] as const)),
+            ),
+            enrichSnapshot: ({ snapshot, publishSnapshot }) =>
+              Deferred.succeed(staleEnrichment, () => publishSnapshot(snapshot)),
+            refreshOnInterval: false,
+          });
+          yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+          yield* provider.refreshUsage!;
+          assert.strictEqual(yield* Ref.get(providerChecks), 1);
+          assert.strictEqual(yield* Ref.get(usageChecks), 1);
+          const sameAccount = yield* provider.getSnapshot;
+          assert.deepStrictEqual(sameAccount.usageLimits, updatedLimits);
+          assert.strictEqual(sameAccount.auth.label, "Pro");
+          yield* provider.refreshUsage!;
+          const switched = yield* provider.getSnapshot;
+          assert.strictEqual(switched.auth.email, "b@example.com");
+          assert.deepStrictEqual(switched.usageLimits, switchedFailure);
+          yield* (yield* Deferred.await(staleEnrichment))();
+          assert.strictEqual((yield* provider.getSnapshot).auth.email, "b@example.com");
+        }),
+      ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 });

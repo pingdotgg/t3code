@@ -14,19 +14,15 @@
  * arrows, em-dashes, fancy quotes, etc. all render verbatim.
  */
 
+import { createHash } from "node:crypto";
 import type { APIRoute, GetStaticPaths } from "astro";
 import { getCollection } from "astro:content";
-import { createHash } from "node:crypto";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { jsx } from "react/jsx-runtime";
 import { render } from "takumi-js";
 import { brandFonts } from "../../brand/fonts.ts";
-import {
-  OgCard,
-  type OgCardKind,
-  type OgCardProps,
-} from "../../brand/OgCard.tsx";
+import { OgCard, type OgCardKind, type OgCardProps } from "../../brand/OgCard.tsx";
 
 interface Entry extends OgCardProps {
   slug: string;
@@ -119,33 +115,23 @@ const MARKETING_PAGES: Record<string, Omit<Entry, "slug" | "kind">> = {
 };
 
 function classifyDoc(slug: string): { kind: OgCardKind; eyebrow: string } {
-  if (slug.startsWith("blog/"))
-    return { kind: "blog", eyebrow: "blog · alchemy.run" };
-  if (slug.startsWith("guides/"))
-    return { kind: "doc", eyebrow: "guide · alchemy" };
-  if (slug.startsWith("concepts/"))
-    return { kind: "doc", eyebrow: "concept · alchemy" };
-  if (slug.startsWith("tutorial/"))
-    return { kind: "doc", eyebrow: "tutorial · alchemy" };
-  if (slug.startsWith("providers/"))
-    return { kind: "doc", eyebrow: "provider · alchemy" };
-  if (slug.startsWith("compare/"))
-    return { kind: "doc", eyebrow: "compare · alchemy" };
+  if (slug.startsWith("blog/")) return { kind: "blog", eyebrow: "blog · alchemy.run" };
+  if (slug.startsWith("guides/")) return { kind: "doc", eyebrow: "guide · alchemy" };
+  if (slug.startsWith("concepts/")) return { kind: "doc", eyebrow: "concept · alchemy" };
+  if (slug.startsWith("tutorial/")) return { kind: "doc", eyebrow: "tutorial · alchemy" };
+  if (slug.startsWith("providers/")) return { kind: "doc", eyebrow: "provider · alchemy" };
+  if (slug.startsWith("compare/")) return { kind: "doc", eyebrow: "compare · alchemy" };
   return { kind: "doc", eyebrow: "alchemy · documentation" };
 }
 
 /** Hash the actual card tree, including styles and embedded SVGs, plus renderer inputs. */
-export function createOgCacheKey(
-  fonts: Awaited<typeof brandFonts>,
-  options: object,
-) {
+export function createOgCacheKey(fonts: Awaited<typeof brandFonts>, options: object) {
   const shared = createHash("sha256").update(JSON.stringify(options));
   for (const { data, ...metadata } of fonts) {
     shared.update(JSON.stringify(metadata));
     shared.update(new Uint8Array(data));
   }
-  return (card: ReactNode) =>
-    shared.copy().update(renderToStaticMarkup(card)).digest("hex");
+  return (card: ReactNode) => shared.copy().update(renderToStaticMarkup(card)).digest("hex");
 }
 
 export const getStaticPaths: GetStaticPaths = async () => {
@@ -173,26 +159,21 @@ export const getStaticPaths: GetStaticPaths = async () => {
         description: data.description ?? data.excerpt,
         kind: meta.kind,
         eyebrow: meta.eyebrow,
-        date:
-          data.date instanceof Date
-            ? data.date.toISOString().slice(0, 10)
-            : data.date,
+        date: data.date instanceof Date ? data.date.toISOString().slice(0, 10) : data.date,
       } satisfies Entry,
     };
   });
 
-  const marketingPaths = Object.entries(MARKETING_PAGES).map(
-    ([slug, meta]) => ({
-      params: { slug },
-      props: {
-        slug,
-        title: meta.title,
-        description: meta.description,
-        kind: "marketing" as const,
-        eyebrow: meta.eyebrow,
-      } satisfies Entry,
-    }),
-  );
+  const marketingPaths = Object.entries(MARKETING_PAGES).map(([slug, meta]) => ({
+    params: { slug },
+    props: {
+      slug,
+      title: meta.title,
+      description: meta.description,
+      kind: "marketing" as const,
+      eyebrow: meta.eyebrow,
+    } satisfies Entry,
+  }));
 
   // Virtual routes that emit og:image metas but aren't docs entries or
   // hand-curated marketing pages: Starlight's 404 and starlight-blog's
@@ -202,9 +183,7 @@ export const getStaticPaths: GetStaticPaths = async () => {
   // build-output og:image check fails loudly if a rendered page ever
   // references a card this misses.
   const blogPosts = docs.filter((entry: any) =>
-    ((entry as { slug?: string; id?: string }).slug ?? entry.id).startsWith(
-      "blog/",
-    ),
+    ((entry as { slug?: string; id?: string }).slug ?? entry.id).startsWith("blog/"),
   );
   const blogDescription = "Release notes and posts from the alchemy team.";
   const virtualPaths = [
@@ -214,16 +193,13 @@ export const getStaticPaths: GetStaticPaths = async () => {
       kind: "doc" as const,
       eyebrow: "alchemy · documentation",
     },
-    ...Array.from(
-      { length: Math.max(1, Math.ceil(blogPosts.length / 5)) },
-      (_, i) => ({
-        slug: i === 0 ? "blog" : `blog/${i + 1}`,
-        title: "Blog",
-        description: blogDescription,
-        kind: "blog" as const,
-        eyebrow: "blog · alchemy.run",
-      }),
-    ),
+    ...Array.from({ length: Math.max(1, Math.ceil(blogPosts.length / 5)) }, (_, i) => ({
+      slug: i === 0 ? "blog" : `blog/${i + 1}`,
+      title: "Blog",
+      description: blogDescription,
+      kind: "blog" as const,
+      eyebrow: "blog · alchemy.run",
+    })),
   ].map((props) => ({
     params: { slug: props.slug },
     props,

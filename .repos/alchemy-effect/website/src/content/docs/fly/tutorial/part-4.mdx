@@ -6,7 +6,7 @@ sidebar:
 ---
 
 import Terminal from "../../../../components/Terminal.astro";
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 In this part the Service reads an API token from your `.env` with
 `Config.Redacted` and uses it to guard a route. Then you tear the
@@ -73,20 +73,7 @@ the raw string.
 
 ## Deploy
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npm run alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm alchemy deploy" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn alchemy deploy" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy deploy" />
 
 <Terminal content={`[u]Plan[/u]: [y]1 to update[/y]
 
@@ -121,20 +108,7 @@ with [`app`](/fly/compute/services#group-services-in-one-app).
 You're done — tear everything down so Machine and Volume billing
 stops:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code="bun alchemy destroy" lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code="npm run alchemy destroy" lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code="pnpm alchemy destroy" lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code="yarn alchemy destroy" lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy destroy" />
 
 Deleting the Service deletes its Machine, its Volume, and the App it
 created, along with the App's addresses.

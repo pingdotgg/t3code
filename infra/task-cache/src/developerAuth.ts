@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 const Keys = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
@@ -13,7 +14,7 @@ export const developerIdentity = Effect.fn("TaskCache.developerIdentity")(functi
   if (!authorization?.toLowerCase().startsWith("basic ")) return undefined;
   if (!encodedKeys || authorization.length > 1024) return null;
 
-  const decoded = yield* Effect.try(() => atob(authorization.slice(6))).pipe(Effect.option);
+  const decoded = Option.liftThrowable(atob)(authorization.slice(6));
   if (decoded._tag === "None") return null;
   const keys = yield* decodeKeys(encodedKeys).pipe(Effect.option);
   if (keys._tag === "None") return null;

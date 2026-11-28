@@ -1,18 +1,10 @@
+/** @jsxRuntime automatic */
 /** @jsxImportSource @alchemy.run/sigil */
 import { useAnimation } from "@alchemy.run/sigil";
-import type { ReactNode } from "react";
 import { stringWidth } from "@alchemy.run/sigil/ansi";
-import {
-  spinnerFramesFor,
-  statusColor,
-  theme,
-  type StatusVariant,
-} from "../../../Util/Theme.ts";
-import {
-  useBorderStyle,
-  useCliEnvironment,
-  useGlyphs,
-} from "./Environment.tsx";
+import type { ReactNode } from "react";
+import { spinnerFramesFor, statusColor, theme, type StatusVariant } from "../../../Util/Theme.ts";
+import { useBorderStyle, useCliEnvironment, useGlyphs } from "./Environment.tsx";
 import { Box, tabsWindow } from "./Layout.tsx";
 import { Text } from "./Typography.tsx";
 
@@ -27,9 +19,7 @@ export function Status({ variant = "info", children, detail }: StatusProps) {
   return (
     <Box gap={1} flexWrap="wrap">
       <Text color={statusColor(variant)}>{glyphs[variant]}</Text>
-      <Text color={variant === "error" ? statusColor(variant) : undefined}>
-        {children}
-      </Text>
+      <Text color={variant === "error" ? statusColor(variant) : undefined}>{children}</Text>
       {detail === undefined ? null : <Text tone="muted">· {detail}</Text>}
     </Box>
   );
@@ -55,12 +45,7 @@ export interface AlertProps extends StatusProps {
 }
 
 /** Glyph + bold title on one row, body indented beneath it. */
-export function Alert({
-  variant = "info",
-  title,
-  children,
-  detail,
-}: AlertProps) {
+export function Alert({ variant = "info", title, children, detail }: AlertProps) {
   const glyphs = useGlyphs();
   return (
     <Box flexDirection="column">
@@ -204,26 +189,17 @@ export function Tabs({ tabs, active }: TabsProps) {
   );
   // chip width = paddingX (2) + optional marker glyph + space + label
   const widths = tabs.map(
-    (tab) =>
-      2 +
-      stringWidth(tab.label) +
-      (tab.marked ? stringWidth(glyphs.selected) + 1 : 0),
+    (tab) => 2 + stringWidth(tab.label) + (tab.marked ? stringWidth(glyphs.selected) + 1 : 0),
   );
   const totalWidth =
-    widths.reduce((sum, width) => sum + width, 0) +
-    Math.max(0, tabs.length - 1) * gap;
+    widths.reduce((sum, width) => sum + width, 0) + Math.max(0, tabs.length - 1) * gap;
   const contentWidth = Math.max(1, columns - theme.space.indent);
   const { start, end } =
     totalWidth <= contentWidth
       ? { start: 0, end: tabs.length }
       : // reserve an arrow cell + gap on each side so the window stays put
         // whether or not the edge arrows render
-        tabsWindow(
-          widths,
-          activeIndex,
-          Math.max(1, contentWidth - 2 * (1 + gap)),
-          gap,
-        );
+        tabsWindow(widths, activeIndex, Math.max(1, contentWidth - 2 * (1 + gap)), gap);
   return (
     <Box
       width="100%"
@@ -250,9 +226,7 @@ export function Tabs({ tabs, active }: TabsProps) {
               dimColor={!selected}
             >
               {tab.marked ? (
-                <Text
-                  color={selected ? theme.color.onAccent : theme.color.brand}
-                >
+                <Text color={selected ? theme.color.onAccent : theme.color.brand}>
                   {glyphs.selected}{" "}
                 </Text>
               ) : null}
@@ -261,9 +235,7 @@ export function Tabs({ tabs, active }: TabsProps) {
           </Box>
         );
       })}
-      {end < tabs.length ? (
-        <Text tone="muted">{glyphs.overflowRight}</Text>
-      ) : null}
+      {end < tabs.length ? <Text tone="muted">{glyphs.overflowRight}</Text> : null}
     </Box>
   );
 }

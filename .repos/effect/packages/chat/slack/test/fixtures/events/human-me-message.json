@@ -1,0 +1,29 @@
+{
+  "case": "H7: a /me line that mentions the bot; the app_mention arrived before the message, both with subtype me_message",
+  "provenance": {
+    "source": "Slack Events API deliveries to the janitor2 app (A0CCHBHDK7X), logged by janitor production's EFF-3709 fixture capture (Effect-TS/janitor a751115)",
+    "channel": "chat-testing-123 (C0CH1LGJ4F3), a private channel",
+    "author": "Tim Smart (U080YLYB277), typing in the Slack client",
+    "recordedAt": "2026-11-12T23:25:50Z to 2026-11-12T23:36:10Z, a session run with Jarvis on EFF-3694",
+    "body": "The delivered JSON string, verbatim apart from the envelope token member, which the capture removes, and the members listed in a delivery's scrubbed, whose URLs are replaced",
+    "headers": "The capture's allowlist. The signature is never logged"
+  },
+  "deliveries": [
+    {
+      "loggedAt": "2026-11-12T23:28:30.070Z",
+      "headers": {
+        "x-slack-request-timestamp": "1794526109",
+        "content-type": "application/json"
+      },
+      "body": "{\"team_id\":\"T05479Z6JBW\",\"api_app_id\":\"A0CCHBHDK7X\",\"event\":{\"type\":\"app_mention\",\"subtype\":\"me_message\",\"user\":\"U080YLYB277\",\"ts\":\"1794526109.798279\",\"text\":\"H7 waves at <@U0CCLMD4S1L|janitor2>\",\"blocks\":[{\"type\":\"rich_text\",\"block_id\":\"xhNF0\",\"elements\":[{\"type\":\"rich_text_section\",\"elements\":[{\"type\":\"text\",\"text\":\"H7 waves at \"},{\"type\":\"user\",\"user_id\":\"U0CCLMD4S1L\"}]}]}],\"channel\":\"C0CH1LGJ4F3\",\"event_ts\":\"1794526109.798279\"},\"type\":\"event_callback\",\"event_id\":\"Ev0CH564V6R1\",\"event_time\":1794526109,\"authorizations\":[{\"enterprise_id\":null,\"team_id\":\"T05479Z6JBW\",\"user_id\":\"U0CCLMD4S1L\",\"is_bot\":true,\"is_enterprise_install\":false}],\"is_ext_shared_channel\":false,\"event_context\":\"4-eyJldCI6ImFwcF9tZW50aW9uIiwidGlkIjoiVDA1NDc5WjZKQlciLCJhaWQiOiJBMENDSEJIREs3WCIsImNpZCI6IkMwQ0gxTEdKNEYzIn0\"}"
+    },
+    {
+      "loggedAt": "2026-11-12T23:28:30.533Z",
+      "headers": {
+        "x-slack-request-timestamp": "1794526109",
+        "content-type": "application/json"
+      },
+      "body": "{\"team_id\":\"T05479Z6JBW\",\"context_team_id\":\"T05479Z6JBW\",\"context_enterprise_id\":null,\"api_app_id\":\"A0CCHBHDK7X\",\"event\":{\"type\":\"message\",\"subtype\":\"me_message\",\"user\":\"U080YLYB277\",\"ts\":\"1794526109.798279\",\"text\":\"H7 waves at <@U0CCLMD4S1L|janitor2>\",\"blocks\":[{\"type\":\"rich_text\",\"block_id\":\"c\\/w\",\"elements\":[{\"type\":\"rich_text_section\",\"elements\":[{\"type\":\"text\",\"text\":\"H7 waves at \"},{\"type\":\"user\",\"user_id\":\"U0CCLMD4S1L\"}]}]}],\"channel\":\"C0CH1LGJ4F3\",\"event_ts\":\"1794526109.798279\",\"channel_type\":\"group\"},\"type\":\"event_callback\",\"event_id\":\"Ev0CJ5PX7ETA\",\"event_time\":1794526109,\"authorizations\":[{\"enterprise_id\":null,\"team_id\":\"T05479Z6JBW\",\"user_id\":\"U0CCLMD4S1L\",\"is_bot\":true,\"is_enterprise_install\":false}],\"is_ext_shared_channel\":false,\"event_context\":\"4-eyJldCI6Im1lc3NhZ2UiLCJ0aWQiOiJUMDU0NzlaNkpCVyIsImFpZCI6IkEwQ0NIQkhESzdYIiwiY2lkIjoiQzBDSDFMR0o0RjMifQ\"}"
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { type PullRequestListSort } from "../components/pullRequest/pullRequestListPreferences";
@@ -8,7 +9,11 @@ import { PullRequestsPage } from "../components/pullRequest/PullRequestsPage";
 
 const MAX_SEARCH_LABEL_CANDIDATES = 100;
 
-function pullRequestSearchLabels(raw: unknown): Partial<Pick<PullRequestsSearch, "labels">> {
+function sliceSearchText(value: string) {
+  return value.slice(0, splitsSurrogatePair(value, 200) ? 199 : 200);
+}
+
+function pullRequestSearchLabels(raw: unknown): PullRequestsSearch["labels"] {
   const values = (Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : []).slice(
     0,
     MAX_SEARCH_LABEL_CANDIDATES,
@@ -17,18 +22,19 @@ function pullRequestSearchLabels(raw: unknown): Partial<Pick<PullRequestsSearch,
   const seen = new Set<string>();
   for (const rawValue of values) {
     if (typeof rawValue !== "string") continue;
-    const value = rawValue.trim().slice(0, 200);
+    const value = sliceSearchText(rawValue.trim());
     const key = value.toLowerCase();
     if (value.length === 0 || seen.has(key)) continue;
     labels.push(value);
     seen.add(key);
     if (labels.length === 10) break;
   }
-  return labels.length === 0 ? {} : { labels };
+  return labels.length === 0 ? undefined : labels;
 }
 
 export const Route = createFileRoute("/_chat/pull-requests")({
   validateSearch: (raw: Record<string, unknown>): PullRequestsSearch => ({
+    ...(typeof raw.selectedUrl === "string" ? { selectedUrl: raw.selectedUrl.slice(0, 4096) } : {}),
     involvement:
       raw.involvement === "reviewing" || raw.involvement === "authored" ? raw.involvement : "all",
     state:
@@ -58,8 +64,8 @@ export const Route = createFileRoute("/_chat/pull-requests")({
     ...(typeof raw.selectedEnvironmentId === "string" && raw.selectedEnvironmentId
       ? { selectedEnvironmentId: raw.selectedEnvironmentId as EnvironmentId }
       : {}),
-    // Always include q to override numeric values in the parent route's unvalidated search.
-    q: typeof raw.q === "string" && raw.q ? raw.q.slice(0, 200) : undefined,
+    // Always include free-text keys to override numeric values in the parent route's unvalidated search.
+    q: typeof raw.q === "string" && raw.q ? sliceSearchText(raw.q) : undefined,
     ...(raw.draft === "only" || raw.draft === "hide" ? { draft: raw.draft } : {}),
     ...(raw.review === "approved" ||
     raw.review === "changes-requested" ||
@@ -68,10 +74,9 @@ export const Route = createFileRoute("/_chat/pull-requests")({
       ? { review: raw.review }
       : {}),
     ...(raw.checks === "passing" || raw.checks === "failing" ? { checks: raw.checks } : {}),
-    ...(typeof raw.author === "string" && raw.author.trim()
-      ? { author: raw.author.trim().slice(0, 200) }
-      : {}),
-    ...pullRequestSearchLabels(raw.labels),
+    author:
+      typeof raw.author === "string" ? sliceSearchText(raw.author.trim()) || undefined : undefined,
+    labels: pullRequestSearchLabels(raw.labels),
   }),
   component: PullRequestsPage,
 });

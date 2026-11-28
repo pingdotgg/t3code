@@ -18,6 +18,8 @@ import {
   type ServerSettingsPatch,
   type ManagedPolicySummary,
   globalIdleCompaction,
+  isSecretReference,
+  type SecretReference,
   withIdleCompaction,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
@@ -55,12 +57,20 @@ import {
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import { secretProviderDefinitions } from "./secrets/secretProviderDefinitions.ts";
+import { watchDirectoryReplacements } from "./watchDirectoryReplacements.ts";
 import {
   readSecretFieldValues,
   sourceControlHostSecretName,
 } from "./sourceControl/sourceControlHostSecrets.ts";
 
-import { mapSettingsSecrets, SECRET_REDACTED, type SettingsSecret } from "./settingsSecrets.ts";
+import {
+  mapSettingsSecrets,
+  mapSettingsSecretValues,
+  withoutRemovedSecretProviderReferences,
+  withoutRedirectedSecrets,
+  SECRET_REDACTED,
+  type SettingsSecret,
+} from "./settingsSecrets.ts";
 
 export {
   resolveReviewGuideModelSelection,
@@ -131,13 +141,51 @@ const normalizeServerSettings = (
     ),
   );
 
-export function redactServerSettingsForClient(settings: ServerSettings): ServerSettings {
+export interface SettingsClient {
+  readonly secretReferences: boolean;
+  readonly httpUsageLimitSources?: boolean;
+}
+
+export function redactServerSettingsForClient(
+  settings: ServerSettings,
+  client: SettingsClient,
+): ServerSettings {
   const redacted = mapSettingsSecrets(settings, (secret) =>
     secret.sensitive
       ? { value: "", redacted: secret.redacted || secret.value.length > 0 }
       : { value: secret.value, redacted: false },
   );
-  return { ...redacted, secretProviders: withoutUnknownSecretProviderConfigs(redacted) };
+  // Older clients decode secret fields as strings and fail on a reference, so they see a saved secret.
+  const shaped = client.secretReferences
+    ? redacted
+    : mapSettingsSecretValues(redacted, (value) =>
+        isSecretReference(value) ? SECRET_REDACTED : value,
+      );
+  return {
+    ...shaped,
+    secretProviders: withoutUnknownSecretProviderConfigs(shaped),
+    // Older clients decode only "cliproxy" sources and reject the whole settings payload otherwise.
+    usageLimitSources: client.httpUsageLimitSources
+      ? shaped.usageLimitSources
+      : Object.fromEntries(
+          Object.entries(shaped.usageLimitSources).filter(
+            ([, source]) => source.kind === "cliproxy",
+          ),
+        ),
+  };
+}
+
+/** A client shown a reference as a saved secret sends that marker back; it keeps the reference. */
+function withEchoedSecretReferences(current: ServerSettings, next: ServerSettings): ServerSettings {
+  const references = new Map<string, SecretReference>();
+  mapSettingsSecretValues(current, (value, secretName) => {
+    if (isSecretReference(value)) references.set(secretName, value);
+    return value;
+  });
+  if (references.size === 0) return next;
+  return mapSettingsSecretValues(next, (value, secretName) =>
+    value === SECRET_REDACTED ? (references.get(secretName) ?? value) : value,
+  );
 }
 
 // A newer kind's config may hold credentials this build cannot recognize, so it never leaves the server.
@@ -207,7 +255,7 @@ function ensureProviderInstanceMutationAllowed(
 ): Effect.Effect<void, ServerSettingsError> {
   if (
     mutation.operation === "create" &&
-    settings.providerInstances[mutation.instanceId] !== undefined
+    Object.hasOwn(settings.providerInstances, mutation.instanceId)
   ) {
     return Effect.fail(
       new ServerSettingsError({
@@ -350,6 +398,20 @@ const PersistedServerSettings = Schema.Struct({
 // Parse first and decode second, so a managed policy can fill its defaults in between.
 const decodeSettingsFileJsonExit = Schema.decodeUnknownExit(fromLenientJson(Schema.Unknown));
 const decodePersistedServerSettingsExit = Schema.decodeUnknownExit(PersistedServerSettings);
+
+/**
+ * The settings on disk with the managed policy laid over them, read without the service: no
+ * database, no write, no legacy migration. A missing or unreadable file reads as the defaults.
+ */
+export const readServerSettingsFromDisk = Effect.gen(function* () {
+  const { settingsPath } = yield* ServerConfig.ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const { settings: managed } = yield* ManagedPolicy.ManagedPolicy;
+  const raw = yield* fs.readFileString(settingsPath).pipe(Effect.option);
+  return managed.applyLocks(
+    Option.isNone(raw) ? managed.defaults : decodeSettingsFile(raw.value, managed).settings,
+  );
+}).pipe(Effect.withSpan("ServerSettings.readServerSettingsFromDisk"));
 const LegacyProviderSettingsJson = fromLenientJson(
   Schema.Struct({
     providers: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
@@ -358,6 +420,40 @@ const LegacyProviderSettingsJson = fromLenientJson(
   }),
 );
 const decodeLegacyProviderSettingsJsonExit = Schema.decodeUnknownExit(LegacyProviderSettingsJson);
+
+/**
+ * A settings file as the server reads it: its settings, or the defaults when the file or its
+ * legacy fields are rejected, with the cause. Pure, so the CLI reads files as the server does.
+ */
+function decodeSettingsFile(
+  raw: string,
+  managed: ManagedPolicy.ManagedPolicy["Service"]["settings"],
+) {
+  const parsed = decodeSettingsFileJsonExit(raw);
+  const decoded = Exit.isFailure(parsed)
+    ? parsed
+    : decodePersistedServerSettingsExit(managed.withDefaults(parsed.value));
+  const legacy = decodeLegacyProviderSettingsJsonExit(raw);
+  const failure = Exit.isFailure(decoded)
+    ? decoded.cause
+    : Exit.isFailure(legacy)
+      ? legacy.cause
+      : undefined;
+  const settings: ServerSettings =
+    Exit.isSuccess(decoded) && failure === undefined
+      ? decoded.value
+      : // The file may hold choices we can no longer read, so opt-in behaviour stays off.
+        {
+          ...managed.defaults,
+          continueThreadsAfterServerUpdate: false,
+          usageHistoryRetentionDays: "unlimited",
+          requireConnectDeviceApproval: true,
+          enablePreviewTunnel: false,
+          enableAgentBrowserAccess: false,
+          defaultRuntimeMode: "approval-required",
+        };
+  return { settings, legacy: Exit.isSuccess(legacy) ? legacy.value : undefined, failure };
+}
 
 const LEGACY_BITBUCKET_SECRET_NAMES: Readonly<Record<string, string>> = {
   accessToken: "bitbucket-access-token",
@@ -465,15 +561,6 @@ function migrateLegacyProviderSettings(
   };
 }
 
-const ACP_REGISTRY_DRIVER = ProviderDriverKind.make("acpRegistry");
-
-function selectionSupportsTextGeneration(
-  settings: ServerSettings,
-  selection: ModelSelection,
-): boolean {
-  return settings.providerInstances[selection.instanceId]?.driver !== ACP_REGISTRY_DRIVER;
-}
-
 type DriverAllowed = (driver: ProviderDriverKind) => boolean;
 const anyDriver: DriverAllowed = () => true;
 
@@ -483,7 +570,6 @@ function resolveTextGenerationProvider(
 ): ServerSettings {
   const selection = settings.textGenerationModelSelection;
   return isModelSelectionProviderEnabled(settings, selection) &&
-    selectionSupportsTextGeneration(settings, selection) &&
     isDriverAllowed(
       settings.providerInstances[selection.instanceId]?.driver ??
         ProviderDriverKind.make(selection.instanceId),
@@ -760,33 +846,19 @@ const make = Effect.gen(function* () {
     let parseFailure = Option.none<unknown>();
 
     if (yield* readConfigExists) {
-      const raw = yield* readRawConfig;
-      const parsed = decodeSettingsFileJsonExit(raw);
-      const decoded = Exit.isFailure(parsed)
-        ? parsed
-        : decodePersistedServerSettingsExit(managed.withDefaults(parsed.value));
-      const legacySettings = decodeLegacyProviderSettingsJsonExit(raw);
-      if (legacySettings._tag === "Success") {
-        legacyProviders = legacySettings.value.providers;
-        legacySourceControl = {
-          bitbucket: legacySettings.value.bitbucket,
-          github: legacySettings.value.github,
-        };
+      const file = decodeSettingsFile(yield* readRawConfig, managed);
+      if (file.legacy !== undefined) {
+        legacyProviders = file.legacy.providers;
+        legacySourceControl = { bitbucket: file.legacy.bitbucket, github: file.legacy.github };
       }
-      if (decoded._tag === "Failure" || legacySettings._tag === "Failure") {
-        const failure = decoded._tag === "Failure" ? decoded : legacySettings;
-        // The file may hold an opt-out we can no longer read; never resume threads on a guess.
-        settings = { ...managed.defaults, continueThreadsAfterServerUpdate: false };
-        if (failure._tag === "Failure") {
-          parseFailure = Option.some(Cause.squash(failure.cause));
-          yield* Effect.logWarning("failed to parse settings.json, using defaults", {
-            path: settingsPath,
-            issues: Cause.pretty(failure.cause),
-            cause: failure.cause,
-          });
-        }
-      } else {
-        settings = decoded.value;
+      settings = file.settings;
+      if (file.failure !== undefined) {
+        parseFailure = Option.some(Cause.squash(file.failure));
+        yield* Effect.logWarning("failed to parse settings.json, using defaults", {
+          path: settingsPath,
+          issues: Cause.pretty(file.failure),
+          cause: file.failure,
+        });
       }
     }
     // Settings saved by a server that kept the mode in `compactIdleThreads` move
@@ -997,14 +1069,23 @@ const make = Effect.gen(function* () {
 
   const persistSettingsSecrets = (current: ServerSettings, next: ServerSettings) =>
     Effect.sync(() => {
+      // Only sensitive rows own a stored secret; a plain duplicate must not hide one from cleanup.
       const previous = new Map<string, SettingsSecret>();
+      const inlineValues = new Map<string, string>();
       mapSettingsSecrets(current, (secret) => {
+        if (!secret.sensitive) return secret;
         previous.set(secret.secretName, secret);
+        if (!secret.redacted && secret.value.length > 0) {
+          inlineValues.set(secret.secretName, secret.value);
+        }
         return secret;
       });
       const changes: SecretChange[] = [];
       const nextSecretNames = new Set<string>();
-      const settings = mapSettingsSecrets(next, (secret) => {
+      const keptSecretNames = new Set<string>();
+      const writtenSecretNames = new Set<string>();
+      const inlineWrites = new Map<string, SecretChange>();
+      const settings = mapSettingsSecrets(withEchoedSecretReferences(current, next), (secret) => {
         const metadata = {
           secretName: secret.secretName,
           ...(secret.providerInstanceId !== undefined
@@ -1018,24 +1099,34 @@ const make = Effect.gen(function* () {
           changes.push({ ...metadata, kind: "remove", operation: "remove-secret" });
           return { value: secret.value, redacted: false };
         }
-        const old = previous.get(secret.secretName);
-        const inlineValue =
-          old?.sensitive && !old.redacted && old.value.length > 0 ? old.value : undefined;
-        const value = secret.redacted ? inlineValue : secret.value;
-        if (value === undefined) {
+        if (secret.redacted) {
+          keptSecretNames.add(secret.secretName);
           nextSecretNames.add(secret.secretName);
+          const inlineValue = inlineValues.get(secret.secretName);
+          if (inlineValue !== undefined) {
+            inlineWrites.set(secret.secretName, {
+              ...metadata,
+              kind: "write",
+              value: textEncoder.encode(inlineValue),
+            });
+          }
           return { value: "", redacted: true };
         }
-        if (value.length === 0) {
+        if (secret.value.length === 0) {
           changes.push({ ...metadata, kind: "remove", operation: "remove-secret" });
           return { value: "", redacted: false };
         }
         nextSecretNames.add(secret.secretName);
-        changes.push({ ...metadata, kind: "write", value: textEncoder.encode(value) });
+        writtenSecretNames.add(secret.secretName);
+        changes.push({ ...metadata, kind: "write", value: textEncoder.encode(secret.value) });
         return { value: "", redacted: true };
       });
+      // A legacy inline value only moves to the store when no row in this save replaces it.
+      for (const [secretName, change] of inlineWrites) {
+        if (!writtenSecretNames.has(secretName)) changes.push(change);
+      }
       for (const secret of previous.values()) {
-        if (!secret.sensitive || nextSecretNames.has(secret.secretName)) continue;
+        if (nextSecretNames.has(secret.secretName)) continue;
         if (changes.some((change) => change.secretName === secret.secretName)) continue;
         changes.push({
           kind: "remove",
@@ -1049,7 +1140,13 @@ const make = Effect.gen(function* () {
             : {}),
         });
       }
-      return { settings, changes };
+      return {
+        settings,
+        // A redacted row still claims its stored secret, so a duplicate row must not remove it.
+        changes: changes.filter(
+          (change) => change.kind === "write" || !keptSecretNames.has(change.secretName),
+        ),
+      };
     });
 
   const rollbackSettingsSecretWrites = (
@@ -1142,7 +1239,12 @@ const make = Effect.gen(function* () {
             cause: parseFailure.value,
           });
         }
-        const updated = yield* update(current);
+        // An older client echoes a reference as the redacted marker; restore it before vetting so
+        // a removed provider's reference is cleared below rather than restored by persistence.
+        const updated = withoutRedirectedSecrets(
+          current,
+          withEchoedSecretReferences(current, yield* update(current)),
+        );
         // Vet before secrets: a variable the policy hides from clients is not one they removed.
         const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
         if (vetted._tag === "Locked") {
@@ -1171,7 +1273,11 @@ const make = Effect.gen(function* () {
             managedBy: managedPolicy?.organization,
           });
         }
-        const persisted = yield* persistSettingsSecrets(current, vettedProviders.settings);
+        // After vetting, which can keep stored variables a policy hides from clients.
+        const persisted = yield* persistSettingsSecrets(
+          current,
+          withoutRemovedSecretProviderReferences(current, vettedProviders.settings),
+        );
         const next = yield* normalizeServerSettings(persisted.settings);
         const materializedNext = yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
@@ -1208,21 +1314,45 @@ const make = Effect.gen(function* () {
     }),
   );
 
-  const watchFileChanges = (filePath: string) => {
+  // `ready` completes once the watch is registered, or once it fails to be.
+  const watchFileChanges = (filePath: string, ready: Deferred.Deferred<void>) => {
     const directory = pathService.dirname(filePath);
     const fileName = pathService.basename(filePath);
     const resolvedFilePath = pathService.resolve(filePath);
-    return fs
-      .watch(directory)
-      .pipe(
-        Stream.filter(
-          (event) =>
-            event.path === fileName ||
-            event.path === filePath ||
-            pathService.resolve(directory, event.path) === resolvedFilePath,
-        ),
-      );
+    const markReady = () => Deferred.doneUnsafe(ready, Exit.void);
+    return fs.watch(directory, { onReady: markReady }).pipe(
+      Stream.filter(
+        (event) =>
+          event.path === fileName ||
+          event.path === filePath ||
+          pathService.resolve(directory, event.path) === resolvedFilePath,
+      ),
+      Stream.as(undefined),
+      Stream.ensuring(Effect.sync(markReady)),
+    );
   };
+
+  // A directory watch follows the directory's inode, so when the target's
+  // directory is renamed away and another takes its path, watch the new one.
+  const watchLinkTargetChanges = (linkTargetPath: string, ready: Deferred.Deferred<void>) =>
+    watchDirectoryReplacements(
+      (parentReady) => watchFileChanges(pathService.dirname(linkTargetPath), parentReady),
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const registered = yield* Deferred.make<void>();
+          return Stream.merge(
+            watchFileChanges(linkTargetPath, registered).pipe(Stream.ignoreCause({ log: true })),
+            // Startup reloads once ready. Later watches trigger their own reload.
+            Stream.fromEffect(
+              Deferred.await(registered).pipe(Effect.andThen(Deferred.succeed(ready, undefined))),
+            ).pipe(
+              Stream.filter((completedStartup) => !completedStartup),
+              Stream.as(undefined),
+            ),
+          );
+        }),
+      ),
+    );
 
   const startWatcher = Effect.gen(function* () {
     const settingsDir = pathService.dirname(settingsPath);
@@ -1255,30 +1385,44 @@ const make = Effect.gen(function* () {
       return Option.some(linkTargetPath);
     }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
 
-    const initialLinkTarget = yield* watchLinkTarget;
-    const linkTargetEvents = Stream.make(initialLinkTarget).pipe(
-      Stream.concat(watchFileChanges(settingsPath).pipe(Stream.mapEffect(() => watchLinkTarget))),
-      Stream.changes,
-      Stream.switchMap(
-        Option.match({
-          onNone: () => Stream.empty,
-          onSome: (linkTargetPath) =>
-            watchFileChanges(linkTargetPath).pipe(Stream.ignore({ log: true })),
-        }),
-      ),
-    );
+    const settingsReady = yield* Deferred.make<void>();
+    const linkTargetReady = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const [settingsEvents, resolveEvents] = yield* watchFileChanges(
+        settingsPath,
+        settingsReady,
+      ).pipe(
+        Stream.ignoreCause({ log: true }),
+        Stream.broadcastN({ n: 2, capacity: 1, strategy: "sliding" }),
+      );
+      // Buffer settings path changes while resolving the first target.
+      const linkTargetEvents = Stream.fromEffect(
+        Deferred.await(settingsReady).pipe(Effect.andThen(watchLinkTarget)),
+      ).pipe(
+        Stream.concat(resolveEvents.pipe(Stream.mapEffect(() => watchLinkTarget))),
+        Stream.changes,
+        Stream.switchMap(
+          Option.match({
+            onNone: () =>
+              Stream.fromEffect(Deferred.succeed(linkTargetReady, undefined)).pipe(Stream.drain),
+            onSome: (linkTargetPath) => watchLinkTargetChanges(linkTargetPath, linkTargetReady),
+          }),
+        ),
+      );
 
-    // Saves emit multiple events; fs.watch may fire before content is flushed.
-    const debouncedSettingsEvents = Stream.merge(
-      watchFileChanges(settingsPath),
-      linkTargetEvents,
-    ).pipe(Stream.debounce(Duration.millis(100)));
-
-    yield* Stream.runForEach(debouncedSettingsEvents, () => revalidateAndEmitSafely).pipe(
+      // Saves emit multiple events; fs.watch may fire before content is flushed.
+      yield* Stream.merge(settingsEvents, linkTargetEvents).pipe(
+        Stream.debounce(Duration.millis(100)),
+        Stream.runForEach(() => revalidateAndEmitSafely),
+      );
+    }).pipe(
+      Effect.scoped,
       Effect.ignoreCause({ log: true }),
+      Effect.ensuring(Deferred.succeed(linkTargetReady, undefined)),
       Effect.forkIn(watcherScope),
-      Effect.asVoid,
     );
+    // Edits made once `start` returns must reach a registered watch.
+    yield* Deferred.await(linkTargetReady);
   });
 
   const start = Effect.gen(function* () {

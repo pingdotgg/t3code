@@ -13,9 +13,11 @@ interface CanvasEdges {
 
 export interface ChatCanvasMeasurements {
   readonly width: number;
+  readonly narrowestWidth?: number;
   readonly height: number;
   readonly padding: number;
   readonly maxChatWidth: number;
+  readonly maxHtmlPreviewWidth: number;
   readonly minChatWidth: number;
   readonly composerHeight: number;
   readonly timelineGutter: number;
@@ -25,8 +27,17 @@ export interface ChatCanvasMeasurements {
 
 interface ChatCanvasStoreState {
   readonly measurements: ChatCanvasMeasurements;
+  /**
+   * The last measurement taken with the right panel open and with it closed. A thread switch can
+   * open or close the panel, and laying out with the other state's width costs a second layout
+   * pass before the first paint.
+   */
+  readonly measurementsByRightPanel: {
+    readonly open?: ChatCanvasMeasurements;
+    readonly closed?: ChatCanvasMeasurements;
+  };
   readonly detailsCardMeasurement: DetailsCardMeasurement | null;
-  readonly setMeasurements: (next: ChatCanvasMeasurements) => void;
+  readonly setMeasurements: (next: ChatCanvasMeasurements, rightPanelOpen: boolean) => void;
   readonly measureDetailsCard: (next: DetailsCardMeasurement) => void;
 }
 
@@ -35,6 +46,7 @@ const INITIAL_MEASUREMENTS: ChatCanvasMeasurements = {
   height: 0,
   padding: 48,
   maxChatWidth: 768,
+  maxHtmlPreviewWidth: 768,
   minChatWidth: 640,
   composerHeight: 0,
   timelineGutter: 0,
@@ -47,9 +59,11 @@ const sameEdges = (a: CanvasEdges | null, b: CanvasEdges | null) =>
 
 const sameMeasurements = (a: ChatCanvasMeasurements, b: ChatCanvasMeasurements) =>
   a.width === b.width &&
+  a.narrowestWidth === b.narrowestWidth &&
   a.height === b.height &&
   a.padding === b.padding &&
   a.maxChatWidth === b.maxChatWidth &&
+  a.maxHtmlPreviewWidth === b.maxHtmlPreviewWidth &&
   a.minChatWidth === b.minChatWidth &&
   a.composerHeight === b.composerHeight &&
   a.timelineGutter === b.timelineGutter &&
@@ -62,9 +76,19 @@ const sameMeasurements = (a: ChatCanvasMeasurements, b: ChatCanvasMeasurements) 
 export const createChatCanvasStore = () =>
   createStore<ChatCanvasStoreState>()((set) => ({
     measurements: INITIAL_MEASUREMENTS,
+    measurementsByRightPanel: {},
     detailsCardMeasurement: null,
-    setMeasurements: (next) =>
-      set((state) => (sameMeasurements(state.measurements, next) ? state : { measurements: next })),
+    setMeasurements: (next, rightPanelOpen) =>
+      set((state) => {
+        const key = rightPanelOpen ? "open" : "closed";
+        const known = state.measurementsByRightPanel[key];
+        const measurements = known && sameMeasurements(known, next) ? known : next;
+        if (measurements === known && measurements === state.measurements) return state;
+        return {
+          measurements,
+          measurementsByRightPanel: { ...state.measurementsByRightPanel, [key]: measurements },
+        };
+      }),
     measureDetailsCard: (next) =>
       set((state) => {
         const current = state.detailsCardMeasurement;
@@ -78,6 +102,9 @@ export const createChatCanvasStore = () =>
   }));
 
 export type ChatCanvasStore = ReturnType<typeof createChatCanvasStore>;
+
+export const selectCanvasMeasurements = (state: ChatCanvasStoreState, rightPanelOpen: boolean) =>
+  state.measurementsByRightPanel[rightPanelOpen ? "open" : "closed"] ?? state.measurements;
 
 export function resolveChatCanvasModel({
   measurements,
@@ -101,6 +128,7 @@ export function resolveChatCanvasModel({
   // preview overlap has pushed the card itself into popover mode.
   const preferredDetailsCard = resolveThreadDetailsCardLayout({
     container,
+    narrowestWidth: measurements.narrowestWidth ?? measurements.width,
     lane,
     frame: null,
     topInset: detailsCardTopInset,
@@ -132,6 +160,7 @@ export function resolveChatCanvasModel({
     preview,
     padding: measurements.padding,
     maxChatWidth: measurements.maxChatWidth,
+    maxHtmlPreviewWidth: measurements.maxHtmlPreviewWidth,
     minChatWidth: measurements.minChatWidth,
     composerHeight: measurements.composerHeight,
     detailsCard,
@@ -139,6 +168,7 @@ export function resolveChatCanvasModel({
   });
   const detailsCardPlacement = resolveThreadDetailsCardLayout({
     container,
+    narrowestWidth: measurements.narrowestWidth ?? measurements.width,
     lane,
     frame: layout.frame,
     overlapsDetailsCard: layout.overlapsDetailsCard,

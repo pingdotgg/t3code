@@ -5,8 +5,45 @@ import AlchemicalDivider from "../components/marketing/AlchemicalDivider.astro";
 import Yantra from "../brand/Yantra.astro";
 import TestLoop from "../components/compare/TestLoop.astro";
 import OneLine from "../components/compare/OneLine.astro";
+import CodeBlock from "../components/marketing/CodeBlock.astro";
 
 const TOOLS = ["Alchemy", "SST", "Pulumi", "Terraform", "AWS CDK"] as const;
+
+// ---------- more than IaC: the same app, split vs together ----------
+const IAC_INFRA_SRC = `export const Uploads = Cloudflare.R2.Bucket("Uploads");
+
+export const Api = Cloudflare.Worker("Api", {
+  main: "./src/api.ts",
+  env: { Uploads },
+});`;
+
+const IAC_HANDLER_SRC = `export default {
+  async fetch(request: Request, env: Env) {
+    const obj = await env.Uploads.get("hello.txt");
+    return obj
+      ? new Response(await obj.text())
+      : new Response("Not found", { status: 404 });
+  },
+};`;
+
+const IAE_SRC = `export const Uploads = Cloudflare.R2.Bucket("Uploads");
+
+export default Cloudflare.Worker(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const bucket = yield* Cloudflare.R2.ReadWriteBucket(Uploads);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const obj = yield* bucket.get("hello.txt");
+        return obj
+          ? HttpServerResponse.text(yield* obj.text())
+          : HttpServerResponse.text("Not found", { status: 404 });
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketBinding)),
+);`;
 
 // One row per dimension; the first cell is Alchemy.
 const ROWS: {
@@ -17,7 +54,7 @@ const ROWS: {
         label: "Language",
         cells: [
             "TypeScript + Effect",
-            "TypeScript",
+            "TypeScript + Go",
             "TypeScript, Python, Go, C#, Java",
             "HCL",
             "TypeScript, Python, Java, C#, Go",
@@ -34,7 +71,7 @@ const ROWS: {
         ],
     },
     {
-        label: "App code in the same program",
+        label: "Infrastructure and app code together",
         cells: ["Yes, as typed Effects and Layers", "No", "No", "No", "No"],
     },
     {
@@ -462,7 +499,7 @@ const ALCHEMY_MODE_DATA = ALCHEMY_MODES.map((m) => {
 
 <Marketing
     title="Alchemy vs SST, Pulumi & Terraform"
-    description="How Alchemy compares to SST, Pulumi, and Terraform: pure TypeScript and Effect instead of wrapped Go engines, infrastructure and app code in one type-checked program, true local emulation, and deploy-test-destroy loops built for agents."
+    description="How Alchemy compares to SST, Pulumi, and Terraform: pure TypeScript and Effect instead of wrapped Go engines, infrastructure and app code built together with Effects and Layers, true local emulation, and deploy-test-destroy loops built for agents."
 >
     <!-- ───────────────── HERO ───────────────── -->
     <section class="cmp-hero cmp-pat-1">
@@ -470,10 +507,10 @@ const ALCHEMY_MODE_DATA = ALCHEMY_MODES.map((m) => {
             <Yantra class="cmp-hero__mark" size={40} />
             <p class="cmp-eyebrow">Compare</p>
             <h1 class="cmp-hero__title" data-copy>
-                Alchemy vs existing IaC solutions
+                More than just Infrastructure as Code
             </h1>
             <p class="cmp-hero__lede" data-copy>
-                Most existing IaC solutions wrap terraform or are managed services in some way. Alchemy ships its own IaC engine in TypeScript, opening the door for more fully integrated features: <a href="#testing">testing</a>, <a href="#engine">engine</a>, <a href="#bindings">bindings</a>, <a href="#permissions">permissions</a>, and <a href="#local">local dev</a>.
+                Terraform, Pulumi, SST, and the CDK deploy your infrastructure and stop there. Alchemy is built on its own Infrastructure as Code engine in TypeScript, and builds your application on top of it with Effects and Layers. That opens the door to fully integrated features: <a href="#app-code">app code</a>, <a href="#testing">testing</a>, <a href="#engine">engine</a>, <a href="#bindings">bindings</a>, <a href="#permissions">permissions</a>, and <a href="#local">local dev</a>.
             </p>
         </div>
     </section>
@@ -525,6 +562,35 @@ const ALCHEMY_MODE_DATA = ALCHEMY_MODES.map((m) => {
                         ))}
                     </tbody>
                 </table>
+            </div>
+        </div>
+    </section>
+
+    <AlchemicalDivider variant="dot" class="cmp-divider" />
+
+    <!-- ───────────────── APP CODE ───────────────── -->
+    <section
+        class="cmp-section cmp-pat-3"
+        id="app-code"
+        aria-labelledby="app-code-h"
+    >
+        <div class="cmp-container">
+            <h2 class="cmp-h2" id="app-code-h" data-copy>
+                Infrastructure and app code, together
+            </h2>
+            <p class="cmp-lede" data-copy>
+                Other IaC tools only cover your infrastructure. The code that runs on it is a separate program that finds the Bucket through an environment variable, so the two halves meet at one name and every feature has to change in both. In Alchemy the Worker is an Effect that asks for the Bucket itself: one line gives it access when you deploy and a typed client while it runs. Layers then let a service bring its own infrastructure. <a href="/what-is-alchemy">What is Alchemy?</a>
+            </p>
+            <div class="cmp-vs">
+                <div class="cmp-vs__side">
+                    <h3 class="cmp-vs__label" data-copy>Other IaC tools: two programs</h3>
+                    <CodeBlock filename="infra.ts" code={IAC_INFRA_SRC} compact />
+                    <CodeBlock filename="src/api.ts" code={IAC_HANDLER_SRC} compact />
+                </div>
+                <div class="cmp-vs__side is-ours">
+                    <h3 class="cmp-vs__label" data-copy>Alchemy: Effects and Layers</h3>
+                    <CodeBlock filename="src/api.ts" code={IAE_SRC} compact highlight={[[7, 7]]} />
+                </div>
             </div>
         </div>
     </section>
@@ -718,13 +784,10 @@ const ALCHEMY_MODE_DATA = ALCHEMY_MODES.map((m) => {
                 True emulation for faster dev loops
             </h2>
             <p class="cmp-lede" data-copy>
-                <code>alchemy dev</code> runs your stack entirely on your
-                machine, or in the cloud, or in a hybrid of both, you get to
-                choose. Our competitors lock you into one testing model and
-                force you to accept the compromises they chose.
-                <br />
-                Or in some cases they don't offer any dev tooling and you just
-                deploy every time like a sucker stuck in the past.
+                <code>alchemy dev</code> runs your stack on your machine, in
+                the cloud, or a mix of both, and you choose. Other tools pick
+                one model for you, and some have no dev mode at all, so every
+                change waits on a deploy.
             </p>
             <div class="dg-traces">
                 {TRACES.map((t, ti) => {
@@ -1088,6 +1151,57 @@ const ALCHEMY_MODE_DATA = ALCHEMY_MODES.map((m) => {
                                             >
                                                 drag me to the cloud!
                                             </text>
+                                            {/* A cursor that acts out the drag on Lambda, on a loop,
+                                                until the reader moves something. */}
+                                            {mode0 && (
+                                                <g
+                                                    style={`transform: translate(${mode0.slots[2]!.x}px, ${mode0.slots[2]!.y}px)`}
+                                                >
+                                                    <g class="dg-hint__demo">
+                                                        <rect
+                                                            class="dg-hint__ghost"
+                                                            x={-mode0.slots[2]!.w / 2}
+                                                            y="-15"
+                                                            width={mode0.slots[2]!.w}
+                                                            height="30"
+                                                            rx="8"
+                                                        />
+                                                        <path
+                                                            class="dg-hint__cursor"
+                                                            transform="translate(2 -2)"
+                                                            d="M0 0 L0 17 L4.6 12.8 L7.6 19.6 L10.4 18.4 L7.4 11.6 L13 11.6 Z"
+                                                        />
+                                                    </g>
+                                                </g>
+                                            )}
+                                        </g>
+                                    )}
+                                    {/* Shown once Lambda has moved: the same cursor on
+                                        DynamoDB. The script places it on the box. */}
+                                    {t.modes && (
+                                        <g
+                                            class="dg-hint is-hidden"
+                                            data-hint-next
+                                            aria-hidden="true"
+                                        >
+                                            <g data-hint-at>
+                                                <text data-hint-text text-anchor="end">
+                                                    now me!
+                                                </text>
+                                                <g class="dg-hint__demo">
+                                                    <rect
+                                                        class="dg-hint__ghost"
+                                                        y="-15"
+                                                        height="30"
+                                                        rx="8"
+                                                    />
+                                                    <path
+                                                        class="dg-hint__cursor"
+                                                        transform="translate(2 -2)"
+                                                        d="M0 0 L0 17 L4.6 12.8 L7.6 19.6 L10.4 18.4 L7.4 11.6 L13 11.6 Z"
+                                                    />
+                                                </g>
+                                            </g>
                                         </g>
                                     )}
                                 </svg>
@@ -1293,6 +1407,7 @@ const ALCHEMY_MODE_DATA = ALCHEMY_MODES.map((m) => {
         };
 
         const hint = svg.querySelector<SVGGElement>("[data-hint]");
+        const hintNext = svg.querySelector<SVGGElement>("[data-hint-next]");
         const NET_Y = 85;
         const NAMES: Record<string, string> = {
             fn: "Lambda",
@@ -1316,6 +1431,42 @@ const ALCHEMY_MODE_DATA = ALCHEMY_MODES.map((m) => {
             return modes.find(
                 (m) => laneOf("fn", m) === fn && laneOf("db", m) === db,
             )!;
+        };
+
+        // Once Lambda has moved, act out the same drag on DynamoDB, up or
+        // down depending on its lane. Gone for good once DynamoDB moves.
+        let nextState: "waiting" | "shown" | "done" = "waiting";
+        let nextTimer = 0;
+        const placeNext = () => {
+            if (!hintNext) return;
+            const i = boxes.findIndex((g) => g.dataset.drag === "db");
+            const s = current.slots[i]!;
+            const up = laneOf("db") === "c";
+            hintNext.querySelector<SVGGElement>("[data-hint-at]")!.style.transform =
+                `translate(${s.x}px, ${s.y}px)`;
+            const ghost = hintNext.querySelector("rect")!;
+            ghost.setAttribute("x", String(-s.w / 2));
+            ghost.setAttribute("width", String(s.w));
+            const text = hintNext.querySelector("[data-hint-text]")!;
+            text.setAttribute("x", String(-s.w / 2 - 14));
+            text.setAttribute("y", up ? "-66" : "76");
+            hintNext.classList.toggle("is-up", up);
+        };
+        const afterMove = (key: string) => {
+            if (!hintNext || nextState === "done") return;
+            clearTimeout(nextTimer);
+            if (key === "db") {
+                nextState = "done";
+                hintNext.classList.add("is-hidden");
+                return;
+            }
+            // Wait for the boxes to land, then show it on DynamoDB's new spot.
+            hintNext.classList.add("is-hidden");
+            nextTimer = window.setTimeout(() => {
+                placeNext();
+                nextState = "shown";
+                hintNext.classList.remove("is-hidden");
+            }, reduced ? 0 : MOVE_MS + 150);
         };
 
         const switchTo = (next: ModeData, from: ModeData) => {
@@ -1404,6 +1555,7 @@ const ALCHEMY_MODE_DATA = ALCHEMY_MODES.map((m) => {
                 g.setPointerCapture(e.pointerId);
                 fig.classList.add("is-switching", "is-dragging");
                 hint?.classList.add("is-hidden");
+                if (key === "db") hintNext?.classList.add("is-hidden");
                 e.preventDefault();
             });
             g.addEventListener("pointermove", (e) => {
@@ -1425,7 +1577,11 @@ const ALCHEMY_MODE_DATA = ALCHEMY_MODES.map((m) => {
                 drag = null;
                 g.classList.remove("is-over");
                 fig.classList.remove("is-dragging");
+                const before = current;
                 switchTo(target(key, s.y > NET_Y ? "c" : "m"), from);
+                if (current !== before) afterMove(key);
+                else if (key === "db" && nextState === "shown")
+                    hintNext?.classList.remove("is-hidden");
             };
             g.addEventListener("pointerup", drop);
             g.addEventListener("pointercancel", drop);
@@ -1433,6 +1589,7 @@ const ALCHEMY_MODE_DATA = ALCHEMY_MODES.map((m) => {
                 if (e.key !== "Enter" && e.key !== " ") return;
                 e.preventDefault();
                 switchTo(target(key, laneOf(key) === "c" ? "m" : "c"), current);
+                afterMove(key);
             });
         }
         describe();
@@ -1525,10 +1682,11 @@ const ALCHEMY_MODE_DATA = ALCHEMY_MODES.map((m) => {
         content: "";
         position: absolute;
         top: 50%;
-        right: -380px;
+        right: -240px;
         z-index: -1;
-        width: 1000px;
-        height: 1000px;
+        /* Smaller than the landing page's 1000px: these sections are shorter. */
+        width: 640px;
+        height: 640px;
         translate: 0 -50%;
         pointer-events: none;
         background: var(--alc-fg-1);
@@ -1561,7 +1719,7 @@ const ALCHEMY_MODE_DATA = ALCHEMY_MODES.map((m) => {
     .cmp-pat-4::before,
     .cmp-pat-6::before {
         right: auto;
-        left: -380px;
+        left: -240px;
     }
     :global(.cmp-divider) {
         margin: 0 auto;
@@ -1697,6 +1855,28 @@ const ALCHEMY_MODE_DATA = ALCHEMY_MODES.map((m) => {
         grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
         gap: 24px;
         align-items: start;
+    }
+    .cmp-vs {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 24px;
+        align-items: start;
+    }
+    .cmp-vs__side {
+        display: grid;
+        gap: 12px;
+        min-width: 0;
+    }
+    .cmp-vs__label {
+        margin: 0;
+        font-family: var(--alc-font-serif);
+        font-weight: 500;
+        font-size: 20px;
+        line-height: 1.25;
+        color: var(--alc-fg-2);
+    }
+    .cmp-vs__side.is-ours .cmp-vs__label {
+        color: var(--alc-fg-1);
     }
     .cmp-cards {
         list-style: none;
@@ -2041,6 +2221,106 @@ const ALCHEMY_MODE_DATA = ALCHEMY_MODES.map((m) => {
         font: 600 19px var(--alc-font-hand);
         fill: var(--alc-accent-deep);
     }
+    /* The cursor presses on Lambda, pulls a ghost of it down into the
+       cloud lane, lets go, and repeats. */
+    .dg-hint__demo {
+        animation: dg-hint-drag 3.2s ease-in-out 1s infinite both;
+    }
+    .dg-hint__ghost {
+        fill: color-mix(in srgb, var(--alc-accent) 14%, transparent);
+        stroke: var(--alc-accent);
+        stroke-width: 1.5;
+        stroke-dasharray: 4 3;
+        animation: dg-hint-ghost 3.2s ease-in-out 1s infinite both;
+    }
+    .dg-hint__cursor {
+        fill: var(--alc-fg-1);
+        stroke: var(--alc-bg);
+        stroke-width: 1.4;
+        stroke-linejoin: round;
+    }
+    .dg-hint.is-up .dg-hint__demo {
+        animation-name: dg-hint-drag-up;
+    }
+    .dg-hint.is-hidden .dg-hint__demo,
+    .dg-hint.is-hidden .dg-hint__ghost {
+        animation: none;
+    }
+    @keyframes dg-hint-drag {
+        0% {
+            opacity: 0;
+            transform: translate(14px, 10px);
+        }
+        12% {
+            opacity: 1;
+            transform: translate(0, 0) scale(1);
+        }
+        20% {
+            transform: translate(0, 0) scale(0.88);
+        }
+        58% {
+            opacity: 1;
+            transform: translate(0, 70px) scale(0.88);
+        }
+        66% {
+            opacity: 1;
+            transform: translate(0, 70px) scale(1);
+        }
+        80%,
+        100% {
+            opacity: 0;
+            transform: translate(0, 70px) scale(1);
+        }
+    }
+    @keyframes dg-hint-drag-up {
+        0% {
+            opacity: 0;
+            transform: translate(14px, 10px);
+        }
+        12% {
+            opacity: 1;
+            transform: translate(0, 0) scale(1);
+        }
+        20% {
+            transform: translate(0, 0) scale(0.88);
+        }
+        58% {
+            opacity: 1;
+            transform: translate(0, -70px) scale(0.88);
+        }
+        66% {
+            opacity: 1;
+            transform: translate(0, -70px) scale(1);
+        }
+        80%,
+        100% {
+            opacity: 0;
+            transform: translate(0, -70px) scale(1);
+        }
+    }
+    @keyframes dg-hint-ghost {
+        0%,
+        18% {
+            opacity: 0;
+        }
+        24%,
+        62% {
+            opacity: 1;
+        }
+        72%,
+        100% {
+            opacity: 0;
+        }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .dg-hint__demo,
+        .dg-hint__ghost {
+            animation: none;
+        }
+        .dg-hint__ghost {
+            opacity: 0;
+        }
+    }
     .dg-hint__arrow,
     .dg-hint__head {
         fill: none;
@@ -2183,6 +2463,7 @@ const ALCHEMY_MODE_DATA = ALCHEMY_MODES.map((m) => {
     /* ---------- responsive ---------- */
     @media (max-width: 900px) {
         .cmp-split,
+        .cmp-vs,
         .cmp-cards--2,
         .cmp-cards--3,
         .dg-trace {

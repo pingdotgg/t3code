@@ -22,7 +22,7 @@ import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as FcmDeliveryQueueSender from "./FcmDeliveryQueueSender.ts";
 import * as FcmClient from "./FcmClient.ts";
-import { androidActivityData, fitFcmData } from "./fcmPayloads.ts";
+import { androidActivityData, androidRecipientData, fitFcmData } from "./fcmPayloads.ts";
 import { makeAggregateState, statusForPhase } from "./agentActivityAggregate.ts";
 import { isExpiredAgentActivityState, notificationForActivity } from "./agentActivityPayloads.ts";
 import {
@@ -281,16 +281,12 @@ const make = Effect.gen(function* () {
           alert = androidAlertForState(state, preferences.value, now.epochMilliseconds);
         }
       }
-      const displayedAggregate =
-        preferences.value.notificationsEnabled && preferences.value.liveActivitiesEnabled
-          ? aggregate
-          : null;
+      const displayedAggregate = preferences.value.liveActivitiesEnabled ? aggregate : null;
       const active = (displayedAggregate?.activeCount ?? 0) > 0;
       if (!displayedAggregate && !alert && !previousAggregate && job.state !== null) return;
       const data: Record<string, string> = {
         t3_kind: "agent_activity",
-        device_id: job.deviceId,
-        user_id: job.userId,
+        ...androidRecipientData(job.userId, job.deviceId, target.app_version),
         updated_at: String(now.epochMilliseconds),
         ...androidActivityData(displayedAggregate),
         ...alert,

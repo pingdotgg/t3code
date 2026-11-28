@@ -5,8 +5,11 @@ import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
@@ -37,6 +40,8 @@ interface RecordedBatchRequest {
         readonly serverAppVersion?: string;
         readonly serverMode?: string;
         readonly t3CodeVersion?: string;
+        readonly wsl?: string;
+        readonly serverWslDistro?: string;
       };
     }>;
   } | null;
@@ -53,6 +58,8 @@ interface RecordedBatchBody {
       readonly serverAppVersion?: string;
       readonly serverMode?: string;
       readonly t3CodeVersion?: string;
+      readonly wsl?: string;
+      readonly serverWslDistro?: string;
     };
   }>;
 }
@@ -67,6 +74,7 @@ const SentBatch = Schema.fromJsonString(
         properties: Schema.Struct({
           telemetryChannel: Schema.String,
           installId: Schema.optionalKey(Schema.String),
+          serverOs: Schema.optionalKey(Schema.String),
           ownerSource: Schema.optionalKey(Schema.String),
           observedBy: Schema.optionalKey(Schema.String),
         }),
@@ -110,6 +118,36 @@ const recordTwentyEvents = Effect.gen(function* () {
   }
 });
 
+const analyticsLayerWith = (
+  client: HttpClient.HttpClient,
+  policy?: ManagedPolicyDocument,
+  telemetryEnv: { readonly T3CODE_TELEMETRY_ENABLED?: boolean } = {
+    T3CODE_TELEMETRY_ENABLED: true,
+  },
+) =>
+  AnalyticsService.layer.pipe(
+    Layer.provideMerge(
+      ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-retry-" }),
+    ),
+    Layer.provide(
+      ConfigProvider.layer(
+        ConfigProvider.fromUnknown({
+          ...telemetryEnv,
+          T3CODE_TELEMETRY_KEY: "phc_test_key",
+          T3CODE_TELEMETRY_HOST: "http://localhost",
+        }),
+      ),
+    ),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(HostProcess.Platform, "win32"),
+        Layer.succeed(HostProcess.Architecture, "x64"),
+        Layer.succeed(HttpClient.HttpClient, client),
+        ManagedPolicy.layerTest(policy),
+      ),
+    ),
+  );
+
 /**
  * Runs `record` (20 events by default), then lets `minutes` of background
  * flushes run against a client that answers every send with `respond`.
@@ -124,6 +162,7 @@ const sendFor = (
     AnalyticsService.AnalyticsService | Effect.Services<typeof getTelemetryIdentity>
   > = recordTwentyEvents,
   policy?: ManagedPolicyDocument,
+  telemetryEnv?: Parameters<typeof analyticsLayerWith>[2],
 ) =>
   Effect.gen(function* () {
     const batches: Array<ReadonlyArray<SentEvent>> = [];
@@ -138,28 +177,7 @@ const sendFor = (
         return yield* respond(request);
       }),
     );
-    const runtimeLayer = AnalyticsService.layer.pipe(
-      Layer.provideMerge(
-        ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-retry-" }),
-      ),
-      Layer.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromUnknown({
-            T3CODE_TELEMETRY_ENABLED: true,
-            T3CODE_POSTHOG_KEY: "phc_test_key",
-            T3CODE_POSTHOG_HOST: "http://localhost",
-          }),
-        ),
-      ),
-      Layer.provide(
-        Layer.mergeAll(
-          Layer.succeed(HostProcess.Platform, "win32"),
-          Layer.succeed(HostProcess.Architecture, "x64"),
-          Layer.succeed(HttpClient.HttpClient, client),
-          ManagedPolicy.layerTest(policy),
-        ),
-      ),
-    );
+    const runtimeLayer = analyticsLayerWith(client, policy, telemetryEnv);
 
     yield* Effect.gen(function* () {
       yield* record;
@@ -194,6 +212,52 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
         batches.flat().map((event) => event.event),
         ["test.allowed"],
       );
+    }),
+  );
+
+  it.effect("sends nothing while DO_NOT_TRACK is set", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { DO_NOT_TRACK: "1" };
+      const batches = yield* sendFor(
+        0,
+        respondWithStatus(204),
+        Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          yield* analytics.record("test.do-not-track");
+          yield* analytics.flush;
+          env.DO_NOT_TRACK = "0";
+          yield* analytics.record("test.allowed");
+          yield* analytics.flush;
+        }),
+      ).pipe(Effect.provideService(HostProcess.Environment, env));
+      assert.deepEqual(
+        batches.flat().map((event) => event.event),
+        ["test.allowed"],
+      );
+    }),
+  );
+
+  it.effect("sends an anonymous event under its own id and without the install id", () =>
+    Effect.gen(function* () {
+      const batches = yield* sendFor(
+        0,
+        respondWithStatus(204),
+        Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          yield* analytics.record("test.linked");
+          yield* analytics.record("test.anonymous", {}, { anonymous: true });
+          yield* analytics.flush;
+        }),
+      );
+      assert.equal(batches.length, 2);
+      const [linked, anonymous] = batches.map(([event]) => event);
+
+      assert.isDefined(linked?.properties.installId);
+      assert.isDefined(linked?.properties.serverOs);
+      assert.equal(anonymous?.distinct_id, anonymous?.uuid);
+      assert.notEqual(anonymous?.distinct_id, linked?.distinct_id);
+      assert.isUndefined(anonymous?.properties.installId);
+      assert.isUndefined(anonymous?.properties.serverOs);
     }),
   );
 
@@ -264,10 +328,36 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
       }),
   );
 
+  it.effect("sends nothing on a CI runner unless the environment opts in", () =>
+    Effect.gen(function* () {
+      const onCi = (telemetryEnv: Parameters<typeof analyticsLayerWith>[2]) =>
+        sendFor(1, respondWithStatus(204), recordTwentyEvents, undefined, telemetryEnv).pipe(
+          Effect.provideService(HostProcess.Environment, { GITHUB_ACTIONS: "true" }),
+        );
+      assert.deepEqual(yield* onCi({}), []);
+      assert.equal((yield* onCi({ T3CODE_TELEMETRY_ENABLED: true })).length, 1);
+    }),
+  );
+
   it.effect("drops a batch the endpoint rejects without sending it again", () =>
     Effect.gen(function* () {
       const batches = yield* sendFor(10, respondWithStatus(400));
       assert.equal(batches.length, 1);
+    }),
+  );
+
+  it.effect("shutdown stops waiting for a telemetry endpoint that never answers", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const context = yield* Layer.buildWithScope(
+        analyticsLayerWith(HttpClient.make(() => Effect.never)),
+        scope,
+      );
+      yield* recordTwentyEvents.pipe(Effect.provide(context));
+
+      const shutdown = yield* Scope.close(scope, Exit.void).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(shutdown);
     }),
   );
 
@@ -282,9 +372,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
           T3CODE_TELEMETRY_ENABLED: true,
-          T3CODE_POSTHOG_KEY: "phc_test_key",
-          T3CODE_POSTHOG_HOST: "http://localhost",
+          T3CODE_TELEMETRY_KEY: "phc_test_key",
+          T3CODE_TELEMETRY_HOST: "http://localhost",
           T3CODE_TELEMETRY_FLUSH_BATCH_SIZE: 20,
+          // A name its user chose; only the family may leave the machine.
+          WSL_DISTRO_NAME: "Acme-Client-Secret-Ubuntu",
         }),
       );
       const layerBatchServer = HttpServer.serve(
@@ -366,11 +458,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
               event.properties?.serverOs === "Linux" &&
               event.properties.serverArch === "arm64" &&
               event.properties.serverAppVersion === event.properties.t3CodeVersion &&
-              event.properties.serverMode === "web",
+              event.properties.serverMode === "web" &&
+              event.properties.wsl === "other" &&
+              event.properties.serverWslDistro === "other",
           ),
         ),
         true,
       );
+      assert.equal(JSON.stringify(batchRequests).includes("Acme-Client-Secret-Ubuntu"), false);
     }),
   );
 
@@ -384,8 +479,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
           T3CODE_TELEMETRY_ENABLED: false,
-          T3CODE_POSTHOG_KEY: "phc_test_key",
-          T3CODE_POSTHOG_HOST: "http://localhost",
+          T3CODE_TELEMETRY_KEY: "phc_test_key",
+          T3CODE_TELEMETRY_HOST: "http://localhost",
         }),
       );
       const layerBatchServer = HttpServer.serve(
@@ -417,4 +512,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
       assert.deepEqual(capturedPaths, []);
     }),
   );
+});
+
+it("reports a WSL distro by its family, never by a name its user chose", () => {
+  assert.equal(AnalyticsService.wslDistroFamily("Ubuntu-24.04"), "Ubuntu");
+  assert.equal(AnalyticsService.wslDistroFamily("openSUSE-Tumbleweed"), "openSUSE");
+  assert.equal(AnalyticsService.wslDistroFamily("Acme-Client-Secret-Ubuntu"), "other");
+  assert.equal(AnalyticsService.wslDistroFamily("  "), undefined);
 });

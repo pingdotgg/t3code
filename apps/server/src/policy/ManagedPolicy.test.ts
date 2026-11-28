@@ -11,8 +11,10 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import { BUILT_IN_DRIVERS } from "../provider/builtInDrivers.ts";
 import * as ManagedPolicy from "./ManagedPolicy.ts";
 import { disallowedDriverReason, providerHostEnvironment } from "./managedProviders.ts";
+import * as ManagedSettings from "./managedSettings.ts";
 
 it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
   const loadFrom = (contents: string | undefined) =>
@@ -53,17 +55,39 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
     }),
   );
 
+  it("lists only settings a policy can manage", () => {
+    const listed = ManagedSettings.listManageableSettings();
+    const paths = listed.map(([path]) => path);
+    assert.include(paths, "storageCleanup.logsAfterDays");
+    assert.include(paths, "backgroundActivity.baseProfile");
+    assert.include(paths, "backgroundActivity.overrides.pauseWhenOnBattery");
+    assert.notInclude(paths, "backgroundActivity.overrides");
+    assert.notInclude(paths, "projectSettingsOverrides");
+    assert.notInclude(paths, "compactIdleThreads");
+    assert.notOk(paths.some((path) => path.startsWith("observability")));
+    for (const [path, value] of listed) {
+      if (value === undefined) continue;
+      const managed = ManagedSettings.makeManagedSettings({ [path]: { value, locked: false } });
+      assert.equal(managed._tag, "Valid", path);
+    }
+  });
+
   it.effect("tells clients which capabilities the policy switches off", () =>
     Effect.gen(function* () {
       const policy = yield* loadFrom(
         JSON.stringify({
           schemaVersion: 1,
           organization: "Example Corp",
-          limits: { webhookTasks: false, telemetry: true },
+          limits: { webhookTasks: false, telemetry: true, previewTunnel: false },
         }),
       );
-      assert.deepEqual(policy.summary?.limits, { webhookTasks: false, telemetry: true });
+      assert.deepEqual(policy.summary?.limits, {
+        webhookTasks: false,
+        telemetry: true,
+        previewTunnel: false,
+      });
       assert.equal(ManagedPolicy.deniedBy(policy, "webhookTasks"), "Example Corp");
+      assert.equal(ManagedPolicy.deniedBy(policy, "previewTunnel"), "Example Corp");
       assert.isUndefined(ManagedPolicy.deniedBy(policy, "telemetry"));
     }),
   );
@@ -141,6 +165,11 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
               },
             },
           }),
+          // Startup reads OTLP endpoints before the policy, and environment variables outrank them.
+          JSON.stringify({
+            ...base,
+            settings: { "observability.otlpTracesUrl": { value: "", locked: true } },
+          }),
         ],
         (contents) =>
           loadFrom(contents).pipe(
@@ -148,7 +177,7 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
             Effect.map((error) => error.reason),
           ),
       );
-      assert.lengthOf(reasons, 13);
+      assert.lengthOf(reasons, 14);
       assert.include(reasons[3], "storageCleanup.logsAfterDayz");
       assert.include(reasons[6], "adds entries users could not remove");
       assert.include(reasons[7], "adds entries users could not remove");
@@ -157,6 +186,7 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       assert.include(reasons[10], 'lock "worktreeCleanup" too');
       assert.include(reasons[11], 'lock "providerInstances.codex" as a whole');
       assert.include(reasons[12], "holds a credential");
+      assert.include(reasons[13], "a policy cannot override");
     }),
   );
 
@@ -186,7 +216,11 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       ]);
       // The host variable that replaces Codex's launch arguments is ignored too.
       const host = { PATH: "/usr/bin", T3CODE_CODEX_LAUNCH_ARGS: "-c mcp_servers.x.command=sh" };
-      assert.deepEqual(providerHostEnvironment(policy.summary, host), { PATH: "/usr/bin" });
+      const managedHost = providerHostEnvironment(policy.summary, host);
+      assert.deepEqual(managedHost, { PATH: "/usr/bin" });
+      // A PATH refresh after launch reaches drivers that hold the managed copy.
+      host.PATH = "/opt/new/bin:/usr/bin";
+      assert.strictEqual(managedHost.PATH, "/opt/new/bin:/usr/bin");
       assert.strictEqual(providerHostEnvironment(undefined, host), host);
     }),
   );
@@ -349,6 +383,20 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
 
   it.effect("tells clients which drivers run and which instance fields are locked", () =>
     Effect.gen(function* () {
+      // A provider the policy cannot name would also escape its launch-setting rules.
+      const everyDriver = BUILT_IN_DRIVERS.map((driver) => driver.driverKind);
+      const allowingAll = yield* loadFrom(
+        JSON.stringify({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: { providers: { allowedDrivers: everyDriver } },
+        }),
+      );
+      assert.deepEqual<unknown>(
+        allowingAll.summary?.limits?.providers?.allowedDrivers,
+        everyDriver,
+      );
+
       const policy = yield* loadFrom(
         JSON.stringify({
           schemaVersion: 1,

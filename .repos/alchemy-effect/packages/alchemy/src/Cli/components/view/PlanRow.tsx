@@ -1,16 +1,15 @@
+/** @jsxRuntime automatic */
 /** @jsxImportSource @alchemy.run/sigil */
 /**
  * Shared rows for the Plan tree. Review and apply modes both render
  * namespaces through this component so they look like the same tree.
  */
 import type { JSX } from "react";
+import { theme } from "../../../Util/Theme.ts";
 import { Row, Text, useGlyphs } from "../ui/index.ts";
-import { theme } from "../../CliKit/index.ts";
 import { actionStyle, type PlanAction } from "./statusStyle.ts";
 
-export const namespaceStyle = (
-  action: string,
-): (typeof actionStyle)[PlanAction] =>
+export const namespaceStyle = (action: string): (typeof actionStyle)[PlanAction] =>
   actionStyle[action as PlanAction] ?? {
     color: theme.color.muted,
     icon: "info",
@@ -23,11 +22,7 @@ type NamespaceRowProps = {
   readonly action: string;
 };
 
-export function NamespaceRow({
-  id,
-  depth,
-  action,
-}: NamespaceRowProps): JSX.Element {
+export function NamespaceRow({ id, depth, action }: NamespaceRowProps): JSX.Element {
   const style = namespaceStyle(action);
   const glyphs = useGlyphs();
   return (

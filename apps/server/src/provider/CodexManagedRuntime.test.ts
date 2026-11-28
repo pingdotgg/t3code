@@ -95,6 +95,7 @@ it.live.each(
           email: null,
         });
         yield* store.set(new TextEncoder().encode(json));
+        const hostEnv = yield* HostProcess.Environment;
         const ambient = {
           CODEX_HOME: "/user/.codex",
           ACCESS_TOKEN: "ambient-bearer",
@@ -102,8 +103,8 @@ it.live.each(
           OPENAI_API_KEY: "dummy-global-key",
           OPENAI_BASE_URL: "https://user-proxy.test",
           T3CODE_CODEX_LAUNCH_ARGS: "--config model_provider=global-proxy",
-          PATH: process.env.PATH,
-          SystemRoot: process.env.SystemRoot,
+          PATH: hostEnv.PATH,
+          SystemRoot: hostEnv.SystemRoot,
         };
         const runtime = yield* makeCodexManagedRuntime({
           instanceId,
@@ -198,6 +199,7 @@ it.live.each(
           assert.include(args, "features.api_key_model_discovery=true");
           assert.include(args, "features.multi_agent=false");
           assert.include(args, "features.multi_agent_v2=false");
+          assert.include(args, "agents.enabled=false");
           assert.notInclude(effective.config.launchArgs, "model_catalog_json");
           assert.notInclude(effective.config.launchArgs, "x-openai-chatpass-test");
           assert.include(provider, "supports_websockets=false");

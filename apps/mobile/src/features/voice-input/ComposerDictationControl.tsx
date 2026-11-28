@@ -1,4 +1,5 @@
 import type { VoiceInputPhase, VoiceInputState } from "@t3tools/client-runtime/voice-input";
+import { useGT } from "gt-react-native";
 import { memo, useState, type ReactNode } from "react";
 import { Linking, Pressable, Text as SystemText, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
@@ -319,12 +320,40 @@ function VoiceActionButton(props: {
   );
 }
 
+export function ComposerDictationError(props: {
+  readonly error: string | null;
+  readonly onDismiss: () => void;
+}) {
+  const gt = useGT();
+  if (!props.error) return null;
+  return (
+    <View className="min-w-0 flex-row items-center gap-2 px-4 py-3">
+      <Text accessibilityRole="alert" className="min-w-0 flex-1 text-sm text-danger-foreground">
+        {props.error}
+      </Text>
+      <Pressable
+        accessibilityLabel={gt("Dismiss voice input error")}
+        accessibilityRole="button"
+        className="size-7 items-center justify-center active:opacity-70"
+        hitSlop={8}
+        onPress={props.onDismiss}
+      >
+        <SymbolView
+          name="xmark"
+          size={12}
+          tintColorClassName="accent-icon-muted"
+          type="monochrome"
+        />
+      </Pressable>
+    </View>
+  );
+}
+
 export function ComposerDictationStatus(props: {
   readonly audioLevels: SharedValue<ReadonlyArray<number>>;
   readonly elapsedSeconds: number;
   readonly phase: VoiceInputPhase;
   readonly presentation: VoiceComposerPresentation;
-  readonly onDismissError: () => void;
 }) {
   const recording = props.phase === "recording";
   const waveformStyle = useAnimatedStyle(() => ({
@@ -334,54 +363,28 @@ export function ComposerDictationStatus(props: {
     opacity: withTiming(recording ? 0 : 1, DICTATION_TIMING),
   }));
 
-  if (!props.presentation.statusLabel) return null;
-  const isError = props.presentation.statusKind === "error";
+  if (!props.presentation.statusLabel || props.presentation.statusKind === "error") return null;
   return (
     <View className="relative h-11 min-w-0 flex-1 justify-center">
-      {isError ? (
-        <View className="min-w-0 flex-row items-center gap-1.5 px-2">
-          <Text className="min-w-0 flex-1 text-sm text-danger-foreground" numberOfLines={2}>
+      <View
+        accessible
+        accessibilityLabel={props.presentation.statusLabel}
+        accessibilityLiveRegion={props.phase === "recording" ? "none" : "polite"}
+        className="h-11"
+      >
+        <Animated.View
+          className="absolute inset-0 min-w-0 flex-row items-center gap-2 px-1"
+          style={waveformStyle}
+        >
+          <VoiceWaveform audioLevels={props.audioLevels} />
+          <DictationElapsedTime className="text-foreground-muted" seconds={props.elapsedSeconds} />
+        </Animated.View>
+        <Animated.View className="absolute inset-0 justify-center px-2" style={labelStyle}>
+          <Text className="text-center text-sm text-foreground-muted" numberOfLines={1}>
             {props.presentation.statusLabel}
           </Text>
-          <Pressable
-            accessibilityLabel="Dismiss voice input error"
-            accessibilityRole="button"
-            className="size-7 items-center justify-center active:opacity-70"
-            hitSlop={8}
-            onPress={props.onDismissError}
-          >
-            <SymbolView
-              name="xmark"
-              size={12}
-              tintColorClassName="accent-icon-muted"
-              type="monochrome"
-            />
-          </Pressable>
-        </View>
-      ) : (
-        <View
-          accessible
-          accessibilityLabel={props.presentation.statusLabel}
-          accessibilityLiveRegion={props.phase === "recording" ? "none" : "polite"}
-          className="h-11"
-        >
-          <Animated.View
-            className="absolute inset-0 min-w-0 flex-row items-center gap-2 px-1"
-            style={waveformStyle}
-          >
-            <VoiceWaveform audioLevels={props.audioLevels} />
-            <DictationElapsedTime
-              className="text-foreground-muted"
-              seconds={props.elapsedSeconds}
-            />
-          </Animated.View>
-          <Animated.View className="absolute inset-0 justify-center px-2" style={labelStyle}>
-            <Text className="text-center text-sm text-foreground-muted" numberOfLines={1}>
-              {props.presentation.statusLabel}
-            </Text>
-          </Animated.View>
-        </View>
-      )}
+        </Animated.View>
+      </View>
     </View>
   );
 }
@@ -391,11 +394,12 @@ export function ComposerDictationCancelAction(props: {
   readonly presentation: VoiceComposerPresentation;
   readonly onCancel: () => void;
 }) {
+  const gt = useGT();
   if (props.presentation.leadingAction !== "cancel") return null;
   return (
     <VoiceActionButton
       size={props.size}
-      accessibilityLabel="Cancel dictation"
+      accessibilityLabel={gt("Cancel dictation")}
       icon="xmark"
       onPress={props.onCancel}
     />
@@ -412,14 +416,15 @@ export function ComposerDictationPrimaryAction(props: {
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
 }) {
+  const gt = useGT();
   if (props.presentation.trailingAction === "confirm") {
     return (
       <VoiceActionButton
         size={props.size}
         accessibilityLabel={
           props.presentation.confirmationEnabled
-            ? "Finish dictation"
-            : (props.presentation.statusLabel ?? "Preparing voice input")
+            ? gt("Finish dictation")
+            : (props.presentation.statusLabel ?? gt("Preparing voice input"))
         }
         disabled={!props.presentation.confirmationEnabled}
         icon="checkmark"
@@ -441,12 +446,13 @@ export function ComposerDictationStartAction(props: {
   readonly onStart: () => void;
   readonly onCancel: () => void;
 }) {
+  const gt = useGT();
   if (!props.isAvailable) return null;
   const openSettings = props.state.phase === "error" && props.state.errorAction === "settings";
   return (
     <VoiceActionButton
       size={props.size}
-      accessibilityLabel={openSettings ? "Open microphone settings" : "Start dictation"}
+      accessibilityLabel={openSettings ? gt("Open microphone settings") : gt("Start dictation")}
       disabled={props.disabled}
       icon="mic"
       onPress={

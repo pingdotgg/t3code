@@ -1,10 +1,14 @@
-import type { OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import type { OrchestrationV2ProjectedTurnItem, OrchestrationV2Subagent } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
 import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
-import { mergeOlderHistoryIntoProjection } from "./threadHistoryMerge.ts";
+import {
+  mergeOlderHistoryIntoProjection,
+  mergeOlderSubagentsIntoProjection,
+} from "./threadHistoryMerge.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
+import { derivePendingThreadRequests } from "./threadRequests.ts";
 
 const NOW = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
 
@@ -131,6 +135,22 @@ describe("threadHistoryMerge", () => {
     ]);
   });
 
+  it("adds older subagent records and keeps the newer record of one already held", () => {
+    const subagent = (id: string, model: string) =>
+      ({ id, model, status: "completed" }) as unknown as OrchestrationV2Subagent;
+    const live = subagent("agent-live", "claude-sonnet-live");
+    const projection = { ...v2Projection, subagents: [live] };
+    const merged = mergeOlderSubagentsIntoProjection(projection, [
+      subagent("agent-old", "claude-haiku-4-5-20251001"),
+      subagent("agent-live", "claude-sonnet-stale"),
+    ]);
+    expect(merged.subagents.map((agent) => [agent.id, agent.model])).toEqual([
+      ["agent-old", "claude-haiku-4-5-20251001"],
+      ["agent-live", "claude-sonnet-live"],
+    ]);
+    expect(mergeOlderSubagentsIntoProjection(projection, undefined)).toBe(projection);
+  });
+
   it("fills inherited activity without confusing identical item IDs from different source threads", () => {
     const inherited = (index: number) => ({
       ...row(index),
@@ -171,6 +191,44 @@ describe("threadHistoryMerge", () => {
       "item-4",
       "item-5",
       "item-6",
+    ]);
+  });
+
+  it("keeps an older answer before a full page that only covers the later part of a conversation page", () => {
+    const [question, olderAnswer, reasoningA, reasoningB, reasoningC, newerAnswer] = [
+      row(0),
+      row(1),
+      row(2),
+      row(3),
+      row(4),
+      row(5),
+    ];
+    const window = [row(6), row(7)];
+    const projection = {
+      ...v2Projection,
+      turnItems: window.map((entry) => entry.item),
+      visibleTurnItems: window.map((entry, position) => ({ ...entry, position })),
+    };
+    const conversation = mergeOlderHistoryIntoProjection(projection, [
+      question,
+      olderAnswer,
+      newerAnswer,
+    ]);
+    const full = mergeOlderHistoryIntoProjection(conversation, [
+      reasoningA,
+      reasoningB,
+      reasoningC,
+      newerAnswer,
+    ]);
+    expect(full.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
+      "item-0",
+      "item-1",
+      "item-2",
+      "item-3",
+      "item-4",
+      "item-5",
+      "item-6",
+      "item-7",
     ]);
   });
 
@@ -221,6 +279,102 @@ describe("threadHistoryMerge", () => {
     ]);
     expect(next?.visibleTurnItems[3]?.item).toEqual(liveItem);
   });
+
+  // regression: #25806 a pending question card retained outside the window shows when paged in
+  it.each(["completed", "rolled_back"] as const)(
+    "keeps a pending question actionable when paging a %s run",
+    (status) => {
+      const recent = row(5);
+      const runId = "question-run" as never;
+      const nodeId = "question-node" as never;
+      const card = {
+        id: "item-question" as never,
+        type: "user_input_request" as const,
+        threadId: v2ThreadId,
+        runId,
+        nodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "running" as const,
+        title: null,
+        requestId: "request-question" as never,
+        responseMode: "message" as const,
+        questions: [{ id: "scope", header: "Scope", question: "Which scope?", options: [] }],
+        startedAt: NOW,
+        completedAt: null,
+        updatedAt: NOW,
+      };
+      const coldOpen = {
+        ...v2Projection,
+        runs: [
+          {
+            id: runId,
+            threadId: v2ThreadId,
+            ordinal: 1,
+            providerInstanceId: v2Projection.thread.providerInstanceId,
+            modelSelection: v2Projection.thread.modelSelection,
+            providerThreadId: null,
+            userMessageId: "question-message" as never,
+            rootNodeId: nodeId,
+            activeAttemptId: null,
+            status,
+            requestedAt: NOW,
+            startedAt: NOW,
+            completedAt: NOW,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        ],
+        runtimeRequests: [
+          {
+            id: card.requestId,
+            nodeId,
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input" as const,
+            status: "pending" as const,
+            responseCapability: { type: "message" as const },
+            createdAt: NOW,
+            resolvedAt: null,
+          },
+        ],
+        turnItems: [card, recent.item],
+        visibleTurnItems: [{ ...recent, position: 0 }],
+      };
+
+      // A row of the run that was never in the window, such as one paged in after a rollback.
+      const ran = { ...row(1), item: { ...row(1).item, runId } };
+      const merged = mergeOlderHistoryIntoProjection(coldOpen, [
+        { ...row(0), position: 0 },
+        ran,
+        {
+          position: 1,
+          visibility: "local",
+          sourceThreadId: v2ThreadId,
+          sourceItemId: card.id,
+          item: card,
+        },
+      ]);
+
+      expect(merged.visibleTurnItems.map((entry) => String(entry.sourceItemId))).toEqual(
+        status === "rolled_back"
+          ? ["item-0", "item-5"]
+          : ["item-0", "item-1", "item-question", "item-5"],
+      );
+      expect(merged.turnItems).toContain(card);
+      const pending = derivePendingThreadRequests(merged).userInputs;
+      expect(pending).toEqual(derivePendingThreadRequests(coldOpen).userInputs);
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).toMatchObject({
+        requestId: card.requestId,
+        dismissible: true,
+        questions: card.questions.map((question) => ({ ...question, multiSelect: false })),
+      });
+    },
+  );
 
   it("keeps a history-page interrupt result visible when its request was retained at cold open", () => {
     const runId = "run-interrupt-cold" as never;

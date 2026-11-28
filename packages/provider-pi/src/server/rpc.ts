@@ -12,6 +12,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   MAX_TOOL_OUTPUT_IMAGES,
@@ -58,7 +59,28 @@ export function piRecordNumber(input: unknown, key: string): number | undefined 
   return Predicate.isNumber(value) && Number.isFinite(value) ? value : undefined;
 }
 
-export function parsePiModelSlug(slug: string): { provider: string; modelId: string } | null {
+// Pi provider names and model ids may both contain "/", so a slug only splits
+// reliably through the `{provider, id}` pairs `get_available_models` reported.
+export function findReportedPiModel(
+  slug: string,
+  reportedModels: unknown,
+): { provider: string; modelId: string } | undefined {
+  if (!Array.isArray(reportedModels)) return undefined;
+  for (const model of reportedModels) {
+    const provider = piRecordString(model, "provider");
+    const modelId = piRecordString(model, "id");
+    if (provider !== undefined && modelId !== undefined && `${provider}/${modelId}` === slug)
+      return { provider, modelId };
+  }
+  return undefined;
+}
+
+export function resolvePiModelSlug(
+  slug: string,
+  reportedModels: unknown,
+): { provider: string; modelId: string } | null {
+  const reported = findReportedPiModel(slug, reportedModels);
+  if (reported !== undefined) return reported;
   const separator = slug.indexOf("/");
   if (separator <= 0 || separator === slug.length - 1) return null;
   return { provider: slug.slice(0, separator), modelId: slug.slice(separator + 1) };
@@ -84,6 +106,7 @@ export interface PiRpcConnection {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const TERMINATION_GRACE = Duration.seconds(1);
+const TERMINATION_POLL_INTERVAL = Duration.millis(20);
 
 interface PendingPiRequest {
   readonly deferred: Deferred.Deferred<unknown, PiRpcError>;
@@ -175,10 +198,14 @@ function parsePiRecord(line: string): PiRpcRecord | undefined {
 const terminatePiProcess = Effect.fn("PiRpc.terminatePiProcess")(function* (
   kill: (signal: NodeJS.Signals) => boolean,
   hasExited: () => boolean,
+  groupGone: () => boolean,
 ) {
   if (hasExited()) return;
   if (!kill("SIGTERM")) return;
-  yield* Effect.sleep(TERMINATION_GRACE);
+  yield* Effect.sleep(TERMINATION_POLL_INTERVAL).pipe(
+    Effect.repeat({ until: groupGone }),
+    Effect.timeoutOption(TERMINATION_GRACE),
+  );
   if (hasExited()) return;
   kill("SIGKILL");
 });
@@ -199,6 +226,8 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
         extendEnv: false,
         shell: spawnCommand.shell,
         detached: platform !== "win32",
+        // On stdin EOF Pi quits without its SIGTERM handler, so the later SIGTERM kills it mid-cleanup.
+        stdin: { stream: "pipe", endOnDone: false },
       }),
     )
     .pipe(Effect.mapError((cause) => new PiRpcError({ operation: "spawn", cause })));
@@ -230,17 +259,34 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     }
   };
 
+  // EPERM means a group member is still alive, so only ESRCH ends the SIGTERM grace early.
+  const processGroupGone = (): boolean => {
+    try {
+      signalProcessGroup(Number(child.pid), 0);
+      return false;
+    } catch (cause) {
+      return (cause as NodeJS.ErrnoException | undefined)?.code === "ESRCH";
+    }
+  };
+
   // Windows process.kill leaves extension children and pipes alive; taskkill /T reaps the tree.
   const terminateWindowsTree = Effect.gen(function* () {
     if (hasExited()) return;
     const taskkill = yield* spawner.spawn(
-      ChildProcess.make("taskkill", ["/PID", String(child.pid), "/T", "/F"]),
+      ChildProcess.make(windowsSystem32Path(yield* HostProcess.Environment, "taskkill.exe"), [
+        "/PID",
+        String(child.pid),
+        "/T",
+        "/F",
+      ]),
     );
     yield* taskkill.exitCode;
   }).pipe(Effect.scoped, Effect.ignore);
 
   const terminateProcess =
-    platform === "win32" ? terminateWindowsTree : terminatePiProcess(killProcessGroup, hasExited);
+    platform === "win32"
+      ? terminateWindowsTree
+      : terminatePiProcess(killProcessGroup, hasExited, processGroupGone);
 
   // Register teardown immediately after spawn so interrupted setup cannot leak a detached process.
   yield* Scope.addFinalizer(scope, terminateProcess.pipe(Effect.ignore, Effect.uninterruptible));

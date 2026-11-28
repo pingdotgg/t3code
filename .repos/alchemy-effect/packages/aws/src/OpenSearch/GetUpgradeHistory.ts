@@ -1,0 +1,33 @@
+import type * as opensearch from "@distilled.cloud/aws/opensearch";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for the `GetUpgradeHistory` operation (IAM action
+ * `es:GetUpgradeHistory`).
+ *
+ * Lists a domain's past engine-version upgrades and upgrade-eligibility checks, with per-step progress. Provide the implementation with
+ * `Effect.provide(AWS.OpenSearch.GetUpgradeHistoryHttp)`.
+ * ### Engine Upgrades
+ * **Example:** List Past Upgrades
+ * ```typescript
+ * const getUpgradeHistory = yield* OpenSearch.GetUpgradeHistory();
+ *
+ * const result = yield* getUpgradeHistory({ DomainName: name });
+ * // result.UpgradeHistories → past upgrades
+ * ```
+ *
+ * @binding
+ */
+export interface GetUpgradeHistory extends Binding.Service<
+  GetUpgradeHistory,
+  "AWS.OpenSearch.GetUpgradeHistory",
+  () => Effect.Effect<
+    (
+      request: opensearch.GetUpgradeHistoryRequest,
+    ) => Effect.Effect<opensearch.GetUpgradeHistoryResponse, opensearch.GetUpgradeHistoryError>
+  >
+> {}
+export const GetUpgradeHistory = Binding.Service<GetUpgradeHistory>(
+  "AWS.OpenSearch.GetUpgradeHistory",
+);

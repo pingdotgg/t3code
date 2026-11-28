@@ -1,6 +1,6 @@
+import { T, useGT, useMessages } from "gt-react-native";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
-import { SearchField } from "../../components/ui/SearchField";
-import { Toolbar } from "../../components/ui/Toolbar";
+import { useSearchToolbarInset } from "../../components/ui/useBarInset";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { LegendList } from "@legendapp/list/react-native";
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
@@ -11,20 +11,15 @@ import {
   thirdPartyLicenseEntryKey,
   type ThirdPartyLicenseEntry,
 } from "@t3tools/shared/thirdPartyLicenses";
-import { useMemo, useRef, useState } from "react";
-import { Linking, Platform, Pressable, type TextInputInstance, View } from "react-native";
+import { useMemo, useState } from "react";
+import { Platform, Pressable, View } from "react-native";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ListRow } from "../../components/ui/ListRow";
 import { SettingsScreen } from "./components/SettingsScreen";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
-import {
-  createNativeMailSearchToolbarItem,
-  NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET,
-} from "../layout/native-mail-search-toolbar";
-import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 
 import { getMobileThirdPartyLicenses } from "./mobileThirdPartyLicenses";
 
@@ -54,11 +49,18 @@ function LicenseRow(props: {
 }
 
 export function SettingsOpenSourceLicensesRouteScreen() {
-  const searchRef = useRef<TextInputInstance>(null);
+  const gt = useGT();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState("");
-  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
+  const search = {
+    value: query,
+    onChangeText: setQuery,
+    placeholder: gt("Search packages"),
+    accessibilityLabel: gt("Search open-source licenses"),
+    clearAccessibilityLabel: gt("Clear package search"),
+  };
+  const searchInset = useSearchToolbarInset(search);
   const manifest = useMobileThirdPartyLicenses();
   const entries = manifest?.entries ?? [];
   const filteredEntries = filterThirdPartyLicenseEntries(entries, query);
@@ -75,10 +77,10 @@ export function SettingsOpenSourceLicensesRouteScreen() {
 
   if (!manifest) {
     return (
-      <SettingsScreen title="Open source licenses">
+      <SettingsScreen title={gt("Open source licenses")}>
         <View className="flex-1 items-center justify-center px-6">
           <Text className="text-center text-base text-foreground-muted">
-            License notices are unavailable in this build.
+            <T>License notices are unavailable in this build.</T>
           </Text>
         </View>
       </SettingsScreen>
@@ -86,50 +88,13 @@ export function SettingsOpenSourceLicensesRouteScreen() {
   }
 
   return (
-    <SettingsScreen title="Open source licenses">
-      {Platform.OS === "ios" ? (
-        <NativeStackScreenOptions
-          options={{
-            unstable_headerToolbarItems: usesNativeMailSearchToolbar
-              ? () => [
-                  createNativeMailSearchToolbarItem({
-                    onSearchTextChange: setQuery,
-                    placeholder: "Search packages",
-                    searchTextChangeId: "open-source-licenses-search-text",
-                    showsSearchDismissButton: true,
-                  }),
-                ]
-              : undefined,
-            headerSearchBarOptions: usesNativeMailSearchToolbar
-              ? undefined
-              : {
-                  allowToolbarIntegration: true,
-                  autoCapitalize: "none",
-                  hideNavigationBar: false,
-                  hideWhenScrolling: false,
-                  obscureBackground: false,
-                  onCancelButtonPress: () => setQuery(""),
-                  onChangeText: (event) => setQuery(event.nativeEvent.text),
-                  placeholder: "Search packages",
-                },
-          }}
-        />
-      ) : null}
-      {Platform.OS === "ios" && !usesNativeMailSearchToolbar ? (
-        <Toolbar placement="bottom">
-          <Toolbar.SearchBarSlot />
-        </Toolbar>
-      ) : null}
-
+    <SettingsScreen title={gt("Open source licenses")} search={search}>
       <LegendList
-        renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
+        renderScrollComponent={NativeScrollView}
         className="flex-1"
         contentContainerStyle={{
-          paddingBottom: usesNativeMailSearchToolbar
-            ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET + 18
-            : Platform.OS === "ios"
-              ? 18
-              : Math.max(insets.bottom, 18) + 18,
+          paddingBottom:
+            searchInset + (Platform.OS === "ios" ? 18 : Math.max(insets.bottom, 18) + 18),
         }}
         contentInsetAdjustmentBehavior="automatic"
         data={filteredEntries}
@@ -140,24 +105,9 @@ export function SettingsOpenSourceLicensesRouteScreen() {
         ListEmptyComponent={
           <View className="items-center px-6 py-12">
             <Text className="text-center text-base text-foreground-muted">
-              No licenses match that search.
+              <T>No licenses match that search.</T>
             </Text>
           </View>
-        }
-        ListHeaderComponent={
-          Platform.OS !== "ios" ? (
-            <View className="px-5 pt-4 pb-5">
-              <SearchField
-                inputRef={searchRef}
-                autoFocus={false}
-                accessibilityLabel="Search open-source licenses"
-                clearAccessibilityLabel="Clear package search"
-                onChangeText={setQuery}
-                placeholder="Search packages"
-                value={query}
-              />
-            </View>
-          ) : null
         }
         renderItem={renderItem}
         showsVerticalScrollIndicator={false}
@@ -169,6 +119,8 @@ export function SettingsOpenSourceLicensesRouteScreen() {
 type LicenseDetailProps = StaticScreenProps<{ readonly entryKey: string }>;
 
 export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const insets = useSafeAreaInsets();
   const manifest = useMobileThirdPartyLicenses();
   const entry = manifest
@@ -178,10 +130,10 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
 
   if (!entry) {
     return (
-      <SettingsScreen title="License notice">
+      <SettingsScreen title={gt("License notice")}>
         <View className="flex-1 items-center justify-center px-6">
           <Text className="text-center text-base text-foreground-muted">
-            This license notice is unavailable.
+            <T>This license notice is unavailable.</T>
           </Text>
         </View>
       </SettingsScreen>
@@ -189,7 +141,7 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
   }
 
   return (
-    <SettingsScreen title="License notice">
+    <SettingsScreen title={gt("License notice")}>
       <ScrollView
         className="flex-1"
         contentInsetAdjustmentBehavior="automatic"
@@ -200,18 +152,20 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
         <View className="gap-2 px-1">
           <Text className="text-2xl font-t3-bold text-foreground">{entry.name}</Text>
           <Text className="text-base leading-normal text-foreground-muted">
-            {[entry.version, entry.license, formatLicenseBundles(entry.bundles)]
+            {[entry.version, entry.license, formatLicenseBundles(entry.bundles, messages)]
               .filter((value): value is string => Boolean(value))
               .join(" · ")}
           </Text>
           {sourceUrl ? (
             <Pressable
-              accessibilityHint="Opens the project website"
+              accessibilityHint={gt("Opens the project website")}
               accessibilityRole="link"
-              onPress={() => void Linking.openURL(sourceUrl)}
+              onPress={() => void tryOpenExternalUrl(sourceUrl)}
               className="min-h-12 flex-row items-center gap-2 self-start py-2 active:opacity-60"
             >
-              <Text className="font-t3-medium text-primary-text">Project source</Text>
+              <Text className="font-t3-medium text-primary-text">
+                <T>Project source</T>
+              </Text>
               <SymbolView
                 name="arrow.up.right"
                 size={16}

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useGT } from "gt-react-native";
+import { useEffect, useRef, useState } from "react";
 import Animated, {
   cubicBezier,
   runOnJS,
@@ -9,27 +10,29 @@ import Animated, {
   type SharedValue,
 } from "react-native-reanimated";
 
-import { constrainAuxiliaryPaneWidth, type WorkspacePaneLayout } from "../../lib/layout";
-import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
+import type { WorkspacePaneLayout } from "../../lib/layout";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspacePaneDivider } from "./workspace-pane-divider";
+import { InspectorPanes } from "./inspector-host";
+import type { InspectorContent } from "./inspector-panes";
 
 // CSS form of WORKSPACE_PANE_TIMING's Easing.inOut(Easing.cubic).
 const PANE_EASING = cubicBezier(0.65, 0, 0.35, 1);
 
 /** Pass layout props to avoid an import cycle with AdaptiveWorkspaceLayout. */
 export function WorkspaceInspectorPane(props: {
-  readonly pathname: string;
   readonly renderedInspectorWidth: SharedValue<number>;
   readonly active?: boolean;
+  readonly onClose: () => void;
   readonly onClosed?: () => void;
   readonly panes: WorkspacePaneLayout;
-  readonly renderInspector?: () => ReactNode;
+  readonly content: InspectorContent | undefined;
   readonly setAuxiliaryPaneWidth: (width: number) => void;
 }) {
+  const gt = useGT();
   const { panes, setAuxiliaryPaneWidth } = props;
   const inspectorWidth = panes.auxiliaryPaneWidth;
-  const inspectorSupported = props.renderInspector !== undefined && inspectorWidth !== null;
+  const inspectorSupported = props.content !== undefined && inspectorWidth !== null;
   const inspectorVisible =
     inspectorSupported && panes.auxiliaryPaneVisible && (props.active ?? true);
   const resizeStartWidth = useRef(0);
@@ -83,12 +86,7 @@ export function WorkspaceInspectorPane(props: {
     setResizing(true);
   };
   const resizeBy = (delta: number) => {
-    setAuxiliaryPaneWidth(
-      constrainAuxiliaryPaneWidth({
-        preferredWidth: resizeStartWidth.current + delta,
-        availableWidth: panes.contentPaneWidth,
-      }),
-    );
+    setAuxiliaryPaneWidth(resizeStartWidth.current + delta);
   };
   const endResize = () => {
     setResizing(false);
@@ -98,7 +96,7 @@ export function WorkspaceInspectorPane(props: {
     <>
       {inspectorVisible ? (
         <WorkspacePaneDivider
-          accessibilityLabel="Resize detail pane"
+          accessibilityLabel={gt("Resize detail pane")}
           currentWidth={inspectorWidth ?? 0}
           resizeDirection={-1}
           onResizeStart={beginResize}
@@ -116,21 +114,10 @@ export function WorkspaceInspectorPane(props: {
           style={inspectorStyle}
         >
           <Animated.View className="flex-1" style={inspectorContentStyle}>
-            <RenderErrorBoundary
-              resetKeys={[props.pathname]}
-              renderFallback={(fallback) => (
-                <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
-              )}
-            >
-              <InspectorRenderer render={props.renderInspector} />
-            </RenderErrorBoundary>
+            <InspectorPanes content={props.content} onClose={props.onClose} />
           </Animated.View>
         </Animated.View>
       ) : null}
     </>
   );
-}
-
-function InspectorRenderer(props: { readonly render?: () => ReactNode }) {
-  return <>{props.render?.()}</>;
 }

@@ -29,6 +29,7 @@ import { V5StackHeader } from "./V5StackHeader.ios";
 import type { AppNativeStackNavigationOptions } from "./StackHeader";
 import { NativeColumnContent } from "./NativeColumnContent.ios";
 import {
+  isPresentedRoute,
   nativeStackPopAction,
   partitionStackPresentations,
   reconcileStackScreens,
@@ -62,6 +63,8 @@ export function V5CardStackView(
   // Options a screen set inside this workspace tab slot, over its route's.
   const slot = use(WorkspaceSlotOptionsContext);
   const nativePopSource = useRef<string | null>(null);
+  // Back reveals the card beneath; a full-screen presentation covers the card without revealing one.
+  const cardRevealed = useRef(false);
   const { onNativePopChange } = props;
   const setNativePopSource = useCallback(
     (key: string | null) => {
@@ -174,6 +177,7 @@ export function V5CardStackView(
                 if (preventedRoutes[route.key]?.preventRemove) descriptor.navigation.goBack();
               }}
               onWillAppear={() => {
+                cardRevealed.current = true;
                 if (index === 0) props.onRootVisibilityChange?.(true);
                 props.navigation.emit({
                   type: "transitionStart",
@@ -216,6 +220,7 @@ export function V5CardStackView(
                 const state = props.navigation.getState();
                 // Only native Back leaves the disappearing card active; JS navigation already changed history.
                 if (state.index > 0 && state.routes[state.index]?.key === route.key) {
+                  cardRevealed.current = false;
                   setNativePopSource(route.key);
                 }
                 props.navigation.emit({
@@ -224,13 +229,16 @@ export function V5CardStackView(
                   data: { closing: true },
                 });
               }}
-              onDidDisappear={() =>
+              onDidDisappear={() => {
+                if (nativePopSource.current === route.key && !cardRevealed.current) {
+                  setNativePopSource(null);
+                }
                 props.navigation.emit({
                   type: "transitionEnd",
                   target: route.key,
                   data: { closing: true },
-                })
-              }
+                });
+              }}
             >
               <NavigationContext value={descriptor.navigation}>
                 <NavigationRouteContext value={descriptor.route}>
@@ -264,8 +272,7 @@ export function V5CardStackView(
 
 export function V5StackView(props: V5StackViewProps) {
   const groups = partitionStackPresentations(props.state.routes, (route) => {
-    const presentation = props.descriptors[route.key]?.options.presentation;
-    return presentation !== undefined && presentation !== "card";
+    return isPresentedRoute(props.descriptors[route.key]?.options);
   });
   const routes = groups.map((group) => group[0]!);
   const descriptors = Object.fromEntries(

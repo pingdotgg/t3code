@@ -2,8 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   fileRoutePathSegments,
+  isAudioPreviewFile,
+  isMarkdownPreviewFile,
   needsWorkspaceFileContents,
   resolveFileLinkPath,
+  resolveMarkdownFileLinkPath,
   resolveWorkspaceRelativeFilePath,
 } from "./filePath";
 
@@ -21,6 +24,15 @@ describe("resolveFileLinkPath", () => {
     expect(resolveFileLinkPath("/repo", "~/notes.md")).toBeNull();
     expect(resolveFileLinkPath(null, "~/notes.md")).toBeNull();
     expect(resolveFileLinkPath("/repo", "../notes.md")).toBeNull();
+  });
+});
+
+describe("resolveMarkdownFileLinkPath", () => {
+  it("resolves home links from home and other links from the Markdown folder", () => {
+    const resolve = (path: string) =>
+      resolveMarkdownFileLinkPath("/home/u/repo", "/home/u/repo/docs", path);
+    expect(resolve("~/notes.md")).toBe("/home/u/notes.md");
+    expect(resolve("other.md")).toBe("/home/u/repo/docs/other.md");
   });
 });
 
@@ -56,5 +68,23 @@ describe("needsWorkspaceFileContents", () => {
     const input = { relativePath: "package.json", activeMode: "source" } as const;
     expect(needsWorkspaceFileContents({ ...input, metadataKind: undefined })).toBe(true);
     expect(needsWorkspaceFileContents({ ...input, metadataKind: "directory" })).toBe(false);
+  });
+});
+
+describe("workspace preview classifiers", () => {
+  it("recognize preview extensions and treat # and ? as literal filename characters", () => {
+    for (const path of ["notes/clip#1.wav", "notes/clip?1.wav", "notes#old/clip.wav"]) {
+      expect(isAudioPreviewFile(path)).toBe(true);
+    }
+    for (const path of [
+      "docs/draft#1.md",
+      "docs/draft?1.md",
+      "docs#old/draft.md",
+      "CHANGELOG.markdown",
+      "notes.MDOWN",
+      "todo.mkd",
+    ]) {
+      expect(isMarkdownPreviewFile(path)).toBe(true);
+    }
   });
 });

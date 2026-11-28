@@ -7,6 +7,7 @@ import {
   removeCatalogValue,
   replaceCatalogValue,
   Persistence,
+  ThreadTriageOutboxStore,
 } from "@t3tools/client-runtime/platform";
 import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
@@ -21,6 +22,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import { mobileThreadTriageOutboxStore } from "../state/thread-triage-outbox-storage";
 import * as CatalogStore from "./catalog-store";
 
 function targetPersistenceError(
@@ -59,24 +61,33 @@ export const layer = Layer.effectContext(
       ),
     });
     const registrationStore = Persistence.ConnectionRegistrationStore.of({
-      register: (registration, routes) =>
-        catalog
-          .update((document) => registerConnectionInCatalog(document, registration, routes))
-          .pipe(Effect.mapError((error) => targetPersistenceError("register-connection", error))),
-      setRoutes: (environmentId, routes) =>
-        catalog
-          .update((document) => setRoutesInCatalog(document, environmentId, routes))
-          .pipe(Effect.mapError((error) => targetPersistenceError("set-connection-routes", error))),
-      remove: (environmentId) =>
+      register: Effect.fn("Persistence.ConnectionRegistrationStore.register")(
+        (registration, routes) =>
+          catalog
+            .update((document) => registerConnectionInCatalog(document, registration, routes))
+            .pipe(Effect.mapError((error) => targetPersistenceError("register-connection", error))),
+      ),
+      setRoutes: Effect.fn("Persistence.ConnectionRegistrationStore.setRoutes")(
+        (environmentId, routes) =>
+          catalog
+            .update((document) => setRoutesInCatalog(document, environmentId, routes))
+            .pipe(
+              Effect.mapError((error) => targetPersistenceError("set-connection-routes", error)),
+            ),
+      ),
+      remove: Effect.fn("Persistence.ConnectionRegistrationStore.remove")((environmentId) =>
         catalog
           .update((document) => removeConnectionFromCatalog(document, environmentId))
           .pipe(Effect.mapError((error) => targetPersistenceError("remove-connection", error))),
-      setEnabled: (environmentId, enabled) =>
-        catalog
-          .update((document) => setConnectionEnabledInCatalog(document, environmentId, enabled))
-          .pipe(
-            Effect.mapError((error) => targetPersistenceError("set-connection-enabled", error)),
-          ),
+      ),
+      setEnabled: Effect.fn("Persistence.ConnectionRegistrationStore.setEnabled")(
+        (environmentId, enabled) =>
+          catalog
+            .update((document) => setConnectionEnabledInCatalog(document, environmentId, enabled))
+            .pipe(
+              Effect.mapError((error) => targetPersistenceError("set-connection-enabled", error)),
+            ),
+      ),
     });
     const profileStore = ProfileStore.make({
       get: (connectionId) =>
@@ -155,6 +166,7 @@ export const layer = Layer.effectContext(
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
       Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),
+      Context.add(ThreadTriageOutboxStore, mobileThreadTriageOutboxStore),
     );
   }),
 );

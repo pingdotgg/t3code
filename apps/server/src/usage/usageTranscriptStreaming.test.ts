@@ -254,7 +254,7 @@ describe("large usage records", () => {
         outputTokens: 99,
         reasoningTokens: 10,
       },
-      dedupeKey: "s1:p1:grok-4.5-build",
+      dedupeKey: "s1:p1:1785578400123:grok-4.5-build",
       reportedCostUsd: 0.25,
     });
   });
