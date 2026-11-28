@@ -41,7 +41,13 @@ lines.on("line", (line) => {
       process.stdout.write(
         JSON.stringify({
           type: "control_response",
-          response: { subtype: "error", request_id: message.request_id, error: "usage failed" },
+          response: process.env.T3_CLAUDE_USAGE_FAILS_AS_NULL
+            ? {
+                subtype: "success",
+                request_id: message.request_id,
+                response: { session: {}, rate_limits_available: true, rate_limits: null },
+              }
+            : { subtype: "error", request_id: message.request_id, error: "usage failed" },
         }) + "\n",
       );
       return;
