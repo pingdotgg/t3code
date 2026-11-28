@@ -30,7 +30,8 @@ function withoutStrings(code: string, stylesheet: boolean): string {
     if (/^["']/.test(token)) {
       return stylesheet ? " " : "";
     }
-    return stylesheet ? "_" : token;
+    // An escaped @ is part of a name, not an at-rule.
+    return stylesheet && token === "\\@" ? "_" : token;
   });
 }
 
