@@ -167,6 +167,40 @@ it("drops the compact offer on a cold Claude thread while /clear is armed", asyn
   await expect.element(compactAndSend).toBeVisible();
 });
 
+it("does not offer to compact before sending a typed /clear on a cold Claude thread", async () => {
+  const viewport = { width: window.innerWidth, height: window.innerHeight };
+  await page.viewport(1280, 800);
+  await using _viewport = {
+    [Symbol.asyncDispose]: () => page.viewport(viewport.width, viewport.height),
+  };
+  const thread = coldClaudeThread("thread-claude-typed-clear");
+  using _environment = installFakeEnvironment([thread], { providers: [CLAUDE_PROVIDER] });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText(`Answer 2 for ${thread.id}.`)).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Compact and send" })).toBeVisible();
+
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.click(editor);
+  await userEvent.type(editor, "/clear");
+
+  // `/clear` runs locally and never compacts, so Send must not promise a summary.
+  await expect
+    .element(page.getByRole("button", { name: "Compact and send" }), { timeout: 3000 })
+    .not.toBeInTheDocument();
+  await expect.element(page.getByRole("button", { name: "Submit message" })).toBeVisible();
+});
+
 it("/compact stays in the slash menu while a turn runs, since a typed command queues", async () => {
   const history = threadWithHistory("compact-mid-turn", 2, {
     instanceId: CLAUDE,
