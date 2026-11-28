@@ -178,7 +178,7 @@ export function WorkLogDetails({
       className={cn(
         "cursor-auto",
         kind === "text"
-          ? "ms-7 flex max-h-96 flex-col gap-3 overflow-auto px-0.5 py-1 select-text"
+          ? "ms-7 flex max-h-96 flex-col gap-3 overflow-auto px-0.5 py-1 select-text [--timeline-composer-inset:0px]"
           : kind === "panel"
             ? "mt-0.5 mb-1.5 pb-2"
             : "mt-1",

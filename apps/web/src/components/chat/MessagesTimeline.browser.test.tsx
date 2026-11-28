@@ -1412,6 +1412,74 @@ describe("MessagesTimeline messages", () => {
       ),
     );
   });
+
+  it("keeps wide table horizontal scrollbars sticky above the composer inset and resets the inset inside nested tables", async () => {
+    setup();
+    const cols = Array.from({ length: 14 }, (_, i) => `Column_${String(i + 1).padStart(2, "0")}`);
+    const innerCols = Array.from({ length: 12 }, (_, i) => `<td>NestedCol_${i + 1}</td>`).join("");
+    const nestedTable = `<table><tbody><tr>${innerCols}</tr></tbody></table>`;
+    const bodyRows = Array.from({ length: 42 }, (_, r) => {
+      const cells = cols.map((col, c) =>
+        r === 0 && c === 0 ? `<td>${nestedTable}</td>` : `<td>${col}_row_${r + 1}</td>`,
+      );
+      return `<tr>${cells.join("")}</tr>`;
+    }).join("");
+    const htmlTable = `<table><thead><tr>${cols.map((col) => `<th>${col}</th>`).join("")}</tr></thead><tbody>${bodyRows}</tbody></table>`;
+
+    await using screen = await renderElement(
+      <MessagesTimeline
+        {...baseProps()}
+        timelineEntries={[message(htmlTable, { role: "assistant" })]}
+        liveFollowEnabled={false}
+        contentInsetEndAdjustment={96}
+      />,
+    );
+
+    const scroller = screen.container.querySelector<HTMLElement>(".messages-timeline-scroll")!;
+    const { outerRoot, outerViewport, outerBar, innerBar } = await vi.waitFor(() => {
+      const bars = screen.container.querySelectorAll<HTMLElement>(
+        '.chat-markdown-table-container [data-slot="scroll-area-scrollbar"][data-orientation="horizontal"]',
+      );
+      expect(bars.length).toBeGreaterThanOrEqual(2);
+      const outer = bars[bars.length - 1]!;
+      const inner = bars[0]!;
+      const root = outer.parentElement!;
+      const vp = root.querySelector<HTMLElement>(':scope > [data-slot="scroll-area-viewport"]')!;
+      expect(outer.getBoundingClientRect().height).toBeGreaterThan(0);
+      expect(vp.scrollWidth).toBeGreaterThan(vp.clientWidth);
+      return { outerRoot: root, outerViewport: vp, outerBar: outer, innerBar: inner };
+    });
+
+    // Nested table scrollbar resets the composer inset inside its outer ScrollArea viewport.
+    expect(getComputedStyle(innerBar).bottom).toBe("0px");
+
+    // Near the top of a tall wide table, the outer scrollbar sticks above the composer inset
+    // without adding height to the scroll area root.
+    scroller.scrollTop = 0;
+    await vi.waitFor(() => {
+      const scrollerRect = scroller.getBoundingClientRect();
+      const barRect = outerBar.getBoundingClientRect();
+      const vpRect = outerViewport.getBoundingClientRect();
+      const expectedBottom = scrollerRect.bottom - 96;
+      expect(vpRect.bottom).toBeGreaterThan(scrollerRect.bottom);
+      expect(barRect.bottom).toBeGreaterThanOrEqual(expectedBottom - 2);
+      expect(barRect.bottom).toBeLessThanOrEqual(expectedBottom + 2);
+      expect(barRect.top).toBeGreaterThanOrEqual(scrollerRect.top);
+    });
+    expect(
+      Math.abs(
+        outerRoot.getBoundingClientRect().height - outerViewport.getBoundingClientRect().height,
+      ),
+    ).toBeLessThanOrEqual(0.5);
+
+    // At the bottom of the timeline, the scrollbar unsticks and rests at the viewport bottom.
+    scroller.scrollTop = scroller.scrollHeight;
+    await vi.waitFor(() => {
+      const barRect = outerBar.getBoundingClientRect();
+      const vpRect = outerViewport.getBoundingClientRect();
+      expect(Math.abs(barRect.bottom - vpRect.bottom)).toBeLessThanOrEqual(1);
+    });
+  });
 });
 
 function usageLimitEntries(resetAt: string) {

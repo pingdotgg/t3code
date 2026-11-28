@@ -2379,11 +2379,30 @@ code {
   max-width: none;
 }
 
-/* Keep overflow discoverable when the edge fade falls between columns. */
+/* Keep ScrollArea.Root from trapping sticky or leaking z-index over sibling fades,
+   and reset composer inset inside nested ScrollArea viewports (e.g. nested tables).
+   Overrides Base UI's inline position/bottom/inset-inline with zero net height. */
+[data-slot="scroll-area-viewport"] {
+  --timeline-composer-inset: 0px;
+}
+
+.chat-markdown .chat-markdown-table-container > :has(> [data-slot="scroll-area-viewport"]) {
+  overflow: clip;
+  isolation: isolate;
+}
+
 .chat-markdown
   .chat-markdown-table-container
   [data-slot="scroll-area-scrollbar"][data-orientation="horizontal"] {
+  position: sticky !important;
+  bottom: var(--timeline-composer-inset, 0px) !important;
+  inset-inline: auto !important;
+  z-index: 1;
   opacity: 1;
+  height: calc(0.375rem + 1px);
+  margin-top: calc(-0.375rem - 1px);
+  margin-bottom: 0;
+  padding-bottom: 1px;
   --app-scrollbar-thumb: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
   --app-scrollbar-thumb-hover: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
 }
