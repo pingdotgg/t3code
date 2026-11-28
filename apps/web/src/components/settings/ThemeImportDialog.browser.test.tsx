@@ -4,8 +4,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
+import { getClientSettings, updateClientSettings } from "../../hooks/useSettings";
+import { I18nProvider } from "../../i18n/I18nProvider";
 import { initializeI18n } from "../../i18n/initializeI18n";
 import { setActiveLocale } from "../../i18n/messages";
+import { startI18n, whenLocaleReady } from "../../i18n/runtime";
 import {
   CUSTOM_THEMES_STORAGE_KEY,
   getCustomThemes,
@@ -87,6 +90,42 @@ describe("ThemeImportDialog", () => {
     await userEvent.fill(page.getByRole("searchbox"), "night");
 
     await expect.element(page.getByText("acme · 1 download", { exact: true })).toBeVisible();
+  });
+
+  it("reformats the shown download count when the app language changes", async () => {
+    searchOpenVsxThemes.mockReset();
+    searchOpenVsxThemes.mockResolvedValue([{ ...extension, downloadCount: 1_200_000 }]);
+    startI18n();
+    const originalLanguage = getClientSettings().language;
+    const setLanguage = async (language: string) => {
+      await act(async () => {
+        await updateClientSettings({ language });
+        await whenLocaleReady();
+      });
+    };
+
+    try {
+      await setLanguage("en");
+      await using _screen = await render(
+        <I18nProvider>
+          <ThemeImportDialog
+            open
+            onOpenChange={() => {}}
+            onImported={() => true}
+            onImportedMany={() => {}}
+          />
+        </I18nProvider>,
+      );
+      await userEvent.fill(page.getByRole("searchbox"), "night");
+      await expect.element(page.getByText("acme · 1.2M downloads", { exact: true })).toBeVisible();
+
+      await setLanguage("ru");
+      await expect.element(page.getByText(/^acme · Скачиваний: 1,2\s+млн$/)).toBeVisible();
+    } finally {
+      await setLanguage(originalLanguage);
+      // Restore the GT fallback locale for tests that render without an I18nProvider.
+      initializeI18n(() => {});
+    }
   });
 
   it("clears the search on Escape before closing the dialog", async () => {
