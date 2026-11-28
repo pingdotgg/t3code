@@ -312,7 +312,7 @@ import { useComposerProviderModel } from "./useComposerProviderModel";
 import { useComposerImageGroups } from "./useComposerImageGroups";
 import { useComposerStash } from "./useComposerStash";
 import { useComposerContextImport } from "./useComposerContextImport";
-import { useComposerAttachmentIntake } from "./useComposerAttachmentIntake";
+import { type LocalFileLinker, useComposerAttachmentIntake } from "./useComposerAttachmentIntake";
 import { isQueuedFileAttachment, isQueuedImageAttachment } from "./queuedMessageEdit";
 import {
   cancelHeldComposerSend,
@@ -3001,6 +3001,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       addComposerFilesToDraft,
       removeComposerImageFromDraft,
       insertAttachmentReferences,
+      resolveLocalFileLinker: () => resolveLocalFileLinkerStable(),
     });
 
   const onComposerCommandKeyStable = useStableCallback(onComposerCommandKey);
@@ -3018,27 +3019,46 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const insertComposerTextAtEndStable = useStableCallback(insertComposerTextAtEnd);
 
-  const insertComposerFolders = async (
-    folders: readonly { readonly name: string; readonly path: string | null }[],
-    target: FolderDropTarget,
+  /**
+   * Inserts an `@path` link for each item on a server that shares this computer's filesystem.
+   * Send waits until every link lands, or a slow WSL conversion would miss the message.
+   */
+  const insertComposerPathLinks = <T,>(
+    items: readonly T[],
+    localPathOf: (item: T) => string | null,
+    target: Exclude<FolderDropTarget, "remote">,
+    busyTitle: string,
     draftKey: string,
-  ) => {
+  ): Promise<{ linked: T[]; missing: T[] }> => {
+    pendingDraftWork.begin(draftKey);
+    return linkComposerPaths(items, localPathOf, target, busyTitle, draftKey).finally(() =>
+      pendingDraftWork.end(draftKey),
+    );
+  };
+
+  const linkComposerPaths = async <T,>(
+    items: readonly T[],
+    localPathOf: (item: T) => string | null,
+    target: Exclude<FolderDropTarget, "remote">,
+    busyTitle: string,
+    draftKey: string,
+  ): Promise<{ linked: T[]; missing: T[] }> => {
+    const linked: T[] = [];
+    const missing: T[] = [];
     const bridge = window.desktopBridge;
-    for (const folder of folders) {
+    for (const item of items) {
+      const localPath = localPathOf(item);
       const path =
-        folder.path === null || typeof target === "string"
-          ? folder.path
-          : ((await bridge
-              ?.toLocalBackendPath(target.wslBackendId, folder.path)
-              .catch(() => null)) ?? null);
+        localPath === null || typeof target === "string"
+          ? localPath
+          : ((await bridge?.toLocalBackendPath(target.wslBackendId, localPath).catch(() => null)) ??
+            null);
       // ChatView is reused across threads, so a slow conversion must not land in the next draft.
-      if (!composerMountedRef.current || attachmentTargetKeyRef.current !== draftKey) return;
+      if (!composerMountedRef.current || attachmentTargetKeyRef.current !== draftKey) {
+        return { linked, missing };
+      }
       if (path === null) {
-        toastManager.add({
-          type: "error",
-          title: gt('Couldn\'t get the path of "{name}"', { name: folder.name }),
-          description: gt("Type the folder path with @ instead."),
-        });
+        missing.push(item);
         continue;
       }
       const inserted = insertComposerTextAtEndStable(`${serializeComposerFileLink(path)} `, {
@@ -3047,16 +3067,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (!inserted) {
         toastManager.add({
           type: "error",
-          title: gt("Unable to add folder"),
+          title: busyTitle,
           description: gt("The composer is busy; try again once it is ready."),
         });
         break;
       }
+      linked.push(item);
     }
-    focusComposer();
+    // A landed link already refocuses the editor once the draft renders. Focusing now would
+    // let the editor write its stale text back over the link (see ComposerAttachInput), and a
+    // sibling insert from the same paste (a folder link) may not have rendered yet either, so
+    // the fallback waits for the next frame too.
+    if (linked.length === 0) scheduleComposerFocus();
+    return { linked, missing };
   };
 
-  const resolveFolderTarget = () =>
+  const resolveComposerDropTarget = () =>
     folderDropTarget({
       localEnvironmentDisabled: isLocalEnvironmentDisabled(),
       environmentId,
@@ -3075,18 +3101,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const addFolderPaths = (
     folders: readonly { readonly name: string; readonly path: string | null }[],
-    target: FolderDropTarget,
+    target: Exclude<FolderDropTarget, "remote">,
     draftKey: string,
   ) => {
-    // Hold send until every conversion lands, or the folder misses the message.
-    pendingDraftWork.begin(draftKey);
-    void insertComposerFolders(folders, target, draftKey).finally(() =>
-      pendingDraftWork.end(draftKey),
-    );
+    void insertComposerPathLinks(
+      folders,
+      (folder) => folder.path,
+      target,
+      gt("Unable to add folder"),
+      draftKey,
+    ).then(({ missing }) => {
+      for (const folder of missing) {
+        toastManager.add({
+          type: "error",
+          title: gt('Couldn\'t get the path of "{name}"', { name: folder.name }),
+          description: gt("Type the folder path with @ instead."),
+        });
+      }
+    });
   };
 
   const addComposerFolders = (folders: File[]) => {
-    const target = resolveFolderTarget();
+    const target = resolveComposerDropTarget();
     if (target === "remote") {
       toastManager.add({
         type: "error",
@@ -3105,6 +3141,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
   };
   const addComposerFoldersStable = useStableCallback(addComposerFolders);
+  const resolveLocalFileLinker = (): LocalFileLinker | null => {
+    const target = resolveComposerDropTarget();
+    if (target === "remote") return null;
+    const getPathForFile = window.desktopBridge?.getPathForFile;
+    return (files) =>
+      insertComposerPathLinks(
+        files,
+        (file) => resolveDroppedFolderPath(file, getPathForFile),
+        target,
+        gt("Unable to add file"),
+        attachmentTargetKeyRef.current,
+      );
+  };
+  const resolveLocalFileLinkerStable = useStableCallback(resolveLocalFileLinker);
 
   // A synchronous IPC read on desktop; the setting only changes with a restart, so read it once.
   const [localEnvironmentDisabledAtMount] = useState(isLocalEnvironmentDisabled);
@@ -3125,7 +3175,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       primaryRunsInWsl: false,
     }) !== "remote";
   const pickComposerFolder = async () => {
-    const target = resolveFolderTarget();
+    const target = resolveComposerDropTarget();
     if (!pickFolder || target === "remote") return;
     const draftKey = attachmentTargetKeyRef.current;
     // gitCwd is a path on the backend; it only names a folder here when no WSL conversion applies.
