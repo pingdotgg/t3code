@@ -525,6 +525,28 @@ describe("HostResources pressure on Linux", () => {
     ),
   );
 
+  // An idle io_uring waiter (Ghostty's default backend) counts as iowait in PSI
+  // while the disks do nothing: their /proc/diskstats counters stay unchanged.
+  it.effect("does not call the machine overloaded on io PSI while the disks are idle", () =>
+    Effect.gen(function* () {
+      setup();
+      const hostResources = yield* HostResources.HostResources;
+      let pressure = yield* hostResources.readPressure;
+      for (let sample = 0; sample < 3; sample++) pressure = yield* hostResources.readPressure;
+      expect(pressure.io).toBe("none");
+    }).pipe(
+      Effect.provide(
+        pressured({
+          "/proc/pressure/cpu": ["some avg10=0.00 avg60=0.00\nfull avg10=0.00 avg60=0.00\n"],
+          "/proc/pressure/io": ["some avg10=78.00 avg60=77.00\nfull avg10=78.00 avg60=77.00\n"],
+          "/proc/diskstats": [
+            " 259       0 nvme0n1 52000 0 4100000 9000 81000 0 6200000 40000 0 61000 49000 0 0 0 0 0 0\n",
+          ],
+        }),
+      ),
+    ),
+  );
+
   it.effect("keeps agent-slice memory pressure while host memory PSI is unreadable", () =>
     Effect.gen(function* () {
       setup();
