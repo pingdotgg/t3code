@@ -1818,7 +1818,8 @@ export const layerWithOptions = (
           });
           return updated;
         });
-      });
+        // Interrupted after the cancel but before this store, the session would keep no idle timer.
+      }, Effect.uninterruptible);
 
       const scheduleIdleRelease = (providerSessionId: ProviderSessionId) =>
         withActivityError(providerSessionId, scheduleIdleReleaseInternal(providerSessionId));
