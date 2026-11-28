@@ -410,7 +410,6 @@ export function useQueuedRunEdit(input: {
     queuedRunEdits.end(editKey);
     focusComposerSoon();
   });
-  /** The edited text went to the stash, so the queued original must not send. */
   const removeEditedRun = useStableCallback(() => {
     if (editing === null) return;
     const { threadId, runId } = editing;
