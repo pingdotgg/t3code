@@ -981,11 +981,11 @@ export function AddProjectRepositoryScreen(props: {
   useEffect(() => () => pendingLookup.current?.abort(), []);
 
   const changeRepositoryInput = (nextInput: string) => {
+    setRepositoryInput(nextInput);
     if (nextInput === repositoryInput) return;
     pendingLookup.current?.abort();
     pendingLookup.current = null;
     setIsSubmitting(false);
-    setRepositoryInput(nextInput);
   };
 
   const lookupRepository = async () => {
