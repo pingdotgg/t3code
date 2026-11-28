@@ -12909,7 +12909,7 @@ it.layer(layerTest)("snooze queued runs", (it) => {
       }),
   );
 
-  it.effect.each(["notification", "scheduled-task", "user"] as const)(
+  it.effect.each(["notification", "scheduled-task", "agent-thread-send", "user"] as const)(
     "a %s message on a snoozed thread keeps the snooze only when automatic",
     (kind) =>
       Effect.gen(function* () {
@@ -12945,8 +12945,12 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           attachments: [],
           modelSelection,
           dispatchMode: { type: "queue_after_active" },
-          createdBy: kind === "notification" ? "agent" : "user",
-          creationSource: kind === "notification" ? "provider" : "web",
+          createdBy: kind === "user" || kind === "scheduled-task" ? "user" : "agent",
+          creationSource:
+            kind === "notification" ? "provider" : kind === "agent-thread-send" ? "mcp" : "web",
+          ...(kind === "agent-thread-send"
+            ? { senderThreadId: ThreadId.make(`snooze-wake-sender:${threadId}`) }
+            : {}),
           ...(kind === "notification"
             ? {
                 notification: {
