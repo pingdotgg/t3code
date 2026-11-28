@@ -22,6 +22,7 @@ import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
+import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 
 export interface EnvironmentProject extends OrchestrationProjectShell {
   readonly environmentId: EnvironmentId;
@@ -135,6 +136,34 @@ export function threadRuntimeIsActive(runtime: ThreadStructureRuntime | null | u
   return runtime !== null && runtime !== undefined && threadRunStatusIsActive(runtime.status);
 }
 
+export function resolveThreadConnectionStatus(
+  thread: Pick<EnvironmentThreadShell, "connectionPhase" | "runtime"> & {
+    readonly pendingBackgroundTasks?: EnvironmentThreadShell["pendingBackgroundTasks"] | undefined;
+  },
+): "connecting" | "reconnecting" | "offline" | null {
+  if (
+    !threadRuntimeIsActive(thread.runtime) &&
+    !(
+      thread.runtime?.status === "idle" &&
+      backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+    )
+  )
+    return null;
+  switch (thread.connectionPhase) {
+    case "connecting":
+      return "connecting";
+    case "reconnecting":
+      return "reconnecting";
+    case "available":
+    case "offline":
+    case "error":
+    case "unsupported":
+      return "offline";
+    default:
+      return null;
+  }
+}
+
 export function threadRuntimeCanArchive(runtime: ThreadRuntimeSummary | null | undefined): boolean {
   if (runtime?.status === "queued") return runtime.activeRunId === null;
   return (
@@ -156,6 +185,7 @@ function threadRunStatusIsActive(status: ThreadRuntimeSummary["status"]): boolea
 
 export interface EnvironmentThreadShell {
   readonly environmentId: EnvironmentId;
+  readonly connectionPhase?: EnvironmentConnectionPhase | undefined;
   readonly id: ThreadId;
   readonly projectId: ProjectId;
   readonly title: string;

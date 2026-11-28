@@ -464,7 +464,7 @@ function requireRepositoryLocator(
 
 function parseBitbucketRemoteUrl(remoteUrl: string): BitbucketRepositoryLocator | null {
   const trimmed = remoteUrl.trim();
-  const scpMatch = /^[a-zA-Z0-9._-]+@[^:/]+:(.+)$/.exec(trimmed);
+  const scpMatch = /^[^-@/\\:\s][^/\\:\s]*@[^@:/]+:(.+)$/.exec(trimmed);
   if (scpMatch?.[1]) {
     return parseBitbucketRepositorySlug(scpMatch[1]);
   }

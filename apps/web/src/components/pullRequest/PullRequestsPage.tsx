@@ -1221,7 +1221,14 @@ export function PullRequestsPage() {
   const rightPanelMaximized = rightPanelState.isOpen && (maximized || tooNarrowToSplit);
   if (!rightPanelState.isOpen && maximized) setMaximized(false);
   const toggleRightPanelMaximized = () => {
-    if (rightPanelState.isOpen) setMaximized((value) => !value);
+    if (rightPanelState.isOpen) {
+      setMaximized((value) => !value);
+      return;
+    }
+    // A closed panel opens straight into maximized.
+    if (!rightPanelAvailable) return;
+    toggleRightPanel();
+    setMaximized(true);
   };
   const onGuideShown = () => setMaximized(true);
   const linkedSelectionKey = linkedSelection === null ? null : JSON.stringify(linkedSelection);
@@ -1331,6 +1338,7 @@ export function PullRequestsPage() {
         <RightPanelMaximizeControl
           maximized={rightPanelMaximized}
           onToggle={toggleRightPanelMaximized}
+          shortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggleMaximized")}
         />
       </div>
     ) : null;
@@ -1720,7 +1728,7 @@ export function PullRequestsPage() {
     if (!event.repeat) toggleRightPanel();
   });
   const toggleRightPanelMaximizedFromShortcut = useEffectEvent((event: KeyboardEvent) => {
-    if (!rightPanelState.isOpen) return;
+    if (!rightPanelState.isOpen && !rightPanelAvailable) return;
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) toggleRightPanelMaximized();

@@ -124,7 +124,7 @@ vi.mock(import("./ProjectDefaultsSettings"), async (original) => ({
 }));
 vi.mock(import("./ProjectActionsSettings"), async (original) => ({
   ...(await original()),
-  ProjectActionsSettings: (() => null) as never,
+  ProjectActionsSettings: (() => <div data-testid="project-actions" />) as never,
 }));
 
 vi.mock(import("../files/projectFilesQueryState"), async (original) => ({
@@ -661,6 +661,13 @@ describe("project settings scope", () => {
     await userEvent.click(scopeMenu());
     await expect.element(primaryOption()).toBeVisible();
     await expect.element(remoteOption()).toBeVisible();
+  });
+
+  it("shows the machine-wide Actions while no project is selected", async () => {
+    setup();
+    await using _screen = await mountSettings({});
+
+    await expect.element(page.getByTestId("project-actions")).toBeInTheDocument();
   });
 
   it("lists only the selected environment's projects and keeps it when one is opened", async () => {

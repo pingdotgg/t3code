@@ -50,6 +50,21 @@ describe("orderDiffFilesForReview", () => {
     ]);
   });
 
+  it.each([
+    "bun.lock",
+    "deno.lock",
+    "npm-shrinkwrap.json",
+    "poetry.lock",
+    "Pipfile.lock",
+    "flake.lock",
+  ])("places the %s lockfile after source like other lockfiles", (lockfile) => {
+    expect(order([file(lockfile), file("package.json"), file("src/index.ts")])).toEqual([
+      "package.json",
+      "src/index.ts",
+      lockfile,
+    ]);
+  });
+
   it("keeps both entries of a path that changed type, such as a file replaced by a symlink", () => {
     const deleted = { ...file("AGENTS.md"), additionLines: [], deletionLines: ["# Agents"] };
     const added = file("AGENTS.md", ["CLAUDE.md"]);

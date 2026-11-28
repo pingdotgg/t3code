@@ -95,6 +95,8 @@ catalog:
   rehype-raw: 7.0.0
   rehype-sanitize: 6.0.0
   remark-breaks: 4.0.0
+  remark-cjk-friendly: 2.3.4
+  remark-cjk-friendly-gfm-strikethrough: 2.3.3
   remark-gfm: 4.0.1
   remark-parse: 11.0.0
   remark-rehype: 11.1.2
@@ -113,7 +115,7 @@ overrides:
   expo-audio: 58.0.12
   expo-network: 58.0.5
   "@clerk/expo-native-components": 0.4.8
-  "@cursor/sdk": 1.5.0
+  "@cursor/sdk": 1.5.2
   expo-sharing: 58.0.23
   expo-widgets: 58.0.29
   "@ff-labs/fff-node": 0.11.0
@@ -290,7 +292,7 @@ patchedDependencies:
   electron-updater@6.8.9: patches/electron-updater@6.8.9.patch
   # Local agents expose agent.resume() (the protocol's ResumeAction), report startup progress,
   # offer background shells to the host, and refresh a cached model list on a miss.
-  "@cursor/sdk@1.5.0": patches/@cursor__sdk@1.5.0.patch
+  "@cursor/sdk@1.5.2": patches/@cursor__sdk@1.5.2.patch
   # A failed Artifacts.cached effect hangs every later caller: https://github.com/alchemy-run/alchemy/issues/2981
   alchemy@2.0.0-beta.85: patches/alchemy@2.0.0-beta.85.patch
   # Android: a marker orient other than "auto" or a number (auto-start-reverse) no longer throws.
@@ -355,12 +357,12 @@ minimumReleaseAgeExclude:
   - "@anthropic-ai/claude-agent-sdk@0.3.321"
   - "@pierre/diffs@1.7.0-beta.4"
   - "@pierre/highlights@0.5.0"
-  - "@cursor/sdk-darwin-arm64@1.5.0"
-  - "@cursor/sdk-darwin-x64@1.5.0"
-  - "@cursor/sdk-linux-arm64@1.5.0"
-  - "@cursor/sdk-linux-x64@1.5.0"
-  - "@cursor/sdk-win32-x64@1.5.0"
-  - "@cursor/sdk@1.5.0"
+  - "@cursor/sdk-darwin-arm64@1.5.2"
+  - "@cursor/sdk-darwin-x64@1.5.2"
+  - "@cursor/sdk-linux-arm64@1.5.2"
+  - "@cursor/sdk-linux-x64@1.5.2"
+  - "@cursor/sdk-win32-x64@1.5.2"
+  - "@cursor/sdk@1.5.2"
   - "@effect/atom-react@4.1.6"
   - "@effect/graphql-generator@4.1.6"
   - "@effect/openapi-generator@4.1.6"

@@ -74,7 +74,9 @@ export const layer: Layer.Layer<
       readonly runId: RunId;
       readonly scopeId: CheckpointScopeId;
     }) {
-      const context = yield* projections.getCheckpointCaptureContext(input.threadId, input);
+      const context = yield* projections.getCheckpointCaptureContext(input.threadId, input, {
+        preservedCheckpoints: "baselines",
+      });
       const { run, rootNode, scope, providerThread, preservedCheckpointOrdinals, sideChat } =
         context;
       // Runs settle before capture; `waiting` is a run persisted before captures ran after settling.

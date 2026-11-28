@@ -79,14 +79,21 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
 export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl({
   maximized,
   onToggle,
+  shortcutLabel,
 }: {
   maximized: boolean;
   onToggle: () => void;
+  shortcutLabel: string | null;
 }) {
   const gt = useGT();
   const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   if (mobileSidebarSheetMounted) return null;
   const label = maximized ? gt("Restore panel size") : gt("Maximize panel");
+  const tooltipLabel = shortcutLabel
+    ? maximized
+      ? gt("Restore panel size ({shortcut})", { shortcut: shortcutLabel })
+      : gt("Maximize panel ({shortcut})", { shortcut: shortcutLabel })
+    : label;
   return (
     <SharedTooltipTrigger
       render={
@@ -105,7 +112,7 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
           )}
         </Toggle>
       }
-      label={label}
+      label={tooltipLabel}
       side="bottom"
     />
   );

@@ -295,7 +295,7 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       for (const match of ['"needle"', null]) {
         const plan = yield* sql<{
           readonly detail: string;
-        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", shortSpellings: "[]", hitLimit: 2000, projectId: null, excludedThreadIds: "[]" })}`;
+        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", shortSpellings: "[]", hitLimit: 2000, projectIds: null, excludedThreadIds: "[]" })}`;
         assert.isFalse(
           plan.some((row) => row.detail.includes("TEMP B-TREE")),
           plan.map((row) => row.detail).join("\n"),
@@ -1339,7 +1339,9 @@ it.layer(layerTest)("ThreadSearch.searchThreadsWithOlderSettledRows", (it) => {
       const search = yield* ThreadSearch.ThreadSearch;
       const sql = yield* SqlClient.SqlClient;
       const project = ProjectId.make("project:plover");
+      const otherProject = ProjectId.make("project:plover-other");
       yield* createProject(project);
+      yield* createProject(otherProject);
       const old = ThreadId.make("thread:plover-old");
       const recent = ThreadId.make("thread:plover-recent");
       yield* Effect.forEach(
@@ -1377,18 +1379,40 @@ it.layer(layerTest)("ThreadSearch.searchThreadsWithOlderSettledRows", (it) => {
         titles.threads?.map((row) => row.id),
         [old],
       );
-      // Without the cut it is the plain message search.
-      assert.isUndefined(
-        (yield* ThreadSearch.searchThreadsWithOlderSettledRows({
-          request: { query: "plover" },
+      yield* Effect.forEach(
+        Array.from({ length: 50 }, (_, index) => {
+          const other = ThreadId.make(`thread:plover-other-${index}`);
+          return [
+            thread(other, otherProject),
+            message(other, `plover-other-${index}`, "user", "plover", { minute: 3 }),
+          ];
+        }).flat(),
+        projections.apply,
+        { discard: true },
+      );
+      const searchMessages = (projectIds?: ReadonlyArray<ProjectId>) =>
+        ThreadSearch.searchThreadsWithOlderSettledRows({
+          request: { query: "plover", ...(projectIds === undefined ? {} : { projectIds }) },
           search: search.search,
           searchOlderSettled: search.searchOlderSettled,
           sql,
           readThreads: (threadIds) =>
             projections.readShellSnapshot({ location: "active", threadIds }),
           latestSequence: Effect.succeed(7),
-        })).threads,
+        });
+      // Without the cut it is the plain message search.
+      const unscoped = yield* searchMessages();
+      assert.isUndefined(unscoped.threads);
+      assert.lengthOf(unscoped.matches, 50);
+      assert.notInclude(
+        unscoped.matches.map((match) => match.threadId),
+        recent,
       );
+      assert.deepEqual(
+        (yield* searchMessages([project])).matches.map((match) => match.threadId),
+        [recent],
+      );
+      assert.deepEqual((yield* searchMessages([])).matches, []);
     }),
   );
 });

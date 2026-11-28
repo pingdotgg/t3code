@@ -1,8 +1,10 @@
-import type {
-  ProviderInstanceId,
-  ServerProvider,
-  ServerProviderUsageWindow,
-  UsageLimitSourceSnapshots,
+import {
+  AuthProvidersManageScope,
+  type EnvironmentId,
+  type ProviderInstanceId,
+  type ServerProvider,
+  type ServerProviderUsageWindow,
+  type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import {
   type LimitPace,
@@ -18,10 +20,11 @@ import { Link } from "@tanstack/react-router";
 import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 import { GaugeIcon, Minimize2Icon, TimerIcon, TrendingUpIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
+import { useEnvironmentScope } from "../../state/session";
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import { formatContextWindowTokens } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
@@ -31,6 +34,7 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Text } from "../ui/text";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { UsageAccessDialog } from "../usage/UsageAccessDialog";
 import { ContextWindowSegments } from "./ContextWindowMeter";
 import { contextWindowSegments } from "./compaction.logic";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
@@ -63,11 +67,12 @@ export interface ThreadDetailsUsageInput {
 
 /** Provider limits grouped by provider as plain numbers with tints for low or fast-burning windows. */
 export function ThreadDetailsUsage({
+  environmentId,
   providerInstanceId,
   model,
   providers,
   sources,
-}: Omit<ThreadDetailsUsageInput, "contextWindow">) {
+}: Omit<ThreadDetailsUsageInput, "contextWindow"> & { readonly environmentId: EnvironmentId }) {
   const gt = useGT();
   const m = useMessages();
   const nowMinute = useNowMinute();
@@ -144,7 +149,13 @@ export function ThreadDetailsUsage({
   const notice = pool || quotaRows.length > 0 ? null : (poolNotice ?? ownNotice);
   return (
     <ThreadDetailsSection title={gt("Usage limits")} variant="usage">
-      {notice || !rows.length ? (
+      {limits?.needsUsageAccess && providerInstanceId !== null && quotaRows.length === 0 ? (
+        <UsageAccessRow
+          environmentId={environmentId}
+          instanceId={providerInstanceId}
+          providers={providers}
+        />
+      ) : notice || !rows.length ? (
         <StatusRow
           label={gt("Limits", { $context: "usage limits row label" })}
           icon={<TimerIcon className="size-4 shrink-0" aria-hidden />}
@@ -240,6 +251,53 @@ export function ThreadDetailsUsage({
         </div>
       )}
     </ThreadDetailsSection>
+  );
+}
+
+/** Limits that need T3 to read the agent's sign-in, which the user has not allowed yet. */
+function UsageAccessRow({
+  environmentId,
+  instanceId,
+  providers,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly instanceId: ProviderInstanceId;
+  readonly providers: readonly ServerProvider[];
+}) {
+  const gt = useGT();
+  const [open, setOpen] = useState(false);
+  const canAnswer = useEnvironmentScope(environmentId, AuthProvidersManageScope);
+  const provider = providers.find((entry) => entry.instanceId === instanceId);
+  if (provider === undefined) return null;
+  return (
+    <>
+      <div className="flex h-7 min-w-0 items-center gap-2.5 ps-2.5 pe-1 text-meta">
+        <TimerIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="min-w-0 flex-1 truncate">
+          {gt("Limits", { $context: "usage limits row label" })}
+        </span>
+        {canAnswer ? (
+          <Button size="xs" variant="secondary" onClick={() => setOpen(true)}>
+            {gt("Set up", { $context: "allow reading an agent's usage limits" })}
+          </Button>
+        ) : (
+          <span className="shrink-0 text-muted-foreground">{gt("Unavailable")}</span>
+        )}
+      </div>
+      {open ? (
+        <UsageAccessDialog
+          prompts={[
+            {
+              environmentId,
+              environmentLabel: "",
+              instanceId,
+              driver: provider.driver,
+            },
+          ]}
+          onOpenChange={setOpen}
+        />
+      ) : null}
+    </>
   );
 }
 

@@ -279,6 +279,12 @@ catalogs:
     remark-breaks:
       specifier: 4.0.0
       version: 4.0.0
+    remark-cjk-friendly:
+      specifier: 2.3.4
+      version: 2.3.4
+    remark-cjk-friendly-gfm-strikethrough:
+      specifier: 2.3.3
+      version: 2.3.3
     remark-gfm:
       specifier: 4.0.1
       version: 4.0.1
@@ -309,7 +315,7 @@ overrides:
   expo-audio: 58.0.12
   expo-network: 58.0.5
   '@clerk/expo-native-components': 0.4.8
-  '@cursor/sdk': 1.5.0
+  '@cursor/sdk': 1.5.2
   expo-sharing: 58.0.23
   expo-widgets: 58.0.29
   '@ff-labs/fff-node': 0.11.0
@@ -395,7 +401,7 @@ pnpmfileChecksum: sha256-G0L7+qfid3Wo9BlLIlMyF/+fqBnAnqHKSe0HlWAtlg8=
 patchedDependencies:
   '@alchemy.run/test@2.0.0-beta.85': 29c0539ea71d9cc372f0b16558640599beb9bc609605feb2a493da268d72713e
   '@clerk/expo-native-components@0.4.8': 7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4
-  '@cursor/sdk@1.5.0': 7fe8889d7916196c56006cf15a39abba4099feb2c567b4030b82a09364cee500
+  '@cursor/sdk@1.5.2': 38c103d5c83bd2276fa1b8788747df0b9aedb5ae0006aeb5bc351cd4cd32f95a
   '@effect/platform-node-shared@4.1.6': f6aef893f2212c4eaa4fe97f84cead4d6ef7ba1651be51dfe28506578eb970ed
   '@effect/vitest@4.1.6': f87ba071dd4f5cfa3b1ba14d5d59363e64372cd49af4d8282c322939e6bf3af2
   '@exodus/bytes@1.15.1': ceab67463db8cb74dcb2ced48eff4cc8ae9de925ae4cd2173a59a0dfba667bd8
@@ -896,8 +902,8 @@ importers:
         specifier: ^0.3.321
         version: 0.3.321(@anthropic-ai/sdk@0.93.0(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(supports-color@8.1.1)(zod@4.6.7))(zod@4.6.7)
       '@cursor/sdk':
-        specifier: 1.5.0
-        version: 1.5.0(patch_hash=7fe8889d7916196c56006cf15a39abba4099feb2c567b4030b82a09364cee500)(zod@4.6.7)
+        specifier: 1.5.2
+        version: 1.5.2(patch_hash=38c103d5c83bd2276fa1b8788747df0b9aedb5ae0006aeb5bc351cd4cd32f95a)(zod@4.6.7)
       '@effect/platform-node':
         specifier: 4.1.6
         version: 4.1.6(bufferutil@4.1.0)(effect@4.1.6(patch_hash=c13237f64561426c002130285a9832acc5bb6ab42fd81e020b306429757ddda1))(redis@6.2.1)(utf-8-validate@6.0.6)
@@ -1847,8 +1853,8 @@ importers:
   packages/provider-cursor:
     dependencies:
       '@cursor/sdk':
-        specifier: 1.5.0
-        version: 1.5.0(patch_hash=7fe8889d7916196c56006cf15a39abba4099feb2c567b4030b82a09364cee500)(zod@4.6.7)
+        specifier: 1.5.2
+        version: 1.5.2(patch_hash=38c103d5c83bd2276fa1b8788747df0b9aedb5ae0006aeb5bc351cd4cd32f95a)(zod@4.6.7)
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -2246,6 +2252,12 @@ importers:
       remark-breaks:
         specifier: 'catalog:'
         version: 4.0.0
+      remark-cjk-friendly:
+        specifier: 'catalog:'
+        version: 2.3.4(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2(patch_hash=cb79edde7eca83bbcaaafb6ceb7b044b81b987314cde4910823b15257ecada67)(supports-color@8.1.1))(unified@11.0.5)
+      remark-cjk-friendly-gfm-strikethrough:
+        specifier: 'catalog:'
+        version: 2.3.3(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2(patch_hash=cb79edde7eca83bbcaaafb6ceb7b044b81b987314cde4910823b15257ecada67)(supports-color@8.1.1))(supports-color@8.1.1)(unified@11.0.5)
       remark-gfm:
         specifier: 'catalog:'
         version: 4.0.1(supports-color@8.1.1)
@@ -3549,9 +3561,6 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@bufbuild/protobuf@1.10.0':
-    resolution: {integrity: sha512-QDdVFLoN93Zjg36NoQPZfsVH9tZew7wKDKyV5qRdj8ntT4wQCOradQjRaTdwMhWUYsgKsvCINKKm87FdEk96Ag==}
-
   '@capsizecss/unpack@4.0.1':
     resolution: {integrity: sha512-CuNiSqg7+e1cO/GjffyMOm5Tt2jUF9CWHHnvQ/UkqvtkGfHdgwEC0wpmq7fkN3gxwpRnrAN0WzO3vREKmNolMQ==}
     engines: {node: '>=18'}
@@ -3748,17 +3757,6 @@ packages:
   '@coderabbitai/config@1.2.0':
     resolution: {integrity: sha512-o9CzGIJcXj8JZtJ167xFZ0CQgxXzaWHiO7aP5m4STKTFXHU3l6/RMxjJRmz87ufncu2KMBLY1hOraAnCeXDBHQ==}
 
-  '@connectrpc/connect-web@1.7.0':
-    resolution: {integrity: sha512-qyP0YOnUPRWwCc/VfsoydMJvkb7EyUPr2q9sHgBuJzbADjiqck1gKH5V5ZPzPhTLBvmz5UvG+wiZ5sMRQHU1MQ==}
-    peerDependencies:
-      '@bufbuild/protobuf': ^1.10.0
-      '@connectrpc/connect': 1.7.0
-
-  '@connectrpc/connect@1.7.0':
-    resolution: {integrity: sha512-iNKdJRi69YP3mq6AePRT8F/HrxWCewrhxnLMNm0vpqXAR8biwzRtO6Hjx80C6UvtKJ5sFmffQT7I4Baecz389w==}
-    peerDependencies:
-      '@bufbuild/protobuf': ^1.10.0
-
   '@crowecawcaw/xa11y-darwin-arm64@0.15.4':
     resolution: {integrity: sha512-/8I+o3JR2tY8thwH/lEcmIuyTxHY8rLW422UFFcP0jI4XRD4+kx5fSjSGV2QIUaQ9tlNsyZkPS0cTYX4oF9GKw==}
     engines: {node: '>=18'}
@@ -3838,38 +3836,38 @@ packages:
     resolution: {integrity: sha512-bPlN9S9O1A0euCpEWE4qnvB5YDuyYVsUTrxSgmAM1Is0j4tICHoVyOVAXfWMP/kS9ZrjvyIXWV2PmomiAXXqOw==}
     engines: {node: '>=20.19.0'}
 
-  '@cursor/sdk-darwin-arm64@1.5.0':
-    resolution: {integrity: sha512-BbNXAZNDnfSr2CVCxXO2MuKQx05tY8YqtMgy7wgfNEN4bl3K9q0ug3FvfWeeml8oj5namyNu+oHenYuzviT7sg==}
+  '@cursor/sdk-darwin-arm64@1.5.2':
+    resolution: {integrity: sha512-j5ffFDbpJeM0Ea4JFOU5TJFMlj6EpB1yXh/POMXvyh4z4VscPQao2rc/nbhHKZg9B0CcqKtW682FiK/gvjIklQ==}
     cpu: [arm64]
     os: [darwin]
     hasBin: true
 
-  '@cursor/sdk-darwin-x64@1.5.0':
-    resolution: {integrity: sha512-20ZOpKYaCFUxggUEmZsXmnsPDc3Qc7dSiBCKd94xvZ/dVhy1zpX8D7TyB2pQG5kLcQhOI72eKttoOzXiVpNr8Q==}
+  '@cursor/sdk-darwin-x64@1.5.2':
+    resolution: {integrity: sha512-OWRw1ya6bjasiVhLNfbiCHpD6UUciJTUSvKZuuDAuZo8RpjiFqD9VhaA4TwjqdMVZIgwMTkXWQhn3ZxfZsVupQ==}
     cpu: [x64]
     os: [darwin]
     hasBin: true
 
-  '@cursor/sdk-linux-arm64@1.5.0':
-    resolution: {integrity: sha512-96BZjj6S4zn4UeV9BCSz8ZvcH6jIGx+oon5+avhQeaTin8s1GI8vzk+/+XcQXCIUiO5CMaOvMB27/kCmN8Xcyg==}
+  '@cursor/sdk-linux-arm64@1.5.2':
+    resolution: {integrity: sha512-ggM4g82XAlxqBo6v8BMAn+WsSNlb4Fx5+iUAZ5fUPe2Nvv+NXMqL/eQtX8is/L8muYwYlILVf8BRxD01T9bN1g==}
     cpu: [arm64]
     os: [linux]
     hasBin: true
 
-  '@cursor/sdk-linux-x64@1.5.0':
-    resolution: {integrity: sha512-nerO1mIGRqmF9N+u+YAwtjtFL5+5B/KS4bDLr2Npj8kOzMaB1G4t9EeZpZmM40Rs7kwb2IHmdpPZ/z9DyWJK6Q==}
+  '@cursor/sdk-linux-x64@1.5.2':
+    resolution: {integrity: sha512-XdOFdMUuKQptHiPbhxMJ0fApoAiByqvt/kaTxLZ0fllWVv6XBY3AH4mTq5doyn/PZlUmMqsvP0xeMusUmn5/5w==}
     cpu: [x64]
     os: [linux]
     hasBin: true
 
-  '@cursor/sdk-win32-x64@1.5.0':
-    resolution: {integrity: sha512-veeYScNOnpC7oEFkZCT96Dk3rLt/mGDeFQL/iqvvPPwYlEz3Kl0EbBd3Rjf2Q9THoUIWV5GlXsn9ZBwXwCcKww==}
+  '@cursor/sdk-win32-x64@1.5.2':
+    resolution: {integrity: sha512-rA1i+VxKkiUn80jKJRqmEpTOURxcP6R9seksjPO2OSD1KYxuLTRf0k3of6anIeNKrrTNP1bVO8L1t5ku5szaDg==}
     cpu: [x64]
     os: [win32]
     hasBin: true
 
-  '@cursor/sdk@1.5.0':
-    resolution: {integrity: sha512-BebvKzDhzxblSDH4pslOjJQIgqBO/Z2bhaVMWAfbkfWEDy8Oz32BZhAEppFnGMcT/5PZRayReqAGteYB4XQSkw==}
+  '@cursor/sdk@1.5.2':
+    resolution: {integrity: sha512-cJVKICD9Rj+WeBt/bZ7+6j4UnkRFHFOXDQHoQLgaF8PU1ybneJBYizSSU6dCvob9RwoXTFGEAfWjBSxXKdRDxQ==}
     engines: {node: '>=22.13'}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
@@ -10753,6 +10751,9 @@ packages:
   mdast-util-gfm-strikethrough@2.0.0:
     resolution: {integrity: sha512-mKKb915TF+OC5ptj5bJ7WFRPdYtuHv0yTRxK2tJvi+BDqbkiG7h7u/9SI89nRAYcmap2xHQL9D+QG/6wSrTtXg==}
 
+  mdast-util-gfm-strikethrough@2.0.1:
+    resolution: {integrity: sha512-OuJHqvr455pwu2OaOrir7dbzqs4jlWKOtlu9L6GjcIjjQwNyw02VntQsr/Ek6/A13vgnXfUhBekWRUP1OkNivw==}
+
   mdast-util-gfm-table@2.0.0:
     resolution: {integrity: sha512-78UEvebzz/rJIxLvE7ZtDd/vIQ0RHv+3Mh5DR96p7cS7HsBhYIICDBCu8csTNWNO6tBWfqXPWekRuj2FNOGOZg==}
 
@@ -10786,8 +10787,29 @@ packages:
   mdast-util-to-hast@13.2.1:
     resolution: {integrity: sha512-cctsq2wp5vTsLIcaymblUriiTcZd0CwWtCbLvrOzYCDZoWyMNV8sZ7krj09FSnsiJi3WVsHLM4k6Dq/yaPyCXA==}
 
+  mdast-util-to-markdown-cjk-friendly-gfm-strikethrough@1.0.2:
+    resolution: {integrity: sha512-aidUweNq42Mok1p6KTJG7m0Ds0+njX3Sp6shhh3/VhwIkyWdn2SqEzkeiwJsK+Ksz0pL6vZUHrVFgFtyX9NMYg==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@types/mdast': '*'
+    peerDependenciesMeta:
+      '@types/mdast':
+        optional: true
+
+  mdast-util-to-markdown-cjk-friendly@1.0.2:
+    resolution: {integrity: sha512-1HCuZwTxQX3WfaNFk8PDb/VW8Ulvzn+nHD+W79Q9k5NXUSkGXH9Zv3eMJ4VI7GjZIz4Ff7WbruEFgMUaPmRJ8g==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@types/mdast': '*'
+    peerDependenciesMeta:
+      '@types/mdast':
+        optional: true
+
   mdast-util-to-markdown@2.1.2:
     resolution: {integrity: sha512-xj68wMTvGXVOKonmog6LwyJKrYXZPvlwabaryTjLh9LuvovB/KAH+kvi8Gjj+7rJjsFi23nkUxRQv1KqSroMqA==}
+
+  mdast-util-to-markdown@2.2.4:
+    resolution: {integrity: sha512-aCsogoZ2Oz1EItAlC12A+/uGuzp+CWlDU0xZ3o5jbJaepLsOu2tlxpvHslnX5dRhspD1gxNVkBtYG0yMiIpXoQ==}
 
   mdast-util-to-string@4.0.0:
     resolution: {integrity: sha512-0H44vDimn51F0YwvxSJSm0eCDOJTRlmN0R1yBh4HLj9wiV1Dn0QoXGbvFAWj2hSItVTlCmBF1hqKlIyUBVFLPg==}
@@ -10882,6 +10904,35 @@ packages:
 
   micromark-core-commonmark@2.0.3:
     resolution: {integrity: sha512-RDBrHEMSxVFLg6xvnXmb1Ayr2WzLAWjeSATAoxwKYJV94TeNavgoIdA0a9ytzDSVzBy2YKFK+emCPOEibLeCrg==}
+
+  micromark-extension-cjk-friendly-gfm-strikethrough@2.0.1:
+    resolution: {integrity: sha512-wVC0zwjJNqQeX+bb07YTPu/CvSAyCTafyYb7sMhX1r62/Lw5M/df3JyYaANyp8g15c1ypJRFSsookTqA1IDsUg==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      micromark: 4.0.2
+      micromark-util-types: ^2.0.0
+    peerDependenciesMeta:
+      micromark-util-types:
+        optional: true
+
+  micromark-extension-cjk-friendly-util@3.0.1:
+    resolution: {integrity: sha512-GcbXqTTHOsiZHyF753oIddP/J2eH8j9zpyQPhkof6B2JNxfEJabnQqxbCgzJNuNes0Y2jTNJ3LiYPSXr6eJA8w==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      micromark-util-types: '*'
+    peerDependenciesMeta:
+      micromark-util-types:
+        optional: true
+
+  micromark-extension-cjk-friendly@2.0.2:
+    resolution: {integrity: sha512-/BqZNCkDWg3Hj9zEEcRitZ5uMF3X78qmBFuP17oAjnVDZ0+H1GHiDKMJZDpJsXasCHEn/kzl6QHozUiWgCHtPQ==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      micromark: 4.0.2
+      micromark-util-types: ^2.0.0
+    peerDependenciesMeta:
+      micromark-util-types:
+        optional: true
 
   micromark-extension-directive@4.0.0:
     resolution: {integrity: sha512-/C2nqVmXXmiseSSuCdItCMho7ybwwop6RrrRPk0KbOHW21JKoCldC+8rFOaundDoRBUWBnJJcxeA/Kvi34WQXg==}
@@ -12000,6 +12051,26 @@ packages:
 
   remark-breaks@4.0.0:
     resolution: {integrity: sha512-IjEjJOkH4FuJvHZVIW0QCDWxcG96kCq7An/KVH2NfJe6rKZU2AsHeB3OEjPNRxi4QC34Xdx7I2KGYn6IpT7gxQ==}
+
+  remark-cjk-friendly-gfm-strikethrough@2.3.3:
+    resolution: {integrity: sha512-UBujdRd1TTgr79iPdXhCnB9ag7kaM54FBCzTa/jLCNfZFGPyZCZb8G6yoCA0k4M3HTKDvilIVKvPxU6K/05dDw==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@types/mdast': ^4.0.0
+      unified: ^11.0.0
+    peerDependenciesMeta:
+      '@types/mdast':
+        optional: true
+
+  remark-cjk-friendly@2.3.4:
+    resolution: {integrity: sha512-xhBzjXkumeN5tKXXg6k/THSCZCP6AYV6+wSxnCsPTkxHt60bb9Yk0IWhdD87CFaDCiTqd86LKHtVObcJTmgcow==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@types/mdast': ^4.0.0
+      unified: ^11.0.0
+    peerDependenciesMeta:
+      '@types/mdast':
+        optional: true
 
   remark-frontmatter@5.0.0:
     resolution: {integrity: sha512-XTFYvNASMe5iPN0719nPrdItC9aU0ssC4v14mH1BCi1u0n1gAocqcujWUrByftZTbLhRtiKRyjYTSIOcr69UVQ==}
@@ -14228,8 +14299,6 @@ snapshots:
   '@bruits/satteri-win32-x64-msvc@0.10.5':
     optional: true
 
-  '@bufbuild/protobuf@1.10.0': {}
-
   '@capsizecss/unpack@4.0.1':
     dependencies:
       fontkitten: 1.0.3
@@ -14394,15 +14463,6 @@ snapshots:
     dependencies:
       zod: 4.6.7
 
-  '@connectrpc/connect-web@1.7.0(@bufbuild/protobuf@1.10.0)(@connectrpc/connect@1.7.0(@bufbuild/protobuf@1.10.0))':
-    dependencies:
-      '@bufbuild/protobuf': 1.10.0
-      '@connectrpc/connect': 1.7.0(@bufbuild/protobuf@1.10.0)
-
-  '@connectrpc/connect@1.7.0(@bufbuild/protobuf@1.10.0)':
-    dependencies:
-      '@bufbuild/protobuf': 1.10.0
-
   '@crowecawcaw/xa11y-darwin-arm64@0.15.4':
     optional: true
 
@@ -14454,34 +14514,31 @@ snapshots:
 
   '@csstools/css-tokenizer@4.0.1': {}
 
-  '@cursor/sdk-darwin-arm64@1.5.0':
+  '@cursor/sdk-darwin-arm64@1.5.2':
     optional: true
 
-  '@cursor/sdk-darwin-x64@1.5.0':
+  '@cursor/sdk-darwin-x64@1.5.2':
     optional: true
 
-  '@cursor/sdk-linux-arm64@1.5.0':
+  '@cursor/sdk-linux-arm64@1.5.2':
     optional: true
 
-  '@cursor/sdk-linux-x64@1.5.0':
+  '@cursor/sdk-linux-x64@1.5.2':
     optional: true
 
-  '@cursor/sdk-win32-x64@1.5.0':
+  '@cursor/sdk-win32-x64@1.5.2':
     optional: true
 
-  '@cursor/sdk@1.5.0(patch_hash=7fe8889d7916196c56006cf15a39abba4099feb2c567b4030b82a09364cee500)(zod@4.6.7)':
+  '@cursor/sdk@1.5.2(patch_hash=38c103d5c83bd2276fa1b8788747df0b9aedb5ae0006aeb5bc351cd4cd32f95a)(zod@4.6.7)':
     dependencies:
-      '@bufbuild/protobuf': 1.10.0
-      '@connectrpc/connect': 1.7.0(@bufbuild/protobuf@1.10.0)
-      '@connectrpc/connect-web': 1.7.0(@bufbuild/protobuf@1.10.0)(@connectrpc/connect@1.7.0(@bufbuild/protobuf@1.10.0))
       '@statsig/js-client': 3.31.0
       zod: 4.6.7
     optionalDependencies:
-      '@cursor/sdk-darwin-arm64': 1.5.0
-      '@cursor/sdk-darwin-x64': 1.5.0
-      '@cursor/sdk-linux-arm64': 1.5.0
-      '@cursor/sdk-linux-x64': 1.5.0
-      '@cursor/sdk-win32-x64': 1.5.0
+      '@cursor/sdk-darwin-arm64': 1.5.2
+      '@cursor/sdk-darwin-x64': 1.5.2
+      '@cursor/sdk-linux-arm64': 1.5.2
+      '@cursor/sdk-linux-x64': 1.5.2
+      '@cursor/sdk-win32-x64': 1.5.2
 
   '@date-fns/tz@1.5.0': {}
 
@@ -21180,6 +21237,14 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  mdast-util-gfm-strikethrough@2.0.1(supports-color@8.1.1):
+    dependencies:
+      '@types/mdast': 4.0.4
+      mdast-util-from-markdown: 2.0.3(supports-color@8.1.1)
+      mdast-util-to-markdown: 2.1.2
+    transitivePeerDependencies:
+      - supports-color
+
   mdast-util-gfm-table@2.0.0(supports-color@8.1.1):
     dependencies:
       '@types/mdast': 4.0.4
@@ -21294,6 +21359,29 @@ snapshots:
       unist-util-visit: 5.1.0
       vfile: 6.0.3
 
+  mdast-util-to-markdown-cjk-friendly-gfm-strikethrough@1.0.2(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(supports-color@8.1.1):
+    dependencies:
+      mdast-util-gfm-strikethrough: 2.0.1(supports-color@8.1.1)
+      mdast-util-to-markdown: 2.2.4
+      mdast-util-to-markdown-cjk-friendly: 1.0.2(@types/mdast@4.0.4)(micromark-util-types@2.0.2)
+    optionalDependencies:
+      '@types/mdast': 4.0.4
+    transitivePeerDependencies:
+      - micromark-util-types
+      - supports-color
+
+  mdast-util-to-markdown-cjk-friendly@1.0.2(@types/mdast@4.0.4)(micromark-util-types@2.0.2):
+    dependencies:
+      mdast-util-to-markdown: 2.2.4
+      micromark-extension-cjk-friendly-util: 3.0.1(micromark-util-types@2.0.2)
+      micromark-util-character: 2.1.1
+      micromark-util-classify-character: 2.0.1
+      micromark-util-html-tag-name: 2.0.1
+    optionalDependencies:
+      '@types/mdast': 4.0.4
+    transitivePeerDependencies:
+      - micromark-util-types
+
   mdast-util-to-markdown@2.1.2:
     dependencies:
       '@types/mdast': 4.0.4
@@ -21303,6 +21391,20 @@ snapshots:
       mdast-util-to-string: 4.0.0
       micromark-util-classify-character: 2.0.1
       micromark-util-decode-string: 2.0.1
+      unist-util-visit: 5.1.0
+      zwitch: 2.0.4
+
+  mdast-util-to-markdown@2.2.4:
+    dependencies:
+      '@types/mdast': 4.0.4
+      '@types/unist': 3.0.3
+      longest-streak: 3.1.0
+      mdast-util-phrasing: 4.1.0
+      mdast-util-to-string: 4.0.0
+      micromark-util-character: 2.1.1
+      micromark-util-classify-character: 2.0.1
+      micromark-util-decode-string: 2.0.1
+      micromark-util-html-tag-name: 2.0.1
       unist-util-visit: 5.1.0
       zwitch: 2.0.4
 
@@ -21513,6 +21615,38 @@ snapshots:
       micromark-util-resolve-all: 2.0.1
       micromark-util-subtokenize: 2.1.0
       micromark-util-symbol: 2.0.1
+      micromark-util-types: 2.0.2
+
+  micromark-extension-cjk-friendly-gfm-strikethrough@2.0.1(micromark-util-types@2.0.2)(micromark@4.0.2(patch_hash=cb79edde7eca83bbcaaafb6ceb7b044b81b987314cde4910823b15257ecada67)(supports-color@8.1.1)):
+    dependencies:
+      devlop: 1.1.0
+      get-east-asian-width: 1.6.0
+      micromark: 4.0.2(patch_hash=cb79edde7eca83bbcaaafb6ceb7b044b81b987314cde4910823b15257ecada67)(supports-color@8.1.1)
+      micromark-extension-cjk-friendly-util: 3.0.1(micromark-util-types@2.0.2)
+      micromark-util-character: 2.1.1
+      micromark-util-chunked: 2.0.1
+      micromark-util-resolve-all: 2.0.1
+      micromark-util-symbol: 2.0.1
+    optionalDependencies:
+      micromark-util-types: 2.0.2
+
+  micromark-extension-cjk-friendly-util@3.0.1(micromark-util-types@2.0.2):
+    dependencies:
+      get-east-asian-width: 1.6.0
+      micromark-util-character: 2.1.1
+      micromark-util-symbol: 2.0.1
+    optionalDependencies:
+      micromark-util-types: 2.0.2
+
+  micromark-extension-cjk-friendly@2.0.2(micromark-util-types@2.0.2)(micromark@4.0.2(patch_hash=cb79edde7eca83bbcaaafb6ceb7b044b81b987314cde4910823b15257ecada67)(supports-color@8.1.1)):
+    dependencies:
+      devlop: 1.1.0
+      micromark: 4.0.2(patch_hash=cb79edde7eca83bbcaaafb6ceb7b044b81b987314cde4910823b15257ecada67)(supports-color@8.1.1)
+      micromark-extension-cjk-friendly-util: 3.0.1(micromark-util-types@2.0.2)
+      micromark-util-chunked: 2.0.1
+      micromark-util-resolve-all: 2.0.1
+      micromark-util-symbol: 2.0.1
+    optionalDependencies:
       micromark-util-types: 2.0.2
 
   micromark-extension-directive@4.0.0:
@@ -23006,6 +23140,29 @@ snapshots:
       '@types/mdast': 4.0.4
       mdast-util-newline-to-break: 2.0.0
       unified: 11.0.5
+
+  remark-cjk-friendly-gfm-strikethrough@2.3.3(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2(patch_hash=cb79edde7eca83bbcaaafb6ceb7b044b81b987314cde4910823b15257ecada67)(supports-color@8.1.1))(supports-color@8.1.1)(unified@11.0.5):
+    dependencies:
+      mdast-util-to-markdown-cjk-friendly-gfm-strikethrough: 1.0.2(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(supports-color@8.1.1)
+      micromark-extension-cjk-friendly-gfm-strikethrough: 2.0.1(micromark-util-types@2.0.2)(micromark@4.0.2(patch_hash=cb79edde7eca83bbcaaafb6ceb7b044b81b987314cde4910823b15257ecada67)(supports-color@8.1.1))
+      unified: 11.0.5
+    optionalDependencies:
+      '@types/mdast': 4.0.4
+    transitivePeerDependencies:
+      - micromark
+      - micromark-util-types
+      - supports-color
+
+  remark-cjk-friendly@2.3.4(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2(patch_hash=cb79edde7eca83bbcaaafb6ceb7b044b81b987314cde4910823b15257ecada67)(supports-color@8.1.1))(unified@11.0.5):
+    dependencies:
+      mdast-util-to-markdown-cjk-friendly: 1.0.2(@types/mdast@4.0.4)(micromark-util-types@2.0.2)
+      micromark-extension-cjk-friendly: 2.0.2(micromark-util-types@2.0.2)(micromark@4.0.2(patch_hash=cb79edde7eca83bbcaaafb6ceb7b044b81b987314cde4910823b15257ecada67)(supports-color@8.1.1))
+      unified: 11.0.5
+    optionalDependencies:
+      '@types/mdast': 4.0.4
+    transitivePeerDependencies:
+      - micromark
+      - micromark-util-types
 
   remark-frontmatter@5.0.0(supports-color@8.1.1):
     dependencies:

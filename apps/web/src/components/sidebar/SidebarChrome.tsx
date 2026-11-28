@@ -32,6 +32,7 @@ import { useWorkflowEnvironmentIds } from "../workflows/useWorkflowEnvironmentId
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
+import { SidebarHostPressureWarning } from "./SidebarHostPressureWarning";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 
@@ -286,6 +287,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   return (
     <SidebarFooter>
+      <SidebarHostPressureWarning />
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
       <SidebarUtilityMenu />

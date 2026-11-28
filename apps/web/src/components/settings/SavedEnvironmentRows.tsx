@@ -4,6 +4,7 @@ import {
   ChevronRightIcon,
   ChevronsLeftRightEllipsisIcon,
   EllipsisIcon,
+  PencilIcon,
   RouteIcon,
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
@@ -34,6 +35,7 @@ import { SettingsRow } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
+import { RenameEnvironmentDialog } from "./RenameEnvironmentDialog";
 import {
   ConnectionDiagnosisPanel,
   ConnectionDiagnosisSummary,
@@ -172,6 +174,7 @@ export function SavedBackendListRow({
   const [routesOpen, setRoutesOpen] = useState(initialRoutesOpen);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const [diagnosisOpen, setDiagnosisOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const environmentId = environment.environmentId;
   const unsupported = environment.connection.phase === "unsupported";
   const blocked = unsupported && !hasSavedBearerRoute(environment.entry);
@@ -451,6 +454,12 @@ ${serverVersion ? `${gt("Version {version}", { version: serverVersion })}\n` : "
             environmentId={environmentId}
             serverConfig={environment.serverConfig}
           />
+          {environment.relayManaged ? null : (
+            <MenuItem onClick={() => setRenameOpen(true)}>
+              <PencilIcon />
+              <T>Rename…</T>
+            </MenuItem>
+          )}
           <MenuItem onClick={() => setRoutesOpen((open) => !open)}>
             <RouteIcon />
             {routesOpen ? gt("Hide routes") : gt("Routes")}
@@ -471,6 +480,12 @@ ${serverVersion ? `${gt("Version {version}", { version: serverVersion })}\n` : "
           </MenuItem>
         </MenuPopup>
       </Menu>
+      <RenameEnvironmentDialog
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
+        environmentId={environmentId}
+        label={environment.label}
+      />
     </EnvironmentRow>
   );
 }

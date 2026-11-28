@@ -895,6 +895,19 @@ describe("open file in preview browser", () => {
   });
 });
 
+describe("save file", () => {
+  it("offers one Save file, whether the toolbar or the preview provides it", async () => {
+    using _settings = setup();
+    state.file = { relativePath: "notes.txt", contents: "notes", byteLength: 5, truncated: false };
+    await using screen = await render(filePreview("notes.txt"));
+    await expect.element(screen.getByRole("button", { name: "Save file" })).toBeVisible();
+
+    await screen.rerender(documentPreview("mutation-1", "revision-1"));
+    await expect.element(screen.getByTestId("office-preview")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save file" }).elements()).toHaveLength(1);
+  });
+});
+
 describe("rendered Markdown select all", () => {
   it("selects only the rendered file, including after a task toggle", async () => {
     using _settings = setup();
@@ -1524,4 +1537,29 @@ describe("notebook scroll position", () => {
       expect(Math.abs(position.offset - saved.offset)).toBeLessThanOrEqual(2);
     });
   });
+});
+
+it("highlights Jupyter kernel languages while keeping labels and raw cells plain", async () => {
+  for (const [language, source] of [
+    ["Rust", 'fn main() { println!("hi"); }'],
+    ["C++17", "int main() { return 0; }"],
+    ["C#", "class C { int x = 1; }"],
+    ["F#", "let answer = 42"],
+    ["Bash", 'if [ -n "$HOME" ]; then echo "hi"; fi'],
+  ] as const) {
+    const cells = (["code", "raw"] as const).map((kind) => ({ kind, source, outputs: [] }));
+    const notebook = { type: "notebook" as const, language, cells };
+    await using screen = await render(<NotebookPreview notebook={notebook} />);
+    // The redesign shows the language in the status and cell header tooltips.
+    expect(screen.getByRole("status").first().element().textContent).toBe("2 cells");
+    expect(screen.container.querySelector("section > div")?.textContent).toBe("Cell 1");
+    await vi.waitFor(() => {
+      const [code, raw] = [...screen.container.querySelectorAll("diffs-container")].map((el) => {
+        const spans = el.shadowRoot?.querySelectorAll("[data-line] span") ?? [];
+        return new Set(Array.from(spans, (span) => getComputedStyle(span).color)).size;
+      });
+      expect(code, language).toBeGreaterThan(1);
+      expect(raw, `raw:${language}`).toBe(1);
+    });
+  }
 });

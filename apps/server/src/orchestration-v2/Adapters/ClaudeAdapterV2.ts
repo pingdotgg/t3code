@@ -3063,27 +3063,34 @@ function nextClaudeGoal(
       checks: Number(active[2] ?? 0),
     };
   }
+  if (current === null) return undefined;
+  const prefix = `[${current.objective}]: `;
+  const feedback = claudeStopHookFeedback(message);
+  if (feedback === undefined || !feedback.startsWith(prefix)) return undefined;
+  return {
+    ...current,
+    status: "active",
+    checks: (current.checks ?? 0) + 1,
+    lastCheck: feedback.slice(prefix.length).trim(),
+  };
+}
+
+/** What a blocking Stop hook told Claude when it continued the root turn, or undefined. */
+function claudeStopHookFeedback(message: SDKMessage): string | undefined {
   if (
     message.type !== "user" ||
     message.parent_tool_use_id !== null ||
-    message.isSynthetic !== true ||
-    current === null
+    message.isSynthetic !== true
   ) {
     return undefined;
   }
-  const prefix = `Stop hook feedback:\n[${current.objective}]: `;
+  const prefix = "Stop hook feedback:\n";
   const content = message.message.content;
   const text =
     typeof content === "string"
       ? content
       : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
-  if (!text.startsWith(prefix)) return undefined;
-  return {
-    ...current,
-    status: "active",
-    checks: (current.checks ?? 0) + 1,
-    lastCheck: text.slice(prefix.length).trim(),
-  };
+  return text.startsWith(prefix) ? text.slice(prefix.length) : undefined;
 }
 
 /** The CLI confirms a goal change as a synthetic reply; the goal row shows that change instead. */
@@ -11866,6 +11873,61 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* liveQuery.query.close.pipe(Effect.ignore);
             return;
           }
+          const stopHookFeedback = claudeStopHookFeedback(message);
+          if (
+            message.type === "user" &&
+            stopHookFeedback !== undefined &&
+            nextClaudeGoal(goalsByNativeThread.get(liveQuery.nativeThreadId) ?? null, message) ===
+              undefined
+          ) {
+            const now = yield* DateTime.now;
+            // Claude ended its native turn on this reply; the run continues only for the hook.
+            const answer = context.assistant.lastReply;
+            if (answer !== null) {
+              yield* publishAssistantArtifacts({
+                context,
+                ...answer,
+                createdAt: answer.startedAt,
+                status: "completed",
+                completedAt: now,
+                finalAnswer: true,
+              });
+            }
+            const nativeItemId =
+              message.uuid ?? `stop-hook:${context.providerTurnId}:${context.itemOrdinals.size}`;
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: {
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CLAUDE_PROVIDER,
+                  nativeItemId,
+                }),
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                nodeId: context.input.rootNodeId,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemRef: {
+                  driver: CLAUDE_PROVIDER,
+                  nativeId: nativeItemId,
+                  strength: message.uuid === undefined ? "weak" : "strong",
+                },
+                parentItemId: null,
+                ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                type: "notification",
+                status: "completed",
+                title: "Stop hook asked Claude to continue",
+                source: { kind: "system" },
+                outcome: "updated",
+                summary: "Stop hook asked Claude to continue",
+                detail: stopHookFeedback.trim(),
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+              },
+            });
+          }
           yield* trackClaudeGoal({ nativeThreadId: liveQuery.nativeThreadId, context, message });
 
           if (message.type === "stream_event" && !message.parent_tool_use_id) {
@@ -16266,7 +16328,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
     const baseEnvironment = yield* mergeClaudeProcessEnvironment(
-      config,
+      { ...config, enabled },
       environment,
       hostEnvironment,
     );

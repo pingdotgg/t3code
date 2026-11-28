@@ -27,6 +27,7 @@ import {
 import { requestWorkspaceFocus } from "../../lib/workspaceFocus";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
+import { ThreadDetailsMachineLoad } from "./ThreadDetailsMachineLoad";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadRepositorySections } from "./ThreadRepositorySections";
@@ -249,7 +250,10 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
           repositories: offersGit && visible.gitActions,
         };
         const workspaceShown =
-          Object.values(show).some(Boolean) || visible.usage || visible.context;
+          Object.values(show).some(Boolean) ||
+          visible.usage ||
+          visible.context ||
+          visible.machineLoad;
         return (
           <>
             <div className="group/details-items thread-details-stack flex flex-col gap-1">
@@ -383,13 +387,15 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                       </div>
                     ) : null}
                   </div>
-                  {visible.usage || visible.context ? (
+                  {visible.usage || visible.context || visible.machineLoad ? (
                     <div
                       className="flex flex-col gap-1.5 px-0.5 pt-1.5 pb-0.5"
                       data-thread-details-unit="usage"
                       hidden={cut.has("usage")}
                     >
-                      {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
+                      {visible.usage ? (
+                        <ThreadDetailsUsage {...props.usage} environmentId={props.environmentId} />
+                      ) : null}
                       {visible.context ? (
                         <div
                           className={visible.usage ? "border-t border-divider pt-1.5" : undefined}
@@ -399,6 +405,17 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                             onCompact={props.onCompactContext}
                             compactUnavailableReason={props.compactUnavailableReason}
                           />
+                        </div>
+                      ) : null}
+                      {visible.machineLoad ? (
+                        <div
+                          className={
+                            visible.usage || visible.context
+                              ? "border-t border-divider pt-1.5"
+                              : undefined
+                          }
+                        >
+                          <ThreadDetailsMachineLoad environmentId={props.environmentId} />
                         </div>
                       ) : null}
                     </div>

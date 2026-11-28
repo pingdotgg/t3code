@@ -55,6 +55,7 @@ import {
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
+  UnplugIcon,
   UserRoundIcon,
   XIcon,
 } from "lucide-react";
@@ -138,6 +139,10 @@ import { InlineButton } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
+import {
+  SidebarThreadHostPressureIcon,
+  SidebarThreadHostPressureLine,
+} from "./SidebarThreadHostPressure";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { ActivityShimmerOverlay } from "../chat/TimelineRowParts";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
@@ -236,6 +241,21 @@ const SIDEBAR_STATUSES: Record<
   SidebarV2TopStatusKind,
   { readonly label: string; readonly Icon: typeof CircleDashedIcon; readonly className: string }
 > = {
+  connecting: {
+    label: msg("Connecting"),
+    Icon: UnplugIcon,
+    className: "text-muted-foreground",
+  },
+  reconnecting: {
+    label: msg("Reconnecting"),
+    Icon: UnplugIcon,
+    className: "text-muted-foreground",
+  },
+  offline: {
+    label: msg("Offline"),
+    Icon: UnplugIcon,
+    className: "text-muted-foreground",
+  },
   working: {
     label: msg("Working", { $context: "thread status" }),
     Icon: CircleDashedIcon,
@@ -463,6 +483,7 @@ function SidebarThreadTooltip({
             <MiddleTruncate value={formatWorktreePathForDisplay(worktreePath)} className="flex" />
           </div>
         ) : null}
+        <SidebarThreadHostPressureLine environmentId={thread.environmentId} threadId={thread.id} />
         {branchMismatch ? (
           <div className="flex min-w-0 items-start gap-2 text-warning">
             <CircleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
@@ -755,6 +776,7 @@ type SidebarThreadRowProps = {
   onUnsettle: (threadRef: ScopedThreadRef) => void;
   onSnooze: (threadRef: ScopedThreadRef, preset: Pick<SnoozePreset, "snoozedUntil">) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
+  onPin: (threadRef: ScopedThreadRef) => void;
   onUnpin: (threadRef: ScopedThreadRef) => void;
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
   onFileDropThreads?: ((threadRef: ScopedThreadRef, files: File[]) => void) | undefined;
@@ -823,6 +845,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     onThreadOpen,
     onUnsettle,
     onUnsnooze,
+    onPin,
     onUnpin,
     readOpensPullRequestsInRightPanel,
     renamingTitle,
@@ -1049,6 +1072,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     event.preventDefault();
     event.stopPropagation();
     onUnsnooze(threadRef);
+  };
+  const handlePinClick = (event: ReactMouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onPin(threadRef);
   };
   const handleUnpinClick = (event: ReactMouseEvent) => {
     event.preventDefault();
@@ -1362,6 +1390,29 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     )
   ) : null;
 
+  const pinButton =
+    !props.isPinned && props.pinningSupported && canOperateThread && !sortable?.isDragging ? (
+      <SharedTooltipTrigger
+        render={
+          <InlineButton
+            tone="ghost-dim"
+            aria-label={gt("Pin thread")}
+            onClick={handlePinClick}
+            // sr-only, not hidden: a display:none button drops out of the Tab order
+            // once the pointer leaves, so keyboard users could never reach it.
+            className="sr-only focus-visible:not-sr-only group-any-hover/sidebar-row:not-sr-only group-focus-visible/sidebar-row:not-sr-only"
+          />
+        }
+        label={<T>Pin thread</T>}
+      >
+        <PinIcon aria-hidden className="size-3 shrink-0" />
+      </SharedTooltipTrigger>
+    ) : null;
+
+  const hostPressureIcon = (
+    <SidebarThreadHostPressureIcon environmentId={thread.environmentId} threadId={thread.id} />
+  );
+
   const multiline = variant === "folder-multiline";
   const inFolder = variant === "folder" || multiline;
   const diff = latestRunDiff(thread);
@@ -1480,6 +1531,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
             {title}
             {multiline ? titleLineIcons : null}
             {pinIndicator}
+            {hostPressureIcon}
             {multiline ? null : terminalStatusIcon}
             {multiline ? null : issueBadge}
             {isRegeneratingTitle ? (
@@ -1670,6 +1722,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
             {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
             {pinIndicator}
+            {pinButton}
+            {hostPressureIcon}
             {props.projectDisplayName ? (
               <span className={SIDEBAR_CARD_PROJECT_LABEL_CLASS_NAME}>
                 {props.projectDisplayName}

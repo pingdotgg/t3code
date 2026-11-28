@@ -18,6 +18,7 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
@@ -183,6 +184,7 @@ function ProjectChooser() {
             </SettingsEmptyTile>
           </SettingsEmptyTiles>
         </SettingsEmptyState>
+        <ProjectActionsSettings />
       </SettingsPageContainer>
     );
   }
@@ -234,6 +236,7 @@ function ProjectChooser() {
           })}
         </div>
       </SettingsSection>
+      <ProjectActionsSettings />
     </SettingsPageContainer>
   );
 }

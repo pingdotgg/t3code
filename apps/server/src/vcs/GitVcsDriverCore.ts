@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FiberMap from "effect/FiberMap";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -1129,6 +1130,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const random = yield* SecureRandom.SecureRandom;
   const hostPlatform = yield* HostProcess.Platform;
   const serviceScope = yield* Effect.scope;
+  // Keyed by worktree path: a refresh writes beside the index, so removal stops it first.
+  const indexRefreshes = yield* FiberMap.make<string>();
   const automaticFetchInterval = yield* VcsAutomaticFetchInterval;
   type StatusFetchState = {
     phase: "queued" | "running" | "claimed";
@@ -6596,7 +6599,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }).pipe(
       Effect.ensuring(fileSystem.remove(copyPath).pipe(Effect.ignore)),
       Effect.ignore({ log: "Debug" }),
-      Effect.forkIn(serviceScope),
+      FiberMap.run(indexRefreshes, path.resolve(worktreePath)),
     );
   });
 
@@ -7439,6 +7442,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // folder than this path. Resolving it once keeps Git, the folder deletion
     // in removeLinkedWorktree, and the leftover cleanup below on one directory.
     const target = path.resolve(input.cwd, input.path);
+    yield* FiberMap.remove(indexRefreshes, target);
     const result = yield* removeLinkedWorktree({
       operation: "GitVcsDriver.removeWorktree",
       cwd: input.cwd,

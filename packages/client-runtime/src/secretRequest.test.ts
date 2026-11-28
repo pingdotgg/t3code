@@ -83,6 +83,15 @@ describe("secretRequestLink", () => {
       "https://a.dev/x?s=1",
     ],
     ["Open [https://a.dev/x?s=1](https://a.dev/x?s=1) and sign in.", "https://a.dev/x?s=1"],
+    ["Open https://[2001:db8::1]:8443/setup to continue.", "https://[2001:db8::1]:8443/setup"],
+    [
+      "Visit https://example.org/setup?scope[]=repo to continue.",
+      "https://example.org/setup?scope[]=repo",
+    ],
+    [
+      "Open [https://a.dev/x?scope[]=repo](https://a.dev/x?scope[]=repo) and sign in.",
+      "https://a.dev/x?scope[]=repo",
+    ],
     ["Sign in [here](https://a.dev/login?state=abc(def)).", "https://a.dev/login?state=abc(def)"],
     ["Sign in at https://a.dev/login?state=abc(def).", "https://a.dev/login?state=abc(def)"],
     ["(Sign in at https://a.dev/login.)", "https://a.dev/login"],
