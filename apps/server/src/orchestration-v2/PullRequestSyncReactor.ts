@@ -205,7 +205,7 @@ function replaceCarriedText(script: string, replace: (piece: CarriedText) => str
 /** The commands a script runs, without the text it carries. */
 const shellCode = (script: string) =>
   replaceCarriedText(script, ({ start, kind }) =>
-    kind === "escape" ? (script[start + 1] === "\n" ? "" : "_") : kind === "heredoc" ? "<<" : "''",
+    kind === "escape" && script[start + 1] === "\n" ? "" : kind === "heredoc" ? "<<" : "''",
   );
 
 /** A script split at the command separators in its code, leaving carried text intact. */

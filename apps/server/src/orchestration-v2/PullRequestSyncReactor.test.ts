@@ -2398,6 +2398,12 @@ describe("PullRequestSyncReactor", () => {
       linked: [],
     },
     {
+      name: "a create command after an escaped hyphen in a command word",
+      input: "PR\\-URL=unused gh pr create; printf '%s\\n' \"$PR\"",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
       name: "an existing pull request quoted in another command",
       input:
         "printf '%s\\n' 'https://github.com/owner/repository/pull/120'; gh pr create --fill > /dev/null",
