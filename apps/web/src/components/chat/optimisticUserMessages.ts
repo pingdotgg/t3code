@@ -4,34 +4,76 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import type { SetStateAction } from "react";
-import type { ChatMessage } from "../../types";
+import { type ChatMessage, isImageAttachment } from "../../types";
 import { collectUserMessageBlobPreviewUrls } from "../ChatView.logic";
 
 /**
  * Messages shown before the server echoes them. An acknowledged message leaves `messages` in the
  * render its ack arrives, so it never reappears even if the server later drops its row. Its blob
  * previews stay in `handoff` until the server's copies load (see useAttachmentPreviewHandoff).
+ * Sends still pending in threads the view has left wait in `pendingByThread` until it returns.
  */
 export interface OptimisticUserMessages {
   readonly threadId: ThreadId;
   readonly messages: ChatMessage[];
   readonly handoff: Readonly<Record<string, ReadonlyArray<string>>>;
+  readonly pendingByThread: Readonly<Record<ThreadId, ChatMessage[]>>;
 }
 
 export function emptyOptimisticUserMessages(threadId: ThreadId): OptimisticUserMessages {
-  return { threadId, messages: [], handoff: {} };
+  return { threadId, messages: [], handoff: {}, pendingByThread: {} };
+}
+
+// Leaving a thread revokes its blob previews, so a message kept for later must not point at them.
+function withoutBlobPreviews(message: ChatMessage): ChatMessage {
+  if (collectUserMessageBlobPreviewUrls(message).length === 0) return message;
+  return {
+    ...message,
+    attachments: message.attachments?.map((attachment) => {
+      if (!isImageAttachment(attachment) || !attachment.previewUrl?.startsWith("blob:")) {
+        return attachment;
+      }
+      const { previewUrl: _revoked, ...rest } = attachment;
+      return rest;
+    }),
+  };
+}
+
+function withPending(
+  pendingByThread: OptimisticUserMessages["pendingByThread"],
+  threadId: ThreadId,
+  messages: ChatMessage[],
+): OptimisticUserMessages["pendingByThread"] {
+  const { [threadId]: _previous, ...rest } = pendingByThread;
+  return messages.length === 0 ? rest : { ...rest, [threadId]: messages.map(withoutBlobPreviews) };
 }
 
 /**
- * The view's state for `threadId`: the previous thread's messages are released when the thread
- * changes, and acknowledged messages are moved out of `messages`. Returns `state` when nothing changes.
+ * The view's state for `threadId`: when the thread changes, the previous thread's unacknowledged
+ * messages are kept for its return and its handoff is released, and acknowledged messages are moved
+ * out of `messages`. Returns `state` when nothing changes.
  */
 export function reconcileOptimisticUserMessages(
   state: OptimisticUserMessages,
   threadId: ThreadId,
   acknowledgedIds: ReadonlySet<MessageId>,
 ): OptimisticUserMessages {
-  if (state.threadId !== threadId) return emptyOptimisticUserMessages(threadId);
+  if (state.threadId !== threadId) {
+    return reconcileOptimisticUserMessages(
+      {
+        threadId,
+        messages: state.pendingByThread[threadId] ?? [],
+        handoff: {},
+        pendingByThread: withPending(
+          withPending(state.pendingByThread, threadId, []),
+          state.threadId,
+          state.messages,
+        ),
+      },
+      threadId,
+      acknowledgedIds,
+    );
+  }
   if (!state.messages.some((message) => acknowledgedIds.has(message.id))) return state;
   const messages: ChatMessage[] = [];
   const handoff: Record<string, ReadonlyArray<string>> = { ...state.handoff };
@@ -46,18 +88,21 @@ export function reconcileOptimisticUserMessages(
   return { ...state, messages, handoff };
 }
 
-/** Applies a send-path update. An update for a thread the view has since left is dropped. */
+/** Applies a send-path update. An update for a thread the view has left applies to its pending sends. */
 export function applyOptimisticUserMessagesAction(
   state: OptimisticUserMessages,
   threadId: ThreadId,
   action: SetStateAction<ChatMessage[]>,
 ): OptimisticUserMessages {
-  if (state.threadId !== threadId) return state;
-  const next = typeof action === "function" ? action(state.messages) : action;
+  const current =
+    state.threadId === threadId ? state.messages : (state.pendingByThread[threadId] ?? []);
+  const next = typeof action === "function" ? action(current) : action;
   const unchanged =
-    next.length === state.messages.length &&
-    next.every((message, index) => message === state.messages[index]);
-  return unchanged ? state : { ...state, messages: next };
+    next.length === current.length && next.every((message, index) => message === current[index]);
+  if (unchanged) return state;
+  return state.threadId === threadId
+    ? { ...state, messages: next }
+    : { ...state, pendingByThread: withPending(state.pendingByThread, threadId, next) };
 }
 
 export function dropOptimisticHandoff(
