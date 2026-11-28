@@ -475,18 +475,23 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("sends a description that starts with a dash as one value, not as a flag", () =>
+  it.effect("sends only a multi-line description over stdin, which survives a Windows az.cmd", () =>
     Effect.gen(function* () {
+      const body = "- rewrote the page\n\nline three";
       mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
 
-      yield* cli.updatePullRequest({
-        cwd: "/w",
-        number: 42,
-        body: "- rewrote the page\n- kept the rest",
-      });
+      yield* cli.updatePullRequest({ cwd: "/w", number: 42, title: "Page", body });
 
-      expect(argsOfCall(0)).toContain("--description=- rewrote the page\n- kept the rest");
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(argsOfCall(0)).toContain("--description=@-");
+      expect(argsOfCall(0).filter((arg) => arg.includes("\n"))).toEqual([]);
+      expect(mockedExecute.mock.calls[0]?.[0].stdin).toBe(body);
+
+      // One line stays in argv, which reaches az as Unicode even without its UTF-8 mode.
+      yield* cli.updatePullRequest({ cwd: "/w", number: 42, body: "Fix für Umlaute" });
+      expect(argsOfCall(1)).toContain("--description=Fix für Umlaute");
+      expect(mockedExecute.mock.calls[1]?.[0].stdin).toBeUndefined();
     }),
   );
 

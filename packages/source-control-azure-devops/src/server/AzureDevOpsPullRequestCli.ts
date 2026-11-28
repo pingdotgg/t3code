@@ -887,12 +887,14 @@ export const make = Effect.gen(function* () {
     ),
 
     updatePullRequest: Effect.fn("AzureDevOpsPullRequestCli.updatePullRequest")(function (input) {
-      // One argv entry preserves leading dashes and multi-string descriptions.
       const fields = [
         ...(input.title === undefined ? [] : [AzureDevOpsCli.textOption("--title", input.title)]),
         ...(input.body === undefined
           ? []
-          : [AzureDevOpsCli.textOption("--description", input.body)]),
+          : // cmd.exe ends a Windows az.cmd line at a newline; stdin keeps every line.
+            input.body.includes("\n")
+            ? [{ arg: "--description=@-", stdin: input.body }]
+            : [AzureDevOpsCli.textOption("--description", input.body)]),
       ];
       // az has one stdin, so each value read from it needs its own call.
       const batches =
