@@ -15,15 +15,25 @@ import expo.modules.kotlin.Promise
 import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.modules.ModuleDefinitionBuilder
 import java.io.File
 import java.net.URI
 
 class T3NativeControlsModule : Module() {
   private var filePreviewPromise: Promise? = null
 
+  private fun ModuleDefinitionBuilder.defineThreadFeedTouchView() {
+    Function("hasThreadFeedTouchView") { true }
+    View(ThreadFeedTouchView::class) {
+      Name("ThreadFeedTouchView")
+    }
+  }
+
   @Suppress("TooGenericExceptionCaught") // Clear the pending promise before rethrowing.
   override fun definition() = ModuleDefinition {
     Name("T3NativeControls")
+
+    defineThreadFeedTouchView()
 
     // React Native sets this once, at launch, from the system theme rather than the app's.
     AsyncFunction("setNavigationBarStyle") { light: Boolean ->
