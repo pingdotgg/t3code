@@ -60,6 +60,17 @@ export const layer = HttpApiBuilder.group(
           allow: "GET, POST, PUT, PATCH",
         });
       }
+      // A page's <img> or <script> is a GET nobody chose; any page that shows the URL could fire it.
+      // Tools send no Sec-Fetch-Dest, and opened links and fetch() still work.
+      const fetchDest = request.headers["sec-fetch-dest"];
+      if (
+        request.method === "GET" &&
+        fetchDest !== undefined &&
+        fetchDest !== "document" &&
+        fetchDest !== "empty"
+      ) {
+        return json(403, { error: "browser_subresource" }, "blocked_by_policy");
+      }
       const contentLength = Number(request.headers["content-length"] ?? "0");
       if (!Number.isFinite(contentLength) || contentLength > WEBHOOK_MAX_BODY_BYTES) {
         return json(413, { error: "body_too_large" }, "body_too_large");
