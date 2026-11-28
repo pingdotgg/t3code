@@ -5887,6 +5887,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     "start-fails",
     "keep-changed-tier",
     "keep-changed-effort",
+    "pick-starting",
   ] as const)("handles terminal Codex capacity failures when retries %s", (outcome) =>
     Effect.gen(function* () {
       const scenario = `capacity-${outcome}`;
@@ -6071,9 +6072,25 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             }
           }
         }
+        if (outcome === "pick-starting") {
+          // Picked after the retry copied the old selection, so it goes out once the turn exists.
+          entries.push(
+            {
+              type: "expect_outbound",
+              label: "thread/settings/update",
+              frame: {
+                id: 5,
+                method: "thread/settings/update",
+                params: { threadId: nativeThreadId, effort: "high" },
+              },
+            },
+            { type: "emit_inbound", frame: { id: 5, result: {} } },
+          );
+        }
         if (outcome === "exhaust") entries.push(...failureEntries(attempt));
         if (
           outcome === "recover" ||
+          outcome === "pick-starting" ||
           outcome === "keep-changed-tier" ||
           outcome === "keep-changed-effort" ||
           outcome === "completion-only" ||
@@ -6134,6 +6151,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const milestones = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
       const starts: Array<unknown> = [];
       const retryStarted = yield* Deferred.make<void>();
+      const testScope = yield* Effect.scope;
+      let pickWhileStarting: Effect.Effect<void, ProviderAdapter.ProviderAdapterV2Error> =
+        Effect.void;
       const harness = yield* makeCodexReplayHarness(
         makeCodexReplayTranscript({ scenario, entries }),
         (event) =>
@@ -6148,6 +6168,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             if (method === "turn/start") {
               starts.push(params);
               if (starts.length === 2) yield* Deferred.succeed(retryStarted, undefined);
+              // The retry's turn/start has not gone out yet, so no turn is registered.
+              if (starts.length === 2) {
+                yield* pickWhileStarting.pipe(
+                  Effect.ignore,
+                  Effect.forkIn(testScope, { startImmediately: true }),
+                );
+              }
             }
           }),
       );
@@ -6158,6 +6185,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         attemptId: RunAttemptId.make(scenario),
         text: prompt,
       });
+      if (outcome === "pick-starting") {
+        pickWhileStarting = harness.runtime.applyModelSelection!({
+          providerThread: harness.providerThread,
+          modelSelection: {
+            ...CODEX_TEST_MODEL_SELECTION,
+            options: [{ id: "reasoningEffort", value: "high" }],
+          },
+        });
+      }
       yield* harness.runtime.startTurn(turnInput);
       if (changedSetting) {
         yield* harness.until(() =>
@@ -6258,6 +6294,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.equal(
         terminal?.status,
         outcome === "recover" ||
+          outcome === "pick-starting" ||
           outcome === "keep-changed-tier" ||
           outcome === "keep-changed-effort" ||
           outcome === "completion-only" ||

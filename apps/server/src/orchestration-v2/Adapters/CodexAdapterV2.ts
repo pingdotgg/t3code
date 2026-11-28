@@ -8519,13 +8519,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             adapterOptions.resolveRuntime === undefined
               ? getCodexServiceTierOptionValue(modelSelection)
               : undefined;
+          // A capacity retry copies its turn's settings before its next turn registers, so a pick
+          // made in between waits for that turn.
+          const retrying = capacityContinuations.get(threadId)?.context.capacityRetryPending;
+          const retried = retrying === undefined ? undefined : yield* Deferred.await(retrying);
           // Between goal turns no turn is active; the held one stands in for the next.
           const held = goalHolds.get(threadId)?.context;
+          const standIns = [held, retried].filter((turn) => turn !== undefined);
           const turns = [
             ...Array.from((yield* Ref.get(activeTurns)).values()).filter(
-              (turn) => turn !== held && turn.providerThread.nativeThreadRef?.nativeId === threadId,
+              (turn) =>
+                !standIns.includes(turn) &&
+                turn.providerThread.nativeThreadRef?.nativeId === threadId,
             ),
-            ...(held === undefined ? [] : [held]),
+            ...standIns,
           ];
           // An effort picked with another model waits for the turn that starts that model.
           const effortTurns = turns.filter(
