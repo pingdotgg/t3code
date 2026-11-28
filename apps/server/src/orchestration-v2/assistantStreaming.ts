@@ -4,8 +4,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 // List fences can open at any indentation; closers may be at most three spaces deeper.
 // A backtick fence's info string cannot contain a backtick, so "```npm test``` runs" is inline code.
 const MARKDOWN_FENCE_PATTERN = /^([ \t]*)(`{3,}(?![^`\r\n]*`)|~{3,})/;
-const LIST_MARKER_PATTERN = /(?:[-*+]|\d{1,9}[.)])/y;
-const FENCE_MARKER_PATTERN = /(?:`{3,}(?![^`\r\n]*`)|~{3,})/y;
+const LIST_MARKER_PATTERN = /[-*+]|\d{1,9}[.)]/y;
 // CommonMark blank lines contain only spaces and tabs.
 const BLANK_LINE_PATTERN = /^[ \t]*$/;
 // Require trailing space so partial list markers cannot match during streaming.
@@ -24,6 +23,7 @@ interface AssistantTextScan {
   readonly openFence: {
     readonly marker: string;
     readonly indent: number;
+    // A fence opened on a list item line ends with the item, at a line indented less than this.
     readonly minIndent: number;
   } | null;
   readonly boundary: number;
@@ -47,51 +47,35 @@ function trimLineEnd(text: string, start: number, end: number): string {
   return text.slice(start, end);
 }
 
-function leadingIndent(line: string): number {
-  let col = 0;
-  for (let i = 0; i < line.length; i++) {
+// Skips spaces and tabs from `i`, counting columns with CommonMark's 4-column tab stops.
+function skipIndent(line: string, i: number, col: number): { i: number; col: number } {
+  for (; i < line.length; i++) {
     const char = line.charCodeAt(i);
     if (char === 32) col++;
     else if (char === 9) col += 4 - (col % 4);
     else break;
   }
-  return col;
+  return { i, col };
 }
 
+const leadingIndent = (line: string) => skipIndent(line, 0, 0).col;
+
+// A fence opened after list markers ("- ```", "1. - ~~~"); `indent` is its content column.
 function matchListItemFence(line: string): { marker: string; indent: number } | null {
-  let i = 0;
-  let col = 0;
-  while (i < line.length) {
-    const char = line.charCodeAt(i);
-    if (char === 32) col++;
-    else if (char === 9) col += 4 - (col % 4);
-    else break;
-    i++;
-  }
+  let { i, col } = skipIndent(line, 0, 0);
   let matched = false;
   for (;;) {
     LIST_MARKER_PATTERN.lastIndex = i;
-    const markerMatch = LIST_MARKER_PATTERN.exec(line);
-    if (!markerMatch) break;
-    i += markerMatch[0].length;
-    col += markerMatch[0].length;
-    const afterMarkerCol = col;
-    while (i < line.length) {
-      const char = line.charCodeAt(i);
-      if (char === 32) col++;
-      else if (char === 9) col += 4 - (col % 4);
-      else break;
-      i++;
-    }
-    const gap = col - afterMarkerCol;
-    if (gap === 0 || gap > 4) return null;
+    const listMarker = LIST_MARKER_PATTERN.exec(line);
+    if (!listMarker) break;
+    const afterMarker = col + listMarker[0].length;
+    ({ i, col } = skipIndent(line, i + listMarker[0].length, afterMarker));
+    if (col === afterMarker || col - afterMarker > 4) return null;
     matched = true;
   }
   if (!matched) return null;
-  FENCE_MARKER_PATTERN.lastIndex = i;
-  const fenceMatch = FENCE_MARKER_PATTERN.exec(line);
-  if (!fenceMatch) return null;
-  return { marker: fenceMatch[0], indent: col };
+  const fence = MARKDOWN_FENCE_PATTERN.exec(line.slice(i));
+  return fence ? { marker: fence[2]!, indent: col } : null;
 }
 
 /** Scans the terminated lines of `text`, resuming after `previous` when `text` extends it. */
