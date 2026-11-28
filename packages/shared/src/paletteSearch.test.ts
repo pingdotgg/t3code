@@ -752,6 +752,10 @@ describe("findSearchTokenRanges", () => {
     expect(findSearchTokenRanges("models and the model", '"model"')).toEqual([
       { start: 15, end: 20 },
     ]);
+    expect(findSearchTokenRanges("日本日本", '"日本"')).toEqual([
+      { start: 0, end: 2 },
+      { start: 2, end: 4 },
+    ]);
   });
 
   it("highlights a dotted capital I as the message matches it", () => {
