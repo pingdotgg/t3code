@@ -2,6 +2,7 @@ import JSZip from "jszip";
 import { describe, expect, it } from "vite-plus/test";
 
 import { prepareOffice } from "./officeArchive";
+import { unlockOpenDocument } from "./openDocumentEncryption";
 
 const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
 const V = 'xmlns:v="urn:schemas-microsoft-com:vml"';
@@ -15,11 +16,13 @@ async function wordFile(
   body: string,
   parts: Partial<Record<"styles" | "numbering" | "header" | "footer" | "footnotes", string>> = {},
   section = "",
+  extraRels = "",
+  media: Record<string, string> = {},
 ) {
   const zip = new JSZip();
   zip.file(
     "[Content_Types].xml",
-    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`,
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="svg" ContentType="image/svg+xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`,
   );
   zip.file(
     "_rels/.rels",
@@ -31,9 +34,10 @@ async function wordFile(
       parts,
     )
       .map((part) => relationship(part, `${part}.xml`))
-      .join("")}</Relationships>`,
+      .join("")}${extraRels}</Relationships>`,
   );
   for (const [part, xml] of Object.entries(parts)) zip.file(`word/${part}.xml`, xml);
+  for (const [path, data] of Object.entries(media)) zip.file(path, data);
   zip.file(
     "word/document.xml",
     `<w:document ${W} ${V} ${R}><w:body>${body}<w:sectPr>${section}<w:pgSz w:w="12240" w:h="15840"/></w:sectPr></w:body></w:document>`,
@@ -91,6 +95,21 @@ describe("Word preview limits", () => {
     expect(await result.part("word/document.xml")).toContain("Item 5999");
   });
 
+  it("keeps the lists of a document with picture bullets, with their text bullets", async () => {
+    const picture = `<w:numPicBullet w:numPicBulletId="0"><w:pict><v:shape style="width:9pt;height:9pt"><v:imagedata r:id="rId1"/></v:shape></w:pict></w:numPicBullet>`;
+    const pictured = `<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/><w:lvlText w:val="\uf0b7"/><w:lvlPicBulletId w:val="0"/></w:lvl></w:abstractNum>`;
+    const numbered = `<w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum>`;
+    const lists = `<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num><w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>`;
+    const result = await prepared(
+      await wordFile(paragraph("Item", `<w:pPr><w:numPr><w:numId w:val="2"/></w:numPr></w:pPr>`), {
+        numbering: `<w:numbering ${W} ${V} ${R}>${picture}${pictured}${numbered}${lists}</w:numbering>`,
+      }),
+    );
+    expect(await result.part("word/numbering.xml")).toBe(
+      `<w:numbering ${W} ${V} ${R}>${pictured.replace('<w:lvlPicBulletId w:val="0"/>', "")}${numbered}${lists}</w:numbering>`,
+    );
+  });
+
   const text = "x".repeat(140_000);
   it.each([
     ["on its own", `<w:p><w:r><w:t>${text}</w:t></w:r></w:p>`],
@@ -132,5 +151,162 @@ describe("Word preview limits", () => {
     expect(await result.part("word/footer.xml")).toBe(footer);
     expect(await result.part("word/footnotes.xml")).toBe(footnotes);
     expect(await result.part("word/document.xml")).toContain("Body");
+  });
+
+  it("drops a malformed external hyperlink relationship while keeping body text", async () => {
+    const result = await prepared(
+      await wordFile(
+        paragraph("Body text"),
+        {},
+        "",
+        `<Relationship Id="badLink" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="http://[placeholder]/" TargetMode="External"/>`,
+      ),
+    );
+    expect(result.truncated).toBe(false);
+    expect(await result.part("word/document.xml")).toContain("Body text");
+    expect(await result.part("word/_rels/document.xml.rels")).not.toContain("badLink");
+  });
+
+  it("keeps a document with an embedded SVG image", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>';
+    const body = `${paragraph("Before")}<w:p><w:r><w:drawing><a:blip xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" r:embed="image"/></w:drawing></w:r></w:p>`;
+    const result = await prepared(
+      await wordFile(body, {}, "", relationship("image", "media/image1.svg"), {
+        "word/media/image1.svg": svg,
+      }),
+    );
+    expect(result.truncated).toBe(false);
+    expect(await result.part("word/document.xml")).toContain("Before");
+    expect(await result.part("word/media/image1.svg")).toBe(svg);
+  });
+
+  it("keeps a VML picture whose imagedata carries a shape id before r:id", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>';
+    const body = `<w:p><w:r><w:pict><v:shape><v:imagedata id="_x0000_i1025" r:id="image"/></v:shape></w:pict></w:r></w:p>`;
+    const result = await prepared(
+      await wordFile(body, {}, "", relationship("image", "media/image1.svg"), {
+        "word/media/image1.svg": svg,
+      }),
+    );
+    expect(await result.part("word/media/image1.svg")).toBe(svg);
+  });
+});
+
+async function workbookFile(
+  target: string,
+  sheetPath: string,
+  extraRels = "",
+  targetMode = "Internal",
+  sheetData = `<row r="1"><c r="A1"><v>42</v></c></row>`,
+) {
+  const zip = new JSZip();
+  zip.file(
+    "[Content_Types].xml",
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>`,
+  );
+  zip.file(
+    "_rels/.rels",
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationship("officeDocument", "xl/workbook.xml")}</Relationships>`,
+  );
+  zip.file(
+    "xl/workbook.xml",
+    `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ${R}><sheets><sheet name="Sample" sheetId="1" r:id="sheet"/></sheets></workbook>`,
+  );
+  zip.file(
+    "xl/_rels/workbook.xml.rels",
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="sheet" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="${target}" TargetMode="${targetMode}"/>${extraRels}</Relationships>`,
+  );
+  zip.file(
+    sheetPath,
+    `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetData}</sheetData></worksheet>`,
+  );
+  return zip.generateAsync({ type: "arraybuffer" });
+}
+
+describe("Workbook relationship targets", () => {
+  it.each(["sheet 1.xml", "sheet%201.xml", "sheet#1.xml"])(
+    "prepares a worksheet whose ZIP name matches its target literally (%s)",
+    async (name) => {
+      const result = await prepareOffice(
+        await workbookFile(`worksheets/${name}`, `xl/worksheets/${name}`),
+        "xlsx",
+      );
+      const zip = await JSZip.loadAsync(result.bytes);
+      expect(result.truncated).toBe(false);
+      expect(await zip.file(`xl/worksheets/${name}`)?.async("string")).toContain("42");
+    },
+  );
+
+  it("refuses a worksheet whose relationship is external", async () => {
+    await expect(
+      prepareOffice(
+        await workbookFile("worksheets/sheet2.xml", "xl/worksheets/sheet2.xml", "", "External"),
+        "xlsx",
+      ),
+    ).rejects.toMatchObject({ code: "workbook-sheet-count" });
+  });
+
+  it("handles a malformed external relationship in workbook relationships", async () => {
+    const result = await prepareOffice(
+      await workbookFile(
+        "worksheets/sheet1.xml",
+        "xl/worksheets/sheet1.xml",
+        `<Relationship Id="ext" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLinkPath" Target="http://[placeholder]/" TargetMode="External"/>`,
+      ),
+      "xlsx",
+    );
+    const zip = await JSZip.loadAsync(result.bytes);
+    expect(result.truncated).toBe(false);
+    expect(await zip.file("xl/worksheets/sheet1.xml")?.async("string")).toContain("42");
+  });
+});
+
+describe("Workbook preview limits", () => {
+  it("does not split a surrogate pair when truncating cell text", async () => {
+    const prefix = "a".repeat(4095);
+    const result = await prepareOffice(
+      await workbookFile(
+        "worksheets/sheet1.xml",
+        "xl/worksheets/sheet1.xml",
+        "",
+        "Internal",
+        `<row r="1"><c r="A1" t="inlineStr"><is><t>${prefix}🚀tail</t></is></c></row>`,
+      ),
+      "xlsx",
+    );
+    const zip = await JSZip.loadAsync(result.bytes);
+    const sheet = await zip.file("xl/worksheets/sheet1.xml")?.async("string");
+    expect(result.truncated).toBe(true);
+    expect(sheet).toContain(`<t>${prefix}</t>`);
+    expect(sheet).not.toContain("\ufffd");
+  });
+});
+
+describe("Case-insensitive XML size limits", () => {
+  it("rejects uppercase .XML entries exceeding 8 MiB in office archives", async () => {
+    const zip = new JSZip();
+    zip.file("ppt/slides/slide1.XML", new Uint8Array(8 * 1024 * 1024 + 1));
+    const bytes = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
+    await expect(prepareOffice(bytes, "pptx")).rejects.toMatchObject({
+      code: "office-too-large-expanded",
+    });
+  });
+
+  it("rejects uppercase .XML entries exceeding 8 MiB in encrypted OpenDocument manifests", async () => {
+    const zip = new JSZip();
+    const manifestXml =
+      `<?xml version="1.0" encoding="UTF-8"?>` +
+      `<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">` +
+      `<manifest:file-entry manifest:full-path="content.XML" manifest:size="${8 * 1024 * 1024 + 1}">` +
+      `<manifest:encryption-data manifest:checksum-type="SHA1/1K" manifest:checksum="AAAAAAAAAAAAAAAAAAAAAAAAAAA=">` +
+      `<manifest:algorithm manifest:algorithm-name="http://www.w3.org/2001/04/xmlenc#aes256-cbc" manifest:initialisation-vector="AAAAAAAAAAAAAAAAAAAAAA=="/>` +
+      `<manifest:key-derivation manifest:key-derivation-name="PBKDF2" manifest:iteration-count="1" manifest:salt="AAAAAAAAAAAAAAAAAAAAAA=="/>` +
+      `</manifest:encryption-data>` +
+      `</manifest:file-entry>` +
+      `</manifest:manifest>`;
+    zip.file("META-INF/manifest.xml", manifestXml);
+    await expect(unlockOpenDocument(zip, "open me")).rejects.toMatchObject({
+      code: "office-too-large-expanded",
+    });
   });
 });

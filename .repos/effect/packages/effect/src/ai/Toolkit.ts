@@ -14,6 +14,7 @@ import * as Cause from "../Cause.ts"
 import * as Context from "../Context.ts"
 import * as Effect from "../Effect.ts"
 import * as Effectable from "../Effectable.ts"
+import * as Exit from "../Exit.ts"
 import * as Fiber from "../Fiber.ts"
 import { identity } from "../Function.ts"
 import * as InternalRecord from "../internal/record.ts"
@@ -217,9 +218,9 @@ export interface WithHandler<in out Tools extends Record<string, Tool.Any>> {
      */
     name: Name,
     /**
-     * Encoded parameters to decode and pass to the tool handler.
+     * JSON-encoded parameters to decode and pass to the tool handler.
      */
-    params: Tool.ParametersEncoded<Tools[Name]>,
+    params: Schema.Json,
     /**
      * The unique identifier of the tool call.
      */
@@ -346,6 +347,51 @@ export const PreliminaryBuffer = Context.Reference<number | "unbounded">("effect
   defaultValue: () => "unbounded"
 })
 
+/**
+ * Controls whether tool call arguments are recorded on the current span.
+ *
+ * **Details**
+ *
+ * Defaults to `false`: `Toolkit.handle` records only `gen_ai.tool.name` and,
+ * when a call id is given, `gen_ai.tool.call.id`. Provide `true` to also record
+ * the arguments as JSON in `gen_ai.tool.call.arguments`. `McpServer` reads the
+ * same setting for `tools/call` requests.
+ *
+ * **Gotchas**
+ *
+ * Arguments can contain user data. Only enable this where your traces may hold
+ * it.
+ *
+ * **Example** (Recording tool arguments)
+ *
+ * ```ts import.meta.vitest
+ * import { Layer } from "effect"
+ * import { Toolkit } from "effect/ai"
+ *
+ * export const RecordToolArgumentsLive = Layer.succeed(Toolkit.RecordToolArguments, true)
+ * ```
+ *
+ * @stability unstable
+ * @category services
+ * @since 4.1.3
+ */
+export const RecordToolArguments = Context.Reference<boolean>("effect/ai/Toolkit/RecordToolArguments", {
+  defaultValue: () => false
+})
+
+/**
+ * Formats tool arguments for the `gen_ai.tool.call.arguments` span attribute.
+ *
+ * @internal
+ */
+export const stringifyToolArguments = (params: unknown): string => {
+  try {
+    return JSON.stringify(params) ?? "null"
+  } catch {
+    return String(params)
+  }
+}
+
 const failureCause = <E>(error: E, origin: Tool.FailureOrigin): Cause.Cause<E> =>
   Cause.annotate(Cause.fail(error), Context.make(FailureOrigin, origin))
 
@@ -372,10 +418,10 @@ const Proto = {
         if (Predicate.isUndefined(schemas)) {
           const handler = services.mapUnsafe.get(tool.id)! as Tool.Handler<any>
           const decodeParameters = Schema.isSchema(tool.parametersSchema)
-            ? Schema.decodeUnknownEffect(tool.parametersSchema) as any
+            ? Schema.decodeUnknownEffect(Schema.toCodecJson(tool.parametersSchema)) as any
             : (u: unknown) => Effect.succeed(u)
-          const encodeSuccess = Schema.encodeUnknownEffect(tool.successSchema) as any
-          const encodeFailure = Schema.encodeUnknownEffect(Tool.failureResultSchema(tool)) as any
+          const encodeSuccess = Schema.encodeUnknownEffect(Schema.toCodecJson(tool.successSchema)) as any
+          const encodeFailure = Schema.encodeUnknownEffect(Schema.toCodecJson(Tool.failureResultSchema(tool))) as any
           const encodeResult = (u: unknown, isFailure: boolean) => isFailure ? encodeFailure(u) : encodeSuccess(u)
           schemas = {
             context: handler.context,
@@ -396,10 +442,13 @@ const Proto = {
       ) {
         const tool = Object.hasOwn(tools, name) ? tools[name] : undefined
 
-        yield* Effect.annotateCurrentSpan({
-          tool: name,
-          parameters: params
-        })
+        yield* Effect.annotateCurrentSpan("gen_ai.tool.name", name)
+        if (toolCallId !== undefined) {
+          yield* Effect.annotateCurrentSpan("gen_ai.tool.call.id", toolCallId)
+        }
+        if (yield* RecordToolArguments) {
+          yield* Effect.annotateCurrentSpan("gen_ai.tool.call.arguments", stringifyToolArguments(params))
+        }
 
         if (Predicate.isUndefined(tool)) {
           return yield* AiError.make({
@@ -410,6 +459,12 @@ const Proto = {
               availableTools: Object.keys(tools)
             })
           })
+        }
+
+        if (Tool.isClientExecuted(tool)) {
+          return yield* Effect.die(
+            new Error(`Tool "${name}" is executed by the client and has no handler`)
+          )
         }
 
         const schemas = getSchemas(tool)
@@ -480,8 +535,10 @@ const Proto = {
             onFailure: (cause) => Queue.failCause(queue, cause),
             onSuccess: () => Queue.end(queue)
           }),
-          Effect.forkChild
+          Effect.forkChild({ startImmediately: true })
         )
+        // Drain the last offer only once stream cleanup can no longer interrupt the producer.
+        fiber.addObserver(() => Queue.flushUnsafe(queue))
 
         const normalizeError = (error: unknown) => {
           const normalizedError = Schema.isSchemaError(error)
@@ -530,7 +587,13 @@ const Proto = {
             }
             return { ...output, encodedResult, modelOutput: tool.toModelOutput(output.result) }
           })),
-          Stream.ensuring(Fiber.interrupt(fiber))
+          Stream.ensuring(Effect.flatMap(
+            Effect.andThen(Fiber.interrupt(fiber), Fiber.await(fiber)),
+            (exit) => {
+              const dies = Exit.isFailure(exit) ? exit.cause.reasons.filter(Cause.isDieReason) : []
+              return dies.length > 0 ? Effect.failCause(Cause.fromReasons(dies)) : Effect.void
+            }
+          ))
         ) satisfies Stream.Stream<Tool.HandlerResult<any>, any>
       })
 

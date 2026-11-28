@@ -11,12 +11,14 @@
  * @since 4.0.0
  */
 import type * as Config from "../Config.ts"
+import type * as Context from "../Context.ts"
 import type * as Effect from "../Effect.ts"
 import { dual, type LazyArg } from "../Function.ts"
 import type * as Option from "../Option.ts"
 import type * as Redacted_ from "../Redacted.ts"
 import type * as Result from "../Result.ts"
 import type * as Schema from "../Schema.ts"
+import type { NoInfer } from "../Types.ts"
 import type * as CliError from "./CliError.ts"
 import type { Environment } from "./Command.ts"
 import * as Param from "./Param.ts"
@@ -868,3 +870,37 @@ export const orElseResult: {
   <B>(that: LazyArg<Argument<B>>): <A>(self: Argument<A>) => Argument<Result.Result<A, B>>
   <A, B>(self: Argument<A>, that: LazyArg<Argument<B>>): Argument<Result.Result<A, B>>
 } = dual(2, <A, B>(self: Argument<A>, that: LazyArg<Argument<B>>) => Param.orElseResult(self, that))
+
+/**
+ * Attaches a user-defined annotation to a positional argument, keyed by a `Context.Key`.
+ *
+ * **Details**
+ *
+ * Annotations never affect parsing, help or completions. `CommandSpec.resolve`
+ * reports them so documentation tooling can read facts the parser cannot
+ * know, such as the environment variable behind a config fallback.
+ *
+ * **Example** (Annotating a positional argument)
+ *
+ * ```ts import.meta.vitest
+ * import { Context } from "effect"
+ * import { Argument } from "effect/cli"
+ *
+ * const EnvVar = Context.Service<never, string>("app/EnvVar")
+ *
+ * const target = Argument.String("target").pipe(Argument.annotate(EnvVar, "APP_TARGET"))
+ * target.kind // => "argument"
+ * ```
+ *
+ * @stability unstable
+ * @category metadata
+ * @since 4.1.3
+ */
+export const annotate: {
+  <I, S>(key: Context.Key<I, S>, value: NoInfer<S>): <A>(self: Argument<A>) => Argument<A>
+  <A, I, S>(self: Argument<A>, key: Context.Key<I, S>, value: NoInfer<S>): Argument<A>
+} = dual(
+  3,
+  <A, I, S>(self: Argument<A>, key: Context.Key<I, S>, value: NoInfer<S>): Argument<A> =>
+    Param.annotate(self, key, value)
+)

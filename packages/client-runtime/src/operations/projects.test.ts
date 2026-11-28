@@ -9,13 +9,33 @@ import {
   getCloneDirectoryLeafName,
   getCloneDirectoryName,
   getCloneDirectoryPath,
+  getAddProjectInitialQuery,
   getDefaultCloneUrl,
   githubIncompleteOwnerRepositoryMessage,
   normalizePastedCloneUrl,
+  sortAddProjectProviderSources,
 } from "./projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
+import { isFilesystemBrowseQuery } from "../state/projects.ts";
 
 describe("add project shared logic", () => {
+  it("starts the Add Project picker on a browsable path for a relative base directory", () => {
+    expect(isFilesystemBrowseQuery(getAddProjectInitialQuery("Desktop/dev"))).toBe(true);
+    expect(getAddProjectInitialQuery("Desktop/dev")).toBe("~/Desktop/dev/");
+    expect(getAddProjectInitialQuery("/srv/code")).toBe("/srv/code/");
+    expect(getAddProjectInitialQuery("~")).toBe("~/");
+    expect(getAddProjectInitialQuery("./work")).toBe("./work/");
+    expect(getAddProjectInitialQuery("C:\\dev")).toBe("C:\\dev\\");
+  });
+
+  it("offers only GitHub until other hosts are turned on", () => {
+    const ready = () => ({ ready: true, hint: null });
+    expect(sortAddProjectProviderSources(ready, {})).toEqual(["github"]);
+    expect(sortAddProjectProviderSources(ready, { gitlab: true, github: false })).toEqual([
+      "gitlab",
+    ]);
+  });
+
   it("asks for a repository name when GitHub input is only an owner path", () => {
     const github = SourceControlProviderKind.make("github");
     expect(githubIncompleteOwnerRepositoryMessage(github, "pingdotgg/")).toBe(
@@ -122,7 +142,14 @@ describe("add project shared logic", () => {
     expect(getCloneDirectoryName("/srv/git/repo.git")).toBe("repo");
     expect(getCloneDirectoryName("C:\\src\\repo.git")).toBe("repo");
     expect(getCloneDirectoryName("git@github.com:repo.git")).toBe("repo");
+    expect(getCloneDirectoryName("git@forge.example:team/spec#2026.git")).toBe("spec#2026");
+    expect(getCloneDirectoryName("forge.example:team#1/spec.git")).toBe("spec");
     expect(getCloneDirectoryName("  https://github.com/owner/repo.git  ")).toBe("repo");
+    expect(getCloneDirectoryName("/srv/git/firmware#2.git")).toBe("firmware#2");
+    expect(getCloneDirectoryName("~/git/what?.git")).toBe("what?");
+    expect(getCloneDirectoryName("../firmware#2.git")).toBe("firmware#2");
+    expect(getCloneDirectoryName("C:\\src\\firmware#2.git")).toBe("firmware#2");
+    expect(getCloneDirectoryName("github.com:owner/repo.git?ref=main")).toBe("repo");
   });
 
   it("lays clone folders out like ghq only when asked, and only when the URL is safe", () => {

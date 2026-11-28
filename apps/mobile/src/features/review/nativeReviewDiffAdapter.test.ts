@@ -8,7 +8,10 @@ import { combinePullRequestDiffPages } from "../pull-requests/pullRequestDiffPag
 import { createPullRequestDiffHighlightFiles } from "../pull-requests/pullRequestDiffHighlightFiles";
 import {
   buildNativeReviewDiffData,
+  buildNativeReviewSnippetRows,
+  buildReviewCommentPatch,
   getCachedNativeReviewDiffData,
+  reviewCommentDiffText,
 } from "./nativeReviewDiffAdapter";
 import type { ReviewInlineComment } from "./reviewCommentSelection";
 import { buildReviewParsedDiff, type ReviewParsedDiff } from "./reviewModel";
@@ -45,6 +48,58 @@ function filesPatch(paths: ReadonlyArray<string>) {
     )
     .join("\n");
 }
+
+describe("buildReviewCommentPatch", () => {
+  it("keeps a selection's trailing blank line and whitespace", () => {
+    const rows = (diff: string) =>
+      buildNativeReviewDiffData(
+        buildReviewParsedDiff(
+          buildReviewCommentPatch({ ...makeComment("Insert here."), diff }),
+          "review-comment-trailing-blank",
+        ),
+      ).rows.filter((row) => row.kind === "line");
+
+    expect(rows("@@ -3,1 +2,2 @@\n+two\t\n ")).toMatchObject([
+      { content: "two\t", change: "add" },
+      { content: "", change: "context" },
+    ]);
+    expect(rows("@@ -4,1 +4,1 @@\n ")).toMatchObject([{ content: "", change: "context" }]);
+    expect(reviewCommentDiffText("\n@@ -3,1 +2,2 @@\n+two\t\n \n")).toBe(
+      "@@ -3,1 +2,2 @@\n+two\t\n ",
+    );
+  });
+});
+
+describe("buildNativeReviewSnippetRows", () => {
+  const snippet = (diff: string) =>
+    buildNativeReviewSnippetRows({ id: "selection", diff }).map((row) => [row.change, row.content]);
+
+  it("keeps changed -- and ++ lines but leaves file headers to the raw renderer", () => {
+    expect(snippet(" select 1;\n--- note\n+-- new note")).toEqual([
+      ["context", "select 1;"],
+      ["delete", "-- note"],
+      ["add", "-- new note"],
+    ]);
+    expect(snippet("+++ counter\n-x")).toEqual([
+      ["add", "++ counter"],
+      ["delete", "x"],
+    ]);
+    expect(snippet("--- /dev/null avoids disk writes\n--- 1\t2026-01-01\tAlice")).toEqual([
+      ["delete", "-- /dev/null avoids disk writes"],
+      ["delete", "-- 1\t2026-01-01\tAlice"],
+    ]);
+    for (const header of [
+      "--- old.sql\n+++ new.sql\n-old\n+new",
+      "--- /dev/null\n+++ b/foo.ts\n+new",
+      "+++ b/foo.ts",
+      "--- /dev/null",
+      '+++ "b/caf\\303\\251.ts"',
+      "--- old.sql\t2026-01-01 00:00:00.000000000 +0000",
+    ]) {
+      expect(snippet(header)).toEqual([]);
+    }
+  });
+});
 
 describe("buildNativeReviewDiffData languages", () => {
   it.each([

@@ -1,5 +1,9 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
+  ProviderDriverKind,
   type ModelCapabilities,
+  type ProviderOptionDescriptor,
+  type ServerProvider,
   type ServerProviderModel,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
@@ -10,10 +14,19 @@ import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
+import type * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { createModelCapabilities } from "@t3tools/shared/model";
-import { compareSemverVersions } from "@t3tools/shared/semver";
+import { createModelCapabilities, DEFAULT_VARIANT_CHOICE_ID } from "@t3tools/shared/model";
+import {
+  brokenVersionDetail,
+  noCompatibilityPolicy,
+  type ProviderCompatibilityLookup,
+} from "@t3tools/provider-core/server/compatibility";
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
@@ -24,6 +37,7 @@ import {
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import type { ProbedOpenCode } from "./versionProbe.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
+import { ServiceUnavailableError } from "@opencode/protocol/errors";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 
 const OPENCODE_PRESENTATION = {
@@ -182,6 +196,10 @@ function titleCaseSlug(value: string): string {
   return segments.join(" ");
 }
 
+function reasoningVariantLabel(value: string): string {
+  return value === "xhigh" ? "Extra High" : titleCaseSlug(value);
+}
+
 function inferDefaultVariant(
   providerID: string,
   variants: ReadonlyArray<string>,
@@ -192,10 +210,36 @@ function inferDefaultVariant(
   if (providerID === "anthropic" || providerID.startsWith("google")) {
     return variants.includes("high") ? "high" : undefined;
   }
-  if (providerID === "openai" || providerID === "opencode") {
+  if (providerID === "openai" || providerID === "opencode" || providerID === "opencode-go") {
     return variants.includes("medium") ? "medium" : variants.includes("high") ? "high" : undefined;
   }
   return undefined;
+}
+
+/** Without an inferable default, a Default choice lets the user go back to sending no variant. */
+function openCodeVariantDescriptors(
+  providerID: string,
+  variants: ReadonlyArray<string>,
+): Array<ProviderOptionDescriptor> {
+  if (variants.length === 0) return [];
+  const inferred = inferDefaultVariant(providerID, variants);
+  const options = variants.map((id) => ({
+    id,
+    label: reasoningVariantLabel(id),
+    ...(id === inferred ? { isDefault: true } : {}),
+  }));
+  return [
+    {
+      id: "variant",
+      label: "Reasoning",
+      type: "select",
+      options:
+        inferred === undefined
+          ? [{ id: DEFAULT_VARIANT_CHOICE_ID, label: "Default" }, ...options]
+          : options,
+      currentValue: inferred ?? DEFAULT_VARIANT_CHOICE_ID,
+    },
+  ];
 }
 
 function inferDefaultAgent(agents: ReadonlyArray<Agent>): string | undefined {
@@ -235,12 +279,6 @@ function openCodeCapabilitiesForModel(input: {
   readonly agents: ReadonlyArray<Agent>;
 }): ModelCapabilities {
   const variantValues = Object.keys(input.model.variants ?? {});
-  const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
-  const variantOptions = variantValues.map((value) =>
-    defaultVariant === value
-      ? { id: value, label: titleCaseSlug(value), isDefault: true as const }
-      : { id: value, label: titleCaseSlug(value) },
-  );
   const primaryAgents = input.agents.filter(
     (agent) => !agent.hidden && (agent.mode === "primary" || agent.mode === "all"),
   );
@@ -252,17 +290,7 @@ function openCodeCapabilitiesForModel(input: {
   );
   return createModelCapabilities({
     optionDescriptors: [
-      ...(variantOptions.length > 0
-        ? [
-            {
-              id: "variant",
-              label: "Reasoning",
-              type: "select" as const,
-              options: variantOptions,
-              ...(defaultVariant ? { currentValue: defaultVariant } : {}),
-            },
-          ]
-        : []),
+      ...openCodeVariantDescriptors(input.providerID, variantValues),
       ...(agentOptions.length > 0
         ? [
             {
@@ -280,15 +308,32 @@ function openCodeCapabilitiesForModel(input: {
 
 interface OpenCodeRelease {
   readonly providerID: string;
+  readonly id: string;
   readonly family?: string | undefined;
   readonly released?: number | undefined;
   readonly deprecated?: boolean | undefined;
+  /** Base input and output price, which a model size keeps when it is renamed. */
+  readonly price?: string | undefined;
 }
 
+export const openCodePrice = (cost: { readonly input: number; readonly output: number }) =>
+  `${cost.input}/${cost.output}`;
+
 /**
- * OpenCode catalogs keep every release of a family, such as Claude Opus 4.5
- * through 5.5. Only the newest active release of each family within a
- * sub-provider stays current; older releases and deprecated models are legacy.
+ * `claude-opus-5` and `claude-opus-5-5` are one release line; `gemini-4-carbon` is another.
+ * A parameter count such as `8b` or `70b` names a size, so it stays in the line.
+ */
+const releaseLine = (id: string) =>
+  id
+    .toLowerCase()
+    .split(/[-_]/)
+    .map((token) => (/^\d+(\.\d+)?[bm]$/.test(token) ? token : token.replace(/[\d.]+/g, "")))
+    .join("");
+
+/**
+ * One OpenCode family can hold several model sizes, such as Gemini 4 Carbon and Hydrogen.
+ * A release is legacy when deprecated, or when its family in the same sub-provider has a
+ * newer active release whose id differs only in version or that is sold at the same price.
  */
 function markOpenCodeLegacy(
   entries: ReadonlyArray<{
@@ -298,23 +343,39 @@ function markOpenCodeLegacy(
 ): Array<ServerProviderModel> {
   const familyKey = ({ providerID, family }: OpenCodeRelease) =>
     family ? `${providerID}/${family}` : undefined;
-  const newest = new Map<string, number>();
+  const active = new Map<
+    string,
+    Array<{ readonly released: number; readonly line: string; readonly price: string | undefined }>
+  >();
   for (const { release } of entries) {
     const key = familyKey(release);
     if (key === undefined || release.released === undefined || release.deprecated) continue;
-    newest.set(key, Math.max(newest.get(key) ?? release.released, release.released));
+    const releases = active.get(key) ?? [];
+    releases.push({
+      released: release.released,
+      line: releaseLine(release.id),
+      price: release.price,
+    });
+    active.set(key, releases);
   }
   return entries.map(({ model, release }) => {
     const key = familyKey(release);
-    const latest = key === undefined ? undefined : newest.get(key);
+    const { released, price } = release;
+    const line = releaseLine(release.id);
     const superseded =
-      latest !== undefined && release.released !== undefined && release.released < latest;
+      key !== undefined &&
+      released !== undefined &&
+      (active.get(key) ?? []).some(
+        (other) =>
+          other.released > released &&
+          (other.line === line || (price !== undefined && other.price === price)),
+      );
     return release.deprecated || superseded ? { ...model, isLegacy: true } : model;
   });
 }
 
 function flattenOpenCodeModels(
-  input: OpenCodeRuntime.OpenCodeInventory,
+  input: Pick<OpenCodeRuntime.OpenCodeInventory, "providerList" | "agents">,
 ): ReadonlyArray<ServerProviderModel> {
   const connected = new Set(input.providerList.connected);
   const entries: Array<{ model: ServerProviderModel; release: OpenCodeRelease }> = [];
@@ -346,15 +407,32 @@ function flattenOpenCodeModels(
         },
         release: {
           providerID: provider.id,
+          id: model.id,
           family: model.family,
           released: Number.isNaN(released) ? undefined : released,
           deprecated: model.status === "deprecated",
+          price: model.cost ? openCodePrice(model.cost) : undefined,
         },
       });
     }
   }
 
   return markOpenCodeLegacy(entries).toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
+/** Undefined when OpenCode lists no models, so callers can keep the catalog they have. */
+export function openCodeProviderModels(
+  settings: Pick<OpenCodeSettings, "customModels">,
+  catalog: Pick<OpenCodeRuntime.OpenCodeInventory, "providerList" | "agents">,
+): ReadonlyArray<ServerProviderModel> | undefined {
+  const models = flattenOpenCodeModels(catalog);
+  return models.length === 0
+    ? undefined
+    : providerModelsFromSettings(
+        models,
+        settings.customModels,
+        DEFAULT_OPENCODE_MODEL_CAPABILITIES,
+      );
 }
 
 function trimOptional(value: string | null | undefined): string | undefined {
@@ -450,7 +528,6 @@ export const makePendingOpenCodeProvider = Effect.fn(
 });
 
 export interface OpenCode2Model extends OpenCodeRelease {
-  readonly id: string;
   readonly name: string;
   readonly providerName?: string;
   readonly variants: ReadonlyArray<{ readonly id: string }>;
@@ -481,28 +558,73 @@ const catalogFingerprint = (models: ReadonlyArray<OpenCode2Model>) =>
     .toSorted()
     .join("\n");
 
+// A cold OpenCode 2.2.5 503s model reads for about a minute while its location plugins activate.
+const PLUGIN_ACTIVATION_DEADLINE = "2 minutes";
+
+const isServiceUnavailable = Schema.is(ServiceUnavailableError);
+const isActivatingPlugins = (error: unknown): boolean =>
+  OpenCodeRuntime.isOpenCodeRuntimeError(error)
+    ? isActivatingPlugins(error.cause)
+    : isServiceUnavailable(error) && error.service === "plugin";
+
 /** A cold server can list a partial catalog; two agreeing reads reduce that startup race. */
+const settleOpenCode2Catalog = <E>(
+  list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
+  first?: ReadonlyArray<OpenCode2Model>,
+) =>
+  Effect.suspend(() => {
+    let previous = first && first.length > 0 ? catalogFingerprint(first) : undefined;
+    return (first ? Effect.delay(list, "250 millis") : list).pipe(
+      Effect.repeat({
+        until: (models) => {
+          const fingerprint = models.length > 0 ? catalogFingerprint(models) : undefined;
+          const settled = fingerprint !== undefined && fingerprint === previous;
+          previous = fingerprint;
+          return settled;
+        },
+        schedule: Schedule.spaced("250 millis"),
+      }),
+    );
+  });
+
+const OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS = 5_000;
+
 export const makeOpenCode2ModelLoader = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
+  environment?: NodeJS.ProcessEnv,
 ) =>
   Effect.sync(() => {
     let lastLoaded: ReadonlyArray<OpenCode2Model> = [];
     return Effect.suspend(() => {
-      let previous: string | undefined;
       let latest: ReadonlyArray<OpenCode2Model> = [];
-      return list.pipe(
-        Effect.repeat({
-          until: (models) => {
+      const tracked = list.pipe(
+        Effect.tap((models) =>
+          Effect.sync(() => {
             if (models.length > 0) latest = models;
-            const fingerprint = models.length > 0 ? catalogFingerprint(models) : undefined;
-            const settled = fingerprint !== undefined && fingerprint === previous;
-            previous = fingerprint;
-            return settled;
-          },
-          schedule: Schedule.spaced("250 millis"),
-        }),
-        Effect.catch((error) => (latest.length > 0 ? Effect.succeed(latest) : Effect.fail(error))),
-        Effect.timeoutOption("5 seconds"),
+          }),
+        ),
+      );
+      // The first read can include a cold server start, so only settling shares the budget.
+      // Each retry borrows the managed server, so retries well inside its idle TTL keep it alive.
+      return tracked.pipe(
+        Effect.retry({ while: isActivatingPlugins, schedule: Schedule.spaced("1 second") }),
+        Effect.timeoutOption(PLUGIN_ACTIVATION_DEADLINE),
+        Effect.flatMap((first) =>
+          Option.isNone(first)
+            ? Effect.succeedNone
+            : settleOpenCode2Catalog(tracked, first.value).pipe(
+                Effect.timeoutOption(
+                  resolveProviderProbeTimeoutMs(
+                    "opencode",
+                    OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS,
+                    environment,
+                  ),
+                ),
+              ),
+        ),
+        Effect.catch((error) =>
+          latest.length > 0 ? Effect.succeedSome(latest) : Effect.fail(error),
+        ),
         Effect.map((loaded) => {
           // Fresh progress may still be partial, but a warm cache must not freeze slow catalogs.
           if (loaded._tag === "Some") lastLoaded = loaded.value;
@@ -512,6 +634,176 @@ export const makeOpenCode2ModelLoader = <E>(
       );
     });
   });
+
+/** None when the reads fail or never agree, so a partial catalog never passes for a settled one. */
+export const readSettledOpenCode2Catalog = <E>(
+  list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
+  environment?: NodeJS.ProcessEnv,
+) =>
+  settleOpenCode2Catalog(list).pipe(
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("opencode", OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS, environment),
+    ),
+    Effect.orElseSucceed(() => Option.none<ReadonlyArray<OpenCode2Model>>()),
+  );
+
+// The registry keeps this many per-directory snapshots; older directories need no watch.
+const WATCHED_DIRECTORIES = 16;
+
+interface WatchedCatalog {
+  readonly read: Effect.Effect<ReadonlyArray<OpenCode2Model>, OpenCodeRuntime.OpenCodeRuntimeError>;
+  previous: string | undefined;
+}
+
+/**
+ * OpenCode serves a startup snapshot until discovery ends and only `model.updated` says when, so
+ * no wait proves a catalog complete. The watch re-reads after each followed read and each change
+ * while the server's event stream lasts, borrowing nothing so a managed server still idles out.
+ */
+export const makeOpenCode2CatalogWatch = Effect.fn(
+  "OpencodeProviderStatus.makeOpenCode2CatalogWatch",
+)(function* (environment?: NodeJS.ProcessEnv) {
+  const scope = yield* Effect.scope;
+  const latest = yield* SubscriptionRef.make<ReadonlyArray<OpenCode2Model> | undefined>(undefined);
+  const rescans = yield* Queue.unbounded<string, Cause.Done>();
+  yield* Effect.addFinalizer(() => Queue.end(rescans));
+  const reads = yield* Queue.sliding<void>(1);
+  let following:
+    | {
+        readonly server: string;
+        machine: WatchedCatalog | undefined;
+        readonly directories: Map<string, WatchedCatalog>;
+      }
+    | undefined;
+  const reread = (
+    watched: WatchedCatalog,
+    changed: (catalog: ReadonlyArray<OpenCode2Model>) => Effect.Effect<unknown>,
+    read: Effect.Effect<
+      ReadonlyArray<OpenCode2Model>,
+      OpenCodeRuntime.OpenCodeRuntimeError
+    > = watched.read,
+  ) =>
+    read.pipe(
+      Effect.flatMap((catalog) => {
+        const fingerprint = catalog.length > 0 ? catalogFingerprint(catalog) : undefined;
+        if (fingerprint === undefined || fingerprint === watched.previous) return Effect.void;
+        watched.previous = fingerprint;
+        return changed(catalog);
+      }),
+      // A stopped server fails every read; that must not discard the catalog it had listed.
+      Effect.retry({ times: 3, schedule: Schedule.spaced("1 second") }),
+      // Nothing else bounds this read, and one that hangs would hold every later change.
+      Effect.timeout("30 seconds"),
+      Effect.ignore,
+    );
+  return {
+    /** The newest machine catalog the watch read; undefined when the last check knows better. */
+    changes: SubscriptionRef.changes(latest),
+    /** Directories whose catalog no longer matches the one their scan was given. */
+    rescans: Stream.fromQueue(rescans),
+    /**
+     * Call beside each catalog read. `read` must not borrow the server. A `directory` read
+     * reports the catalog its scan settled on, if any, and is rescanned once that changes.
+     */
+    follow: <E, SE>(
+      server: string,
+      subscribe: Effect.Effect<Stream.Stream<{ readonly type: string }, SE>, E, Scope.Scope>,
+      read: Effect.Effect<ReadonlyArray<OpenCode2Model>, OpenCodeRuntime.OpenCodeRuntimeError>,
+      directory?: { readonly cwd: string; readonly settled?: ReadonlyArray<OpenCode2Model> },
+    ) =>
+      Effect.suspend(() => {
+        const started = following?.server !== server;
+        const watching = started
+          ? { server, machine: undefined, directories: new Map<string, WatchedCatalog>() }
+          : following!;
+        following = watching;
+        if (directory === undefined) {
+          watching.machine = { read, previous: watching.machine?.previous };
+        } else {
+          const { cwd, settled } = directory;
+          const previous = settled?.length
+            ? catalogFingerprint(settled)
+            : watching.directories.get(cwd)?.previous;
+          watching.directories.delete(cwd);
+          watching.directories.set(cwd, { read, previous });
+          for (const oldest of watching.directories.keys()) {
+            if (watching.directories.size <= WATCHED_DIRECTORIES) break;
+            watching.directories.delete(oldest);
+          }
+        }
+        const requested = Queue.offer(reads, undefined).pipe(Effect.asVoid);
+        if (!started) return requested;
+        const rereadAll = Effect.suspend(() =>
+          Effect.forEach(
+            [
+              ...(watching.machine
+                ? [reread(watching.machine, (catalog) => SubscriptionRef.set(latest, catalog))]
+                : []),
+              ...Array.from(watching.directories, ([cwd, watched]) =>
+                reread(watched, () => Queue.offer(rescans, cwd)),
+              ),
+            ],
+            (effect) => effect,
+            { concurrency: 4, discard: true },
+          ),
+        );
+        // A new server lists its startup snapshot first; nothing else reads it unless a check did.
+        const settleMachine = Effect.suspend(() => {
+          const machine = watching.machine;
+          return machine === undefined
+            ? Effect.void
+            : reread(
+                machine,
+                (catalog) => SubscriptionRef.set(latest, catalog),
+                readSettledOpenCode2Catalog(machine.read, environment).pipe(
+                  Effect.map(Option.getOrElse((): ReadonlyArray<OpenCode2Model> => [])),
+                ),
+              );
+        });
+        const watch = subscribe.pipe(
+          Effect.tap(() => settleMachine),
+          Effect.flatMap((events) =>
+            events.pipe(
+              Stream.filter((event) => event.type === "model.updated"),
+              Stream.merge(Stream.fromQueue(reads), { haltStrategy: "left" }),
+              // OpenCode announces one change as a burst of events.
+              Stream.debounce("250 millis"),
+              Stream.runForEach(() => rereadAll),
+              Effect.ignore,
+            ),
+          ),
+          // Unwatched, a catalog kept from an earlier server would override every later check.
+          Effect.catch(() => SubscriptionRef.set(latest, undefined)),
+          Effect.scoped,
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (following === watching) following = undefined;
+            }),
+          ),
+        );
+        return requested.pipe(Effect.andThen(Effect.forkIn(watch, scope)), Effect.asVoid);
+      }),
+  };
+});
+
+const openCode2ReadyMessage = (version: string, count: number) =>
+  `OpenCode ${version} lists ${count} model${count === 1 ? "" : "s"}.`;
+
+/** A catalog read after the check reports the same health the check would have. */
+export const withOpenCode2Catalog = (
+  snapshot: ServerProvider,
+  settings: Pick<OpenCodeSettings, "customModels">,
+  catalog: ReadonlyArray<OpenCode2Model>,
+): ServerProvider =>
+  snapshot.version === null || snapshot.status === "error" || snapshot.status === "disabled"
+    ? snapshot
+    : {
+        ...snapshot,
+        status: "ready",
+        auth: { ...snapshot.auth, status: "authenticated" },
+        message: openCode2ReadyMessage(snapshot.version, catalog.length),
+        models: openCode2ProviderModels(settings, catalog),
+      };
 
 export interface OpenCode2Workspace {
   readonly skills: ReadonlyArray<{
@@ -527,21 +819,49 @@ export interface OpenCode2Workspace {
 }
 
 /**
- * Reading a location the server has not loaded boots its scan, and only reads after the scan's
- * `command.updated` plus `skill.updated` are complete; `scanned` must listen before `read`. A
- * loaded location listing no commands is still scanning. OpenCode exposes no readiness signal,
- * so one another caller booted moments earlier can still read partial.
+ * Runs `onScanned` for each location whose scan ends, which OpenCode announces once, after loading
+ * the location, as `command.updated` plus `skill.updated`.
+ */
+export const followOpenCode2Scans = <E>(
+  events: Stream.Stream<
+    { readonly type: string; readonly location?: { readonly directory?: string } | undefined },
+    E
+  >,
+  onScanned: (directory: string) => Effect.Effect<void>,
+) => {
+  const pending = new Map<string, Set<string>>();
+  return events.pipe(
+    Stream.runForEach((event) => {
+      const directory = event.location?.directory;
+      if (directory === undefined) return Effect.void;
+      if (event.type !== "command.updated" && event.type !== "skill.updated") return Effect.void;
+      const seen = pending.get(directory) ?? new Set<string>();
+      pending.set(directory, seen.add(event.type));
+      if (seen.size < 2) return Effect.void;
+      pending.delete(directory);
+      return onScanned(directory);
+    }),
+    Effect.ignore,
+  );
+};
+
+/**
+ * Until its scan ends a location lists only built-ins, even once the server lists it as loaded,
+ * and nothing but the scan's end tells the two apart. Unless the caller saw that scan end, read to
+ * boot the location, wait for its scan (`scanned` must listen before `read`), and read again.
  */
 export const loadOpenCode2Workspace = Effect.fn("OpencodeProviderStatus.loadOpenCode2Workspace")(
   function* <E>(
     read: Effect.Effect<OpenCode2Workspace, E>,
     scanned: Effect.Effect<void>,
-    loaded: Effect.Effect<boolean>,
+    sawScan: boolean,
+    environment?: NodeJS.ProcessEnv,
   ) {
-    const wasLoaded = yield* loaded;
     const first = yield* read;
-    if (wasLoaded && first.commands.length > 0) return first;
-    yield* scanned.pipe(Effect.timeoutOption("10 seconds"));
+    if (sawScan) return first;
+    yield* scanned.pipe(
+      Effect.timeoutOption(resolveProviderProbeTimeoutMs("opencode", 10_000, environment)),
+    );
     return yield* read;
   },
 );
@@ -586,26 +906,37 @@ const OPENCODE_2_PRESENTATION = {
 } as const;
 
 function openCode2ModelCapabilities(model: OpenCode2Model): ModelCapabilities {
-  const variants = model.variants.map((variant) => variant.id);
-  const defaultVariant = inferDefaultVariant(model.providerID, variants);
   return createModelCapabilities({
-    optionDescriptors:
-      variants.length === 0
-        ? []
-        : [
-            {
-              id: "variant",
-              label: "Reasoning",
-              type: "select",
-              options: variants.map((id) => ({
-                id,
-                label: titleCaseSlug(id),
-                ...(id === defaultVariant ? { isDefault: true } : {}),
-              })),
-              ...(defaultVariant === undefined ? {} : { currentValue: defaultVariant }),
-            },
-          ],
+    optionDescriptors: openCodeVariantDescriptors(
+      model.providerID,
+      model.variants.map((variant) => variant.id),
+    ),
   });
+}
+
+export function openCode2ProviderModels(
+  settings: Pick<OpenCodeSettings, "customModels">,
+  catalog: ReadonlyArray<OpenCode2Model>,
+): ReadonlyArray<ServerProviderModel> {
+  return providerModelsFromSettings(
+    markOpenCodeLegacy(
+      catalog.map((model) => {
+        const subProvider = subProviderLabelFor(model);
+        return {
+          model: {
+            slug: `${model.providerID}/${model.id}`,
+            name: model.name,
+            ...(subProvider ? { subProvider } : {}),
+            isCustom: false,
+            capabilities: openCode2ModelCapabilities(model),
+          },
+          release: model,
+        };
+      }),
+    ).toSorted((left, right) => left.name.localeCompare(right.name)),
+    settings.customModels,
+    DEFAULT_OPENCODE_MODEL_CAPABILITIES,
+  );
 }
 
 const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
@@ -649,37 +980,15 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
       version,
     });
   }
-  const models = providerModelsFromSettings(
-    markOpenCodeLegacy(
-      result.value.map((model) => {
-        const subProvider = subProviderLabelFor(model);
-        return {
-          model: {
-            slug: `${model.providerID}/${model.id}`,
-            name: model.name,
-            ...(subProvider ? { subProvider } : {}),
-            isCustom: false,
-            capabilities: openCode2ModelCapabilities(model),
-          },
-          release: model,
-        };
-      }),
-    ).toSorted((left, right) => left.name.localeCompare(right.name)),
-    settings.customModels,
-    DEFAULT_OPENCODE_MODEL_CAPABILITIES,
-  );
   return buildServerProvider({
     presentation: OPENCODE_2_PRESENTATION,
     enabled: true,
     checkedAt,
-    models,
+    models: openCode2ProviderModels(settings, result.value),
     slashCommands: [COMPACT_SLASH_COMMAND],
     probe:
       result.value.length > 0
-        ? probe(
-            "ready",
-            `OpenCode ${version} lists ${result.value.length} model${result.value.length === 1 ? "" : "s"}.`,
-          )
+        ? probe("ready", openCode2ReadyMessage(version, result.value.length))
         : probe("warning", "OpenCode 2 is running, but it did not list any models yet."),
   });
 });
@@ -692,6 +1001,8 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     ReadonlyArray<OpenCode2Model>,
     OpenCodeRuntime.OpenCodeRuntimeError
   >,
+  environment?: NodeJS.ProcessEnv,
+  compatibility: ProviderCompatibilityLookup = noCompatibilityPolicy,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -766,21 +1077,30 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   if (probed.generation === "v2") {
     return yield* checkOpenCode2(openCodeSettings, probed.version, checkedAt, loadOpenCode2Models);
   }
-  if (compareSemverVersions(probed.version, OpenCodeRuntime.MINIMUM_OPENCODE_VERSION) < 0) {
-    return buildServerProvider({
-      presentation: OPENCODE_PRESENTATION,
-      enabled: openCodeSettings.enabled,
-      checkedAt,
-      models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
-      probe: {
-        installed: true,
-        version: probed.version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: `OpenCode v${probed.version} is too old. Upgrade to v${OpenCodeRuntime.MINIMUM_OPENCODE_VERSION} or newer.`,
-      },
+  const refuseBroken = Effect.fnUntraced(function* (detected: string) {
+    const broken = brokenVersionDetail({
+      name: "OpenCode",
+      version: detected,
+      advisory: yield* compatibility(ProviderDriverKind.make("opencode"), detected),
     });
-  }
+    return broken === undefined
+      ? undefined
+      : buildServerProvider({
+          presentation: OPENCODE_PRESENTATION,
+          enabled: openCodeSettings.enabled,
+          checkedAt,
+          models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+          probe: {
+            installed: true,
+            version: detected,
+            status: "error",
+            auth: { status: "unknown" },
+            message: broken,
+          },
+        });
+  });
+  const refused = yield* refuseBroken(probed.version);
+  if (refused !== undefined) return refused;
 
   const installedVersion = isExternalServer ? {} : { installedVersion: probed.version };
   let version = probed.version;
@@ -808,6 +1128,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           ...(settingsSecretLiteral(openCodeSettings.serverPassword)
             ? { serverPassword: settingsSecretLiteral(openCodeSettings.serverPassword) }
             : {}),
+          ...(environment !== undefined ? { environment } : {}),
         })
         .pipe(Effect.flatMap(loadInventory), Effect.scoped)
     : serverOwner.withServer(loadInventory);
@@ -822,6 +1143,9 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       ),
     ),
   );
+  // The server that answered can differ from the CLI the probe ran.
+  const refusedServer = version === probed.version ? undefined : yield* refuseBroken(version);
+  if (refusedServer !== undefined) return { ...refusedServer, ...installedVersion };
   if (inventoryExit._tag === "Failure") {
     yield* logDiscoveryFailure({
       phase: "inventory",
@@ -835,16 +1159,14 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     };
   }
 
-  const inventoryModels = flattenOpenCodeModels(inventoryExit.value);
-  const models = providerModelsFromSettings(
-    inventoryModels,
-    customModels,
-    DEFAULT_OPENCODE_MODEL_CAPABILITIES,
-  );
+  const catalogModels = openCodeProviderModels(openCodeSettings, inventoryExit.value);
+  const models =
+    catalogModels ??
+    providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES);
   const skills = openCodeSkillsToServerProviderSkills(inventoryExit.value.skills);
   const connectedCount = inventoryExit.value.providerList.connected.length;
-  const catalogReady = connectedCount > 0 && inventoryModels.length > 0;
-  if (connectedCount > 0 && inventoryModels.length === 0) {
+  const catalogReady = connectedCount > 0 && catalogModels !== undefined;
+  if (connectedCount > 0 && catalogModels === undefined) {
     yield* logDiscoveryFailure({ phase: "inventory", isExternalServer, version });
   }
   return {

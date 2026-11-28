@@ -117,6 +117,38 @@ describe("HttpMiddleware", () => {
         assert.strictEqual(response.headers.get("access-control-allow-origin"), "*")
         assert.strictEqual(response.headers.get("vary"), "Accept-Language")
       }))
+
+    it.effect.each(["GET", "OPTIONS"])(
+      "does not call the origin predicate without an Origin header (%s)",
+      (method) =>
+        Effect.gen(function*() {
+          const handler = HttpEffect.toWebHandler(
+            Effect.succeed(HttpServerResponse.empty()).pipe(HttpMiddleware.cors({
+              allowedOrigins: (origin) => origin.endsWith(".example")
+            }))
+          )
+          const response = yield* Effect.promise(() => handler(new Request("http://localhost/", { method })))
+          assert.isTrue(response.ok)
+          assert.isNull(response.headers.get("access-control-allow-origin"))
+          assert.strictEqual(response.headers.get("vary"), "Origin")
+        })
+    )
+
+    it.effect("sends access-control-max-age when maxAge is 0", () =>
+      Effect.gen(function*() {
+        const handler = HttpEffect.toWebHandler(
+          Effect.succeed(HttpServerResponse.empty()).pipe(HttpMiddleware.cors({ maxAge: 0 }))
+        )
+        const response = yield* Effect.promise(() =>
+          handler(
+            new Request("http://localhost/", {
+              method: "OPTIONS",
+              headers: { Origin: "https://client.example" }
+            })
+          )
+        )
+        assert.strictEqual(response.headers.get("access-control-max-age"), "0")
+      }))
   })
 
   describe("logger", () => {
@@ -533,6 +565,7 @@ describe("HttpMiddleware", () => {
         assert(error instanceof HttpServerError.HttpServerError)
         // The message is path-only, so query values never reach exporters through it.
         assert.strictEqual(error.message, "ResponseError (500 GET /failure)")
+        assert.strictEqual(error.request.url, "/failure?token=REDACTED")
       }))
 
     it.effect("preserves the stream failure when the sent response is 500", () =>

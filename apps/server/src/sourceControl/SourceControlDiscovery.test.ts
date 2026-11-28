@@ -7,10 +7,15 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as TestClock from "effect/testing/TestClock";
 import {
   providerAuth,
   type SourceControlProviderDiscoverySpec,
@@ -102,6 +107,8 @@ const defaultDiscoveries = [
   }),
 ];
 
+const onPath = (command: string) => `/usr/local/bin/${command}`;
+
 const layerDiscovery = (
   runProcess = run,
   discoveries: ReadonlyArray<SourceControlProviderDiscoverySpec> = defaultDiscoveries,
@@ -170,10 +177,13 @@ it.effect("reports every hosting integration in registry order with its sign-in"
         ["jj", "available"],
       ],
     );
-  }).pipe(Effect.provide(SourceControlDiscovery.layer.pipe(Layer.provide(layerDiscovery())))),
+  }).pipe(
+    Effect.provide(SourceControlDiscovery.layer.pipe(Layer.provide(layerDiscovery()))),
+    Effect.provideService(SpawnExecutableResolution, onPath),
+  ),
 );
 
-it.effect("explains a hosting CLI whose version probe failed instead of advising an install", () =>
+it.effect("explains a CLI whose version probe failed instead of advising an install", () =>
   Effect.gen(function* () {
     const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
     const result = yield* discovery.discover;
@@ -193,20 +203,56 @@ it.effect("explains a hosting CLI whose version probe failed instead of advising
     assert.strictEqual(authDetail("broken"), item("broken").installHint);
 
     assert.strictEqual(item("absent").installHint, "Install absent.");
+
+    const git = result.versionControlSystems.find((entry) => entry.kind === "git");
+    assert.isDefined(git);
+    assert.notInclude(git.installHint, "Install Git from");
+    assert.include(git.installHint, "`git --version` exited with status 1");
   }).pipe(
+    Effect.provideService(SpawnExecutableResolution, onPath),
     Effect.provide(
       SourceControlDiscovery.layer.pipe(
         Layer.provide(
-          layerDiscovery(run, [
-            cliDiscovery("slow", "slow-cli"),
-            cliDiscovery("broken", "broken-cli"),
-            cliDiscovery("absent", "absent-cli"),
-          ]),
+          layerDiscovery(
+            (input) => run(input.command === "git" ? { ...input, command: "broken-cli" } : input),
+            [
+              cliDiscovery("slow", "slow-cli"),
+              cliDiscovery("broken", "broken-cli"),
+              cliDiscovery("absent", "absent-cli"),
+            ],
+          ),
         ),
       ),
     ),
   ),
 );
+
+it.effect("answers once the slowest probe does instead of after every probe in turn", () => {
+  const delays: Record<string, Duration.Input> = {
+    "git --version": "1 second",
+    "slow-version-cli --version": "3 seconds",
+    "slow-version-cli auth": "1 second",
+  };
+  const timedRun: typeof run = (input) =>
+    run(input).pipe(Effect.delay(delays[`${input.command} ${input.args[0]}`] ?? Duration.zero));
+  return Effect.gen(function* () {
+    const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+    const fiber = yield* Effect.forkChild(discovery.discover);
+    yield* TestClock.adjust("3 seconds");
+    assert.isDefined(fiber.pollUnsafe(), "discovery waited on probes in series");
+    const item = (yield* Fiber.join(fiber)).sourceControlProviders[0];
+    assert.deepStrictEqual([item?.status, item?.auth.status], ["available", "authenticated"]);
+  }).pipe(
+    Effect.provide(
+      SourceControlDiscovery.layer.pipe(
+        Layer.provide(layerDiscovery(timedRun, [cliDiscovery("slow", "slow-version-cli")])),
+      ),
+    ),
+    Effect.provideService(SpawnExecutableResolution, onPath),
+    // Skips the login-shell PATH refresh, which spawns a real shell on wall-clock time.
+    Effect.provideService(HostProcess.Platform, "win32"),
+  );
+});
 
 it.effect.each(["darwin", "linux"] as const)(
   "names incompatible executables only on macOS (%s)",
@@ -240,9 +286,69 @@ it.effect.each(["darwin", "linux"] as const)(
       }
     }).pipe(
       Effect.provide(SourceControlDiscovery.layer.pipe(Layer.provide(layerDiscovery(runProcess)))),
-      Effect.provideService(SpawnExecutableResolution, (command) => `/usr/local/bin/${command}`),
+      Effect.provideService(SpawnExecutableResolution, onPath),
       Effect.provideService(HostProcess.Platform, platform),
       Effect.provideService(HostProcess.Architecture, "arm64"),
     );
   },
+);
+
+// Spawns a real login shell and `jj`, so it runs on wall-clock time; the fixture shell is POSIX sh.
+it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "rescans with tools the login shell gained after the server started",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-discovery-login-shell-" });
+      const home = path.join(root, "home");
+      const fakebin = path.join(home, "fakebin");
+      const loginShell = path.join(root, "loginsh");
+      yield* fs.makeDirectory(fakebin, { recursive: true });
+      // Stands in for `$SHELL -ilc <capture>` and sources only the fixture
+      // profile, so the host's own shell init cannot change the result.
+      yield* fs.writeFileString(
+        loginShell,
+        `#!/bin/sh\nexport HOME=${home}\n. "$HOME/.profile"\nshift\nexec /bin/sh -c "$1"\n`,
+        { mode: 0o755 },
+      );
+      const env = yield* HostProcess.Environment;
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const saved = { PATH: env.PATH, SHELL: env.SHELL };
+          env.SHELL = loginShell;
+          return saved;
+        }),
+        (saved) =>
+          Effect.sync(() => {
+            env.PATH = saved.PATH;
+            if (saved.SHELL === undefined) delete env.SHELL;
+            else env.SHELL = saved.SHELL;
+          }),
+      );
+
+      // The user installs a tool after launch; their login shell now finds it.
+      yield* fs.writeFileString(path.join(fakebin, "jj"), "#!/bin/sh\necho 'jj 0.99.0-test'\n", {
+        mode: 0o755,
+      });
+      yield* fs.writeFileString(path.join(home, ".profile"), 'export PATH="$HOME/fakebin:$PATH"\n');
+
+      const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+      const jj = (yield* discovery.discover).versionControlSystems.find(
+        (item) => item.kind === "jj",
+      );
+
+      assert.deepStrictEqual(
+        { status: jj?.status, version: jj?.version },
+        { status: "available", version: Option.some("jj 0.99.0-test") },
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        SourceControlDiscovery.layer.pipe(
+          Layer.provide(VcsProcess.layer),
+          Layer.provideMerge(layerDiscovery()),
+        ),
+      ),
+    ),
 );

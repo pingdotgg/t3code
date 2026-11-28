@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - `node:crypto` names the backup of an undecryptable catalog by its content.
+import * as NodeCrypto from "node:crypto";
+
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
@@ -12,6 +15,7 @@ import {
 } from "@t3tools/client-runtime/platform";
 import type { PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -45,6 +49,9 @@ const RuntimeConnectionCatalogDocumentJson = Schema.fromJsonString(
 const encodeRuntimeConnectionCatalogDocumentJson = Schema.encodeEffect(
   RuntimeConnectionCatalogDocumentJson,
 );
+const decodeRuntimeConnectionCatalogDocumentJson = Schema.decodeEffect(
+  RuntimeConnectionCatalogDocumentJson,
+);
 
 const DesktopConnectionCatalogStoreWriteOperation = Schema.Literals([
   "create-temporary-file-name",
@@ -52,6 +59,8 @@ const DesktopConnectionCatalogStoreWriteOperation = Schema.Literals([
   "create-directory",
   "write-temporary-file",
   "replace-catalog-file",
+  "preserve-undecryptable-catalog",
+  "keep-unreadable-catalog",
 ]);
 
 const DesktopConnectionCatalogStoreMigrationOperation = Schema.Literals([
@@ -64,7 +73,6 @@ const DesktopConnectionCatalogStoreMigrationOperation = Schema.Literals([
 const DesktopConnectionCatalogStoreProtectionOperation = Schema.Literals([
   "check-encryption-availability",
   "encrypt-catalog",
-  "decrypt-catalog",
 ]);
 
 export class DesktopConnectionCatalogStoreWriteError extends Schema.TaggedError<DesktopConnectionCatalogStoreWriteError>()(
@@ -156,6 +164,7 @@ export class DesktopConnectionCatalogStore extends Context.Service<
       | DesktopConnectionCatalogStoreDecodeError
       | DesktopConnectionCatalogStoreMigrationError
       | DesktopConnectionCatalogStoreProtectionError
+      | DesktopConnectionCatalogStoreWriteError
     >;
     readonly set: (
       catalog: string,
@@ -182,13 +191,7 @@ function decodeSecretBytes(
   );
 }
 
-const readDocument = (
-  fileSystem: FileSystem.FileSystem,
-  catalogPath: string,
-): Effect.Effect<
-  Option.Option<EncryptedConnectionCatalogDocument>,
-  DesktopConnectionCatalogStoreReadError | DesktopConnectionCatalogStoreDocumentDecodeError
-> =>
+const readDocument = (fileSystem: FileSystem.FileSystem, catalogPath: string) =>
   fileSystem.readFileString(catalogPath).pipe(
     Effect.catch((error) =>
       error.reason._tag === "NotFound"
@@ -202,8 +205,9 @@ const readDocument = (
     ),
     Effect.flatMap((raw) =>
       raw === null
-        ? Effect.succeed(Option.none<EncryptedConnectionCatalogDocument>())
+        ? Effect.succeedNone
         : decodeEncryptedConnectionCatalogDocumentJson(raw).pipe(
+            Effect.map((document) => ({ document, raw })),
             Effect.asSome,
             Effect.mapError(
               (cause) =>
@@ -220,21 +224,11 @@ const writeDocument = Effect.fn("desktop.connectionCatalogStore.writeDocument")(
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly catalogPath: string;
-  readonly document: EncryptedConnectionCatalogDocument;
+  readonly contents: string;
   readonly suffix: string;
 }): Effect.fn.Return<void, DesktopConnectionCatalogStoreWriteError> {
   const directory = input.path.dirname(input.catalogPath);
   const tempPath = `${input.catalogPath}.${process.pid}.${input.suffix}.tmp`;
-  const encoded = yield* encodeEncryptedConnectionCatalogDocumentJson(input.document).pipe(
-    Effect.mapError(
-      (cause) =>
-        new DesktopConnectionCatalogStoreWriteError({
-          operation: "encode-document",
-          path: input.catalogPath,
-          cause,
-        }),
-    ),
-  );
   yield* input.fileSystem.makeDirectory(directory, { recursive: true }).pipe(
     Effect.mapError(
       (cause) =>
@@ -246,7 +240,7 @@ const writeDocument = Effect.fn("desktop.connectionCatalogStore.writeDocument")(
     ),
   );
   yield* Effect.gen(function* () {
-    yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
+    yield* input.fileSystem.writeFileString(tempPath, input.contents).pipe(
       Effect.mapError(
         (cause) =>
           new DesktopConnectionCatalogStoreWriteError({
@@ -395,6 +389,24 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  // An unreadable catalog may still hold another build's saved environments and credentials.
+  const keepUnreadableCatalogFile = Effect.gen(function* () {
+    const keptPath = `${catalogPath}.unreadable-${yield* Clock.currentTimeMillis}`;
+    yield* fileSystem.copyFile(catalogPath, keptPath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopConnectionCatalogStoreWriteError({
+            operation: "keep-unreadable-catalog",
+            path: keptPath,
+            cause,
+          }),
+      ),
+    );
+    yield* Effect.logWarning("Kept an unreadable connection catalog before replacing it.", {
+      keptPath,
+    });
+  });
+
   const writeCatalog = Effect.fn("desktop.connectionCatalogStore.writeCatalog")(function* (
     catalog: string,
   ) {
@@ -410,15 +422,99 @@ export const make = Effect.gen(function* () {
         ),
       ),
     );
+    const encoded = yield* encodeEncryptedConnectionCatalogDocumentJson({
+      version: 1,
+      encryptedCatalog,
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopConnectionCatalogStoreWriteError({
+            operation: "encode-document",
+            path: catalogPath,
+            cause,
+          }),
+      ),
+    );
     const suffix = (yield* random.uuidV4()).replace(/-/g, "");
     yield* writeDocument({
       fileSystem,
       path,
       catalogPath,
-      document: { version: 1, encryptedCatalog },
+      contents: `${encoded}\n`,
       suffix,
     });
   });
+
+  // Electron regenerates its key when the OS keyring entry is lost, orphaning the catalog for
+  // good. Read it as empty so the user can reconnect, but keep a copy first: the catalog stays
+  // in place until the next save replaces it, and the content-derived name keeps repeated and
+  // concurrent reads to one backup.
+  const preserveUndecryptableCatalog = Effect.fn(
+    "desktop.connectionCatalogStore.preserveUndecryptableCatalog",
+  )(function* (
+    contents: string,
+    encryptedCatalog: Uint8Array,
+    decryptError: ElectronSafeStorage.ElectronSafeStorageDecryptError,
+  ) {
+    const digest = NodeCrypto.createHash("sha256").update(encryptedCatalog).digest("hex");
+    const backupPath = `${catalogPath}.${digest}.undecryptable`;
+    const preserveError = (cause: unknown) =>
+      new DesktopConnectionCatalogStoreWriteError({
+        operation: "preserve-undecryptable-catalog",
+        path: backupPath,
+        cause,
+      });
+    if (!(yield* fileSystem.exists(backupPath).pipe(Effect.mapError(preserveError)))) {
+      const suffix = (yield* random.uuidV4()).replace(/-/g, "");
+      // Back up the document that failed to decrypt, not the file at `catalogPath`: a
+      // concurrent `set` may already have replaced it.
+      yield* writeDocument({ fileSystem, path, catalogPath: backupPath, contents, suffix }).pipe(
+        Effect.mapError(preserveError),
+      );
+      yield* Effect.logWarning(
+        "The desktop connection catalog can no longer be decrypted; starting a new one.",
+        { catalogPath, backupPath, reason: decryptError._tag },
+      );
+    }
+  });
+
+  const decryptDocument = Effect.fn("desktop.connectionCatalogStore.decryptDocument")(
+    function* (snapshot: {
+      readonly document: EncryptedConnectionCatalogDocument;
+      readonly raw: string;
+    }) {
+      const encryptedCatalog = yield* decodeSecretBytes(
+        catalogPath,
+        snapshot.document.encryptedCatalog,
+      );
+      return yield* safeStorage.decryptString(encryptedCatalog).pipe(
+        Effect.asSome,
+        Effect.catchTags({
+          ElectronSafeStorageDecryptError: (error) =>
+            preserveUndecryptableCatalog(snapshot.raw, encryptedCatalog, error).pipe(
+              Effect.as(Option.none<string>()),
+            ),
+        }),
+      );
+    },
+  );
+
+  const keepUnreadableCatalog = readDocument(fileSystem, catalogPath).pipe(
+    Effect.flatMap(Option.match({ onNone: () => Effect.succeedNone, onSome: decryptDocument })),
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.void,
+        onSome: (catalog) =>
+          decodeRuntimeConnectionCatalogDocumentJson(catalog).pipe(Effect.asVoid),
+      }),
+    ),
+    Effect.catchTags({
+      DesktopConnectionCatalogStoreReadError: () => keepUnreadableCatalogFile,
+      DesktopConnectionCatalogStoreDocumentDecodeError: () => keepUnreadableCatalogFile,
+      DesktopConnectionCatalogStoreDecodeError: () => keepUnreadableCatalogFile,
+      SchemaError: () => keepUnreadableCatalogFile,
+    }),
+  );
 
   const migrateLegacyCatalog = Effect.gen(function* () {
     if (!(yield* encryptionAvailable)) {
@@ -470,26 +566,13 @@ export const make = Effect.gen(function* () {
       if (!(yield* encryptionAvailable)) {
         return Option.none<string>();
       }
-      const decrypted = yield* decodeSecretBytes(catalogPath, document.value.encryptedCatalog).pipe(
-        Effect.flatMap((encryptedCatalog) =>
-          safeStorage.decryptString(encryptedCatalog).pipe(
-            Effect.mapError(
-              (cause) =>
-                new DesktopConnectionCatalogStoreProtectionError({
-                  operation: "decrypt-catalog",
-                  catalogPath,
-                  cause,
-                }),
-            ),
-          ),
-        ),
-      );
-      return Option.some(decrypted);
+      return yield* decryptDocument(document.value);
     }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
     set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {
       if (!(yield* encryptionAvailable)) {
         return false;
       }
+      yield* keepUnreadableCatalog;
       yield* writeCatalog(catalog);
       return true;
     }),

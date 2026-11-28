@@ -4,8 +4,8 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
-import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import * as Effect from "effect/Effect";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -13,8 +13,10 @@ import {
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
   isProviderWorkspaceSnapshotScanning,
+  isSkillReloadCommand,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
+  resolveProvidersForCwd,
 } from "./providerSkills.ts";
 
 const provider = {
@@ -84,6 +86,15 @@ describe("getProviderSkillsForSlashMenu", () => {
   });
 });
 
+describe("isSkillReloadCommand", () => {
+  it("matches only a bare reload command", () => {
+    expect(isSkillReloadCommand(" /reload-skills\n")).toBe(true);
+    expect(isSkillReloadCommand("/Reload-Plugins")).toBe(true);
+    expect(isSkillReloadCommand("/reload-skills then use it")).toBe(false);
+    expect(isSkillReloadCommand("reload-skills")).toBe(false);
+  });
+});
+
 describe("workspace provider snapshots", () => {
   it("uses the cwd snapshot after a provider session has populated it", () => {
     expect(resolveProviderSkillsForCwd(provider, "/workspace/project-a")).toEqual([
@@ -120,6 +131,30 @@ describe("workspace provider snapshots", () => {
     expect(hasCompleteProviderWorkspaceSnapshot(undefined, "/workspace/project-a")).toBe(false);
     expect(hasCompleteProviderWorkspaceSnapshot(provider, null)).toBe(false);
   });
+
+  it("lists a project's own models only for that project", () => {
+    const projectModel = {
+      slug: "uni/medium-gpt",
+      name: "Medium GPT",
+      isCustom: false,
+      capabilities: null,
+    } satisfies ServerProvider["models"][number];
+    const withProjectModels = {
+      ...provider,
+      workspaceSnapshots: provider.workspaceSnapshots.map((snapshot) => ({
+        ...snapshot,
+        models: [projectModel],
+      })),
+    } satisfies ServerProvider;
+    const providers = [provider, withProjectModels];
+
+    expect(resolveProvidersForCwd(providers, "/workspace/project-a").map((p) => p.models)).toEqual([
+      [],
+      [projectModel],
+    ]);
+    expect(resolveProvidersForCwd(providers, "/workspace/project-a")[0]).toBe(provider);
+    expect(resolveProvidersForCwd(providers, "/workspace/project-b")).toBe(providers);
+  });
 });
 
 describe("provider workspace snapshot refresh atom", () => {
@@ -151,17 +186,25 @@ describe("provider workspace snapshot refresh atom", () => {
     | null
     | Promise<ReadonlyArray<ServerProvider> | null>;
 
-  function setup(initialProviders: ReadonlyArray<ServerProvider>, initialResponses?: Response[]) {
+  function setup(
+    initialProviders: ReadonlyArray<ServerProvider>,
+    initialResponses?: Response[],
+    // The client drops a reply whose provider changed while it was in flight.
+    options?: { readonly droppedReplies?: number },
+  ) {
+    let droppedReplies = options?.droppedReplies ?? 0;
     const providersAtom = Atom.make<ReadonlyArray<ServerProvider> | null>(initialProviders);
     const responses: Response[] = [...(initialResponses ?? [])];
-    const run = vi.fn(async () => {
-      const providers = await (responses.shift() ?? (() => null))();
-      return providers === null
-        ? AsyncResult.failure<{ providers: ReadonlyArray<ServerProvider> }, string>(
-            Cause.fail("offline"),
-          )
-        : AsyncResult.success({ providers });
-    });
+    const run = vi.fn(() =>
+      Effect.promise(async () => (responses.shift() ?? (() => null))()).pipe(
+        Effect.flatMap((providers) => {
+          if (providers === null) return Effect.fail("offline");
+          if (droppedReplies > 0) droppedReplies -= 1;
+          else registry.set(providersAtom, providers);
+          return Effect.succeed({ providers });
+        }),
+      ),
+    );
     const family = createProviderWorkspaceSnapshotRefreshAtomFamily({
       providers: () => providersAtom,
       refreshProviders: { label: "refresh", run },
@@ -218,6 +261,20 @@ describe("provider workspace snapshot refresh atom", () => {
     },
   );
 
+  it("asks again at once when the client dropped a complete reply", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const scanned = withSnapshot("2026-01-01T00:00:00.000Z");
+    const { registry, atom, run, unmount } = setup(noSnapshot, [() => scanned, () => scanned], {
+      droppedReplies: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(isProviderWorkspaceSnapshotScanning(registry.get(atom))).toBe(false);
+    registry.refresh(atom);
+    expect(run).toHaveBeenCalledTimes(2);
+    unmount();
+  });
+
   it("keeps the TTL guard for a newly scanned catalog when the client clock is ahead", async () => {
     vi.useFakeTimers({ now: Date.parse("2026-01-01T01:00:00.000Z") });
     const { registry, atom, run, unmount } = setup(withSnapshot("2026-01-01T00:00:00.000Z"), [
@@ -271,6 +328,22 @@ describe("provider workspace snapshot refresh atom", () => {
     await vi.advanceTimersByTimeAsync(20_000);
     expect(run).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("rescans a current snapshot whose commands are complete but models are pending", () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const [current] = withSnapshot("2026-01-01T00:00:00.000Z");
+    const { run, unmount } = setup([
+      {
+        ...current!,
+        workspaceSnapshots: current!.workspaceSnapshots!.map((snapshot) => ({
+          ...snapshot,
+          modelsPending: true,
+        })),
+      },
+    ]);
+    expect(run).toHaveBeenCalledTimes(1);
+    unmount();
   });
 
   it("stops retrying after three failed scans until the TTL lapses", async () => {

@@ -155,9 +155,12 @@ export function installSidebarTree(root: HTMLElement) {
     // Like VS Code's list, suppress keydown and open on release. Reuse the row's
     // selection-aware handler, including its Electron native menu route.
     row.dispatchEvent(
-      new MouseEvent("contextmenu", {
+      // A PointerEvent, as Chromium sends, keeps button -1 (a MouseEvent clamps it to 0),
+      // which contextMenuSourceOf reads as a keyboard-opened menu.
+      new PointerEvent("contextmenu", {
         bubbles: true,
         cancelable: true,
+        button: -1,
         clientX: rect.left,
         clientY: rect.bottom,
       }),

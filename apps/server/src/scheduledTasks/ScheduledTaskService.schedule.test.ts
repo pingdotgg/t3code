@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -195,6 +196,8 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
       readonly messages: ReadonlyArray<OrchestrationV2ConversationMessage>;
     }>({ runs: [activeRun], messages: [] });
     const runDueWork = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+    const sql = yield* SqlClient.SqlClient;
+    const outcomeDuringLookup = yield* Ref.make(false);
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       ManagedPolicy.layerTest(),
@@ -241,7 +244,18 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
               { runs: [...current.runs, run], messages: [...current.messages, message] },
             ];
           }),
-        getThreadRecords: () => Ref.get(thread).pipe(Effect.map((records) => records as never)),
+        getThreadRecords: (_id, fields) =>
+          Effect.gen(function* () {
+            if (
+              fields.some((field) => field === "messages") &&
+              (yield* Ref.get(outcomeDuringLookup))
+            ) {
+              yield* Ref.set(outcomeDuringLookup, false);
+              yield* sql`UPDATE scheduled_tasks SET last_run_status = 'failed',
+                last_run_error = 'Provider failed' WHERE task_id = 'scheduled-task:busy-thread'`;
+            }
+            return (yield* Ref.get(thread)) as never;
+          }).pipe(Effect.orDie),
         getThreadShell: () =>
           Effect.succeed({
             projectId: "project-busy-thread",
@@ -292,6 +306,34 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
         Date.parse("2026-07-01T09:03:03.000Z"),
       );
 
+      yield* Ref.update(thread, (current) => ({
+        ...current,
+        runs: current.runs.map((run) =>
+          run.status === "queued" ? { ...run, queueHeld: true } : run,
+        ),
+      }));
+      yield* TestClock.adjust("61 seconds");
+      yield* Effect.flatten(Ref.get(runDueWork));
+      const [blocked] = (yield* service.list()).tasks;
+      expect(blocked?.lastRunStatus).toBe("failed");
+      expect(blocked?.lastRunError).toBe(
+        "A previous occurrence is held in the thread queue. Resume or remove it to run this task again.",
+      );
+      expect(yield* queuedOccurrences).toBe(1);
+
+      // The prior run can finish while the poll is looking up its held occurrence.
+      yield* sql`UPDATE scheduled_tasks SET last_run_status = 'succeeded', last_run_error = NULL
+        WHERE task_id = ${task.id}`;
+      yield* Ref.set(outcomeDuringLookup, true);
+      yield* TestClock.adjust("61 seconds");
+      yield* Effect.flatten(Ref.get(runDueWork));
+      const [raced] = (yield* service.list()).tasks;
+      expect(raced?.lastRunStatus).toBe("failed");
+      expect(raced?.lastRunError).toBe("Provider failed");
+      expect(Date.parse(raced?.nextRunAt ?? "")).toBeGreaterThan(
+        Date.parse(blocked?.nextRunAt ?? ""),
+      );
+
       // Run now is an explicit request, so it still queues behind the held one.
       yield* service.runNow({ id: task.id });
       expect(yield* queuedOccurrences).toBe(2);
@@ -306,6 +348,9 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
       yield* TestClock.adjust("61 seconds");
       yield* Effect.flatten(Ref.get(runDueWork));
       expect(yield* queuedOccurrences).toBe(1);
+      const [resumed] = (yield* service.list()).tasks;
+      expect(resumed?.lastRunStatus).toBe("succeeded");
+      expect(resumed?.lastRunError).toBeNull();
 
       // A one-time task's only scheduled occurrence still sends behind a queued Run now.
       const { task: once } = yield* service.upsert(
@@ -314,7 +359,7 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
           title: "Check once",
           prompt: "Check once",
           enabled: true,
-          schedule: { type: "once", runAt: "2026-07-01T09:05:00.000Z" },
+          schedule: { type: "once", runAt: "2026-07-01T09:07:00.000Z" },
           projectId: "project-busy-thread",
           threadId: "thread:busy",
           workspaceStrategy: { type: "root" },
@@ -390,5 +435,169 @@ it.effect(
         yield* TestClock.adjust("60 seconds");
         expect(yield* Deferred.await(launched)).toBe(created.task.title);
       }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a fixed-time slot missed while the server was off shows on the task", () =>
+  Effect.gen(function* () {
+    const at = (hour: number, minute = 0, day = 1) =>
+      DateTime.makeZonedUnsafe(
+        { year: 2026, month: 7, day, hour, minute, second: 0, millisecond: 0 },
+        { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+      );
+    yield* TestClock.setTime(DateTime.toEpochMillis(at(8)));
+    const launches = yield* Ref.make(0);
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Scheduler.layer,
+      ManagedPolicy.layerTest(),
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        launch: () =>
+          Ref.update(launches, (count) => count + 1).pipe(
+            Effect.as({ threadId: "thread-missed-slot", resumed: false } as never),
+          ),
+      }),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        isScratchProject: () => Effect.succeed(false),
+      }),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    );
+    const withServer = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))),
+      );
+
+    const taskId = yield* withServer(
+      Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const { task } = yield* service.upsert(
+          yield* decodeUpsertInput({
+            title: "Morning bookkeeping",
+            prompt: "Update yesterday's notes.",
+            enabled: true,
+            schedule: { type: "fixed_time", timeOfDay: "09:00" },
+            projectId: "project-missed-slot",
+            workspaceStrategy: { type: "root" },
+            modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          }),
+        );
+        yield* service.runNow({ id: task.id });
+        return task.id;
+      }),
+    );
+
+    // The server is off across the 09:00 slot and comes back at 09:30.
+    yield* TestClock.setTime(DateTime.toEpochMillis(at(9, 30)));
+    const [listed] = yield* withServer(
+      Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        yield* TestClock.adjust("6 seconds");
+        return (yield* service.list()).tasks;
+      }),
+    );
+
+    expect(listed?.id).toBe(taskId);
+    expect(yield* Ref.get(launches)).toBe(1);
+    expect(listed?.nextRunAt).toBe(DateTime.formatIso(DateTime.toUtc(at(9, 0, 2))));
+    // The skipped slot must not read as the earlier manual run's clean success.
+    expect({ status: listed?.lastRunStatus, error: listed?.lastRunError }).not.toEqual({
+      status: "succeeded",
+      error: null,
+    });
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
+  "a run made while the scheduler was busy is not overwritten by its stale missed slot",
+  () =>
+    Effect.gen(function* () {
+      const at = (hour: number, minute = 0, day = 1) =>
+        DateTime.makeZonedUnsafe(
+          { year: 2026, month: 7, day, hour, minute, second: 0, millisecond: 0 },
+          { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+        );
+      yield* TestClock.setTime(DateTime.toEpochMillis(at(6)));
+      const slowStarted = yield* Deferred.make<void>();
+      const releaseSlow = yield* Deferred.make<void>();
+      const lastProcessed = yield* Deferred.make<void>();
+      const layerDependencies = Layer.mergeAll(
+        NodeCrypto.layer,
+        Scheduler.layer,
+        ManagedPolicy.layerTest(),
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+          launch: (input) =>
+            (input.title === "Slow"
+              ? Deferred.succeed(slowStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseSlow)),
+                )
+              : input.title === "Last"
+                ? Deferred.succeed(lastProcessed, undefined)
+                : Effect.void
+            ).pipe(Effect.as({ threadId: `thread-${input.title}`, resumed: false } as never)),
+        }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isScratchProject: () => Effect.succeed(false),
+        }),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+      );
+      const withServer = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(
+          Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))),
+        );
+      const upsert = (
+        title: string,
+        schedule: { type: "interval"; everyMs: number } | { type: "fixed_time"; timeOfDay: string },
+      ) =>
+        Effect.gen(function* () {
+          const service = yield* ScheduledTaskService.ScheduledTaskService;
+          const { task } = yield* service.upsert(
+            yield* decodeUpsertInput({
+              title,
+              prompt: "Update the notes.",
+              enabled: true,
+              schedule,
+              projectId: "project-stale-slot",
+              workspaceStrategy: { type: "root" },
+              modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+            }),
+          );
+          return task.id;
+        });
+
+      // Due at 07:00, 08:00 and 08:30; the server is off until 09:30.
+      const morningId = yield* withServer(
+        Effect.gen(function* () {
+          yield* upsert("Slow", { type: "interval", everyMs: 60 * 60 * 1000 });
+          const id = yield* upsert("Morning", { type: "fixed_time", timeOfDay: "08:00" });
+          yield* upsert("Last", { type: "interval", everyMs: 150 * 60 * 1000 });
+          return id;
+        }),
+      );
+      yield* TestClock.setTime(DateTime.toEpochMillis(at(9, 30)));
+      const morning = yield* withServer(
+        Effect.gen(function* () {
+          const service = yield* ScheduledTaskService.ScheduledTaskService;
+          yield* TestClock.adjust("6 seconds");
+          yield* Deferred.await(slowStarted);
+          yield* service.runNow({ id: morningId });
+          yield* Deferred.succeed(releaseSlow, undefined);
+          yield* Deferred.await(lastProcessed);
+          return (yield* service.list()).tasks.find((task) => task.id === morningId);
+        }),
+      );
+
+      expect({ status: morning?.lastRunStatus, error: morning?.lastRunError }).toEqual({
+        status: "succeeded",
+        error: null,
+      });
+      expect(morning?.nextRunAt).toBe(DateTime.formatIso(DateTime.toUtc(at(8, 0, 2))));
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

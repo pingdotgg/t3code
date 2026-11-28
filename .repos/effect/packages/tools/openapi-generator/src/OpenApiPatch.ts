@@ -19,6 +19,7 @@ import * as JsonPointer from "effect/JsonPointer"
 import * as Path from "effect/Path"
 import * as Predicate from "effect/Predicate"
 import * as Schema from "effect/Schema"
+import * as InternalJsonPointer from "./internal/jsonPointer.ts"
 
 // =============================================================================
 // Error Types
@@ -329,12 +330,10 @@ const expandMove = (op: JsonPatchMoveOperation, document: Schema.Json): JsonPatc
   if (op.path.startsWith(`${op.from}/`)) {
     throw new Error(`Cannot move ${op.from} into its own child ${op.path}`)
   }
-  let value: unknown = document
-  for (const token of op.from.split("/").slice(1).map(JsonPointer.unescapeToken)) {
-    if (!Predicate.isObjectOrArray(value) || !Object.hasOwn(value, token)) {
-      throw new Error(`Path ${op.from} does not exist`)
-    }
-    value = (value as Record<string, unknown>)[token]
+  const tokens = op.from.split("/").slice(1).map(JsonPointer.unescapeToken)
+  const value = InternalJsonPointer.lookup(document, tokens)
+  if (value === undefined) {
+    throw new Error(`Path ${op.from} does not exist`)
   }
   // Moving a location onto itself leaves the document unchanged, once the source is known to exist
   if (op.from === op.path) return []

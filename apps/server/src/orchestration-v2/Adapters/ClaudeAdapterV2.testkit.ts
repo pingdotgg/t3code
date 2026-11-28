@@ -838,6 +838,8 @@ function makeReplayQueryRunner(
               mode,
             });
           }),
+        // Recorded sessions already hold their title, and no replay asserts rename frames.
+        renameSession: () => Effect.void,
         stopTask: (taskId) =>
           replayEffect(() => {
             assertNextOutboundFrame({ type: "query.stop_task", taskId });
@@ -846,9 +848,13 @@ function makeReplayQueryRunner(
           replayEffect(() => {
             assertNextOutboundFrame({ type: "query.background_tasks", toolUseId });
           }).pipe(Effect.as(true)),
+        // A result looks for servers that need a sign-in; the replay reports none.
+        mcpServerStatus: Effect.succeed([]),
         // Recorded CLIs predate MCP Apps capabilities, so replays never reach these.
-        mcpServerStatus: Effect.die("unexpected MCP server status in replay"),
         readMcpResource: () => Effect.die("unexpected MCP resource read in replay"),
+        mcpAuthenticate: () => Effect.die("unexpected MCP sign-in in replay"),
+        mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in in replay"),
+        reconnectMcpServer: () => Effect.die("unexpected MCP reconnect in replay"),
         callMcpTool: () => Effect.die("unexpected MCP tool call in replay"),
         listPermissionRules: Effect.die("unexpected permission rules read in replay"),
         interrupt: replayEffect(() => {
@@ -943,6 +949,7 @@ function replayQueryRunnerService(
     open: (input) => replay(() => queryRunner.open(input)),
     forkSession: (input) => replay(() => queryRunner.forkSession(input)),
     subagentLaunchToolUseId: (input) => replay(() => queryRunner.subagentLaunchToolUseId(input)),
+    subagentModel: () => Effect.succeed(null),
     assertComplete: replay(() => queryRunner.assertComplete()),
   });
 }
@@ -1489,7 +1496,9 @@ const resolveClaudeRecordingExecutablePath = Effect.fn("resolveClaudeRecordingEx
   function* (environment: NodeJS.ProcessEnv) {
     const resolveExecutable = yield* SpawnExecutableResolution;
     const platform = yield* HostProcess.Platform;
-    const resolved = resolveExecutable("claude", platform, environment);
+    const resolved = yield* Effect.promise(async () =>
+      resolveExecutable("claude", platform, environment),
+    );
     if (resolved === undefined) {
       return undefined;
     }

@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
+import { resolveLocalOrigin } from "../startupAccess.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
@@ -27,6 +28,8 @@ const managedCodexLaunchArgs = (command: string, args: ReadonlyArray<string>) =>
     "features.api_key_model_discovery=true",
     "features.multi_agent=false",
     "features.multi_agent_v2=false",
+    // Catalog models declaring multi_agent_version still get agent tools without this.
+    "agents.enabled=false",
   ]
     .map((value) => `-c ${JSON.stringify(value)}`)
     .join(" ");
@@ -49,7 +52,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     instanceId: options.instanceId,
     defaultReturnUrl: new URL(
       "/welcome",
-      config.devUrl ?? `http://localhost:${config.port}`,
+      config.devUrl ?? resolveLocalOrigin(config.host, config.port),
     ).toString(),
   });
   const homeLayout = yield* resolveManagedCodexHomeLayout(

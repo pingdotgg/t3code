@@ -94,6 +94,34 @@ describe("KeyedLock", () => {
     }),
   );
 
+  it.effect("runner keeps each key's effects in run order and never holds up another key", () =>
+    Effect.gen(function* () {
+      const runner = yield* KeyedLock.makeRunner<string>();
+      const events = yield* Ref.make<ReadonlyArray<string>>([]);
+      const record = (event: string) => Ref.update(events, (current) => [...current, event]);
+      const release = yield* Deferred.make<void>();
+      const otherRan = yield* Deferred.make<void>();
+      const busyRan = yield* Deferred.make<void>();
+
+      yield* runner.run("busy", Effect.andThen(Deferred.await(release), record("busy:1")));
+      yield* runner.run("busy", record("busy:2"));
+      yield* runner.run(
+        "busy",
+        Effect.andThen(record("busy:3"), Deferred.succeed(busyRan, undefined)).pipe(Effect.asVoid),
+      );
+      yield* runner.run(
+        "other",
+        Effect.andThen(record("other"), Deferred.succeed(otherRan, undefined)).pipe(Effect.asVoid),
+      );
+      yield* Deferred.await(otherRan);
+      assert.deepStrictEqual(yield* Ref.get(events), ["other"]);
+
+      yield* Deferred.succeed(release, undefined);
+      yield* Deferred.await(busyRan);
+      assert.deepStrictEqual(yield* Ref.get(events), ["other", "busy:1", "busy:2", "busy:3"]);
+    }),
+  );
+
   it.effect("runs the effect in the caller's scope", () =>
     Effect.gen(function* () {
       const lock = yield* KeyedLock.make<string>();

@@ -7,6 +7,10 @@ import { canNavigateHistory, navigateHistory, type HistoryDirection } from "../n
 const SWIPE_TRIGGER_DISTANCE = 120;
 // Movement needed before the gesture picks an axis; first events are often diagonal.
 const SWIPE_AXIS_LOCK_DISTANCE = 8;
+// Vertical scrolls drift sideways, so a swipe's horizontal travel must clearly dominate once
+// it has moved far enough for its direction to be more than noise.
+const SWIPE_HORIZONTAL_DOMINANCE = 2;
+const SWIPE_DOMINANCE_DISTANCE = 30;
 const MOMENTUM_SAMPLE_SIZE = 5;
 
 type SwipeBounds = { left: number; top: number; width: number; height: number };
@@ -17,6 +21,8 @@ type SwipeGesture =
       direction: HistoryDirection;
       distance: number;
       deltas: number[];
+      travelX: number;
+      travelY: number;
       y: number;
       bounds: SwipeBounds;
     }
@@ -38,29 +44,42 @@ function readMainContentBounds(): SwipeBounds {
 }
 
 // `event.target` stops at a shadow host; the composed path also reaches scrollers inside it.
-function canScrollHorizontally(path: readonly EventTarget[], deltaX: number): boolean {
+function hasHorizontalScroller(path: readonly EventTarget[]): boolean {
   for (const element of path) {
     if (!(element instanceof Element) || element.scrollWidth <= element.clientWidth) continue;
     const { overflowX } = getComputedStyle(element);
     if (overflowX !== "auto" && overflowX !== "scroll") continue;
-    const canScroll =
-      deltaX < 0
-        ? element.scrollLeft > 0
-        : element.scrollLeft + element.clientWidth < element.scrollWidth - 1;
-    if (canScroll) return true;
+    return true;
   }
   return false;
+}
+
+function isVerticalScroll(travelX: number, travelY: number): boolean {
+  return (
+    travelX + travelY >= SWIPE_DOMINANCE_DISTANCE && travelX <= SWIPE_HORIZONTAL_DOMINANCE * travelY
+  );
 }
 
 function lockSwipeAxis(
   pending: Extract<SwipeGesture, { kind: "pending" }>,
 ): Exclude<SwipeGesture, { kind: "pending" }> {
   const { path, sumX, sumY } = pending;
-  if (Math.abs(sumX) <= Math.abs(sumY)) return { kind: "ignored" };
-  if (path.some((node) => node instanceof Element && node.matches('[role="dialog"]'))) {
+  if (Math.abs(sumX) <= Math.abs(sumY) || isVerticalScroll(Math.abs(sumX), Math.abs(sumY))) {
     return { kind: "ignored" };
   }
-  if (canScrollHorizontally(path, sumX)) return { kind: "ignored" };
+  // Preview contents can scroll in another document or on the server, outside this DOM.
+  if (
+    path.some(
+      (node) =>
+        node instanceof Element &&
+        node.matches(
+          '[role="dialog"], [role="alertdialog"], [data-preview-panel-mode], [data-preview-viewport], [data-server-browser-surface]',
+        ),
+    )
+  ) {
+    return { kind: "ignored" };
+  }
+  if (hasHorizontalScroller(path)) return { kind: "ignored" };
   const direction = sumX < 0 ? "back" : "forward";
   if (!canNavigateHistory(direction)) return { kind: "ignored" };
   return {
@@ -68,6 +87,8 @@ function lockSwipeAxis(
     direction,
     distance: Math.abs(sumX),
     deltas: [],
+    travelX: Math.abs(sumX),
+    travelY: Math.abs(sumY),
     y: pending.y,
     bounds: readMainContentBounds(),
   };
@@ -118,6 +139,11 @@ export function HistorySwipeNavigation() {
       gesture = null;
     });
     const onWheel = (event: WheelEvent) => {
+      if (event.shiftKey) {
+        if (gesture?.kind === "tracking") hideIndicator();
+        gesture = { kind: "ignored" };
+        return;
+      }
       if (gesture === null) {
         gesture =
           event.ctrlKey || event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL
@@ -134,6 +160,12 @@ export function HistorySwipeNavigation() {
       } else {
         const delta = gesture.direction === "back" ? -event.deltaX : event.deltaX;
         if (event.deltaX === 0 && event.deltaY === 0) return release();
+        gesture.travelX += Math.abs(event.deltaX);
+        gesture.travelY += Math.abs(event.deltaY);
+        if (isVerticalScroll(gesture.travelX, gesture.travelY)) {
+          gesture = { kind: "ignored" };
+          return hideIndicator();
+        }
         gesture.deltas = [...gesture.deltas.slice(1 - MOMENTUM_SAMPLE_SIZE), delta];
         if (isMomentumTail(gesture.deltas)) return release();
         gesture.distance = Math.max(0, gesture.distance + delta);

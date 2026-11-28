@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -5,10 +6,11 @@ import type * as Signature from "effect/crypto/Signature";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import type * as CodexUsageHistory from "../../usage/CodexUsageHistory.ts";
@@ -26,8 +28,10 @@ import { ProviderDriverError } from "../Errors.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
   checkCodexProviderStatus,
+  makeCodexAppServerHelper,
   makePendingCodexProvider,
-  probeCodexSkillsForCwd,
+  makeCodexSkillsProbe,
+  probeCodexUsageLimits,
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
@@ -42,6 +46,7 @@ import {
   makeCachedProviderMaintenanceResolution,
   makePackageManagedProviderMaintenanceResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
+  type ProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -50,6 +55,7 @@ import {
 } from "@t3tools/provider-core/server/snapshotSettings";
 import {
   codexContinuationIdentity,
+  codexHomeLaunchArgs,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
@@ -96,6 +102,31 @@ function makeCodexMaintenanceResolver(sharedHomePath: string) {
       }),
     },
   });
+}
+
+// `codex update` installs this channel's release, which can lag npm's latest tag.
+const CODEX_NATIVE_CHANNEL = "https://releases.openai.com/codex/channels/latest";
+const CodexNativeRelease = Schema.Struct({ tag_name: Schema.String });
+
+function withCodexNativeLatestVersion(
+  capabilities: ProviderMaintenanceCapabilities,
+  http: HttpClient.HttpClient,
+): ProviderMaintenanceCapabilities {
+  if (capabilities.update?.lockKey !== `${DRIVER_KIND}-native`) return capabilities;
+  return {
+    ...capabilities,
+    latestVersion: null,
+    latestVersionCacheKey: CODEX_NATIVE_CHANNEL,
+    lookupLatestVersion: http.get(CODEX_NATIVE_CHANNEL).pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap((response) => response.json),
+      Effect.flatMap(Schema.decodeUnknownEffect(CodexNativeRelease)),
+      Effect.map((release) => /^rust-v(\d+\.\d+\.\d+)$/.exec(release.tag_name)?.[1] ?? null),
+      Effect.timeoutOption("4 seconds"),
+      Effect.map(Option.getOrNull),
+      Effect.orElseSucceed(() => null),
+    ),
+  };
 }
 
 export type CodexDriverEnv =
@@ -152,6 +183,7 @@ export const CodexDriver: ProviderDriver<
     const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
+    const host = yield* ProviderHost.ProviderHost;
     const httpClient = yield* HttpClient.HttpClient;
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const installation = yield* CodexInstallation.CodexInstallation;
@@ -162,11 +194,11 @@ export const CodexDriver: ProviderDriver<
       yield* HostProcess.Environment,
     );
     const environmentHome = processEnv.CODEX_HOME;
-    const homeLayout = yield* resolveCodexHomeLayout(
-      !config.homePath.trim() && !config.shadowHomePath.trim() && environmentHome?.trim()
+    const homeConfig =
+      !config.homePath.trim() && environmentHome?.trim()
         ? { ...config, homePath: environmentHome }
-        : config,
-    );
+        : config;
+    const homeLayout = yield* resolveCodexHomeLayout(homeConfig);
     const continuationIdentity = codexContinuationIdentity(homeLayout);
     const stampIdentity = withInstanceIdentity({
       instanceId,
@@ -191,13 +223,15 @@ export const CodexDriver: ProviderDriver<
       enabled,
       binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
       homePath: homeLayout.effectiveHomePath ?? "",
+      launchArgs: codexHomeLaunchArgs(pathService, homeLayout, config.launchArgs),
     } satisfies CodexSettings;
-    const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+    const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(
       resolveProviderMaintenanceCapabilitiesEffect(
         makeCodexMaintenanceResolver(homeLayout.sharedHomePath),
         {
           binaryPath: effectiveConfig.binaryPath,
           env: processEnv,
+          npmCacheDir: pathService.join(host.paths.providerStatusCacheDir, "npm"),
         },
       ).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -205,6 +239,10 @@ export const CodexDriver: ProviderDriver<
         Effect.provideService(Path.Path, pathService),
       ),
     );
+    const resolveMaintenance: typeof resolveInstallation = (options) =>
+      resolveInstallation(options).pipe(
+        Effect.map((capabilities) => withCodexNativeLatestVersion(capabilities, httpClient)),
+      );
 
     const orchestrationAdapter = yield* createCodexAdapterV2(
       {
@@ -213,10 +251,13 @@ export const CodexDriver: ProviderDriver<
         accentColor,
         environment,
         enabled,
-        config,
+        config: homeConfig,
       },
       {
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+        models: Effect.suspend(() => snapshot.getSnapshot).pipe(
+          Effect.map((value) => value.models),
+        ),
         compatibility: installation.compatibility,
       },
     ).pipe(
@@ -246,6 +287,14 @@ export const CodexDriver: ProviderDriver<
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, pathService),
     );
+    const codexHelper = yield* makeCodexAppServerHelper().pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+    const checkUsageLimits = probeCodexUsageLimits({
+      helper: codexHelper,
+      codexSettings: effectiveConfig,
+      environment: processEnv,
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<CodexSettings>>({
       resolveMaintenance,
@@ -259,6 +308,7 @@ export const CodexDriver: ProviderDriver<
           (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
         ),
       checkProvider,
+      checkUsageLimits,
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>
@@ -286,22 +336,21 @@ export const CodexDriver: ProviderDriver<
       processEnv,
       snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
     );
+    const probeSkills = yield* makeCodexSkillsProbe(codexHelper).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
     const snapshotForCwd = (cwd: string) =>
       !effectiveConfig.enabled
         ? snapshot.getSnapshot
         : Effect.all([
             snapshot.getSnapshot,
-            probeCodexSkillsForCwd({
+            probeSkills({
               binaryPath: effectiveConfig.binaryPath,
               homePath: effectiveConfig.homePath,
               launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
               cwd,
               environment: processEnv,
-            }).pipe(
-              Effect.scoped,
-              Effect.timeout("20 seconds"),
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            ),
+            }).pipe(Effect.timeout(resolveProviderProbeTimeoutMs("codex", 20_000, processEnv))),
           ]).pipe(
             Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })),
             Effect.mapError(
@@ -347,29 +396,23 @@ export const CodexDriver: ProviderDriver<
                 cause,
               }),
           ),
-          // The windows just changed; re-probe so the snapshot says so. A
-          // failed probe republishes the pre-redemption limits rather than
-          // marking them failed, so "confirmed" means `checkedAt` moved past
-          // what was published before the redemption started.
           Effect.tap((outcome) =>
-            Effect.gen(function* () {
-              const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
-              const refreshed = yield* snapshot.refresh;
-              const after = refreshed.usageLimits?.checkedAt;
-              if (
-                outcome === "reset" &&
-                (after === undefined ||
-                  after === before ||
-                  refreshed.usageLimits?.unavailable?.reason === "probeFailed")
-              ) {
-                return yield* new ProviderDriverError({
-                  driver: DRIVER_KIND,
-                  instanceId,
-                  detail:
-                    "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
-                });
-              }
-            }),
+            ResetCreditCoordinator.refreshAfterRedemption({
+              outcome,
+              getSnapshot: snapshot.getSnapshot,
+              refresh: snapshot.refresh,
+            }).pipe(
+              Effect.filterOrFail(
+                (confirmed) => confirmed,
+                () =>
+                  new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail:
+                      "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
+                  }),
+              ),
+            ),
           ),
         );
 
@@ -378,7 +421,12 @@ export const CodexDriver: ProviderDriver<
       yield* fileSystem.watch(accountKey).pipe(
         Stream.filter((event) => pathService.basename(event.path) === "auth.json"),
         Stream.debounce(Duration.millis(250)),
-        Stream.runForEach(() => snapshot.refresh.pipe(Effect.ignoreCause({ log: true }))),
+        Stream.runForEach(() =>
+          codexHelper.invalidateAll.pipe(
+            Effect.andThen(snapshot.refresh),
+            Effect.ignoreCause({ log: true }),
+          ),
+        ),
         Effect.catchReason("PlatformError", "NotFound", () => Effect.void),
         Effect.ignoreCause({ log: true }),
         Effect.forkScoped,

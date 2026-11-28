@@ -1,8 +1,9 @@
 import { MysqlClient } from "@effect/sql-mysql2"
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Fiber, Stream } from "effect"
+import { Effect, Fiber, Layer, Redacted, Stream } from "effect"
 import * as Arr from "effect/Array"
 import * as Scheduler from "effect/Scheduler"
+import { SqlClient } from "effect/sql"
 import * as Mysql from "mysql2"
 import { EventEmitter } from "node:events"
 import { Readable } from "node:stream"
@@ -41,6 +42,42 @@ describe("MysqlClient", () => {
       Effect.provide(MysqlContainer.layerClient),
       Effect.catchTag("ContainerError", () => Effect.void)
     ), { timeout: 60_000 })
+
+  it.effect(
+    "starts a transaction at the isolation level of a SET TRANSACTION BeginTransaction",
+    () =>
+      Effect.gen(function*() {
+        const container = yield* MysqlContainer
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`CREATE TABLE begin_statement (value VARCHAR(32))`
+        yield* Effect.gen(function*() {
+          // one connection, so the transaction can't run on another session
+          const tx = yield* SqlClient.SqlClient
+          const count = Effect.map(
+            tx<{ n: number }>`SELECT COUNT(*) AS n FROM begin_statement`,
+            ([row]) => Number(row.n)
+          )
+          const sawConcurrentCommit = yield* Effect.gen(function*() {
+            yield* tx`INSERT INTO begin_statement VALUES ('rolled back')`
+            const before = yield* count
+            yield* sql`INSERT INTO begin_statement VALUES ('committed')`
+            return yield* Effect.fail((yield* count) > before)
+          }).pipe(
+            tx.withTransaction,
+            Effect.provideService(SqlClient.BeginTransaction, "SET TRANSACTION ISOLATION LEVEL READ COMMITTED"),
+            Effect.flip
+          )
+          // READ COMMITTED, where MySQL's default REPEATABLE READ would not see it
+          assert.isTrue(sawConcurrentCommit)
+        }).pipe(Effect.provide(MysqlClient.layer({
+          url: Redacted.make(container.getConnectionUri()),
+          maxConnections: 1
+        })))
+        // the failure rolled back the transaction's own insert
+        assert.deepStrictEqual(yield* sql`SELECT value FROM begin_statement`, [{ value: "committed" }])
+      }).pipe(Effect.provide(MysqlContainer.client.pipe(Layer.provideMerge(MysqlContainer.layer)))),
+    { timeout: 60_000 }
+  )
 
   // These replace mysql2's pool with fakes through one-shot mocks, so they
   // must not run alongside each other.
