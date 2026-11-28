@@ -78,7 +78,7 @@ import {
   WorkspaceBreadcrumbText,
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
-import { UsageAccessOverlay, type UsageAccessPrompt } from "./UsageAccessDialog";
+import { UsageAccessCard, type UsageAccessPrompt } from "./UsageAccessDialog";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
@@ -235,15 +235,12 @@ export function UsagePage() {
   });
 
   const accessPrompts: UsageAccessPrompt[] = selectedEnvironments.flatMap((environment) =>
-    (environment.canAnswerUsageAccess ? (environment.summary?.accessRequests ?? []) : []).map(
-      (request) => ({
-        environmentId: environment.environmentId,
-        environmentLabel: environment.label,
-        instanceId: request.instanceId,
-        driver: request.driver,
-        paths: request.paths,
-      }),
-    ),
+    environment.accessRequests.map((request) => ({
+      environmentId: environment.environmentId,
+      environmentLabel: environment.label,
+      instanceId: request.instanceId,
+      driver: request.driver,
+    })),
   );
 
   const canReadDiagnostics = selectedEnvironments.some(
@@ -540,60 +537,59 @@ export function UsagePage() {
           <AppRouteModalClose />
         </header>
 
-        <div className="relative flex min-h-0 flex-1 flex-col">
-          <ScrollArea className="min-h-0 flex-1" observeContent inert={accessPrompts.length > 0}>
-            <WorkspacePageContainer width="wide">
-              {selectedEnvironments.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  {environments.length === 0
-                    ? showingLimits
-                      ? gt("Connect an environment to see limits.")
-                      : gt("Connect an environment to see usage.")
-                    : showingLimits
-                      ? gt("Select an environment to see limits.")
-                      : gt("Select an environment to see usage.")}
-                </p>
-              ) : showingLimits ? (
-                <UsageLimitsSection
-                  selectedEnvironmentIds={selectedEnvironmentIds}
-                  hiddenProviders={hiddenProviders}
-                  now={limitsNow}
-                />
-              ) : shown === null ? (
-                <UsageSkeleton />
-              ) : !canReadDiagnostics ? (
-                <div className="space-y-2 py-12 text-center text-sm text-muted-foreground">
-                  {selectedEnvironments.map((environment) => (
-                    <p key={environment.environmentId}>
-                      {selectedEnvironments.length > 1
-                        ? gt("{environment}: {error}", {
-                            environment: environment.label,
-                            error: environment.error,
-                          })
-                        : environment.error}
-                    </p>
-                  ))}
-                </div>
-              ) : (
-                <UsageOverview
-                  merged={merged}
-                  shownWindow={shownWindow}
-                  hour12={hour12}
-                  days={days}
-                  hours={hours}
-                  showingKept={showingKept}
-                  metric={metric === "tokens" ? "tokens" : "cost"}
-                  selectedEnvironments={selectedEnvironments}
-                  hiddenProviders={hiddenProviders}
-                  refreshingUsage={refreshingUsage}
-                  showChatGptSharing={showChatGptSharing}
-                  onSelectModel={selectUsageModel}
-                />
-              )}
-            </WorkspacePageContainer>
-          </ScrollArea>
-          {accessPrompts.length > 0 ? <UsageAccessOverlay prompts={accessPrompts} /> : null}
-        </div>
+        <ScrollArea className="min-h-0 flex-1" observeContent>
+          <WorkspacePageContainer width="wide">
+            {accessPrompts.length > 0 ? (
+              <UsageAccessCard prompts={accessPrompts} />
+            ) : selectedEnvironments.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                {environments.length === 0
+                  ? showingLimits
+                    ? gt("Connect an environment to see limits.")
+                    : gt("Connect an environment to see usage.")
+                  : showingLimits
+                    ? gt("Select an environment to see limits.")
+                    : gt("Select an environment to see usage.")}
+              </p>
+            ) : showingLimits ? (
+              <UsageLimitsSection
+                selectedEnvironmentIds={selectedEnvironmentIds}
+                hiddenProviders={hiddenProviders}
+                now={limitsNow}
+              />
+            ) : shown === null ? (
+              <UsageSkeleton />
+            ) : !canReadDiagnostics ? (
+              <div className="space-y-2 py-12 text-center text-sm text-muted-foreground">
+                {selectedEnvironments.map((environment) => (
+                  <p key={environment.environmentId}>
+                    {selectedEnvironments.length > 1
+                      ? gt("{environment}: {error}", {
+                          environment: environment.label,
+                          error: environment.error,
+                        })
+                      : environment.error}
+                  </p>
+                ))}
+              </div>
+            ) : (
+              <UsageOverview
+                merged={merged}
+                shownWindow={shownWindow}
+                hour12={hour12}
+                days={days}
+                hours={hours}
+                showingKept={showingKept}
+                metric={metric === "tokens" ? "tokens" : "cost"}
+                selectedEnvironments={selectedEnvironments}
+                hiddenProviders={hiddenProviders}
+                refreshingUsage={refreshingUsage}
+                showChatGptSharing={showChatGptSharing}
+                onSelectModel={selectUsageModel}
+              />
+            )}
+          </WorkspacePageContainer>
+        </ScrollArea>
       </div>
       {showingLimits ? null : (
         <UsageModelDialogHost

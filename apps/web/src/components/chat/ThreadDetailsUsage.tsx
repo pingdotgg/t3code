@@ -168,7 +168,6 @@ function UsageAccessRow({
               environmentLabel: "",
               instanceId,
               driver: provider.driver,
-              paths: [],
             },
           ]}
           onOpenChange={setOpen}

@@ -19,8 +19,8 @@ import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { SettingsGroup } from "../settings/SettingsGroup";
 import { Button } from "../ui/button";
-import { Checkbox } from "../ui/checkbox";
 import {
   Dialog,
   DialogDescription,
@@ -30,8 +30,8 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
+import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
-import { UsageAccessReads } from "./UsageAccessReads";
 
 export interface UsageAccessPrompt {
   readonly environmentId: EnvironmentId;
@@ -39,7 +39,6 @@ export interface UsageAccessPrompt {
   readonly environmentLabel: string;
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
-  readonly paths: readonly string[];
 }
 
 const promptKey = (prompt: UsageAccessPrompt) => `${prompt.environmentId}\0${prompt.instanceId}`;
@@ -110,6 +109,45 @@ function useUsageAccessChoices(prompts: readonly UsageAccessPrompt[], onAnswered
   };
 }
 
+type UsageAccessChoices = ReturnType<typeof useUsageAccessChoices>;
+
+function useShortReads() {
+  const gt = useGT();
+  // Keep in step with UsageAccessReads, which Settings shows in full.
+  return (driver: ProviderDriverKind) => {
+    switch (driver) {
+      case "claudeAgent":
+      case "grok":
+        return gt("Session history and sign-in");
+      case "opencode":
+        return gt("Usage database and Go key");
+      case "antigravity":
+        return gt("Conversation history");
+      case "cursor":
+        return gt("Account usage from Cursor");
+      default:
+        return gt("Session history");
+    }
+  };
+}
+
+function usePromptLabels(prompts: readonly UsageAccessPrompt[]) {
+  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
+  return prompts.map((prompt) => {
+    const snapshot = presentations
+      .get(prompt.environmentId)
+      ?.serverConfig?.providers.find((provider) => provider.instanceId === prompt.instanceId);
+    return {
+      prompt,
+      key: promptKey(prompt),
+      accentColor: snapshot?.accentColor,
+      label: resolveProviderInstanceDisplayName(
+        snapshot ?? { instanceId: prompt.instanceId, driver: prompt.driver },
+      ),
+    };
+  });
+}
+
 function UsageAccessRows({
   prompts,
   declined,
@@ -121,59 +159,43 @@ function UsageAccessRows({
   readonly disabled: boolean;
   readonly onToggle: (prompt: UsageAccessPrompt, checked: boolean) => void;
 }) {
-  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
+  const shortReads = useShortReads();
+  const agents = usePromptLabels(prompts);
   const environments = [...new Set(prompts.map((prompt) => prompt.environmentId))];
   return (
     <div className="flex flex-col gap-4">
       {environments.map((environmentId) => {
-        const group = prompts.filter((prompt) => prompt.environmentId === environmentId);
+        const group = agents.filter((agent) => agent.prompt.environmentId === environmentId);
         return (
-          <section key={environmentId} className="flex flex-col gap-3">
+          <section key={environmentId} className="flex flex-col gap-2">
             {environments.length > 1 ? (
-              <h3 className="text-xs font-medium text-muted-foreground">
-                {group[0]?.environmentLabel}
+              <h3 className="px-1 text-xs font-medium text-muted-foreground">
+                {group[0]?.prompt.environmentLabel}
               </h3>
             ) : null}
-            <ul className="flex flex-col gap-3">
-              {group.map((prompt) => {
-                const key = promptKey(prompt);
-                const snapshot = presentations
-                  .get(prompt.environmentId)
-                  ?.serverConfig?.providers.find(
-                    (provider) => provider.instanceId === prompt.instanceId,
-                  );
-                const label = resolveProviderInstanceDisplayName(
-                  snapshot ?? { instanceId: prompt.instanceId, driver: prompt.driver },
-                );
-                const checkboxId = `usage-access-${key}`;
-                return (
-                  <li key={key} className="flex items-start gap-3">
-                    <Checkbox
-                      id={checkboxId}
-                      aria-label={label}
-                      className="mt-0.5"
-                      checked={!declined.has(key)}
-                      disabled={disabled}
-                      onCheckedChange={(checked) => onToggle(prompt, Boolean(checked))}
-                    />
-                    <label htmlFor={checkboxId} className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <span className="flex items-center gap-2 text-sm font-medium">
-                        <ProviderInstanceIcon
-                          driverKind={prompt.driver}
-                          displayName={label}
-                          accentColor={snapshot?.accentColor}
-                          size="compact"
-                        />
-                        {label}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        <UsageAccessReads driver={prompt.driver} paths={prompt.paths} />
-                      </span>
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
+            <SettingsGroup>
+              {group.map(({ prompt, key, label, accentColor }) => (
+                <div key={key} className="flex items-center gap-3 px-3.5 py-3">
+                  <ProviderInstanceIcon
+                    driverKind={prompt.driver}
+                    displayName={label}
+                    accentColor={accentColor}
+                  />
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="text-sm font-medium">{label}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {shortReads(prompt.driver)}
+                    </span>
+                  </div>
+                  <Switch
+                    aria-label={label}
+                    checked={!declined.has(key)}
+                    disabled={disabled}
+                    onCheckedChange={(checked) => onToggle(prompt, Boolean(checked))}
+                  />
+                </div>
+              ))}
+            </SettingsGroup>
           </section>
         );
       })}
@@ -181,66 +203,61 @@ function UsageAccessRows({
   );
 }
 
+function UsageAccessTitle() {
+  return <T>Show agent usage?</T>;
+}
+
 function UsageAccessIntro() {
+  return <T>T3 Code reads this from each agent to chart cost, tokens, and limits.</T>;
+}
+
+function UsageAccessActions({ choices }: { readonly choices: UsageAccessChoices }) {
   return (
-    <T>
-      T3 Code can chart tokens, cost, and limits from what your agents keep on the computer they run
-      on. Choose which agents to include.
-    </T>
+    <>
+      <Button
+        variant="outline"
+        disabled={choices.saving}
+        onClick={() => void choices.answer(false)}
+      >
+        <T>Don't allow</T>
+      </Button>
+      <Button
+        disabled={choices.saving || choices.noneSelected}
+        onClick={() => void choices.answer(true)}
+      >
+        <T>Allow</T>
+      </Button>
+    </>
   );
 }
 
-function UsageAccessFooterNote() {
-  return <T>You can change this for each agent in Settings → Providers.</T>;
-}
-
-/** Covers the Usage page until every listed agent has an answer; answering is the only way past it. */
-export function UsageAccessOverlay({
-  prompts,
-}: {
-  readonly prompts: readonly UsageAccessPrompt[];
-}) {
+/** The Usage page's own content until every listed agent has an answer. The rest of the app stays usable. */
+export function UsageAccessCard({ prompts }: { readonly prompts: readonly UsageAccessPrompt[] }) {
   const choices = useUsageAccessChoices(prompts, () => {});
   return (
-    <div className="absolute inset-0 z-10 flex justify-center overflow-y-auto scrollbar-gutter-both bg-linear-to-b from-background/40 via-background/95 via-30% to-background px-4 pt-24 pb-8">
+    <div className="flex min-h-[min(34rem,70vh)] items-center justify-center">
       <section
-        role="region"
         aria-labelledby="usage-access-title"
-        className="flex w-full max-w-md flex-col gap-6"
+        className="w-full max-w-md rounded-2xl border bg-popover shadow-lg/5"
       >
-        <div className="flex flex-col gap-2 text-center">
-          <h2 id="usage-access-title" className="text-xl font-semibold">
-            <T>Show usage from your agents?</T>
+        <div className="flex flex-col gap-2 p-6 pb-4">
+          <h2 id="usage-access-title" className="text-xl leading-snug font-semibold">
+            <UsageAccessTitle />
           </h2>
           <p className="text-sm text-muted-foreground">
             <UsageAccessIntro />
           </p>
         </div>
-        <UsageAccessRows
-          prompts={prompts}
-          declined={choices.declined}
-          disabled={choices.saving}
-          onToggle={choices.toggle}
-        />
-        <div className="flex flex-col items-center gap-3">
-          <div className="flex gap-2">
-            <Button
-              variant="ghost"
-              disabled={choices.saving}
-              onClick={() => void choices.answer(false)}
-            >
-              <T>Don't allow</T>
-            </Button>
-            <Button
-              disabled={choices.saving || choices.noneSelected}
-              onClick={() => void choices.answer(true)}
-            >
-              <T>Allow</T>
-            </Button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            <UsageAccessFooterNote />
-          </p>
+        <div className="px-6 pb-6">
+          <UsageAccessRows
+            prompts={prompts}
+            declined={choices.declined}
+            disabled={choices.saving}
+            onToggle={choices.toggle}
+          />
+        </div>
+        <div className="flex justify-end gap-2 rounded-b-2xl border-t bg-muted/72 px-6 py-4">
+          <UsageAccessActions choices={choices} />
         </div>
       </section>
     </div>
@@ -258,10 +275,10 @@ export function UsageAccessDialog({
   const choices = useUsageAccessChoices(prompts, () => onOpenChange(false));
   return (
     <Dialog open onOpenChange={onOpenChange}>
-      <DialogPopup>
+      <DialogPopup className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            <T>Show usage from your agents?</T>
+            <UsageAccessTitle />
           </DialogTitle>
           <DialogDescription>
             <UsageAccessIntro />
@@ -274,24 +291,9 @@ export function UsageAccessDialog({
             disabled={choices.saving}
             onToggle={choices.toggle}
           />
-          <p className="mt-4 text-xs text-muted-foreground">
-            <UsageAccessFooterNote />
-          </p>
         </DialogPanel>
         <DialogFooter>
-          <Button
-            variant="outline"
-            disabled={choices.saving}
-            onClick={() => void choices.answer(false)}
-          >
-            <T>Don't allow</T>
-          </Button>
-          <Button
-            disabled={choices.saving || choices.noneSelected}
-            onClick={() => void choices.answer(true)}
-          >
-            <T>Allow</T>
-          </Button>
+          <UsageAccessActions choices={choices} />
         </DialogFooter>
       </DialogPopup>
     </Dialog>

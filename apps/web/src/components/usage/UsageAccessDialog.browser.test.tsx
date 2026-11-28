@@ -28,42 +28,28 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
 }));
 
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { UsageAccessOverlay, type UsageAccessPrompt } from "./UsageAccessDialog";
+import { UsageAccessCard, type UsageAccessPrompt } from "./UsageAccessDialog";
 
 const environmentId = EnvironmentId.make("primary");
-const prompt = (driver: string, path: string): UsageAccessPrompt => ({
+const prompt = (driver: string): UsageAccessPrompt => ({
   environmentId,
   environmentLabel: "cups",
   instanceId: ProviderInstanceId.make(driver),
   driver: ProviderDriverKind.make(driver),
-  paths: [path],
 });
 
-it("says what each agent's access reads and saves only the agents left checked", async () => {
+it("says what each agent's access reads and saves only the agents left on", async () => {
   state.config = Atom.make({ settings: { providerInstances: {} } });
   state.mutateProviderInstance.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   await using screen = await render(
     <RegistryContext.Provider value={appAtomRegistry}>
-      <UsageAccessOverlay
-        prompts={[
-          prompt("claudeAgent", "/home/me/.claude/projects"),
-          prompt("codex", "/home/me/.codex/sessions"),
-        ]}
-      />
+      <UsageAccessCard prompts={[prompt("claudeAgent"), prompt("codex")]} />
     </RegistryContext.Provider>,
   );
-  await expect
-    .element(
-      screen.getByText(
-        "Reads its session history at /home/me/.claude/projects, and its sign-in to match limits to your account and ask Anthropic for your reset credits.",
-      ),
-    )
-    .toBeVisible();
-  await expect
-    .element(screen.getByText("Reads its session history at /home/me/.codex/sessions."))
-    .toBeVisible();
+  await expect.element(screen.getByText("Session history and sign-in")).toBeVisible();
+  await expect.element(screen.getByText("Session history", { exact: true })).toBeVisible();
 
-  await screen.getByRole("checkbox", { name: /Codex/ }).click();
+  await screen.getByRole("switch", { name: /Codex/ }).click();
   await screen.getByRole("button", { name: "Allow", exact: true }).click();
   await vi.waitFor(() => expect(state.mutateProviderInstance).toHaveBeenCalledTimes(2));
 

@@ -1,7 +1,10 @@
 import {
   AuthDiagnosticsReadScope,
   sessionGrantsScope,
+  type ServerSettings,
   type SessionGrantInput,
+  type UsageAccessRequest,
+  type UsageSummary,
 } from "@t3tools/contracts";
 
 import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
@@ -44,4 +47,19 @@ export function resolveUsageAccess(
       ? null
       : resolve(msg("This connection does not have access to diagnostics and usage.")),
   };
+}
+
+/**
+ * The agents a session can still answer for. A summary lists who was unanswered when its scan
+ * began, and a first scan can run long, so answers the settings already hold are left out.
+ */
+export function unansweredUsageAccessRequests(input: {
+  readonly canAnswer: boolean;
+  readonly summary: Pick<UsageSummary, "accessRequests"> | null;
+  readonly providerInstances: ServerSettings["providerInstances"] | undefined;
+}): readonly UsageAccessRequest[] {
+  if (!input.canAnswer) return [];
+  return (input.summary?.accessRequests ?? []).filter(
+    (request) => input.providerInstances?.[request.instanceId]?.usageAccess === undefined,
+  );
 }

@@ -13068,8 +13068,6 @@
   "ffbe05f2f405850a": "Acceso al uso",
   "40b7d767de71d529": "Acceso al uso de {provider}",
   "b1407315384f1c1b": "No se pudo guardar el acceso al uso",
-  "e8c85a531545e81e": "¿Mostrar el uso de tus agentes?",
-  "fe435496a11f0a76": "Puedes cambiarlo para cada agente en Ajustes → Proveedores.",
   "d0eb90f0a42166b7": "No permitir",
   "c23c1f8ee3808edb": "Permitir",
   "53d6f3510e1d2505": "Trae tus proyectos",
@@ -13079,43 +13077,6 @@
   "53e3445f40979e50": "Lee su historial de conversaciones.",
   "a7990527035b13c7": "Consulta a Cursor el uso de tu cuenta con la clave de API que diste a T3 Code.",
   "dd05e52097323d6a": "Lee su historial de sesiones.",
-  "7494e2ce9d51834d": [
-    "Lee su historial de sesiones en ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " y su inicio de sesión para consultar a xAI tus créditos."
-  ],
-  "b36e17795a3c3059": [
-    "Lee su base de datos de uso en ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " y su clave de Go para consultar a OpenCode tus límites de Go."
-  ],
-  "6eeddb4ee806cf22": [
-    "Lee su historial de conversaciones en ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "."
-  ],
-  "02139b3322ab2f61": [
-    "Lee su historial de sesiones en ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "."
-  ],
-  "75543f378b9076b9": "T3 Code puede mostrar tokens, coste y límites a partir de lo que tus agentes guardan en el ordenador donde se ejecutan. Elige qué agentes incluir.",
   "1c90379ba4454864": "Mostrar también mis estadísticas de uso de estos agentes, lo que puede leer su inicio de sesión para consultar límites",
   "16d657e5243b12c1": [
     "T3 Code puede leer tu historial de sesiones de ",
@@ -13127,13 +13088,11 @@
     " para encontrar las carpetas en las que trabajaste y sus remotos de git."
   ],
   "bdce0ad68690fdc1": "Lee su historial de sesiones y su inicio de sesión para asociar los límites a tu cuenta y consultar a Anthropic tus créditos de reinicio.",
-  "4337474d91936326": [
-    "Lee su historial de sesiones en ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " y su inicio de sesión para asociar los límites a tu cuenta y consultar a Anthropic tus créditos de reinicio."
-  ]
+  "8d802467f2a7f93b": "¿Mostrar el uso de los agentes?",
+  "f23cca870c825ca8": "T3 Code lee esto de cada agente para mostrar coste, tokens y límites.",
+  "0ef08693f1224444": "Historial de sesiones e inicio de sesión",
+  "bb9866823586b67a": "Base de datos de uso y clave de Go",
+  "8380d6f1828fe191": "Historial de conversaciones",
+  "1f2036cf25caaf16": "Uso de la cuenta desde Cursor",
+  "51aa7700c1f967d2": "Historial de sesiones"
 }

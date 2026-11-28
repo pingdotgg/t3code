@@ -13073,8 +13073,6 @@
   "ffbe05f2f405850a": "Nutzungszugriff",
   "40b7d767de71d529": "Nutzungszugriff für {provider}",
   "b1407315384f1c1b": "Nutzungszugriff konnte nicht gespeichert werden",
-  "e8c85a531545e81e": "Nutzung deiner Agenten anzeigen?",
-  "fe435496a11f0a76": "Du kannst das für jeden Agenten unter Einstellungen → Anbieter ändern.",
   "d0eb90f0a42166b7": "Nicht erlauben",
   "c23c1f8ee3808edb": "Erlauben",
   "53d6f3510e1d2505": "Bring deine Projekte mit",
@@ -13084,43 +13082,6 @@
   "53e3445f40979e50": "Liest den Gesprächsverlauf.",
   "a7990527035b13c7": "Fragt bei Cursor die Nutzung deines Kontos ab, mit dem API-Schlüssel, den du T3 Code gegeben hast.",
   "dd05e52097323d6a": "Liest den Sitzungsverlauf.",
-  "7494e2ce9d51834d": [
-    "Liest den Sitzungsverlauf unter ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " und die Anmeldung, um bei xAI dein Guthaben abzufragen."
-  ],
-  "b36e17795a3c3059": [
-    "Liest die Nutzungsdatenbank unter ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " und den Go-Schlüssel, um bei OpenCode deine Go-Limits abzufragen."
-  ],
-  "6eeddb4ee806cf22": [
-    "Liest den Gesprächsverlauf unter ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "."
-  ],
-  "02139b3322ab2f61": [
-    "Liest den Sitzungsverlauf unter ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "."
-  ],
-  "75543f378b9076b9": "T3 Code kann Tokens, Kosten und Limits aus dem darstellen, was deine Agents auf dem Computer speichern, auf dem sie laufen. Wähle, welche Agents einbezogen werden.",
   "1c90379ba4454864": "Auch meine Nutzungsstatistiken dieser Agents anzeigen, wofür ihre Anmeldung gelesen werden kann, um Limits abzufragen",
   "16d657e5243b12c1": [
     "T3 Code kann deinen ",
@@ -13132,13 +13093,11 @@
     " Sitzungsverlauf lesen, um die Ordner zu finden, in denen du gearbeitet hast, und ihre Git-Remotes."
   ],
   "bdce0ad68690fdc1": "Liest den Sitzungsverlauf und die Anmeldung, um Limits deinem Konto zuzuordnen und bei Anthropic deine Reset-Guthaben abzufragen.",
-  "4337474d91936326": [
-    "Liest den Sitzungsverlauf unter ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " und die Anmeldung, um Limits deinem Konto zuzuordnen und bei Anthropic deine Reset-Guthaben abzufragen."
-  ]
+  "8d802467f2a7f93b": "Agenten-Nutzung anzeigen?",
+  "f23cca870c825ca8": "T3 Code liest dies von jedem Agenten, um Kosten, Tokens und Limits darzustellen.",
+  "0ef08693f1224444": "Sitzungsverlauf und Anmeldung",
+  "bb9866823586b67a": "Nutzungsdatenbank und Go-Schlüssel",
+  "8380d6f1828fe191": "Gesprächsverlauf",
+  "1f2036cf25caaf16": "Kontonutzung von Cursor",
+  "51aa7700c1f967d2": "Sitzungsverlauf"
 }

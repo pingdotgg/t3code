@@ -13080,8 +13080,6 @@
   "ffbe05f2f405850a": "Användningsåtkomst",
   "40b7d767de71d529": "Användningsåtkomst för {provider}",
   "b1407315384f1c1b": "Det gick inte att spara användningsåtkomsten",
-  "e8c85a531545e81e": "Visa användning från dina agenter?",
-  "fe435496a11f0a76": "Du kan ändra detta för varje agent under Inställningar → Leverantörer.",
   "d0eb90f0a42166b7": "Tillåt inte",
   "c23c1f8ee3808edb": "Tillåt",
   "53d6f3510e1d2505": "Ta med dina projekt",
@@ -13091,43 +13089,6 @@
   "53e3445f40979e50": "Läser konversationshistoriken.",
   "a7990527035b13c7": "Frågar Cursor om kontots användning med API-nyckeln du gav T3 Code.",
   "dd05e52097323d6a": "Läser sessionshistoriken.",
-  "7494e2ce9d51834d": [
-    "Läser sessionshistoriken i ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " och inloggningen för att fråga xAI om dina krediter."
-  ],
-  "b36e17795a3c3059": [
-    "Läser användningsdatabasen i ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " och Go-nyckeln för att fråga OpenCode om dina Go-gränser."
-  ],
-  "6eeddb4ee806cf22": [
-    "Läser konversationshistoriken i ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "."
-  ],
-  "02139b3322ab2f61": [
-    "Läser sessionshistoriken i ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "."
-  ],
-  "75543f378b9076b9": "T3 Code kan visa tokens, kostnad och gränser utifrån det dina agenter sparar på datorn där de körs. Välj vilka agenter som ska ingå.",
   "1c90379ba4454864": "Visa även min användningsstatistik från dessa agenter, vilket kan läsa deras inloggning för att kontrollera gränser",
   "16d657e5243b12c1": [
     "T3 Code kan läsa din sessionshistorik från ",
@@ -13139,13 +13100,11 @@
     " för att hitta mapparna du arbetat i och deras git-remotes."
   ],
   "bdce0ad68690fdc1": "Läser sessionshistoriken och inloggningen för att koppla gränserna till ditt konto och fråga Anthropic om dina återställningskrediter.",
-  "4337474d91936326": [
-    "Läser sessionshistoriken i ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " och inloggningen för att koppla gränserna till ditt konto och fråga Anthropic om dina återställningskrediter."
-  ]
+  "8d802467f2a7f93b": "Visa agenternas användning?",
+  "f23cca870c825ca8": "T3 Code läser detta från varje agent för att visa kostnad, tokens och gränser.",
+  "0ef08693f1224444": "Sessionshistorik och inloggning",
+  "bb9866823586b67a": "Användningsdatabas och Go-nyckel",
+  "8380d6f1828fe191": "Konversationshistorik",
+  "1f2036cf25caaf16": "Kontots användning från Cursor",
+  "51aa7700c1f967d2": "Sessionshistorik"
 }

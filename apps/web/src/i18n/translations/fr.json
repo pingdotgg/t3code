@@ -13073,8 +13073,6 @@
   "ffbe05f2f405850a": "Accès à l'utilisation",
   "40b7d767de71d529": "Accès à l'utilisation pour {provider}",
   "b1407315384f1c1b": "Impossible d'enregistrer l'accès à l'utilisation",
-  "e8c85a531545e81e": "Afficher l'utilisation de vos agents ?",
-  "fe435496a11f0a76": "Vous pouvez modifier ce choix pour chaque agent dans Réglages → Fournisseurs.",
   "d0eb90f0a42166b7": "Ne pas autoriser",
   "c23c1f8ee3808edb": "Autoriser",
   "53d6f3510e1d2505": "Importez vos projets",
@@ -13084,43 +13082,6 @@
   "53e3445f40979e50": "Lit son historique de conversations.",
   "a7990527035b13c7": "Demande à Cursor l’utilisation de votre compte, avec la clé d’API fournie à T3 Code.",
   "dd05e52097323d6a": "Lit son historique de sessions.",
-  "7494e2ce9d51834d": [
-    "Lit son historique de sessions dans ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", ainsi que sa connexion pour demander à xAI vos crédits."
-  ],
-  "b36e17795a3c3059": [
-    "Lit sa base de données d’utilisation dans ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", ainsi que sa clé Go pour demander à OpenCode vos limites Go."
-  ],
-  "6eeddb4ee806cf22": [
-    "Lit son historique de conversations dans ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "."
-  ],
-  "02139b3322ab2f61": [
-    "Lit son historique de sessions dans ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "."
-  ],
-  "75543f378b9076b9": "T3 Code peut afficher les tokens, le coût et les limites à partir de ce que vos agents conservent sur l’ordinateur où ils s’exécutent. Choisissez les agents à inclure.",
   "1c90379ba4454864": "Afficher aussi mes statistiques d’utilisation de ces agents, ce qui peut lire leur connexion pour vérifier les limites",
   "16d657e5243b12c1": [
     "T3 Code peut lire votre historique de sessions ",
@@ -13132,13 +13093,11 @@
     " pour trouver les dossiers dans lesquels vous avez travaillé et leurs remotes git."
   ],
   "bdce0ad68690fdc1": "Lit son historique de sessions, ainsi que sa connexion pour rattacher les limites à votre compte et demander à Anthropic vos crédits de réinitialisation.",
-  "4337474d91936326": [
-    "Lit son historique de sessions dans ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", ainsi que sa connexion pour rattacher les limites à votre compte et demander à Anthropic vos crédits de réinitialisation."
-  ]
+  "8d802467f2a7f93b": "Afficher l’utilisation des agents ?",
+  "f23cca870c825ca8": "T3 Code lit ces données auprès de chaque agent pour afficher le coût, les tokens et les limites.",
+  "0ef08693f1224444": "Historique de sessions et connexion",
+  "bb9866823586b67a": "Base de données d’utilisation et clé Go",
+  "8380d6f1828fe191": "Historique de conversations",
+  "1f2036cf25caaf16": "Utilisation du compte depuis Cursor",
+  "51aa7700c1f967d2": "Historique de sessions"
 }
