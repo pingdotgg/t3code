@@ -169,6 +169,59 @@ describe("createThreadRowProviderInstanceResolver", () => {
       registry.dispose();
     }
   });
+
+  it("gives a custom instance an automatic color only while an enabled sibling shares its driver", () => {
+    const environmentId = EnvironmentId.make("environment-a");
+    const work = makeThread(environmentId, "codex_work");
+    const resolve = (defaultEnabled: boolean) =>
+      createThreadRowProviderInstanceResolver(
+        new Map([
+          [
+            environmentId,
+            makeConfig([
+              { instanceId: "codex", driver: "codex" },
+              { instanceId: "codex_work", driver: "codex" },
+            ]).providers.map((provider) =>
+              provider.instanceId === "codex" ? { ...provider, enabled: defaultEnabled } : provider,
+            ),
+          ],
+        ]),
+      )(work);
+
+    const automatic = resolve(true)?.accentColor;
+    expect(automatic).toMatch(/^#[0-9a-f]{6}$/);
+    expect(resolve(false)).toMatchObject({ accentColor: undefined, showBadge: false });
+    expect(resolve(true)).toMatchObject({ accentColor: automatic, showBadge: true });
+  });
+
+  it("leaves an enabled ACP registry session to its own icon", () => {
+    const environmentId = EnvironmentId.make("environment-a");
+    const thread = {
+      ...makeThread(environmentId, "codex"),
+      runtime: {
+        status: "running" as const,
+        activeRunId: null,
+        providerInstanceId: ProviderInstanceId.make("mistral_vibe"),
+        providerName: "Mistral Vibe",
+        lastError: null,
+        updatedAt: "2026-06-01T00:01:00.000Z",
+      },
+    };
+    const resolve = createThreadRowProviderInstanceResolver(
+      new Map([
+        [
+          environmentId,
+          makeConfig([
+            { instanceId: "codex", driver: "codex" },
+            { instanceId: "mistral_vibe", driver: "acpRegistry", displayName: "Mistral Vibe" },
+            { instanceId: "devin", driver: "acpRegistry", displayName: "Devin" },
+          ]).providers,
+        ],
+      ]),
+    );
+
+    expect(resolve(thread)).toMatchObject({ driverKind: "acpRegistry", accentColor: undefined });
+  });
 });
 
 describe("thread list reorder availability", () => {
