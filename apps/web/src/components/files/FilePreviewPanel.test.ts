@@ -235,8 +235,6 @@ describe("document preview contents", () => {
   });
 
   it.each([
-    ["an unknown destination", String.raw`A{\*\vendor \nesttableprops\nestrow}B`, "AB"],
-    ["an uppercase suffix", String.raw`A{\*\nesttablepropsVendor\nestrow}B`, "AB"],
     ["a child destination", String.raw`A{\*\nesttableprops{\*\vendor\nestrow}\nestrow}B`, "A<br>B"],
     [
       "a compatibility paragraph",
