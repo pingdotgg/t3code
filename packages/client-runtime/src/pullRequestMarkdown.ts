@@ -36,7 +36,17 @@ type PullRequestBodyTableCell = {
 
 // `.` stops at the `\r` of a CRLF body, which is how GitHub stores one written in its web editor.
 // The marker is the whole run, so a line that is no fence is given up on in one pass.
-const FENCE_PATTERN = /^\s{0,3}(`{3,}(?!`)|~{3,}(?!~))(.*)\r?$/u;
+// A fence may open right after a list marker: `- ```ts` starts code inside the item.
+const FENCE_PATTERN = /^\s{0,3}(?:(?:[-+*]|\d{1,9}[.)]) {1,4})?(`{3,}(?!`)|~{3,}(?!~))(.*)\r?$/u;
+const LIST_ITEM_PATTERN = /^\s{0,3}(?:[-+*]|\d{1,9}[.)]) /u;
+
+/** Tabs advance to the next multiple of four, as Markdown measures indentation. */
+function indentColumns(line: string): number {
+  let column = 0;
+  for (const char of /^[ \t]*/u.exec(line)![0]) column += char === "\t" ? 4 - (column % 4) : 1;
+  return column;
+}
+
 /**
  * How far a `<video>` tag may reach for its closing tag. Real embeds are one to three lines,
  * and the bound keeps an unclosed tag from making each one rescan the rest of the body.
@@ -321,7 +331,12 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
   const segments: PullRequestBodySegment[] = [];
   const markdown: string[] = [];
   let markdownStart = 0;
-  let openFence: { readonly marker: string; readonly flushLeft: boolean } | null = null;
+  let openFence: {
+    readonly marker: string;
+    readonly flushLeft: boolean;
+    /** Columns of a list item the fence opened in; a less indented line ends the item and fence. */
+    readonly itemIndent: number;
+  } | null = null;
   let openComment = false;
 
   // Blank lines around a run are dropped, but never leading spaces: four of them open an
@@ -354,6 +369,14 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       markdown.push(line);
       continue;
     }
+    if (
+      openFence !== null &&
+      openFence.itemIndent > 0 &&
+      line.trim() &&
+      indentColumns(line) < openFence.itemIndent
+    ) {
+      openFence = null;
+    }
     const fenceMatch = FENCE_PATTERN.exec(line);
     // ```` ```npm test``` ```` is a code span, not an opener that would flip every later fence.
     // A span that runs past this line is left an opener, so its lines stay out of media.
@@ -361,7 +384,13 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       openFence === null &&
       fenceMatch?.[1]![0] === "`" &&
       (fenceMatch[2]!.match(/`+/gu) ?? []).some((run) => run.length === fenceMatch[1]!.length);
-    if (fenceMatch !== null && !isInlineCode) {
+    // A backtick fence's info string cannot hold a backtick; on a list marker that is item text.
+    const isListText =
+      openFence === null &&
+      fenceMatch?.[1]![0] === "`" &&
+      fenceMatch[2]!.includes("`") &&
+      LIST_ITEM_PATTERN.test(line);
+    if (fenceMatch !== null && !isInlineCode && !isListText) {
       const fence = fenceMatch[1]!;
       // A fence closes only on the same marker, at least as long as the one that opened it,
       // and with nothing after it: `~~~` cannot end a ``` block, and ```` ```ts ```` is an
@@ -372,9 +401,16 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
         fence[0] === openFence.marker[0] &&
         fence.length >= openFence.marker.length &&
         fenceMatch[2]!.trim().length === 0 &&
-        !(openFence.flushLeft && INDENTED_CODE_PATTERN.test(line));
+        !LIST_ITEM_PATTERN.test(line) &&
+        !(openFence.flushLeft && INDENTED_CODE_PATTERN.test(line)) &&
+        // A closer may sit at most three columns past its list item's content.
+        !(openFence.itemIndent > 0 && indentColumns(line) > openFence.itemIndent + 3);
       if (openFence === null) {
-        openFence = { marker: fence, flushLeft: line.startsWith(fence) };
+        openFence = {
+          marker: fence,
+          flushLeft: line.startsWith(fence),
+          itemIndent: LIST_ITEM_PATTERN.test(line) ? line.indexOf(fence) : 0,
+        };
       } else if (closes) {
         openFence = null;
       }
