@@ -5774,5 +5774,11 @@
   "5d9bc70d1cb3b596": "{count, plural, one {Na {count} maszynie prawie brak miejsca na dysku} other {Na {count} maszynach prawie brak miejsca na dysku}}",
   "7bb6d3c4fe5cea0f": "{count, plural, one {{count} maszyna jest przeciążona} few {{count} maszyny są przeciążone} many {{count} maszyn jest przeciążonych} other {{count} maszyny są przeciążone}}",
   "b48a4b390016a4f0": "Zajmuje {usage}, gdy pamięć spowalnia agentów. Zatrzymanie go pomoże pozostałym.",
-  "0d23483df1d6fc87": "Zajmuje {usage}, gdy ta maszyna jest przeciążona. Zatrzymanie go pomoże pozostałym."
+  "0d23483df1d6fc87": "Zajmuje {usage}, gdy ta maszyna jest przeciążona. Zatrzymanie go pomoże pozostałym.",
+  "c5d632f44b6d9152": "Podsumowania wątków",
+  "5517f24d82fdb85f": "Wyświetla krótkie podsumowanie na żywo aktywnego wątku po zakończeniu tur. Generuje tylko wtedy, gdy Podsumowanie jest widoczne w wątku, przy użyciu modelu generowania tekstu.",
+  "8515375e3eb5bf1f": "Otwórz podsumowanie wątku",
+  "5abe15eff533d759": "Podsumowanie",
+  "4b70f044c4430078": "Generowanie podsumowania…",
+  "3db8544f9659fc34": "Brak podsumowania. Krótkie podsumowanie pojawi się po zakończeniu tur."
 }

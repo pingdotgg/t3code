@@ -8,6 +8,7 @@ import {
 
 const usage = THREAD_DETAILS_ITEMS.find((item) => item.id === "usage")!;
 const servers = THREAD_DETAILS_ITEMS.find((item) => item.id === "servers")!;
+const recap = THREAD_DETAILS_ITEMS.find((item) => item.id === "recap")!;
 
 describe("thread details items", () => {
   it.each([
@@ -32,5 +33,6 @@ describe("thread details items", () => {
 
     const hidden = { threadDetailsItems: { servers: false }, threadDetailsUsageEnabled: false };
     expect(setThreadDetailsItem(hidden, servers, true)).toEqual({});
+    expect(setThreadDetailsItem(hidden, recap, false)).toEqual({ servers: false, recap: false });
   });
 });

@@ -31,6 +31,8 @@ export type {
   PrContentGenerationResult,
   ReviewGuideGenerationInput,
   ReviewGuideGenerationResult,
+  ThreadRecapGenerationInput,
+  ThreadRecapGenerationResult,
   ThreadTitleGenerationInput,
   ThreadTitleGenerationResult,
   TranscriptionPostProcessingInput,
@@ -46,6 +48,7 @@ type TextGenerationOp =
   | "generatePrContent"
   | "generateBranchName"
   | "generateThreadTitle"
+  | "generateThreadRecap"
   | "generateReviewGuide"
   | "generateTranscriptionPostProcessing";
 
@@ -238,6 +241,14 @@ export const make = Effect.gen(function* () {
               modelSelection,
             });
           }),
+      );
+    }),
+    generateThreadRecap: Effect.fn("TextGeneration.generateThreadRecap")(function (input) {
+      return generate(
+        "generateThreadRecap",
+        input.modelSelection,
+        input.projectId,
+        (service, modelSelection) => service.generateThreadRecap({ ...input, modelSelection }),
       );
     }),
   });

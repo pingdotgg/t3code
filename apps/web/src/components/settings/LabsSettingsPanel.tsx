@@ -45,6 +45,7 @@ export function LabsSettingsPanel() {
         <WorkflowsRow />
         <WorkflowSkippedRunsRow />
         <PromptSuggestionsRow />
+        <ThreadRecapRow />
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
         <AgentFeedbackRow />
@@ -310,6 +311,38 @@ function PromptSuggestionsRow() {
             updateSettings({ promptSuggestionsEnabled: Boolean(checked) })
           }
           aria-label={gt("Suggest next prompt")}
+        />
+      }
+    />
+  );
+}
+
+function ThreadRecapRow() {
+  const searchableSetting = useSearchableSetting();
+  const { connectedEnvironments } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const gt = useGT();
+  if (
+    connectedEnvironments.some(
+      (environment) => environment.serverConfig?.environment.capabilities.threadRecap !== true,
+    )
+  )
+    return null;
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("thread-recap-beta")}
+      settingKeys={["threadRecapEnabled"]}
+      description={gt(
+        "Show a short live recap of the active thread after turns settle. Generates only while Recap is visible on a thread, using your text generation model.",
+      )}
+      control={
+        <ScopedSwitch
+          settingKeys={["threadRecapEnabled"]}
+          checked={settings.threadRecapEnabled}
+          onCheckedChange={(checked) => updateSettings({ threadRecapEnabled: Boolean(checked) })}
+          aria-label={gt("Thread recaps")}
         />
       }
     />

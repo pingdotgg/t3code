@@ -397,7 +397,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
     searchTerms: [
       msg(
-        "customize show hide panel card environment editor scripts branch pull request git changes servers automations lineage usage limits 5 hour weekly quota tokens context window",
+        "customize show hide panel card environment editor scripts branch pull request git changes servers automations recap summary lineage usage limits 5 hour weekly quota tokens context window",
       ),
     ],
   },
@@ -592,6 +592,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/labs",
     scope: "environment",
     searchTerms: [msg("beta tab autocomplete predict next message claude codex ghost text")],
+  },
+  {
+    id: "thread-recap-beta",
+    title: msg("Thread recaps"),
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: [msg("beta recap summary thread details catch up live note")],
   },
   {
     id: "simlock-hosts",

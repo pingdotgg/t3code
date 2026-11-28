@@ -11914,7 +11914,7 @@
   "d8d6cfd630cff22d": "röd grön blå orange tillägg borttagningar ändringar antal palett färgblind",
   "717e49895cfee1c7": "bred full bredd kolumn layout meddelanden inmatningsfält skärm",
   "9d5c7430a7ff76cf": "bred full bredd inbäddad sida rendera diagram instrumentpanel artefakt centrerad",
-  "88365077fd80787b": "anpassa visa dölj panel kort miljö redigerare skript gren pull request git ändringar servrar automatiseringar härkomst användning gränser 5 timmar vecka kvot token kontextfönster",
+  "f267cfda3aef7173": "anpassa visa dölj panel kort miljö redigerare skript gren pull request git ändringar servrar automatiseringar sammanfattning recap härkomst användning gränser 5 timmar vecka kvot token kontextfönster",
   "d561f74efa5f3920": "resonemang ansträngning tänkande staplar diagram ord etikett nivå inmatningsfält",
   "6113c17109ee0d57": "latex tex katex ekvationer formler markdown",
   "8c8364d44fa28d22": "dev nightly latest kanal grafik pill etikett dölj ingen",
@@ -13169,5 +13169,13 @@
   "236911500e5aff7c": "Agenterna väntar hela tiden medan systemet frigör minne.",
   "81aafe06d7fede9a": "Där T3 Code sparar sina data och worktrees",
   "9429f8ff8866edac": "Processor",
-  "79a21371b8db96da": "Arbetet väntar på en ledig processor eller på disken, så agenterna går långsamt."
+  "79a21371b8db96da": "Arbetet väntar på en ledig processor eller på disken, så agenterna går långsamt.",
+  "6fa2a2aff354657c": "Sammanfattning",
+  "b4dad2deaf1b438e": "Fäll ihop sammanfattning",
+  "cf4f8bfb3cf5b459": "Expandera sammanfattning",
+  "8a1246875894c143": "Skapar sammanfattning",
+  "d6d3011a17b8f747": "Sammanfattning",
+  "5517f24d82fdb85f": "Visar en kort direktsammanfattning av den aktiva tråden när turer har avslutats. Genereras bara medan Sammanfattning visas i en tråd, med din textgenereringsmodell.",
+  "c5d632f44b6d9152": "Trådsammanfattningar",
+  "dfe532d643a20824": "beta sammanfattning recap tråddetaljer uppdatera direktanteckning"
 }

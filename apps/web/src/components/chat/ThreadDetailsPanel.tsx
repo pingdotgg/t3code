@@ -32,6 +32,7 @@ import {
   type ThreadDetailsUsageInput,
 } from "./ThreadDetailsUsage";
 import { ThreadDetailsTasks } from "./ThreadDetailsTasks";
+import { ThreadDetailsRecap } from "./ThreadDetailsRecap";
 import type { TaskListPlan } from "../../session-logic";
 import { ThreadDetailsItemsMenuItems } from "./ThreadDetailsItemsMenu";
 import { resolveThreadDetailsVisibility, THREAD_DETAILS_ITEMS } from "./threadDetailsItems";
@@ -106,6 +107,9 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
   const project = useProject(scopeProjectRef(props.environmentId, props.projectId));
   const serverConfig = useServerConfigs().get(props.environmentId);
+  const threadRecapEnabled =
+    serverConfig?.environment.capabilities.threadRecap === true &&
+    serverConfig.settings.threadRecapEnabled === true;
   const tracksFolders = (project?.trackedFolders?.length ?? 0) > 0;
   // A worktree thread reaches tracked repositories only through its own task folder.
   const taskFolderQuery = useEnvironmentQuery(
@@ -158,9 +162,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
       threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
       anchor={props.anchor}
       handle={props.handle}
-      contentKey={THREAD_DETAILS_ITEMS.filter((item) => visible[item.id])
-        .map((item) => item.id)
-        .join(",")}
+      contentKey={[
+        ...THREAD_DETAILS_ITEMS.filter((item) => visible[item.id]).map((item) => item.id),
+        threadRecapEnabled ? "recap-on" : "recap-off",
+      ].join(",")}
       onContextMenu={(event) => {
         // Popups the card opens bubble here through React; they, fields, links, and selected text
         // keep their own menus.
@@ -316,6 +321,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 />
               ) : null}
 
+              {density === "full" && !props.draftId && threadRecapEnabled && visible.recap ? (
+                <ThreadDetailsRecap environmentId={props.environmentId} threadId={props.threadId} />
+              ) : null}
+
               {density === "full" && !props.draftId && (visible.lineage || visible.sideChats) ? (
                 <ThreadRelationshipsPanel
                   environmentId={props.environmentId}
@@ -377,7 +386,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 align="start"
                 side="bottom"
               >
-                <ThreadDetailsItemsMenuItems />
+                <ThreadDetailsItemsMenuItems environmentId={props.environmentId} />
               </MenuPopup>
             </Menu>
           </>

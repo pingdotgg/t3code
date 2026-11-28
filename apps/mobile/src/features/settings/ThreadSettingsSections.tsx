@@ -65,6 +65,15 @@ export function SettingsLabsRouteScreen() {
             "On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
           )}
         />
+        <MachineBetaSection
+          title={gt("Thread recaps")}
+          icon="text.alignleft"
+          capability="threadRecap"
+          setting="threadRecapEnabled"
+          description={gt(
+            "Show a short live recap of the active thread after turns settle. Generates only while Recap is visible on a thread, using your text generation model.",
+          )}
+        />
         <AgentFeedbackSection />
       </ScrollView>
     </SettingsScreen>
@@ -264,7 +273,10 @@ export function NewThreadSettingsSection() {
   );
 }
 
-type MachineBetaSetting = "linkedEnvironmentsEnabled" | "fastWorktreeCheckout";
+type MachineBetaSetting =
+  | "linkedEnvironmentsEnabled"
+  | "fastWorktreeCheckout"
+  | "threadRecapEnabled";
 
 const AGENT_FEEDBACK_CHOICES: ReadonlyArray<{
   readonly mode: AgentFeedbackMode;
@@ -358,7 +370,7 @@ function MachineBetaSection({
 }: {
   readonly title: string;
   readonly icon: ComponentProps<typeof SettingsSwitchRow>["icon"];
-  readonly capability: "peerLinks" | "fastWorktreeCheckout";
+  readonly capability: "peerLinks" | "fastWorktreeCheckout" | "threadRecap";
   readonly setting: MachineBetaSetting;
   readonly description: string;
 }) {
@@ -402,7 +414,9 @@ function MachineBetaSection({
                     patch:
                       setting === "linkedEnvironmentsEnabled"
                         ? { linkedEnvironmentsEnabled: value }
-                        : { fastWorktreeCheckout: value },
+                        : setting === "fastWorktreeCheckout"
+                          ? { fastWorktreeCheckout: value }
+                          : { threadRecapEnabled: value },
                   },
                 })
               }

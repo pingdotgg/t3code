@@ -1,9 +1,11 @@
+import type { EnvironmentId } from "@t3tools/contracts";
 import { T, useMessages } from "gt-react";
 import {
   getClientSettings,
   updateClientSettings,
   useClientSettings,
 } from "../../hooks/useSettings";
+import { useServerConfigs } from "../../state/entities";
 import { MenuCheckboxItem, MenuGroup, MenuGroupLabel, MenuItem, MenuSeparator } from "../ui/menu";
 import {
   isDefaultThreadDetailsVisibility,
@@ -13,9 +15,28 @@ import {
   THREAD_DETAILS_ITEMS,
 } from "./threadDetailsItems";
 
+export function useAvailableThreadDetailsItems(environmentId?: EnvironmentId) {
+  const serverConfigs = useServerConfigs();
+  const isRecapEnabled = (config: ReturnType<typeof serverConfigs.get>) =>
+    config?.environment.capabilities.threadRecap === true &&
+    config.settings.threadRecapEnabled === true;
+  const recapEnabled =
+    environmentId !== undefined
+      ? isRecapEnabled(serverConfigs.get(environmentId))
+      : Array.from(serverConfigs.values()).some(isRecapEnabled);
+  return recapEnabled
+    ? THREAD_DETAILS_ITEMS
+    : THREAD_DETAILS_ITEMS.filter((item) => item.id !== "recap");
+}
+
 /** Menu body that shows and hides thread details items. The card's context menu and Settings share it. */
-export function ThreadDetailsItemsMenuItems() {
+export function ThreadDetailsItemsMenuItems({
+  environmentId,
+}: {
+  readonly environmentId?: EnvironmentId;
+} = {}) {
   const visibility = useClientSettings(resolveThreadDetailsVisibility);
+  const items = useAvailableThreadDetailsItems(environmentId);
   const m = useMessages();
   return (
     <>
@@ -23,7 +44,7 @@ export function ThreadDetailsItemsMenuItems() {
         <MenuGroupLabel>
           <T>Show in thread details</T>
         </MenuGroupLabel>
-        {THREAD_DETAILS_ITEMS.map((item) => (
+        {items.map((item) => (
           <MenuCheckboxItem
             key={item.id}
             checked={visibility[item.id]}

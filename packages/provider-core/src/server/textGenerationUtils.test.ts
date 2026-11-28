@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { limitSection, sanitizeCommitSubject, sanitizeThreadTitle } from "./textGenerationUtils.ts";
+import {
+  limitSection,
+  sanitizeCommitSubject,
+  sanitizeThreadRecap,
+  sanitizeThreadTitle,
+} from "./textGenerationUtils.ts";
 
 describe("limitSection", () => {
   it("cuts a long section without splitting an emoji", () => {
@@ -42,5 +47,20 @@ describe("sanitizeThreadTitle", () => {
     const title = `${prefix}${character} more`;
 
     expect(sanitizeThreadTitle(title)).toBe(`${prefix}${retained}...`);
+  });
+});
+
+describe("sanitizeThreadRecap", () => {
+  it("strips prefixes, unwraps JSON, collapses whitespace, and falls back when empty", () => {
+    expect(
+      sanitizeThreadRecap('{"recap":"Recap:  Updated auth   middleware.\\nNext: run tests."}'),
+    ).toBe("Updated auth middleware. Next: run tests.");
+    expect(sanitizeThreadRecap("   ", "Previous recap text.")).toBe("Previous recap text.");
+    expect(sanitizeThreadRecap("   ")).toBe("");
+  });
+
+  it("clips long recaps at 240 chars without splitting surrogate pairs", () => {
+    const prefix = "a".repeat(236);
+    expect(sanitizeThreadRecap(`${prefix}🚀 more`)).toBe(`${prefix}...`);
   });
 });

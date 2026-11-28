@@ -11915,7 +11915,7 @@
   "d8d6cfd630cff22d": "czerwony zielony niebieski pomarańczowy dodania usunięcia zmiany liczby paleta daltonizm",
   "717e49895cfee1c7": "szeroki pełna szerokość kolumnowy układ wiadomości composer monitor",
   "9d5c7430a7ff76cf": "szeroko pełna szerokość w linii strona renderowanie wykres kokpit artefakt wyśrodkowany",
-  "88365077fd80787b": "dostosuj pokaż ukryj panel karta środowisko edytor skrypty gałąź pull request zmiany gita serwery automatyzacje pochodzenie limity użycia 5 godzin tygodniowy limit tokeny okno kontekstowe",
+  "f267cfda3aef7173": "dostosuj pokaż ukryj panel karta środowisko edytor skrypty gałąź pull request zmiany gita serwery automatyzacje podsumowanie skrót pochodzenie limity użycia 5 godzin tygodniowy limit tokeny okno kontekstowe",
   "d561f74efa5f3920": "wnioskowanie wysiłek myślenie słupki wykres słowo etykieta poziom composer",
   "6113c17109ee0d57": "latex tex katex równania wzory markdown",
   "8c8364d44fa28d22": "dev nightly najnowszy kanał grafika znaczek etykieta ukryj brak",
@@ -13170,5 +13170,13 @@
   "236911500e5aff7c": "Agenci ciągle czekają, aż system zwolni pamięć.",
   "81aafe06d7fede9a": "Miejsce, w którym T3 Code trzyma dane i worktree",
   "9429f8ff8866edac": "CPU",
-  "79a21371b8db96da": "Praca czeka na wolny procesor lub na dysk, więc agenci działają wolno."
+  "79a21371b8db96da": "Praca czeka na wolny procesor lub na dysk, więc agenci działają wolno.",
+  "6fa2a2aff354657c": "Podsumowanie",
+  "b4dad2deaf1b438e": "Zwiń podsumowanie",
+  "cf4f8bfb3cf5b459": "Rozwiń podsumowanie",
+  "8a1246875894c143": "Generowanie podsumowania",
+  "d6d3011a17b8f747": "Podsumowanie",
+  "5517f24d82fdb85f": "Wyświetla krótkie podsumowanie na żywo aktywnego wątku po zakończeniu tur. Generuje tylko wtedy, gdy Podsumowanie jest widoczne w wątku, przy użyciu modelu generowania tekstu.",
+  "c5d632f44b6d9152": "Podsumowania wątków",
+  "dfe532d643a20824": "beta podsumowanie skrót szczegóły wątku nadrobienie notatka na żywo"
 }

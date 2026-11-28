@@ -11901,7 +11901,7 @@
   "d8d6cfd630cff22d": "rojo verde azul naranja adiciones eliminaciones cambios recuentos paleta daltonismo",
   "717e49895cfee1c7": "ancho ancho completo columna diseño mensajes cuadro mensaje compositor monitor",
   "9d5c7430a7ff76cf": "ancho ancho completo en línea página renderizar gráfico panel artefacto centrado",
-  "88365077fd80787b": "personalizar mostrar ocultar panel tarjeta entorno editor scripts rama pull request git cambios servidores automatizaciones linaje uso límites 5 horas semanal cuota tokens ventana de contexto",
+  "f267cfda3aef7173": "personalizar mostrar ocultar panel tarjeta entorno editor scripts rama pull request git cambios servidores automatizaciones resumen recap linaje uso límites 5 horas semanal cuota tokens ventana de contexto",
   "d561f74efa5f3920": "esfuerzo de razonamiento pensamiento barras gráfico palabra etiqueta nivel cuadro mensaje compositor",
   "6113c17109ee0d57": "latex tex katex ecuaciones fórmulas markdown",
   "8c8364d44fa28d22": "dev nightly latest canal ilustración píldora etiqueta ocultar ninguno",
@@ -13157,5 +13157,13 @@
   "236911500e5aff7c": "Los agentes esperan una y otra vez mientras el sistema libera memoria.",
   "81aafe06d7fede9a": "Donde T3 Code guarda sus datos y worktrees",
   "9429f8ff8866edac": "CPU",
-  "79a21371b8db96da": "El trabajo espera una CPU libre o el disco, así que los agentes van lentos."
+  "79a21371b8db96da": "El trabajo espera una CPU libre o el disco, así que los agentes van lentos.",
+  "6fa2a2aff354657c": "Resumen",
+  "b4dad2deaf1b438e": "Contraer resumen",
+  "cf4f8bfb3cf5b459": "Expandir resumen",
+  "8a1246875894c143": "Generando resumen",
+  "d6d3011a17b8f747": "Resumen",
+  "5517f24d82fdb85f": "Muestra un breve resumen en vivo del hilo activo cuando terminan los turnos. Solo se genera mientras Resumen está visible en el hilo, usando tu modelo de generación de texto.",
+  "c5d632f44b6d9152": "Resúmenes de hilos",
+  "dfe532d643a20824": "beta resumen recap detalles del hilo ponerse al día nota en vivo"
 }

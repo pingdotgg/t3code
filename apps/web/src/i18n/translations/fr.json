@@ -11906,7 +11906,7 @@
   "d8d6cfd630cff22d": "rouge vert bleu orange ajouts suppressions modifications compteurs palette daltonien",
   "717e49895cfee1c7": "large pleine largeur colonne mise en page messages zone de saisie écran",
   "9d5c7430a7ff76cf": "large pleine largeur intégré page rendu graphique tableau de bord artefact centré",
-  "88365077fd80787b": "personnaliser afficher masquer panneau carte environnement éditeur scripts branche pull request modifications git serveurs automatisations lignée utilisation limites 5 heures hebdomadaire quota jetons fenêtre de contexte",
+  "f267cfda3aef7173": "personnaliser afficher masquer panneau carte environnement éditeur scripts branche pull request modifications git serveurs automatisations récapitulatif résumé lignée utilisation limites 5 heures hebdomadaire quota jetons fenêtre de contexte",
   "d561f74efa5f3920": "effort de raisonnement réflexion barres graphique mot libellé niveau zone de saisie",
   "6113c17109ee0d57": "latex tex katex équations formules markdown",
   "8c8364d44fa28d22": "dev nightly dernière canal illustration pastille libellé masquer aucun",
@@ -13162,5 +13162,13 @@
   "236911500e5aff7c": "Les agents attendent sans cesse que le système libère de la mémoire.",
   "81aafe06d7fede9a": "Là où T3 Code conserve ses données et ses worktrees",
   "9429f8ff8866edac": "Processeur",
-  "79a21371b8db96da": "Le travail attend un processeur libre ou le disque, les agents sont donc lents."
+  "79a21371b8db96da": "Le travail attend un processeur libre ou le disque, les agents sont donc lents.",
+  "6fa2a2aff354657c": "Récapitulatif",
+  "b4dad2deaf1b438e": "Réduire le récapitulatif",
+  "cf4f8bfb3cf5b459": "Développer le récapitulatif",
+  "8a1246875894c143": "Génération du récapitulatif",
+  "d6d3011a17b8f747": "Récapitulatif",
+  "5517f24d82fdb85f": "Affiche un court récapitulatif en direct du fil actif une fois les tours terminés. Généré uniquement lorsque le récapitulatif est visible sur un fil, à l'aide de votre modèle de génération de texte.",
+  "c5d632f44b6d9152": "Récapitulatifs de fils",
+  "dfe532d643a20824": "bêta récapitulatif résumé détails du fil rattrapage note en direct"
 }

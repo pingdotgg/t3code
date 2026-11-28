@@ -32,11 +32,13 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildThreadRecapPrompt,
   buildThreadTitlePrompt,
 } from "@t3tools/provider-core/server/textGenerationPrompts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
+  sanitizeThreadRecap,
   toJsonSchemaObject,
 } from "@t3tools/provider-core/server/textGenerationUtils";
 
@@ -383,6 +385,27 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     });
     return { title: yield* generatedThreadTitle(generated.title) };
   });
+  const generateThreadRecap: ProviderTextGeneration["generateThreadRecap"] = Effect.fn(
+    "MuseTextGeneration.generateThreadRecap",
+  )(function* (input) {
+    const generated = yield* runMuseJson({
+      operation: "generateThreadRecap",
+      ...buildThreadRecapPrompt({
+        previousRecap: input.previousRecap,
+        newMaterial: input.newMaterial,
+        currentState: input.currentState,
+      }),
+      modelSelection: input.modelSelection,
+    });
+    const recap = sanitizeThreadRecap(generated.recap, input.previousRecap);
+    if (recap.length === 0) {
+      return yield* new TextGenerationError({
+        operation: "generateThreadRecap",
+        detail: "The model returned an empty thread recap.",
+      });
+    }
+    return { recap };
+  });
   const generateTranscriptionPostProcessing: ProviderTextGeneration["generateTranscriptionPostProcessing"] =
     Effect.fn("MuseTextGeneration.generateTranscriptionPostProcessing")(function* (input) {
       return yield* runMuseJson({
@@ -399,6 +422,7 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateThreadRecap,
     generateReviewGuide,
     generateTranscriptionPostProcessing,
   } satisfies ProviderTextGeneration;

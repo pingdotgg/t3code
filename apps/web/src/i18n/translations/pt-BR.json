@@ -11906,7 +11906,7 @@
   "d8d6cfd630cff22d": "vermelho verde azul laranja adições exclusões alterações contagens paleta daltonismo",
   "717e49895cfee1c7": "largo largura total coluna layout mensagens editor de mensagens monitor",
   "9d5c7430a7ff76cf": "largo largura total em linha página renderizar gráfico painel artefato centralizado",
-  "88365077fd80787b": "personalizar mostrar ocultar painel cartão ambiente editor scripts branch pull request git alterações servidores automações linhagem uso limites 5 horas semanal cota tokens janela de contexto",
+  "f267cfda3aef7173": "personalizar mostrar ocultar painel cartão ambiente editor scripts branch pull request git alterações servidores automações resumo recap linhagem uso limites 5 horas semanal cota tokens janela de contexto",
   "d561f74efa5f3920": "esforço de raciocínio pensamento barras gráfico palavra rótulo nível editor de mensagens",
   "6113c17109ee0d57": "latex tex katex equações fórmulas markdown",
   "8c8364d44fa28d22": "dev nightly latest canal arte pílula rótulo ocultar nenhum",
@@ -13162,5 +13162,13 @@
   "236911500e5aff7c": "Os agentes ficam esperando enquanto o sistema libera memória.",
   "81aafe06d7fede9a": "Onde o T3 Code guarda seus dados e worktrees",
   "9429f8ff8866edac": "CPU",
-  "79a21371b8db96da": "O trabalho espera por uma CPU livre ou pelo disco, então os agentes ficam lentos."
+  "79a21371b8db96da": "O trabalho espera por uma CPU livre ou pelo disco, então os agentes ficam lentos.",
+  "6fa2a2aff354657c": "Resumo",
+  "b4dad2deaf1b438e": "Recolher resumo",
+  "cf4f8bfb3cf5b459": "Expandir resumo",
+  "8a1246875894c143": "Gerando resumo",
+  "d6d3011a17b8f747": "Resumo",
+  "5517f24d82fdb85f": "Mostra um breve resumo ao vivo do tópico ativo após a conclusão dos turnos. Só é gerado enquanto o Resumo estiver visível no tópico, usando seu modelo de geração de texto.",
+  "c5d632f44b6d9152": "Resumos de tópicos",
+  "dfe532d643a20824": "beta resumo recap detalhes do tópico atualizar-se nota ao vivo"
 }

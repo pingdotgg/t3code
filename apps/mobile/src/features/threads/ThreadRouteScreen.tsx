@@ -1059,6 +1059,12 @@ function ThreadRouteContent(
               inspectorMode={inspectorMode}
               onOpenFilesInspector={handleOpenFilesInspector}
               onReturnToThread={props.onReturnToThread}
+              recapTarget={
+                serverConfig?.environment.capabilities.threadRecap === true &&
+                serverConfig.settings.threadRecapEnabled === true
+                  ? { environmentId: selectedThread.environmentId, threadId: selectedThread.id }
+                  : null
+              }
             />
           )
         }

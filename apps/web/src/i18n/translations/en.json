@@ -11915,7 +11915,7 @@
   "d8d6cfd630cff22d": "red green blue orange additions deletions changes counts palette colorblind",
   "717e49895cfee1c7": "wide full width column layout messages composer monitor",
   "9d5c7430a7ff76cf": "wide full width inline page render chart dashboard artifact centered",
-  "88365077fd80787b": "customize show hide panel card environment editor scripts branch pull request git changes servers automations lineage usage limits 5 hour weekly quota tokens context window",
+  "f267cfda3aef7173": "customize show hide panel card environment editor scripts branch pull request git changes servers automations recap summary lineage usage limits 5 hour weekly quota tokens context window",
   "d561f74efa5f3920": "reasoning effort thinking bars graph word label level composer",
   "6113c17109ee0d57": "latex tex katex equations formulas markdown",
   "8c8364d44fa28d22": "dev nightly latest channel artwork pill label hide none",
@@ -13170,5 +13170,13 @@
   "236911500e5aff7c": "Agents keep waiting while the system frees up memory.",
   "81aafe06d7fede9a": "Where T3 Code keeps its data and worktrees",
   "9429f8ff8866edac": "CPU",
-  "79a21371b8db96da": "Work waits for a free CPU or for the disk, so agents run slowly."
+  "79a21371b8db96da": "Work waits for a free CPU or for the disk, so agents run slowly.",
+  "6fa2a2aff354657c": "Recap",
+  "b4dad2deaf1b438e": "Collapse recap",
+  "cf4f8bfb3cf5b459": "Expand recap",
+  "8a1246875894c143": "Generating recap",
+  "d6d3011a17b8f747": "Recap",
+  "5517f24d82fdb85f": "Show a short live recap of the active thread after turns settle. Generates only while Recap is visible on a thread, using your text generation model.",
+  "c5d632f44b6d9152": "Thread recaps",
+  "dfe532d643a20824": "beta recap summary thread details catch up live note"
 }

@@ -5774,5 +5774,11 @@
   "5d9bc70d1cb3b596": "{count} machines are almost out of disk space",
   "7bb6d3c4fe5cea0f": "{count} machines are overloaded",
   "b48a4b390016a4f0": "Using {usage} while memory is slowing agents down. Stopping it helps the rest.",
-  "0d23483df1d6fc87": "Using {usage} while this machine is overloaded. Stopping it helps the rest."
+  "0d23483df1d6fc87": "Using {usage} while this machine is overloaded. Stopping it helps the rest.",
+  "c5d632f44b6d9152": "Thread recaps",
+  "5517f24d82fdb85f": "Show a short live recap of the active thread after turns settle. Generates only while Recap is visible on a thread, using your text generation model.",
+  "8515375e3eb5bf1f": "Open thread recap",
+  "5abe15eff533d759": "Recap",
+  "4b70f044c4430078": "Generating recap…",
+  "3db8544f9659fc34": "No recap yet. A short summary appears after turns settle."
 }

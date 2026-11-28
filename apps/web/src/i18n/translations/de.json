@@ -11908,7 +11908,7 @@
   "d8d6cfd630cff22d": "rot grün blau orange hinzufügungen löschungen änderungen anzahl palette farbenblind",
   "717e49895cfee1c7": "breit volle breite spalte layout nachrichten eingabefeld monitor",
   "9d5c7430a7ff76cf": "breit volle breite inline seite rendern diagramm dashboard artefakt zentriert",
-  "88365077fd80787b": "anpassen anzeigen ausblenden panel karte umgebung editor skripte branch pull request git änderungen server automatisierungen herkunft nutzung limits 5 stunden wöchentlich kontingent tokens kontextfenster",
+  "f267cfda3aef7173": "anpassen anzeigen ausblenden panel karte umgebung editor skripte branch pull request git änderungen server automatisierungen zusammenfassung recap herkunft nutzung limits 5 stunden wöchentlich kontingent tokens kontextfenster",
   "d561f74efa5f3920": "reasoning aufwand denken balken grafik wort bezeichnung stufe eingabefeld",
   "6113c17109ee0d57": "latex tex katex gleichungen formeln markdown",
   "8c8364d44fa28d22": "dev nightly latest kanal artwork badge bezeichnung ausblenden keine",
@@ -13162,5 +13162,13 @@
   "236911500e5aff7c": "Agents warten immer wieder, während das System Arbeitsspeicher freigibt.",
   "81aafe06d7fede9a": "Wo T3 Code seine Daten und Worktrees speichert",
   "9429f8ff8866edac": "CPU",
-  "79a21371b8db96da": "Die Arbeit wartet auf eine freie CPU oder auf die Festplatte, daher laufen Agents langsam."
+  "79a21371b8db96da": "Die Arbeit wartet auf eine freie CPU oder auf die Festplatte, daher laufen Agents langsam.",
+  "6fa2a2aff354657c": "Zusammenfassung",
+  "b4dad2deaf1b438e": "Zusammenfassung einklappen",
+  "cf4f8bfb3cf5b459": "Zusammenfassung ausklappen",
+  "8a1246875894c143": "Zusammenfassung wird erstellt",
+  "d6d3011a17b8f747": "Zusammenfassung",
+  "5517f24d82fdb85f": "Zeigt nach abgeschlossenen Durchgängen eine kurze Live-Zusammenfassung des aktiven Threads. Wird nur erstellt, solange die Zusammenfassung im Thread sichtbar ist, mit deinem Textgenerierungsmodell.",
+  "c5d632f44b6d9152": "Thread-Zusammenfassungen",
+  "dfe532d643a20824": "beta zusammenfassung recap thread-details überblick live-notiz"
 }

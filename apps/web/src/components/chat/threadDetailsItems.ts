@@ -20,6 +20,11 @@ export const THREAD_DETAILS_ITEMS = [
   },
   { id: "automations", label: msg("Automations"), defaultVisible: true },
   {
+    id: "recap",
+    label: msg("Recap", { $context: "thread details item: short live summary of the thread" }),
+    defaultVisible: true,
+  },
+  {
     id: "lineage",
     label: msg("Lineage", { $context: "thread details item: parent and child agents" }),
     defaultVisible: true,

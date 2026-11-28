@@ -5772,5 +5772,11 @@
   "5d9bc70d1cb3b596": "{count} Rechnern geht der Speicherplatz aus",
   "7bb6d3c4fe5cea0f": "{count} Rechner sind überlastet",
   "b48a4b390016a4f0": "Belegt {usage}, während Arbeitsspeicher Agents ausbremst. Ihn zu stoppen hilft den übrigen.",
-  "0d23483df1d6fc87": "Belegt {usage}, während dieser Rechner überlastet ist. Ihn zu stoppen hilft den übrigen."
+  "0d23483df1d6fc87": "Belegt {usage}, während dieser Rechner überlastet ist. Ihn zu stoppen hilft den übrigen.",
+  "c5d632f44b6d9152": "Thread-Zusammenfassungen",
+  "5517f24d82fdb85f": "Zeigt nach abgeschlossenen Durchgängen eine kurze Live-Zusammenfassung des aktiven Threads. Wird nur erstellt, solange die Zusammenfassung im Thread sichtbar ist, mit deinem Textgenerierungsmodell.",
+  "8515375e3eb5bf1f": "Thread-Zusammenfassung öffnen",
+  "5abe15eff533d759": "Zusammenfassung",
+  "4b70f044c4430078": "Zusammenfassung wird erstellt…",
+  "3db8544f9659fc34": "Noch keine Zusammenfassung. Eine kurze Übersicht erscheint nach abgeschlossenen Durchgängen."
 }

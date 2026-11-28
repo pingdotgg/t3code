@@ -231,6 +231,11 @@ function selectOpenCodeRuntimeTextGeneration(
         v1: v1.generateThreadTitle(input),
         v2: v2.generateThreadTitle(input),
       }),
+    generateThreadRecap: (input) =>
+      byOpenCodeRuntime(resolve, {
+        v1: v1.generateThreadRecap(input),
+        v2: v2.generateThreadRecap(input),
+      }),
     generateReviewGuide: (input) =>
       byOpenCodeRuntime(resolve, {
         v1: v1.generateReviewGuide(input),

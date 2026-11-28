@@ -79,6 +79,19 @@ export interface ThreadTitleGenerationResult {
   needsRefinement?: boolean | undefined;
 }
 
+export interface ThreadRecapGenerationInput {
+  cwd: string;
+  previousRecap?: string | undefined;
+  newMaterial: string;
+  currentState?: string | undefined;
+  modelSelection: ModelSelection;
+  projectId?: ProjectId | null | undefined;
+}
+
+export interface ThreadRecapGenerationResult {
+  recap: string;
+}
+
 export interface ReviewGuideStackLayer {
   readonly number: number;
   readonly title: string | null;
@@ -138,6 +151,10 @@ export interface ProviderTextGeneration {
   readonly generateThreadTitle: (
     input: ThreadTitleGenerationInput,
   ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+  readonly generateThreadRecap: (
+    input: ThreadRecapGenerationInput,
+  ) => Effect.Effect<ThreadRecapGenerationResult, TextGenerationError>;
 
   readonly generateReviewGuide: (
     input: ReviewGuideGenerationInput,

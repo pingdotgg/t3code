@@ -5766,5 +5766,11 @@
   "5d9bc70d1cb3b596": "{count} machines n’ont presque plus d’espace disque",
   "7bb6d3c4fe5cea0f": "{count} machines sont surchargées",
   "b48a4b390016a4f0": "Utilise {usage} alors que la mémoire ralentit les agents. L’arrêter aide les autres.",
-  "0d23483df1d6fc87": "Utilise {usage} alors que cette machine est surchargée. L’arrêter aide les autres."
+  "0d23483df1d6fc87": "Utilise {usage} alors que cette machine est surchargée. L’arrêter aide les autres.",
+  "c5d632f44b6d9152": "Récapitulatifs de fils",
+  "5517f24d82fdb85f": "Affiche un court récapitulatif en direct du fil actif une fois les tours terminés. Généré uniquement lorsque le récapitulatif est visible sur un fil, à l'aide de votre modèle de génération de texte.",
+  "8515375e3eb5bf1f": "Ouvrir le récapitulatif du fil",
+  "5abe15eff533d759": "Récapitulatif",
+  "4b70f044c4430078": "Génération du récapitulatif…",
+  "3db8544f9659fc34": "Aucun récapitulatif pour l'instant. Un court résumé apparaît une fois les tours terminés."
 }

@@ -4136,6 +4136,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   subscribeThread: "orchestration.subscribeThread",
   subscribeCommandOutput: "orchestration.subscribeCommandOutput",
   subscribePromptSuggestion: "orchestration.subscribePromptSuggestion",
+  subscribeThreadRecap: "orchestration.subscribeThreadRecap",
 } as const;
 
 export const OrchestrationV2SubscribeCommandOutputInput = Schema.Struct({
@@ -4174,6 +4175,22 @@ export const OrchestrationV2PromptSuggestion = Schema.NullOr(
   Schema.Struct({ runId: RunId, text: Schema.String }),
 );
 export type OrchestrationV2PromptSuggestion = typeof OrchestrationV2PromptSuggestion.Type;
+
+export const OrchestrationV2SubscribeThreadRecapInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationV2SubscribeThreadRecapInput =
+  typeof OrchestrationV2SubscribeThreadRecapInput.Type;
+
+export const OrchestrationV2ThreadRecapStatus = Schema.Literals(["idle", "pending", "error"]);
+export type OrchestrationV2ThreadRecapStatus = typeof OrchestrationV2ThreadRecapStatus.Type;
+
+export const OrchestrationV2ThreadRecap = Schema.Struct({
+  status: OrchestrationV2ThreadRecapStatus,
+  text: Schema.NullOr(Schema.String),
+  updatedAt: Schema.NullOr(Schema.String),
+});
+export type OrchestrationV2ThreadRecap = typeof OrchestrationV2ThreadRecap.Type;
 
 export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
   schemaVersion: PositiveInt,
@@ -4865,6 +4882,10 @@ export const OrchestrationV2RpcSchemas = {
   subscribePromptSuggestion: {
     input: OrchestrationV2SubscribePromptSuggestionInput,
     output: OrchestrationV2PromptSuggestion,
+  },
+  subscribeThreadRecap: {
+    input: OrchestrationV2SubscribeThreadRecapInput,
+    output: OrchestrationV2ThreadRecap,
   },
 } as const;
 

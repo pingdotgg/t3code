@@ -55,6 +55,36 @@ export function sanitizePrTitle(raw: string): string {
 }
 
 const MAX_THREAD_TITLE_CHARS = 120;
+const MAX_THREAD_RECAP_CHARS = 240;
+
+const decodeJsonThreadRecap = Schema.decodeOption(
+  Schema.fromJsonString(Schema.Struct({ recap: Schema.String })),
+);
+
+export function sanitizeThreadRecap(raw: string, previousRecap?: string): string {
+  const decoded = decodeJsonThreadRecap(raw);
+  const value = Option.isSome(decoded) ? decoded.value.recap : raw;
+  const normalized = value
+    .trim()
+    .replace(/^recap\s*:\s*/iu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  const fallback = previousRecap?.trim().replace(/\s+/gu, " ") ?? "";
+  const candidate = normalized.length > 0 ? normalized : fallback;
+  if (candidate.length === 0) {
+    return "";
+  }
+  if (candidate.length <= MAX_THREAD_RECAP_CHARS) {
+    return candidate;
+  }
+  let end = MAX_THREAD_RECAP_CHARS - 3;
+  const previous = candidate.charCodeAt(end - 1);
+  const next = candidate.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${candidate.slice(0, end).trimEnd()}...`;
+}
 
 export function sanitizeThreadTitle(raw: string): string {
   // Unwrap a JSON-formatted title before truncation can cut off the closing brace.

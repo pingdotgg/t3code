@@ -5772,5 +5772,11 @@
   "5d9bc70d1cb3b596": "{count} datorer har nästan slut på diskutrymme",
   "7bb6d3c4fe5cea0f": "{count} datorer är överbelastade",
   "b48a4b390016a4f0": "Använder {usage} medan minnet gör agenterna långsamma. Att stoppa den hjälper resten.",
-  "0d23483df1d6fc87": "Använder {usage} medan den här datorn är överbelastad. Att stoppa den hjälper resten."
+  "0d23483df1d6fc87": "Använder {usage} medan den här datorn är överbelastad. Att stoppa den hjälper resten.",
+  "c5d632f44b6d9152": "Trådsammanfattningar",
+  "5517f24d82fdb85f": "Visar en kort direktsammanfattning av den aktiva tråden när turer har avslutats. Genereras bara medan Sammanfattning visas i en tråd, med din textgenereringsmodell.",
+  "8515375e3eb5bf1f": "Öppna trådsammanfattning",
+  "5abe15eff533d759": "Sammanfattning",
+  "4b70f044c4430078": "Skapar sammanfattning…",
+  "3db8544f9659fc34": "Ingen sammanfattning ännu. En kort sammanfattning visas när turer har avslutats."
 }

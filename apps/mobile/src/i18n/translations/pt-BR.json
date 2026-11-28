@@ -5766,5 +5766,11 @@
   "5d9bc70d1cb3b596": "{count} máquinas estão quase sem espaço em disco",
   "7bb6d3c4fe5cea0f": "{count} máquinas estão sobrecarregadas",
   "b48a4b390016a4f0": "Usando {usage} enquanto a memória deixa os agentes lentos. Pará-lo ajuda os demais.",
-  "0d23483df1d6fc87": "Usando {usage} enquanto esta máquina está sobrecarregada. Pará-lo ajuda os demais."
+  "0d23483df1d6fc87": "Usando {usage} enquanto esta máquina está sobrecarregada. Pará-lo ajuda os demais.",
+  "c5d632f44b6d9152": "Resumos de tópicos",
+  "5517f24d82fdb85f": "Mostra um breve resumo ao vivo do tópico ativo após a conclusão dos turnos. Só é gerado enquanto o Resumo estiver visível no tópico, usando seu modelo de geração de texto.",
+  "8515375e3eb5bf1f": "Abrir resumo do tópico",
+  "5abe15eff533d759": "Resumo",
+  "4b70f044c4430078": "Gerando resumo…",
+  "3db8544f9659fc34": "Ainda não há resumo. Um breve resumo aparece após a conclusão dos turnos."
 }

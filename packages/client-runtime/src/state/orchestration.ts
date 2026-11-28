@@ -181,6 +181,12 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         tag: ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion,
         idleTtlMs: 0,
       }),
+      // The open thread's live recap, only while a client displays it.
+      threadRecap: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+        label: "environment-data:orchestration-v2:thread-recap",
+        tag: ORCHESTRATION_V2_WS_METHODS.subscribeThreadRecap,
+        idleTtlMs: 0,
+      }),
     },
     turnDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-diff",

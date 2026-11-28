@@ -11,11 +11,13 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildReviewGuidePrompt,
+  buildThreadRecapPrompt,
   buildThreadTitlePrompt,
 } from "./textGenerationPrompts.ts";
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
+  sanitizeThreadRecap,
   sanitizeThreadTitle,
 } from "./textGenerationUtils.ts";
 
@@ -178,6 +180,29 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     };
   });
 
+  const generateThreadRecap: ProviderTextGeneration["generateThreadRecap"] = Effect.fn(
+    `${name}.generateThreadRecap`,
+  )(function* (input) {
+    const generated = yield* run({
+      operation: "generateThreadRecap",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      ...buildThreadRecapPrompt({
+        previousRecap: input.previousRecap,
+        newMaterial: input.newMaterial,
+        currentState: input.currentState,
+      }),
+    });
+    const recap = sanitizeThreadRecap(generated.recap, input.previousRecap);
+    if (recap.length === 0) {
+      return yield* new TextGenerationError({
+        operation: "generateThreadRecap",
+        detail: "The model returned an empty thread recap.",
+      });
+    }
+    return { recap };
+  });
+
   const generateTranscriptionPostProcessing: ProviderTextGeneration["generateTranscriptionPostProcessing"] =
     Effect.fn(`${name}.generateTranscriptionPostProcessing`)(function* (input) {
       return yield* run({
@@ -206,6 +231,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateThreadRecap,
     generateReviewGuide,
     generateTranscriptionPostProcessing,
   } satisfies ProviderTextGeneration;
