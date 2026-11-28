@@ -909,6 +909,7 @@
   "9f70c78508f05cc5": "This evening",
   "1b9d249ecc4cc532": "Tomorrow",
   "f3e58d0c7a119551": "Next week",
+  "fd551a92f829316d": "Indefinitely",
   "26dd8a65fa8bd045": "now",
   "7ac52df3f6b0a072": "{minutes}m",
   "8ebe1f516687cb93": "{hours}h",
@@ -4029,6 +4030,8 @@
   "b18d8b097eb4a3c2": "overview",
   "a8675ab06a18c426": "checkouts",
   "e44e1efba0742a8c": "delete project",
+  "a71afe1099a59acd": "pin",
+  "2d3005e2cd158d2d": "pinned projects",
   "3358b338bb494339": "language",
   "a3ff3275026d0318": "locale",
   "bbcff924e7734cee": "translation",
@@ -4664,6 +4667,7 @@
   "e20b3174f3fd3877": "Edit pending message",
   "4fd8927b7afc2a92": "Copy message",
   "36e4b8d2db087296": "Fork from this response",
+  "ae3b63552e352863": "Share response",
   "9f25f4ea2965cbf9": "Could not confirm fork",
   "e57f98ddc8003b13": "Reconnect and check the thread list before trying again.",
   "3b3c6d42d7b877c7": "Fork created",
@@ -5728,5 +5732,12 @@
   "f6cf1627f4acc5ef": "Comment audience",
   "eb1fd384ad5919dd": "Internal note",
   "b45f0b467e9406d0": "Reply to customer",
-  "15e5597f8f93ce12": "{start} to {end}"
+  "15e5597f8f93ce12": "{start} to {end}",
+  "872bf68b2e05f055": "{count, plural, one {{count} viewed file hidden} other {{count} viewed files hidden}}",
+  "f538b8016f5ca2f3": "Hide viewed files",
+  "be348514e8486295": "No unviewed files loaded yet",
+  "6b7765835778dc77": "All files are hidden",
+  "bd2cfcb7be24cd38": "Viewed files are hidden from this review.",
+  "6ae1484aa5bd2bc8": "Show viewed files",
+  "15db3431c35d4927": "{count, plural, one {{count} viewed hidden} other {{count} viewed hidden}}"
 }
