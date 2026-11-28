@@ -99,12 +99,12 @@ function evaluateWhenNode(node: KeybindingWhenNode, context: ShortcutMatchContex
   }
 }
 
-function matchesWhenClause(
-  whenAst: KeybindingWhenNode | undefined,
+function isBindingEligible(
+  binding: ResolvedKeybindingRule,
   context: ShortcutMatchContext,
 ): boolean {
-  if (!whenAst) return true;
-  return evaluateWhenNode(whenAst, context);
+  if (binding.command.startsWith("list.") && !context.listFocus) return false;
+  return !binding.whenAst || evaluateWhenNode(binding.whenAst, context);
 }
 
 export function shortcutConflictKey(
@@ -158,7 +158,7 @@ export function effectiveShortcutsForCommand(
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
-    if (!matchesWhenClause(binding.whenAst, context)) continue;
+    if (!isBindingEligible(binding, context)) continue;
 
     const shortcut = shortcutForContext(binding, context);
     const conflictKey = shortcutConflictKey(shortcut, platform);
@@ -192,13 +192,28 @@ function matchesCommandShortcut(
   return resolveShortcutCommand(event, keybindings, options) === command;
 }
 
+/**
+ * True for a focused element that drives a popup list: a combobox, or a text
+ * box whose suggestion list is open.
+ */
+export function isListFocusTarget(target: unknown): boolean {
+  if (typeof (target as Element | null)?.getAttribute !== "function") return false;
+  const element = target as Element;
+  return (
+    element.getAttribute("role") === "combobox" ||
+    (element.getAttribute("aria-autocomplete") === "list" &&
+      element.getAttribute("aria-expanded") === "true")
+  );
+}
+
 export function resolveShortcutCommand(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): KeybindingCommand | null {
   const platform = resolvePlatform(options);
-  const context = resolveContext(options);
+  // Every listener sees list focus, so a list key inside a list never resolves to its other command.
+  const context = { ...resolveContext(options), listFocus: isListFocusTarget(event.target) };
   if (options?.context?.editableFocus === undefined && typeof document !== "undefined") {
     context.editableFocus = isEditableFocused(event.target ?? document.activeElement);
   }
@@ -206,7 +221,7 @@ export function resolveShortcutCommand(
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
-    if (!matchesWhenClause(binding.whenAst, context)) continue;
+    if (!isBindingEligible(binding, context)) continue;
     if (
       !matchesKeybindingShortcut(
         event,

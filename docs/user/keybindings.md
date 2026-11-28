@@ -64,7 +64,9 @@ Join modifiers and keys with `+` (`mod`, `cmd`/`meta`, `ctrl`/`control`, `alt`/`
 
 ### When conditions
 
-Available context keys: `terminalFocus`, `terminalOpen`, `previewFocus`, `previewOpen`, `rightPanelOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`, `draftThreadRoute`, `turnRunning`, `composerEmpty`, `editableFocus`, `isWeb`, `isDesktop`. Unknown keys evaluate to `false`.
+Available context keys: `terminalFocus`, `terminalOpen`, `previewFocus`, `previewOpen`, `rightPanelOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`, `draftThreadRoute`, `turnRunning`, `composerEmpty`, `editableFocus`, `listFocus`, `isWeb`, `isDesktop`. Unknown keys evaluate to `false`.
+
+`listFocus` is true while a search field with a result list, such as the command palette or the composer's suggestion menu, has keyboard focus.
 
 Combine with `!`, `&&`, `||`, and parentheses:
 
@@ -85,6 +87,15 @@ The last matching rule in `keybindings.json` wins, even across different command
 - `thread.undo` (`mod+z`): Undoes recent sidebar actions (unpin, settle, snooze, archive, discard draft) within 5 seconds, including consecutive actions of the same kind.
 - `navigation.back` (`mod+[`) / `navigation.forward` (`mod+]`): Moves through visited pages.
 - `chat.new` / `chat.newLocal` / `chat.newWithoutProject` (`mod+alt+n`): Start new threads using your [new-thread defaults](./thread-sidebar.md#start-a-thread) or [without a project](./thread-sidebar.md#start-without-a-project).
+
+`list.previous` and `list.next` move the highlight in result lists while `listFocus` is true. Up Arrow and Down Arrow are the defaults and continue to work after rebinding. For Emacs-style navigation, add these rules:
+
+```json
+[
+  { "key": "ctrl+p", "command": "list.previous", "when": "listFocus" },
+  { "key": "ctrl+n", "command": "list.next", "when": "listFocus" }
+]
+```
 
 ## Reserved and platform shortcuts
 
