@@ -232,6 +232,10 @@ packageExtensions:
   "@effect/vitest@*":
     dependencies:
       vite-plus: "catalog:"
+  # Our patch makes react-native-image-viewing's Android item import expo-image.
+  "react-native-image-viewing@*":
+    peerDependencies:
+      expo-image: "*"
 
 patchedDependencies:
   # Mobile's GB18030 TextDecoder polyfill imports these typings; their unused Node reference would

@@ -64,15 +64,18 @@ index 3d7641a9a94864415d207c678b71f8c592c90aa1..2b9ef77c3eb58cd284152ad22b2e711a
          offset: SCREEN_WIDTH * index,
          index,
 diff --git a/dist/components/ImageItem/ImageItem.android.js b/dist/components/ImageItem/ImageItem.android.js
-index 5fcaa9f9a7d893817fee89b85186ee3936118e69..e166dd14349b4b95f96d648cb64f464ed564c8b8 100644
+index 5fcaa9f9a7d893817fee89b85186ee3936118e69..67cfd0d0a7e175e1a549d031f98c47419750d2a3 100644
 --- a/dist/components/ImageItem/ImageItem.android.js
 +++ b/dist/components/ImageItem/ImageItem.android.js
-@@ -6,17 +6,17 @@
+@@ -5,20 +5,39 @@
+  * LICENSE file in the root directory of this source tree.
   *
   */
- import React, { useCallback, useRef, useState } from "react";
+-import React, { useCallback, useRef, useState } from "react";
 -import { Animated, ScrollView, Dimensions, StyleSheet, } from "react-native";
++import React, { useCallback, useEffect, useRef, useState } from "react";
 +import { Animated, ScrollView, Dimensions, View, } from "react-native";
++import { Image as ExpoImage } from "expo-image";
  import useImageDimensions from "../../hooks/useImageDimensions";
  import usePanResponder from "../../hooks/usePanResponder";
  import { getImageStyles, getImageTransform } from "../../utils";
@@ -82,14 +85,35 @@ index 5fcaa9f9a7d893817fee89b85186ee3936118e69..e166dd14349b4b95f96d648cb64f464e
 -const SCREEN = Dimensions.get("window");
 -const SCREEN_WIDTH = SCREEN.width;
 -const SCREEN_HEIGHT = SCREEN.height;
++const AnimatedExpoImage = Animated.createAnimatedComponent(ExpoImage);
  const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPress, swipeToCloseEnabled = true, doubleTapToZoomEnabled = true, }) => {
 +    const SCREEN = Dimensions.get("window");
 +    const SCREEN_WIDTH = SCREEN.width;
 +    const SCREEN_HEIGHT = SCREEN.height;
      const imageContainer = useRef(null);
-     const imageDimensions = useImageDimensions(imageSrc);
+-    const imageDimensions = useImageDimensions(imageSrc);
++    const sizedDimensions = useImageDimensions(imageSrc);
++    // React Native's decoder cannot read some images, such as SVG; expo-image draws those or reports a failure.
++    const fallbackUri = imageSrc?.uri && sizedDimensions?.width === 0 ? imageSrc.uri : null;
++    const [fallback, setFallback] = useState(null);
++    useEffect(() => {
++        if (!fallbackUri) return;
++        let live = true;
++        ExpoImage.loadAsync(imageSrc).then((image) => live ? setFallback({ image }) : image.release(), () => live && setFallback({ failed: true }));
++        return () => { live = false; };
++    }, [fallbackUri]);
++    useEffect(() => {
++        const image = fallback?.image;
++        // Released after the commit that unmounts it, as expo-image's useImage does.
++        return image ? () => { Promise.resolve().then(() => image.release()); } : undefined;
++    }, [fallback]);
++    // Lay small images out at the fitted size, so double-tap's fixed 2x zooms in rather than out.
++    const fit = fallback?.image && Math.max(1, Math.min(SCREEN_WIDTH / fallback.image.width, SCREEN_HEIGHT / fallback.image.height));
++    const imageDimensions = !fallbackUri ? sizedDimensions : fit ? { width: fallback.image.width * fit, height: fallback.image.height * fit } : null;
      const [translate, scale] = getImageTransform(imageDimensions, SCREEN);
-@@ -28,10 +28,10 @@ const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPre
+     const scrollValueY = new Animated.Value(0);
+     const [isLoaded, setLoadEnd] = useState(false);
+@@ -28,10 +47,10 @@ const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPre
          onZoom(isZoomed);
          if ((_a = imageContainer) === null || _a === void 0 ? void 0 : _a.current) {
              imageContainer.current.setNativeProps({
@@ -102,7 +126,7 @@ index 5fcaa9f9a7d893817fee89b85186ee3936118e69..e166dd14349b4b95f96d648cb64f464e
      const onLongPressHandler = useCallback(() => {
          onLongPress(imageSrc);
      }, [imageSrc, onLongPress]);
-@@ -64,21 +64,15 @@ const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPre
+@@ -64,21 +83,15 @@ const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPre
          const offsetY = (_c = (_b = (_a = nativeEvent) === null || _a === void 0 ? void 0 : _a.contentOffset) === null || _b === void 0 ? void 0 : _b.y, (_c !== null && _c !== void 0 ? _c : 0));
          scrollValueY.setValue(offsetY);
      };
@@ -115,8 +139,8 @@ index 5fcaa9f9a7d893817fee89b85186ee3936118e69..e166dd14349b4b95f96d648cb64f464e
 -      {(!isLoaded || !imageDimensions) && <ImageLoading />}
 +      {/* Pinch from anywhere on screen, not only on the fitted image. */}
 +      <View {...panHandlers} pointerEvents={isLoaded && imageDimensions ? "auto" : "none"} style={{ width: SCREEN_WIDTH, height: SCREEN_HEIGHT }}>
-+        <Animated.Image source={imageSrc} style={imageStylesWithOpacity} onLoad={onLoaded}/>
-+        {(!isLoaded || !imageDimensions) && <ImageLoading />}
++        {fallbackUri ? (fallback?.image && <AnimatedExpoImage source={fallback.image} style={imageStylesWithOpacity} onLoad={onLoaded}/>) : (<Animated.Image source={imageSrc} style={imageStylesWithOpacity} onLoad={onLoaded}/>)}
++        {(!isLoaded || !imageDimensions) && !fallback?.failed && <ImageLoading />}
 +      </View>
      </ScrollView>);
  };
