@@ -544,6 +544,14 @@ Third}`;
                 { data: { "text/html": ["<b>Results</b>"], "text/plain": ["Results"] } },
                 { output_type: "display_data", data: { "text/markdown": ["| a |\n", "|---|"] } },
                 { data: { "text/plain": "plain wins", "text/markdown": "**markdown**" } },
+                { data: { "text/plain": "", "text/markdown": "**ready**" } },
+                {
+                  data: {
+                    "text/plain":
+                      "\u001b[0m\u001b[2K\u001b[?25l\u001b]0;title\u0007\u001b]0;title\u001b\\",
+                    "text/markdown": "ANSI fallback",
+                  },
+                },
                 { output_type: "stream", name: "stdout", text: "Status: 10%" },
                 { output_type: "stream", name: "stdout", text: ["\r", "Status: Done\n"] },
                 { output_type: "stream", name: "stderr", text: "\rDiagnostic" },
@@ -573,6 +581,8 @@ Third}`;
             { kind: "html", text: "<b>Results</b>" },
             { kind: "text", text: "| a |\n|---|" },
             { kind: "text", text: "plain wins" },
+            { kind: "text", text: "**ready**" },
+            { kind: "text", text: "ANSI fallback" },
             { kind: "text", text: "Status: Done\n" },
             { kind: "text", text: "Diagnostic" },
             { kind: "text", text: "Keep this" },

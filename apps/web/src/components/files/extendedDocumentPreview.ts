@@ -24,6 +24,8 @@ import {
 
 const TABLE_PREVIEW_MAX_ROWS = 500;
 const TABLE_PREVIEW_MAX_COLUMNS = 50;
+const NOTEBOOK_CONTROL_PATTERN =
+  /\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\))/gu;
 
 function base64ImageFits(base64: string) {
   return (
@@ -464,7 +466,7 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
         }
         const html = notebookText(data["text/html"]);
         if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
-        const plain = terminalOutputPlainText(
+        let plain = terminalOutputPlainText(
           notebookText(
             output.text ??
               data["text/plain"] ??
@@ -472,6 +474,13 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
               tracebackLines(output.traceback),
           ),
         );
+        if (
+          output.text == null &&
+          !plain.replaceAll(NOTEBOOK_CONTROL_PATTERN, "").trim() &&
+          data["text/markdown"] != null
+        ) {
+          plain = terminalOutputPlainText(notebookText(data["text/markdown"]));
+        }
         const text = output.output_type === "stream" ? terminalOutputCollapseRedraws(plain) : plain;
         if (text.trim() || output.output_type !== "error") return { kind: "text" as const, text };
         const summary = [output.ename, output.evalue]
