@@ -190,7 +190,7 @@ export function parseGitRemoteRepository(
   const scpHost = scpStyleHostAndPath?.[1];
   const scpPath = scpStyleHostAndPath?.[2];
   if (!scpHost || !scpPath) return null;
-  // SCP sends a literal path. Strip the literal suffix and escape percent signs before URL-style normalization.
+  // SCP sends a literal path: only a literal .git is a suffix, and `%` is a character, not an escape.
   const path = canonicalRepositoryPath(
     dropSuffix(scpPath).replace(/\/+$/, "").replaceAll("%", "%25"),
   );
