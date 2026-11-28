@@ -44,6 +44,7 @@ import {
   ProviderInstanceId,
   resolveEnvironmentMachineKind,
   scheduledTaskThreadMode,
+  trimAsciiWhitespace,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -117,6 +118,7 @@ import { Label } from "../ui/label";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/menu";
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "../ui/empty";
+import { Skeleton } from "../ui/skeleton";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -146,7 +148,6 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useSearchableSetting } from "./settingsSearch";
 import {
   SettingsPageContainer,
@@ -154,6 +155,7 @@ import {
   SettingsSection,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
 } from "./settingsLayout";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_SHORT = [
@@ -576,6 +578,9 @@ function ScheduledTaskEnvironmentList({
 
   const loaded = states.filter((state) => state.connected && state.error === null && state.tasks);
   const populated = loaded.filter((state) => state.tasks && state.tasks.length > 0);
+  const loading = states.some((state) => state.connected && state.error === null && !state.tasks);
+  // Until one machine has tasks to show, rows stand in for the list instead of a status line.
+  const placeholder = loading && populated.length === 0;
   const summaries: Record<string, string[]> = {
     "Not connected:": [],
     "Loading scheduled tasks on": [],
@@ -591,7 +596,7 @@ function ScheduledTaskEnvironmentList({
     } else if (error !== null) {
       summaries["Could not load scheduled tasks:"]!.push(`${label}: ${error}`);
     } else if (!tasks) {
-      summaries["Loading scheduled tasks on"]!.push(label);
+      if (!placeholder) summaries["Loading scheduled tasks on"]!.push(label);
     } else if (tasks.length === 0 && populated.length > 0) {
       summaries["No tasks on"]!.push(label);
     }
@@ -639,7 +644,8 @@ function ScheduledTaskEnvironmentList({
           role="status"
         />
       ) : null}
-      {populated.length === 0 && loaded.length > 0 ? (
+      {placeholder ? <ScheduledTaskRowsSkeleton /> : null}
+      {populated.length === 0 && loaded.length > 0 && !loading ? (
         <SettingsRow
           title={gt("No scheduled tasks")}
           description={gt("No tasks match this environment and project selection.")}
@@ -651,19 +657,18 @@ function ScheduledTaskEnvironmentList({
           environments: entries.join(", "),
         });
         return (
-          <Tooltip key={label}>
-            <TooltipTrigger
-              render={
-                <p
-                  className="truncate px-3 py-2.5 text-xs text-muted-foreground sm:px-4"
-                  role="status"
-                />
-              }
-            >
-              {summary}
-            </TooltipTrigger>
-            <TooltipPopup>{summary}</TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            key={label}
+            render={
+              <p
+                className="truncate px-3 py-2.5 text-xs text-muted-foreground sm:px-4"
+                role="status"
+              />
+            }
+            label={summary}
+          >
+            {summary}
+          </SharedTooltipTrigger>
         );
       })}
     </SettingsGroup>
@@ -735,7 +740,7 @@ function ScheduledTaskEnvironmentSection({
       ) : tasksQuery.error ? (
         <SettingsRow title={gt("Could not load scheduled tasks")} description={tasksQuery.error} />
       ) : !tasks ? (
-        <SettingsRow title={gt("Loading scheduled tasks…")} role="status" />
+        <ScheduledTaskRowsSkeleton />
       ) : (
         <>
           {taskId && !linkedTask ? (
@@ -766,6 +771,37 @@ function ScheduledTaskEnvironmentSection({
         </>
       )}
     </SettingsSection>
+  );
+}
+
+const SKELETON_ROWS = [0, 1] as const;
+
+function ScheduledTaskRowsSkeleton() {
+  const gt = useGT();
+  return (
+    <div
+      role="status"
+      aria-label={gt("Loading scheduled tasks…")}
+      className="divide-y divide-border/50"
+    >
+      {SKELETON_ROWS.map((row) => (
+        <div
+          key={row}
+          aria-hidden
+          className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4"
+        >
+          <div className="min-w-0 flex-1 space-y-2">
+            <Skeleton shape="pill" className="h-4 w-40" />
+            <Skeleton shape="pill" className="h-3 w-full max-w-sm" />
+            <Skeleton shape="pill" className="h-3 w-48" />
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Skeleton shape="pill" className="h-5 w-9" />
+            <Skeleton className="size-7" />
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -907,7 +943,7 @@ function ScheduledTaskRow({
               <MenuSeparator />
               <MenuItem onClick={() => void act("delete")}>
                 <Trash2Icon />
-                Delete
+                <T context="verb, delete the scheduled task">Delete</T>
               </MenuItem>
             </MenuPopup>
           </Menu>
@@ -1427,7 +1463,7 @@ function ScheduledTaskDestination({
             <ComboboxEmpty>
               <T>No threads found.</T>
             </ComboboxEmpty>
-            <ComboboxList className="max-h-72">
+            <ComboboxList scrollAreaClassName="max-h-72">
               {items.map((value, index) => (
                 <ComboboxItem key={value} index={index} value={value}>
                   <span className="block truncate">
@@ -1534,7 +1570,8 @@ function ScheduledTaskEditorForm({
     : task;
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
-  const automaticBaseRef = draft.workspaceMode === "worktree" && !draft.baseRef.trim();
+  const automaticBaseRef =
+    draft.workspaceMode === "worktree" && !trimAsciiWhitespace(draft.baseRef);
   const automaticBaseRefs = usePaginatedBranches({
     environmentId,
     cwd: automaticBaseRef ? (selectedProject?.workspaceRoot ?? null) : null,
@@ -2331,7 +2368,11 @@ function ScheduledTaskEditorForm({
                     setDraft((current) => ({ ...current, intervalMinutes: event.target.value }))
                   }
                 />
-                <span className="text-xs text-muted-foreground">minutes</span>
+                <span className="text-xs text-muted-foreground">
+                  {gt("{count, plural, one {minute} other {minutes}}", {
+                    count: Number(draft.intervalMinutes),
+                  })}
+                </span>
               </div>
             )}
           </div>

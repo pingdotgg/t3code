@@ -21,6 +21,8 @@ import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
 import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_WorkflowSkippedRuns.ts";
 import WorkflowRunTagsMigration from "../persistence/Migrations/115_WorkflowRunTags.ts";
 import WorkflowMailSenderMigration from "../persistence/Migrations/117_WorkflowMailSender.ts";
+import WorkflowPoolsMigration from "../persistence/Migrations/118_WorkflowPools.ts";
+import WorkflowRunSubjectMigration from "../persistence/Migrations/119_WorkflowRunSubject.ts";
 import { type AgentResult, WorkflowAgents } from "./WorkflowAgents.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import * as WorkflowRuntime from "./WorkflowRuntime.ts";
@@ -59,6 +61,8 @@ const setup = Effect.fn("setup")(function* (
     Effect.andThen(WorkflowsMigration, WorkflowSkippedRunsMigration).pipe(
       Effect.andThen(WorkflowRunTagsMigration),
       Effect.andThen(WorkflowMailSenderMigration),
+      Effect.andThen(WorkflowPoolsMigration),
+      Effect.andThen(WorkflowRunSubjectMigration),
     ),
     database,
   );

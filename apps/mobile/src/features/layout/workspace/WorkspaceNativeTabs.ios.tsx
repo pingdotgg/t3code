@@ -123,12 +123,12 @@ function RetainedWorkspaceTab(props: {
     );
     return () => cancelAnimationFrame(frame);
   }, [headerOnly, optionsByRoute, slot, setPrewarmRequests]);
+  // Built apart from the providers: a header option write re-renders their readers, not the tab.
+  const body = content ? content.children(content.workspace, content.headerOnly) : null;
   return content ? (
     <NativeWorkspaceTabActivityContext value={activity}>
       <WorkspaceSlotOptionsContext value={slotOptions}>
-        <WorkspaceTabsContext value={content.workspace}>
-          {content.children(content.workspace, content.headerOnly)}
-        </WorkspaceTabsContext>
+        <WorkspaceTabsContext value={content.workspace}>{body}</WorkspaceTabsContext>
       </WorkspaceSlotOptionsContext>
     </NativeWorkspaceTabActivityContext>
   ) : null;

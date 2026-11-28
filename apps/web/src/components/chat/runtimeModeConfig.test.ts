@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { draftSupportedRuntimeModes, resolveCompatibleRuntimeMode } from "./runtimeModeConfig";
+import {
+  draftRuntimeModeLimitsInstance,
+  draftSupportedRuntimeModes,
+  resolveCompatibleRuntimeMode,
+  resolveRuntimeModeOptions,
+  runtimeModeOptions,
+} from "./runtimeModeConfig";
 
 describe("draftSupportedRuntimeModes", () => {
   const supervisedOnly = {
@@ -29,5 +35,34 @@ describe("draftSupportedRuntimeModes", () => {
   it("falls back only when no selected provider can run the mode", () => {
     const modes = draftSupportedRuntimeModes(undefined, [supervisedOnly, noAuto], providers);
     expect(resolveCompatibleRuntimeMode("auto", modes).mode).toBe("approval-required");
+  });
+});
+
+describe("draftRuntimeModeLimitsInstance", () => {
+  const claude = { instanceId: "claude" };
+  const codex = { instanceId: "codex" };
+
+  it.each([
+    { label: "no multi-model selection", selections: null, expected: "active" },
+    { label: "an empty multi-model selection", selections: [], expected: "active" },
+    { label: "one selected model", selections: [claude], expected: "claude" },
+    { label: "models that share one provider", selections: [claude, claude], expected: "claude" },
+    { label: "models on different providers", selections: [claude, codex], expected: undefined },
+  ])("checks the limits of the provider every thread uses: $label", ({ selections, expected }) => {
+    expect(draftRuntimeModeLimitsInstance("active", selections)).toBe(expected);
+  });
+});
+
+describe("resolveRuntimeModeOptions", () => {
+  it("keeps a mode the provider cannot run in this folder listed, disabled with the reason", () => {
+    const options = resolveRuntimeModeOptions(runtimeModeOptions, undefined, undefined, [
+      { mode: "auto", reason: "project-settings" },
+    ]);
+    expect(options.map((option) => [option.mode, option.disabledReason])).toEqual([
+      ["approval-required", undefined],
+      ["auto-accept-edits", undefined],
+      ["auto", "This project's Claude settings turn auto mode off."],
+      ["full-access", undefined],
+    ]);
   });
 });
