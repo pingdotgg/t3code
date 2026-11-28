@@ -98,6 +98,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -355,8 +356,6 @@ const EMPTY_DRAFT_IDS: readonly DraftId[] = [];
 const FOLDER_PREVIEW_COUNT = 6;
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
-const REVEAL_ROW_CLASS_NAME =
-  "mx-0.5 flex h-5.5 w-[calc(100%-0.25rem)] cursor-pointer items-center rounded-row px-2 text-left text-sm font-medium text-dim-foreground outline-none not-aria-disabled:hover:surface-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-disabled:cursor-default";
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
@@ -1036,6 +1035,16 @@ function revealSidebarShelf(header: HTMLElement) {
   if (!viewport || !lastRow) return;
   revealSidebarRow(viewport, lastRow);
   revealSidebarRow(viewport, header);
+}
+
+function SidebarRevealRow(props: Omit<ComponentProps<"button">, "className" | "type">) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className="mx-0.5 flex h-5.5 w-[calc(100%-0.25rem)] cursor-pointer items-center rounded-row px-2 text-left text-sm font-medium text-dim-foreground outline-none not-aria-disabled:hover:surface-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-disabled:cursor-default"
+    />
+  );
 }
 
 export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
@@ -3915,14 +3924,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 key={`project-folder-more:${folder.group.projectKey}`}
                                 className="list-none"
                               >
-                                <button
-                                  type="button"
+                                <SidebarRevealRow
                                   data-sidebar-row={`${folderRow}:more`}
                                   data-sidebar-parent={folderRow}
                                   onClick={() =>
                                     toggleProjectFolderShowAll(folder.group.projectKey)
                                   }
-                                  className={REVEAL_ROW_CLASS_NAME}
                                 >
                                   {showMore
                                     ? gt(
@@ -3930,7 +3937,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                         { count: folder.hiddenThreads.length },
                                       )
                                     : gt("Show less")}
-                                </button>
+                                </SidebarRevealRow>
                               </li>,
                             );
                           }
@@ -4074,8 +4081,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   })()}
                   {settledShelfExpanded && hiddenSettledCount > 0 ? (
                     <li className="list-none">
-                      <button
-                        type="button"
+                      <SidebarRevealRow
                         data-sidebar-row="settled:more"
                         data-sidebar-parent="shelf:settled"
                         aria-disabled={olderSettledShelf.loading}
@@ -4084,7 +4090,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           olderSettledShelf.retry();
                           showMoreSettled();
                         }}
-                        className={REVEAL_ROW_CLASS_NAME}
                       >
                         {olderSettledShelf.loading
                           ? gt("Loading")
@@ -4096,7 +4101,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   count: Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT),
                                 },
                               )}
-                      </button>
+                      </SidebarRevealRow>
                     </li>
                   ) : null}
                 </ul>
