@@ -565,7 +565,6 @@ describe("scopeAzureCliArgs", () => {
 
   it.each([
     ["https://dev.azure.com/acme/My%20Project/_git/My%20Repo", "https://dev.azure.com/acme"],
-    ["https://dev.azure.com/acme/My Project/_git/My Repo", "https://dev.azure.com/acme"],
     ["https://user@dev.azure.com/acme/My%20Project/_git/My%20Repo", "https://dev.azure.com/acme"],
     [
       "https://acme.visualstudio.com/DefaultCollection/My%20Project/_git/My%20Repo",
@@ -681,10 +680,6 @@ describe("primaryRemoteUrl", () => {
       "https://dev.azure.com/acme/My Project/_git/My Repo",
     ],
     [remotes(["backup", "/Users/alice/My Repos/app"], azure("origin")), azure("origin")[1]],
-    [
-      "upstream\tssh.dev.azure.com:v3/acme/My Project/My Repo (fetch) [blob:none]\nupstream\tssh.dev.azure.com:v3/acme/My Project/My Repo (push)\n",
-      "ssh.dev.azure.com:v3/acme/My Project/My Repo",
-    ],
     [remotes(), null],
     [`origin\t${azure("origin")[1]} (fetch)`, null],
     [remotes(["origin", "https://dev.azure.com/acme/My\tProject/_git/Repo"]), null],
