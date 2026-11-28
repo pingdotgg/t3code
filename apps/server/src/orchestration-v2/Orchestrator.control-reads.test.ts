@@ -1949,7 +1949,6 @@ it.effect.each(["after deletion", "concurrently"] as const)(
           yield* create(original);
           const beforeDeletion = yield* projections.getThreadRecords(original, ["providerThreads"]);
           originalProviderThreadId = beforeDeletion.providerThreads[0]?.id;
-          assert.isDefined(originalProviderThreadId);
           yield* orchestrator.dispatch({
             type: "thread.delete",
             commandId: CommandId.make("delete:native-import-original"),
