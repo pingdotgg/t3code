@@ -9403,8 +9403,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         // session/load response arrives after replay idle. Upgrade-only: a
         // later partial config update must not revoke the switch mid-session.
         refreshModelSwitchCapability = Effect.gen(function* () {
-          const { capabilities } = providerSession;
-          if (capabilities.sessions.supportsModelSwitchInSession) {
+          if (providerSession.capabilities.sessions.supportsModelSwitchInSession) {
             return;
           }
           const supportsModelSwitchInSession = canSwitchModelInSession(
@@ -9414,13 +9413,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (!supportsModelSwitchInSession) {
             return;
           }
+          const updatedAt = yield* DateTime.now;
+          const { capabilities } = providerSession;
           providerSession = {
             ...providerSession,
             capabilities: {
               ...capabilities,
               sessions: { ...capabilities.sessions, supportsModelSwitchInSession },
             },
-            updatedAt: yield* DateTime.now,
+            updatedAt,
           };
           yield* emitProviderEvent({ type: "provider_session.updated", driver, providerSession });
         });
