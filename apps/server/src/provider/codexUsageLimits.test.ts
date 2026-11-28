@@ -53,7 +53,7 @@ describe("codexRateLimitsToLimits", () => {
       }).resetCredits?.expiries,
     ).toEqual(
       Array.from({ length: 20 }, (_, index) =>
-        new Date((1_784_000_000 + index * 3600) * 1000).toISOString(),
+        DateTime.formatIso(DateTime.makeUnsafe((1_784_000_000 + index * 3600) * 1000)),
       ),
     );
   });
