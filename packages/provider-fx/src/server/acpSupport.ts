@@ -33,25 +33,41 @@ export const FX_MODE_CONFIG_ID = "mode";
 const FX_EFFORT_CONFIG_ID = "effort";
 const FX_DEFAULT_EFFORT = "medium";
 
-const FX_EFFORT_LABELS = {
-  auto: "Auto",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "Extra High",
-  max: "Max",
-} as const;
+export const FX_DEFAULT_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 
-export const FX_EFFORT_OPTION_DESCRIPTOR: ProviderOptionDescriptor = {
-  id: FX_EFFORT_CONFIG_ID,
-  label: "Effort",
-  type: "select",
-  options: Object.entries(FX_EFFORT_LABELS).map(([id, label]) => ({
-    id,
-    label,
-    ...(id === FX_DEFAULT_EFFORT ? { isDefault: true } : {}),
-  })),
-};
+const FX_EFFORT_LABELS = new Map<string, string>([
+  ["auto", "Auto"],
+  ["none", "None"],
+  ["minimal", "Minimal"],
+  ["low", "Low"],
+  ["medium", "Medium"],
+  ["high", "High"],
+  ["xhigh", "Extra High"],
+  ["max", "Max"],
+]);
+
+/**
+ * Builds the Effort select descriptor for an fx model from the levels
+ * `fx models --json` advertises. Always prepends `auto`; returns undefined
+ * when the model advertises no effort levels.
+ */
+export function fxEffortOptionDescriptor(
+  efforts: ReadonlyArray<string>,
+): ProviderOptionDescriptor | undefined {
+  const levels = efforts.filter((id) => id !== "auto");
+  if (levels.length === 0) return undefined;
+  const defaultEffort = levels.includes(FX_DEFAULT_EFFORT) ? FX_DEFAULT_EFFORT : "auto";
+  return {
+    id: FX_EFFORT_CONFIG_ID,
+    label: "Effort",
+    type: "select",
+    options: ["auto", ...levels].map((id) => ({
+      id,
+      label: FX_EFFORT_LABELS.get(id) ?? id,
+      ...(id === defaultEffort ? { isDefault: true } : {}),
+    })),
+  };
+}
 
 /** Every fx offers these; the provider snapshot adds Full access where `fx status` lists `full-access`. */
 export const FX_SUPPORTED_RUNTIME_MODES = [
@@ -323,20 +339,27 @@ export const applyFxModelSelection = Effect.fn("applyFxModelSelection")(function
   );
 });
 
-/** The shared option loop writes a stored effort; a thread without one starts at medium. */
+/** The shared option loop writes a stored effort; a thread without one starts at medium, or auto if medium is not advertised. */
 export const applyFxEffortDefault = Effect.fn("applyFxEffortDefault")(function* (
-  runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+  runtime: Pick<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    "getConfigOptions" | "setConfigOption"
+  >,
   modelSelection: ModelSelection,
 ): Effect.fn.Return<void, EffectAcpErrors.AcpError> {
   if (getModelSelectionStringOptionValue(modelSelection, FX_EFFORT_CONFIG_ID)) return;
   const option = (yield* runtime.getConfigOptions).find(
     (entry) => entry.id === FX_EFFORT_CONFIG_ID && entry.type === "select",
   );
-  if (
-    option !== undefined &&
-    collectSessionConfigOptionValues(option).includes(FX_DEFAULT_EFFORT)
-  ) {
-    yield* runtime.setConfigOption(FX_EFFORT_CONFIG_ID, FX_DEFAULT_EFFORT);
+  if (option === undefined) return;
+  const values = collectSessionConfigOptionValues(option);
+  const target = values.includes(FX_DEFAULT_EFFORT)
+    ? FX_DEFAULT_EFFORT
+    : values.includes("auto")
+      ? "auto"
+      : undefined;
+  if (target !== undefined) {
+    yield* runtime.setConfigOption(FX_EFFORT_CONFIG_ID, target);
   }
 });
 

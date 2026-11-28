@@ -354,6 +354,100 @@ describe("checkFxProviderStatus", () => {
       assert.equal(empty.draft.status, "ready");
     }),
   );
+
+  it.effect("uses display names and per-model effort levels from `fx models --json`", () =>
+    Effect.gen(function* () {
+      const gatewayPayload = JSON.stringify({
+        kind: "models",
+        count: 4,
+        private_models_hidden: false,
+        ids: [
+          "google/gemini-4-neon",
+          "openai/gpt-no-medium",
+          "meta/llama-non-reasoning",
+          "custom/no-metadata",
+        ],
+        models: [
+          {
+            id: "google/gemini-4-neon",
+            name: "Gemini 4 Neon",
+            efforts: ["none", "minimal", "low", "medium", "high"],
+            fast: false,
+            ultrafast: false,
+          },
+          {
+            id: "openai/gpt-no-medium",
+            name: "GPT No Medium",
+            efforts: ["low", "high", "max"],
+          },
+          {
+            id: "meta/llama-non-reasoning",
+            name: "Llama Non-Reasoning",
+            efforts: [],
+          },
+          {
+            id: "custom/no-metadata",
+            name: null,
+            efforts: null,
+          },
+        ],
+      });
+      const { draft } = yield* check({
+        " status --json": status("fx login", { model: "meta/llama-non-reasoning" }),
+        "gateway status --json": status("fx login"),
+        "gateway models --json": gatewayPayload,
+        "codex status --json": status("missing"),
+        "grok status --json": status("missing"),
+      });
+
+      assert.deepEqual(
+        draft.models.map((model) => [model.slug, model.name]),
+        [
+          ["default", "Default (Llama Non-Reasoning)"],
+          ["gateway:google/gemini-4-neon", "Gemini 4 Neon"],
+          ["gateway:openai/gpt-no-medium", "GPT No Medium"],
+          ["gateway:meta/llama-non-reasoning", "Llama Non-Reasoning"],
+          ["gateway:custom/no-metadata", "custom/no-metadata"],
+        ],
+      );
+
+      const effortOf = (slug: string) => {
+        const model = draft.models.find((entry) => entry.slug === slug);
+        const descriptor = model?.capabilities?.optionDescriptors?.find(
+          (entry) => entry.id === "effort",
+        );
+        return descriptor?.type === "select" ? descriptor.options : undefined;
+      };
+
+      // "Default" resolves per folder at session time, so it keeps the fallback effort list
+      // even when the machine-wide default advertises no effort levels.
+      const fallbackEffort = [
+        { id: "auto", label: "Auto" },
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium", isDefault: true },
+        { id: "high", label: "High" },
+        { id: "xhigh", label: "Extra High" },
+        { id: "max", label: "Max" },
+      ];
+      assert.deepEqual(effortOf("default"), fallbackEffort);
+      assert.deepEqual(effortOf("gateway:google/gemini-4-neon"), [
+        { id: "auto", label: "Auto" },
+        { id: "none", label: "None" },
+        { id: "minimal", label: "Minimal" },
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium", isDefault: true },
+        { id: "high", label: "High" },
+      ]);
+      assert.deepEqual(effortOf("gateway:openai/gpt-no-medium"), [
+        { id: "auto", label: "Auto", isDefault: true },
+        { id: "low", label: "Low" },
+        { id: "high", label: "High" },
+        { id: "max", label: "Max" },
+      ]);
+      assert.isUndefined(effortOf("gateway:meta/llama-non-reasoning"));
+      assert.deepEqual(effortOf("gateway:custom/no-metadata"), fallbackEffort);
+    }),
+  );
 });
 
 describe("readFxDefaultChoice", () => {

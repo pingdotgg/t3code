@@ -9,6 +9,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 
 import {
+  applyFxEffortDefault,
   applyFxModelSelection,
   fxPermissionDisposition,
   fxSessionModeForPolicy,
@@ -266,5 +267,52 @@ describe("fx cancellation failures", () => {
         cancelled,
       );
     },
+  );
+});
+
+describe("applyFxEffortDefault", () => {
+  it.effect.each([
+    {
+      label: "writes medium when advertised",
+      advertised: ["auto", "low", "medium", "high"],
+      expected: ["medium"],
+    },
+    {
+      label: "falls back to auto when medium is not advertised",
+      advertised: ["auto", "low", "high", "max"],
+      expected: ["auto"],
+    },
+    {
+      label: "skips writing when effort is already stored",
+      advertised: ["auto", "low", "medium", "high"],
+      storedEffort: "high",
+      expected: [],
+    },
+  ] as const)("$label", ({ advertised, storedEffort, expected }) =>
+    Effect.gen(function* () {
+      const written: Array<string> = [];
+      const runtime = {
+        getConfigOptions: Effect.succeed<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>([
+          {
+            id: "effort",
+            name: "Reasoning Effort",
+            type: "select",
+            currentValue: "low",
+            options: advertised.map((value) => ({ value, name: value })),
+          },
+        ]),
+        setConfigOption: (_id: string, value: string | boolean) =>
+          Effect.sync(() => {
+            written.push(String(value));
+            return { configOptions: [] };
+          }),
+      };
+      yield* applyFxEffortDefault(runtime, {
+        instanceId: ProviderInstanceId.make("fx"),
+        model: "gateway:openai/gpt-5.5",
+        ...(storedEffort === undefined ? {} : { options: [{ id: "effort", value: storedEffort }] }),
+      });
+      assert.deepEqual(written, [...expected]);
+    }),
   );
 });
