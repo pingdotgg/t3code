@@ -967,9 +967,8 @@ function markWordMergeContinuations(table: XmlNode) {
       const merge = childNamed(properties, "vMerge");
       if (merge) {
         const value = merge.attrs.val?.trim() ?? "continue";
-        const verticalContinuation = value === "continue" && previous.get(column) === span;
-        if (verticalContinuation) cell.wordMergeCovered = true;
-        if (value === "restart" || verticalContinuation) current.set(column, span);
+        if (value === "continue" && previous.get(column) === span) cell.wordMergeCovered = true;
+        if (value === "restart" || cell.wordMergeCovered) current.set(column, span);
       }
       const horizontal = childNamed(properties, "hMerge");
       const value = horizontal && (horizontal.attrs.val?.trim() ?? "continue");
