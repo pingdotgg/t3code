@@ -184,9 +184,12 @@ export function ChunkedMarkdown(props: {
       });
   };
 
-  const extraData = props.footnotes
-    ? `${props.definitions}\0${props.footnotes.stubs}\0${props.footnotes.definitions}\0${props.footnotes.chunkRefs.map((refs) => refs.join(",")).join("|")}`
-    : props.definitions;
+  // Rows re-render only when this changes; a new workspace revision re-mints their images.
+  const extraData = `${props.workspaceMutationId ?? ""}\0${
+    props.footnotes
+      ? `${props.definitions}\0${props.footnotes.stubs}\0${props.footnotes.definitions}\0${props.footnotes.chunkRefs.map((refs) => refs.join(",")).join("|")}`
+      : props.definitions
+  }`;
 
   return (
     <div
