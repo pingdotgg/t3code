@@ -32,7 +32,7 @@ import {
 } from "@t3tools/contracts";
 import { toServerClock } from "@t3tools/client-runtime/clock";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
-import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze, hasSettleBlockingRun } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useNavigation } from "@react-navigation/native";
@@ -1002,6 +1002,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     snoozable: canSnooze(thread, { now: snoozeGateNow }),
     snoozed: snoozedRow,
   });
+  const hideSettleAction = swipeActions.primary === "settle" && hasSettleBlockingRun(thread);
   const snoozePresets = resolveThreadListV2SnoozePresets(
     {
       secondary: swipeActions.secondary,
@@ -1193,7 +1194,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         nested,
         direct: [
           ...direct,
-          localized(CARD_MENU_ACTIONS[0]!),
+          ...(!hideSettleAction ? [localized(CARD_MENU_ACTIONS[0]!)] : []),
           ...(swipeActions.secondary === "snooze"
             ? [
                 {
@@ -1220,6 +1221,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     autoSettleMenuItems,
     canShareWithGuest,
     canUnsettle,
+    hideSettleAction,
     pinMenuItems,
     props.settlementSupported,
     reorderMenuItems,
@@ -1384,12 +1386,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [gt, handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
   );
   const canSwipe =
-    canOperateThread || (triageOnly && TRIAGE_MENU_ACTION_IDS.has(swipeActions.primary));
-  const swipeAccessibilityHint = !canSwipe
-    ? gt("Opens the thread")
-    : secondaryAction === null
-      ? primaryAction.swipeHint
-      : primaryAction.swipeSnoozeHint;
+    canOperateThread ||
+    (triageOnly &&
+      swipeActions.primary !== null &&
+      TRIAGE_MENU_ACTION_IDS.has(swipeActions.primary));
+  const swipePrimaryAction = hideSettleAction ? secondaryAction : primaryAction;
+  const swipeAccessibilityHint =
+    !canSwipe || swipePrimaryAction === null
+      ? gt("Opens the thread")
+      : hideSettleAction
+        ? gt("Opens the thread. Swipe left to snooze.")
+        : secondaryAction === null
+          ? primaryAction.swipeHint
+          : primaryAction.swipeSnoozeHint;
 
   const titleTextInset = props.project ? projectIconSize + 8 : 0;
   const cardContent = (
@@ -1785,11 +1794,29 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   if (!canSwipe)
     return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
 
+  const customSnoozeSheet = customSnoozeOpen && (
+    <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
+  );
+
+  if (swipePrimaryAction === null) {
+    return (
+      <View style={rowAppearance.swipeContainerStyle}>
+        {customSnoozeSheet}
+        <Menu
+          accessibilityLabel={rowAccessibilityLabel}
+          actions={menuActions}
+          onPressAction={handleMenuAction}
+          shouldOpenOnLongPress
+        >
+          {rowContent(() => {})}
+        </Menu>
+      </View>
+    );
+  }
+
   return (
     <View collapsable={false}>
-      {customSnoozeOpen && (
-        <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
-      )}
+      {customSnoozeSheet}
       <ThreadSwipeable
         dormant={dormant}
         threadKey={`${thread.environmentId}:${thread.id}`}
@@ -1803,9 +1830,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         onDelete={handleDelete}
         onSwipeableClose={props.onSwipeableClose}
         onSwipeableWillOpen={props.onSwipeableWillOpen}
-        primaryAction={primaryAction}
-        secondaryAction={secondaryAction}
-        resetKey={`${thread.environmentId}:${thread.id}:${variant}:${snoozedRow}:${thread.settledAt}:${thread.unsettledAt}:${thread.snoozedUntil}:${thread.pinnedAt}`}
+        primaryAction={
+          hideSettleAction
+            ? { ...swipePrimaryAction, onPress: () => setCustomSnoozeOpen(true) }
+            : swipePrimaryAction
+        }
+        secondaryAction={hideSettleAction ? null : secondaryAction}
+        resetKey={`${thread.environmentId}:${thread.id}:${variant}:${hideSettleAction}:${snoozedRow}:${thread.settledAt}:${thread.unsettledAt}:${thread.snoozedUntil}:${thread.pinnedAt}`}
         simultaneousWith={props.simultaneousSwipeGesture}
         threadTitle={thread.title}
       >

@@ -5766,5 +5766,6 @@
   "5d9bc70d1cb3b596": "{count} máquinas casi no tienen espacio en disco",
   "7bb6d3c4fe5cea0f": "{count} máquinas están sobrecargadas",
   "b48a4b390016a4f0": "Usa {usage} mientras la memoria ralentiza los agentes. Detenerlo ayuda al resto.",
-  "0d23483df1d6fc87": "Usa {usage} mientras esta máquina está sobrecargada. Detenerlo ayuda al resto."
+  "0d23483df1d6fc87": "Usa {usage} mientras esta máquina está sobrecargada. Detenerlo ayuda al resto.",
+  "8d9a8818faaf5ed1": "Abre el hilo. Desliza hacia la izquierda para posponerlo."
 }
