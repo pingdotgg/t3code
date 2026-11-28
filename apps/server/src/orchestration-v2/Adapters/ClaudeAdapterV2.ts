@@ -32,9 +32,13 @@ import {
   claudeLedgerDelta,
   claudeModelLedger,
   claudeReportedContextWindows,
+  estimateStoppedClaudeUsage,
+  hasPositiveClaudeUsage,
   normalizeClaudeTurnTokenUsage,
+  recordClaudeRequestUsage,
   type ClaudeLedgerUsage,
   type ClaudeModelLedger,
+  type ClaudeTurnRequests,
 } from "../../provider/ClaudeTurnTokenUsage.ts";
 import { toMcpElicitationResponse } from "../../provider/CodexMcpElicitation.ts";
 import {
@@ -5672,6 +5676,8 @@ interface ActiveClaudeTurnContext {
     requestedAt?: DateTime.Utc;
     usage: ClaudeMessageUsage | null;
   } | null;
+  readonly requests: ClaudeTurnRequests;
+  readonly unmeasuredSegmentRequestIds: Set<string>;
   compactionTokens: number | undefined;
   readonly toolCalls: Map<string, ActiveClaudeToolCall>;
   // A successful status can precede the boundary that supplies its token counts.
@@ -10186,7 +10192,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             status,
           });
 
-        // A held result's usage joins the steered segments once another result settles the turn.
+        const closeSegmentRequests = (
+          context: ActiveClaudeTurnContext,
+          result: SDKResultMessage,
+        ) => {
+          if (hasPositiveClaudeUsage(result.usage)) {
+            for (const id of context.requests.keys()) {
+              if (!context.unmeasuredSegmentRequestIds.has(id)) context.requests.delete(id);
+            }
+          } else {
+            for (const id of context.requests.keys()) context.unmeasuredSegmentRequestIds.add(id);
+          }
+        };
+
+        // A held result's usage joins the steered segments when the turn goes on without it.
         const absorbHeldResult = (context: ActiveClaudeTurnContext) => {
           if (context.heldResult === undefined) return;
           const { assistant } = context;
@@ -10516,6 +10535,33 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   failure: null,
                   threadDisposition,
                 };
+          const requestUsage = estimateStoppedClaudeUsage(
+            input.context.requests,
+            input.result,
+            input.status,
+          );
+          input.context.requests.clear();
+          input.context.unmeasuredSegmentRequestIds.clear();
+          const finalLedger =
+            input.result === undefined ? undefined : resultLedgerUsage.get(input.result);
+          const ledger = addClaudeLedgerUsage(input.context.steeredLedgerUsage, finalLedger);
+          if (
+            requestUsage !== undefined &&
+            (finalLedger === undefined ||
+              finalLedger.inputTokens <
+                requestUsage.inputTokens + (requestUsage.otherUsage?.inputTokens ?? 0) ||
+              finalLedger.outputTokens <
+                requestUsage.outputTokens + (requestUsage.otherUsage?.outputTokens ?? 0)) &&
+            (yield* Ref.get(activeTurn)) === input.context
+          ) {
+            const liveQuery = yield* Ref.get(queryContext);
+            if (liveQuery === null || liveQuery.lastTurn === input.context) {
+              // A later cumulative result may include these requests; it needs a new anchor.
+              const nativeId = input.context.nativeThreadId;
+              modelLedgers.delete(clearedNativeSessions.get(nativeId) ?? nativeId);
+              if (liveQuery !== null) liveQuery.modelLedger = undefined;
+            }
+          }
           yield* Effect.all(
             [
               emitProviderEvent({
@@ -10535,14 +10581,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     input.context.steeredSegmentUsage,
                     {
                       rootModels: input.context.rootModels,
-                      ...(input.result === undefined
-                        ? {}
-                        : {
-                            ledger: addClaudeLedgerUsage(
-                              input.context.steeredLedgerUsage,
-                              resultLedgerUsage.get(input.result),
-                            ),
-                          }),
+                      stoppedRequestUsage: requestUsage,
+                      ledger,
                     },
                   ),
                 },
@@ -10773,6 +10813,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const subagents = yield* Ref.get(sessionSubagentsByTaskId);
           const buffered = (yield* Ref.get(wakeBuffers)).get(closedQuery.nativeThreadId)?.messages;
           if (current === context) {
+            absorbHeldResult(context);
             yield* finalizeActiveTurn({
               context,
               status: interrupted ? "interrupted" : "failed",
@@ -11550,6 +11591,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return subagent?.task.status === "running" ? settled : null;
         });
 
+        const recordAssistantRequestUsage = (
+          context: ActiveClaudeTurnContext,
+          message: SDKAssistantMessage,
+        ) => {
+          if (
+            !context.steersClosed &&
+            message.message.model !== "<synthetic>" &&
+            message.message.usage != null
+          ) {
+            recordClaudeRequestUsage(
+              context.requests,
+              message.message.id,
+              message.message.usage,
+              message.parent_tool_use_id !== null,
+            );
+          }
+        };
+
         const handleSdkMessageFrame = Effect.fnUntraced(function* (input: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
@@ -11882,12 +11941,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               context.assistant.streamBlocks.clear();
               const usage: ClaudeMessageUsage = event.message.usage ?? {};
               context.streamUsage = { messageId: event.message.id, usage };
+              recordClaudeRequestUsage(context.requests, event.message.id, usage, false);
               yield* emitContextUsage(context, usage, true);
             } else if (event.type === "message_delta") {
               const usage: typeof event.usage | null | undefined = event.usage;
               const stream = context.streamUsage;
               if (stream?.usage && usage != null) {
                 stream.usage = mergeClaudeStreamUsage(stream.usage, usage);
+                recordClaudeRequestUsage(context.requests, stream.messageId, stream.usage, false);
                 yield* emitContextUsage(context, stream.usage);
               }
             } else if (
@@ -12346,6 +12407,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (message.type === "assistant" && input.replayed !== true) {
+            recordAssistantRequestUsage(context, message);
             if (message.message.model !== "<synthetic>") {
               const now = yield* DateTime.now;
               yield* completeProviderRetry(context, now);
@@ -13052,6 +13114,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
             absorbHeldResult(context);
             if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
+              closeSegmentRequests(context, message);
               const cutOffReply = context.assistant.lastReply;
               context.assistant.lastReply = null;
               if (message.terminal_reason === "aborted_streaming") {
@@ -13185,6 +13248,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               context.pendingSteers.size > 0 &&
               claudeEchoedPromptUuids(message).length > 0
             ) {
+              closeSegmentRequests(context, message);
               context.heldResult = message;
               // Claude ended its native turn on this reply; the run continues only for the steer.
               const answer = context.assistant.lastReply;
@@ -13289,6 +13353,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             uuid !== undefined &&
             forkedSkillTranscripts.get(parentToolUseId)?.shownUuids.has(uuid) === true
           ) {
+            if (
+              input.message.type === "assistant" &&
+              (yield* Ref.get(queryContext))?.query === input.query
+            ) {
+              const context = yield* Ref.get(activeTurn);
+              if (context !== null) recordAssistantRequestUsage(context, input.message);
+            }
             return;
           }
           yield* routeSdkMessage(input);
@@ -14792,6 +14863,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 blocks: new Map(),
               },
               streamUsage: null,
+              requests: new Map(),
+              unmeasuredSegmentRequestIds: new Set(),
               compactionTokens: undefined,
               toolCalls: new Map(),
               compaction: null,
