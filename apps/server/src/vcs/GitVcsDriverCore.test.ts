@@ -9718,6 +9718,29 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect("checks for cherry-pick and revert refs only in reftable repositories", () =>
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawnedArgs: Array<ReadonlyArray<string>> = [];
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (ChildProcess.isStandardCommand(command)) spawnedArgs.push(command.args.map(String));
+          return delegate.spawn(command);
+        });
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "a.txt", "a\n");
+        yield* writeTextFile(cwd, "b.txt", "b\n");
+
+        yield* driver.commit(cwd, "Add a", "", { stage: { filePaths: ["a.txt"] } });
+
+        assert.equal(yield* git(cwd, ["log", "-1", "--pretty=%s"]), "Add a");
+        assert.isFalse(spawnedArgs.some((args) => args.includes("--symbolic-full-name")));
+      }),
+    );
+
     it.effect("stops a selected-file commit when another process holds the index lock", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

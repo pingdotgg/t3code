@@ -3892,10 +3892,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const headPaths = yield* runGitStdout("GitVcsDriver.commit.mergeHead", cwd, [
           "rev-parse",
           ...inProgressHeads.flatMap(({ head }) => ["--git-path", head]),
+          "--git-path",
+          "reftable",
         ]);
         const resolvedHeadPaths = headPaths.trim().split("\n");
-        // Reftable keeps CHERRY_PICK_HEAD and REVERT_HEAD as refs with no file under .git. A
-        // same-named branch resolves to its full name; an ambiguity warning would blank stdout.
+        const exists = (index: number) =>
+          fileSystem.exists(path.resolve(cwd, resolvedHeadPaths[index] ?? ""));
+        // Reftable keeps CHERRY_PICK_HEAD and REVERT_HEAD as refs with no file under .git, so
+        // only a repository with a reftable directory needs the ref probe. A same-named branch
+        // resolves to its full name; an ambiguity warning would blank stdout.
         const operationRefs = new Set<string>(["CHERRY_PICK_HEAD", "REVERT_HEAD"]);
         const isOperationRef = (head: string) =>
           runGitStdout(
@@ -3912,14 +3917,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ],
             true,
           ).pipe(Effect.map((ref) => ref.trim() === head));
-        const inProgress = yield* Effect.findFirst(inProgressHeads, ({ head }, index) =>
-          fileSystem.exists(path.resolve(cwd, resolvedHeadPaths[index] ?? "")).pipe(
-            Effect.filterOrElse(
-              (exists) => exists || !operationRefs.has(head),
-              () => isOperationRef(head),
+        const inProgress = yield* exists(inProgressHeads.length).pipe(
+          Effect.flatMap((usesReftable) =>
+            Effect.findFirst(inProgressHeads, ({ head }, index) =>
+              exists(index).pipe(
+                Effect.filterOrElse(
+                  (found) => found || !usesReftable || !operationRefs.has(head),
+                  () => isOperationRef(head),
+                ),
+              ),
             ),
           ),
-        ).pipe(
           Effect.mapError(
             (cause) =>
               new GitCommandError({
