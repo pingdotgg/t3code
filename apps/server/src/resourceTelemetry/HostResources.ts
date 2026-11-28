@@ -195,6 +195,8 @@ const PRESSURE_INTERVAL = "5 seconds";
 const MAX_UNREAD_PRESSURE_SAMPLES = 6;
 const HEAVIEST_AGENT_COUNT = 3;
 const CPU_SAMPLE_MAX_AGE_MS = 30_000;
+// The time constant of PSI avg60, so disk busy share and io stall average over the same minute.
+const DISK_BUSY_DECAY_MS = 60_000;
 
 /** Up to about an eighth coarser, so ordinary growth does not push an update every sample. */
 export function roundCoarsely(bytes: number): number {
@@ -227,6 +229,18 @@ export function heaviestAgents(
     }));
 }
 
+/** Milliseconds each block device has spent doing I/O; empty when nothing parses. */
+function diskIoTicks(diskstats: string) {
+  const devices = new Map<string, number>();
+  for (const line of diskstats.split("\n")) {
+    // After major, minor and name, field 10 is the ms spent doing I/O.
+    const fields = line.trim().split(/\s+/);
+    const ioTicks = Number(fields[12]);
+    if (fields[2] !== undefined && Number.isFinite(ioTicks)) devices.set(fields[2], ioTicks);
+  }
+  return devices;
+}
+
 function cgroupNumber(text: string, pattern: RegExp): number | null {
   const value = pattern.exec(text)?.[1];
   return value === undefined ? null : Number(value);
@@ -241,6 +255,10 @@ const make = Effect.fn("makeHostResources")(function* () {
   const config = yield* Config.ServerConfig;
   const levels = yield* Ref.make(CALM);
   const unreadSamples = yield* Ref.make({ memory: 0, cpu: 0, io: 0, disk: 0 });
+  const diskBusy = yield* Ref.make<{
+    readonly at: number;
+    readonly devices: ReadonlyMap<string, { readonly ioTicks: number; readonly busy: number }>;
+  } | null>(null);
   const lastAgentCpu = yield* Ref.make<{
     readonly at: number;
     readonly usage: ReadonlyMap<string, number>;
@@ -314,13 +332,36 @@ const make = Effect.fn("makeHostResources")(function* () {
         ? NodeOS.loadavg()[0]! / Math.max(1, NodeOS.availableParallelism())
         : null;
     const disk = yield* diskSpace;
+    const sampledAt = yield* Clock.currentTimeMillis;
+    const ioTicks = linux ? diskIoTicks(yield* readFile("/proc/diskstats")) : new Map();
+    // An io_uring waiter (Ghostty) counts as PSI io full while no disk works, so the busiest disk's
+    // share of time doing I/O caps it, averaged the way the kernel averages PSI avg60.
+    const previousDisks = yield* Ref.get(diskBusy);
+    const elapsedMs = previousDisks === null ? 0 : sampledAt - previousDisks.at;
+    const decay = Math.exp(-elapsedMs / DISK_BUSY_DECAY_MS);
+    const devices = new Map(
+      [...ioTicks].map(([name, ticks]) => {
+        const before = previousDisks?.devices.get(name);
+        const busy =
+          before === undefined || elapsedMs <= 0
+            ? 0
+            : before.busy * decay +
+              Math.min(100, (Math.max(0, ticks - before.ioTicks) / elapsedMs) * 100) * (1 - decay);
+        return [name, { ioTicks: ticks, busy }] as const;
+      }),
+    );
+    yield* Ref.set(diskBusy, devices.size === 0 ? null : { at: sampledAt, devices });
+    const diskBusyPercent =
+      devices.size === 0 ? null : Math.max(...[...devices.values()].map((device) => device.busy));
+    const ioFull = psiAverage(ioPsi, "full", "avg60");
     const sample: PressureSample = {
       memorySome: psiAverage(memoryPsi, "some", "avg10"),
       memoryFull: psiAverage(memoryPsi, "full", "avg10"),
       agentsMemoryFull: psiAverage(agentsPsi, "full", "avg10"),
       darwinMemoryLevel,
       cpuSome,
-      ioFull: psiAverage(ioPsi, "full", "avg60"),
+      ioFull:
+        ioFull === null || diskBusyPercent === null ? ioFull : Math.min(ioFull, diskBusyPercent),
       loadPerCpu,
       diskFreeBytes: disk?.free ?? null,
       diskTotalBytes: disk?.total ?? null,

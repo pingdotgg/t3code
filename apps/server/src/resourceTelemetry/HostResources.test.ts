@@ -472,6 +472,70 @@ describe("HostResources pressure on Linux", () => {
     }).pipe(Effect.provide(pressured({}))),
   );
 
+  // An io_uring waiter (Ghostty's default backend) counts as iowait in PSI while no disk is busy.
+  it.effect("does not report io pressure while every disk is idle", () =>
+    Effect.gen(function* () {
+      setup();
+      const pressure = yield* (yield* HostResources.HostResources).readPressure;
+      expect(pressure.io).toBe("none");
+    }).pipe(
+      Effect.provide(
+        pressured({
+          "/proc/pressure/cpu": ["some avg10=0.00 avg60=0.00\nfull avg10=0.00 avg60=0.00\n"],
+          "/proc/pressure/io": ["some avg10=77.00 avg60=77.00\nfull avg10=76.00 avg60=76.00\n"],
+          "/proc/diskstats": [
+            " 259       0 nvme0n1 52000 0 4100000 9000 81000 0 6300000 41000 0 68000 50000 0 0 0 0 0 0\n",
+          ],
+        }),
+      ),
+    ),
+  );
+
+  // One /proc/diskstats reading per 5 s sample, each with the disk's total ms spent doing I/O.
+  const ioFullWhileDiskTicks = (ticks: ReadonlyArray<number>) =>
+    pressured({
+      "/proc/pressure/cpu": ["some avg10=0.00 avg60=0.00\nfull avg10=0.00 avg60=0.00\n"],
+      "/proc/pressure/io": ["some avg10=77.00 avg60=77.00\nfull avg10=76.00 avg60=76.00\n"],
+      "/proc/diskstats": ticks.map(
+        (ioTicks) =>
+          ` 259       0 nvme0n1 52000 0 4100000 9000 81000 0 6300000 41000 0 ${ioTicks} 50000 0 0 0 0 0 0\n`,
+      ),
+    });
+  // The stream emits changes only, so the latest level is the last one it emitted.
+  const ioLevelsAfter = (samples: number) =>
+    Effect.gen(function* () {
+      setup();
+      const levels: Array<string> = [];
+      yield* Stream.runForEach((yield* HostResources.HostResources).pressure, (pressure) =>
+        Effect.sync(() => levels.push(pressure.io)),
+      ).pipe(Effect.forkScoped);
+      for (let sample = 1; sample < samples; sample++) yield* TestClock.adjust("5 seconds");
+      return levels;
+    });
+
+  // Background writes and a short burst of real disk work on an otherwise idle disk.
+  it.effect("does not report severe io pressure for bursts of disk work", () =>
+    Effect.gen(function* () {
+      expect(yield* ioLevelsAfter(13)).not.toContain("severe");
+    }).pipe(
+      Effect.provide(
+        ioFullWhileDiskTicks([
+          68000, 68050, 69615, 74115, 78615, 83115, 87615, 87650, 87700, 87740,
+        ]),
+      ),
+    ),
+  );
+
+  it.effect("reports io pressure while a disk stays busy", () =>
+    Effect.gen(function* () {
+      expect((yield* ioLevelsAfter(13)).at(-1)).toBe("severe");
+    }).pipe(
+      Effect.provide(
+        ioFullWhileDiskTicks(Array.from({ length: 13 }, (_, sample) => 68000 + sample * 4500)),
+      ),
+    ),
+  );
+
   it.effect("reports a nearly full disk with its free space", () =>
     Effect.gen(function* () {
       setup();
