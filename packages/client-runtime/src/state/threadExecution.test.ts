@@ -18,6 +18,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
+import { decodeOptions, mFallback } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import { describe, expect, it } from "vite-plus/test";
 
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
@@ -32,6 +34,7 @@ import {
   deriveThreadActivityRun,
   deriveThreadRuntime,
   formatModelSelectionEffort,
+  formatProviderSubagentStatus,
   formatSubagentEffort,
   isBackgroundWorkStopPending,
   presentPendingBackgroundWork,
@@ -431,26 +434,72 @@ describe("thread execution presentation", () => {
         providerSessions: [{ ...session, startupPhase: "a-later-server's-phase" }],
       })?.providerStartingLabel,
     ).toBe("Starting Claude");
+    // A session shared by several threads shows its phase only on the thread it names.
+    const sharedPhase = (threadId: ThreadId) =>
+      deriveThreadActivityRun({
+        ...starting,
+        providerSessions: [{ ...session, startupPhase: "mcp", startupPhaseThreadId: threadId }],
+      })?.providerStartingLabel;
+    expect(sharedPhase(v2Projection.thread.id)).toBe("Starting Claude MCP servers");
+    expect(sharedPhase(ThreadId.make("another-thread"))).toBe("Starting Claude");
     expect(
       deriveThreadActivityRun({ ...starting, providerSessions: [] })?.providerStartingLabel,
     ).toBe("Starting");
+    // Before its session exists, the run still names its provider from the instances the client knows.
+    const unopened = deriveThreadActivityRun({ ...starting, providerSessions: [] }, [
+      { instanceId: openRun.providerInstanceId, driver: session.driver },
+    ]);
+    expect(unopened?.providerStartingLabel).toBe("Starting Claude");
+    expect(unopened?.providerStarting).toEqual({
+      instanceId: openRun.providerInstanceId,
+      driver: session.driver,
+    });
+
+    const providerTurnId = ProviderTurnId.make("provider-turn-starting");
+    const turnStarted = {
+      ...starting,
+      providerTurns: [
+        {
+          id: providerTurnId,
+          providerThreadId: ProviderThreadId.make("provider-thread-starting"),
+          nodeId: NodeId.make("node-starting"),
+          runAttemptId: attemptId,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "running" as const,
+          startedAt: now,
+          completedAt: null,
+        },
+      ],
+    };
+    expect(deriveThreadActivityRun(turnStarted)?.providerStartingLabel).toBeUndefined();
+
+    // A provider can still be preparing after its turn opens; its phase shows until the first output.
+    const connecting = {
+      ...turnStarted,
+      providerSessions: [{ ...session, startupPhase: "connecting" }],
+    };
+    expect(deriveThreadActivityRun(connecting)?.providerStartingLabel).toBe("Connecting to Claude");
+    const reasoning = {
+      id: TurnItemId.make("first-output"),
+      threadId: v2Projection.thread.id,
+      runId: openRun.id,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      type: "reasoning" as const,
+      status: "running" as const,
+      streaming: true,
+      title: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+    };
     expect(
-      deriveThreadActivityRun({
-        ...starting,
-        providerTurns: [
-          {
-            id: ProviderTurnId.make("provider-turn-starting"),
-            providerThreadId: ProviderThreadId.make("provider-thread-starting"),
-            nodeId: NodeId.make("node-starting"),
-            runAttemptId: attemptId,
-            nativeTurnRef: null,
-            ordinal: 1,
-            status: "running",
-            startedAt: now,
-            completedAt: null,
-          },
-        ],
-      })?.providerStartingLabel,
+      deriveThreadActivityRun({ ...connecting, turnItems: [reasoning] })?.providerStartingLabel,
     ).toBeUndefined();
   });
 
@@ -900,6 +949,44 @@ describe("presentProviderGoal", () => {
         false,
       ).usage,
     ).toBe("1m / 1m tokens");
+  });
+});
+
+// A Japanese catalogue for the duration units only, keyed by source message like the real one.
+const JAPANESE_UNITS: Record<string, string> = {
+  "{minutes}m {seconds}s": "{minutes}分{seconds}秒",
+};
+const japaneseUnits = ((encodedMsg: string, options?: Parameters<MFunctionType>[1]) => {
+  const vars: Record<string, unknown> = { ...decodeOptions(encodedMsg), ...options };
+  const translated = JAPANESE_UNITS[String(vars.$_source)];
+  return translated === undefined
+    ? mFallback(encodedMsg, options)
+    : translated.replace(/\{(\w+)\}/g, (_, key: string) => String(vars[key]));
+}) as MFunctionType;
+
+describe("duration units follow the app language", () => {
+  it("in the goal usage line", () => {
+    expect(
+      presentProviderGoal(
+        { objective: "Ship the feature", status: "paused", timeUsedSeconds: 125 },
+        false,
+        japaneseUnits,
+      ).usage,
+    ).toBe("2分5秒");
+  });
+
+  it("in the provider subagent status", () => {
+    expect(
+      formatProviderSubagentStatus(
+        {
+          status: "completed",
+          startedAt: "2026-07-28T10:00:00.000Z",
+          completedAt: "2026-07-28T10:02:05.000Z",
+        },
+        0,
+        japaneseUnits,
+      ),
+    ).toBe("Completed in 2分5秒");
   });
 });
 

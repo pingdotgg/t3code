@@ -24,6 +24,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -53,9 +54,10 @@ import * as ProjectService from "./ProjectService.ts";
 const projectId = ProjectId.make("agent-session-import-project");
 const timestamp = "2026-09-01T10:00:00.000Z";
 const now = DateTime.makeUnsafe(timestamp);
-const stores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
-  Layer.provideMerge(SqlitePersistence.layerMemory),
-);
+const stores = Layer.mergeAll(
+  EventStore.layer,
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
+).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 const persistence = Layer.mergeAll(
   stores,
   EventSink.layer.pipe(Layer.provide(stores)),
@@ -543,7 +545,7 @@ it.effect("counts only new threads when re-importing cached and recovered transc
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
-it.effect("does not certify new native history after a partial import retry", () =>
+it.effect("certifies new native history only with its messages after a partial import retry", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -562,17 +564,18 @@ it.effect("does not certify new native history after a partial import retry", ()
       { role: "user", text: "Continue outside T3", createdAt: timestamp },
       { role: "assistant", text: "Native continuation", createdAt: timestamp },
     );
-    // The thread holds only the original messages, so the continued transcript stays unrecorded.
     expect(yield* (yield* makeImporter([continued])).run).toEqual({
       importedCount: 0,
-      skippedCount: 1,
+      skippedCount: 0,
     });
-    expect(yield* runtimes.list()).toEqual([]);
     expect(
       (yield* projections.getThreadRecords(threadId, ["messages"])).messages.map(
         (message) => message.text,
       ),
-    ).toEqual(["Fix it", "Fixed"]);
+    ).toEqual(["Fix it", "Fixed", "Continue outside T3", "Native continuation"]);
+    expect(Option.getOrThrow(yield* runtimes.getByThreadId({ threadId }))).toMatchObject({
+      runtimePayload: { importedTranscripts: [continued.source] },
+    });
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
@@ -614,6 +617,91 @@ it.effect("does not record a changed transcript as imported without its new mess
       recordsChangedTranscript: recorded?.some((source) => source.size === 200) ?? false,
       showsNewMessages: texts.includes("Continued"),
     }).not.toEqual({ recordsChangedTranscript: true, showsNewMessages: false });
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("re-import brings a continued transcript into an import thread with no runs", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const first = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "7a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      "claudeAgent",
+    );
+    const threadId = importId(first);
+    yield* (yield* makeImporter([first])).run;
+    expect((yield* projections.getThreadRecords(threadId, ["runs"])).runs).toEqual([]);
+
+    const continued = candidate(
+      CLAUDE_MODEL_SELECTION,
+      first.source.providerSessionId,
+      "claudeAgent",
+    );
+    continued.source.size = 200;
+    continued.source.mtimeMs = 3;
+    continued.thread.messages.push(
+      { role: "user", text: "Continue in the terminal", createdAt: timestamp },
+      { role: "assistant", text: "Continued in the terminal", createdAt: timestamp },
+    );
+
+    expect(yield* (yield* makeImporter([continued])).run).toMatchObject({ skippedCount: 0 });
+    expect(
+      (yield* projections.getThreadRecords(threadId, ["messages"])).messages.map(
+        (message) => message.text,
+      ),
+    ).toEqual(["Fix it", "Fixed", "Continue in the terminal", "Continued in the terminal"]);
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("re-import leaves an import thread that has runs at its stored messages", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const first = candidate(CODEX_MODEL_SELECTION, "continued-in-t3");
+    const threadId = importId(first);
+    yield* (yield* makeImporter([first])).run;
+    const { thread } = yield* projections.getThreadRecords(threadId, []);
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(`${threadId}:run`),
+          type: "run.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: RunId.make(`${threadId}:run`),
+            threadId,
+            ordinal: 1,
+            providerInstanceId: thread.providerInstanceId,
+            modelSelection: thread.modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make(`${threadId}:prompt`),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "queued",
+            requestedAt: now,
+            startedAt: null,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        },
+      ],
+    });
+    const continued = candidate(CODEX_MODEL_SELECTION, first.source.providerSessionId);
+    continued.source.size = 200;
+    continued.source.mtimeMs = 3;
+    continued.thread.messages.push(
+      { role: "user", text: "Continue outside T3", createdAt: timestamp },
+      { role: "assistant", text: "Native continuation", createdAt: timestamp },
+    );
+
+    expect(yield* (yield* makeImporter([continued])).run).toMatchObject({ skippedCount: 1 });
+    expect(
+      (yield* projections.getThreadRecords(threadId, ["messages"])).messages.map(
+        (message) => message.text,
+      ),
+    ).toEqual(["Fix it", "Fixed"]);
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 

@@ -1,4 +1,5 @@
 import { parseGoalCommand } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import * as Effect from "effect/Effect";
 import * as JsonSchema from "effect/JsonSchema";
 import * as Result from "effect/Result";
@@ -61,10 +62,11 @@ export interface OutputRejection {
 }
 
 /** The rejection as told to whoever wrote the value: the problem, then what in it did not fit. */
-export const rejectionText = (rejection: OutputRejection): string =>
-  rejection.cause instanceof Error
-    ? `${rejection.problem}\n${rejection.cause.message.slice(0, 2000)}`
-    : rejection.problem;
+export const rejectionText = (rejection: OutputRejection): string => {
+  if (!(rejection.cause instanceof Error)) return rejection.problem;
+  const { message } = rejection.cause;
+  return `${rejection.problem}\n${message.slice(0, splitsSurrogatePair(message, 2000) ? 1999 : 2000)}`;
+};
 
 /**
  * Checks what an agent submitted against the schema its run declared. The value is kept as

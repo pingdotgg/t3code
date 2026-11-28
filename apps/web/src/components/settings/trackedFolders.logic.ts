@@ -1,5 +1,6 @@
 import type { ProjectTrackedFolder } from "@t3tools/contracts";
 import { hasTrailingPathSeparator } from "@t3tools/client-runtime/state/projects";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import {
   fileBasename,
   isAbsolutePath,
@@ -34,7 +35,8 @@ export function resolveTrackedFolderInput(input: {
   if (rawPath === null) return null;
   const path = normalizeProjectPathForDispatch(rawPath);
   // `ProjectTrackedFolder.name` takes at most 128 characters.
-  const name = fileBasename(path).slice(0, 128).trim();
+  const basename = fileBasename(path).trimStart();
+  const name = basename.slice(0, splitsSurrogatePair(basename, 128) ? 127 : 128).trimEnd();
   if (path.length === 0 || name.length === 0) return null;
   return { path, name };
 }

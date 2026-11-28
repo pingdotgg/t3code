@@ -1166,6 +1166,55 @@ describe("DesktopBrowserHost", () => {
     }),
   );
 
+  // regression: #44003 agent typing into a cross-site iframe field was refused while the preview was unfocused
+  it.effect("types into the cross-site frame holding an unfocused guest's focus", () =>
+    Effect.gen(function* () {
+      const host = yield* makeDrawnHost;
+      // The page's focus is an iframe whose document it cannot read; that frame focuses a field.
+      const debuggee = makeDebuggee({
+        answer: (method, sessionId) => {
+          if (method === "Runtime.evaluate") {
+            return sessionId === undefined
+              ? { result: { type: "object", value: false, objectId: "FOCUSED-IFRAME" } }
+              : { result: { type: "undefined" } };
+          }
+          if (method === "DOM.describeNode") return { node: { frameId: "FRAME" } };
+          if (method === "Runtime.releaseObject") return {};
+          return undefined;
+        },
+      });
+      host.attach(key, debuggee.tab);
+      const errors: Array<string> = [];
+      yield* host.events.pipe(
+        Stream.map((line) => decodeEvent(new TextDecoder().decode(line))),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            if (event.type !== "cdp") return;
+            const { error } = decodeCdpError(event.message);
+            if (error) errors.push(error.message);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+      debuggee.emit("Target.attachedToTarget", {
+        sessionId: "FRAME-SESSION",
+        targetInfo: { targetId: "FRAME", type: "iframe" },
+      });
+
+      yield* command(host, 1, "Input.insertText");
+      yield* settle;
+      debuggee.release();
+      yield* settle;
+
+      expect(errors).toEqual([]);
+      expect(debuggee.methods).toContain("Input.insertText");
+      expect(debuggee.sessionIds[debuggee.methods.indexOf("Input.insertText")]).toBe(
+        "FRAME-SESSION",
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("fails mouse input whose frame detaches before taking it, then moves on", () =>
     Effect.gen(function* () {
       const host = yield* makeDrawnHost;
@@ -1596,6 +1645,101 @@ describe("DesktopBrowserHost", () => {
         yield* viewer(7, method, type);
         expect(led()).toBe(false);
       }
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("relays no input to a guest while the person at its window annotates it", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      let annotating = true;
+      host.attach(key, { ...debuggee.tab, annotating: () => annotating });
+      const refusals: Array<number> = [];
+      yield* host.events.pipe(
+        Stream.map((line) => decodeEvent(new TextDecoder().decode(line))),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            if (event.type !== "cdp") return;
+            const { id } = decodeCdpMessage(event.message);
+            const { error } = decodeCdpError(event.message);
+            if (id !== undefined && error?.message.includes("annotat")) refusals.push(id);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+      const raw = (message: Record<string, unknown>) =>
+        host.handleCommandLine(encodeJson({ type: "cdp", ...key, message: encodeJson(message) }));
+      yield* raw({ id: 1, method: "Target.attachToTarget", params: { targetId: "GUEST" } });
+      yield* settle;
+
+      // A viewer's own session and the page's, as a person and an agent send them.
+      yield* raw({
+        id: 10,
+        method: "Input.dispatchKeyEvent",
+        params: { id: 10, type: "rawKeyDown" },
+        sessionId: "t3-preview-page-1",
+      });
+      yield* command(host, 11, "Input.insertText");
+      yield* command(host, 12, "Input.dispatchKeyEvent");
+      yield* settle;
+      expect(debuggee.methods).toEqual([]);
+      expect(refusals).toEqual([10, 11, 12]);
+
+      // The page stays readable meanwhile, and input resumes once the annotation ends.
+      yield* command(host, 20, "DOM.getDocument");
+      yield* settle;
+      expect(debuggee.methods).toEqual(["DOM.getDocument"]);
+      annotating = false;
+      yield* command(host, 21, "Input.insertText");
+      yield* settle;
+      expect(debuggee.methods).toHaveLength(2);
+      expect(refusals).toEqual([10, 11, 12]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("relays no input that was still waiting when the annotation started", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee({ deferFocus: true });
+      let annotating = false;
+      host.attach(key, { ...debuggee.tab, annotating: () => annotating });
+      const refusals: Array<number> = [];
+      yield* host.events.pipe(
+        Stream.map((line) => decodeEvent(new TextDecoder().decode(line))),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            if (event.type !== "cdp") return;
+            const { id } = decodeCdpMessage(event.message);
+            const { error } = decodeCdpError(event.message);
+            if (id !== undefined && error?.message.includes("annotat")) refusals.push(id);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+
+      // Waiting for the guest to take focus.
+      yield* command(host, 1, "Input.dispatchMouseEvent");
+      yield* settle;
+      expect(debuggee.methods).toEqual([]);
+      annotating = true;
+      debuggee.settleFocus();
+      yield* settle;
+      expect(debuggee.methods).toEqual([]);
+      expect(refusals).toEqual([1]);
+
+      // Waiting behind an earlier pointer event the guest has not answered.
+      annotating = false;
+      yield* command(host, 2, "Input.dispatchMouseEvent");
+      yield* command(host, 3, "Input.dispatchMouseEvent");
+      yield* settle;
+      expect(debuggee.sent).toEqual([2]);
+      annotating = true;
+      debuggee.release();
+      yield* settle;
+      expect(debuggee.sent).toEqual([2]);
+      expect(refusals).toEqual([1, 3]);
     }).pipe(Effect.scoped),
   );
 

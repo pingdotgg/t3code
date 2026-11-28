@@ -39,8 +39,9 @@ export function installFileEditorDismissal({
   };
   const handleKeyDown = (event: KeyboardEvent) => {
     if (event.key !== "Escape" || isBlocked() || !isFileEditorFocused(root)) return;
-    event.preventDefault();
     event.stopImmediatePropagation();
+    if (event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
     dismissFileEditorInteraction({ root, editor, onDismiss });
   };
 
