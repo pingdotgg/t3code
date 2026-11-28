@@ -208,9 +208,8 @@ function useThreadActionExecutor(
       if (action === "archive" || action === "delete") {
         for (const kind of ["settle", "snooze", "pin"]) ThreadUndo.invalidate(kind, key);
       }
-      if (action === "archive" || action === "unarchive" || action === "delete") {
-        refreshArchivedThreadsForEnvironment(thread.environmentId);
-      }
+      // Archiving and deleting reach an open archive as shell removals; unarchiving does not.
+      if (action === "unarchive") refreshArchivedThreadsForEnvironment(thread.environmentId);
       if (action === "delete") clearComposerDraft(key);
       onCompleted?.(action, thread);
       return true;
@@ -885,16 +884,11 @@ export function useThreadListActions(): {
   };
 }
 
-export function useArchivedThreadListActions(
-  onCompleted: (thread: EnvironmentThreadShell) => void,
-): {
+export function useArchivedThreadListActions(): {
   readonly unarchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
 } {
-  const handleCompleted = (_action: ThreadListAction, thread: EnvironmentThreadShell) => {
-    onCompleted(thread);
-  };
-  const executeAction = useThreadActionExecutor(handleCompleted);
+  const executeAction = useThreadActionExecutor();
   const unarchiveThread = (thread: EnvironmentThreadShell) => {
     void executeAction("unarchive", thread);
   };
