@@ -387,7 +387,10 @@ export function applyServerSettingsPatch(
   current: ServerSettings,
   rawPatch: ServerSettingsPatch,
 ): ServerSettings {
-  const patch = translateLegacyProjectOverridePatch(current, rawPatch);
+  const patch = translateLegacyProjectOverridePatch(
+    current,
+    deepMerge<ServerSettingsPatch>({}, rawPatch),
+  );
   const selectionPatch = patch.textGenerationModelSelection;
   const {
     migrateModelPreferences,
