@@ -39,6 +39,7 @@ import type { VoiceGrant } from "../voice-input/voiceGrantStorage";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
+import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
@@ -411,23 +412,23 @@ export function SettingsVoiceRouteScreen() {
               )}
         </Text>
         {/* Google's on-device recognizer on Android always uses the device language. */}
-        {Platform.OS === "ios" && !grant ? (
+        {Platform.OS === "ios" && !grant && !sheetEnvironment ? (
           <>
             <SettingsSection title={gt("Dictation language")}>
-              <ListChoiceRow
+              <SettingsChoiceRow
                 label={gt("Device language")}
                 selected={ready && dictationLocale === null}
                 disabled={!ready}
-                onPress={() => void savePreferences({ dictationLocale: null })}
+                onPress={() => savePreferences({ dictationLocale: null })}
               />
               {DICTATION_LANGUAGES.map((language) => (
-                <ListChoiceRow
+                <SettingsChoiceRow
                   key={language.locale}
                   label={language.label}
                   selected={dictationLocale === language.locale}
                   separated
                   disabled={!ready}
-                  onPress={() => void savePreferences({ dictationLocale: language.locale })}
+                  onPress={() => savePreferences({ dictationLocale: language.locale })}
                 />
               ))}
             </SettingsSection>

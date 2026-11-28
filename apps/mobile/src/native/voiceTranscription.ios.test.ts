@@ -242,8 +242,27 @@ describe("getLocalVoiceTranscriber", () => {
     expect(error).toMatchObject({ code: "cancelled" });
   });
 
+  it("keeps the device-language message when the device offers a single language", async () => {
+    useLanguages(["en-US"], "en-US");
+    mocks.prepare.mockResolvedValue(null);
+    const options = { signal: new AbortController().signal };
+
+    const prepared = await (await getLocalVoiceTranscriber())!.prepare(options);
+    const error = await prepared
+      .transcribe("file:///voice.m4a", options)
+      .catch((error: unknown) => error);
+
+    expect(error).toMatchObject({
+      code: "unsupported-locale",
+      message: "Voice transcription does not support any of your languages.",
+    });
+    expect(mocks.prepare).toHaveBeenCalledTimes(1);
+  });
+
   it("prepares and transcribes a chosen locale instead of the device locale", async () => {
+    useLanguages(["en-US"], "en-US");
     mocks.prepare.mockResolvedValue("pt-BR");
+    mocks.transcribe.mockResolvedValue("olá");
     const options = { signal: new AbortController().signal };
     const prepared = await getVoiceTranscriberForLocale("pt-BR")!.prepare(options);
     await prepared.transcribe("file:///voice.m4a", options);
@@ -258,9 +277,10 @@ describe("getLocalVoiceTranscriber", () => {
     mocks.prepare.mockResolvedValue(null);
     const options = { signal: new AbortController().signal };
 
-    const error = await getVoiceTranscriberForLocale("de-DE")!
-      .prepare(options)
-      .then((prepared) => prepared.transcribe("file:///voice.m4a", options))
+    // Preparation hands back a handle so recording can start; the unsupported model fails at transcription.
+    const prepared = await getVoiceTranscriberForLocale("de-DE")!.prepare(options);
+    const error = await prepared
+      .transcribe("file:///voice.m4a", options)
       .catch((error: unknown) => error);
 
     expect(error).toBeInstanceOf(VoiceTranscriptionError);

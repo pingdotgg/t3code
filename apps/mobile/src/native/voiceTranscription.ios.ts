@@ -48,18 +48,19 @@ export async function getLocalVoiceTranscriber(): Promise<VoiceTranscriber | nul
   const locales = getPreferredLocales();
   // Availability is a device and OS check; which languages have a model only `prepare` knows.
   if (!native?.isAppleSpeechAvailable?.()) return null;
-  return { prepare: (options) => prepareVoiceTranscription(native, locales, options) };
+  return { prepare: (options) => prepareVoiceTranscription(native, locales, false, options) };
 }
 
 /** A chosen language stays fixed: one the device can't transcribe fails instead of falling back. */
 export function getVoiceTranscriberForLocale(locale: string): VoiceTranscriber | null {
   if (!native) return null;
-  return { prepare: (options) => prepareVoiceTranscription(native, [locale], options) };
+  return { prepare: (options) => prepareVoiceTranscription(native, [locale], true, options) };
 }
 
 async function prepareVoiceTranscription(
   native: AppleSpeechModule,
   locales: readonly string[],
+  chosen: boolean,
   { signal }: VoiceTranscriptionOptions,
 ): Promise<PreparedVoiceTranscription> {
   throwIfVoiceTranscriptionAborted(signal);
@@ -75,7 +76,7 @@ async function prepareVoiceTranscription(
   }
 
   let locale = locales[0]!;
-  const model = prepareLocales(native, locales, signal).then((supported) => {
+  const model = prepareLocales(native, locales, chosen, signal).then((supported) => {
     locale = supported;
   });
   // Recorder setup can fail before either consumer observes the model.
@@ -110,13 +111,14 @@ async function prepareVoiceTranscription(
 async function prepareLocales(
   native: AppleSpeechModule,
   locales: readonly string[],
+  chosen: boolean,
   signal: AbortSignal,
 ): Promise<string> {
   throwIfVoiceTranscriptionAborted(signal);
   let unsupported: VoiceTranscriptionError | undefined;
   for (const locale of locales) {
     try {
-      return await prepareLocale(native, locale, locales.length === 1, signal);
+      return await prepareLocale(native, locale, chosen, signal);
     } catch (error) {
       if (!isVoiceTranscriptionError(error) || error.code !== "unsupported-locale") throw error;
       unsupported = error;
@@ -128,7 +130,7 @@ async function prepareLocales(
 async function prepareLocale(
   native: AppleSpeechModule,
   locale: string,
-  onlyLocale: boolean,
+  chosen: boolean,
   signal: AbortSignal,
 ): Promise<string> {
   let supportedLocale: string | null;
@@ -146,7 +148,7 @@ async function prepareLocale(
   if (supportedLocale === null) {
     throw new VoiceTranscriptionError({
       code: "unsupported-locale",
-      message: onlyLocale
+      message: chosen
         ? m(msg("Voice transcription does not support this language."))
         : m(msg("Voice transcription does not support any of your languages.")),
     });
