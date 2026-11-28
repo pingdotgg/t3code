@@ -198,6 +198,8 @@ export class DeviceService extends Context.Service<
       readonly hostId: DeviceHostId;
       readonly deviceId: DeviceId;
       readonly targetArgs: ReadonlyArray<string>;
+      /** The directory the host opened the agent-device session in, when it opened one. */
+      readonly openedIn?: string | undefined;
     }) => Effect.Effect<Option.Option<string>, DeviceError>;
     readonly state: Effect.Effect<DeviceServiceState>;
     readonly subscribe: Effect.Effect<PubSub.Subscription<DeviceServiceState>, never, Scope.Scope>;
@@ -261,6 +263,7 @@ export interface AgentDeviceLaunchers {
   readonly bind: (input: {
     readonly session: string;
     readonly targetArgs: ReadonlyArray<string>;
+    readonly openedIn?: string | undefined;
   }) => Effect.Effect<string, DeviceError>;
   /** Removes every launcher whose session is not in `live`. */
   readonly prune: (live: ReadonlySet<string>) => Effect.Effect<void>;
@@ -1197,6 +1200,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       }),
       agentLauncher: Effect.fn("DeviceService.agentLauncher")(function* ({
         targetArgs,
+        openedIn,
         ...target
       }) {
         if (!launchers)
@@ -1221,7 +1225,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               )
             )
               return Option.none();
-            const launcher = yield* launchers.bind({ session, targetArgs });
+            const launcher = yield* launchers.bind({ session, targetArgs, openedIn });
             boundLaunchers.set(session, launcher);
             return Option.some(launcher);
           }),

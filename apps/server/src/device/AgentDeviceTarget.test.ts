@@ -180,6 +180,100 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
     ),
   );
 
+  it.effect("runs a session's claim commands in one directory, with the caller's paths", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-cwd-" }),
+      );
+      const entryPath = path.join(dir, "cli.mjs");
+      yield* fs.writeFileString(
+        entryPath,
+        "console.log(JSON.stringify({ cwd: process.cwd(), args: process.argv.slice(2) }));",
+      );
+      const caller = path.join(dir, "caller");
+      const openedIn = path.join(dir, "workspace");
+      yield* fs.makeDirectory(caller);
+      yield* fs.makeDirectory(openedIn);
+      yield* fs.writeFileString(path.join(caller, "payload.json"), "{}");
+      const target = ["--config", "/h.json", "--session", "t3-a"];
+      const bind = (session: string, opened?: string) =>
+        bindAgentDeviceLauncher({
+          entryPath,
+          stateDir: dir,
+          session,
+          targetArgs: target,
+          openedIn: opened,
+        }).pipe(Effect.map(path.dirname));
+      const own = yield* bind("t3-a");
+      const hostOpened = yield* bind("t3-b", openedIn);
+      const shared = yield* ensureAgentDeviceShim({ entryPath, stateDir: dir });
+      const launch = (launcher: string, args: ReadonlyArray<string>) =>
+        exec(process.execPath, [path.join(launcher, "agent-device-launcher.mjs"), ...args], {
+          cwd: caller,
+        }).then((result) => JSON.parse(result.stdout));
+      const here = (file: string) => path.join(caller, file);
+      const cases: ReadonlyArray<
+        readonly [launcher: string, args: ReadonlyArray<string>, cwd: string, ReadonlyArray<string>]
+      > = [
+        [
+          own,
+          ["open", "com.app", "--launch-console", "logs/c.log", "--save-script", "./s.ad"],
+          own,
+          [
+            "open",
+            "com.app",
+            "--launch-console",
+            here("logs/c.log"),
+            "--save-script",
+            here("s.ad"),
+          ],
+        ],
+        [own, ["open", "--save-script", "com.app"], own, ["open", "--save-script", "com.app"]],
+        [
+          own,
+          ["install", "com.app", "build/App.app"],
+          own,
+          ["install", "com.app", here("build/App.app")],
+        ],
+        [hostOpened, ["install", "App.apk"], openedIn, ["install", here("App.apk")]],
+        [own, ["install", "remote:/tmp/App.apk"], own, ["install", "remote:/tmp/App.apk"]],
+        [own, ["reinstall", "com.app"], own, ["reinstall", "com.app"]],
+        [own, ["push", "com.app", "payload.json"], own, ["push", "com.app", here("payload.json")]],
+        [own, ["push", "com.app", '{"aps":{}}'], own, ["push", "com.app", '{"aps":{}}']],
+        [own, ["screenshot", "out.png"], caller, ["screenshot", "out.png"]],
+        [
+          own,
+          ["metro", "prepare", "--public-base-url", "https://example.com:8081"],
+          caller,
+          ["metro", "prepare", "--public-base-url", "https://example.com:8081"],
+        ],
+      ];
+      for (const [launcher, args, cwd, expected] of cases) {
+        expect(yield* Effect.promise(() => launch(launcher, args))).toEqual({
+          cwd,
+          args: [...expected, ...target],
+        });
+      }
+      // The shared launcher claims in the session's bound launcher directory, or the caller's without one.
+      for (const [session, cwd] of [
+        ["t3-a", own],
+        ["t3-b", openedIn],
+        ["t3-none", caller],
+        ["../t3-a", caller],
+      ] as const) {
+        const args = ["open", "App.app", "--config", "/h.json", "--session", session];
+        expect(yield* Effect.promise(() => launch(shared, args))).toEqual({ cwd, args });
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcess.IsExecutable, false),
+      Effect.provideService(HostProcess.ExecutablePath, process.execPath),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
+  );
+
   it.effect("passes each command only the bound flags agent-device accepts for it", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
