@@ -3957,6 +3957,7 @@
   "34c4569cfaf5e87f": "Modelo {label}",
   "e302fe085e879637": "Configurar {provider}",
   "eca2c02ebf4a171c": "Abrir a configuração do provedor",
+  "ef8c626ba8137396": "{instances}: {notice}",
   "4314e052a3524c51": "Favoritos",
   "cb2476679502d798": "Modelo: {name}",
   "1889823ac6b01f7b": "{provider} não está disponível nesta thread. Inicie uma nova thread para trocar de provedor.",
