@@ -267,6 +267,15 @@ it.effect(
       expect(titled.launched[0]).toMatchObject({ title: "Fix", generateTitle: true });
       expect(titled.launched[0]?.titleRenamed).toBeUndefined();
 
+      const firstLine = yield* launchWith("full-access", "full-access", {
+        title: "Fix the login\nDo not include this second line",
+        message: "Fix the bug",
+      });
+      expect(firstLine.launched[0]?.title).toBe("Fix the login");
+      expect(firstLine.result).toMatchObject({
+        link: `[Fix the login](t3-thread://v2/environment/${firstLine.launched[0]?.threadId})`,
+      });
+
       for (const message of [undefined, "", " \n "]) {
         const idleTitled = yield* launchWith("full-access", "full-access", {
           title: "Fix",

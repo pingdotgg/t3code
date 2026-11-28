@@ -28,6 +28,7 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { rejectionText } from "../../../orchestration-v2/runOutput.ts";
+import { firstLineTitle } from "../../firstLineTitle.ts";
 import { ThreadToolkit } from "./tools.ts";
 
 function queueEntry(
@@ -209,7 +210,9 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               sourceThreadId: projection.thread.id,
               targetThreadId,
               sourcePoint,
-              ...(input.title === undefined ? {} : { title: input.title }),
+              ...(input.title === undefined
+                ? {}
+                : { title: firstLineTitle(input.title) ?? input.title }),
               createdBy: "agent",
               creationSource: "mcp",
             })

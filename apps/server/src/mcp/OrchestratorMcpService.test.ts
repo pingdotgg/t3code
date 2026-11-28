@@ -3701,6 +3701,21 @@ describe("OrchestratorMcpService provider resolution", () => {
               prompt: "Review the auth flow\nmore",
               expected: "Auth review",
             },
+            {
+              title: "Auth review\nPay special attention to token renewal.",
+              prompt: "Review the auth flow\nmore",
+              expected: "Auth review",
+            },
+            {
+              title: "Auth review\rPay special attention to token renewal.",
+              prompt: "Review the auth flow",
+              expected: "Auth review",
+            },
+            {
+              title: "Auth review\u2028Pay special attention to token renewal.",
+              prompt: "Review the auth flow",
+              expected: "Auth review",
+            },
           ].entries()) {
             const created = yield* service.createThreads(scope, {
               threads: [
@@ -4628,6 +4643,32 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.deepEqual(
           (yield* Ref.get(inputs)).map((input) => input.title),
           [title],
+        );
+      }),
+    );
+
+    it.effect("an explicit scheduled-task title stops at the first line break", () =>
+      Effect.gen(function* () {
+        const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            service(
+              masterRepository,
+              yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
+              existing,
+              inputs,
+            ),
+          ),
+        );
+        yield* mcp.scheduleTask(client, {
+          projectId,
+          title: "Auth review\nPay special attention to token renewal.",
+          prompt: "Check the build\nIgnore this line",
+          schedule,
+        });
+        assert.deepEqual(
+          (yield* Ref.get(inputs)).map((input) => input.title),
+          ["Auth review"],
         );
       }),
     );

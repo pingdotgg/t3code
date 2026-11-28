@@ -140,6 +140,7 @@ import {
   taskPrompt,
 } from "./delegatedTaskModes.ts";
 import { assertTargetWithinLimits, isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
+import { firstLineTitle } from "./firstLineTitle.ts";
 import { WITHHELD, withoutWebhookUrlToken } from "../scheduledTasks/webhookUrlToken.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
@@ -903,12 +904,7 @@ function threadTitle(input: {
   readonly title: string | undefined;
   readonly index: number;
 }): string {
-  const detail =
-    input.title?.trim() ||
-    input.prompt
-      ?.trim()
-      .split(/[\r\n\u2028\u2029]/, 1)[0]
-      ?.trim();
+  const detail = firstLineTitle(input.title) || firstLineTitle(input.prompt);
   if (!detail) return placeholderThreadTitle(input.parentTitle, input.index);
   if (detail.length <= 80) return detail;
   let end = 77;
@@ -2507,7 +2503,8 @@ const make = Effect.gen(function* () {
       const derivedTitle = (input.prompt.split(/[\r\n\u2028\u2029]/, 1)[0]?.trim() ?? "")
         .slice(0, 80)
         .replace(/[\uD800-\uDBFF]$/, "");
-      const title = input.title ?? (derivedTitle.length > 0 ? derivedTitle : "Scheduled task");
+      const title =
+        firstLineTitle(input.title) ?? (derivedTitle.length > 0 ? derivedTitle : "Scheduled task");
       // Scope the idempotency key by provider session so two callers
       // reusing the same clientRequestId cannot collide on one task row.
       const commandId =
@@ -2625,7 +2622,7 @@ const make = Effect.gen(function* () {
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           requireExisting: true,
-          title: input.title ?? existing.title,
+          title: firstLineTitle(input.title) ?? existing.title,
           prompt: input.prompt ?? existing.prompt,
           enabled: input.enabled ?? existing.enabled,
           schedule: input.schedule ?? existing.schedule,
@@ -3091,7 +3088,9 @@ const make = Effect.gen(function* () {
               parentRunId: parentRun.id,
               parentNodeId,
               task: taskPrompt(input),
-              ...(input.title === undefined ? {} : { title: input.title }),
+              ...(input.title === undefined
+                ? {}
+                : { title: firstLineTitle(input.title) ?? input.title }),
               modelSelection: target.modelSelection,
               runtimeMode,
               interactionMode,
@@ -3460,7 +3459,7 @@ const make = Effect.gen(function* () {
                   threadId,
                   projectId: parent.thread.projectId,
                   title,
-                  ...(request.title?.trim() ? { titleRenamed: true } : {}),
+                  ...(firstLineTitle(request.title) ? { titleRenamed: true } : {}),
                   modelSelection: target.modelSelection,
                   runtimeMode,
                   interactionMode,
