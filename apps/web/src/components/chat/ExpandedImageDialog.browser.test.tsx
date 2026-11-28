@@ -222,6 +222,8 @@ describe("ExpandedImageDialog", () => {
     await expect.element(image).toBeVisible();
     const rects = () =>
       [image, caption].map((locator) => locator.element().getBoundingClientRect().toJSON());
+    // The redesign's dialog scales in; measure once it has settled.
+    await Promise.all(document.getAnimations().map((animation) => animation.finished));
     const before = rects();
 
     await userEvent.click(screen.getByRole("button", { name: "Draw on image" }));
