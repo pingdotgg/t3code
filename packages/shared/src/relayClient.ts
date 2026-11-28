@@ -197,6 +197,7 @@ function resolveReleaseAsset(
 }
 
 const VERSION_PATTERN = /\b(\d{4})\.(\d{1,2})\.(\d+)\b/u;
+const MANAGED_VERSION_PATTERN = /^\d{4}\.\d{1,2}\.\d+$/u;
 
 function parseVersion(value: string): readonly [number, number, number] | null {
   const match = VERSION_PATTERN.exec(value);
@@ -363,13 +364,19 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     const entries = yield* fileSystem
       .readDirectory(managedRoot)
       .pipe(Effect.orElseSucceed(() => []));
-    return entries
+    const candidates = entries
       .filter(
         (entry) =>
-          parseVersion(entry) !== null &&
+          MANAGED_VERSION_PATTERN.test(entry) &&
           compareCloudflaredVersions(entry, CLOUDFLARED_VERSION) < 0,
       )
       .sort((left, right) => compareCloudflaredVersions(right, left));
+    return yield* Effect.filter(candidates, (entry) =>
+      fileSystem.stat(path.join(managedRoot, entry)).pipe(
+        Effect.map((info) => info.type === "Directory"),
+        Effect.orElseSucceed(() => false),
+      ),
+    );
   });
 
   const resolvePathExecutable = Effect.gen(function* () {

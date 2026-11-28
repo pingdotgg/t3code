@@ -7,6 +7,7 @@ import {
   type ContextChipIconRef,
   UNAVAILABLE_CONTEXT_CHIP_PRESENTATION,
 } from "./composerChipPresentation";
+import type { MessageResolver } from "../i18n/messages";
 import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
 import type {
   SelectableMarkdownModel,
@@ -22,6 +23,7 @@ import { EXTENSIONLESS_FILE_NAMES } from "@t3tools/shared/markdownLinks";
 export function enrichedContextLinkPresentation(
   href: string,
   records?: ReadonlyArray<ComposerContextRecord>,
+  resolve?: MessageResolver,
 ): { accent?: string; icon: ContextChipIconRef; label?: string } | undefined {
   const reference = parseComposerContextHref(href);
   if (!reference) return undefined;
@@ -30,7 +32,7 @@ export function enrichedContextLinkPresentation(
     records && !record
       ? UNAVAILABLE_CONTEXT_CHIP_PRESENTATION
       : contextChipPresentation(reference.kind, record);
-  const size = composerChipSizeSuffix(record);
+  const size = composerChipSizeSuffix(record, resolve);
   return {
     ...(presentation.accent ? { accent: presentation.accent } : {}),
     icon: contextChipIcon(presentation, contextRecordFileName(record)),
