@@ -44,7 +44,8 @@ import { LayoutDropZones } from "./DropZones";
 import { toggleThreadSidePane } from "./openRules";
 import { buildLayoutTabMenuItems, runLayoutTabMenuAction } from "./PaneTabs";
 import { useLayoutKeyboardCommands } from "./layoutCommands";
-import { clearPaneTabSelection } from "./paneTabSelection";
+import { clearPaneTabSelection, hasPaneTabSelection } from "./paneTabSelection";
+import { readLocalApi } from "../localApi";
 import { LayoutSurfaceHost, selectSurfaceMounts } from "./SurfaceHost";
 import { requestLayoutSurfacePlacement, useLayoutSurfaceSync } from "./surfaceSync";
 import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../previewMiniPlayerStore";
@@ -1990,4 +1991,165 @@ it("lets Escape dismiss an open popover before clearing pane tab selection", asy
   popup.remove();
   await userEvent.keyboard("{Escape}");
   await expect.element(tabEl(t1!.id)).toHaveAttribute("aria-pressed", "false");
+});
+
+it("handles real right-click context menus on non-launcher tabs and multi-tab drag lifecycle", async () => {
+  const settings = getClientSettings();
+  __setClientSettingsForTests({ ...settings, scrollingWorkspacesEnabled: true });
+  const original = useLayoutStore.getState().layout;
+  const previousPanels = useRightPanelStore.getState().byThreadKey;
+  const tour = localStorage.getItem(TOUR_KEY);
+  localStorage.setItem(TOUR_KEY, "true");
+  useLayoutStore.setState({ layout: createLayoutState() });
+  const threadRef = scopeThreadRef(EnvironmentId.make("local"), ThreadId.make("ctx-menu-thread"));
+  useRightPanelStore.getState().open(threadRef, "diff");
+  useRightPanelStore.getState().openFile(threadRef, "notes.md");
+  const fileSurfaceId = useRightPanelStore
+    .getState()
+    .byThreadKey[scopedThreadKey(threadRef)]!.surfaces.find(
+      (surface) => surface.kind === "file",
+    )!.id;
+
+  const store = useLayoutStore.getState();
+  store.openTab(
+    { kind: "surface", threadRef, surfaceId: "diff" },
+    { placement: "active-pane", position: "end" },
+  );
+  store.openTab(
+    { kind: "surface", threadRef, surfaceId: fileSurfaceId },
+    { placement: "active-pane", position: "end" },
+  );
+  store.openTab({ kind: "issues" }, { placement: "active-pane", position: "end" });
+  store.openTab({ kind: "pull-requests" }, { placement: "active-pane", position: "end" });
+  const pane = useLayoutStore.getState().layout.workspaces[0]!.columns[0]!.panes[0]!;
+  const [diffTab, fileTab, issuesTab, prsTab] = pane.tabs;
+  store.focusTab(diffTab!.id);
+
+  const showMenuSpy = vi.spyOn(readLocalApi()!.contextMenu, "show").mockResolvedValue(null);
+
+  using _cleanup = {
+    [Symbol.dispose]: () => {
+      showMenuSpy.mockRestore();
+      clearPaneTabSelection();
+      __setClientSettingsForTests(settings);
+      useLayoutStore.setState({ layout: original });
+      useRightPanelStore.setState({ byThreadKey: previousPanels });
+      if (tour === null) localStorage.removeItem(TOUR_KEY);
+      else localStorage.setItem(TOUR_KEY, tour);
+    },
+  };
+
+  await page.viewport(1200, 600);
+  const container = document.createElement("div");
+  container.style.cssText = "position:fixed;inset:0;display:flex;";
+  await using _screen = await render(
+    <>
+      <Host />
+      <LayoutDropZones />
+    </>,
+    { container },
+  );
+  const tabEl = (id: string) =>
+    document.querySelector<HTMLElement>(`[data-layout-pane-tab="${id}"]`)!;
+  await vi.waitFor(() => expect(tabEl(issuesTab!.id)).not.toBeNull());
+
+  // Shift-select [diffTab, fileTab, issuesTab] (all non-launcher tabs).
+  await userEvent.click(page.elementLocator(tabEl(issuesTab!.id)), { modifiers: ["Shift"] });
+  await expect
+    .element(page.elementLocator(tabEl(fileTab!.id)))
+    .toHaveAttribute("aria-pressed", "true");
+  await expect
+    .element(page.elementLocator(tabEl(issuesTab!.id)))
+    .toHaveAttribute("aria-pressed", "true");
+
+  // Real right-click on selected tab offers "Close selected tabs" (not "Close").
+  tabEl(issuesTab!.id).dispatchEvent(
+    new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 16 }),
+  );
+  await vi.waitFor(() => expect(showMenuSpy).toHaveBeenCalledTimes(1));
+  const selectedItems = showMenuSpy.mock.calls[0]![0];
+  expect(selectedItems.some((item) => item.id === "layout:close-selected-tabs")).toBe(true);
+  expect(selectedItems.some((item) => item.id === "layout:close-tab")).toBe(false);
+
+  // Real right-click on unselected tab offers "Close" (not "Close selected tabs").
+  tabEl(prsTab!.id).dispatchEvent(
+    new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 80, clientY: 16 }),
+  );
+  await vi.waitFor(() => expect(showMenuSpy).toHaveBeenCalledTimes(2));
+  const unselectedItems = showMenuSpy.mock.calls[1]![0];
+  expect(unselectedItems.some((item) => item.id === "layout:close-tab")).toBe(true);
+  expect(unselectedItems.some((item) => item.id === "layout:close-selected-tabs")).toBe(false);
+
+  // Dragging a selected tab exercises beginLayoutTabDrag (multi-tab badge) and Escape cancels.
+  const issuesRect = tabEl(issuesTab!.id).getBoundingClientRect();
+  tabEl(issuesTab!.id).dispatchEvent(
+    new PointerEvent("pointerdown", {
+      bubbles: true,
+      button: 0,
+      pointerId: 11,
+      clientX: issuesRect.left + 8,
+      clientY: issuesRect.top + 8,
+    }),
+  );
+  window.dispatchEvent(
+    new PointerEvent("pointermove", {
+      bubbles: true,
+      pointerId: 11,
+      clientX: issuesRect.left + 40,
+      clientY: issuesRect.top + 8,
+    }),
+  );
+  await vi.waitFor(() => expect(isLayoutDragActive()).toBe(true));
+  expect(document.querySelector("[data-layout-drag-overlay]")?.textContent).toContain("3");
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+  );
+  window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 11 }));
+  expect(isLayoutDragActive()).toBe(false);
+  expect(
+    useLayoutStore.getState().layout.workspaces[0]!.columns[0]!.panes[0]!.tabs.map((tab) => tab.id),
+  ).toEqual([diffTab!.id, fileTab!.id, issuesTab!.id, prsTab!.id]);
+
+  // Dragging an unselected tab clears the multi-selection once past the drag threshold.
+  expect(hasPaneTabSelection(pane.id)).toBe(true);
+  const prsRect = tabEl(prsTab!.id).getBoundingClientRect();
+  tabEl(prsTab!.id).dispatchEvent(
+    new PointerEvent("pointerdown", {
+      bubbles: true,
+      button: 0,
+      pointerId: 12,
+      clientX: prsRect.left + 8,
+      clientY: prsRect.top + 8,
+    }),
+  );
+  window.dispatchEvent(
+    new PointerEvent("pointermove", {
+      bubbles: true,
+      pointerId: 12,
+      clientX: prsRect.left + 40,
+      clientY: prsRect.top + 8,
+    }),
+  );
+  await vi.waitFor(() => expect(hasPaneTabSelection(pane.id)).toBe(false));
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+  );
+  window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 12 }));
+
+  // Re-select [issuesTab, prsTab] (starting from diffTab? select fileTab + issuesTab via Cmd-click)
+  // and choose "Close selected tabs" from the real right-click menu.
+  await userEvent.click(page.elementLocator(tabEl(issuesTab!.id)), { modifiers: ["Shift"] });
+  showMenuSpy.mockResolvedValueOnce("layout:close-selected-tabs");
+  tabEl(issuesTab!.id).dispatchEvent(
+    new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 16 }),
+  );
+  await vi.waitFor(() => {
+    const remaining = useLayoutStore
+      .getState()
+      .layout.workspaces[0]!.columns[0]!.panes[0]!.tabs.map((tab) => tab.id);
+    // diffTab + fileTab closed in rightPanelStore (and issuesTab closed in layoutStore); only prsTab remains in layout
+    // (diffTab/fileTab also leave layout when surfaceSync is mounted; here issuesTab leaves layout and both surfaces leave rightPanelStore).
+    expect(remaining).not.toContain(issuesTab!.id);
+    expect(useRightPanelStore.getState().byThreadKey[scopedThreadKey(threadRef)]).toBeUndefined();
+  });
 });
