@@ -12,3 +12,10 @@ export function parseJiraIssueUrl(url: URL) {
   const scope = /^([A-Z][A-Z0-9_]*)-[1-9][0-9]*$/.exec(key)?.[1];
   return scope === undefined ? null : { host: JIRA_HOST, workspace: site, scope, key };
 }
+
+export const issueLinkDefinition = {
+  tracker: JIRA_KIND,
+  parseIssueUrl: parseJiraIssueUrl,
+  mayContainIssueUrl: (text: string) => /\.atlassian\.net\/browse\//i.test(text),
+  canUseUnboundProject: true,
+};

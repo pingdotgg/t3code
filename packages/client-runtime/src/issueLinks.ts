@@ -5,12 +5,7 @@ import {
   type IssueTrackerConnectionList,
   type RepositoryIdentity,
 } from "@t3tools/contracts";
-import { JIRA_KIND, parseJiraIssueUrl } from "@t3tools/issue-tracker-jira/shared/issueUrl";
-import {
-  LINEAR_HOST,
-  LINEAR_KIND,
-  parseLinearIssueUrl,
-} from "@t3tools/issue-tracker-linear/shared/issueUrl";
+import { builtInStandaloneIssueLinkDefinitions } from "@t3tools/source-control-definitions/standalone-issue-links";
 
 import { sourceControlClients } from "./sourceControlClients.ts";
 import type { EnvironmentProject } from "./state/shell.ts";
@@ -63,30 +58,28 @@ function parseIssueLink(
 }
 
 function parseStandaloneIssueLink(url: string) {
+  let parsed: URL;
   try {
-    const parsed = new URL(url);
-    const linear = parseLinearIssueUrl(parsed);
-    if (linear !== null) return { tracker: LINEAR_KIND, link: linear };
-    const jira = parseJiraIssueUrl(parsed);
-    return jira === null ? null : { tracker: JIRA_KIND, link: jira };
+    parsed = new URL(url);
   } catch {
     return null;
   }
+  for (const definition of builtInStandaloneIssueLinkDefinitions) {
+    const link = definition.parseIssueUrl(parsed);
+    if (link !== null) return { definition, link };
+  }
+  return null;
 }
 
-/** Whether `url` is a standalone tracker's issue link, which only bindings can resolve. */
 export function isStandaloneIssueLink(url: string): boolean {
   return parseStandaloneIssueLink(url) !== null;
 }
 
-const LINEAR_LINK_HINT_PATTERN = new RegExp(
-  `${LINEAR_HOST.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/`,
-  "i",
-);
-
 /** A cheap pre-check, so text without such a link never asks for the bindings. */
 export function mayContainStandaloneIssueLink(text: string): boolean {
-  return LINEAR_LINK_HINT_PATTERN.test(text) || /\.atlassian\.net\/browse\//i.test(text);
+  return builtInStandaloneIssueLinkDefinitions.some((definition) =>
+    definition.mayContainIssueUrl(text),
+  );
 }
 
 /**
@@ -102,7 +95,8 @@ function resolveStandaloneIssueLink<Project extends LinkProject>(
 ): { readonly project: Project; readonly ref: IssueRef } | null {
   const parsed = trackers === undefined ? null : parseStandaloneIssueLink(url);
   if (parsed === null || trackers === undefined) return null;
-  const { tracker, link } = parsed;
+  const { definition, link } = parsed;
+  const { tracker, canUseUnboundProject } = definition;
   const accounts = new Set(
     [...trackers.trackers, ...(trackers.accounts ?? [])]
       .filter(
@@ -128,10 +122,9 @@ function resolveStandaloneIssueLink<Project extends LinkProject>(
     issueTrackerBindingScopes(candidate.binding).find((key) => key.toLowerCase() === scope);
   const own = preferFirst(onTracker.filter((candidate) => boundScope(candidate) !== undefined));
   const lender = own ?? preferFirst(onTracker);
-  // An unbound Jira project uses the server's default Jira account. Never use it
-  // to open a link for another site or route through a project bound to another Jira account.
+  // An unbound project uses the default account, so it must reach the link's workspace.
   const fallback =
-    tracker === JIRA_KIND && accounts.has(null)
+    canUseUnboundProject && accounts.has(null)
       ? projects.find(
           (project) =>
             project.id === preferredProjectId && bindings[project.id]?.tracker !== tracker,

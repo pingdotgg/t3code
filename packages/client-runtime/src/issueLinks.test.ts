@@ -140,6 +140,15 @@ describe("resolveIssueLinkTarget", () => {
       resolveIssueLinkTarget({ url: "https://linear.app/acme/issue/WEB-17", projects }),
     ).toBeNull();
 
+    expect(
+      resolveIssueLinkTarget({
+        url: "https://linear.app/acme/issue/WEB-17",
+        projects,
+        preferredProjectId: ProjectId.make("p1"),
+        trackers: { ...trackers, bindings: {} },
+      }),
+    ).toBeNull();
+
     // A second account reaches its own workspace, through only the projects bound with it.
     const accountId = IssueTrackerAccountId.make("second");
     const [p1, p2] = [ProjectId.make("p1"), ProjectId.make("p2")];
