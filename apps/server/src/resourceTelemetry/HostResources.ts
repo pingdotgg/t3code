@@ -161,17 +161,17 @@ const LOCAL_ANONYMOUS_FILESYSTEMS = new Set([
 ]);
 
 /**
- * The mounts in `/proc/self/mountinfo` whose stalls may never reach a block device. NFS keeps
- * counters and the GVFS bridge lists its shares, so those two can be told idle from in use.
- * Nothing tells that of the rest, nor of an unreadable table: there, being mounted is enough.
+ * The mounts in `/proc/self/mountinfo` whose stalls may never reach a block device. The GVFS
+ * bridge lists its shares, so it can be told idle from in use. Nothing tells that of the rest
+ * (NFS counters do not show a request still outstanding), nor of an unreadable table: there,
+ * being mounted is enough.
  */
 export function mountsOffBlockDevices(
   mountinfo: string,
   ownAppDir: string | undefined,
-): { readonly nfs: boolean; readonly gvfs: ReadonlyArray<string>; readonly unknown: boolean } {
+): { readonly gvfs: ReadonlyArray<string>; readonly unknown: boolean } {
   const mounts = mountinfo.split("\n").filter((line) => line.trim() !== "");
   const gvfs: Array<string> = [];
-  let nfs = false;
   let unknown = mounts.length === 0;
   for (const line of mounts) {
     const mount = /^\d+ \d+ (\d+):\d+ \S+ (\S+) .* - (\S+) /.exec(line);
@@ -180,22 +180,12 @@ export function mountsOffBlockDevices(
       String.fromCharCode(Number.parseInt(octal, 8)),
     );
     if (mount?.[1] !== "0") unknown ||= !mount;
-    else if (type === "nfs" || type === "nfs4") nfs = true;
     else if (type === "fuse.gvfsd-fuse") gvfs.push(mountPoint);
     // The AppImage this server runs from is a FUSE mount of a local file.
     else if (type.startsWith("fuse.") && mountPoint === ownAppDir?.replace(/\/+$/, "")) continue;
     else unknown ||= !LOCAL_ANONYMOUS_FILESYSTEMS.has(type);
   }
-  return { nfs, gvfs, unknown };
-}
-
-/**
- * Every NFS mount's `events` and `bytes` lines from `/proc/self/mountstats`. They count each
- * call into the filesystem as it starts, so a stall that began and ended between two samples
- * still moves them.
- */
-function nfsCounters(mountstats: string): string {
-  return (mountstats.match(/^\s*(?:events|bytes):.*$/gm) ?? []).join("\n");
+  return { gvfs, unknown };
 }
 
 export interface BlockReading {
@@ -395,7 +385,6 @@ const make = Effect.fn("makeHostResources")(function* () {
     readonly usage: ReadonlyMap<string, number>;
   } | null>(null);
   const blockReadings = yield* Ref.make<ReadonlyArray<BlockReading>>([]);
-  const lastNfsCounters = yield* Ref.make<string | null>(null);
 
   const readFile = (path: string) => fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
 
@@ -453,19 +442,12 @@ const make = Effect.fn("makeHostResources")(function* () {
       yield* readFile("/proc/self/mountinfo"),
       environment.APPDIR,
     );
-    const nfs = offBlock.nfs ? nfsCounters(yield* readFile("/proc/self/mountstats")) : "";
-    // Compared with the reading before, however old: the counters only ever grow.
-    const nfsBefore = yield* Ref.getAndSet(lastNfsCounters, nfs);
-    const nfsIdle = offBlock.nfs ? nfs !== "" && nfs === nfsBefore : !nfsBefore;
     // The bridge shows each share it carries as an entry; with none, nothing can wait on it.
     const gvfsShares = yield* Effect.forEach(offBlock.gvfs, (directory) =>
       onMount("readdir", directory, (path) => NodeFSP.readdir(path)),
     );
     const bounded =
-      activity !== null &&
-      !offBlock.unknown &&
-      nfsIdle &&
-      gvfsShares.every((shares) => shares?.length === 0);
+      activity !== null && !offBlock.unknown && gvfsShares.every((shares) => shares?.length === 0);
     return {
       at: yield* Clock.currentTimeMillis,
       busyMs: bounded ? activity.busyMs : null,

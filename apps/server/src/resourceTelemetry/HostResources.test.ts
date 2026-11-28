@@ -360,19 +360,15 @@ describe("pressure levels", () => {
       "50 22 0:60 / /tmp/.mount_T3-Codabc123 ro - fuse.T3-Code-x86_64.AppImage T3-Code-x86_64.AppImage ro\n";
     const read = (mounts: string, appDir?: string) =>
       HostResources.mountsOffBlockDevices(mounts, appDir);
-    expect(read(local)).toEqual({ nfs: false, gvfs: [], unknown: false });
-    expect(read(`${local}40 22 0:61 / /mnt/work rw shared:60 - nfs4 nas:/work rw,hard\n`)).toEqual({
-      nfs: true,
-      gvfs: [],
-      unknown: false,
-    });
+    expect(read(local)).toEqual({ gvfs: [], unknown: false });
     expect(
       read(`${local}31 22 0:58 / /run/user/1000/gvfs rw - fuse.gvfsd-fuse gvfsd-fuse rw\n`),
-    ).toEqual({ nfs: false, gvfs: ["/run/user/1000/gvfs"], unknown: false });
+    ).toEqual({ gvfs: ["/run/user/1000/gvfs"], unknown: false });
     // The server's own AppImage is a local file; another program's FUSE mount is not known to be.
     expect(read(local + appImage, "/tmp/.mount_T3-Codabc123/").unknown).toBe(false);
     for (const mount of [
       appImage,
+      "40 22 0:61 / /mnt/work rw shared:60 - nfs4 nas:/work rw,hard\n",
       "41 22 0:62 / /mnt/remote rw - fuse.sshfs user@host:/srv rw,user_id=1000\n",
       "42 22 0:63 / /mnt/new rw - some-new-fs none rw\n",
     ]) {
@@ -604,26 +600,22 @@ describe("HostResources pressure on Linux", () => {
     }).pipe(Effect.provide(ioPressured([1000, 1003]))),
   );
 
-  it.effect("keeps io pressure beside idle disks only while an NFS mount is in use", () => {
-    const mountstats = (lookups: number) =>
-      "device nas:/work mounted on /mnt/work with fstype nfs4 statvers=1.1\n" +
-      "\tage:\t5\n" +
-      `\tevents:\t3 ${lookups} 0 0 0 0 0 0\n` +
-      "\tbytes:\t0 0 0 0 0 0 0 0\n";
-    return Effect.gen(function* () {
+  it.effect("keeps io pressure beside idle disks while a network filesystem is mounted", () =>
+    Effect.gen(function* () {
       setup();
       const hostResources = yield* HostResources.HostResources;
-      const samples = yield* Stream.take(hostResources.pressure, 3).pipe(
+      const samples = yield* Stream.take(hostResources.pressure, 2).pipe(
         Stream.runCollect,
         Effect.forkScoped,
       );
       yield* TestClock.adjust("70 seconds");
-      // What the mount did before the first sample is unknown for a minute. After that it is
-      // idle, until a lookup that came and went between two samples moves its counters.
-      expect((yield* Fiber.join(samples)).map((sample) => sample.io)).toEqual([
-        "severe",
-        "none",
-        "severe",
+      // A read left outstanding moves no counter and no disk, so only PSI shows it: the level
+      // holds past the minute of history, until the CPU reading changes the sample at 70 s.
+      expect(
+        (yield* Fiber.join(samples)).map((sample) => ({ io: sample.io, cpu: sample.cpu })),
+      ).toEqual([
+        { io: "severe", cpu: "none" },
+        { io: "severe", cpu: "severe" },
       ]);
     }).pipe(
       Effect.provide(
@@ -631,14 +623,14 @@ describe("HostResources pressure on Linux", () => {
           "/proc/self/mountinfo": [
             `${localMounts}40 22 0:61 / /mnt/work rw shared:60 - nfs4 nas:/work rw,hard\n`,
           ],
-          "/proc/self/mountstats": [
-            ...Array.from({ length: 14 }, () => mountstats(7)),
-            mountstats(8),
+          "/proc/pressure/cpu": [
+            ...Array.from({ length: 14 }, () => calmCpu),
+            "some avg10=90.00 avg60=75.00\nfull avg10=0.00 avg60=0.00\n",
           ],
         }),
       ),
-    );
-  });
+    ),
+  );
 
   it.effect("reports a disk stall that the first, short reading missed", () =>
     Effect.gen(function* () {
