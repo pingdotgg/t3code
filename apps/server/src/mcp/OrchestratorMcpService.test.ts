@@ -1155,6 +1155,117 @@ describe("OrchestratorMcpService", () => {
     }),
   );
 
+  it.effect("cancels the follow-ups the parent queued into the cancelled child", () =>
+    Effect.gen(function* () {
+      const parentThreadId = ThreadId.make("thread:mcp-cancel-follow-up-parent");
+      const childThreadId = ThreadId.make("thread:mcp-cancel-follow-up-child");
+      const childRunId = RunId.make("run:mcp-cancel-follow-up-child");
+      const followUpRunId = RunId.make("run:mcp-cancel-follow-up-queued");
+      const followUpMessageId = MessageId.make("message:mcp-cancel-follow-up-queued");
+      const taskId = NodeId.make("node:mcp-cancel-follow-up-task");
+      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const parentProjection = {
+        thread: { id: parentThreadId },
+        runs: [],
+        contextTransfers: [],
+        subagents: [
+          {
+            id: taskId,
+            threadId: parentThreadId,
+            origin: "app_owned",
+            childThreadId,
+            driver: "codex",
+            model: "gpt-5.6-terra",
+            result: null,
+            completionDelivery: { state: "pending" },
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadProjection;
+      // Stop holds the queue; the parent's t3_thread_send follow-up carries no delegatedTaskId.
+      const childProjection = {
+        thread: { id: childThreadId, title: "Child" },
+        runs: [
+          { id: childRunId, ordinal: 1, status: "running", delegatedTaskId: taskId },
+          {
+            id: followUpRunId,
+            ordinal: 2,
+            status: "queued",
+            queueHeld: true,
+            userMessageId: followUpMessageId,
+          },
+        ],
+        contextTransfers: [],
+        messages: [
+          {
+            id: followUpMessageId,
+            role: "user",
+            runId: followUpRunId,
+            senderThreadId: parentThreadId,
+          },
+        ],
+        subagents: [],
+        providerThreads: [],
+        providerTurns: [],
+        runtimeRequests: [],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
+          getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
+          listAppOwnedChildThreadIds: () => Effect.succeed([]),
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.as({} as never),
+            ),
+          stopDelegatedTasks: () => Effect.void,
+          cancelDelegatedTask: ({ command, stopDescendants }) =>
+            stopDescendants(() => Effect.die("No remote descendants in this test")).pipe(
+              Effect.andThen(Ref.update(dispatched, (commands) => [...commands, command])),
+            ),
+        }),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:mcp-cancel-follow-up"),
+        requestNamespace: "provider-session:mcp-cancel-follow-up",
+        thread: {
+          threadId: parentThreadId,
+          providerSessionId: "provider-session:mcp-cancel-follow-up",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service.cancelTask(scope, {
+          taskId,
+          clientRequestId: "cancel-follow-up-task",
+        });
+        assert.deepEqual(
+          (yield* Ref.get(dispatched)).flatMap((command) => {
+            const typed = command as { type: string; runId?: string };
+            return typed.type === "queued-run.cancel" ? [typed.runId] : [];
+          }),
+          [followUpRunId],
+        );
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
   it.effect(
     "reports the dispatch cause instead of the generic wrapper when disposing a finished task's completion delivery fails",
     () =>
