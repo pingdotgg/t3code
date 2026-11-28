@@ -233,8 +233,22 @@ interface TokenMatch extends SearchRange {
   readonly letters?: ReadonlyArray<SearchRange>;
 }
 
+const NUMBER = /^\p{N}+$/u;
+
+// A name's number ends with what people remember of it: "120" finds course "33120".
+function endsNumber(field: SearchField, token: string, index: number): boolean {
+  const end = index + token.length;
+  return (
+    token.length >= 3 &&
+    NUMBER.test(token) &&
+    DIGIT.test(field.text[index - 1] ?? "") &&
+    !DIGIT.test(field.text[end] ?? "")
+  );
+}
+
 /**
- * Mid-word hits need four or more characters and `midWord`, so "del" does not find "model".
+ * Mid-word hits need four or more characters and `midWord`, so "del" does not find "model",
+ * or a name's number ending in the token.
  * Typos preserve the first letter except for swaps; short tokens allow fewer edits to limit noise.
  * Numbers never match with a typo because different pull request numbers must stay distinct.
  */
@@ -272,7 +286,10 @@ function matchToken(
         best = { score, start: index, end: index + token.length };
       }
       if (score === WHOLE_WORD) return best;
-    } else if (midWord && token.length >= 4 && best === null) {
+    } else if (
+      best === null &&
+      ((midWord && token.length >= 4) || (isPrimary && endsNumber(field, token, index)))
+    ) {
       best = { score: MID_WORD, start: index, end: index + token.length };
     }
   }

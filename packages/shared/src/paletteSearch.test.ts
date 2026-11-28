@@ -639,6 +639,14 @@ describe("rankSearchGroups with keywords and picks", () => {
       scoreThreadSearch("arch", thread("Notes", { branch: "research-extension-system" }), NOW),
     ).toBeNull();
     expect(scoreThreadSearch("arch", thread("Research notes"), NOW)?.quality).toBe(0.3);
+    // Except a number's last digits in a name, never in a pull request number.
+    expect(scoreSearchTerms("120", ["33120", "~/courses/33120"])?.quality).toBe(0.3);
+    expect(scoreThreadSearch("120", thread("33120 notes"), NOW)?.quality).toBe(0.3);
+    expect(scoreSearchTerms("312", ["33120"])).toBeNull();
+    expect(scoreSearchTerms("20", ["33120"])).toBeNull();
+    expect(
+      scoreThreadSearch("189", thread("Stats", { pullRequests: [{ number: 22189 }] }), NOW),
+    ).toBeNull();
   });
 
   it("forgives typos in names but not in hidden keywords", () => {
