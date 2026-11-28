@@ -195,6 +195,19 @@ describe("appendTerminalOutput", () => {
     expect(feed([`a\u001b]0;${"t".repeat(80)}`, "\u001b", "\\b"]).text).toBe("ab");
   });
 
+  it("keeps DCS payload hidden when it contains BEL while still terminating OSC on BEL", () => {
+    const dcs = "\u001bPqA\u0007BBB\u001b\\OK";
+    expect(normalizeTerminalOutput(dcs).text).toBe("OK");
+    for (let cut = 0; cut <= dcs.length; cut += 1) {
+      const state = feed([dcs.slice(0, cut)]);
+      expect(appendTerminalOutput(state, dcs.slice(cut)).text).toBe("OK");
+      expect(feed([terminalOutputResumeText(state), dcs.slice(cut)]).text).toBe("OK");
+    }
+    expect(normalizeTerminalOutput("\u001b]0;title\u0007OK").text).toBe("OK");
+    expect(normalizeTerminalOutput("\u001bPqA\u0018OK").text).toBe("OK");
+    expect(normalizeTerminalOutput("\u001bPqA\u001b[31mOK").text).toBe("\u001b[0;31mOK\u001b[0m");
+  });
+
   it("drops an escape sequence that never terminates and resumes after it", () => {
     expect(feed(["ok\u001b]", "x".repeat(200), "\nafter"]).text).toBe("ok\nafter");
     expect(feed(["ok\u001b]0;title\u001b", "\u001b[31mred"]).text).toBe(
