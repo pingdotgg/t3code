@@ -64,7 +64,8 @@ export function ThreadHeader(props: {
       overflowOnly: true,
       disabled: !canOperate,
       onPress: () => {
-        if (!props.cwd || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
+        if (!props.cwd || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+          return;
         void openInEditor({ environmentId, input: { cwd: props.cwd, editor: "devin" } });
       },
     });

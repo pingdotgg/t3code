@@ -1603,7 +1603,10 @@ it.effect("starts a Windows command shim for unicode paths with cmd metacharacte
 );
 
 it.effect.each([
-  { platform: "darwin", install: "Applications/Devin.app/Contents/Resources/app/bin/devin-desktop" },
+  {
+    platform: "darwin",
+    install: "Applications/Devin.app/Contents/Resources/app/bin/devin-desktop",
+  },
   { platform: "linux", install: ".local/bin/devin-desktop" },
   { platform: "win32", install: "Programs/Devin/bin/devin-desktop.cmd" },
 ] as const)("discovers and opens Devin on $platform", ({ platform, install }) =>
