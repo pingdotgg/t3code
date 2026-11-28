@@ -751,7 +751,7 @@ function bareMarkdownLinkDestinationEnd(markdown: string, start: number): number
   }
 }
 
-function markdownLinkDestinationScanner(markdown: string) {
+export function markdownLinkDestinationScanner(markdown: string) {
   const whitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
   const angleEnd = markdownRunEndFinder(markdown, /\\[\\<>]|[<>\r\n]/g);
   // Separate caches keep scans moving forward when angle destinations fall back to bare ones.
