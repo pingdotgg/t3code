@@ -220,6 +220,20 @@ describe("native device stream transport", () => {
     socket.onopen?.();
     const admit = () => socket.onmessage?.({ data: Uint8Array.of(0x83).buffer });
     if (admitted) admit();
+    const setInputUnavailable = (inputUnavailable: boolean) =>
+      socket.onmessage?.({
+        data: new Uint8Array([
+          0x82,
+          ...new TextEncoder().encode(
+            JSON.stringify({
+              width: 1080,
+              height: 2400,
+              orientation: "portrait",
+              inputUnavailable,
+            }),
+          ),
+        ]).buffer,
+      });
     const take = () => {
       const keys = socket.send.mock.calls.map(([packet]) => {
         const { type, usage } = JSON.parse(new TextDecoder().decode(packet.subarray(1)));
@@ -246,7 +260,7 @@ describe("native device stream transport", () => {
       client.sendKey(event, "down", usLayout);
       client.sendKey(event, "up", usLayout);
     };
-    return { client, take, keyEvent, press, admit };
+    return { client, take, keyEvent, press, admit, setInputUnavailable };
   };
 
   it("types the character from the user's layout with the simulator's US keys", async () => {
@@ -288,6 +302,10 @@ describe("native device stream transport", () => {
     client.sendKey(keyEvent("ControlLeft", "Control"), "up", true);
     expect(take()).toEqual(["up e3"]);
     press("KeyH", "h", ctrlAlt);
+    client.sendKey(keyEvent("AltLeft", "Alt"), "up", true);
+    expect(take()).toEqual(["down e3", "down e2", "down b", "up b", "up e3", "up e2"]);
+    // Windows reports Ctrl+Alt as AltGr too. A key with no AltGr character stays a shortcut.
+    press("KeyH", "h", ctrlAlt, true);
     client.sendKey(keyEvent("AltLeft", "Alt"), "up", true);
     expect(take()).toEqual(["down e3", "down e2", "down b", "up b", "up e3", "up e2"]);
 
@@ -335,6 +353,11 @@ describe("native device stream transport", () => {
     // AltGr is Option, not Command and Option.
     press("Digit0", "@", ctrlAlt, true);
     expect(take()).toEqual(["down e2", "down 27", "up 27"]);
+    client.sendKey(keyEvent("AltRight", "AltGraph"), "up");
+    expect(take()).toEqual(["up e2"]);
+    // Chromium on Windows reports AltGr without Ctrl and Alt.
+    press("Digit0", "@", {}, true);
+    expect(take()).toEqual(["down e2", "down 27", "up 27"]);
     // Shortcuts use the key place, which has the same letter on both keyboards.
     press("KeyA", "ф", { ctrlKey: true });
     expect(take()).toEqual(["down e3", "up e2", "down 4", "up 4"]);
@@ -344,6 +367,19 @@ describe("native device stream transport", () => {
     press("BracketLeft", "Dead");
     press("KeyE", "ê");
     expect(take()).toEqual(["down 2f", "up 2f", "down 8", "up 8"]);
+    client.stop();
+  });
+
+  it("releases the keys held when simulator input closed", async () => {
+    vi.stubGlobal("navigator", { platform: "Win32" });
+    const { client, take, keyEvent, setInputUnavailable } = await connectIosKeys(true);
+    client.sendKey(keyEvent("KeyA", "a", { ctrlKey: true }), "down", true);
+    expect(take()).toEqual(["down e3", "down 4"]);
+    setInputUnavailable(true);
+    client.sendKey(keyEvent("KeyA", "a", { ctrlKey: true }), "up", true);
+    client.sendKey(keyEvent("ControlLeft", "Control"), "up", true);
+    setInputUnavailable(false);
+    expect(take()).toEqual(["up 4", "up e3"]);
     client.stop();
   });
 

@@ -462,10 +462,16 @@ export function createDeviceStreamClient(
     if (usage !== null) sendIosKey(type, usage);
   };
   const syncIosModifiers = (event: KeyboardEvent | null, phase: "down" | "up" = "down") => {
-    // Windows reports AltGr as Ctrl+Alt. Option alone is the AltGr of Apple layouts.
+    if (!inputOpen()) return;
+    // Windows reports AltGr as Ctrl+Alt, and Chromium can report it as neither.
+    // Option alone is the AltGr of Apple layouts.
     const altGraph = event?.getModifierState?.("AltGraph") === true;
+    const altGraphText = event !== null && isAltGraphText(event);
     for (const [flag, code] of iosModifierKeys()) {
-      const held = event?.[flag] === true && !(altGraph && flag === "ctrlKey");
+      const held =
+        flag === "altKey"
+          ? event?.altKey === true || altGraph
+          : event?.[flag] === true && !(altGraphText && flag === "ctrlKey");
       if (held === iosHeldModifiers.has(code) || (held && phase === "up")) continue;
       if (held) iosHeldModifiers.add(code);
       else iosHeldModifiers.delete(code);
@@ -508,7 +514,15 @@ export function createDeviceStreamClient(
     if (event.metaKey) sendIosKey("up", usage);
     else iosPressedKeys.set(event.code, usage);
   };
+  // Keyups that come while input is closed are not sent, so the simulator can still hold those keys.
+  const releaseIosInput = () => {
+    for (const usage of iosPressedKeys.values()) sendIosKey("up", usage);
+    for (const code of iosHeldModifiers) sendIosCode("up", code);
+    iosPressedKeys.clear();
+    iosHeldModifiers.clear();
+  };
   const releaseIosKey = (event: KeyboardEvent) => {
+    if (!inputOpen()) return;
     const usage = iosPressedKeys.get(event.code);
     iosPressedKeys.delete(event.code);
     if (usage !== undefined) sendIosKey("up", usage);
@@ -1270,8 +1284,6 @@ export function createDeviceStreamClient(
     socket = ws;
     iosInputAdmitted = false;
     iosInputUnavailable = false;
-    iosHeldModifiers.clear();
-    iosPressedKeys.clear();
     ws.onmessage = (event) => {
       if (stopped || socket !== ws) return;
       if (!(event.data instanceof ArrayBuffer)) return;
@@ -1279,6 +1291,7 @@ export function createDeviceStreamClient(
       if (socket !== ws || stopped || bytes.length < 1) return;
       if (bytes[0] === IOS_TAG_INPUT_ADMITTED) {
         iosInputAdmitted = true;
+        if (inputOpen()) releaseIosInput();
         events.onInputConnected(!iosInputUnavailable);
         return;
       }
@@ -1290,7 +1303,9 @@ export function createDeviceStreamClient(
         } else if (bytes[0] === IOS_TAG_SCREEN_CONFIG) {
           const config = decodeScreenConfig(payload);
           if (Option.isSome(config)) {
+            const wasOpen = inputOpen();
             iosInputUnavailable = config.value.inputUnavailable === true;
+            if (!wasOpen && inputOpen()) releaseIosInput();
             events.onInputConnected(
               iosInputAdmitted && !iosInputUnavailable,
               iosInputUnavailable ? resolve(msg("Simulator input is unavailable")) : undefined,
