@@ -29,7 +29,6 @@ export interface CodexRuntimeInfo {
   readonly model: string;
   readonly modelName?: string | undefined;
   readonly reasoningEffort?: string | undefined;
-  readonly isGitRepository?: boolean | undefined;
 }
 
 /** Keep this outside collaboration mode; model-catalog mode text overrides client developer_instructions. */
@@ -43,10 +42,6 @@ export function buildCodexAdditionalContext(
     linkedEnvironments: tools.linkedEnvironments === true,
     nativeSubagents: tools.nativeSubagents !== false,
   });
-  const runtimePolicy =
-    runtime.isGitRepository === undefined
-      ? undefined
-      : { cwd: null, isGitRepository: runtime.isGitRepository };
   // Split values to fit per-entry caps; number keys because Codex emits them in key order.
   return {
     ...Object.fromEntries(
@@ -57,11 +52,7 @@ export function buildCodexAdditionalContext(
     ),
     t3_code_runtime: {
       kind: "application",
-      value: buildRuntimeInstructions({
-        harness: "Codex",
-        ...runtime,
-        ...(runtimePolicy === undefined ? {} : { runtimePolicy }),
-      }),
+      value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
     },
     ...(tools.device
       ? { t3_code_tools: { kind: "application", value: T3_CODE_DEVICE_TOOL_INSTRUCTIONS } }

@@ -159,16 +159,13 @@ export function makeAntigravityAcpAdapterFlavor(
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
       const scope = yield* Scope.fork(yield* Effect.scope);
-      const includePullRequestLinking = input.runtimePolicy.isGitRepository !== false;
       const runtime = yield* options
         .withProcess(
           Scope.close(scope, Exit.void),
           options.makeRuntime({
             ...input,
             clientFileReads: true,
-            ...(includePullRequestLinking
-              ? { sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS }
-              : {}),
+            sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));

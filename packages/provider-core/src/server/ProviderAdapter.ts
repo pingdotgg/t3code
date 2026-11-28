@@ -66,8 +66,6 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   cwd: Schema.NullOr(Schema.String),
-  /** False when neither `cwd` nor any tracked folder is a Git repository. Unset defaults to true. */
-  isGitRepository: Schema.optional(Schema.Boolean),
   approvalPolicy: Schema.optional(Schema.Unknown),
   sandboxPolicy: Schema.optional(Schema.Unknown),
   /**

@@ -2595,8 +2595,6 @@ export function makeClaudeQueryOptions(input: {
   readonly deviceToolsAvailable?: boolean;
   /** Settings → Labs → Linked environments is enabled. */
   readonly linkedEnvironmentsAvailable?: boolean;
-  /** False when neither `cwd` nor any tracked folder is a Git repository. */
-  readonly isGitRepository?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -2757,13 +2755,7 @@ export function makeClaudeQueryOptions(input: {
         buildRuntimeInstructions({
           harness: "Claude Code",
           agentFeedback,
-          runtimePolicy: {
-            cwd: input.cwd,
-            workspace: input.workspace,
-            ...(input.isGitRepository === undefined
-              ? {}
-              : { isGitRepository: input.isGitRepository }),
-          },
+          runtimePolicy: { cwd: input.cwd, workspace: input.workspace },
         }) +
           (input.mcpServers === undefined
             ? ""
@@ -4135,9 +4127,8 @@ export function claudeEffectiveQueryPolicyKey(
   },
   // Folders are fixed when a query starts, so a changed list needs a new one.
   workspace?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["workspace"],
-  // System prompt append depends on git and tool-host availability; rotate if they change.
+  // The system prompt append depends on tool-host availability; rotate if it changes.
   instructionFlags?: {
-    readonly isGitRepository?: boolean;
     readonly deviceToolsAvailable?: boolean;
     readonly linkedEnvironmentsAvailable?: boolean;
   },
@@ -14097,7 +14088,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             mcpOverrides,
             turnInput.runtimePolicy.workspace,
             {
-              isGitRepository: turnInput.runtimePolicy.isGitRepository !== false,
               deviceToolsAvailable:
                 mcpSession?.capabilities?.has("device") === true &&
                 mcpSession.deviceHostsAvailable !== false,
@@ -14313,9 +14303,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               mcpSession?.capabilities?.has("device") === true &&
               mcpSession.deviceHostsAvailable !== false,
             linkedEnvironmentsAvailable: mcpSession?.linkedEnvironmentsAvailable === true,
-            ...(turnInput.runtimePolicy.isGitRepository === undefined
-              ? {}
-              : { isGitRepository: turnInput.runtimePolicy.isGitRepository }),
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined
               ? {}

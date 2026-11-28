@@ -23,10 +23,8 @@ export function buildRuntimeInstructions(runtime: {
   readonly reasoningEffort?: string | undefined;
   /** False when the session's system prompt already carries the linking instructions. */
   readonly pullRequestLinking?: boolean;
-  /** Adds the folder list of a multi-folder thread and gates git-only linking guidance. */
-  readonly runtimePolicy?:
-    | Pick<ProviderAdapterV2RuntimePolicy, "cwd" | "workspace" | "isGitRepository">
-    | undefined;
+  /** Adds the folder list of a multi-folder thread. */
+  readonly runtimePolicy?: Pick<ProviderAdapterV2RuntimePolicy, "cwd" | "workspace"> | undefined;
 }): string {
   const harness = toSingleLine(runtime.harness);
   const model = toSingleLine(runtime.model ?? "");
@@ -41,11 +39,10 @@ export function buildRuntimeInstructions(runtime: {
   const feedback = feedbackLine ? `\n${feedbackLine}` : "";
   const workspace =
     runtime.runtimePolicy === undefined ? "" : buildWorkspaceInstructions(runtime.runtimePolicy);
-  const includePullRequestLinking =
-    runtime.pullRequestLinking !== false && runtime.runtimePolicy?.isGitRepository !== false;
-  const linked = includePullRequestLinking
-    ? `${runtimeInfo}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`
-    : runtimeInfo;
+  const linked =
+    runtime.pullRequestLinking === false
+      ? runtimeInfo
+      : `${runtimeInfo}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`;
   return [linked + feedback, ...(workspace === "" ? [] : [workspace])].join("\n\n");
 }
 

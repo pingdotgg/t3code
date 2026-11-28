@@ -41,11 +41,6 @@ describe("Codex runtime context", () => {
     NodeAssert.match(instructions, /as gpt 5\.3 codex with high effort reasoning effort/);
     NodeAssert.doesNotMatch(instructions, /<runtime_info>[^<]*\n/);
   });
-
-  it("omits PR linking outside git repositories", () => {
-    const nonGit = runtimeInstructions({ model: "gpt-6.1-sol", isGitRepository: false });
-    NodeAssert.ok(!nonGit.includes("<pull_request_linking>"));
-  });
 });
 
 describe("Codex orchestration context", () => {
@@ -57,7 +52,7 @@ describe("Codex orchestration context", () => {
 
     NodeAssert.ok(orchestration.includes("native tool"));
     NodeAssert.ok(orchestration.includes("`run_in_background:false`"));
-    NodeAssert.ok(orchestration.includes("native types on another model"));
+    NodeAssert.ok(orchestration.includes("a native type on one"));
     NodeAssert.ok(
       orchestration.includes("Background agent: `delegate_task`, never a background `Agent`."),
     );

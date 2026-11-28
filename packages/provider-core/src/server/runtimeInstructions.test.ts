@@ -18,16 +18,6 @@ describe("buildRuntimeInstructions", () => {
     assert.notInclude(instructions, "<pull_request_linking>");
   });
 
-  it("omits PR linking outside git repositories", () => {
-    const instructions = buildRuntimeInstructions({
-      harness: "Codex",
-      runtimePolicy: { cwd: "/tmp/scratch", isGitRepository: false },
-    });
-
-    assert.include(instructions, "<runtime_info>");
-    assert.notInclude(instructions, "<pull_request_linking>");
-  });
-
   it("links PRs the agent creates, takes over, or pushes to, and no others", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex" });
 

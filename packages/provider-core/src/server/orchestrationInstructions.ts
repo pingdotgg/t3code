@@ -18,8 +18,8 @@ export function buildT3OrchestrationSections(
   const linked = options.linkedEnvironments === true;
   const nativeSubagents = options.nativeSubagents !== false;
   const subagentLine = nativeSubagents
-    ? `- Subagents: native tool (Claude \`Agent\` \`run_in_background:false\`; Codex \`spawn_agent\`) only for same provider/model with default settings. Use \`delegate_task\` for another provider/model (incl. native types on another model), \`target.options\`, \`isolation:"worktree"\`, or new review rounds (never \`t3_thread_send\`; fix small nits yourself). Background agent: \`delegate_task\`, never a background \`Agent\`. Workflow only when asked. Check \`orchestrator_capabilities\` once; if unavailable, say so (no CLI/Workflow fallback). Never make a child's checkout in shell/task. Stop or trim unneeded delegates with \`task_cancel\` (no replacement); never poll (follow \`next\`). Children don't delegate unless told.`
-    : `- Subagents: Use \`delegate_task\` for subagents (including your own provider/model), \`isolation:"worktree"\` for a separate checkout, and new review rounds (never \`t3_thread_send\`; fix small nits yourself). Workflow only when asked. Check \`orchestrator_capabilities\` once; if unavailable, say so (no CLI/Workflow fallback). Never make a child's checkout in shell/task. Stop or trim unneeded delegates with \`task_cancel\` (no replacement); never poll (follow \`next\`). Children don't delegate unless told.`;
+    ? `- Subagents: native tool (Claude \`Agent\` \`run_in_background:false\`; Codex \`spawn_agent\`) only for your provider (any model it offers) with default settings. Use \`delegate_task\` for another provider's model (incl. a native type on one), \`target.options\`, \`isolation:"worktree"\`, or new review rounds (never \`t3_thread_send\`; fix small nits yourself). Background agent: \`delegate_task\`, never a background \`Agent\`. Workflow only when asked. Check \`orchestrator_capabilities\` once (again after an error or a user-named provider change); if unavailable, say so and never switch unasked (no native/CLI/Workflow fallback). Never make a child's checkout in shell/task. Stop or trim unneeded delegates with \`task_cancel\` (no replacement); never poll (follow \`next\`). Children don't delegate unless told.`
+    : `- Subagents: Use \`delegate_task\` for subagents (including your own provider/model), \`isolation:"worktree"\` for a separate checkout, and new review rounds (never \`t3_thread_send\`; fix small nits yourself). Workflow only when asked. Check \`orchestrator_capabilities\` once (again after an error or a user-named provider change); if unavailable, say so and never switch unasked (no native/CLI/Workflow fallback). Never make a child's checkout in shell/task. Stop or trim unneeded delegates with \`task_cancel\` (no replacement); never poll (follow \`next\`). Children don't delegate unless told.`;
   const lines = [
     "Ordinary coding tasks need no T3 tools. T3 tools may load late; try once before calling absent.",
     subagentLine,
@@ -67,16 +67,16 @@ const T3_CODE_ACP_DEFERRED_PROXY_INSTRUCTIONS =
 export function acpMcpFallbackInstructions(platform?: NodeJS.Platform): string {
   return platform === "win32"
     ? `ACP fallback (if T3 tools are absent and \`T3_ACP_MCP_CALL\` is set): pipe JSON (escape non-ASCII as \`\\uXXXX\`) to stdin, e.g. \`'{}' | & $env:T3_ACP_MCP_CALL orchestrator_capabilities -\`.`
-    : `ACP fallback (if T3 tools are absent and \`T3_ACP_MCP_NODE\` is set): \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call <tool> '<json>'\`.`;
+    : `ACP fallback (if T3 tools are absent and \`T3_ACP_MCP_NODE\` is set): \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call <tool> '<json>'\`, e.g. \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`.`;
 }
 
 const T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS = `## T3 Code interaction mode: Default
 
-Make reasonable assumptions and carry out the request. Ask concisely only when a missing decision materially changes the result.`;
+Prefer making reasonable assumptions and carrying out the user's request. Ask a concise question only when a missing user decision would materially change the result. Treat this mode as active until T3 Code supplies a different interaction-mode instruction.`;
 
 const T3_CODE_ACP_PLAN_MODE_INSTRUCTIONS = `## T3 Code interaction mode: Plan
 
-Investigate read-only; do not edit files or implement. Resolve discoverable facts first, then return a concrete plan without executing it.`;
+Investigate with read-only actions and do not edit files or otherwise execute the implementation. Resolve discoverable facts before asking questions. When the requirements are decision complete, return a concrete implementation plan and do not start implementing it. Treat this mode as active until T3 Code supplies a different interaction-mode instruction.`;
 
 export interface T3AcpInstructionState {
   readonly interactionMode: ProviderInteractionMode;

@@ -88,7 +88,7 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Start one child agent with only `task` (no parent history, no secrets). Use for another provider/model, `target.options`, `isolation:'worktree'`, background work, or new review rounds. Call `orchestrator_capabilities` once first. Keep `taskId` for `task_status`/`task_cancel`; follow `next`, never poll.",
+    "Start one child agent with only `task` (no parent history, no secrets). Use for another provider's model, `target.options`, `isolation:'worktree'`, background work, or new review rounds. Call `orchestrator_capabilities` once first. Keep `taskId` for `task_status`/`task_cancel`; follow `next`, never poll.",
   parameters: OrchestratorMcpDelegateTaskInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
