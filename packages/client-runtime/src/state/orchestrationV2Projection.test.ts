@@ -137,6 +137,22 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.updatedAt).toEqual(projection.updatedAt);
   });
 
+  it.each([
+    "thread.pull-request-synced",
+    "thread.issue-synced",
+    "thread.active-reordered",
+  ] as const)("keeps the thread's activity time on %s", (type) => {
+    const later = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+    const next = applyOrchestrationV2ProjectionEvent(emptyProjection, {
+      id: "background-sync" as OrchestrationV2DomainEvent["id"],
+      type,
+      threadId,
+      occurredAt: later,
+      payload: emptyProjection.thread,
+    } as OrchestrationV2DomainEvent);
+    expect(next?.updatedAt).toEqual(emptyProjection.thread.updatedAt);
+  });
+
   it("keeps live token usage when the terminal provider turn omits it", () => {
     const providerTurnId = ProviderTurnId.make("provider-turn-reducer");
     const running = {

@@ -1453,3 +1453,27 @@ describe("notebook scroll position", () => {
     });
   });
 });
+
+it("highlights Jupyter kernel languages while keeping labels and raw cells plain", async () => {
+  for (const [language, source] of [
+    ["Rust", 'fn main() { println!("hi"); }'],
+    ["C++17", "int main() { return 0; }"],
+    ["C#", "class C { int x = 1; }"],
+    ["F#", "let answer = 42"],
+    ["Bash", 'if [ -n "$HOME" ]; then echo "hi"; fi'],
+  ] as const) {
+    const cells = (["code", "raw"] as const).map((kind) => ({ kind, source, outputs: [] }));
+    const notebook = { type: "notebook" as const, language, cells };
+    await using screen = await render(<NotebookPreview notebook={notebook} />);
+    expect(screen.getByRole("status").first().element().textContent).toContain(`· ${language}`);
+    expect(screen.container.querySelector("section > div")?.textContent).toBe(`${language} · 1`);
+    await vi.waitFor(() => {
+      const [code, raw] = [...screen.container.querySelectorAll("diffs-container")].map((el) => {
+        const spans = el.shadowRoot?.querySelectorAll("[data-line] span") ?? [];
+        return new Set(Array.from(spans, (span) => getComputedStyle(span).color)).size;
+      });
+      expect(code, language).toBeGreaterThan(1);
+      expect(raw, `raw:${language}`).toBe(1);
+    });
+  }
+});

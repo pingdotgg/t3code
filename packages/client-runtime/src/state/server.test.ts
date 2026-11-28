@@ -14,6 +14,7 @@ import {
   type ServerLifecycleWelcomePayload,
   type ServerSelfUpdateOutcome,
   WS_METHODS,
+  CALM_HOST_PRESSURE,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
@@ -1478,7 +1479,11 @@ describe("server state projection", () => {
           yield* Queue.offer(events, {
             version: 1,
             type: "snapshot",
-            config: { ...CONFIG, lastEventLoopStall },
+            config: {
+              ...CONFIG,
+              lastEventLoopStall,
+              hostPressure: { ...CALM_HOST_PRESSURE, memory: "severe" },
+            },
           });
           const projected = yield* SubscriptionRef.changes(state).pipe(
             Stream.filter((value) =>
@@ -1496,7 +1501,10 @@ describe("server state projection", () => {
       );
 
       // Cached, it would read as a fresh freeze on the next launch.
-      expect(yield* Queue.take(savedConfigs)).not.toHaveProperty("lastEventLoopStall");
+      const saved = yield* Queue.take(savedConfigs);
+      expect(saved).not.toHaveProperty("lastEventLoopStall");
+      // Never read back, and changes every sample while memory is short.
+      expect(saved).not.toHaveProperty("hostPressure");
     }),
   );
 });
