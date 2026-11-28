@@ -188,6 +188,28 @@ describe("document preview contents", () => {
     expect(result.pages[0]!.html.replaceAll(/<[^>]*>/g, "")).toBe(expected);
   });
 
+  it("shows RTF footnotes after the page text", () => {
+    // LibreOffice Writer marks the footnote destination with \*; Word does not.
+    const libreOffice = String.raw`{\rtf1\ansi{\pard The north region}{{\super \chftn{\*\footnote \chftn\pard\plain \s24\fi-340\li340{
+\tab Hold the obsolete value apart.}
+}}
+}{
+ is ready.}
+\par }`;
+    const word = String.raw`{\rtf1\ansi\pard The shipment left.{\cs16\super \chftn }{\footnote \pard\plain \s15 {\cs16\super \chftn } Inspect the seals.} Finance booked revenue.\par}`;
+    const html = (source: string) => {
+      const result = openRtf(bytes(source));
+      if (result.type !== "document") throw new Error("Expected document");
+      return result.pages[0]!.html;
+    };
+    expect(html(libreOffice)).toBe(
+      "<p data-rtf-whitespace>The north region<sup>1</sup> is ready.<br></p><hr><p data-rtf-whitespace><sup>1</sup>\tHold the obsolete value apart.</p>",
+    );
+    expect(html(word)).toBe(
+      "<p data-rtf-whitespace>The shipment left.<sup>1</sup> Finance booked revenue.<br></p><hr><p data-rtf-whitespace><sup>1</sup> Inspect the seals.</p>",
+    );
+  });
+
   it.each(["?", String.raw`\'3f`, String.raw`\\`])(
     "consumes skipped rich text Unicode fallback %s",
     (fallback) => {
