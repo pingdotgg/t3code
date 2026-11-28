@@ -7633,12 +7633,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       projection = applyToProjection(projection, event);
     }
-    // Inter-agent MCP messages and background wakes continue work the user already snoozed.
+    // Messages from another agent and background wakes continue work the user already snoozed.
+    // An MCP send with no sender comes from a client acting for the owner, so it still wakes.
     const automaticWake =
       command.notification !== undefined ||
       command.delegatedCompletion !== undefined ||
       command.scheduledTaskId !== undefined ||
-      (command.createdBy === "agent" && command.creationSource === "mcp");
+      (command.createdBy === "agent" &&
+        command.creationSource === "mcp" &&
+        (command.senderThreadId !== undefined || command.linkedSender !== undefined));
     if (projection.thread.snoozedUntil != null && !automaticWake) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
