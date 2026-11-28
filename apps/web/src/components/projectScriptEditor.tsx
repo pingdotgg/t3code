@@ -109,9 +109,22 @@ export const EMPTY_PROJECT_SCRIPT_INPUT: NewProjectScriptInput = {
   autoOpenPreview: false,
 };
 
+/**
+ * `onActionCreated` reports a new action's ID once its settings are saved, so a
+ * retry after a later failure (such as the shortcut write) updates that action
+ * instead of creating another.
+ */
+export type ProjectScriptSubmit = (
+  scriptId: string | null,
+  input: NewProjectScriptInput,
+  onActionCreated: (scriptId: string) => void,
+  retryingCreation: boolean,
+) => Promise<ProjectScriptActionResult>;
+
 export interface ProjectScriptEditorRequest {
   scriptId: string | null;
   initial: NewProjectScriptInput;
+  createdScriptId?: string;
   error?: string;
 }
 
@@ -149,10 +162,7 @@ export function ProjectScriptEditorDialog({
   editScope?: typeof AuthOrchestrationOperateScope | typeof AuthSettingsWriteScope;
   request: ProjectScriptEditorRequest | null;
   scripts: ReadonlyArray<ProjectScript>;
-  onSubmit: (
-    scriptId: string | null,
-    input: NewProjectScriptInput,
-  ) => Promise<ProjectScriptActionResult>;
+  onSubmit: ProjectScriptSubmit;
   onDelete: (scriptId: string) => void;
   onClose: () => void;
 }) {
@@ -272,10 +282,7 @@ function ProjectScriptEditorForm({
   scripts: ReadonlyArray<ProjectScript>;
   validationError: string | null;
   onValidationError: (error: string | null) => void;
-  onSubmit: (
-    scriptId: string | null,
-    input: NewProjectScriptInput,
-  ) => Promise<ProjectScriptActionResult>;
+  onSubmit: ProjectScriptSubmit;
   onRequestDelete: (name: string) => void;
   onClose: () => void;
 }) {
@@ -298,6 +305,7 @@ function ProjectScriptEditorForm({
   const [previewUrl, setPreviewUrl] = useState(request.initial.previewUrl ?? "");
   const [autoOpenPreview, setAutoOpenPreview] = useState(request.initial.autoOpenPreview);
   const [isSaving, setIsSaving] = useState(false);
+  const createdScriptIdRef = useRef(request.createdScriptId ?? null);
   const pendingSubmissionRef = useRef<object | null>(null);
   // A save that settles after this form is replaced must not close or error
   // the request that replaced it.
@@ -370,10 +378,12 @@ function ProjectScriptEditorForm({
     }
 
     setValidationError(null);
+    const createdScriptId = createdScriptIdRef.current;
+    const scriptId = request.scriptId ?? createdScriptId;
     let payload: NewProjectScriptInput;
     try {
       const scriptIdForValidation =
-        request.scriptId ??
+        scriptId ??
         nextProjectScriptId(
           trimmedName,
           scripts.map((script) => script.id),
@@ -407,7 +417,16 @@ function ProjectScriptEditorForm({
     setIsSaving(true);
     setIconPickerOpen(false);
     try {
-      const result = await onSubmit(request.scriptId, payload);
+      const result = await onSubmit(
+        scriptId,
+        payload,
+        (id) => {
+          if (pendingSubmissionRef.current === submission) {
+            createdScriptIdRef.current = id;
+          }
+        },
+        createdScriptId !== null,
+      );
       if (pendingSubmissionRef.current === submission) {
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {

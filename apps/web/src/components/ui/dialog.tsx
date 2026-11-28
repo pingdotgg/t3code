@@ -232,7 +232,7 @@ function DialogFooter({
   return (
     <div
       className={cn(
-        "flex flex-col-reverse gap-2 px-6 sm:flex-row sm:justify-end sm:rounded-b-[calc(var(--radius-pane)-1px)]",
+        "flex flex-col-reverse gap-2 px-6 sm:flex-row sm:flex-wrap sm:justify-end sm:rounded-b-[calc(var(--radius-pane)-1px)]",
         variant === "default" && "py-4",
         variant === "bare" && "py-4",
         className,

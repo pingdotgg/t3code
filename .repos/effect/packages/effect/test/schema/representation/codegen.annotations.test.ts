@@ -34,6 +34,71 @@ const EmptyUnionRepresentation: SchemaRepresentation.Representation = {
 }
 
 describe("Codegen.Module.addSchemas annotations", () => {
+  it("prefers live overrides on built-ins, including an explicitly removed callback", () => {
+    const schema = Schema.Option(Schema.String.check(Schema.isMinLength(2, {
+      toCode: () => ({ runtime: "Custom.check()" })
+    }))).annotate({
+      toCode: ({ typeParameters: [value] }: SchemaRepresentation.Generation.DeclarationInput) => ({
+        runtime: `Custom.box(${value.runtime})`,
+        Type: value.Type
+      })
+    })
+    const source = makeModule(SchemaRepresentation.toRepresentations([schema.ast])).print()
+    assert.include(source, "Custom.box(Schema.String.check(Custom.check()")
+    for (
+      const disabled of [
+        Schema.Date.annotate({ toCode: undefined }),
+        Schema.String.check(Schema.isMinLength(2, { toCode: undefined })),
+        Schema.String.check(Schema.isMinLength(2, { representation: { id: "acme/min", payload: 2 } }))
+      ]
+    ) {
+      assert.throws(() => makeModule(SchemaRepresentation.toRepresentations([disabled.ast])), "Missing toCode callback")
+    }
+  })
+
+  it("prints the date bound recorded when the check was created", () => {
+    const date = new Date(0)
+    const schema = Schema.Date.check(Schema.isGreaterThanDate(date))
+    date.setTime(42)
+    const source = makeModule(SchemaRepresentation.toRepresentations([schema.ast])).print()
+    assert.include(source, "Schema.isGreaterThanDate(new globalThis.Date(0))")
+  })
+
+  it("validates built-in payloads and schema arguments at their document paths", () => {
+    for (
+      const [id, payload] of [
+        ["effect/schema/isMinLength", { minLength: "2" }],
+        ["effect/schema/isPattern", { source: "[", flags: "" }],
+        ["effect/schema/isLessThanBigInt", { exclusiveMaximum: "1.5" }]
+      ] as const
+    ) {
+      expectError(
+        () =>
+          makeModule({
+            representations: [{
+              _tag: "String",
+              checks: [{ _tag: "Filter", aborted: false, representation: { id, payload } }]
+            }],
+            references: {}
+          }),
+        `Invalid representation payload for ${id}\n  at ["representations"][0]["checks"][0]["representation"]["payload"]`
+      )
+    }
+    expectError(
+      () =>
+        makeModule({
+          representations: [{
+            _tag: "Declaration",
+            typeParameters: [],
+            checks: [],
+            representation: { id: "effect/schema/Option", payload: null }
+          }],
+          references: {}
+        }),
+      "Invalid number of schema arguments for effect/schema/Option: expected 1, got 0\n  at [\"representations\"][0][\"typeParameters\"]"
+    )
+  })
+
   it("preserves explicit options on an empty union", () => {
     assertSchemas(
       makeModule({
@@ -45,10 +110,14 @@ describe("Codegen.Module.addSchemas annotations", () => {
     )
   })
 
-  it("compiles the isPattern and Option vertical slice", () => {
+  it("generates isPattern and Option without attaching printers to either built-in", () => {
+    const pattern = Schema.isPattern(/^a+$/)
+    const option = Schema.Option(Schema.String)
+    assert.isUndefined(pattern.annotations?.toCode)
+    assert.isUndefined(option.ast.annotations?.toCode)
     const document = SchemaRepresentation.toRepresentations([
-      Schema.String.check(Schema.isPattern(/^a+$/)).ast,
-      Schema.Option(Schema.String).ast
+      Schema.String.check(pattern).ast,
+      option.ast
     ])
     const output = makeModule(document)
 

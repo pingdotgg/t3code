@@ -18,6 +18,7 @@ import {
 import { projectThreadProjectionForWire } from "@t3tools/shared/wireProjection";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -220,7 +221,7 @@ const seed = Effect.gen(function* () {
 
 const seededStore = <E>(events: Effect.Effect<void, E, ProjectionStore.ProjectionStoreV2>) =>
   Layer.effectDiscard(events).pipe(
-    Layer.provideMerge(ProjectionStore.layer),
+    Layer.provideMerge(ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest))),
     Layer.provideMerge(SqlitePersistence.layerMemory),
   );
 
