@@ -272,6 +272,17 @@ export const make = Effect.gen(function* () {
       {
         label: m(msg("File", { $context: "menu bar title" })),
         submenu: [
+          {
+            label: m(msg("New Window")),
+            click: () =>
+              runMenuEffect(
+                "new-window",
+                Effect.gen(function* () {
+                  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+                  yield* desktopWindow.createMain;
+                }),
+              ),
+          },
           ...(environment.platform === "darwin"
             ? []
             : [

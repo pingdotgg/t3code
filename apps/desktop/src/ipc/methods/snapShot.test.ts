@@ -44,8 +44,8 @@ describe("window capture IPC", () => {
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(ElectronWindow.ElectronWindow, {
-            main: Effect.succeedSome({ webContents: { id: 7 } }),
-          } as ElectronWindow.ElectronWindow["Service"]),
+            mainForSender: () => Effect.succeedSome({ webContents: { id: 7 } }),
+          } as unknown as ElectronWindow.ElectronWindow["Service"]),
           Layer.succeed(DesktopSnapShot.DesktopSnapShot, {
             previewConfig: () =>
               Effect.sync(() => {
@@ -81,8 +81,8 @@ describe("window capture IPC", () => {
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(ElectronWindow.ElectronWindow, {
-            main: Effect.succeedSome({ webContents: { id: 7 } }),
-          } as ElectronWindow.ElectronWindow["Service"]),
+            mainForSender: () => Effect.succeedSome({ webContents: { id: 7 } }),
+          } as unknown as ElectronWindow.ElectronWindow["Service"]),
           Layer.succeed(DesktopSnapShot.DesktopSnapShot, {
             setup: (action: string) =>
               Effect.sync(() => {

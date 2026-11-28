@@ -24,9 +24,10 @@ it.effect("answers only the main window's top frame", () =>
         }).pipe(
           Layer.provide(
             Layer.mock(ElectronWindow.ElectronWindow, {
-              main: Effect.succeedSome({
-                webContents: { id: 1, mainFrame },
-              } as unknown as Electron.BrowserWindow),
+              mainForSender: () =>
+                Effect.succeedSome({
+                  webContents: { id: 1, mainFrame },
+                } as unknown as Electron.BrowserWindow),
             }),
           ),
         ),

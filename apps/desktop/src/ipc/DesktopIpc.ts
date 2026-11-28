@@ -186,7 +186,7 @@ export const layer = (ipcMain: DesktopIpcMain) =>
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       return make(ipcMain, (event) =>
         Effect.map(
-          electronWindow.main,
+          electronWindow.mainForSender(event.sender.id),
           (main) =>
             Option.isSome(main) &&
             main.value.webContents.id === event.sender.id &&
