@@ -31,7 +31,7 @@ const staticControls = new Set(["button", "input", "select", "textarea"]);
 const svgTags = new Set(
   (
     "svg g a defs desc title path rect circle ellipse line polyline polygon text tspan image use symbol switch textPath clipPath mask pattern marker linearGradient radialGradient stop " +
-    "filter feGaussianBlur feColorMatrix feSpecularLighting feDistantLight feComposite feOffset feComponentTransfer feFuncA feFlood feBlend feMerge feMergeNode feDropShadow"
+    "filter feGaussianBlur feColorMatrix feSpecularLighting feDiffuseLighting feDistantLight fePointLight feSpotLight feComposite feOffset feComponentTransfer feFuncA feFuncR feFuncG feFuncB feFlood feBlend feMerge feMergeNode feDropShadow"
   ).split(" "),
 );
 const mathTags = new Set(
@@ -115,7 +115,8 @@ const svgAttrs = (
   "clip-rule clipPathUnits mask maskUnits maskContentUnits patternUnits patternContentUnits patternTransform startOffset " +
   "marker-start marker-mid marker-end markerWidth markerHeight markerUnits refX refY orient " +
   "filter filterUnits primitiveUnits stdDeviation in in2 result type values color-interpolation-filters flood-color flood-opacity mode " +
-  "kernelUnitLength surfaceScale specularExponent specularConstant lighting-color azimuth elevation operator slope intercept"
+  "kernelUnitLength surfaceScale specularExponent specularConstant lighting-color azimuth elevation operator slope intercept tableValues amplitude exponent " +
+  "diffuseConstant z pointsAtX pointsAtY pointsAtZ limitingConeAngle k1 k2 k3 k4"
 ).split(" ");
 const mathAttrs = (
   "display displaystyle mathvariant mathsize mathcolor mathbackground accent accentunder columnalign " +

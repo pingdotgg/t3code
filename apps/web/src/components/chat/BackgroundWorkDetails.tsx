@@ -1,13 +1,18 @@
-import type {
-  EnvironmentId,
-  OrchestrationV2PendingBackgroundTask,
-  ThreadId,
+import {
+  type EnvironmentId,
+  type OrchestrationV2PendingBackgroundTask,
+  type OrchestrationV2RemoteTaskChild,
+  type ScopedThreadRef,
+  type ThreadId,
 } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { T, useGT } from "gt-react";
 import { useState } from "react";
 
+import { useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
+import { useLinkedThreadOpener } from "../../state/linkedThreadView";
 import { Button, InlineButton } from "../ui/button";
 import {
   Dialog,
@@ -19,6 +24,32 @@ import {
 } from "../ui/dialog";
 import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPanel";
 import { ShellCommandBlock } from "./ShellCommandBlock";
+
+function RemoteSubagentOpenButton(props: {
+  readonly parentRef: ScopedThreadRef;
+  readonly remoteChild: OrchestrationV2RemoteTaskChild;
+  readonly title: string;
+  readonly onOpened: () => void;
+}) {
+  const opener = useLinkedThreadOpener(props.parentRef, props.remoteChild, props.title);
+  const trigger = useSideThreadTrigger();
+  if (!opener) return null;
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      {...trigger(
+        (intent) => {
+          props.onOpened();
+          opener.open(intent);
+        },
+        { panel: opener.mode === "linked" },
+      )}
+    >
+      <T>Open subagent</T>
+    </Button>
+  );
+}
 
 export function BackgroundWorkDetails(props: {
   readonly environmentId: EnvironmentId;
@@ -44,6 +75,7 @@ export function BackgroundWorkDetails(props: {
   };
   const [open, setOpen] = useState(false);
   const streamsOutput = useCommandOutputStreaming(props.environmentId);
+  const parentRef = scopeThreadRef(props.environmentId, props.threadId);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger render={<InlineButton />}>
@@ -60,7 +92,8 @@ export function BackgroundWorkDetails(props: {
             {props.tasks.map((task) => {
               const item = props.turnItems.findLast((candidate) =>
                 task.itemId === undefined
-                  ? (candidate.nativeItemRef?.nativeId || candidate.id) === task.taskId
+                  ? (candidate.nativeItemRef?.nativeId || candidate.id) ===
+                    (task.nativeItemId ?? task.taskId)
                   : candidate.id === task.itemId,
               );
               const command =
@@ -75,6 +108,10 @@ export function BackgroundWorkDetails(props: {
               const itemId =
                 task.itemId ?? (item?.type === "command_execution" ? item.id : undefined);
               const childThreadId = task.kind === "subagent" ? task.childThreadId : undefined;
+              const remoteChild =
+                task.kind === "subagent" && item?.type === "subagent"
+                  ? item.remoteChild
+                  : undefined;
               return (
                 <section key={task.taskId} className="space-y-2 text-sm">
                   <div className="flex items-baseline justify-between gap-3">
@@ -110,6 +147,13 @@ export function BackgroundWorkDetails(props: {
                     >
                       <T>Open subagent</T>
                     </Button>
+                  ) : remoteChild ? (
+                    <RemoteSubagentOpenButton
+                      parentRef={parentRef}
+                      remoteChild={remoteChild}
+                      title={title}
+                      onOpened={() => setOpen(false)}
+                    />
                   ) : null}
                 </section>
               );

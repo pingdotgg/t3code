@@ -29,6 +29,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
@@ -830,6 +831,7 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 const projectionStoreSql = ProjectionStore.layer.pipe(
+  Layer.provide(NodeCrypto.layerDigest),
   Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 
@@ -2572,6 +2574,39 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         yield* fixture.publishEvent(settledEvent(own));
         assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: shared.id });
         assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: own.id });
+        assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, own.id);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
+  it.effect("skips the settle script for a fork or side chat in its source's worktree", () =>
+    Effect.gen(function* () {
+      const source = appThread("fork-source", "active", "/worktrees/source");
+      const child = (id: string, worktreePath: string, sideChat: boolean) => ({
+        ...appThread(id, "settled", worktreePath),
+        lineage: {
+          parentThreadId: source.id,
+          relationshipToParent: "fork" as const,
+          rootThreadId: source.id,
+          ...(sideChat ? { sideChat: true } : {}),
+        },
+      });
+      const fork = child("fork-shared", "/worktrees/source", false);
+      const sideChat = child("side-chat-shared", "/worktrees/source", true);
+      const own = child("fork-own", "/worktrees/own", false);
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([]),
+        currentThreads: [source, fork, sideChat, own],
+        existingWorktreePaths: ["/worktrees/source", "/worktrees/own"],
+      });
+
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+        yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+        // The worktree belongs to the source, so only the fork with its own worktree runs it.
+        yield* fixture.publishEvent(settledEvent(fork));
+        yield* fixture.publishEvent(settledEvent(sideChat));
+        yield* fixture.publishEvent(settledEvent(own));
         assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, own.id);
       }).pipe(Effect.provide(fixture.layer));
     }),

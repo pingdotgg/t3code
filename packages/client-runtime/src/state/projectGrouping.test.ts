@@ -6,6 +6,7 @@ import { chooseLoadBalancedEnvironment } from "../load-balancing.ts";
 import {
   buildProjectGroups,
   deriveLogicalProjectKeyFromSettings,
+  groupIconFallbacks,
   pickableProjectGroups,
   derivePhysicalProjectKey,
   resolveGroupDefaultProject,
@@ -606,5 +607,15 @@ describe("sortProjectsByGroupOrder", () => {
       ],
     );
     expect(sorted.map((entry) => entry.id)).toEqual(["pinned", "recent", "archived", "unlisted"]);
+  });
+});
+
+describe("groupIconFallbacks", () => {
+  it("lists the group's other members in order, leaving out its representative", () => {
+    const remote = EnvironmentId.make("remote");
+    const root = makeProject("root", "/work/t3code");
+    const web = makeProject("web", "/work/t3code/apps/web");
+    const remoteRoot = makeProject("root", "/work/t3code", { environmentId: remote });
+    expect(groupIconFallbacks([web, root, remoteRoot], root)).toEqual([web, remoteRoot]);
   });
 });

@@ -75,7 +75,8 @@ const runCursorTextGenerationWithStore = <E>(input: {
 }): Effect.Effect<RunResult, E> => {
   const agentOptions = {
     apiKey: input.apiKey,
-    mode: "plan",
+    mode: "agent",
+    tools: [],
     model: input.model,
     local: {
       cwd: input.cwd,
