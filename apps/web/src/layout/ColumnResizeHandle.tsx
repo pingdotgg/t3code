@@ -747,7 +747,8 @@ function ResizeFeedback({ drag, stripWidth }: { drag: ResizeGuide; stripWidth: n
           style={{ left: `calc(${toPct(edge)} + ${drag.edgeOffsetPx}px)` }}
         />
         <ResizePill
-          style={{ left: toPct(edge), top: "58%" }}
+          center={toPct(edge)}
+          top="58%"
           icon={<MoveHorizontalIcon className="size-3.25" />}
           label={
             drag.snapped === 1
@@ -772,7 +773,8 @@ function ResizeFeedback({ drag, stripWidth }: { drag: ResizeGuide; stripWidth: n
         }}
       />
       <ResizePill
-        style={{ left: `calc(${left} + ${width} / 2)`, top: `${edge * 100}%` }}
+        center={`calc(${left} + ${width} / 2)`}
+        top={`${edge * 100}%`}
         icon={<MoveVerticalIcon className="size-3.25" />}
         label={
           drag.snapped === 1
@@ -784,22 +786,30 @@ function ResizeFeedback({ drag, stripWidth }: { drag: ResizeGuide; stripWidth: n
   );
 }
 
+/**
+ * Centred on `center` by a row twice the strip's width, the pill sticks inside the strip's
+ * visible span, so an edge at the window's border never hides half of it.
+ */
 function ResizePill({
-  style,
+  center,
+  top,
   icon,
   label,
 }: {
-  style: React.CSSProperties;
+  center: string;
+  top: string;
   icon: React.ReactNode;
   label: string;
 }) {
   return (
     <div
-      className="absolute flex h-6.5 -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 rounded-control bg-strong-foreground px-2.5 text-meta whitespace-nowrap text-background shadow-drag-label"
-      style={style}
+      className="absolute flex h-0 w-[200%] items-center justify-center"
+      style={{ left: `calc(${center} - 100%)`, top }}
     >
-      {icon}
-      {label}
+      <div className="sticky inset-x-2 flex h-6.5 shrink-0 items-center gap-1.5 rounded-control bg-strong-foreground px-2.5 text-meta whitespace-nowrap text-background shadow-drag-label">
+        {icon}
+        {label}
+      </div>
     </div>
   );
 }

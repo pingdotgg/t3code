@@ -1148,6 +1148,36 @@ it("shrinks a full-width column from its start at the window's left edge, beside
   );
 });
 
+it("keeps the size pill whole when keyboard resizing brings a column's start to the window's left edge", async () => {
+  using _tabs = setupThreeColumns();
+  await using _screen = await renderHost({ edges: [40, 0] });
+  const strip = stripElement();
+  const view = strip.getBoundingClientRect();
+  useLayoutStore
+    .getState()
+    .focusPane(useLayoutStore.getState().layout.workspaces[0]!.columns[1]!.panes[0]!.id);
+  await vi.waitFor(() => expect(focusedColumn()).toBe(1));
+  settleStripCamera();
+  // The second column's end at the window's right edge: growing it from its start keeps
+  // that end still, so its start lands on the window's left edge.
+  await scrollStripTo(Math.round(strip.clientWidth / 3));
+  const handle = document.querySelectorAll<HTMLElement>('[aria-label="Resize column start"]')[0]!;
+  handle.focus({ focusVisible: true });
+  handle.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true }),
+  );
+  await vi.waitFor(() => expect(columnWidths()[1]).toBeCloseTo(1, 4));
+  await vi.waitFor(() => expect(Math.abs(paneRect(1).left - view.left - 4)).toBeLessThan(2));
+  const pill = await vi.waitFor(() => {
+    const shown = document.querySelector<HTMLElement>(".shadow-drag-label");
+    expect(shown?.textContent).toBe("Full width");
+    return shown!;
+  });
+  const box = pill.getBoundingClientRect();
+  expect(box.left).toBeGreaterThanOrEqual(view.left);
+  expect(box.right).toBeLessThanOrEqual(view.right);
+});
+
 it("moves focus to the neighboring column on a double-click in the gutter on that side", async () => {
   using _tabs = setupThreeColumns();
   await using _screen = await renderHost();
