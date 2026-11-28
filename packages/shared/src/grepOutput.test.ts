@@ -84,6 +84,24 @@ describe("parseGrepOutput", () => {
     ]);
   });
 
+  it("keeps ripgrep matches under the right file when a heading looks like a note or decoration", () => {
+    expect(parseGrepOutput("normal.ts\n1:hit\n\n(draft)\n1:hit\n", ".")).toEqual([
+      { fileName: "normal.ts", line: 1, preview: "hit" },
+      { fileName: "(draft)", line: 1, preview: "hit" },
+    ]);
+    expect(
+      parseGrepOutput("normal.ts\n1:hit\n\n(draft)\n1:hit\n\n(Results are truncated.)\n", "."),
+    ).toEqual([
+      { fileName: "normal.ts", line: 1, preview: "hit" },
+      { fileName: "(draft)", line: 1, preview: "hit" },
+      { fileName: ".", preview: "(Results are truncated.)" },
+    ]);
+    expect(parseGrepOutput("normal.ts\n1:hit\n\n---\n1:hit\n", ".")).toEqual([
+      { fileName: "normal.ts", line: 1, preview: "hit" },
+      { fileName: "---", line: 1, preview: "hit" },
+    ]);
+  });
+
   it("reads Gemini's File and L-numbered form", () => {
     const output = [
       'Found 2 matches for pattern "needle" in path "src":',

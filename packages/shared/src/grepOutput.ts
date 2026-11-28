@@ -44,6 +44,26 @@ export function parseGrepOutput(
       if (ripgrepFormat === "heading") file = undefined;
       continue;
     }
+    const nextLine = lines[index + 1] ?? "";
+    // Recognize a ripgrep heading at a file-block boundary before treating it as a note or decoration.
+    if (
+      file === undefined &&
+      ripgrepFormat !== "inline" &&
+      (lines[index - 1] ?? "").trim() === "" &&
+      RIPGREP_NUMBERED_LINE.test(nextLine)
+    ) {
+      // Two inline rows can also look like a bare heading and its numbered match.
+      if (
+        ripgrepFormat === undefined &&
+        PATH_LINE_TEXT.test(nextLine) &&
+        PATH_LINE_TEXT.test(trimmed)
+      ) {
+        return undefined;
+      }
+      file = line;
+      ripgrepFormat = "heading";
+      continue;
+    }
     if (trimmed === "--" || trimmed === "---" || SUMMARY_LINE.test(trimmed)) continue;
     const heading = FILE_HEADING.exec(trimmed);
     if (heading) {
@@ -59,7 +79,6 @@ export function parseGrepOutput(
     }
     // ripgrep context lines (`N-text`) can't be told apart from a file named like one.
     if (file !== undefined && CONTEXT_LINE.test(line)) return undefined;
-    const nextLine = lines[index + 1] ?? "";
     // `dir/a:12:b.txt:` is both an inline match and an OpenCode heading; an indented `Line N:` next decides.
     const colonHeading = COLON_HEADING.exec(line.trimEnd());
     const inline =
