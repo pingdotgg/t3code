@@ -491,24 +491,6 @@ describe("HostResources pressure on Linux", () => {
     ),
   );
 
-  it.effect("reports io pressure while a disk has requests in flight", () =>
-    Effect.gen(function* () {
-      setup();
-      const pressure = yield* (yield* HostResources.HostResources).readPressure;
-      expect(pressure.io).toBe("severe");
-    }).pipe(
-      Effect.provide(
-        pressured({
-          "/proc/pressure/cpu": ["some avg10=0.00 avg60=0.00\nfull avg10=0.00 avg60=0.00\n"],
-          "/proc/pressure/io": ["some avg10=77.00 avg60=77.00\nfull avg10=76.00 avg60=76.00\n"],
-          "/proc/diskstats": [
-            " 259       0 nvme0n1 52000 0 4100000 9000 81000 0 6300000 41000 12 68000 50000 0 0 0 0 0 0\n",
-          ],
-        }),
-      ),
-    ),
-  );
-
   // One /proc/diskstats reading per 5 s sample, each with the disk's total ms spent doing I/O.
   const ioFullWhileDiskTicks = (ticks: ReadonlyArray<number>) =>
     pressured({
@@ -531,13 +513,15 @@ describe("HostResources pressure on Linux", () => {
       return levels;
     });
 
-  // Background writes on an otherwise idle disk can keep it busy for a second within one sample.
-  it.effect("does not report io pressure while disks do bursts of background writes", () =>
+  // Background writes and a short burst of real disk work on an otherwise idle disk.
+  it.effect("does not report severe io pressure for bursts of disk work", () =>
     Effect.gen(function* () {
-      expect(yield* ioLevelsAfter(13)).toEqual(["none"]);
+      expect(yield* ioLevelsAfter(13)).not.toContain("severe");
     }).pipe(
       Effect.provide(
-        ioFullWhileDiskTicks([68000, 68050, 69615, 69650, 69700, 69700, 70000, 70040]),
+        ioFullWhileDiskTicks([
+          68000, 68050, 69615, 74115, 78615, 83115, 87615, 87650, 87700, 87740,
+        ]),
       ),
     ),
   );
