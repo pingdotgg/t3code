@@ -17,13 +17,17 @@ import { FxSettings } from "@t3tools/provider-fx/settings";
 import { FX_DRIVER_KIND, FX_SESSION_META, makeFxAdapterV2 } from "@t3tools/provider-fx/testing";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
+import {
+  ProviderAdapterV2RuntimePolicy,
+  type ProviderAdapterV2Event,
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -133,29 +137,26 @@ const update = (sessionId: string, sessionUpdate: Record<string, unknown>): Fram
   },
 });
 /** A `libfx/hook` event as fx 0.0.15 sends it once a session opts in. */
+const hookEvent = (sessionId: string, type: string, data: Record<string, unknown>) => ({
+  version: 1,
+  sessionId,
+  rootSessionId: SESSION_ID,
+  parentSessionId: sessionId === SESSION_ID ? null : SESSION_ID,
+  sourceSessionId: null,
+  workId: null,
+  turnId: "turn-1",
+  executionId: `execution-${sessionId}`,
+  stepIndex: 1,
+  timestamp: 1_793_283_383_907,
+  type,
+  data,
+  contentCaptured: true,
+  contentTruncated: false,
+});
 const hook = (sessionId: string, type: string, data: Record<string, unknown>): Frame => ({
   type: "emit_inbound",
   label: `libfx/hook:${type}`,
-  frame: {
-    kind: "notification",
-    method: "libfx/hook",
-    params: {
-      version: 1,
-      sessionId,
-      rootSessionId: SESSION_ID,
-      parentSessionId: sessionId === SESSION_ID ? null : SESSION_ID,
-      sourceSessionId: null,
-      workId: null,
-      turnId: "turn-1",
-      executionId: `execution-${sessionId}`,
-      stepIndex: 1,
-      timestamp: 1_793_283_383_907,
-      type,
-      data,
-      contentCaptured: true,
-      contentTruncated: false,
-    },
-  },
+  frame: { kind: "notification", method: "libfx/hook", params: hookEvent(sessionId, type, data) },
 });
 const subagentReply = (reply: string) =>
   JSON.stringify({ ok: true, result: reply, error_code: null });
@@ -219,6 +220,11 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
   readonly loadSessionId?: string;
   /** Then starts a turn on this model. */
   readonly turnModel?: string;
+  /** `libfx/hook` events fx sends after the turn has ended, collected until `until`. */
+  readonly afterTurn?: {
+    readonly hooks: ReadonlyArray<ReturnType<typeof hookEvent>>;
+    readonly until: (event: ProviderAdapterV2Event) => boolean;
+  };
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -238,6 +244,17 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
     FX_DRIVER_KIND,
   );
   const instanceId = ProviderInstanceId.make(`fx-${input.scenario}`);
+  const replayRuntime = makeAcpReplayRuntime({
+    transcript,
+    statusPath,
+    scriptPath: yield* path.fromFileUrl(
+      new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+    ),
+    childProcessSpawner,
+    fileSystem,
+    sessionMeta: () => FX_SESSION_META,
+  });
+  let deliverHook: ((raw: unknown) => Effect.Effect<void>) | undefined;
   const adapter = yield* makeFxAdapterV2({
     instanceId,
     settings: ENABLED_FX_SETTINGS,
@@ -250,16 +267,22 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
           ? { backend: input.defaultBackend ?? "gateway", model: FX_DEFAULT_MODEL }
           : undefined,
       ),
-    makeRuntime: makeAcpReplayRuntime({
-      transcript,
-      statusPath,
-      scriptPath: yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+    makeRuntime: (runtimeInput) =>
+      replayRuntime(runtimeInput).pipe(
+        Effect.map((runtime) => ({
+          ...runtime,
+          handleExtNotification: (method, payload, handler) => {
+            if (method === "libfx/hook") {
+              deliverHook = (raw) =>
+                Schema.decodeUnknownEffect(payload)(raw).pipe(
+                  Effect.flatMap(handler),
+                  Effect.orDie,
+                );
+            }
+            return runtime.handleExtNotification(method, payload, handler);
+          },
+        })),
       ),
-      childProcessSpawner,
-      fileSystem,
-      sessionMeta: () => FX_SESSION_META,
-    }),
   });
   const threadId = ThreadId.make(`thread-fx-${input.scenario}`);
   // The thread's effort matches the session's, so no effort write is scripted.
@@ -327,10 +350,18 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
       modelSelection: turnSelection,
       runtimePolicy,
     });
-    return yield* session.events.pipe(
+    const turn = yield* session.events.pipe(
       Stream.takeUntil((event) => event.type === "turn.terminal"),
       Stream.runCollect,
     );
+    if (input.afterTurn === undefined) return turn;
+    const later = yield* session.events.pipe(
+      Stream.takeUntil(input.afterTurn.until),
+      Stream.runCollect,
+      Effect.forkScoped,
+    );
+    for (const event of input.afterTurn.hooks) yield* deliverHook?.(event) ?? Effect.void;
+    return [...turn, ...(yield* Fiber.join(later))];
   }).pipe(Effect.scoped);
   yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
   return events;
@@ -665,6 +696,101 @@ describe("FxAdapterV2", () => {
           );
         }
       }
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("keeps a child's steps and reply when it outlives its parent's turn", () =>
+    Effect.gen(function* () {
+      const reply = `FULL_CHILD_REPLY ${"package.json has twelve lines. ".repeat(12)}`;
+      const childSessionId = "fx-session-child";
+      const childHook = (type: string, data: Record<string, unknown>) =>
+        hookEvent(childSessionId, type, data);
+      const events = yield* openFxSession({
+        scenario: "async-child-outlives-turn",
+        runtimeMode: "approval-required",
+        turnModel: "default",
+        frames: [
+          ...initialize,
+          outbound("session/new"),
+          answer("session/new", {
+            ...fxSession({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES }),
+            _meta: { fx: { hooksVersion: 1 } },
+          }),
+          ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES })),
+          outbound("session/prompt"),
+          update(SESSION_ID, {
+            sessionUpdate: "tool_call",
+            toolCallId: "call_child",
+            name: "subagent",
+            title: "Subagent · reviewer",
+            kind: "other",
+            status: "pending",
+            rawInput: { action: "message", agent: "reviewer", message: "Read package.json" },
+          }),
+          hook(SESSION_ID, "delegation", {
+            callId: "call_child",
+            childSessionId,
+            phase: "dispatched",
+          }),
+          subagentPreview("call_child", "Sent to reviewer."),
+          hook(SESSION_ID, "tool.end", {
+            call: { callId: "call_child", name: "subagent", provenance: "model" },
+            output: subagentReply("Sent to reviewer."),
+            status: "success",
+          }),
+          answer("session/prompt", { stopReason: "end_turn" }),
+        ],
+        afterTurn: {
+          until: (event) =>
+            event.type === "subagent.updated" && event.subagent.status === "completed",
+          hooks: [
+            childHook("tool.start", {
+              call: {
+                callId: "call_read",
+                name: "read_file",
+                provenance: "model",
+                argumentsJson: '{"path":"package.json"}',
+              },
+            }),
+            childHook("tool.end", {
+              call: { callId: "call_read", name: "read_file", provenance: "model" },
+              output: '{"name":"fixture"}',
+              status: "success",
+            }),
+            childHook("model.start", { modelCallId: 1, purpose: "agent" }),
+            childHook("model.end", { modelCallId: 1, output: reply, toolCalls: [] }),
+            childHook("turn.end", { outcome: "completed", error: null }),
+          ],
+        },
+      });
+      assert.isTrue(
+        events.some((event) => event.type === "turn.terminal" && event.status === "completed"),
+      );
+      const settled = events.flatMap((event) =>
+        event.type === "subagent.updated" ? [event.subagent] : [],
+      );
+      const childThreadId = settled.at(-1)?.childThreadId;
+      assert.equal(settled.at(-1)?.result, reply);
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.threadId === childThreadId &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.status === "completed",
+        ),
+        "the child's read step lands in its thread",
+      );
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "message.updated" &&
+            event.message.threadId === childThreadId &&
+            event.message.role === "assistant" &&
+            event.message.text === reply,
+        ),
+        "the child's reply lands in its thread",
+      );
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 

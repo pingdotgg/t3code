@@ -4085,7 +4085,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const projectSubagentNotification = Effect.fnUntraced(function* (
           subagent: ActiveAcpSubagent,
           notification: EffectAcpSchema.SessionNotification,
-          owner: ActiveAcpTurn,
+          owner?: ActiveAcpTurn,
         ) {
           const update = notification.update;
           if (update.sessionUpdate === "agent_message_chunk") {
@@ -6828,6 +6828,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             (yield* applyFinalizedActiveTurnSubagentTerminal(completed, notification, true))
           )
             return;
+          if (
+            (context === null || context.finalized) &&
+            (yield* projectCarryoverChildNotification(notification))
+          )
+            return;
           if (yield* followNativeChild(notification, context)) return;
           if (
             followsAgentWorkState &&
@@ -7823,6 +7828,54 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (acpSubagentStatusIsTerminal(status)) {
             subagent.terminalStatusProjected = true;
           }
+        });
+
+        // A child that outlives its parent's turn keeps its steps and reply in its own thread.
+        const projectCarryoverChildNotification = Effect.fnUntraced(function* (
+          notification: EffectAcpSchema.SessionNotification,
+        ) {
+          if (yield* Ref.get(stoppedRunQuarantine)) return false;
+          const carryover = yield* Ref.get(carryoverSubagents);
+          const rootSessionId = yield* Ref.get(activeSessionId);
+          if (
+            carryover === null ||
+            carryover.sessionId !== rootSessionId ||
+            !carryover.projectsLateTerminals ||
+            notification.sessionId === rootSessionId
+          )
+            return false;
+          const subagent = carryover.subagents.find(
+            (candidate) => candidate.childSessionId === notification.sessionId,
+          );
+          if (
+            subagent === undefined ||
+            !acpSubagentStatusBlocksTurnSettlement(subagent.task.status)
+          )
+            return false;
+          const update = notification.update;
+          if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
+            const toolCalls = parseSessionUpdateEvent(notification).events.flatMap((event) =>
+              event._tag === "ToolCallUpdated"
+                ? [flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall]
+                : [],
+            );
+            // A child's report on a sub-agent task settles it through the carryover path.
+            if (toolCalls.some((toolCall) => extractSubagentUpdate(toolCall) !== undefined))
+              return false;
+            for (const toolCall of toolCalls) {
+              yield* projectSubagentTool(subagent, notification.sessionId, toolCall);
+            }
+            return true;
+          }
+          if (
+            update.sessionUpdate === "tool_call_content_chunk" ||
+            update.sessionUpdate === "agent_message_chunk" ||
+            update.sessionUpdate === "agent_message"
+          ) {
+            yield* projectSubagentNotification(subagent, notification);
+            return true;
+          }
+          return false;
         });
 
         const updateCarryoverSubagentStatus = Effect.fnUntraced(function* (
