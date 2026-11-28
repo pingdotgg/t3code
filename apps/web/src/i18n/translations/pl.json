@@ -13075,5 +13075,8 @@
   "0d50b5bfe7151ece": "Nie udało się pobrać pliku",
   "eb1fd384ad5919dd": "Notatka wewnętrzna",
   "b45f0b467e9406d0": "Odpowiedz klientowi",
-  "d454bfdeea6f1129": "Otwórz podgląd"
+  "d454bfdeea6f1129": "Otwórz podgląd",
+  "1ef0ccbe5aa656ac": "Tryb planowania",
+  "e18f183d8feb3c21": "Pokazuje w kompozytorze przełącznik trybu planowania dla agentów, które go obsługują. Wyłączony wysyła każdą wiadomość w trybie budowania.",
+  "a24f29cdd04997d7": "beta build plan tryb planowania kompozytor przełącznik"
 }
