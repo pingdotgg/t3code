@@ -6181,6 +6181,18 @@ describe("AcpAdapterV2", () => {
           cause: "test",
         }),
       );
+      // Clients see the next send launch an agent before the server opens its turn.
+      const gone = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "provider_session.updated"),
+        Stream.take(1),
+        Stream.runCollect,
+      );
+      assert.deepEqual(
+        Array.from(gone, (event) =>
+          event.type === "provider_session.updated" ? event.providerSession.startupPhase : null,
+        ),
+        ["launch"],
+      );
 
       yield* runtime.startTurn(
         makeTurnInput({
@@ -6211,6 +6223,57 @@ describe("AcpAdapterV2", () => {
         ).slice(0, 3),
         ["resume", null, "turn running"],
       );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("clears the launch step once a replacement session replaces a terminated agent", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      const runtimeInputs: AcpAdapterV2RuntimeInput[] = [];
+      const baseMakeRuntime = makeMockRuntime({ childProcessSpawner, mockAgentPath });
+      const instanceId = ProviderInstanceId.make("acp-test-replacement-clears-launch");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: (runtimeInput) =>
+            Effect.sync(() => {
+              runtimeInputs.push(runtimeInput);
+            }).pipe(Effect.andThen(baseMakeRuntime(runtimeInput))),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-replacement-clears-launch");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-replacement-clears-launch"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const original = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+      yield* runtimeInputs[0]!.onTermination!(
+        new EffectAcpErrors.AcpTransportError({ detail: "Injected termination", cause: "test" }),
+      );
+      assert.equal(runtime.providerSession.startupPhase, "launch");
+
+      yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+        existingProviderThread: { ...original, nativeThreadRef: null },
+        forceNewNativeThread: true,
+      });
+      // The replacement agent is running, so the next send does not show it starting.
+      assert.isUndefined(runtime.providerSession.startupPhase);
     }).pipe(Effect.provide(layerTest)),
   );
 
