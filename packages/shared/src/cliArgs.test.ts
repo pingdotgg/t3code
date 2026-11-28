@@ -63,6 +63,9 @@ describe("tokenizeCliArgs", () => {
       "--config",
       String.raw`quoted=C:\Users\me`,
     ]);
+
+    const path = "C:\\Users\\\u00a0Project";
+    expect(tokenizeCliArgs(`--add-dir ${path}`)).toEqual(["--add-dir", path]);
   });
 });
 
