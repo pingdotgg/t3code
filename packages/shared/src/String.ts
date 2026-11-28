@@ -5,5 +5,5 @@ export function truncate(text: string, maxLength = 50): string {
     return trimmed;
   }
 
-  return `${characters.slice(0, maxLength).join("")}...`;
+  return `${characters.slice(0, maxLength).join("").trimEnd()}...`;
 }

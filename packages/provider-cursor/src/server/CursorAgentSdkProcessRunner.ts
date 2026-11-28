@@ -55,6 +55,7 @@ interface ActiveWorkerRun {
   readonly sessionId: number;
   readonly queue: Queue.Queue<RunQueueItem>;
   readonly waitDeferred: Deferred.Deferred<RunResult, CursorAgentSdk.CursorAgentSdkRunnerError>;
+  readonly onStartupPhase: ((phase: string) => Effect.Effect<void>) | undefined;
   doneEnqueued: boolean;
 }
 
@@ -104,7 +105,11 @@ interface SpawnedCursorWorker {
     build: (id: number) => CursorWorkerRequest,
     method: string,
   ) => Effect.Effect<CursorWorkerResponsePayload, CursorAgentSdk.CursorAgentSdkRunnerError>;
-  readonly registerRun: (sessionId: number, sendId: number) => Effect.Effect<ActiveWorkerRun>;
+  readonly registerRun: (
+    sessionId: number,
+    sendId: number,
+    onStartupPhase: ActiveWorkerRun["onStartupPhase"],
+  ) => Effect.Effect<ActiveWorkerRun>;
   readonly unregisterRun: (sendId: number) => Effect.Effect<void>;
   readonly failSessionRuns: (sessionId: number) => Effect.Effect<void>;
   readonly setBackgroundShellListener: (
@@ -114,6 +119,7 @@ interface SpawnedCursorWorker {
   readonly drainBackgroundShellStops: (sessionId: number) => Effect.Effect<void>;
   readonly closeBackgroundShellSession: (sessionId: number) => void;
   readonly isAlive: () => boolean;
+  readonly ended: Effect.Effect<void>;
   readonly close: (graceful: boolean) => Effect.Effect<void>;
 }
 
@@ -220,6 +226,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
           CursorAgentSdk.CursorAgentSdkProtocolLogger
         >();
         const closedDone = yield* Deferred.make<void>();
+        const endedDone = yield* Deferred.make<void>();
         const stdoutDone = yield* Deferred.make<void>();
         const stderrDone = yield* Deferred.make<void>();
         let nextRequestId = 0;
@@ -275,6 +282,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
           if (!wasTerminated) {
             terminated = { exitCode };
           }
+          yield* Deferred.succeed(endedDone, undefined);
           const pending = Array.from(pendingRequests.entries());
           pendingRequests.clear();
           for (const [, entry] of pending) {
@@ -358,6 +366,8 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
               }
               return Effect.void;
             }
+            case "startupPhase":
+              return activeRuns.get(parsed.sendId)?.onStartupPhase?.(parsed.phase) ?? Effect.void;
             case "runDone": {
               const run = activeRuns.get(parsed.sendId);
               if (run !== undefined && !run.doneEnqueued) {
@@ -599,13 +609,23 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
         activeCleanups.add(activeCleanup);
 
         // Untraced: per-send registration inside CursorAgentSdkSession.send.
-        const registerRun = Effect.fnUntraced(function* (sessionId: number, sendId: number) {
+        const registerRun = Effect.fnUntraced(function* (
+          sessionId: number,
+          sendId: number,
+          onStartupPhase: ActiveWorkerRun["onStartupPhase"],
+        ) {
           const queue = yield* Queue.unbounded<RunQueueItem>();
           const waitDeferred = yield* Deferred.make<
             RunResult,
             CursorAgentSdk.CursorAgentSdkRunnerError
           >();
-          const state: ActiveWorkerRun = { sessionId, queue, waitDeferred, doneEnqueued: false };
+          const state: ActiveWorkerRun = {
+            sessionId,
+            queue,
+            waitDeferred,
+            onStartupPhase,
+            doneEnqueued: false,
+          };
           activeRuns.set(sendId, state);
           return state;
         });
@@ -697,6 +717,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
             }
           },
           isAlive: () => terminated === undefined && !closing,
+          ended: Deferred.await(endedDone),
           close,
         };
       },
@@ -775,6 +796,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
             worker.protocolLoggers.delete(input.providerSessionId);
           }
         });
+        const sessionClosedDone = yield* Deferred.make<void>();
         const closeWorkerSession = Effect.suspend(() => {
           sessionClosed = true;
           return worker
@@ -787,7 +809,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
               Effect.ignore,
               Effect.ensuring(worker.failSessionRuns(sessionId)),
             );
-        });
+        }).pipe(Effect.ensuring(Deferred.succeed(sessionClosedDone, undefined)));
         const release = (closeInWorker: boolean) =>
           (closeInWorker ? closeWorkerSession : Effect.void).pipe(
             Effect.ensuring(forgetLogger),
@@ -863,7 +885,11 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
               if (sendInput.onBackgroundShell !== undefined) {
                 yield* worker.setBackgroundShellListener(sessionId, sendInput.onBackgroundShell);
               }
-              const runState = yield* worker.registerRun(sessionId, sendId);
+              const runState = yield* worker.registerRun(
+                sessionId,
+                sendId,
+                sendInput.onStartupPhase,
+              );
               let transmitted = false;
               let acknowledged = false;
               let rejectedByWorker = false;
@@ -1101,6 +1127,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
                 Effect.asVoid,
               ),
             isAlive: () => !sessionClosed && worker.isAlive(),
+            ended: Effect.raceFirst(Deferred.await(sessionClosedDone), worker.ended),
             close: closeSession,
           } satisfies CursorAgentSdk.CursorAgentSdkSession;
           handedOff = true;
