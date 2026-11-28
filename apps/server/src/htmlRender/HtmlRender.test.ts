@@ -278,6 +278,20 @@ describe("HtmlRender", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("never ends a published title on half of an emoji at the length limit", () =>
+    Effect.gen(function* () {
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      const fits = "a".repeat(199);
+      const reference = yield* htmlRender.publish({
+        threadId: ThreadId.make("thread-html-render-emoji"),
+        html: "<p>x</p>",
+        title: `${fits}🚀 more`,
+        height: 200,
+      });
+      expect(reference.title).toBe(fits);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("publishes a page from an .html file as a snapshot that path calls recover", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

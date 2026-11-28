@@ -5,10 +5,10 @@ import { isNetworkPath } from "@t3tools/shared/path";
 import {
   clampHtmlRenderHeight,
   HTML_RENDER_COLUMN_WIDTH,
-  HTML_RENDER_MAX_TITLE_LENGTH,
   HTML_RENDER_MEASURE_FONTS,
   HTML_RENDER_MEASURE_WIDTHS,
   htmlRenderTheme,
+  htmlRenderTitle,
   htmlRenderThemeFragment,
   injectHtmlRenderBootstrap,
   type HtmlRenderReference,
@@ -538,7 +538,7 @@ const make = Effect.gen(function* () {
     }
     const baseReference: HtmlRenderReference = {
       attachmentId,
-      title: input.title.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) || "HTML",
+      title: htmlRenderTitle(input.title),
       height: clampHtmlRenderHeight(input.height),
     };
     return yield* fileSystem.writeFileString(filePath, html).pipe(
