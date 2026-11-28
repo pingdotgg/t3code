@@ -28,7 +28,14 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
-import { HttpBody, HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http";
+import {
+  HttpBody,
+  HttpClient,
+  HttpClientRequest,
+  HttpRouter,
+  HttpServer,
+  HttpServerRequest,
+} from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
 import * as ProjectService from "../project/ProjectService.ts";
@@ -1661,6 +1668,40 @@ it.effect("accepts case-insensitive MCP bearer schemes and diagnoses rejected cr
       ),
     ),
   );
+});
+
+it.effect("grants an OAuth client the issues capability its advertised issue tools need", () => {
+  const layerAuth = EnvironmentAuth.layer.pipe(
+    Layer.provideMerge(
+      Layer.mock(ServerEnvironment.ServerEnvironment)({
+        getEnvironmentId: Effect.succeed(environmentId),
+      }),
+    ),
+    Layer.provideMerge(Sqlite.layerMemory),
+    Layer.provide(ServerSecretStore.layer),
+    Layer.provide(ManagedPolicy.layerTest()),
+    Layer.provideMerge(ServerEnvironment.layerIdentity),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-oauth-issues-test-" })),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
+  return Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const oauth = yield* auth.issueMcpClientSession({
+      label: "ChatGPT",
+      access: "full-access",
+      peerLink: false,
+      client: { deviceType: "bot" },
+    });
+    const authenticator = yield* McpHttpServer.McpClientAuthenticator;
+    const scope = yield* authenticator.authenticate(
+      HttpServerRequest.fromWeb(
+        new Request("http://127.0.0.1/mcp", {
+          headers: { authorization: `Bearer ${oauth.token}` },
+        }),
+      ),
+    );
+    expect(scope?.capabilities.has("issues")).toBe(true);
+  }).pipe(Effect.provide(McpOAuth.layerMcpClientAuthenticator.pipe(Layer.provideMerge(layerAuth))));
 });
 
 it.effect("gives outside clients an upload URL on the origin their request reached", () =>
