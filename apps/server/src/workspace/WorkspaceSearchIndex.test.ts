@@ -579,6 +579,38 @@ it.live("answers content searches with git grep while a slow content index build
       [5, 511, [{ start: 0, end: 5 }]],
     ]);
 
+    if (HostProcess.Platform.defaultValue() !== "win32") {
+      const newlinePath = "src/one\ntwo.txt";
+      yield* fileSystem.writeFileString(path.join(cwd, newlinePath), "unique_lf_needle\n");
+      expect(
+        yield* search({ query: "unique_lf_needle", caseSensitive: true, useRegex: false }),
+      ).toEqual({
+        matches: [
+          {
+            path: newlinePath,
+            lineNumber: 1,
+            lineContent: "unique_lf_needle",
+            matchRanges: [{ start: 0, end: 16 }],
+          },
+        ],
+        truncated: false,
+      });
+      expect(
+        yield* search({ query: "unique_lf_n.+", caseSensitive: true, useRegex: true }),
+      ).toEqual({
+        matches: [
+          {
+            path: newlinePath,
+            lineNumber: 1,
+            lineContent: "unique_lf_needle",
+            matchRanges: [{ start: 0, end: 16 }],
+          },
+        ],
+        truncated: false,
+      });
+      yield* fileSystem.remove(path.join(cwd, newlinePath));
+    }
+
     isWarmupComplete = true;
     yield* search({});
     expect(grep).toHaveBeenCalledTimes(3);
