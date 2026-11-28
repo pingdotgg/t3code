@@ -36,7 +36,7 @@ import { useFilesystemReadAccess } from "~/state/filesystem";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { useFileContextMenuHandler } from "../fileContextMenu";
 import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
-import { openDiffFilePrimaryAction } from "../diffFileActions";
+import { openDiffFilePrimaryAction, resolveDiffPathForWorkspace } from "../diffFileActions";
 import { toolCallDiff } from "../lib/toolCallDiff";
 import { useCheckpointDiff, useTurnItemDetail } from "~/state/queries";
 import { revisionedQuery } from "~/state/revisionedQuery";
@@ -51,6 +51,10 @@ import {
 } from "../diffPanelStore";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
+import { ChatMarkdownAssetImage } from "./chat/ChatMarkdownMedia";
+import { workspaceAssetResource } from "./files/filePreviewMode";
 import { useHideTestFiles } from "./diffs/useHideTestFiles";
 import { useRenderedAppearance } from "../hooks/useTheme";
 import { useStableCallback } from "../hooks/useStableCallback";
@@ -871,6 +875,54 @@ export default function DiffPanel({
         (repository) => repository.repositoryPath === match.section.repositoryPath,
       )?.cwd,
     };
+  };
+  // Only uncommitted and branch changes end at the working tree, the one version that can be shown.
+  const workingTreeImagePath = (filePath: string) => {
+    if (
+      !isGitSelection ||
+      selectedCommitSha !== null ||
+      !activeCwd ||
+      !isWorkspaceImagePreviewPath(filePath)
+    ) {
+      return null;
+    }
+    if (gitRepository !== null) return resolvePathLinkTarget(filePath, gitRepository.cwd);
+    const workspacePath = resolveDiffPathForWorkspace({
+      filePath,
+      workspaceRoot: activeCwd,
+      repositoryRoot: activeRepositoryRoot,
+    });
+    return workspacePath === null ? null : resolvePathLinkTarget(workspacePath, activeCwd);
+  };
+  const imagePreviewPath = (fileDiff: FileDiffMetadata) => {
+    const filePath = resolveFileDiffPath(fileDiff);
+    return fileDiff.hunks.length === 0 &&
+      fileDiff.type !== "deleted" &&
+      workingTreeImagePath(filePath) !== null
+      ? filePath
+      : null;
+  };
+  const renderImagePreview = (filePath: string) => {
+    const absolutePath = workingTreeImagePath(filePath);
+    if (!routeThreadRef || !activeCwd || absolutePath === null) return null;
+    const resource = workspaceAssetResource({
+      kind: "workspace-file",
+      threadRef: routeThreadRef,
+      draft: false,
+      workspaceRoot: activeCwd,
+      absolutePath,
+    });
+    return resource._tag === "workspace-file" || resource._tag === "media-file" ? (
+      <div className="flex justify-center p-3">
+        <ChatMarkdownAssetImage
+          environmentId={routeThreadRef.environmentId}
+          resource={resource}
+          alt={filePath}
+          workspaceRoot={activeCwd}
+          workspaceMutationId={workspaceMutationId}
+        />
+      </div>
+    ) : null;
   };
   const openDiffFile = (filePath: string) => {
     const repositoryFile = repositoryFileTarget(filePath);
@@ -1748,6 +1800,8 @@ export default function DiffPanel({
                         }
                       : {})}
                     onFileCollapsedChange={setDiffFileCollapsed}
+                    imagePreviewPath={imagePreviewPath}
+                    renderImagePreview={renderImagePreview}
                     renderHeaderPrefix={(fileDiff, fileKey, collapsed) => {
                       return (
                         <DiffFileCollapseToggle
