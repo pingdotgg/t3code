@@ -158,6 +158,7 @@ it.each(["available", "full", "duplicate"] as const)(
             addComposerFilesToDraft: () => [],
             removeComposerImageFromDraft: () => {},
             insertAttachmentReferences: () => false,
+            resolveLocalFileLinker: () => null,
           }}
           ready={(value) => {
             intake = value;

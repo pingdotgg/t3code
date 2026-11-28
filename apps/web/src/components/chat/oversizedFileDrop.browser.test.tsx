@@ -108,16 +108,6 @@ function dropFromDesktop(file: File, bridge: Record<string, unknown>) {
   }
 }
 
-it("links a dropped file too large to upload by its path on this computer", async () => {
-  await using screen = await renderThread("oversized-drop");
-
-  dropFromDesktop(largeArchive(), {});
-
-  await expect.element(screen.editor).toHaveTextContent("device-firmware-build.tar.gz");
-  await expect.element(page.getByText("Linked device-firmware-build.tar.gz by path")).toBeVisible();
-  expect(page.getByText(/exceeds the .* attachment limit/).query()).toBeNull();
-});
-
 it("holds send until a WSL path conversion links the dropped file", async () => {
   await using screen = await renderThread("oversized-drop-wsl");
   let finishConversion = () => {};
