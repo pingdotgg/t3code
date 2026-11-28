@@ -7155,6 +7155,100 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     });
   };
 
+  it.effect.each(["none", "streamed", "completion-only"] as const)(
+    "settles a visible unfinished answer after a steer (replacement: %s)",
+    (replacementKind) =>
+      Effect.gen(function* () {
+        const scenario = "steered-unfinished-answer";
+        const transcript = finalAnswerTranscript(scenario, [
+          { id: "draft", text: "First answer", streamed: true },
+          ...(replacementKind === "none"
+            ? []
+            : [
+                {
+                  id: "replacement",
+                  text: "Updated answer",
+                  streamed: replacementKind === "streamed",
+                },
+              ]),
+        ]);
+        // The steer reaches Codex while the draft is open. Only the replacement gets a completion.
+        const entries = transcript.entries.map((entry): CodexReplay.CodexAppServerReplayEntry =>
+          entry.type === "emit_inbound" && entry.label === "item/completed/draft"
+            ? {
+                type: "emit_inbound",
+                label: "steer-delivered",
+                frame: {
+                  method: "item/started",
+                  params: {
+                    threadId: `native-${scenario}-thread`,
+                    turnId: `native-${scenario}-turn`,
+                    item: {
+                      type: "userMessage",
+                      id: "steer",
+                      clientId: null,
+                      content: [{ type: "text", text: "Change direction", text_elements: [] }],
+                    },
+                    startedAtMs: 1782622441000,
+                  },
+                },
+              }
+            : entry,
+        );
+        const draftSent = yield* Deferred.make<void>();
+        const continueReplay = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          { ...transcript, entries },
+          undefined,
+          undefined,
+          undefined,
+          (entry) =>
+            entry.label === "steer-delivered"
+              ? Deferred.succeed(draftSent, undefined).pipe(
+                  Effect.andThen(Deferred.await(continueReplay)),
+                )
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-steered-unfinished-answer"),
+            text: "Reply with the requested recovery marker.",
+          }),
+        );
+        yield* Deferred.await(draftSent);
+        yield* TestClock.adjust("50 millis");
+        const draftUpdates = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.nativeItemRef?.nativeId === "draft"
+              ? [event.turnItem]
+              : [],
+          );
+        yield* harness.until(() => draftUpdates().some((item) => item.streaming));
+        yield* Deferred.succeed(continueReplay, undefined);
+        yield* harness.awaitTerminal(1);
+        const replacement = replacementKind !== "none";
+        assert.equal(draftUpdates().at(-1)?.status, replacement ? "cancelled" : "completed");
+        assert.deepEqual(
+          assistantMessages(harness.events).map(({ message }) => message.text),
+          [replacement ? "Updated answer" : "First answer"],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect.each([false, true])(
     "preserves a final answer that repeats a preceding partial answer (streamed: %s)",
     (streamed) =>

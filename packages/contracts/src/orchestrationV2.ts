@@ -1940,6 +1940,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("assistant_message"),
     phase: Schema.optional(AssistantMessagePhase),
+    /** The provider replaced this unfinished answer after receiving new user input. */
+    supersededBySteer: Schema.optional(Schema.Literal(true)),
     /** The provider sent this mid-turn, apart from the turn's answer. */
     delivery: Schema.optional(Schema.Literal("async")),
     messageId: MessageId,
@@ -2843,6 +2845,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("assistant_message"),
     phase: Schema.optional(AssistantMessagePhase),
+    /** The provider replaced this unfinished answer after receiving new user input. */
+    supersededBySteer: Schema.optional(Schema.Literal(true)),
     /** The provider sent this mid-turn, apart from the turn's answer. */
     delivery: Schema.optional(Schema.Literal("async")),
     messageId: MessageId,
