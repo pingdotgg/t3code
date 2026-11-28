@@ -1614,7 +1614,7 @@ export const layer = Layer.effect(
         runtimeMode: input.runtimeMode,
         interactionMode: input.interactionMode,
         createdBy: existingTask?.createdBy ?? input.createdBy ?? "user",
-        creationSource: existingTask?.creationSource ?? input.creationSource ?? "web",
+        creationSource: input.creationSource ?? "web",
         createdAt: existingTask?.createdAt ?? iso(now),
         updatedAt: iso(now),
         nextRunAt: scheduleUnchanged
