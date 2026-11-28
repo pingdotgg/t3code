@@ -13088,17 +13088,10 @@
   "fff2428ddd02a265": "Eigene Antwort eingeben",
   "8341d2112104dbd5": "Anfrage von {title}",
   "5536b6ffc0e02e95": "Antwort senden",
-  "859afb06f481b44d": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ",
-    "braucht deine Freigabe"
-  ],
   "2d5f9fc73d29506b": "Notiz bearbeiten",
   "3ac8ed47fe50bd34": "Titel",
   "c710ee112651e1dd": "Zusammenfassung",
-  "16062ac4bcd9ab9e": "Notiz"
+  "16062ac4bcd9ab9e": "Notiz",
+  "07f432b0f8a65d39": "Freigabe anzeigen",
+  "067e9781206ddcba": "Freigabe ausblenden"
 }

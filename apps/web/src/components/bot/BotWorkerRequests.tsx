@@ -13,10 +13,9 @@ import {
   seedUserInputDraftAnswers,
   userInputDraftKey,
 } from "@t3tools/client-runtime/state/thread-requests";
-import { AuthOrchestrationOperateScope, type ScopedThreadRef } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { T, useGT, Var } from "gt-react";
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 
 import { derivePendingUserInputProgress } from "~/pendingUserInput";
@@ -27,26 +26,15 @@ import {
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { buildThreadRouteParams } from "~/threadRoutes";
 import { BackgroundThreadContext } from "../chat/backgroundThread";
 import { OtherThreadApproval } from "../chat/ChildThreadApprovals";
 import { ComposerPendingUserInputPanel } from "../chat/ComposerPendingUserInputPanel";
+import { ComposerBanner } from "../chat/ComposerBanner";
 import { Button } from "../ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Input } from "../ui/input";
 
 const NO_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
-
-function WorkerLink({ thread, title }: { thread: ScopedThreadRef; title: string }) {
-  return (
-    <Link
-      to="/$environmentId/$threadId"
-      params={buildThreadRouteParams(thread)}
-      className="min-w-0 truncate font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
-    >
-      {title}
-    </Link>
-  );
-}
 
 function WorkerQuestion({
   request,
@@ -208,31 +196,62 @@ function WorkerQuestion({
   );
 }
 
+function WorkerApproval({ request }: { request: Extract<BotWorkerRequest, { kind: "approval" }> }) {
+  const gt = useGT();
+  const [collapsed, setCollapsed] = useState(false);
+  const { approval } = request;
+  return (
+    <Collapsible open={!collapsed} onOpenChange={(open) => setCollapsed(!open)}>
+      <CollapsibleTrigger
+        render={<ComposerBanner.Row render={<button type="button" />} />}
+        title={collapsed ? gt("Show the approval") : gt("Hide the approval")}
+        className="px-4 py-1.5"
+      >
+        <ComposerBanner.Content>
+          <span className="max-w-1/3 min-w-0 truncate font-medium text-foreground">
+            {request.title}
+          </span>
+          <ComposerBanner.Separator />
+          <span className="min-w-0 shrink-0 truncate text-muted-foreground">
+            <T>Needs approval</T>
+          </span>
+          {collapsed ? (
+            <>
+              <ComposerBanner.Separator />
+              <span className="min-w-0 flex-1 truncate text-secondary-label">
+                {approval.detail || approval.requestKind}
+              </span>
+            </>
+          ) : null}
+        </ComposerBanner.Content>
+        <ComposerBanner.Actions className="gap-0">
+          <ComposerBanner.ToggleIcon expanded={!collapsed} />
+        </ComposerBanner.Actions>
+      </CollapsibleTrigger>
+      <CollapsiblePanel>
+        <div className="ps-6 pe-4 pt-0.5 pb-2 sm:ps-5.5">
+          <OtherThreadApproval thread={request.thread} approval={approval} />
+        </div>
+      </CollapsiblePanel>
+    </Collapsible>
+  );
+}
+
 function WorkerRequestCard({ request }: { request: BotWorkerRequest }) {
   const gt = useGT();
   return (
-    <section
+    <ComposerBanner.Root
+      detached
+      variant="info"
+      role="region"
       aria-label={gt("Request from {title}", { title: request.title })}
-      className="rounded-lg border border-border bg-background text-xs"
     >
       {request.kind === "approval" ? (
-        <p className="flex min-w-0 items-center gap-1 px-3 pt-2.5 pb-1 text-muted-foreground">
-          <T>
-            <Var>
-              <WorkerLink thread={request.thread} title={request.title} />
-            </Var>{" "}
-            needs your approval
-          </T>
-        </p>
-      ) : null}
-      {request.kind === "approval" ? (
-        <div className="px-3 pb-3 pt-1">
-          <OtherThreadApproval thread={request.thread} approval={request.approval} />
-        </div>
+        <WorkerApproval request={request} />
       ) : (
         <WorkerQuestion request={request} />
       )}
-    </section>
+    </ComposerBanner.Root>
   );
 }
 

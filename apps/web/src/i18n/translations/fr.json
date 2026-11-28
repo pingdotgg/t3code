@@ -13088,17 +13088,10 @@
   "fff2428ddd02a265": "Saisis ta propre réponse",
   "8341d2112104dbd5": "Demande de {title}",
   "5536b6ffc0e02e95": "Envoyer la réponse",
-  "859afb06f481b44d": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ",
-    "a besoin de ton approbation"
-  ],
   "2d5f9fc73d29506b": "Modifier la note",
   "3ac8ed47fe50bd34": "Titre",
   "c710ee112651e1dd": "Résumé",
-  "16062ac4bcd9ab9e": "Note"
+  "16062ac4bcd9ab9e": "Note",
+  "07f432b0f8a65d39": "Afficher l’approbation",
+  "067e9781206ddcba": "Masquer l’approbation"
 }

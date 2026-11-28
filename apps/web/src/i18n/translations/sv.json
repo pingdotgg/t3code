@@ -13095,17 +13095,10 @@
   "fff2428ddd02a265": "Skriv ett eget svar",
   "8341d2112104dbd5": "Förfrågan från {title}",
   "5536b6ffc0e02e95": "Skicka svar",
-  "859afb06f481b44d": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ",
-    "behöver ditt godkännande"
-  ],
   "2d5f9fc73d29506b": "Redigera anteckning",
   "3ac8ed47fe50bd34": "Titel",
   "c710ee112651e1dd": "Sammanfattning",
-  "16062ac4bcd9ab9e": "Anteckning"
+  "16062ac4bcd9ab9e": "Anteckning",
+  "07f432b0f8a65d39": "Visa godkännandet",
+  "067e9781206ddcba": "Dölj godkännandet"
 }

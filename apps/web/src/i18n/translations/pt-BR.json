@@ -13088,17 +13088,10 @@
   "fff2428ddd02a265": "Digite sua própria resposta",
   "8341d2112104dbd5": "Solicitação de {title}",
   "5536b6ffc0e02e95": "Enviar resposta",
-  "859afb06f481b44d": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ",
-    "precisa da sua aprovação"
-  ],
   "2d5f9fc73d29506b": "Editar nota",
   "3ac8ed47fe50bd34": "Título",
   "c710ee112651e1dd": "Resumo",
-  "16062ac4bcd9ab9e": "Nota"
+  "16062ac4bcd9ab9e": "Nota",
+  "07f432b0f8a65d39": "Mostrar a aprovação",
+  "067e9781206ddcba": "Ocultar a aprovação"
 }

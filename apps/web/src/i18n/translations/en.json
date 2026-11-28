@@ -13097,17 +13097,10 @@
   "fff2428ddd02a265": "Type your own answer",
   "8341d2112104dbd5": "Request from {title}",
   "5536b6ffc0e02e95": "Send answer",
-  "859afb06f481b44d": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ",
-    "needs your approval"
-  ],
   "2d5f9fc73d29506b": "Edit note",
   "3ac8ed47fe50bd34": "Title",
   "c710ee112651e1dd": "Summary",
-  "16062ac4bcd9ab9e": "Note"
+  "16062ac4bcd9ab9e": "Note",
+  "07f432b0f8a65d39": "Show the approval",
+  "067e9781206ddcba": "Hide the approval"
 }
