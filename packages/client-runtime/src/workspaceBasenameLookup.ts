@@ -190,7 +190,7 @@ export async function findAgentDirectoryMatch(
 // A quoted string or a comment is one token, so `cd` inside either is not read as a command.
 // A backslash escapes the next character, except in a Windows drive path, where it separates folders.
 const SHELL_TOKEN =
-  /(?<![^\s;&|()])#[^\n]*|"[^"]*"|'[^']*'|[;&|()\n]|[ \t]+|[a-zA-Z]:\\[^\s;&|()"']*|(?:\\[\s\S]?|[^\s;&|()"'\\])+/g;
+  /(?<![^\s;&|()])#[^\n]*|"[^"]*"|'[^']*'|[;&|()\n]|[ \t]+|[a-zA-Z]:\\[^\s;&|()"']*|\\\n|(?:\\[^\n]|[^\s;&|()"'\\])+/g;
 const SHELL_NAME = /(?:^|\/)(?:ba|z|da|k|mk|a)?sh$/;
 const CD_OPTION = /^-[LPe@]*$|^--$/;
 
@@ -215,6 +215,8 @@ function cdOperands(script: string): Array<string> {
     wordOpen = false;
   };
   for (const [token] of script.matchAll(SHELL_TOKEN)) {
+    // A line continuation is removed before the shell reads words.
+    if (token === "\\\n") continue;
     // A here-document's body is data, and where it ends is the shell's to say.
     if (!/^["'#]/.test(token) && token.includes("<<")) break;
     if (/^[;&|()\n]/.test(token)) endCommand();

@@ -239,6 +239,8 @@ describe("agentWorkingDirectories", () => {
   it.each([
     { command: String.raw`echo marker \; cd /other`, expected: [] },
     { command: String.raw`echo marker \\; cd /other`, expected: ["/other"] },
+    { command: "echo ok; \\\ncd /other", expected: ["/other"] },
+    { command: "cd \\\n/other", expected: ["/other"] },
     { command: String.raw`cd C:\ && dir`, expected: ["C:\\"] },
     {
       command: String.raw`cd C:\work\; cd D:\other`,
