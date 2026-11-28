@@ -1431,6 +1431,7 @@ export const ServerSettings = Schema.Struct({
   agentFeedback: Schema.Struct({
     mode: AgentFeedbackMode.pipe(Schema.withDecodingDefaultKey(Effect.succeed("off" as const))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({ mode: "off" as const }))),
+  shareUsageData: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -1909,6 +1910,7 @@ export const ServerSettingsPatch = Schema.Struct({
   fastWorktreeCheckout: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   agentFeedback: Schema.optionalKey(Schema.Struct({ mode: AgentFeedbackMode })),
+  shareUsageData: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   keepAwakeWhileAgentsWork: Schema.optionalKey(Schema.Boolean),

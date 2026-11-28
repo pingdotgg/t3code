@@ -6,6 +6,26 @@ T3 Code sends lightweight product usage events and relay connection traces to ke
 
 The server sends usage events to `ingest.t3.codes` under a hashed random install ID (plus a hashed T3 Connect account ID when signed in, and random client device IDs). Events contain provider, catalog model name (non-catalog models report as custom), reasoning effort, permission mode, turn/request outcome, duration, release channel, and token counts.
 
+## Turn off product usage data
+
+In the web or desktop app, open **Settings > General > Privacy** and turn off **Share usage data**.
+Select the environment you want to change, or select all connected environments to change them together.
+This preference is saved on each selected server and applies to all clients connected to it.
+It is on by default, including for existing installations.
+
+`T3CODE_TELEMETRY_ENABLED` still overrides this preference when explicitly set to `true` or `false`
+in the server's environment. When it is unset, the server follows the saved preference outside CI.
+CI runners still send no product events by default, even when this preference is on. An
+administrator's managed policy or `DO_NOT_TRACK=1` can still disable telemetry, including when
+`T3CODE_TELEMETRY_ENABLED=true`.
+
+When the saved preference controls telemetry, turning it off stops product events immediately and
+discards queued events and pending retries. A request already sent may finish. Turning it back on
+collects new events without sending the discarded ones.
+
+This setting controls product events, including delivery of agent feedback. It does not control
+relay connection diagnostics or OpenTelemetry export to your own receiver, described below.
+
 ## Disable telemetry
 
 - **Server / CLI**: Set `T3CODE_TELEMETRY_ENABLED=false` or `DO_NOT_TRACK=1` before starting (`DO_NOT_TRACK=1` takes precedence). CI environments (`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `JENKINS_URL`) disable telemetry by default unless `T3CODE_TELEMETRY_ENABLED=true`.

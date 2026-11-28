@@ -189,7 +189,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const config = yield* ServerConfig.ServerConfig;
         const fs = yield* FileSystem.FileSystem;
         const provider = ProviderInstanceId.make("codex_work");
+        assert.isTrue((yield* service.getSettings).shareUsageData);
+        const observed: boolean[] = [];
+        if (service.observeChanges) {
+          yield* service.observeChanges((settings) => observed.push(settings.shareUsageData));
+        }
         const patch = {
+          shareUsageData: false,
           favorites: [{ provider, model: "sol" }],
           providerModelPreferences: {
             [provider]: { hiddenModels: ["astra"], modelOrder: ["sol"] },
@@ -197,12 +203,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         };
         const changes = yield* service.subscribeChanges;
         yield* service.updateSettings(patch);
+        assert.deepEqual(observed, [false]);
         const received = Option.getOrThrow(yield* Stream.runHead(changes));
+        assert.isFalse(received.shareUsageData);
         assert.deepEqual(received.favorites, patch.favorites);
         assert.deepEqual(received.providerModelPreferences, patch.providerModelPreferences);
         const saved = yield* decodeServerSettingsJson(
           yield* fs.readFileString(config.settingsPath),
         );
+        assert.isFalse(saved.shareUsageData);
         assert.deepEqual(saved.favorites, patch.favorites);
         assert.deepEqual(saved.providerModelPreferences, patch.providerModelPreferences);
         const hidden = yield* service.updateSettings({
@@ -2588,6 +2597,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       const settings = yield* serverSettings.getSettings;
       assert.isFalse(settings.projectSettingsFolded);
       assert.isFalse(settings.continueThreadsAfterServerUpdate);
+      assert.isFalse(settings.shareUsageData);
       assert.equal(settings.usageHistoryRetentionDays, "unlimited");
       assert.isTrue(settings.requireConnectDeviceApproval);
       assert.isFalse(settings.enablePreviewTunnel);

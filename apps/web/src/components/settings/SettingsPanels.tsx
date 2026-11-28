@@ -855,9 +855,43 @@ export function GeneralSettingsPanel() {
   const languageValue = SUPPORTED_LOCALES.includes(settings.language)
     ? settings.language
     : SYSTEM_LANGUAGE;
+  const usageDataMixed = useScopedSettingsMixed(["shareUsageData"]);
 
   return (
     <SettingsPageContainer>
+      <SettingsSection id="privacy" title={gt("Privacy")}>
+        <SettingsRow
+          {...setting("share-usage-data")}
+          serverScoped
+          settingKeys={["shareUsageData"]}
+          description={gt(
+            "Send product usage data to T3 Code. The server's {variable} environment variable overrides this preference.",
+            { variable: "T3CODE_TELEMETRY_ENABLED" },
+          )}
+          resetAction={
+            usageDataMixed ||
+            settings.shareUsageData !== DEFAULT_UNIFIED_SETTINGS.shareUsageData ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset share usage data to default")}
+                onClick={() =>
+                  updateSettings({ shareUsageData: DEFAULT_UNIFIED_SETTINGS.shareUsageData })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["shareUsageData"]}
+              checked={settings.shareUsageData}
+              onCheckedChange={(checked) =>
+                updateSettings({ shareUsageData: usageDataMixed ? false : Boolean(checked) })
+              }
+              aria-label={gt("Share usage data")}
+            />
+          }
+        />
+      </SettingsSection>
+
       <SettingsSection id="notifications" title={gt("Notifications")}>
         <NotificationSettings />
         <SettingsRow
