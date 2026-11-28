@@ -527,13 +527,18 @@ export function UsageLimitsSection({
       {pools.map((pool) => {
         const windows = displayLimitWindows(pool);
         return (
-          <Fragment key={pool.driver}>
+          <Fragment key={pool.key}>
             <View className="gap-3">
               <View className="flex-row items-center gap-2 px-1">
                 <ProviderIcon provider={pool.driver} size={18} />
                 <Text className="text-base font-t3-medium text-foreground">
                   {providerClients.get(pool.driver)?.label ?? pool.driver}
                 </Text>
+                {pool.label ? (
+                  <Text numberOfLines={1} className="shrink text-base text-foreground-muted">
+                    · {pool.label}
+                  </Text>
+                ) : null}
               </View>
               {windows.map((window) => {
                 const details =
@@ -631,7 +636,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
   const accounts = collectLimitAccounts(selected);
   const account = accounts.find((candidate) => candidate.key === accountKey);
   const pool = collectLimitPools(accounts, now)
-    .find((candidate) => candidate.driver === account?.driver)
+    .find((candidate) => candidate.accounts.some((member) => member.key === accountKey))
     ?.windows.find((candidate) => candidate.id === windowId && candidate.kind === windowKind);
   const window = pool?.members.find((member) => member.account.key === accountKey)?.window;
   const evenPace = window ? paceRemainingPercent(window, now) : null;
