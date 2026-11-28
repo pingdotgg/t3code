@@ -60,7 +60,8 @@ const SHELL: Interpreter = {
 
 const PYTHON: Interpreter = {
   language: "python",
-  inline: flagIn("-c"),
+  // Bundles like -uc and -IBc; -W and -X take a value, so a c after them is that value.
+  inline: (flag) => /^-[bBdEiIOPqsSuvx]*c$/u.test(flag),
   valueOptions: new Set(["-W", "-X"]),
   scriptFileOptions: new Set(["-m"]),
   stdin: "without-script-file",
@@ -95,8 +96,19 @@ const INTERPRETERS: Record<string, Interpreter> = {
   fish: { language: "fish", inline: flagIn("-c", "--command"), stdin: "without-script-file" },
   node: {
     language: "javascript",
-    inline: flagIn("-e", "--eval", "-p", "--print"),
-    valueOptions: new Set(["-r", "--require", "--import", "--loader", "-C", "--conditions"]),
+    inline: flagIn("-e", "--eval", "-p", "--print", "-pe"),
+    valueOptions: new Set([
+      "-r",
+      "--require",
+      "--import",
+      "--loader",
+      "-C",
+      "--conditions",
+      "--input-type",
+      "--env-file",
+      "--env-file-if-exists",
+      "--experimental-loader",
+    ]),
     stdin: "without-script-file",
   },
   bun: { language: "typescript", inline: flagIn("-e", "--eval", "-p", "--print"), stdin: "never" },
@@ -110,7 +122,8 @@ const INTERPRETERS: Record<string, Interpreter> = {
   },
   ruby: {
     language: "ruby",
-    inline: flagIn("-e"),
+    // Bundles like -ne and -lane; -i, -I, -r and -C take a value, so an e after them is that value.
+    inline: (flag) => /^-[acdlnpsvwyW]*e$/u.test(flag),
     valueOptions: new Set(["-r", "-I", "-C"]),
     stdin: "without-script-file",
   },
@@ -161,7 +174,9 @@ const PROGRAM_WRAPPERS: Record<string, ReadonlySet<string>> = {
   exec: new Set(["-a"]),
   command: new Set(),
   builtin: new Set(),
+  timeout: new Set(["-k", "--kill-after", "-s", "--signal"]),
 };
+PROGRAM_WRAPPERS.gtimeout = PROGRAM_WRAPPERS.timeout!;
 
 const DELIMITER_LANGUAGES: Record<string, string> = {
   py: "python",
@@ -272,6 +287,7 @@ function programIndex(words: ReadonlyArray<Word>): number {
     const name = programName(words[index]!);
     if (!Object.hasOwn(PROGRAM_WRAPPERS, name)) return index;
     const valueOptions = PROGRAM_WRAPPERS[name]!;
+    const isTimeout = name === "timeout" || name === "gtimeout";
     index += 1;
     let optionsEnded = false;
     while (index < words.length) {
@@ -280,11 +296,14 @@ function programIndex(words: ReadonlyArray<Word>): number {
       if (isOption && value === "--") optionsEnded = true;
       // `env -- FOO=1 cmd` still takes assignments after the options end.
       if (isOption || /^[A-Za-z_]\w*=/u.test(value)) {
-        index += isOption && valueOptions.has(value) ? 2 : 1;
+        const takesValue =
+          isOption && (valueOptions.has(value) || (isTimeout && /^-[fpv]*[ks]$/u.test(value)));
+        index += takesValue ? 2 : 1;
       } else {
         break;
       }
     }
+    if (isTimeout) index += 1;
   }
   return index;
 }
@@ -360,7 +379,11 @@ function interpreterArgs(
       optionsEnded = true;
       continue;
     }
-    if (!optionsEnded && flag.startsWith("-") && flag !== "-") {
+    if (
+      !optionsEnded &&
+      (flag.startsWith("-") || (interpreter === SHELL && flag.startsWith("+"))) &&
+      flag !== "-"
+    ) {
       const [name = flag, value] = flag.startsWith("--") ? flag.split(/=(.*)/su) : [flag];
       if (interpreter.scriptFileOptions?.has(name)) {
         if (!interpreter.repeatable) return { scripts, scriptFromFile: true };
@@ -380,7 +403,13 @@ function interpreterArgs(
         if (value === undefined) index += 1;
         continue;
       }
-      if (value === undefined && interpreter.valueOptions?.has(flag)) index += 1;
+      if (
+        value === undefined &&
+        (interpreter.valueOptions?.has(flag) ||
+          (interpreter === SHELL && /^[-+][a-zA-Z]*[oO]$/u.test(flag)))
+      ) {
+        index += 1;
+      }
       continue;
     }
     positionals.push(arg);

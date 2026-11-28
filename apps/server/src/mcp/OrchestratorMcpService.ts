@@ -97,6 +97,7 @@ import {
   subagentStopNotice,
   delegatedTaskProgress,
   delegatedTaskReportRuns,
+  monitorUpdateRunIds,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
   DispatchModeLimit,
@@ -114,6 +115,7 @@ import {
 } from "../orchestration-v2/RestartBackgroundNote.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { placeholderThreadTitle } from "../orchestration-v2/placeholderThreadTitle.ts";
+import { firstLineTitle } from "./firstLineTitle.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
@@ -785,11 +787,7 @@ function latestTerminalResultRun(
   delegatedRun: OrchestrationV2Run | undefined,
   awaitingContinuationRun: OrchestrationV2Run | undefined,
 ): OrchestrationV2Run | undefined {
-  const monitorRunIds = new Set(
-    projection.messages
-      .filter((message) => message.notification?.source.kind === "monitor")
-      .map((message) => message.runId),
-  );
+  const monitorRunIds = monitorUpdateRunIds(projection.messages, projection.runs);
   // A restart-cut run, and each cut run before it in the chain, has no outcome while a
   // continuation is pending, live, or ran to a result.
   const runsById = new Map(projection.runs.map((run) => [run.id, run]));
@@ -906,7 +904,12 @@ function threadTitle(input: {
   readonly title: string | undefined;
   readonly index: number;
 }): string {
-  const detail = input.title?.trim() || input.prompt?.trim();
+  const detail =
+    firstLineTitle(input.title) ||
+    input.prompt
+      ?.trim()
+      .split(/[\r\n\u2028\u2029]/, 1)[0]
+      ?.trim();
   if (!detail) return placeholderThreadTitle(input.parentTitle, input.index);
   if (detail.length <= 80) return detail;
   let end = 77;
@@ -1174,8 +1177,33 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return [item.explanation, ...item.steps.map((step) => `[${step.status}] ${step.text}`)]
         .filter((line): line is string => line !== undefined)
         .join("\n");
-    case "user_input_request":
-      return jsonText(item.questions);
+    case "user_input_request": {
+      if (item.questionAnswer === undefined) return jsonText(item.questions);
+      const attachmentsByQuestionId = Object.fromEntries(
+        Object.entries(item.questionAnswer.attachmentsByQuestionId).flatMap(
+          ([questionId, attachments]) =>
+            attachments === undefined || attachments.length === 0
+              ? []
+              : [
+                  [
+                    questionId,
+                    attachments.map(({ type, id, name, mimeType, sizeBytes }) => ({
+                      type,
+                      id,
+                      name,
+                      mimeType,
+                      sizeBytes,
+                    })),
+                  ],
+                ],
+        ),
+      );
+      return jsonText({
+        answers: item.questionAnswer.answers,
+        ...(Object.keys(attachmentsByQuestionId).length === 0 ? {} : { attachmentsByQuestionId }),
+        questions: item.questions,
+      });
+    }
     case "file_change":
       return [
         item.fileName,
@@ -1919,7 +1947,9 @@ const make = Effect.gen(function* () {
       )
       .pipe(Effect.mapError(threadManagementFailure));
     const childRun = delegatedTaskRun(childControls, task);
-    const progress = delegatedTaskProgress(childControls);
+    const progress = delegatedTaskProgress(childControls, {
+      unsettled: task.result === null && task.cancelledRunId === undefined,
+    });
     const followupRuns =
       childRun?.delegatedTaskId === task.id ? delegatedTaskRuns(childControls, task.id) : undefined;
     const taskResultRun =
@@ -2475,10 +2505,11 @@ const make = Effect.gen(function* () {
       const modelSelection =
         parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
       // Never end on a lone high surrogate, which renders as a broken character.
-      const derivedTitle = (input.prompt.split("\n")[0]?.trim() ?? "")
+      const derivedTitle = (input.prompt.split(/[\r\n\u2028\u2029]/, 1)[0]?.trim() ?? "")
         .slice(0, 80)
         .replace(/[\uD800-\uDBFF]$/, "");
-      const title = input.title ?? (derivedTitle.length > 0 ? derivedTitle : "Scheduled task");
+      const title =
+        firstLineTitle(input.title) ?? (derivedTitle.length > 0 ? derivedTitle : "Scheduled task");
       // Scope the idempotency key by provider session so two callers
       // reusing the same clientRequestId cannot collide on one task row.
       const commandId =
@@ -2596,7 +2627,7 @@ const make = Effect.gen(function* () {
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           requireExisting: true,
-          title: input.title ?? existing.title,
+          title: firstLineTitle(input.title) ?? existing.title,
           prompt: input.prompt ?? existing.prompt,
           enabled: input.enabled ?? existing.enabled,
           schedule: input.schedule ?? existing.schedule,
@@ -2876,6 +2907,11 @@ const make = Effect.gen(function* () {
             enabledForCaller ? provider : { ...provider, enabled: false },
             orchestrationCapableInstanceIds.has(provider.instanceId),
           );
+          const isFavorite = (model: ServerProviderModel) =>
+            (settings.favorites ?? []).some(
+              (favorite) =>
+                favorite.provider === provider.instanceId && favorite.model === model.slug,
+            );
           const { listed, omitted } = listCapabilityModels({
             provider,
             preferences: settings.providerModelPreferences?.[provider.instanceId],
@@ -2883,10 +2919,7 @@ const make = Effect.gen(function* () {
             isPinned: (model) =>
               model.isCustom ||
               (inherited?.instanceId === provider.instanceId && inherited.model === model.slug) ||
-              (settings.favorites ?? []).some(
-                (favorite) =>
-                  favorite.provider === provider.instanceId && favorite.model === model.slug,
-              ),
+              isFavorite(model),
           });
           return {
             providerInstanceId: provider.instanceId,
@@ -2900,6 +2933,7 @@ const make = Effect.gen(function* () {
                   ? {}
                   : { label: model.name }),
                 ...(options.length === 0 ? {} : { options: options.map(capabilityModelOption) }),
+                ...(isFavorite(model) ? { favorite: true as const } : {}),
               };
             }),
             ...(omitted === 0 ? {} : { omittedModels: omitted }),
@@ -2925,6 +2959,7 @@ const make = Effect.gen(function* () {
       };
     }),
     delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (callerScope, input) {
+      const title = firstLineTitle(input.title);
       const environmentId =
         input.target === undefined
           ? undefined
@@ -2935,6 +2970,7 @@ const make = Effect.gen(function* () {
         // The task's child runs as an ordinary thread there; this thread keeps the task.
         const { taskId } = yield* remoteDelegation.delegate(scope, {
           ...input,
+          ...(title === undefined ? {} : { title }),
           target: { ...input.target, environmentId },
         });
         return yield* input.mode === "wait"
@@ -3059,7 +3095,7 @@ const make = Effect.gen(function* () {
               parentRunId: parentRun.id,
               parentNodeId,
               task: taskPrompt(input),
-              ...(input.title === undefined ? {} : { title: input.title }),
+              ...(title === undefined ? {} : { title }),
               modelSelection: target.modelSelection,
               runtimeMode,
               interactionMode,
@@ -3219,16 +3255,23 @@ const make = Effect.gen(function* () {
             ),
           );
         const stopped = yield* threadManagement
-          .getThreadRecords(childThreadId, ["runs"])
+          .getThreadRecords(childThreadId, ["runs", "messages"], { messageRoles: ["user"] })
           .pipe(Effect.mapError(threadManagementFailure));
+        const parentMessageIds = new Set(
+          stopped.messages
+            .filter((message) => message.senderThreadId === scope.thread.threadId)
+            .map((message) => message.id),
+        );
         for (const run of stopped.runs) {
           if (
             run.status !== "queued" ||
-            (run.delegatedTaskId !== input.taskId && run.id !== current.childRunId)
+            (run.delegatedTaskId !== input.taskId &&
+              run.id !== current.childRunId &&
+              !parentMessageIds.has(run.userMessageId))
           )
             continue;
           // Stop preserves the queue for Resume. Cancelling a task must also
-          // remove that task's queued turn, including a previously held one.
+          // remove its queued turns, including the parent's follow-ups and held ones.
           yield* threadManagement
             .dispatch({
               type: "queued-run.cancel",

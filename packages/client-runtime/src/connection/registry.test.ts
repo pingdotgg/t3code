@@ -2199,6 +2199,130 @@ describe("EnvironmentRegistry routes", () => {
     }),
   );
 
+  it.effect("renames every route and keeps profiles and credentials", () =>
+    Effect.gen(function* () {
+      const environmentId = LAN_TARGET.environmentId;
+      const learnedId = `learned:${environmentId}:http://100.64.0.9:3773@${LAN_TARGET.connectionId}`;
+      const sshProfile = new SshConnectionProfile({ ...SSH_PROFILE, environmentId });
+      const harness = yield* makeHarness(
+        [
+          new BearerConnectionTarget({ ...LAN_TARGET, connectionId: learnedId }),
+          LAN_TARGET,
+          new SshConnectionTarget({ ...SSH_CONNECTION, environmentId }),
+          SECOND_RELAY_TARGET,
+        ],
+        [
+          new BearerConnectionProfile({ ...LAN_PROFILE, connectionId: learnedId, learned: true }),
+          LAN_PROFILE,
+          sshProfile,
+        ],
+        [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* awaitConnectionState(
+          registry,
+          environmentId,
+          (state) => state.phase === "connected",
+        );
+        const profiles = yield* Ref.get(harness.storedProfiles);
+
+        yield* registry.setLabel(environmentId, "  Studio  ");
+
+        expect(
+          routesOf(yield* Ref.get(harness.storedTargets), environmentId).map(
+            (target) => target.label,
+          ),
+        ).toEqual(["Studio", "Studio", "Studio"]);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(environmentId)?.target.label,
+        ).toBe("Studio");
+        expect(
+          yield* registry.run(
+            environmentId,
+            EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+              Effect.map((supervisor) => supervisor.target.label),
+            ),
+          ),
+        ).toBe("Studio");
+        yield* awaitConnectionState(
+          registry,
+          environmentId,
+          (state) => state.phase === "connected",
+        );
+        expect(yield* Ref.get(harness.storedProfiles)).toEqual(profiles);
+        expect((yield* Ref.get(harness.storedCredentials)).get(LAN_TARGET.connectionId)).toEqual(
+          BEARER_CREDENTIAL,
+        );
+
+        const error = yield* registry.setLabel(environmentId, "   ").pipe(Effect.flip);
+        expect(error._tag).toBe("ConnectionBlockedError");
+        const relayError = yield* registry
+          .setLabel(SECOND_RELAY_TARGET.environmentId, "Studio")
+          .pipe(Effect.flip);
+        expect(relayError._tag).toBe("ConnectionBlockedError");
+        expect(
+          routesOf(yield* Ref.get(harness.storedTargets), SECOND_RELAY_TARGET.environmentId).map(
+            (target) => target.label,
+          ),
+        ).toEqual([SECOND_RELAY_TARGET.label]);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("a renamed environment keeps its label when a route is added or re-paired", () =>
+    Effect.gen(function* () {
+      const environmentId = LAN_TARGET.environmentId;
+      const harness = yield* makeHarness(
+        [LAN_TARGET],
+        [LAN_PROFILE],
+        [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* awaitConnectionState(
+          registry,
+          environmentId,
+          (state) => state.phase === "connected",
+        );
+        yield* registry.setLabel(environmentId, "Studio");
+
+        const secondTarget = new BearerConnectionTarget({
+          ...LAN_TARGET,
+          label: "server-name",
+          connectionId: "bearer:lan-2",
+        });
+        yield* registry.register(
+          lanRegistration(
+            secondTarget,
+            new BearerConnectionProfile({
+              ...LAN_PROFILE,
+              connectionId: secondTarget.connectionId,
+              label: secondTarget.label,
+              httpBaseUrl: "http://192.168.1.11:3773/",
+              wsBaseUrl: "ws://192.168.1.11:3773/",
+            }),
+          ),
+        );
+        yield* registry.register(
+          lanRegistration(
+            new BearerConnectionTarget({ ...LAN_TARGET, label: "server-name" }),
+            new BearerConnectionProfile({ ...LAN_PROFILE, label: "server-name" }),
+          ),
+        );
+
+        expect(
+          routesOf(yield* Ref.get(harness.storedTargets), environmentId).map(
+            (target) => target.label,
+          ),
+        ).toEqual(["Studio", "Studio"]);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(environmentId)?.target.label,
+        ).toBe("Studio");
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("removing the last route forgets the environment", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness(

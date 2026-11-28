@@ -110,6 +110,7 @@ import { configuredHostedAppUrl } from "../hostedPairing";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { SidebarFolderDrop } from "./sidebar/SidebarFolderDrop";
 import {
+  groupIconFallbacks,
   pickableProjectGroups,
   selectProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
@@ -178,6 +179,7 @@ import { ProjectRowActions } from "./ProjectComboboxRow";
 import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
+  canMarkLatestRunUnread,
   isThreadTriageAction,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
@@ -343,8 +345,11 @@ const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, SidebarProviderEntry> = new Ma
 const EMPTY_THREADS: readonly EnvironmentThreadShell[] = [];
 const EMPTY_DRAFT_IDS: readonly DraftId[] = [];
 
+const FOLDER_PREVIEW_COUNT = 6;
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
+const REVEAL_ROW_CLASS_NAME =
+  "flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground aria-disabled:cursor-default";
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
@@ -486,6 +491,7 @@ function useSidebarThreads(input: {
   // Shared with the old per-project sidebar, so folders keep their open state.
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
+  const [showAllFolderKeys, setShowAllFolderKeys] = useState<ReadonlySet<string>>(() => new Set());
   const [settledTail, setSettledTail] = useState({
     scopeKey: projectScopeKey,
     count: SETTLED_TAIL_INITIAL_COUNT,
@@ -550,16 +556,23 @@ function useSidebarThreads(input: {
             projectExpandedById,
             sidebarFolderExpansionKeys(folder.group),
           );
+          const showAll = !collapsed && showAllFolderKeys.has(folder.group.projectKey);
+          // A closed folder previews nothing; either way the open thread stays listed.
+          const previewCount = collapsed ? 0 : FOLDER_PREVIEW_COUNT;
+          const tail = folder.threads.slice(previewCount);
+          const hidden = tail.filter((thread) => threadShellKey(thread) !== routeRowThreadKey);
+          const listsAll = showAll || hidden.length === 0;
           return {
             group: folder.group,
             collapsed,
-            // A closed folder still shows the open thread, and hints at the rest.
-            threads: collapsed
-              ? routeThreadOnly(folder.threads, routeRowThreadKey)
-              : folder.threads,
-            hiddenThreads: collapsed
-              ? folder.threads.filter((thread) => threadShellKey(thread) !== routeRowThreadKey)
-              : EMPTY_THREADS,
+            threads: listsAll
+              ? folder.threads
+              : [
+                  ...folder.threads.slice(0, previewCount),
+                  ...routeThreadOnly(tail, routeRowThreadKey),
+                ],
+            hiddenThreads: listsAll ? EMPTY_THREADS : hidden,
+            canShowLess: showAll && hidden.length > 0,
           };
         });
   const orderedThreads = [
@@ -612,6 +625,12 @@ function useSidebarThreads(input: {
       const keys = sidebarFolderExpansionKeys(group);
       setProjectExpanded(keys, !resolveProjectExpanded(projectExpandedById, keys));
     },
+    toggleProjectFolderShowAll: (projectKey: string) =>
+      setShowAllFolderKeys((current) => {
+        const next = new Set(current);
+        if (!next.delete(projectKey)) next.add(projectKey);
+        return next;
+      }),
     renderedSettledThreads,
     visibleSnoozedThreads,
     visibleWorkingThreads,
@@ -1086,7 +1105,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   } | null>(null);
   const snoozingThreadKeysRef = useRef(new Set<string>());
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
-  const openAddProjectCommandPalette = () => openCommandPalette({ open: "add-project" });
+  const openAddProjectCommandPalette = () => {
+    if (isMobile) setOpenMobile(false);
+    openCommandPalette({ open: "add-project" });
+  };
   const routeThreadRef = resolveActiveThreadRouteRef(
     routeTarget,
     routeDraftThread,
@@ -1356,6 +1378,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     toggleWorkingShelf,
     projectFolders,
     toggleProjectFolder,
+    toggleProjectFolderShowAll,
     renderedSettledThreads,
     visibleSnoozedThreads,
     visibleWorkingThreads,
@@ -1545,7 +1568,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       threadSearchMatchKey({ environmentId: thread.environmentId, threadId: thread.id }),
     );
     const query = threadSearch.query;
-    clearThreadSearch();
     navigateToThread(ref);
     if (match) openThreadFindOnQuery(scopedThreadKey(ref), findForMessageMatch(match, query));
   };
@@ -1947,6 +1969,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }
     })();
   };
+  const attemptPinStable = useStableCallback(attemptPin);
   const attemptUnpin = (threadRef: ScopedThreadRef) => {
     void (async () => {
       const result = await confirmAndUnpinThread(threadRef);
@@ -2060,7 +2083,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const listMotionLayoutKey = [
     sidebarListItemsKey,
     projectFolders
-      ?.map((folder) => `${folder.group.projectKey}:${folder.threads.length}`)
+      ?.map(
+        (folder) =>
+          `${folder.group.projectKey}:${folder.canShowLess}:${folder.threads.map(threadShellKey).join(",")}`,
+      )
       .join("\n") ?? "",
     visibleDraftSessionCount,
     routeDraftIdForRows ?? "",
@@ -2394,6 +2420,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const unpinMenuItem = buildBulkUnpinContextMenuItem({
         pinnedCount: pinnedSelectedThreads.length,
       });
+      // Same rule as the single-thread menu: only a settled, completed run can be marked unread.
+      const markUnreadThreads = selectedThreads.filter(
+        (thread) =>
+          canMarkLatestRunUnread(thread.latestRun) && threadRuntimeCanArchive(thread.runtime),
+      );
       // Presets sync across environments, so the first selected thread's stand for all.
       const menuOpenedAt = new Date();
       const snoozePresets = resolveSnoozePresets(
@@ -2409,7 +2440,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               : []),
             {
               id: "settle",
-              label: gt("Settle ({count})", { count }),
+              label: gt("Settle ({count})", { count: settlingThreads.length }),
               disabled: settlingThreads.length === 0 || !canOperateThreads(settlingThreads, true),
             },
             ...(canSnoozeSelection
@@ -2445,7 +2476,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   },
                 ]
               : []),
-            { id: "mark-unread", label: gt("Mark unread ({count})", { count }) },
+            ...(markUnreadThreads.length > 0
+              ? [
+                  {
+                    id: "mark-unread" as const,
+                    label: gt("Mark unread ({count})", { count: markUnreadThreads.length }),
+                  },
+                ]
+              : []),
             {
               id: "delete",
               label: gt("Delete ({count})", { count }),
@@ -2555,9 +2593,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         return;
       }
       if (clicked.value === "mark-unread") {
-        for (const threadKey of threadKeys) {
-          const thread = threadByKeyRef.current.get(threadKey);
-          if (thread) markThreadUnread(scopeThreadRef(thread.environmentId, thread.id));
+        for (const thread of markUnreadThreads) {
+          markThreadUnread(scopeThreadRef(thread.environmentId, thread.id));
         }
         clearSelection();
         return;
@@ -2742,7 +2779,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
               isRegeneratingTitle,
               isRunning: !threadRuntimeCanArchive(thread.runtime),
-              hasCompletedRun: thread.latestRun?.completedAt != null,
+              hasCompletedRun: canMarkLatestRunUnread(thread.latestRun),
               canShareWithGuest: appAtomRegistry.get(
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
@@ -2798,6 +2835,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               });
             return;
           case "new-thread-on-branch": {
+            if (isMobile) setOpenMobile(false);
             const result = await settlePromise(() =>
               handleNewThread(scopeProjectRef(thread.environmentId, thread.projectId), {
                 branch: thread.branch,
@@ -3160,13 +3198,24 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 : "-ml-1 flex rounded-[25%] bg-sidebar ring-2 ring-sidebar"
                             }
                           >
-                            <ProjectFavicon project={project} className="size-3.5" />
+                            <ProjectFavicon
+                              project={project}
+                              fallbackProjects={groupIconFallbacks(project.memberProjects, project)}
+                              className="size-3.5"
+                            />
                           </span>
                         ))}
                       </span>
                     ) : scopedProjectGroups[0] ? (
                       <span className="flex shrink-0">
-                        <ProjectFavicon project={scopedProjectGroups[0]} className="size-4" />
+                        <ProjectFavicon
+                          project={scopedProjectGroups[0]}
+                          fallbackProjects={groupIconFallbacks(
+                            scopedProjectGroups[0].memberProjects,
+                            scopedProjectGroups[0],
+                          )}
+                          className="size-4"
+                        />
                       </span>
                     ) : (
                       <FolderIcon className="size-4" />
@@ -3260,7 +3309,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           >
                             <ProjectScopeRowIcon isSelected={isSelected}>
                               {project ? (
-                                <ProjectFavicon project={project} className="size-4 shrink-0" />
+                                <ProjectFavicon
+                                  project={project}
+                                  fallbackProjects={groupIconFallbacks(
+                                    project.memberProjects,
+                                    project,
+                                  )}
+                                  className="size-4 shrink-0"
+                                />
                               ) : (
                                 <FolderIcon className="size-4 shrink-0" />
                               )}
@@ -3602,6 +3658,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onUnsettle={attemptUnsettle}
                           onSnooze={attemptSnooze}
                           onUnsnooze={attemptUnsnooze}
+                          onPin={attemptPinStable}
                           onUnpin={attemptUnpin}
                           onAcknowledgeWoke={acknowledgeWoke}
                           onFileDropThreads={handleThreadFileDrop}
@@ -3632,6 +3689,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       }
                       if (projectFolders !== null && item.marker === "active-placeholder") {
                         for (const folder of projectFolders) {
+                          const folderRow = sidebarFolderRowId(folder.group.projectKey);
+                          const showMore = !folder.collapsed && folder.hiddenThreads.length > 0;
                           items.push(
                             <SidebarProjectFolderHeader
                               key={`project-folder:${folder.group.projectKey}`}
@@ -3644,12 +3703,35 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             />,
                           );
                           for (const thread of folder.threads) {
+                            items.push(renderThreadRow(thread, "active", folderRow));
+                          }
+                          if (showMore || folder.canShowLess) {
                             items.push(
-                              renderThreadRow(
-                                thread,
-                                "active",
-                                sidebarFolderRowId(folder.group.projectKey),
-                              ),
+                              <li
+                                key={`project-folder-more:${folder.group.projectKey}`}
+                                className="list-none"
+                              >
+                                <button
+                                  type="button"
+                                  data-sidebar-row={`${folderRow}:more`}
+                                  data-sidebar-parent={folderRow}
+                                  onClick={() =>
+                                    toggleProjectFolderShowAll(folder.group.projectKey)
+                                  }
+                                  className={REVEAL_ROW_CLASS_NAME}
+                                >
+                                  <ChevronDownIcon
+                                    aria-hidden
+                                    className={cn("size-4 shrink-0", !showMore && "rotate-180")}
+                                  />
+                                  {showMore
+                                    ? gt(
+                                        "{count, plural, one {Show {count} more} other {Show {count} more}}",
+                                        { count: folder.hiddenThreads.length },
+                                      )
+                                    : gt("Show less")}
+                                </button>
+                              </li>,
                             );
                           }
                         }
@@ -3779,7 +3861,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           olderSettledShelf.retry();
                           showMoreSettled();
                         }}
-                        className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground aria-disabled:cursor-default"
+                        className={REVEAL_ROW_CLASS_NAME}
                       >
                         {/* Plus means "add", so revealing more uses a chevron. */}
                         <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
