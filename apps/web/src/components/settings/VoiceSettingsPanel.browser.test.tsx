@@ -953,3 +953,41 @@ it("records from the first connected microphone in the saved order", async () =>
     .element(screen.getByRole("button", { name: "Forget System default" }))
     .not.toBeInTheDocument();
 });
+
+it("keeps an unplugged microphone disconnected when an older scan finishes last", async () => {
+  const previous = getClientSettings();
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => __setClientSettingsForTests(previous));
+  __setClientSettingsForTests({
+    ...previous,
+    voiceMicrophones: [{ kind: "device", deviceId: "usb", label: "USB test microphone" }],
+  });
+  const microphone = (deviceId: string, label: string): MediaDeviceInfo => ({
+    kind: "audioinput",
+    deviceId,
+    groupId: deviceId,
+    label,
+    toJSON: () => ({}),
+  });
+  const internal = microphone("internal", "Built-in microphone");
+  const usb = microphone("usb", "USB test microphone");
+  const olderScan = deferred<MediaDeviceInfo[]>();
+  using _enumerate = vi
+    .spyOn(navigator.mediaDevices, "enumerateDevices")
+    .mockReturnValueOnce(olderScan.promise)
+    .mockResolvedValue([internal]);
+  await using screen = await render(
+    <SettingsScopeProvider search={{}} onChange={() => {}}>
+      <VoiceSettingsPanel />
+    </SettingsScopeProvider>,
+  );
+
+  const microphones = screen.getByRole("list", { name: "Microphones, preferred first" });
+  const usbRow = microphones.getByRole("listitem").filter({ hasText: "USB test microphone" });
+  await userEvent.click(screen.getByRole("button", { name: "Refresh microphones" }));
+  await expect.element(microphones.getByText("Built-in microphone")).toBeVisible();
+  expect(usbRow.element().textContent).toContain("Not connected");
+
+  await act(() => olderScan.resolve([internal, usb]));
+  expect(usbRow.element().textContent).toContain("Not connected");
+});
