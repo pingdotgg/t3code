@@ -43,8 +43,17 @@ const { getMediaAccessStatus, askForMediaAccess } = vi.hoisted(() => ({
   askForMediaAccess: vi.fn<(device: string) => Promise<boolean>>(() => Promise.resolve(true)),
 }));
 
+const electronApp = vi.hoisted(() => ({ userAgentFallback: "" }));
+const defaultSession = vi.hoisted(() => ({ setUserAgent: vi.fn() }));
+
 vi.mock("electron", () => ({
   app: {
+    get userAgentFallback() {
+      return electronApp.userAgentFallback;
+    },
+    set userAgentFallback(value: string) {
+      electronApp.userAgentFallback = value;
+    },
     on: (eventName: string, listener: (...args: unknown[]) => void) => {
       appListeners.set(eventName, listener);
     },
@@ -54,6 +63,7 @@ vi.mock("electron", () => ({
   },
   BrowserWindow: { fromWebContents },
   session: {
+    defaultSession,
     fromPartition,
   },
   systemPreferences: { getMediaAccessStatus, askForMediaAccess },
@@ -223,15 +233,20 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("keeps the native User-Agent except for the Electron token sent to Teams", () =>
+  it.effect("presents preview sessions and their workers as Chrome, not Electron", () =>
     Effect.gen(function* () {
       const nativeUserAgent =
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Alpha)/0.0.33 Chrome/146.0.7680.216 Electron/41.5.0 Safari/537.36";
-      const teamsUserAgent =
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Alpha)/0.0.33 Chrome/146.0.7680.216 Safari/537.36";
+      const chromeUserAgent = BrowserSession.chromeUserAgent(
+        nativeUserAgent,
+        process.versions.chrome ?? "",
+      );
+      electronApp.userAgentFallback = nativeUserAgent;
+      defaultSession.setUserAgent.mockReset();
       fromPartition.mockReset();
       fromPartition.mockImplementation((partition: string) => {
-        let userAgent = nativeUserAgent;
+        // Like Electron, a new session starts from the app-wide fallback.
+        const userAgent = electronApp.userAgentFallback;
         const browserSession = {
           clearCache: vi.fn(() => Promise.resolve()),
           clearStorageData: vi.fn(() => Promise.resolve()),
@@ -240,9 +255,7 @@ describe("BrowserSession", () => {
           getUserAgent: vi.fn(() => userAgent),
           setPermissionRequestHandler: vi.fn(),
           setPermissionCheckHandler: vi.fn(),
-          setUserAgent: vi.fn((next: string) => {
-            userAgent = next;
-          }),
+          setUserAgent: vi.fn(),
           webRequest: { onBeforeSendHeaders: vi.fn() },
         };
         sessions.set(partition, browserSession);
@@ -250,40 +263,52 @@ describe("BrowserSession", () => {
       });
 
       const browserSessions = yield* BrowserSession.BrowserSession;
-      const partition = yield* browserSessions.getPartition("scope-a");
       yield* browserSessions.getSession("scope-a");
+      yield* browserSessions.getSession("scope-b", false);
 
-      const browserSession = sessions.get(partition);
-      assert.isDefined(browserSession);
-      assert.strictEqual(browserSession.getUserAgent(), nativeUserAgent);
-
-      // Teams redirects Electron to an error page before sign-in; every other host sees the native one.
-      const calls = browserSession.webRequest.onBeforeSendHeaders.mock.calls;
-      assert.strictEqual(calls.length, 1);
-      const [filter, listener] = calls[0] ?? [];
-      assert.deepStrictEqual(filter, { urls: ["http://*/*", "https://*/*"] });
-      const send = (
-        requestHeaders: Record<string, string>,
-        url = "https://teams.microsoft.com/v2/",
-        resourceType = "xhr",
-      ) => {
-        let response: { requestHeaders?: Record<string, string> } | undefined;
-        listener({ url, resourceType, requestHeaders }, (next: typeof response) => {
-          response = next;
-        });
-        return response;
-      };
-      for (const key of ["User-Agent", "user-agent"]) {
-        const requestHeaders = { [key]: nativeUserAgent, Accept: "*/*" };
-        assert.deepStrictEqual(send(requestHeaders), {
-          requestHeaders: { [key]: teamsUserAgent, Accept: "*/*" },
-        });
-        assert.strictEqual(requestHeaders[key], nativeUserAgent);
+      // Workers read only the fallback; a session override alone leaves them on Electron's.
+      assert.strictEqual(electronApp.userAgentFallback, chromeUserAgent);
+      // The app window keeps the identity it had, once, before any preview session exists.
+      assert.deepStrictEqual(defaultSession.setUserAgent.mock.calls, [[nativeUserAgent]]);
+      for (const browserSession of sessions.values()) {
+        assert.strictEqual(browserSession.getUserAgent(), chromeUserAgent);
+        assert.strictEqual(browserSession.setUserAgent.mock.calls.length, 0);
+        const [, listener] = browserSession.webRequest.onBeforeSendHeaders.mock.calls[0] ?? [];
+        let response: unknown;
+        listener(
+          {
+            url: "https://teams.microsoft.com/v2/",
+            resourceType: "xhr",
+            requestHeaders: { "User-Agent": chromeUserAgent },
+          },
+          (next: unknown) => {
+            response = next;
+          },
+        );
+        assert.deepStrictEqual(response, {});
       }
-      assert.deepStrictEqual(send({ Accept: "*/*" }), {});
-      assert.deepStrictEqual(send({ "User-Agent": nativeUserAgent }, "https://example.com/"), {});
     }).pipe(Effect.provide(layer)),
   );
+
+  it("drops only the app and Electron tokens, as Chrome's reduced User-Agent", () => {
+    for (const [native, chrome] of [
+      [
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Dev)/0.0 Chrome/152.0.7977.169 Electron/44.10.1 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+      ],
+      [
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) T3CodeNightly/0.1.8-nightly.20261104.4179 Chrome/152.0.7977.169 Electron/44.10.1 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+      ],
+      [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) T3CodeBeta/0.1.9 Chrome/152.0.7977.169 Electron/44.10.1 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+      ],
+    ] as const) {
+      assert.strictEqual(BrowserSession.chromeUserAgent(native, "152.0.7977.169"), chrome);
+      assert.strictEqual(BrowserSession.chromeUserAgent(chrome, "152.0.7977.169"), chrome);
+    }
+  });
 
   it.effect("adds the renderer's client hints to secure navigations, which Electron omits", () =>
     Effect.gen(function* () {

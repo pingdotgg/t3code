@@ -1,6 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { Certificate, Session, WebContents } from "electron";
-import { BrowserWindow, session, systemPreferences } from "electron";
+import { app, BrowserWindow, session, systemPreferences } from "electron";
 import { msg } from "gt-i18n";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -63,11 +63,6 @@ const externalProtocolPromptUrl = (rawUrl: string | undefined): string | null =>
   }
 };
 
-// Teams sends Electron User-Agents to an error page before sign-in. Electron allows one listener per session.
-const isTeamsUrl = (url: string): boolean =>
-  url.startsWith("https://teams.cloud.microsoft/") ||
-  url.startsWith("https://teams.microsoft.com/");
-
 const GREASE_CHARS = [" ", "(", ":", "-", ".", "/", ")", ";", "=", "?", "_"];
 const GREASE_VERSIONS = ["8", "99", "24"];
 
@@ -88,6 +83,13 @@ export const lowEntropyClientHints = (
     "sec-ch-ua-platform": `"${platform === "darwin" ? "macOS" : platform === "win32" ? "Windows" : "Linux"}"`,
   };
 };
+
+/** Chrome's reduced User-Agent on this engine: Electron's own without its app and `Electron/` tokens. */
+export const chromeUserAgent = (nativeUserAgent: string, chromeVersion: string): string =>
+  nativeUserAgent.replace(
+    /\(KHTML, like Gecko\) .* Safari\/537\.36$/,
+    `(KHTML, like Gecko) Chrome/${Number.parseInt(chromeVersion, 10)}.0.0.0 Safari/537.36`,
+  );
 
 const isPotentiallyTrustworthy = (rawUrl: string): boolean => {
   try {
@@ -711,6 +713,15 @@ export const make = Effect.gen(function* BrowserSessionMake() {
       if (existing) return Effect.succeed([existing, sessions] as const);
       return Effect.try({
         try: () => {
+          // Sites refuse the app and Electron tokens. Workers read only the app-wide fallback, and a
+          // page whose workers disagree with it fails Turnstile (600010), so a session override can't
+          // do this. The app window's session follows the fallback too, so it is pinned first.
+          const nativeUserAgent = app.userAgentFallback;
+          const previewUserAgent = chromeUserAgent(nativeUserAgent, process.versions.chrome);
+          if (previewUserAgent !== nativeUserAgent) {
+            session.defaultSession.setUserAgent(nativeUserAgent);
+            app.userAgentFallback = previewUserAgent;
+          }
           const browserSession = session.fromPartition(partition);
           // Location and clipboard decisions are remembered separately for each origin.
           const permissionDecisions = {
@@ -856,7 +867,6 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               },
             );
           };
-          // Rewriting Electron's native User-Agent makes Turnstile fail integrity checks with error 600010.
           browserSession.setPermissionRequestHandler(
             (webContents, permission, callback, details) => {
               if (permission === "openExternal") {
@@ -916,24 +926,13 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           browserSession.webRequest.onBeforeSendHeaders(
             { urls: ["http://*/*", "https://*/*"] },
             ({ url, resourceType, requestHeaders }, callback) => {
-              let next = requestHeaders;
-              if (
+              callback(
                 (resourceType === "mainFrame" || resourceType === "subFrame") &&
-                !Object.keys(requestHeaders).some((name) => name.toLowerCase() === "sec-ch-ua") &&
-                isPotentiallyTrustworthy(url)
-              ) {
-                next = { ...next, ...clientHints };
-              }
-              if (isTeamsUrl(url)) {
-                const userAgent = Object.entries(next).find(
-                  ([name]) => name.toLowerCase() === "user-agent",
-                );
-                if (userAgent !== undefined) {
-                  const [name, value] = userAgent;
-                  next = { ...next, [name]: value.replace(/ Electron\/\S+/, "") };
-                }
-              }
-              callback(next === requestHeaders ? {} : { requestHeaders: next });
+                  !Object.keys(requestHeaders).some((name) => name.toLowerCase() === "sec-ch-ua") &&
+                  isPotentiallyTrustworthy(url)
+                  ? { requestHeaders: { ...requestHeaders, ...clientHints } }
+                  : {},
+              );
             },
           );
           return browserSession;
