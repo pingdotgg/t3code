@@ -783,6 +783,7 @@ Third}`;
       '<text:p>Wait near the <text:span text:style-name="T2">old blue or </text:span>red marker.</text:p>',
       '<text:p>Shown <text:span text:style-name="Shown">again</text:span>.</text:p>',
       '<text:p>Bring your <text:span text:style-name="Retired">draft or permit</text:span>badge.</text:p>',
+      '<text:p>Take <text:span text:style-name="Retired">the old <text:span text:style-name="Shown">the new</text:span><text:span> stairs</text:span></text:span> up.</text:p>',
       "</office:text></office:body></office:document-content>",
     ].join("");
     const styles =
@@ -796,7 +797,7 @@ Third}`;
     );
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html).toBe(
-      "<p>Use  the north entrance.</p><p>Wait near the red marker.</p><p>Shown <span>again</span>.</p><p>Bring your badge.</p>",
+      "<p>Use  the north entrance.</p><p>Wait near the red marker.</p><p>Shown <span>again</span>.</p><p>Bring your badge.</p><p>Take <span>the new</span> up.</p>",
     );
   });
 

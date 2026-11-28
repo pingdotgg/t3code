@@ -74,8 +74,9 @@ function odfListStart(node: XmlNode | undefined): number | undefined {
   const value = Number(start);
   return value >= 0 && value <= 2_147_483_647 ? value : undefined;
 }
-// Writer hides text whose character style sets text:display="none"; a style without it inherits from its parent.
-function odfSpanHidden(styles: Map<string, XmlNode>, name = ""): boolean {
+// Writer hides text whose character style sets text:display="none"; a style without it inherits from its
+// parent style, and a span whose styles set nothing inherits from the enclosing span.
+function odfSpanHidden(styles: Map<string, XmlNode>, name = ""): boolean | undefined {
   for (const seen = new Set<string>(); name && !seen.has(name);) {
     seen.add(name);
     const style = styles.get(`span\n${name}`);
@@ -83,7 +84,7 @@ function odfSpanHidden(styles: Map<string, XmlNode>, name = ""): boolean {
     if (display) return display === "none";
     name = style?.attrs["style:parent-style-name"] ?? "";
   }
-  return false;
+  return undefined;
 }
 async function odfHtml(
   node: XmlNode,
@@ -94,7 +95,15 @@ async function odfHtml(
   list: [string, number] = ["", 0],
   inOrderedList = false,
   listEnds = new Map<string, number>(),
+  hidden = false,
 ): Promise<string> {
+  if (
+    hidden &&
+    ["#text", "text:s", "text:tab", "text:line-break", "text:note", "draw:image"].includes(
+      node.name,
+    )
+  )
+    return "";
   if (node.name === "#text") return pipe(text(node), escape, boundedMarkup);
   if (node.name === "text:s" || node.name === "text:tab")
     return boundedMarkup(
@@ -138,8 +147,7 @@ async function odfHtml(
       "text:bibliography-source",
       "table:covered-table-cell",
     ].includes(node.name) ||
-    (node.name === "text:section" && node.attrs["text:display"]?.trim() === "none") ||
-    (node.name === "text:span" && odfSpanHidden(listStyles, node.attrs["text:style-name"]))
+    (node.name === "text:section" && node.attrs["text:display"]?.trim() === "none")
   )
     return "";
   const childImageAlt =
@@ -151,6 +159,10 @@ async function odfHtml(
           .join(" ")
       : "";
   let children = "";
+  const childHidden =
+    node.name === "text:span"
+      ? (odfSpanHidden(listStyles, node.attrs["text:style-name"]) ?? hidden)
+      : hidden;
   const repeatedRow =
     node.name === "table:table-row"
       ? Number(node.attrs["table:number-rows-repeated"]) > 1
@@ -183,6 +195,7 @@ async function odfHtml(
       nextList,
       numberingLevel !== undefined,
       listEnds,
+      childHidden,
     );
   const tags: Record<string, string> = {
     "text:p": "p",
@@ -197,7 +210,7 @@ async function odfHtml(
   const level = node.name === "text:h" ? Number(node.attrs["text:outline-level"]) : NaN;
   const tag =
     Number.isSafeInteger(level) && level >= 1 ? `h${Math.min(level, 6)}` : tags[node.name];
-  if (!tag) return children;
+  if (!tag || (tag === "span" && childHidden)) return children;
   const count =
     tag === "tr"
       ? repeat(node.attrs["table:number-rows-repeated"], TABLE_PREVIEW_MAX_ROWS)
