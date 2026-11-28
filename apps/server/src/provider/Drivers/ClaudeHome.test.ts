@@ -120,4 +120,22 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         ).toBe("custom");
       }),
   );
+
+  it.effect(
+    "leaves API-key processes on an entrypoint Anthropic bills to subscriber API credits (#29393)",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const homePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
+        const instance = [{ name: "ANTHROPIC_API_KEY", value: "sk-ant-test", sensitive: true }];
+
+        const { CLAUDE_CODE_ENTRYPOINT } = yield* mergeClaudeProcessEnvironment(
+          { homePath },
+          instance,
+          {},
+        );
+        // Unset lets the Agent SDK apply its `sdk-ts` default; `t3-code` fails with "Credit balance is too low".
+        expect([undefined, "sdk-ts"]).toContain(CLAUDE_CODE_ENTRYPOINT);
+      }),
+  );
 });
