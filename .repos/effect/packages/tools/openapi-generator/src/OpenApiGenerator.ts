@@ -42,7 +42,12 @@ import * as Utils from "./Utils.ts"
  */
 export class OpenApiGenerator extends Context.Service<
   OpenApiGenerator,
-  { readonly generate: (spec: OpenAPISpec, options: OpenApiGenerateOptions) => Effect.Effect<string> }
+  {
+    readonly generate: (
+      spec: OpenAPISpec,
+      options: OpenApiGenerateOptions
+    ) => Effect.Effect<string, HttpApiTransformer.HttpApiEndpointNameCollision>
+  }
 >()("OpenApiGenerator") {}
 
 /**
@@ -253,7 +258,7 @@ export const make = Effect.gen(function*() {
         ]
       )
       const registration = options.format === "httpapi"
-        ? HttpApiTransformer.registerModule(module, importName, options.name, parsed)
+        ? yield* Effect.fromResult(HttpApiTransformer.registerModule(module, importName, options.name, parsed))
         : HttpClientGenerator.registerModule(
           module,
           importName,
@@ -300,6 +305,7 @@ const parseOpenApi = (
   const reservedSchemaNames = new Set<string>(Object.keys(spec.components?.schemas ?? {}))
   const isHttpApi = format === "httpapi"
   const dialect = getDialect(spec)
+  const preserveResponseDescription = isHttpApi && dialect === "openapi-3.1"
   const securitySchemes = isHttpApi ? parseSecuritySchemes(spec, resolveRef) : []
 
   const addSchema = (
@@ -335,7 +341,8 @@ const parseOpenApi = (
         ? Utils.camelize(operation.operationId)
         : `${method.toUpperCase()}${path}`
 
-      const description = Utils.nonEmptyString(operation.description) ?? Utils.nonEmptyString(operation.summary)
+      const summary = Utils.nonEmptyString(operation.summary)
+      const description = Utils.nonEmptyString(operation.description)
 
       const parameters = resolveOperationParameters(
         Array.isArray(pathItem.parameters) ? pathItem.parameters : undefined,
@@ -347,7 +354,9 @@ const parseOpenApi = (
       const op = ParsedOperation.makeDeepMutable({
         id,
         method,
-        description,
+        description: summary && description && summary !== description
+          ? `${summary}\n\n${description}`
+          : summary ?? description,
         pathIds,
         pathTemplate
       })
@@ -364,8 +373,8 @@ const parseOpenApi = (
         })
       }
       op.metadata = {
-        summary: Utils.nonEmptyString(operation.summary),
-        description: Utils.nonEmptyString(operation.description),
+        summary,
+        description,
         deprecated: operation.deprecated === true,
         externalDocs: operation.externalDocs
       }
@@ -429,42 +438,26 @@ const parseOpenApi = (
         continue
       }
 
-      const resolvedResponses = Object.entries(operation.responses ?? {})
-        .filter(([status]) => isResponseStatus(status))
-        .map(([status, response]) => [status, resolveReference(response, resolveRef)] as const)
-      const hasExplicitSuccessResponse = resolvedResponses.some(([status]) => {
-        if (!/^\d{3}$/.test(status)) {
-          return false
-        }
-        return Number(status) < 400
-      })
+      const responses = Object.entries(operation.responses ?? {}).filter(([status]) => isResponseStatus(status))
+      const defaultStatus = responses.some(([status]) => Number(status) < 400) ? "500" : "200"
+      const resolvedResponses = responses.map(([status, response]) => ({
+        status,
+        parsedStatus: isHttpApi && status === "default" ? defaultStatus : status,
+        response: resolveReference(response, resolveRef, preserveResponseDescription)
+      }))
 
-      if (isHttpApi && hasUnsupportedSuccessfulSseResponse(resolvedResponses, hasExplicitSuccessResponse)) {
+      if (
+        isHttpApi &&
+        resolvedResponses.some(({ parsedStatus, response }) =>
+          Number(parsedStatus) < 400 && hasUnsupportedSseResponse(response)
+        )
+      ) {
         warnForOperation(emitWarning, op, {
           code: "sse-operation-skipped",
           message:
             "Operation was skipped because a successful SSE response is missing x-effect-stream metadata required for HttpApi generation."
         })
         continue
-      }
-
-      const validParameters = parameters.filter((parameter) =>
-        parameter.in !== "path" && !droppedCookies.has(parameter)
-      )
-
-      const combinedParameterSchema = buildParameterSchema(validParameters, (parameter, added) => {
-        if (parameter.in === "query") {
-          Utils.spreadElementsInto(added, op.urlParams)
-        } else if (parameter.in === "header") {
-          Utils.spreadElementsInto(added, op.headers)
-        } else if (parameter.in === "cookie") {
-          Utils.spreadElementsInto(added, op.cookies)
-        }
-      })
-
-      if (combinedParameterSchema !== undefined) {
-        op.params = addSchema(`${schemaId}Params`, combinedParameterSchema.schema, op)
-        op.paramsOptional = combinedParameterSchema.optional
       }
 
       if (isHttpApi) {
@@ -484,8 +477,29 @@ const parseOpenApi = (
           op.headersSchema = addSchema(`${schemaId}Headers`, headerParameterSchema.schema, op)
           op.headersSchemaOptional = headerParameterSchema.optional
         }
-      } else if (pathSchema !== undefined) {
-        op.pathSchema = addSchema(`${schemaId}PathParams`, pathSchema, op)
+      } else {
+        const validParameters = parameters.filter((parameter) =>
+          parameter.in !== "path" && !droppedCookies.has(parameter)
+        )
+
+        const combinedParameterSchema = buildParameterSchema(validParameters, (parameter, added) => {
+          if (parameter.in === "query") {
+            Utils.spreadElementsInto(added, op.urlParams)
+          } else if (parameter.in === "header") {
+            Utils.spreadElementsInto(added, op.headers)
+          } else if (parameter.in === "cookie") {
+            Utils.spreadElementsInto(added, op.cookies)
+          }
+        })
+
+        if (combinedParameterSchema !== undefined) {
+          op.params = addSchema(`${schemaId}Params`, combinedParameterSchema.schema, op)
+          op.paramsOptional = combinedParameterSchema.optional
+        }
+
+        if (pathSchema !== undefined) {
+          op.pathSchema = addSchema(`${schemaId}PathParams`, pathSchema, op)
+        }
       }
 
       if (Predicate.isNotUndefined(requestBody) && Predicate.isObject(requestBody)) {
@@ -604,19 +618,20 @@ const parseOpenApi = (
       }
 
       let defaultSchema: string | undefined
-      for (const [status, response] of resolvedResponses) {
+      for (const { parsedStatus, response, status } of resolvedResponses) {
         if (!Predicate.isObject(response)) {
           continue
         }
 
-        const parsedStatus = isHttpApi
-          ? remapDefaultResponseStatusForHttpApi(status, hasExplicitSuccessResponse)
-          : status
-        if (isHttpApi && status === "default") {
+        if (status !== parsedStatus) {
+          const hasExplicitResponse = Object.hasOwn(operation.responses, parsedStatus)
           warnForOperation(emitWarning, op, {
             code: "default-response-remapped",
-            message: `Default response was remapped to status ${parsedStatus} for HttpApi generation.`
+            message: hasExplicitResponse
+              ? `Default response was skipped because its remapped status ${parsedStatus} is explicitly defined.`
+              : `Default response was remapped to status ${parsedStatus} for HttpApi generation.`
           })
+          if (hasExplicitResponse) continue
         }
 
         const content = Predicate.isObject(response.content)
@@ -751,7 +766,7 @@ const parseOpenApi = (
         const isEmptyResponse = Predicate.isUndefined(content) || Object.keys(content).length === 0
         const parsedResponse = {
           status: parsedStatus,
-          description: Utils.nonEmptyString(response.description),
+          description: typeof response.description === "string" ? response.description : undefined,
           contentTypes: Predicate.isNotUndefined(content) ? Object.keys(content) : [],
           hasHeaders: Predicate.isNotUndefined(response.headers),
           isEmpty: isEmptyResponse,
@@ -1432,12 +1447,20 @@ const isPrimitiveSchema = (
   return members.length > 0
 }
 
-const resolveReference = (input: unknown, resolveRef: (ref: string) => unknown): any => {
+const resolveReference = (
+  input: unknown,
+  resolveRef: (ref: string) => unknown,
+  preserveDescription = false
+): any => {
   let current = input
+  let description: string | undefined
   while (Predicate.isObject(current) && typeof current.$ref === "string") {
+    if (preserveDescription && typeof current.description === "string") {
+      description ??= current.description
+    }
     current = resolveRef(current.$ref)
   }
-  return current
+  return description !== undefined && Predicate.isObject(current) ? { ...current, description } : current
 }
 
 const cloneSecurityRequirements = (
@@ -1539,48 +1562,17 @@ const warnForAndSecurityRequirements = (
   }
 }
 
-const hasUnsupportedSuccessfulSseResponse = (
-  responses: ReadonlyArray<readonly [string, unknown]>,
-  hasExplicitSuccessResponse: boolean
-): boolean => {
-  for (const [status, response] of responses) {
-    if (!Predicate.isObject(response)) {
-      continue
+const hasUnsupportedSseResponse = (response: unknown): boolean => {
+  if (!Predicate.isObject(response) || !Predicate.isObject(response.content)) return false
+  return Object.entries(response.content).some(([contentType, mediaType]) => {
+    if (!Predicate.isObject(mediaType)) return false
+    const encoding = getEffectStreamEncoding(mediaType)
+    if (encoding === "sse") {
+      return mediaType.schema === undefined || getEffectStreamErrorSchema(mediaType) === undefined
     }
-    const remappedStatus = remapDefaultResponseStatusForHttpApi(status, hasExplicitSuccessResponse)
-    const statusCode = Number(remappedStatus)
-    if (Number.isNaN(statusCode) || statusCode >= 400) {
-      continue
-    }
-
-    const content = Predicate.isObject(response.content)
-      ? response.content as Record<string, any>
-      : undefined
-    if (Predicate.isUndefined(content)) {
-      continue
-    }
-
-    for (const [contentType, mediaType] of Object.entries(content)) {
-      if (!Predicate.isObject(mediaType)) {
-        continue
-      }
-      const streamEncoding = getEffectStreamEncoding(mediaType)
-      if (streamEncoding === "sse") {
-        if (Predicate.isUndefined(mediaType.schema) || Predicate.isUndefined(getEffectStreamErrorSchema(mediaType))) {
-          return true
-        }
-        continue
-      }
-      if (contentType === "text/event-stream" && streamEncoding !== "ndjson") {
-        return true
-      }
-    }
-  }
-  return false
+    return contentType === "text/event-stream" && encoding !== "ndjson"
+  })
 }
-
-const remapDefaultResponseStatusForHttpApi = (status: string, hasExplicitSuccessResponse: boolean): string =>
-  status === "default" ? (hasExplicitSuccessResponse ? "500" : "200") : status
 
 const methodSupportsRequestBody = (method: Lowercase<HttpMethod>): boolean =>
   method !== "get" && method !== "head" && method !== "options" && method !== "trace"

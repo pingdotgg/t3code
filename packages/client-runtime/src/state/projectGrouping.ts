@@ -9,7 +9,7 @@ import {
 import type { ClientSettings } from "@t3tools/contracts/settings";
 
 import type { EnvironmentProject } from "./models.ts";
-import { normalizeProjectPathForComparison } from "./projects.ts";
+import { normalizeProjectPathForComparison, preferredPathSeparator } from "./projects.ts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
@@ -61,8 +61,11 @@ function deriveRepositoryRelativeProjectPath(
     return "";
   }
 
-  const separator = normalizedRootPath.includes("\\") ? "\\" : "/";
-  const rootPrefix = `${normalizedRootPath}${separator}`;
+  const separator = preferredPathSeparator(normalizedRootPath);
+  // A volume root such as `/` or `d:\` already ends with its separator.
+  const rootPrefix = normalizedRootPath.endsWith(separator)
+    ? normalizedRootPath
+    : `${normalizedRootPath}${separator}`;
   if (!normalizedProjectPath.startsWith(rootPrefix)) {
     return null;
   }
@@ -235,9 +238,23 @@ export function deriveProjectGroupLabel(input: {
   readonly groupKey: string;
   readonly representative: Pick<EnvironmentProject, "title" | "repositoryIdentity">;
   readonly members: ReadonlyArray<
-    Pick<EnvironmentProject, "title" | "hasCustomTitle" | "repositoryIdentity">
+    Pick<EnvironmentProject, "title" | "hasCustomTitle" | "repositoryIdentity" | "workspaceRoot">
   >;
 }): string {
+  // A rename reaches only the checkouts that exist at that moment; one added later, on any
+  // environment, still has its folder title. A renamed subfolder doesn't name the repository.
+  const isSubfolderOfRepositoryGroup = (member: (typeof input.members)[number]) =>
+    member.repositoryIdentity != null &&
+    input.groupKey === repositoryGroupingKeyOf(member.repositoryIdentity) &&
+    Boolean(deriveRepositoryRelativeProjectPath(member));
+  const renamedTitles = uniqueNonEmptyValues(
+    input.members
+      .filter((member) => member.hasCustomTitle === true && !isSubfolderOfRepositoryGroup(member))
+      .map((member) => member.title),
+  );
+  if (renamedTitles.length === 1) {
+    return renamedTitles[0]!;
+  }
   const sharedTitles = uniqueNonEmptyValues(input.members.map((member) => member.title));
   const sharedDisplayNames = uniqueNonEmptyValues(
     input.members.map((member) =>

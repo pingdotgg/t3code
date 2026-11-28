@@ -19,7 +19,6 @@ import {
   subscribeOncePerTask,
 } from "../files/fileTreeExpansion";
 import { Button } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   buildDiffFileTreeUpdates,
   compareDiffFileTreeEntries,
@@ -28,6 +27,7 @@ import {
   type DiffFileTreeEntry,
 } from "./diffFileTree.logic";
 import { diffFileTreePositions } from "@t3tools/client-runtime/diff-file-order";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 
@@ -202,32 +202,28 @@ export function DiffFileTree({
         <span className="ml-auto tabular-nums">{entries.length}</span>
         {headerAccessory}
         {directoryPaths.length > 0 ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label={
-                    allDirectoriesExpanded ? gt("Collapse all folders") : gt("Expand all folders")
-                  }
-                  onClick={() =>
-                    setAllDirectoriesExpanded(model, directoryPaths, !allDirectoriesExpanded)
-                  }
-                />
-              }
-            >
-              {allDirectoriesExpanded ? (
-                <ChevronsDownUpIcon className="size-3.5" />
-              ) : (
-                <ChevronsUpDownIcon className="size-3.5" />
-              )}
-            </TooltipTrigger>
-            <TooltipPopup>
-              {allDirectoriesExpanded ? gt("Collapse all folders") : gt("Expand all folders")}
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label={
+                  allDirectoriesExpanded ? gt("Collapse all folders") : gt("Expand all folders")
+                }
+                onClick={() =>
+                  setAllDirectoriesExpanded(model, directoryPaths, !allDirectoriesExpanded)
+                }
+              />
+            }
+            label={allDirectoriesExpanded ? gt("Collapse all folders") : gt("Expand all folders")}
+          >
+            {allDirectoriesExpanded ? (
+              <ChevronsDownUpIcon className="size-3.5" />
+            ) : (
+              <ChevronsUpDownIcon className="size-3.5" />
+            )}
+          </SharedTooltipTrigger>
         ) : null}
       </div>
       <FileTree

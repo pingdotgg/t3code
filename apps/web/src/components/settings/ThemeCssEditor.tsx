@@ -30,7 +30,8 @@ export function ThemeCssEditor({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.nativeEvent.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
     const editor = event.currentTarget;
     if (event.key === "Escape" && (tabIndents || event.repeat)) {
       event.preventDefault();

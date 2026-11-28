@@ -57,4 +57,36 @@ describe("recording compositor", () => {
       for (const track of sourceStream.getTracks()) track.stop();
     }
   });
+
+  it("keeps producing frames at the recording frame rate while the source is idle", async () => {
+    const source = document.createElement("canvas");
+    source.width = 320;
+    source.height = 180;
+    paintSource(source, "#f00");
+    const sourceStream = source.captureStream(30);
+    const compositor = await createRecordingCompositor(
+      sourceStream,
+      { showKeyPresses: false, showMousePresses: false, frameRate: 30 },
+      () => () => {},
+    );
+    const output = document.createElement("video");
+    output.muted = true;
+    output.srcObject = compositor.stream;
+    let presentedFrames = 0;
+    const countFrame = () => {
+      presentedFrames += 1;
+      output.requestVideoFrameCallback(countFrame);
+    };
+    output.requestVideoFrameCallback(countFrame);
+    try {
+      await output.play();
+      await vi.waitFor(() => expect(presentedFrames).toBeGreaterThanOrEqual(15), {
+        timeout: 3000,
+      });
+    } finally {
+      output.srcObject = null;
+      compositor.dispose();
+      for (const track of sourceStream.getTracks()) track.stop();
+    }
+  });
 });

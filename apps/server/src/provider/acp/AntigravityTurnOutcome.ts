@@ -17,6 +17,8 @@ import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityPro
 const ERROR_STEP_TYPE = 17;
 // CORTEX_STEP_TYPE_PLANNER_RESPONSE: the model answered within this turn.
 const PLANNER_RESPONSE_STEP_TYPE = 15;
+// CORTEX_STEP_STATUS_DONE.
+const DONE_STEP_STATUS = 3;
 // The harness error text leads the payload; a Go stack trace follows it.
 const MAX_ERROR_PAYLOAD_BYTES = 16_384;
 // The Go harness's rendering of a Google API error, as the agent's api_errors.py reads it.
@@ -26,6 +28,29 @@ const API_ERROR =
   /Error (\d{3}), Message: ((?:(?!, Status: |Error \d{3}, Message: ).)+), Status: ([A-Z_]+|\d{3}[^,\n]*)/s;
 // Antigravity 1.5 with a Google account writes "STATUS (code NNN): message".
 const STATUS_ERROR = /(?<![A-Z_])([A-Z_]+) \(code (\d{3})\): (\P{Cc}+)/u;
+// Newer Antigravity builds attach the HTTP JSON body (pretty-printed or compact) to the error step.
+const ERROR_JSON_START = /\{\s*"error"\s*:/g;
+const decodeVerificationError = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      error: Schema.Struct({
+        code: Schema.Literal(403),
+        status: Schema.Literal("PERMISSION_DENIED"),
+        details: Schema.Array(Schema.Unknown),
+      }),
+    }),
+  ),
+);
+const decodeVerificationErrorInfo = Schema.decodeUnknownOption(
+  Schema.Struct({
+    "@type": Schema.Literal("type.googleapis.com/google.rpc.ErrorInfo"),
+    domain: Schema.Literal("cloudcode-pa.googleapis.com"),
+    reason: Schema.Literal("VALIDATION_REQUIRED"),
+    metadata: Schema.optionalKey(
+      Schema.NullOr(Schema.Struct({ validation_url: Schema.optionalKey(Schema.Unknown) })),
+    ),
+  }),
+);
 const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
 // Claude rejects a saved thinking block without a valid signature. It sits in the native
 // history, so every later prompt to that session fails the same way.
@@ -35,6 +60,8 @@ const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
 const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
 // google.rpc.RetryInfo, which plain rate limits carry instead of a quota reset.
 const RETRY_DELAY = /\bretryDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
+// Antigravity 1.5 may state the reset only in the message: "... Resets in 4m42s.".
+const RESETS_IN = /\bResets in ((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?!\w|\.\d)/;
 const GO_DURATION_PART = /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|h|m|s)/g;
 const GO_DURATION_UNIT_MS: Record<string, number> = {
   ns: 1e-6,
@@ -50,6 +77,7 @@ const NATIVE_SESSION_ID = /^[\w-]+$/;
 
 interface LastStep {
   readonly type: number;
+  readonly status: number | null;
   readonly payload: Uint8Array | null;
   readonly reachedModel: boolean;
 }
@@ -91,9 +119,13 @@ const lastStepIndex = (database: NodeSqlite.DatabaseSync) => {
 const lastStepAfter =
   (index: number) =>
   (database: NodeSqlite.DatabaseSync): LastStep | undefined => {
+    const hasStatus =
+      database.prepare("SELECT 1 FROM pragma_table_info('steps') WHERE name = 'status'").get() !==
+      undefined;
     const row = database
       .prepare(
-        `SELECT step_type AS type, substr(step_payload, 1, ?) AS payload
+        `SELECT step_type AS type, ${hasStatus ? "status" : "NULL"} AS status,
+           substr(step_payload, 1, ?) AS payload
          FROM steps WHERE idx > ? ORDER BY idx DESC LIMIT 1`,
       )
       .get(MAX_ERROR_PAYLOAD_BYTES, index);
@@ -104,6 +136,7 @@ const lastStepAfter =
         .get(index, PLANNER_RESPONSE_STEP_TYPE) !== undefined;
     return {
       type: row.type,
+      status: typeof row.status === "number" ? row.status : null,
       payload: row.payload instanceof Uint8Array ? row.payload : null,
       reachedModel,
     };
@@ -113,7 +146,8 @@ function resetAtFrom(text: string, now: DateTime.Utc | undefined): string | unde
   // makeProviderFailure drops a timestamp that does not parse, so fall back to the delay.
   const timestamp = RESET_TIMESTAMP.exec(text)?.[1];
   if (timestamp !== undefined && Option.isSome(DateTime.make(timestamp))) return timestamp;
-  const delay = RESET_DELAY.exec(text)?.[1] ?? RETRY_DELAY.exec(text)?.[1];
+  const delay =
+    RESET_DELAY.exec(text)?.[1] ?? RETRY_DELAY.exec(text)?.[1] ?? RESETS_IN.exec(text)?.[1];
   if (delay === undefined || now === undefined) return undefined;
   let delayMs = 0;
   for (const [, amount, unit] of delay.matchAll(GO_DURATION_PART)) {
@@ -126,6 +160,48 @@ function resetAtFrom(text: string, now: DateTime.Utc | undefined): string | unde
 function statusError(text: string) {
   const match = STATUS_ERROR.exec(text);
   return match === null ? null : ([match[0], match[2], match[3], match[1]] as const);
+}
+
+function balancedJsonObject(text: string, start: number): string | undefined {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") {
+      depth += 1;
+    } else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return undefined;
+}
+
+function verificationErrorInfo(text: string) {
+  for (const match of text.matchAll(ERROR_JSON_START)) {
+    const json = balancedJsonObject(text, match.index);
+    if (json === undefined) continue;
+    const response = Option.getOrUndefined(decodeVerificationError(json));
+    if (response === undefined) continue;
+    for (const detail of response.error.details) {
+      const info = Option.getOrUndefined(decodeVerificationErrorInfo(detail));
+      if (info !== undefined) return info;
+    }
+  }
+  return undefined;
 }
 
 function turnFailure(
@@ -171,6 +247,18 @@ function turnFailure(
       }),
       threadDisposition: "broken",
     };
+  }
+  const verification = verificationErrorInfo(text);
+  if (verification !== undefined) {
+    return reusable(
+      makeProviderFailure({
+        class: "permission_error",
+        message: "Verify your Google account, then retry this turn.",
+        code: "VALIDATION_REQUIRED",
+        retryable: false,
+        verificationUrl: verification.metadata?.validation_url,
+      }),
+    );
   }
   if (apiError === null) {
     return reusable(
@@ -268,7 +356,15 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
         )
       : undefined;
     // A retired prompt's check runs long after the error, so a relative delay has no anchor.
-    const now = options?.retired === true ? undefined : yield* DateTime.now;
-    return turnFailure(result.stopReason, step, now);
+    const retired = options?.retired === true;
+    const now = retired ? undefined : yield* DateTime.now;
+    const failure = turnFailure(result.stopReason, step, now);
+    // The reply finished but session/prompt never answered.
+    const finished =
+      retired &&
+      failure === undefined &&
+      step?.type === PLANNER_RESPONSE_STEP_TYPE &&
+      step.status === DONE_STEP_STATUS;
+    return finished ? ("completed" as const) : failure;
   });
 });

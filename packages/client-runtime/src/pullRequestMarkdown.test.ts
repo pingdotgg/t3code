@@ -1,10 +1,16 @@
+import { describe, expect, it, vi } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import { AtomRegistry } from "effect/reactivity";
 import type { Root, RootContent } from "mdast";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
-import { describe, expect, it } from "vite-plus/test";
 
-import { splitPullRequestBody, type PullRequestBodySegment } from "./pullRequestMarkdown.ts";
+import {
+  makePullRequestMediaKindAtom,
+  splitPullRequestBody,
+  type PullRequestBodySegment,
+} from "./pullRequestMarkdown.ts";
 import {
   changeRequestReferenceAutolinker,
   resolveChangeRequestMediaUrl,
@@ -32,9 +38,7 @@ const split = (body: string) =>
   });
 
 describe("pull request body segmentation", () => {
-  // GitHub writes a dropped image into the body as an `<img>` tag, so a bare attachment link on
-  // its own line is the shape it uses for a video — every one sampled in the wild was one.
-  it("lifts a dropped video out and keeps the prose around it", () => {
+  it("lifts a GitHub upload without guessing its type and keeps the prose around it", () => {
     expect(
       split(
         "Before\n\nhttps://github.com/user-attachments/assets/2f8c1a90-1b2c-4d5e-8f90-abcdef123456\n\nAfter",
@@ -45,9 +49,23 @@ describe("pull request body segmentation", () => {
         id: "attachment:1",
         kind: "attachment",
         url: "https://github.com/user-attachments/assets/2f8c1a90-1b2c-4d5e-8f90-abcdef123456",
-        media: "video",
+        media: "unknown",
       },
       { id: "markdown:2", kind: "markdown", text: "After", sourceOffset: 89 },
+    ]);
+  });
+
+  it("leaves the type of a linked GitHub upload unresolved", () => {
+    const upload =
+      "https://github.com/user-attachments/assets/f619ea9d-112c-400b-b1db-8c8d5d2357cc";
+    expect(split(`[Native iPhone caption playback](${upload})`)).toEqual([
+      {
+        id: "attachment:0",
+        kind: "attachment",
+        url: upload,
+        media: "unknown",
+        label: "Native iPhone caption playback",
+      },
     ]);
   });
 
@@ -140,6 +158,29 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
+  it("does not close a fence opened at the margin on a tab-indented marker", () => {
+    const code = "```\n\t```\nhttps://example.com/sample.mp4\n```";
+    expect(split(`${code}\n\nhttps://example.com/demo.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: code, sourceOffset: 0 },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/demo.mp4",
+        media: "video",
+      },
+    ]);
+    const listCode = "- List\n\n\t```md\n  https://example.com/sample.mp4\n\t```";
+    expect(split(`${listCode}\n\nhttps://example.com/demo.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: listCode, sourceOffset: 0 },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/demo.mp4",
+        media: "video",
+      },
+    ]);
+  });
+
   it("keeps a video tag that shares its line with prose as markdown", () => {
     const body = 'Before <video src="https://example.com/a.mp4"></video> after';
     expect(split(body)).toEqual([
@@ -211,6 +252,38 @@ describe("pull request body segmentation", () => {
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
   });
+});
+
+describe("extensionless pull request media", () => {
+  it.effect.each([
+    [206, "image/png", "image"],
+    [206, "video/mp4", "video"],
+    [200, "text/html", null],
+    [404, "image/png", null],
+  ] as const)("classifies HTTP %i with Content-Type %s", ([status, contentType, kind]) =>
+    Effect.gen(function* () {
+      const cancel = vi.fn();
+      const fetchMedia = vi.fn(
+        async () =>
+          new Response(new ReadableStream({ cancel }), {
+            status,
+            headers: { "content-type": contentType },
+          }),
+      );
+      const url = "https://environment.test/api/assets/signed/upload";
+      const registry = AtomRegistry.make();
+      yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+      const atom = makePullRequestMediaKindAtom(fetchMedia)(url);
+      expect(yield* AtomRegistry.getResult(registry, atom)).toBe(kind);
+      expect(fetchMedia).toHaveBeenCalledWith(
+        url,
+        expect.objectContaining({
+          headers: { Range: "bytes=0-0" },
+        }),
+      );
+      expect(cancel).toHaveBeenCalledOnce();
+    }),
+  );
 });
 
 describe("reference links around lifted media", () => {
@@ -302,15 +375,42 @@ describe("reference links around lifted media", () => {
     const marker = segment.text.indexOf("[ ]");
     expect(body.slice(segment.sourceOffset + marker)).toBe("[ ] Read [the docs][guide]");
   });
+
+  it.each([
+    ["\uFEFF", "", 0],
+    ["intro\n\n\uFEFF", "intro\n\n\uFEFF", 0],
+    [`${recording}\n\n\uFEFF`, "\uFEFF", 1],
+  ])("preserves BOM meaning and task offsets after prefix %j", (prefix, kept, pick) => {
+    const definition = "[guide]: https://example.com/docs";
+    const task = "- [ ] Read [guide]";
+    const body = `${prefix}${task}\n\n${recording}\n\n${definition}`;
+    const segment = splitPullRequestBody(body, () => [definition])[pick]!;
+    if (segment.kind !== "markdown") throw new Error("expected prose");
+    expect(segment.text).toBe(`${definition}\n\n${kept}${task}`);
+    expect(segment.sourceOffset + segment.text.indexOf("[ ]")).toBe(body.indexOf("[ ]"));
+  });
 });
 
 describe("media on custom hosts", () => {
   it.each([
-    ["https://drop.example.com/capture.PNG?token=abc#preview", "image"],
-    ["[Recording](https://drop.example.com/recording.mov)", "video"],
-    ["<https://drop.example.com/shot.webp>", "image"],
-  ])("recognizes %s without a request", (body, media) => {
-    expect(split(body)).toEqual([expect.objectContaining({ kind: "attachment", media })]);
+    ["https://drop.example.com/capture.PNG?token=abc#preview", "image", undefined],
+    ["[Recording](https://drop.example.com/recording.mov)", "video", "Recording"],
+    ["[Screenshot](https://drop.example.com/shot.webp)", "image", "Screenshot"],
+    ["<https://drop.example.com/shot.webp>", "image", undefined],
+  ])("recognizes %s without a request and preserves its label", (body, media, label) => {
+    const segments = split(body);
+    expect(segments).toEqual([expect.objectContaining({ kind: "attachment", media })]);
+    const [segment] = segments;
+    expect(segment?.kind === "attachment" ? segment.label : null).toBe(label);
+  });
+
+  it.each([
+    "[Open report](https://example.com/report?file=demo.mp4)",
+    "https://example.com/report#demo.png",
+  ])("keeps %s a link when only its query or fragment names media", (body) => {
+    expect(split(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
   });
 
   it("keeps inline links and media examples in code as prose", () => {
