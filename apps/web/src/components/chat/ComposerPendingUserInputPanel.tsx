@@ -1,9 +1,8 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
 import { markdownProseDirection, textDirection } from "~/textDirection";
 import { useGT } from "gt-react";
-import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
+import { memo, use, useEffect, useEffectEvent, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
-import { useStableCallback } from "~/hooks/useStableCallback";
 import { type PendingUserInput } from "../../session-logic";
 import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/pending-user-input";
 import { derivePendingUserInputProgress } from "../../pendingUserInput";
@@ -25,7 +24,6 @@ interface PendingUserInputPanelProps {
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
   onToggleOption: (questionId: string, optionValue: string) => void;
-  onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
 }
 
@@ -38,7 +36,6 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   answers,
   questionIndex,
   onToggleOption,
-  onAdvance,
   onDismiss,
 }: PendingUserInputPanelProps) {
   if (pendingUserInputs.length === 0) return null;
@@ -56,7 +53,6 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       answers={answers}
       questionIndex={questionIndex}
       onToggleOption={onToggleOption}
-      onAdvance={onAdvance}
       onDismiss={onDismiss}
     />
   );
@@ -71,7 +67,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   answers,
   questionIndex,
   onToggleOption,
-  onAdvance,
   onDismiss,
 }: {
   prompt: PendingUserInput;
@@ -82,19 +77,12 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
   onToggleOption: (questionId: string, optionValue: string) => void;
-  onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
 }) {
   const gt = useGT();
   // Message-mode requests remain answerable after their provider turn ends.
   const canRespond = prompt.responseCapability !== "not_resumable";
   const responseDisabled = disabled || isResponding || !canRespond;
-  const autoAdvanceTimerRef = useRef<number | null>(null);
-  const advance = useStableCallback(onAdvance);
-  const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
-    questionId: string;
-    optionValue: string;
-  } | null>(null);
   const [collapsedQuestionId, setCollapsedQuestionId] = useState<string | null>(null);
   // Keep question identity stable for its shortcut listener.
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
@@ -107,44 +95,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   );
   const isCollapsed = collapsedQuestionId !== null && collapsedQuestionId === activeQuestion?.id;
 
-  if (
-    optimisticSingleSelect &&
-    activeQuestion &&
-    !activeQuestion.multiSelect &&
-    (optimisticSingleSelect.questionId !== activeQuestion.id ||
-      (!customAnswerActive &&
-        progress.selectedOptionValues.includes(optimisticSingleSelect.optionValue)))
-  ) {
-    setOptimisticSingleSelect(null);
-  }
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the auto-advance timer when the question changes, input is disabled, or the panel unmounts
-  useEffect(() => {
-    const clearAutoAdvance = () => {
-      if (autoAdvanceTimerRef.current !== null) {
-        window.clearTimeout(autoAdvanceTimerRef.current);
-        autoAdvanceTimerRef.current = null;
-      }
-    };
-    if (disabled || activeQuestion?.id === undefined) clearAutoAdvance();
-    return clearAutoAdvance;
-  }, [activeQuestion?.id, disabled]);
-
   const handleOptionSelection = (questionId: string, optionValue: string) => {
-    if (disabled || isResponding) return;
-    if (activeQuestion?.multiSelect) {
-      onToggleOption(questionId, optionValue);
-      return;
-    }
-    setOptimisticSingleSelect({ questionId, optionValue });
+    if (responseDisabled) return;
     onToggleOption(questionId, optionValue);
-    if (autoAdvanceTimerRef.current !== null) {
-      window.clearTimeout(autoAdvanceTimerRef.current);
-    }
-    autoAdvanceTimerRef.current = window.setTimeout(() => {
-      autoAdvanceTimerRef.current = null;
-      advance();
-    }, 200);
   };
 
   const selectOptionFromShortcut = useEffectEvent(handleOptionSelection);
@@ -276,11 +229,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             <div className="-ms-2 mt-1.5 sm:-ms-1.5">
               {activeQuestion.options.map((option, index) => {
                 const optionValue = option.value ?? option.label;
-                const isOptimisticallySelected =
-                  optimisticSingleSelect?.questionId === activeQuestion.id &&
-                  optimisticSingleSelect.optionValue === optionValue;
-                const isSelected =
-                  isOptimisticallySelected || draftSelectedOptions?.[index] === true;
+                const isSelected = draftSelectedOptions?.[index] === true;
                 const className = cn(
                   questionTextAlign,
                   "group flex w-full items-start gap-2.5 rounded-md bg-transparent py-1.5 ps-2 sm:ps-1.5 outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
@@ -318,7 +267,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     ) : null}
                   </>
                 );
-                // The preview sits outside the button: it can hold links, and a click on a single-select option advances.
+                // The preview sits outside the button because it can hold links.
                 return (
                   <div key={`${activeQuestion.id}:${optionValue}`}>
                     <button
@@ -353,7 +302,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 });
 
 // Drawn with ui/radio-group's look instead of using its Radio: Radio only checks inside a
-// RadioGroup, whose arrow keys select options and would trip the single-select auto-advance.
+// RadioGroup, whose arrow keys would conflict with the panel's option shortcuts.
 function OptionRadio({ checked }: { checked: boolean }) {
   return (
     <span

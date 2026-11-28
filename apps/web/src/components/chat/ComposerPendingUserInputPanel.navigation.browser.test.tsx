@@ -21,6 +21,7 @@ import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { toastManager } from "../ui/toast";
 import { usePendingThreadRequests, usePendingUserInputDraft } from "./usePendingThreadRequests";
+import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
 
@@ -33,7 +34,10 @@ const prompt = {
     id: `question-${index}`,
     header: `Question ${index + 1}`,
     question: `Choose for question ${index + 1}`,
-    options: [{ label: "Incremental", description: "One module at a time" }],
+    options: [
+      { label: "Incremental", description: "One module at a time" },
+      { label: "All at once", description: "One release" },
+    ],
     multiSelect: false,
   })),
 };
@@ -217,12 +221,16 @@ function QuestionPositionProbe(props: ProbeProps) {
   return (
     <>
       <output>Question {state.activePendingQuestionIndex + 1}</output>
-      <button
-        type="button"
-        onClick={() => state.onSelectActivePendingUserInputOption("question-0", "Incremental")}
-      >
-        Choose Incremental
-      </button>
+      <ComposerPendingUserInputPanel
+        pendingUserInputs={state.pendingUserInputs}
+        cwd={undefined}
+        threadRef={{ environmentId: props.environmentId, threadId: props.projection.thread.id }}
+        respondingRequestIds={[]}
+        answers={state.activePendingDraftAnswers}
+        questionIndex={state.activePendingQuestionIndex}
+        onToggleOption={state.onSelectActivePendingUserInputOption}
+        onDismiss={state.onDismissUserInput}
+      />
       <button type="button" onClick={() => state.onAdvanceActivePendingUserInput()}>
         Submit
       </button>
@@ -230,18 +238,31 @@ function QuestionPositionProbe(props: ProbeProps) {
   );
 }
 
-it("stays on an unanswered question when the composer submits", async () => {
+it("waits for explicit confirmation and lets the user correct a question's selection", async () => {
   await using screen = await render(
     <QuestionPositionProbe
       environmentId={EnvironmentId.make("unanswered-environment")}
       projection={questionProjection(threadRef.threadId)}
     />,
   );
+  using _timers = fakeTimers();
   const submit = screen.getByRole("button", { name: "Submit" });
   await userEvent.click(submit);
   await expect.element(screen.getByRole("status")).toHaveTextContent("Question 1");
 
-  await userEvent.click(screen.getByRole("button", { name: "Choose Incremental" }));
+  const incremental = screen.getByRole("button", { name: /Incremental/ });
+  const allAtOnce = screen.getByRole("button", { name: /All at once/ });
+  await userEvent.click(incremental);
+  await act(() => vi.advanceTimersByTimeAsync(250));
+  await expect.element(screen.getByRole("status")).toHaveTextContent("Question 1");
+  await expect.element(incremental).toHaveAttribute("aria-pressed", "true");
+
+  await userEvent.keyboard("2");
+  await act(() => vi.advanceTimersByTimeAsync(250));
+  await expect.element(screen.getByRole("status")).toHaveTextContent("Question 1");
+  await expect.element(incremental).toHaveAttribute("aria-pressed", "false");
+  await expect.element(allAtOnce).toHaveAttribute("aria-pressed", "true");
+
   await userEvent.click(submit);
   await expect.element(screen.getByRole("status")).toHaveTextContent("Question 2");
 });

@@ -36,7 +36,6 @@ function panel(onToggleOption: (questionId: string, optionValue: string) => void
       answers={{}}
       questionIndex={0}
       onToggleOption={onToggleOption}
-      onAdvance={vi.fn()}
       onDismiss={vi.fn()}
     />
   );
