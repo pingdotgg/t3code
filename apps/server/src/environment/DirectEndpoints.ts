@@ -29,6 +29,7 @@ import {
   isLoopbackHost,
   isPrivateNetworkAddress,
   isVirtualInterface,
+  isVpnTunnelAddress,
   WINDOWS_HOST_ADAPTER_MAC,
 } from "../startupAccess.ts";
 
@@ -85,6 +86,7 @@ export function resolveBoundEndpoints(input: {
             !entry.internal &&
             entry.family === "IPv4" &&
             isAdvertisableAddress(entry.address) &&
+            !isVpnTunnelAddress(entry.address) &&
             !(input.platform === "win32" && WINDOWS_HOST_ADAPTER_MAC.test(entry.mac)),
         )
         .map((entry) => entry.address)
