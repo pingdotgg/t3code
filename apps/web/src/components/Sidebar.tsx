@@ -333,7 +333,7 @@ const FOLDER_PREVIEW_COUNT = 6;
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
 const REVEAL_ROW_CLASS_NAME =
-  "mx-0.5 flex h-5.5 w-[calc(100%-0.25rem)] cursor-pointer items-center gap-1.5 rounded-row px-2 text-left text-sm font-medium text-dim-foreground outline-none hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-disabled:cursor-default";
+  "mx-0.5 flex h-5.5 w-[calc(100%-0.25rem)] cursor-pointer items-center rounded-row px-2 text-left text-sm font-medium text-dim-foreground outline-none hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-disabled:cursor-default";
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
@@ -3724,10 +3724,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   }
                                   className={REVEAL_ROW_CLASS_NAME}
                                 >
-                                  <ChevronDownIcon
-                                    aria-hidden
-                                    className={cn("size-4 shrink-0", !showMore && "rotate-180")}
-                                  />
                                   {showMore
                                     ? gt(
                                         "{count, plural, one {Show {count} more} other {Show {count} more}}",
