@@ -12,7 +12,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { TextInput, View } from "react-native";
+import { TextInput, useWindowDimensions, View } from "react-native";
 import { m } from "../../i18n/messages";
 
 import * as Dialog from "../../components/ui/Dialog";
@@ -77,15 +77,18 @@ export function ClaudeAccount({
   const instance = environment.serverConfig.settings.providerInstances[provider.instanceId];
   const configDir = claudeConfigDir(instance);
   const name = provider.displayName ?? "Claude";
+  // A signed-in account needs no label; the row only speaks up when something is off.
   const status = !provider.enabled
     ? gt("Turned off")
     : provider.auth.status === "authenticated"
-      ? gt("Signed in")
+      ? null
       : provider.auth.status === "unauthenticated"
         ? gt("Not signed in")
         : !provider.installed
           ? gt("Not installed")
-          : null;
+          : gt("Sign-in not checked");
+  // Matches ListRowLayout: large text stacks the status below instead of squeezing the name.
+  const stacked = useWindowDimensions().fontScale >= 1.5;
   const removable =
     provider.instanceId !== DEFAULT_CLAUDE_INSTANCE_ID &&
     !isManagedSettingPath(
@@ -126,14 +129,30 @@ export function ClaudeAccount({
   }
   return (
     <View className="border-t border-border-subtle">
-      <View className="min-h-16 flex-row items-center gap-3 px-4 py-3">
-        <View className="min-w-0 shrink grow gap-0.5">
-          <Text textRole="body" className="text-foreground" numberOfLines={1}>
+      <View className="min-h-14 flex-row items-center gap-3 px-4 py-1.5">
+        <View
+          className={
+            stacked
+              ? "min-w-0 shrink grow gap-0.5"
+              : "min-w-0 shrink grow flex-row items-center gap-3"
+          }
+        >
+          <Text
+            textRole="body"
+            className={stacked ? "text-foreground" : "min-w-0 shrink grow text-foreground"}
+            numberOfLines={1}
+          >
             {name}
           </Text>
-          <Text textRole="footnote" className="text-foreground-muted" numberOfLines={2}>
-            {[status, configDir || gt("Default config folder")].filter(Boolean).join(" · ")}
-          </Text>
+          {status ? (
+            <Text
+              textRole="footnote"
+              className={stacked ? "text-foreground-muted" : "min-w-0 shrink text-foreground-muted"}
+              numberOfLines={stacked ? undefined : 1}
+            >
+              {status}
+            </Text>
+          ) : null}
         </View>
         {editing ? null : (
           <Menu
@@ -188,10 +207,6 @@ export function AddClaudeAccount({ environment }: { readonly environment: Settin
         <ListActionRow
           icon="plus"
           label={gt("Add {provider} account", { provider: "Claude" })}
-          description={gt(
-            "Use a {provider} config folder that is already signed in on this server.",
-            { provider: "Claude" },
-          )}
           onPress={() => setAdding(true)}
         />
       )}
