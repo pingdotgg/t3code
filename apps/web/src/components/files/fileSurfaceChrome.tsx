@@ -59,6 +59,24 @@ export const FILE_LINK_REVEAL_UNSAFE_CSS = `
   }
 `;
 
+// @pierre/diffs overflows the gutter "+" button into the code, covering text and
+// blocking selection; mirror its left-aligned variant and pad the digits clear of it.
+export const FILE_GUTTER_UTILITY_UNSAFE_CSS = `
+  [data-gutter-utility-slot] {
+    right: unset !important;
+    left: 6px !important;
+    justify-content: flex-start !important;
+  }
+
+  [data-utility-button] {
+    margin-right: 0 !important;
+  }
+
+  [data-column-number] {
+    padding-left: calc(1lh + 9px) !important;
+  }
+`;
+
 export function FileSurfaceAction(props: {
   readonly label: string;
   readonly pressed?: boolean;
