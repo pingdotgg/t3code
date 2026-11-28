@@ -903,7 +903,12 @@ function threadTitle(input: {
   readonly title: string | undefined;
   readonly index: number;
 }): string {
-  const detail = input.title?.trim() || input.prompt?.trim();
+  const detail =
+    input.title?.trim() ||
+    input.prompt
+      ?.trim()
+      .split(/[\r\n\u2028\u2029]/, 1)[0]
+      ?.trim();
   if (!detail) return placeholderThreadTitle(input.parentTitle, input.index);
   if (detail.length <= 80) return detail;
   let end = 77;
@@ -1171,8 +1176,33 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return [item.explanation, ...item.steps.map((step) => `[${step.status}] ${step.text}`)]
         .filter((line): line is string => line !== undefined)
         .join("\n");
-    case "user_input_request":
-      return jsonText(item.questions);
+    case "user_input_request": {
+      if (item.questionAnswer === undefined) return jsonText(item.questions);
+      const attachmentsByQuestionId = Object.fromEntries(
+        Object.entries(item.questionAnswer.attachmentsByQuestionId).flatMap(
+          ([questionId, attachments]) =>
+            attachments === undefined || attachments.length === 0
+              ? []
+              : [
+                  [
+                    questionId,
+                    attachments.map(({ type, id, name, mimeType, sizeBytes }) => ({
+                      type,
+                      id,
+                      name,
+                      mimeType,
+                      sizeBytes,
+                    })),
+                  ],
+                ],
+        ),
+      );
+      return jsonText({
+        answers: item.questionAnswer.answers,
+        ...(Object.keys(attachmentsByQuestionId).length === 0 ? {} : { attachmentsByQuestionId }),
+        questions: item.questions,
+      });
+    }
     case "file_change":
       return [
         item.fileName,
@@ -2474,7 +2504,7 @@ const make = Effect.gen(function* () {
       const modelSelection =
         parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
       // Never end on a lone high surrogate, which renders as a broken character.
-      const derivedTitle = (input.prompt.split("\n")[0]?.trim() ?? "")
+      const derivedTitle = (input.prompt.split(/[\r\n\u2028\u2029]/, 1)[0]?.trim() ?? "")
         .slice(0, 80)
         .replace(/[\uD800-\uDBFF]$/, "");
       const title = input.title ?? (derivedTitle.length > 0 ? derivedTitle : "Scheduled task");
@@ -2875,6 +2905,11 @@ const make = Effect.gen(function* () {
             enabledForCaller ? provider : { ...provider, enabled: false },
             orchestrationCapableInstanceIds.has(provider.instanceId),
           );
+          const isFavorite = (model: ServerProviderModel) =>
+            (settings.favorites ?? []).some(
+              (favorite) =>
+                favorite.provider === provider.instanceId && favorite.model === model.slug,
+            );
           const { listed, omitted } = listCapabilityModels({
             provider,
             preferences: settings.providerModelPreferences?.[provider.instanceId],
@@ -2882,10 +2917,7 @@ const make = Effect.gen(function* () {
             isPinned: (model) =>
               model.isCustom ||
               (inherited?.instanceId === provider.instanceId && inherited.model === model.slug) ||
-              (settings.favorites ?? []).some(
-                (favorite) =>
-                  favorite.provider === provider.instanceId && favorite.model === model.slug,
-              ),
+              isFavorite(model),
           });
           return {
             providerInstanceId: provider.instanceId,
@@ -2899,6 +2931,7 @@ const make = Effect.gen(function* () {
                   ? {}
                   : { label: model.name }),
                 ...(options.length === 0 ? {} : { options: options.map(capabilityModelOption) }),
+                ...(isFavorite(model) ? { favorite: true as const } : {}),
               };
             }),
             ...(omitted === 0 ? {} : { omittedModels: omitted }),
@@ -3218,16 +3251,23 @@ const make = Effect.gen(function* () {
             ),
           );
         const stopped = yield* threadManagement
-          .getThreadRecords(childThreadId, ["runs"])
+          .getThreadRecords(childThreadId, ["runs", "messages"], { messageRoles: ["user"] })
           .pipe(Effect.mapError(threadManagementFailure));
+        const parentMessageIds = new Set(
+          stopped.messages
+            .filter((message) => message.senderThreadId === scope.thread.threadId)
+            .map((message) => message.id),
+        );
         for (const run of stopped.runs) {
           if (
             run.status !== "queued" ||
-            (run.delegatedTaskId !== input.taskId && run.id !== current.childRunId)
+            (run.delegatedTaskId !== input.taskId &&
+              run.id !== current.childRunId &&
+              !parentMessageIds.has(run.userMessageId))
           )
             continue;
           // Stop preserves the queue for Resume. Cancelling a task must also
-          // remove that task's queued turn, including a previously held one.
+          // remove its queued turns, including the parent's follow-ups and held ones.
           yield* threadManagement
             .dispatch({
               type: "queued-run.cancel",

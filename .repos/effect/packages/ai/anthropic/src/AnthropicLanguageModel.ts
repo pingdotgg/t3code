@@ -1345,6 +1345,26 @@ const prepareToolResultContent = Effect.fnUntraced(function*(
 const getBase64Data = (data: string | Uint8Array): string =>
   typeof data === "string" ? data.replace(/^data:[^;]+;base64,/, "") : Base64.encode(data)
 
+const decodeBase64DataUrl = (
+  data: typeof Prompt.FilePart.Type["data"]
+): Effect.Effect<typeof Prompt.FilePart.Type["data"], AiError.AiError> => {
+  const value = data instanceof URL ? data.href : data
+  if (typeof value !== "string" || !/^data:[^,]*;base64,/i.test(value)) {
+    return Effect.succeed(data)
+  }
+  return Effect.mapError(
+    Effect.fromResult(Base64.decode(value.slice(value.indexOf(",") + 1))),
+    (error) =>
+      AiError.make({
+        module: "AnthropicLanguageModel",
+        method: "prepareMessages",
+        reason: new AiError.InvalidUserInputError({
+          description: `Failed to decode text file data URL: ${error.message}`
+        })
+      })
+  )
+}
+
 const prepareFilePart = Effect.fnUntraced(function*(
   part: Prompt.FilePart,
   cacheControl: typeof Generated.CacheControlEphemeral.Encoded | null,
@@ -1370,17 +1390,19 @@ const prepareFilePart = Effect.fnUntraced(function*(
     const enableCitations = areCitationsEnabled(part)
     const documentOptions = getDocumentMetadata(part)
 
-    const source = isUrlData(part.data)
+    const data = part.mediaType === "text/plain" ? yield* decodeBase64DataUrl(part.data) : part.data
+
+    const source = isUrlData(data)
       ? {
         type: "url",
-        url: getUrlString(part.data)
+        url: getUrlString(data)
       } as const
       : part.mediaType === "application/pdf"
-      ? { type: "base64", media_type: "application/pdf", data: getBase64Data(part.data) } as const
+      ? { type: "base64", media_type: "application/pdf", data: getBase64Data(data) } as const
       : {
         type: "text",
         media_type: "text/plain",
-        data: typeof part.data === "string" ? part.data : new TextDecoder().decode(part.data)
+        data: typeof data === "string" ? data : new TextDecoder().decode(data)
       } as const
 
     return {

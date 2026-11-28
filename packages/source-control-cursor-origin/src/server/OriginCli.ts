@@ -36,6 +36,7 @@ export class OriginCliError extends Schema.TaggedError<OriginCliError>()("Origin
   operation: Schema.String,
   cwd: Schema.String,
   detail: Schema.String,
+  userFacingDetail: Schema.optional(Schema.String),
   reason: Schema.Literals([
     "missing-tool",
     "unauthenticated",
@@ -88,6 +89,53 @@ const OriginNamespaceListSchema = Schema.Struct({
 /** `owner/repo` for a REST path, each segment escaped. */
 export function originRepositoryPath(repository: string): string {
   return `/v1/origin/repos/${repository.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+const ORIGIN_WEB_REPOSITORY_PATH = /^\/codebase\/([^/]+\/[^/]+?)(?:\/(?:tree|blob)\/.+)?\/?$/u;
+
+const INVALID_REPOSITORY_SEGMENT = /[\s:@?#\\]/u;
+
+function normalizeOriginRepositoryPath(path: string): string | null {
+  const segments = path
+    .replace(/\/+$/u, "")
+    .replace(/\.git$/iu, "")
+    .split("/");
+  if (
+    segments.length !== 2 ||
+    segments.some(
+      (segment) =>
+        segment === "" ||
+        segment === "." ||
+        segment === ".." ||
+        INVALID_REPOSITORY_SEGMENT.test(segment),
+    )
+  ) {
+    return null;
+  }
+  return segments.join("/");
+}
+
+/** Parses `owner/name` or a Cursor Origin git/web URL into `owner/name`. */
+export function parseOriginRepository(input: string): string | null {
+  const trimmed = input.trim();
+  if (trimmed.length === 0) return null;
+  if (parseGitRemoteHost(trimmed)?.hostname === CURSOR_ORIGIN_GIT_HOST) {
+    const remotePath = repositoryPathFromRemoteUrl(trimmed);
+    return remotePath === null ? null : normalizeOriginRepositoryPath(remotePath);
+  }
+  const url = URL.parse(trimmed);
+  if (url !== null) {
+    const hostname = url.hostname.toLowerCase();
+    if (
+      (url.protocol !== "https:" && url.protocol !== "http:") ||
+      (hostname !== "cursor.com" && hostname !== "www.cursor.com")
+    ) {
+      return null;
+    }
+    const webPath = ORIGIN_WEB_REPOSITORY_PATH.exec(url.pathname)?.[1];
+    return webPath === undefined ? null : normalizeOriginRepositoryPath(webPath);
+  }
+  return normalizeOriginRepositoryPath(trimmed);
 }
 
 /** The message an Origin error body carries, Connect-style or REST-style. */
