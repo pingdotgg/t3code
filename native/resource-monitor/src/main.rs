@@ -744,16 +744,7 @@ impl Collector {
                     return None;
                 }
                 let disk_usage = details.disk_usage();
-                let command = if details.cmd().is_empty() {
-                    process.name().to_string_lossy().into_owned()
-                } else {
-                    details
-                        .cmd()
-                        .iter()
-                        .map(|part| part.to_string_lossy())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                };
+                let command = command_label(details.cmd(), &process.name().to_string_lossy());
 
                 Some(ProcessSample {
                     pid,
@@ -963,6 +954,151 @@ fn select_tracked_pids(rows: &[(u32, u32, u64)], roots: &HashSet<u32>) -> HashSe
     }
 
     tracked
+}
+
+const SCRIPT_EXTENSIONS: [&str; 8] = ["js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx"];
+
+/// How a JavaScript runtime's arguments lead up to the script, package script or package it runs.
+struct ScriptRuntime {
+    subcommands: &'static [&'static str],
+    /// Flags whose value is the next argument. Only forms the runtime accepts as two arguments.
+    value_flags: &'static [&'static str],
+    /// Flags that run code from their value, so no argument is a script.
+    inline_code_flags: &'static [&'static str],
+}
+
+const INLINE_CODE_FLAGS: &[&str] = &["-e", "--eval", "-p", "--print"];
+const NODE: ScriptRuntime = ScriptRuntime {
+    subcommands: &[],
+    value_flags: &[
+        "-r",
+        "--require",
+        "--import",
+        "--loader",
+        "--experimental-loader",
+        "-C",
+        "--conditions",
+        "--env-file",
+    ],
+    inline_code_flags: INLINE_CODE_FLAGS,
+};
+const BUN: ScriptRuntime = ScriptRuntime {
+    subcommands: &["run", "x"],
+    value_flags: &[
+        "-r",
+        "--preload",
+        "--require",
+        "--import",
+        "--env-file",
+        "--cwd",
+    ],
+    inline_code_flags: INLINE_CODE_FLAGS,
+};
+const DENO: ScriptRuntime = ScriptRuntime {
+    subcommands: &["run", "task"],
+    value_flags: &[
+        "-c",
+        "--config",
+        "--import-map",
+        "--cert",
+        "-L",
+        "--log-level",
+        "--preload",
+        "--import",
+        "--require",
+    ],
+    inline_code_flags: &[],
+};
+
+fn script_runtime(executable: &str) -> Option<&'static ScriptRuntime> {
+    let file_name = executable.rsplit(['/', '\\']).next().unwrap_or(executable);
+    let file_name = file_name.to_ascii_lowercase();
+    match file_name.strip_suffix(".exe").unwrap_or(&file_name) {
+        "node" => Some(&NODE),
+        "bun" => Some(&BUN),
+        "deno" => Some(&DENO),
+        _ => None,
+    }
+}
+
+/// The argument a runtime runs, found without reading anything past it.
+fn runtime_script<'a>(
+    runtime: &ScriptRuntime,
+    arguments: &'a [impl AsRef<str>],
+) -> Option<&'a str> {
+    let mut arguments = arguments.iter().map(AsRef::as_ref);
+    let mut unknown_flag_seen = false;
+    while let Some(argument) = arguments.next() {
+        if runtime.inline_code_flags.contains(&argument) {
+            return None;
+        }
+        if runtime.value_flags.contains(&argument) {
+            arguments.next();
+        } else if argument.starts_with('-') {
+            unknown_flag_seen = true;
+        } else {
+            // An unknown flag may take this argument as its value, so past one only a file
+            // with a script extension counts as the script.
+            return (!unknown_flag_seen || has_script_extension(argument)).then_some(argument);
+        }
+    }
+    None
+}
+
+fn has_script_extension(argument: &str) -> bool {
+    argument
+        .rsplit_once('.')
+        .is_some_and(|(_, extension)| SCRIPT_EXTENSIONS.contains(&extension))
+}
+
+fn is_process_type_argument(argument: &str) -> bool {
+    argument.strip_prefix("--type=").is_some_and(|value| {
+        !value.is_empty()
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'-')
+    })
+}
+
+/// Samples and history carry a label, never the argument list: the executable, the script a
+/// JavaScript runtime was started with, and the Chromium process type. The server groups and
+/// categorizes processes by those three.
+fn command_label<Argument: AsRef<std::ffi::OsStr>>(arguments: &[Argument], name: &str) -> String {
+    let arguments = arguments
+        .iter()
+        .map(|argument| argument.as_ref().to_string_lossy())
+        .collect::<Vec<_>>();
+    // A lone argument with spaces is a path without arguments or a title the process wrote over
+    // its own argument list. The two cannot be told apart, so the process name stands in.
+    let executable = match arguments.as_slice() {
+        [] => name,
+        [only] if only.contains(char::is_whitespace) => name,
+        [executable, ..] => executable,
+    };
+    let mut label = executable.to_owned();
+    if let Some(runtime) = script_runtime(executable) {
+        let mut rest = arguments.get(1..).unwrap_or_default();
+        if let Some((first, after)) = rest.split_first()
+            && runtime.subcommands.contains(&first.as_ref())
+        {
+            label.push(' ');
+            label.push_str(first);
+            rest = after;
+        }
+        if let Some(script) = runtime_script(runtime, rest) {
+            label.push(' ');
+            label.push_str(script);
+        }
+    }
+    if let Some(process_type) = arguments
+        .iter()
+        .flat_map(|argument| argument.split_whitespace())
+        .find(|argument| is_process_type_argument(argument))
+    {
+        label.push(' ');
+        label.push_str(process_type);
+    }
+    label
 }
 
 fn truncate_utf8(mut value: String, max_bytes: usize) -> String {
@@ -1846,6 +1982,202 @@ mod tests {
         assert_eq!(own.ppid, expected.parent().map(Pid::as_u32).unwrap_or(0));
         assert_eq!(own.name, expected.name().to_string_lossy());
         assert!(table.windows(2).all(|pair| pair[0].pid < pair[1].pid));
+    }
+
+    #[test]
+    fn labels_commands_by_executable_script_and_process_type() {
+        for (arguments, name, label) in [
+            (vec![], "idle", "idle"),
+            (
+                vec!["/usr/bin/git", "fetch", "origin"],
+                "git",
+                "/usr/bin/git",
+            ),
+            (vec!["pi", "--option", "value"], "pi", "pi"),
+            (
+                vec!["/usr/bin/node", "/opt/pi/cli.js", "--option", "value"],
+                "node",
+                "/usr/bin/node /opt/pi/cli.js",
+            ),
+            (
+                vec!["C:\\Program Files\\nodejs\\Node.EXE", "cli.js", "serve"],
+                "node.exe",
+                "C:\\Program Files\\nodejs\\Node.EXE cli.js",
+            ),
+            (vec!["bun", "--eval", "value"], "bun", "bun"),
+            (vec!["node", "--eval", "value", "cli.js"], "node", "node"),
+            (
+                vec![
+                    "node",
+                    "--no-warnings",
+                    "--max-old-space-size=4096",
+                    "cli.js",
+                    "serve",
+                ],
+                "node",
+                "node cli.js",
+            ),
+            (vec!["node", "run", "value"], "node", "node run"),
+            (
+                vec!["deno", "run", "/opt/pi/cli.ts", "value"],
+                "deno",
+                "deno run /opt/pi/cli.ts",
+            ),
+            (
+                vec![
+                    "deno",
+                    "run",
+                    "-A",
+                    "--allow-net=example.com",
+                    "main.ts",
+                    "value",
+                ],
+                "deno",
+                "deno run main.ts",
+            ),
+            (
+                vec!["deno", "task", "dev", "value"],
+                "deno",
+                "deno task dev",
+            ),
+            (vec!["deno", "main.ts", "run"], "deno", "deno main.ts"),
+            (
+                vec!["/usr/local/bin/bun", "run", "/opt/pi/cli.js", "value"],
+                "bun",
+                "/usr/local/bin/bun run /opt/pi/cli.js",
+            ),
+            (vec!["bun", "run", "dev", "value"], "bun", "bun run dev"),
+            (
+                vec!["bun", "run", "--watch", "cli.tsx", "value"],
+                "bun",
+                "bun run cli.tsx",
+            ),
+            (vec!["bun", "x", "package", "value"], "bun", "bun x package"),
+            (vec!["bun", "run"], "bun", "bun run"),
+            (vec!["bun", "task", "value"], "bun", "bun task"),
+            (vec!["sh", "-c", "node cli.js"], "sh", "sh"),
+            (
+                vec!["/opt/T3 Code/t3code", "--type=renderer", "--field=value"],
+                "t3code",
+                "/opt/T3 Code/t3code --type=renderer",
+            ),
+            (
+                vec!["/opt/t3code/t3code --type=gpu-process --field=value"],
+                "t3code",
+                "t3code --type=gpu-process",
+            ),
+            (
+                vec!["/Applications/T3 Code.app/T3 Code"],
+                "T3 Code",
+                "T3 Code",
+            ),
+            (vec!["tool", "--type=Value1"], "tool", "tool"),
+        ] {
+            assert_eq!(command_label(&arguments, name), label);
+        }
+    }
+
+    #[test]
+    fn labels_runtime_commands_past_flags_that_take_a_value() {
+        for (command, label) in [
+            (
+                "node --require ./preload.js ./app.js value",
+                "node ./app.js",
+            ),
+            (
+                "node -r ./preload.js /usr/bin/tool value",
+                "node /usr/bin/tool",
+            ),
+            ("node --import tsx cli.ts value", "node cli.ts"),
+            ("node --loader ./loader.mjs cli.ts", "node cli.ts"),
+            (
+                "node --experimental-loader ./loader.mjs cli.ts",
+                "node cli.ts",
+            ),
+            ("node -C development cli.js", "node cli.js"),
+            ("node --conditions development cli.js", "node cli.js"),
+            ("node --env-file .env cli.js", "node cli.js"),
+            ("node -r ./a.js --import ./b.mjs tool value.js", "node tool"),
+            (
+                "node --require=./preload.js ./app.js value",
+                "node ./app.js",
+            ),
+            ("node --require", "node"),
+            ("node --require ./preload.js", "node"),
+            ("node -e value cli.js", "node"),
+            ("node -p value cli.js", "node"),
+            ("node --print value cli.js", "node"),
+            ("node --require ./preload.js --eval value cli.js", "node"),
+            ("node --title value cli", "node"),
+            ("node --no-warnings --require ./preload.js tool", "node"),
+            ("bun -r ./preload.ts cli.ts value", "bun cli.ts"),
+            ("bun --preload ./preload.ts cli.ts", "bun cli.ts"),
+            ("bun --require ./preload.ts cli.ts", "bun cli.ts"),
+            ("bun --import ./preload.ts cli.ts", "bun cli.ts"),
+            ("bun --env-file .env cli.ts", "bun cli.ts"),
+            ("bun run --cwd /opt/pi cli value", "bun run cli"),
+            ("bun -c bunfig.toml cli.ts", "bun"),
+            ("bun -e value cli.ts", "bun"),
+            ("bun --print value cli.ts", "bun"),
+            ("deno run -c deno.json main.ts value", "deno run main.ts"),
+            ("deno run --config deno.json main.ts", "deno run main.ts"),
+            ("deno run --import-map map.json main.ts", "deno run main.ts"),
+            ("deno run --cert ca.pem main.ts", "deno run main.ts"),
+            ("deno run -L debug main.ts", "deno run main.ts"),
+            ("deno run --log-level debug main.ts", "deno run main.ts"),
+            (
+                "deno run --preload ./preload.ts main.ts",
+                "deno run main.ts",
+            ),
+            ("deno run --import ./preload.ts main.ts", "deno run main.ts"),
+            (
+                "deno run --require ./preload.cjs main.ts",
+                "deno run main.ts",
+            ),
+            ("deno run --lock main.ts value", "deno run main.ts"),
+            ("deno run --lock deno.lock main.ts", "deno run"),
+            ("deno run --env-file main.ts value", "deno run main.ts"),
+        ] {
+            let arguments = command.split(' ').collect::<Vec<_>>();
+            assert_eq!(command_label(&arguments, arguments[0]), label, "{command}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn keeps_process_arguments_out_of_samples_and_history() {
+        const ARGUMENT: &str = "t3-sampled-argument-value";
+        // The trailing `:` keeps the shell from replacing itself with its last command.
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "read _; :", "sh", ARGUMENT])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn child");
+        let mut collector = Collector::new();
+        let config = CollectorConfig {
+            root_pid: std::process::id(),
+            sample_interval: None,
+            external_processes: HashMap::new(),
+        };
+        let snapshot = collector.sample(&config, None);
+        let mut history = HistoryRecorder::default();
+        history.record(&snapshot);
+        child.kill().expect("stop child");
+        child.wait().expect("reap child");
+
+        let sampled = snapshot
+            .processes
+            .iter()
+            .find(|process| process.pid == child.id())
+            .expect("child sample");
+        assert_eq!(sampled.command, "sh");
+        for serialized in [
+            serde_json::to_string(&snapshot).expect("snapshot json"),
+            serde_json::to_string(&history.snapshots).expect("history json"),
+        ] {
+            assert!(serialized.contains(&format!("\"pid\":{}", child.id())));
+            assert!(!serialized.contains(ARGUMENT));
+        }
     }
 
     #[test]
