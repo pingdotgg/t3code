@@ -77,13 +77,18 @@ function odfListStart(node: XmlNode | undefined): number | undefined {
 // Writer hides text whose character style sets text:display="none"; a style without it inherits from its
 // parent style, and a span whose styles set nothing inherits from the enclosing span.
 // ODF 1.3 Part 3 §19.510: parent-style-name names a common style, never an automatic one.
-function odfSpanHidden(styles: Map<string, XmlNode>, name = ""): boolean | undefined {
-  let style = styles.get(`auto\n${name}`) ?? styles.get(`span\n${name}`);
+// Paragraph styles hide their paragraph's text the same way, within the paragraph family.
+function odfStyleHidden(
+  styles: Map<string, XmlNode>,
+  family: "text" | "paragraph",
+  name = "",
+): boolean | undefined {
+  let style = styles.get(`auto\n${family}\n${name}`) ?? styles.get(`common\n${family}\n${name}`);
   for (const seen = new Set<XmlNode>(); style && !seen.has(style);) {
     seen.add(style);
     const display = find(style, "style:text-properties")[0]?.attrs["text:display"]?.trim();
     if (display) return display === "none";
-    style = styles.get(`span\n${style.attrs["style:parent-style-name"] ?? ""}`);
+    style = styles.get(`common\n${family}\n${style.attrs["style:parent-style-name"] ?? ""}`);
   }
   return undefined;
 }
@@ -191,9 +196,14 @@ async function odfHtml(
           .join(" ")
       : "";
   let children = "";
+  const paragraph = node.name === "text:p" || node.name === "text:h";
   const childHidden =
-    node.name === "text:span"
-      ? (odfSpanHidden(listStyles, node.attrs["text:style-name"]) ?? hidden)
+    node.name === "text:span" || paragraph
+      ? (odfStyleHidden(
+          listStyles,
+          paragraph ? "paragraph" : "text",
+          node.attrs["text:style-name"],
+        ) ?? hidden)
       : hidden;
   const repeatedRow =
     node.name === "table:table-row"
@@ -229,6 +239,7 @@ async function odfHtml(
       listEnds,
       childHidden,
     );
+  if (paragraph && childHidden && !children) return "";
   const tags: Record<string, string> = {
     "text:p": "p",
     "text:h": "h2",
@@ -285,6 +296,25 @@ async function odfHtml(
   reserveMarkup(count * markup.length - children.length);
   return markup.repeat(count);
 }
+// A drawing can contain paragraphs of its own, even when anchored inside cell text.
+function withoutOdsDrawings(node: XmlNode): XmlNode | undefined {
+  if (node.name.startsWith("draw:")) return undefined;
+  let children: XmlNode[] | undefined;
+  for (const [index, child] of node.children.entries()) {
+    const content = withoutOdsDrawings(child);
+    if (content !== child) children ??= node.children.slice(0, index);
+    if (content) children?.push(content);
+  }
+  return children ? { ...node, children } : node;
+}
+function odsCellText(cell: XmlNode): string {
+  const paragraphs = cell.children
+    .filter((child) => child.name !== "office:annotation")
+    .map(withoutOdsDrawings)
+    .flatMap((child) => (!child ? [] : child.name === "text:p" ? [child] : find(child, "text:p")))
+    .map(text);
+  return paragraphs.some(Boolean) ? paragraphs.join("\n") : "";
+}
 export async function openDocument(
   archive: JSZip,
   kind: "odt" | "ods" | "odp",
@@ -297,10 +327,17 @@ export async function openDocument(
   if (kind === "ods") {
     const tables = find(root, "table:table");
     if (!tables.length || tables.length > 100) throw new PreviewError({ code: "ods-sheet-count" });
+    const hidden = new Set<string>();
+    for (const style of find(root, "style:style", "office:body"))
+      if (style.attrs["style:family"] === "table" && style.attrs["style:name"])
+        if (find(style, "style:table-properties")[0]?.attrs["table:display"]?.trim() === "false")
+          hidden.add(style.attrs["style:name"]);
+    const visible = tables.filter((table) => !hidden.has(table.attrs["table:style-name"] ?? ""));
+    if (!visible.length) throw new PreviewError({ code: "ods-sheet-count" });
     let cellBytes = 0;
     return {
       type: "ods",
-      sheets: tables.map((table) => {
+      sheets: visible.map((table) => {
         const rows: string[][] = [];
         let truncated = false;
         let pendingEmptyRows = 0;
@@ -312,15 +349,7 @@ export async function openDocument(
             const value =
               cell.name === "table:covered-table-cell"
                 ? ""
-                : cell.children
-                    // Shapes anchored to a cell float over the sheet; their text is not the cell's value.
-                    .filter(
-                      (child) =>
-                        child.name !== "office:annotation" && !child.name.startsWith("draw:"),
-                    )
-                    .flatMap((child) => (child.name === "text:p" ? [child] : find(child, "text:p")))
-                    .map(text)
-                    .join("\n") ||
+                : odsCellText(cell) ||
                   cell.attrs["office:value"] ||
                   cell.attrs["office:date-value"] ||
                   cell.attrs["office:time-value"] ||
@@ -385,12 +414,14 @@ export async function openDocument(
       if (style.attrs["style:name"]) listStyles.set(style.attrs["style:name"], style);
     if (kind === "odt")
       for (const [prefix, part] of [
-        ...named.map((part) => ["span", part] as const),
+        ...named.map((part) => ["common", part] as const),
         ["auto", root] as const,
       ])
-        for (const style of find(part, "style:style", "office:body"))
-          if (style.attrs["style:family"] === "text" && style.attrs["style:name"])
-            listStyles.set(`${prefix}\n${style.attrs["style:name"]}`, style);
+        for (const style of find(part, "style:style", "office:body")) {
+          const family = style.attrs["style:family"];
+          if ((family === "text" || family === "paragraph") && style.attrs["style:name"])
+            listStyles.set(`${prefix}\n${family}\n${style.attrs["style:name"]}`, style);
+        }
   }
   const rendered = [];
   for (const page of pages) {
@@ -539,6 +570,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   if (!source.startsWith("{\\rtf")) throw new PreviewError({ code: "rtf-invalid" });
   let state = {
     skip: false,
+    nestedTableProperties: false,
     deleted: false,
     hiddenText: false,
     inTable: false,
@@ -574,7 +606,9 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     });
     completedLength += html.length;
     html = notes = "";
+    nestedRowEnd = -1;
   };
+  let nestedRowEnd = -1;
   let run = "";
   let fallback = 0;
   const hidden = () => state.skip || state.deleted || state.hiddenText;
@@ -618,6 +652,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     if (fallback > 0) fallback--;
     else if (!hidden()) encoded[encodedLength++] = value;
   };
+  const nestedTablePropertiesHeader = /[\r\n]*\\\*[\r\n]*\\nesttableprops(?![A-Za-z])/y;
   for (let i = 0; i < source.length;) {
     const char = source[i++];
     if (char === "{") {
@@ -625,6 +660,9 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       fallback = 0;
       if (stack.length > 100) throw new PreviewError({ code: "rtf-too-deep" });
       stack.push({ ...state });
+      // Only this destination's own row marker can render while its contents are skipped.
+      nestedTablePropertiesHeader.lastIndex = i;
+      state.nestedTableProperties = !state.skip && nestedTablePropertiesHeader.test(source);
     } else if (char === "}") {
       flush();
       fallback = 0;
@@ -731,6 +769,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
           // Shape properties, and the drawing that repeats a shape for older readers.
           "sp",
           "shprslt",
+          "nonesttables",
           "header",
           "headerl",
           "headerr",
@@ -793,8 +832,16 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         html += `<sup>${noteDepth === undefined ? ++noteCount : noteCount}</sup>`;
       else if (!hidden() && word === "page") finishPage();
       else if (word === "cell" || word === "nestcell") emit("\t", state.skip);
-      else if (!state.skip && word === "row") html += "<br>";
-      else if (!hidden() && (word === "par" || word === "line")) html += lineBreak();
+      else if (word === "nestrow" && (!state.skip || state.nestedTableProperties)) {
+        html += "<br>";
+        nestedRowEnd = html.length;
+      } else if (!state.skip && word === "row") {
+        // A cell holding only a nested table ends after the nested row's break; skip its empty line.
+        if (nestedRowEnd >= 0 && /^\t*$/.test(html.slice(nestedRowEnd)))
+          html = html.slice(0, nestedRowEnd);
+        else html += "<br>";
+        nestedRowEnd = -1;
+      } else if (!hidden() && (word === "par" || word === "line")) html += lineBreak();
       // Writers usually end the paragraph before these breaks; a second break would add a blank line.
       else if (!hidden() && (word === "sect" || word === "column")) {
         if (html && !html.endsWith("<br>")) html += "<br>";

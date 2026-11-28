@@ -52,9 +52,11 @@ const PPTX_DRAWING_PROPERTIES = new Map([
 ]);
 const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
+const SVG_NS = "http://www.w3.org/2000/svg";
 const ODF_DRAW_NS = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
 const ODF_STYLE_NS = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
 const ODF_TEXT_NS = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
+const XML_SCHEMA_TRUE = /^[\t\n\r ]*(?:true|1)[\t\n\r ]*$/u;
 type TextPart =
   | string
   | typeof CELL_START
@@ -237,9 +239,7 @@ function odfCommonTextStyleHidden(styles: Map<string, OdfTextStyle>, name: strin
 }
 
 function isHiddenOdfField(attributes: Record<string, string>, scope: readonly XmlNode[]) {
-  return /^[\t\n\r ]*(?:true|1)[\t\n\r ]*$/u.test(
-    odfAttribute(attributes, "is-hidden", scope) ?? "",
-  );
+  return XML_SCHEMA_TRUE.test(odfAttribute(attributes, "is-hidden", scope) ?? "");
 }
 
 function isHiddenOdfSection(
@@ -410,7 +410,7 @@ function xml(
       node.mathmlFirstChildSeen = false;
     if (
       extension === ".epub" &&
-      ["nav", "main", "details", "summary"].includes(node.name) &&
+      ["nav", "main", "details", "summary", "center"].includes(node.name) &&
       isXhtmlElement(tag.name, stack, rootTagName)
     )
       node.epubBlock = true;
@@ -517,6 +517,9 @@ function xml(
       (extension === ".epub" &&
         node.name === "template" &&
         isXhtmlElement(tag.name, [...stack, node], rootTagName)) ||
+      (extension === ".epub" &&
+        node.name === "metadata" &&
+        namespaceOf(tag.name, [...stack, node]) === SVG_NS) ||
       (extension === ".epub" &&
         (stack[1] ?? node).name === "html" &&
         ((Object.hasOwn(tag.attributes, "hidden") &&
@@ -996,7 +999,7 @@ function markWordMergeContinuations(table: XmlNode) {
 // PowerPoint keeps the cells a merge covers and flags them with hMerge or vMerge.
 const drawingMergeCovered = (cell: XmlNode) =>
   cell.name === "tc" &&
-  [cell.attrs.hMerge, cell.attrs.vMerge].some((flag) => flag === "1" || flag === "true");
+  [cell.attrs.hMerge, cell.attrs.vMerge].some((flag) => XML_SCHEMA_TRUE.test(flag ?? ""));
 const covered = (cell: XmlNode) =>
   cell.name === "covered-table-cell" || cell.wordMergeCovered || drawingMergeCovered(cell);
 function hasCellText(cell: XmlNode): boolean {
@@ -1765,7 +1768,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
         const target = workbookRelations.find((rel) => rel.Type?.endsWith(`/${part}`))?.Target;
         return resolveWorkbookPart(target || `${part}.xml`);
       };
-      const dateSystem = ["1", "true"].includes(
+      const dateSystem = /^[ \t\r\n]*(?:1|true)[ \t\r\n]*$/.test(
         all(workbook, "workbookPr").next().value?.attrs.date1904 ?? "",
       )
         ? "1904"

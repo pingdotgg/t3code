@@ -26,6 +26,9 @@ export function resolveProviderInstanceDisplayName(
   return trimmedSnapshotName || kindLabel;
 }
 
+// A letter with the combining marks after it, which NFC cannot always fold into one character.
+const glyphs = (word: string) => word.match(/\P{M}\p{M}*/gu) ?? [];
+
 export function providerInstanceInitials(label: string): string {
   // Punctuation separates words so "Codex (hub)" reads CH, not C(. An apostrophe
   // inside a word stays ("Theo's Codex" is TC); a quoting one does not
@@ -39,10 +42,10 @@ export function providerInstanceInitials(label: string): string {
   let words = toWords(label.normalize("NFC").replace(/[^\P{P}'’]+/gu, " "));
   if (words.length === 1) words = toWords(words[0]!.replace(/(\p{Ll})(\p{Lu})/gu, "$1 $2"));
   if (words.length === 0) return "";
-  if (words.length === 1) return Array.from(words[0]!).slice(0, 2).join("").toUpperCase();
+  if (words.length === 1) return glyphs(words[0]!).slice(0, 2).join("").toUpperCase();
   return words
     .slice(0, 2)
-    .map((word) => Array.from(word)[0]?.toUpperCase() ?? "")
+    .map((word) => glyphs(word)[0]?.toUpperCase() ?? "")
     .join("");
 }
 

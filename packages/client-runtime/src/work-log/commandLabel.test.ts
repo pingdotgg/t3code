@@ -127,6 +127,9 @@ describe("commandProgramName", () => {
     "coproc npm test",
     "true || git --version",
     "builtin true || git --version",
+    ": || git --version",
+    "builtin : || git --version",
+    "command : || git --version",
   ])("does not treat shell lookup and commandless wrapper forms as executions: %s", (command) => {
     expect(commandProgramName(command)).toBeNull();
   });
