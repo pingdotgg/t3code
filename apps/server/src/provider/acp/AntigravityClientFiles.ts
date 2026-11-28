@@ -12,6 +12,39 @@ function isInsideRoot(path: Path.Path, root: string, candidate: string): boolean
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+/**
+ * A linked worktree's own Git directory (`<common>/worktrees/<name>`), named by the checkout's
+ * `.git` file and pointing back at it. The shared common directory is never returned.
+ */
+export const linkedWorktreeGitDir = Effect.fn("AntigravityClientFiles.linkedWorktreeGitDir")(
+  function* (input: {
+    readonly fileSystem: FileSystem.FileSystem;
+    readonly path: Path.Path;
+    readonly cwd: string;
+  }) {
+    const { fileSystem, path } = input;
+    const gitFile = path.join(input.cwd, ".git");
+    const firstLine = (yield* fileSystem.readFileString(gitFile)).split(/\r?\n/u, 1)[0] ?? "";
+    if (!firstLine.startsWith("gitdir:")) return Option.none<string>();
+    const gitDir = yield* fileSystem.realPath(
+      path.resolve(input.cwd, firstLine.slice("gitdir:".length).trim()),
+    );
+    const commonDir = path.resolve(
+      gitDir,
+      (yield* fileSystem.readFileString(path.join(gitDir, "commondir"))).trim(),
+    );
+    const backlink = path.resolve(
+      gitDir,
+      (yield* fileSystem.readFileString(path.join(gitDir, "gitdir"))).trim(),
+    );
+    const isRegistered =
+      path.dirname(gitDir) === path.join(yield* fileSystem.realPath(commonDir), "worktrees") &&
+      (yield* fileSystem.realPath(backlink)) === (yield* fileSystem.realPath(gitFile));
+    return isRegistered ? Option.some(gitDir) : Option.none<string>();
+  },
+  Effect.orElseSucceed(() => Option.none<string>()),
+);
+
 /** Resolve all symlinks, including the final component, before checking workspace containment. */
 const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFilePath")(
   function* (input: {
