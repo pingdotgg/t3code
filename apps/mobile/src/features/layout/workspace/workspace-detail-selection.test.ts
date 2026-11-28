@@ -1,5 +1,7 @@
 import * as NodeModule from "node:module";
 import { describe, expect, it } from "vite-plus/test";
+import { settingsNavigationState } from "../../settings/settings-navigation";
+import { nativeStackPopAction } from "../../../native/workspace-stack-projection";
 import {
   selectWorkspaceDetail,
   setNativelyPoppingWorkspaceRoute,
@@ -31,6 +33,9 @@ const options = {
     "PullRequestReviewers",
     "Settings",
     "SettingsAppearance",
+    "SettingsThreads",
+    "SettingsScheduledTasks",
+    "SettingsProviderAccounts",
     "GitOverview",
   ],
   routeParamList: {},
@@ -122,6 +127,37 @@ describe("selectWorkspaceDetail", () => {
       setNativelyPoppingWorkspaceRoute(null);
     }
   });
+});
+
+describe("Settings native Back handoff", () => {
+  it.each(["SettingsThreads", "SettingsScheduledTasks", "SettingsProviderAccounts"] as const)(
+    "reopens %s while native Back is still dismissing its previous screen",
+    (name) => {
+      const initial = home();
+      const opened = apply(initial, {
+        type: "RESET",
+        payload: settingsNavigationState(initial, name),
+      });
+      const leaving = opened.routes.at(-1)!;
+      expect(settingsNavigationState(opened, name).routes.at(-1)).toBe(leaving);
+      setNativelyPoppingWorkspaceRoute(leaving.key);
+      try {
+        for (const key of [undefined, leaving.key]) {
+          const reopened = apply(opened, {
+            type: "RESET",
+            payload: settingsNavigationState(opened, name, undefined, key),
+          });
+          expect(page(reopened)).toEqual({ names: ["Home", "Settings", name], index: 2 });
+          expect(reopened.routes.at(-1)?.key).not.toBe(leaving.key);
+          expect(nativeStackPopAction(reopened, leaving.key)).toBeNull();
+          const back = apply(reopened, { type: "GO_BACK" });
+          expect(page(back)).toEqual({ names: ["Home", "Settings"], index: 1 });
+        }
+      } finally {
+        setNativelyPoppingWorkspaceRoute(null);
+      }
+    },
+  );
 });
 
 describe("workspaceDetailLinkAction", () => {
