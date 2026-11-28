@@ -17,5 +17,5 @@ export function parseJiraIssueUrl(url: URL) {
 export const issueLinkDefinition: StandaloneIssueLinkDefinition = {
   tracker: JIRA_KIND,
   parseIssueUrl: parseJiraIssueUrl,
-  mayContainIssueUrl: (text: string) => /\.atlassian\.net\/browse\//i.test(text),
+  mayContainIssueUrl: (text: string) => /\.atlassian\.net(?::\d+)?\/browse\//i.test(text),
 };

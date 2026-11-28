@@ -210,6 +210,7 @@ describe("resolveIssueLinkTarget", () => {
       scope: "HELP",
       key: "HELP-42",
     });
+    expect(resolve("https://acme.atlassian.net:443/browse/HELP-42")?.key).toBe("HELP-42");
     expect(resolve("https://other.atlassian.net/browse/HELP-42")).toBeUndefined();
     expect(resolve("https://acme.atlassian.net.evil.test/browse/HELP-42")).toBeUndefined();
     expect(
@@ -233,6 +234,8 @@ describe("mayContainStandaloneIssueLink", () => {
     ["[issue](https://linear.app/acme/issue/WEB-17)", true],
     ["[issue](https://LINEAR.APP/acme/issue/WEB-17)", true],
     ["[issue](https://acme.atlassian.net/browse/HELP-42)", true],
+    ["[issue](https://acme.atlassian.net:443/browse/HELP-42)", true],
+    ["[issue](https://linear.app:443/acme/issue/WEB-17)", true],
     ["[issue](https://github.com/acme/web/issues/7)", false],
   ])("classifies %s as %s", (text, expected) => {
     expect(mayContainStandaloneIssueLink(text)).toBe(expected);

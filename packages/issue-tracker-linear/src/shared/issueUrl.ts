@@ -16,5 +16,5 @@ export function parseLinearIssueUrl(url: URL) {
 export const issueLinkDefinition: StandaloneIssueLinkDefinition = {
   tracker: LINEAR_KIND,
   parseIssueUrl: parseLinearIssueUrl,
-  mayContainIssueUrl: (text: string) => /linear\.app\//i.test(text),
+  mayContainIssueUrl: (text: string) => /linear\.app(?::\d+)?\//i.test(text),
 };
