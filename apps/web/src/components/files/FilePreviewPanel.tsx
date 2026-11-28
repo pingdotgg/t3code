@@ -2177,7 +2177,11 @@ export function WorkspaceLargeTextPreview(props: {
       delimiter={props.delimiter}
       markdownCwd={props.markdownCwd}
       threadRef={props.threadRef}
-      workspaceMutationId={props.workspaceMutationId}
+      // A refresh re-mints embedded images too; their cached URLs keep the old bytes.
+      workspaceMutationId={withRefreshRevision(
+        props.workspaceMutationId,
+        props.refreshRevision ?? 0,
+      )}
       copyContents={props.copyContents}
       onRetry={retry}
       onPostRender={props.onPostRender}
