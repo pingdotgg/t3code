@@ -1,6 +1,8 @@
+import "~/index.css";
+
 import { redirect, useLocation } from "@tanstack/react-router";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { commands, page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
 import { useCommitOnBlur } from "../hooks/useCommitOnBlur";
@@ -136,5 +138,33 @@ describe("AppRouteModal", () => {
 
     await userEvent.keyboard("{Escape}");
     await expect.element(usage).not.toBeInTheDocument();
+  });
+
+  // regression: #45028. A press and release on different elements click their common ancestor.
+  it("stays open when a press on the backdrop is released inside the window", async () => {
+    const size = { width: window.innerWidth, height: window.innerHeight };
+    await page.viewport(1280, 800);
+    await using _viewport = {
+      [Symbol.asyncDispose]: () => page.viewport(size.width, size.height),
+    };
+    await using _screen = await render(
+      <AppRouteModal label="Settings">
+        <input aria-label="Instructions" />
+      </AppRouteModal>,
+      { router: "/settings/general" },
+    );
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    await expect.element(settings).toHaveAttribute("data-open");
+
+    await userEvent.hover(settings.element().parentElement!, { position: { x: 4, y: 4 } });
+    await commands.pointerDown();
+    try {
+      await userEvent.hover(page.getByRole("textbox", { name: "Instructions" }));
+    } finally {
+      await commands.pointerUp();
+    }
+    await act(async () => {});
+
+    expect(settings.element()).toHaveAttribute("data-open");
   });
 });
