@@ -173,6 +173,24 @@ describe("AcpClientTerminals", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("runs Devin shell source under bash", () =>
+    Effect.gen(function* () {
+      const terminals = yield* makeAcpClientTerminals({
+        defaultCwd: process.cwd(),
+        shellCommands: true,
+      });
+      yield* Effect.addFinalizer(() => terminals.disposeAll);
+      const terminal = yield* terminals.create({
+        sessionId: "devin",
+        command: "[[ -n x ]] && echo {1..3} && cat <(printf ok)",
+      });
+      const exit = yield* terminals.waitForExit({ sessionId: "devin", ...terminal });
+      const output = yield* terminals.output({ sessionId: "devin", ...terminal });
+      expect(output.output.trim()).toBe("1 2 3\nok");
+      expect(exit.exitCode).toBe(0);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live.each([
     { text: "a".repeat(64) + "TAIL", limit: 16 },
     { text: "€".repeat(16) + "TAIL", limit: 6 },
