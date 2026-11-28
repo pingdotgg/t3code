@@ -15,6 +15,24 @@ import { ENRICHED_INLINE_FILE_LINK_REGEX } from "./enrichedLinkPresentation";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
 
+it("renders bare Windows and POSIX spaced media and file paths in native Markdown", () => {
+  const winSlash = "Z:/Projects/Demo App/Output Shots/bust.jpg";
+  const winBackslash = String.raw`C:\Users\First Last\.t3\shot.png`;
+  const mac = "/Users/test/Mobile Documents/shot.png";
+  const markdown = [
+    `![Bust](${winSlash})`,
+    `![Win](${winBackslash})`,
+    `![Mac](${mac})`,
+    `[File](C:/Users/First Last/src/app.ts:10)`,
+  ].join("\n\n");
+  expect(markdownImageSources(markdown)).toEqual([winSlash, winBackslash, mac]);
+  const rendered = markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX);
+  expect(rendered).toContain(`![Bust](<${winSlash}>)`);
+  expect(rendered).toContain(String.raw`![Win](<C:\\Users\\First Last\\.t3\\shot.png>)`);
+  expect(rendered).toContain(`![Mac](<${mac}>)`);
+  expect(rendered).toContain(`[File](<C:/Users/First Last/src/app.ts:10>)`);
+});
+
 describe("HTML in native Markdown", () => {
   it("preserves screenshot URLs and captions from GitHub HTML image embeds", () => {
     expect(

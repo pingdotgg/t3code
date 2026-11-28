@@ -731,6 +731,82 @@ function markdownLinkTailScanner(markdown: string) {
 // link's opening parenthesis while that parenthesis counts toward this depth.
 const MAX_BARE_DESTINATION_PAREN_DEPTH = 32;
 
+const EXPLICIT_SPACED_PATH_PREFIX = /^(?:\/(?![/\\])|~[\\/]|[A-Za-z]:[\\/]|\.\.?[\\/])/;
+
+function hasTrailingUnescapedBackslash(value: string): boolean {
+  let count = 0;
+  for (let index = value.length - 1; index >= 0 && value[index] === "\\"; index -= 1) {
+    count += 1;
+  }
+  return count % 2 !== 0;
+}
+
+/**
+ * Scans a bare Markdown link destination starting at `start` (after `(` and optional horizontal
+ * whitespace) for a local file path containing spaces (absolute, home, or relative).
+ */
+export function spacedFilePathDestinationEnd(
+  markdown: string,
+  start: number,
+): { readonly hrefEnd: number; readonly end: number } | null {
+  if (markdown[start] === "<" || markdown[start] === "#") return null;
+  const prefix = EXPLICIT_SPACED_PATH_PREFIX.exec(markdown.slice(start, start + 3))?.[0];
+  const isWindows = prefix !== undefined && prefix.length === 3 && prefix[1] === ":";
+  let parenDepth = 0;
+  let closeParen = -1;
+  for (let index = start; index < markdown.length; index += 1) {
+    const char = markdown[index]!;
+    if (
+      char === "\r" ||
+      char === "\n" ||
+      char === "<" ||
+      char === ">" ||
+      char === "`" ||
+      char === '"'
+    ) {
+      return null;
+    }
+    // A later `](` is scanned as its own candidate, so giving up here keeps scans linear.
+    if (char === "]" && markdown[index + 1] === "(") return null;
+    if (char === "\\" && !isWindows) {
+      const next = markdown[index + 1];
+      if (next === undefined || next === "\r" || next === "\n") return null;
+      index += 1;
+      continue;
+    }
+    if (char === "(") {
+      if (parenDepth === MAX_BARE_DESTINATION_PAREN_DEPTH) return null;
+      parenDepth += 1;
+    } else if (char === ")") {
+      if (parenDepth === 0) {
+        closeParen = index;
+        break;
+      }
+      parenDepth -= 1;
+    }
+  }
+  if (closeParen < 0) return null;
+  let hrefEnd = closeParen;
+  while (hrefEnd > start && (markdown[hrefEnd - 1] === " " || markdown[hrefEnd - 1] === "\t")) {
+    hrefEnd -= 1;
+  }
+  const path = markdown.slice(start, hrefEnd);
+  if (!/[ \t]/.test(path) || hasTrailingUnescapedBackslash(path) || isNetworkPath(path)) {
+    return null;
+  }
+  const parsed = parseMarkdownFileLink(path);
+  if (!parsed) return null;
+  if (!prefix) {
+    // Unprefixed relative paths require a slash and a file-shaped basename so prose like `(a/b c)` stays text.
+    if (!PATH_SEPARATOR_PATTERN.test(parsed.path)) return null;
+    const basename = parsed.path.split(PATH_SEPARATOR_PATTERN).at(-1) ?? "";
+    if (!FILE_EXTENSION_PATTERN.test(basename) && !EXTENSIONLESS_FILE_NAMES.has(basename)) {
+      return null;
+    }
+  }
+  return { hrefEnd, end: closeParen + 1 };
+}
+
 function bareMarkdownLinkDestinationEnd(markdown: string, start: number): number | null {
   const delimiter = /[\s()\\]/g;
   delimiter.lastIndex = start;
@@ -768,9 +844,12 @@ function markdownLinkDestinationScanner(markdown: string) {
       }
     }
     const hrefEnd = bareMarkdownLinkDestinationEnd(markdown, hrefStart);
-    if (hrefEnd === null) return null;
-    const end = bareTail(hrefEnd);
-    return end === null ? null : { hrefStart, hrefEnd, end };
+    if (hrefEnd !== null) {
+      const end = bareTail(hrefEnd);
+      if (end !== null) return { hrefStart, hrefEnd, end };
+    }
+    const spaced = spacedFilePathDestinationEnd(markdown, hrefStart);
+    return spaced === null ? null : { hrefStart, hrefEnd: spaced.hrefEnd, end: spaced.end };
   };
 }
 

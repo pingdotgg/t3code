@@ -561,6 +561,58 @@ describe("wordsHast", () => {
     expect(isMarkdownFileLinkLabel(basename, String(anchor.properties.href))).toBe(true);
   });
 
+  it("renders bare Windows and POSIX media embeds and file links with spaces while leaving code literal", () => {
+    const winSlash = "Z:/Projects/Demo App/Output Shots/final-bust.jpg";
+    const winBackslash = String.raw`C:\Users\First Last\.t3\design-review\r6-1.png`;
+    const macIcloud = "/Users/test/Mobile Documents/iCloud~md~notes/cover photo.png";
+    const winFileLink = "C:/Users/First Last/Downloads GC/project/src/DetailsTab.tsx:42";
+    const markdown = [
+      `![Bust](${winSlash})`,
+      "",
+      `![Round 6](${winBackslash})`,
+      "",
+      `![Cover](${macIcloud})`,
+      "",
+      `[DetailsTab.tsx:42](${winFileLink})`,
+      "",
+      `\`![Inline](${winSlash})\``,
+      "",
+      "```md",
+      `![Fence](${macIcloud})`,
+      "```",
+    ].join("\n");
+    const html = wordsHtml(markdown);
+    expect(html).toContain(`data-local-src="Z:/Projects/Demo%20App/Output%20Shots/final-bust.jpg"`);
+    expect(html).toContain(
+      String.raw`data-local-src="C:\Users\First%20Last\.t3\design-review\r6-1.png"`,
+    );
+    expect(html).toContain(
+      `src="/Users/test/Mobile%20Documents/iCloud~md~notes/cover%20photo.png"`,
+    );
+    expect(html).toContain(
+      `href="file:///C:/Users/First%20Last/Downloads%20GC/project/src/DetailsTab.tsx:42"`,
+    );
+    expect(html).toContain(`<code data-inline-code="" dir="ltr">![Inline](${winSlash})</code>`);
+    expect(html).toContain(`<code class="language-md">![Fence](${macIcloud})\n</code>`);
+
+    // Backticks inside a fenced block must not pair with prose backticks after an image.
+    expect(wordsHtml("~~~\n`unclosed\n~~~\n![real](/tmp/a b.png)\n`tail`")).toContain(
+      `src="/tmp/a%20b.png"`,
+    );
+    expect(wordsHtml("[Open `README.md`](/tmp/My Project/README.md)")).toContain(
+      `href="/tmp/My%20Project/README.md"`,
+    );
+    expect(wordsHtml("[Open `README\n.md`](/tmp/My Project/README.md)")).toContain(
+      `href="/tmp/My%20Project/README.md"`,
+    );
+    expect(wordsHtml("![a](./img !32.png)\n\n![b](screenshots/my shot (1).png)")).toContain(
+      `src="./img%20!32.png"`,
+    );
+    expect(wordsHtml("![b](screenshots/my shot (1).png)")).toContain(
+      `src="screenshots/my%20shot%20(1).png"`,
+    );
+  });
+
   it("supports chunked footnote modes (omit, omit-seeded, only)", () => {
     const chunk0 = toHtml(
       wordsHast("[^a]: .\n[^b]: .\n\nFirst[^a].", {
