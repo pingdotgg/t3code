@@ -9625,6 +9625,105 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("cancels a permission request the agent sends after an interrupt settled", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let requestPermission: Parameters<RuntimeService["handleRequestPermission"]>[0] | undefined;
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: { T3_ACP_EMIT_TOOL_CALLS: "1" },
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleRequestPermission: (handler) =>
+                Effect.sync(() => {
+                  requestPermission = handler;
+                }).pipe(Effect.andThen(runtime.handleRequestPermission(handler))),
+            }),
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-late-permission-after-interrupt");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make(
+          "provider-session-acp-late-permission-after-interrupt",
+        ),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
+      );
+      const pendingRequest = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+          ),
+          Stream.runHead,
+        ),
+      );
+      if (
+        pendingRequest.type !== "runtime_request.updated" ||
+        pendingRequest.runtimeRequest.providerTurnId === null
+      ) {
+        return yield* Effect.die("Expected a pending ACP permission request with a provider turn");
+      }
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: pendingRequest.runtimeRequest.providerTurnId,
+      });
+      Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+        ),
+      );
+      if (requestPermission === undefined) {
+        return yield* Effect.die("ACP runtime must register a permission handler");
+      }
+
+      // An ask that raced session/cancel arrives after the turn settled; ACP expects `cancelled`.
+      const lateResponse = yield* Effect.exit(
+        requestPermission(
+          {
+            sessionId: "mock-session-1",
+            toolCall: { toolCallId: "raced-tool", title: "Bash", kind: "execute" },
+            options: [
+              { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+              { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+            ],
+          },
+          { requestId: "raced-permission", method: "session/request_permission" },
+        ),
+      );
+      assert.deepStrictEqual(lateResponse, Exit.succeed({ outcome: { outcome: "cancelled" } }));
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live("keeps hard teardown excluded until a permission response is enqueued", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
