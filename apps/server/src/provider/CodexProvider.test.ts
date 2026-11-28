@@ -1,9 +1,17 @@
+import * as NodeSqlite from "node:sqlite";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { CodexSettings } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -13,6 +21,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   applyPreferredCodexDefaultModel,
+  checkCodexProviderStatus,
   codexCustomEndpoint,
   codexRoutesSpendNativeQuota,
   makeCodexSkillsProbe,
@@ -340,3 +349,180 @@ it("reports native quota only for an OpenAI login on a native route", () => {
   assert.strictEqual(codexCustomEndpoint({ openai_base_url: "https://chatgpt.com/x" }), undefined);
   assert.strictEqual(codexCustomEndpoint({}), undefined);
 });
+
+function writeCodexBackfillState(dbPath: string, status: string, updatedAt: number): void {
+  const db = new NodeSqlite.DatabaseSync(dbPath);
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS backfill_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        status TEXT NOT NULL,
+        last_watermark TEXT,
+        last_success_at INTEGER,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+    db.prepare(
+      `INSERT INTO backfill_state (id, status, last_watermark, last_success_at, updated_at)
+       VALUES (1, ?, NULL, NULL, ?)
+       ON CONFLICT(id) DO UPDATE SET status = excluded.status, updated_at = excluded.updated_at`,
+    ).run(status, updatedAt);
+  } finally {
+    db.close();
+  }
+}
+
+function makeHangingCodexProbeSpawner(onSpawn?: () => void) {
+  let closed = false;
+  const started = Deferred.makeUnsafe<void>();
+  const spawner = ChildProcessSpawner.make(() =>
+    Effect.gen(function* () {
+      onSpawn?.();
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          closed = true;
+        }),
+      );
+      yield* Deferred.succeed(started, undefined);
+      return ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(900_000_100),
+        exitCode: Effect.never,
+        isRunning: Effect.sync(() => !closed),
+        kill: () =>
+          Effect.sync(() => {
+            closed = true;
+          }),
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.never,
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    }),
+  );
+  return {
+    spawner,
+    started: Deferred.await(started),
+    isClosed: () => closed,
+  };
+}
+
+const decodeCodexSettings = Schema.decodeUnknownSync(CodexSettings);
+
+const TEST_EPOCH_SEC = 1_700_000_000;
+
+it.effect(
+  "keeps codex app-server alive until an owned state db backfill finishes after probe timeout",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(TEST_EPOCH_SEC * 1000);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-backfill-" });
+      const dbPath = path.join(tempHome, "state_5.sqlite");
+
+      const { spawner, started, isClosed } = makeHangingCodexProbeSpawner(() => {
+        writeCodexBackfillState(dbPath, "running", TEST_EPOCH_SEC);
+      });
+
+      const fiber = yield* checkCodexProviderStatus(
+        decodeCodexSettings({ homePath: tempHome }),
+        undefined,
+        {},
+      ).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.forkChild,
+      );
+
+      yield* started;
+      yield* TestClock.adjust("20 seconds");
+      const status = yield* Fiber.join(fiber);
+
+      assert.strictEqual(status.status, "error");
+      assert.match(status.message ?? "", /backfilling its local state database/);
+      assert.strictEqual(isClosed(), false);
+
+      // Once Codex completes backfill, the detached probe process closes cleanly.
+      writeCodexBackfillState(dbPath, "complete", TEST_EPOCH_SEC + 25);
+      yield* TestClock.adjust("1 second");
+      assert.strictEqual(isClosed(), true);
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(HostProcess.Platform, "linux"),
+    ),
+);
+
+it.effect(
+  "closes a waiting probe immediately when backfill_state was already running before spawn",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(TEST_EPOCH_SEC * 1000);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-stale-backfill-" });
+      writeCodexBackfillState(
+        path.join(tempHome, "state_5.sqlite"),
+        "running",
+        TEST_EPOCH_SEC - 60,
+      );
+
+      const { spawner, started, isClosed } = makeHangingCodexProbeSpawner();
+      const fiber = yield* checkCodexProviderStatus(
+        decodeCodexSettings({ homePath: tempHome }),
+        undefined,
+        {},
+      ).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.forkChild,
+      );
+
+      yield* started;
+      yield* TestClock.adjust("20 seconds");
+      const status = yield* Fiber.join(fiber);
+
+      assert.strictEqual(status.status, "error");
+      assert.match(status.message ?? "", /backfilling its local state database/);
+      assert.strictEqual(isClosed(), true);
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(HostProcess.Platform, "linux"),
+    ),
+);
+
+it.effect(
+  "closes a hung probe immediately with the default message when no backfill is running",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(TEST_EPOCH_SEC * 1000);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-hung-probe-" });
+      writeCodexBackfillState(path.join(tempHome, "state_5.sqlite"), "complete", TEST_EPOCH_SEC);
+
+      const { spawner, started, isClosed } = makeHangingCodexProbeSpawner();
+      const fiber = yield* checkCodexProviderStatus(
+        decodeCodexSettings({ homePath: tempHome }),
+        undefined,
+        {},
+      ).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.forkChild,
+      );
+
+      yield* started;
+      yield* TestClock.adjust("20 seconds");
+      const status = yield* Fiber.join(fiber);
+
+      assert.strictEqual(status.status, "error");
+      assert.strictEqual(
+        status.message,
+        "Timed out while checking Codex app-server provider status.",
+      );
+      assert.strictEqual(isClosed(), true);
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(HostProcess.Platform, "linux"),
+    ),
+);

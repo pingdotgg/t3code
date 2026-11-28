@@ -1,3 +1,5 @@
+import * as NodeSqlite from "node:sqlite";
+
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { pipe } from "effect/Function";
 import * as DateTime from "effect/DateTime";
@@ -642,12 +644,82 @@ const codexProcessEnvironment = Effect.fn("codexProcessEnvironment")(function* (
   };
 });
 
+const resolveCodexHomePath = Effect.fn("resolveCodexHomePath")(function* (input: {
+  readonly homePath?: string | undefined;
+  readonly environment?: NodeJS.ProcessEnv | undefined;
+}) {
+  const path = yield* Path.Path;
+  const homeDir = yield* HostProcess.HomeDirectory;
+  const configured = input.homePath?.trim() || input.environment?.CODEX_HOME?.trim();
+  return configured
+    ? path.resolve(expandHomePath(configured, homeDir))
+    : path.join(homeDir, ".codex");
+});
+
+const CODEX_STATE_DB_PATTERN = /^state_(\d+)\.sqlite$/;
+
+interface CodexBackfillState {
+  readonly status: string;
+  readonly updatedAt: number;
+}
+
+const readCodexBackfillState = Effect.fn("readCodexBackfillState")(function* (codexHome: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const entries = yield* fs.readDirectory(codexHome).pipe(Effect.orElseSucceed(() => []));
+  let dbPath: string | undefined;
+  let highestVersion = -1;
+  for (const entry of entries) {
+    const match = CODEX_STATE_DB_PATTERN.exec(entry);
+    if (!match) continue;
+    const version = Number(match[1]);
+    if (version > highestVersion) {
+      highestVersion = version;
+      dbPath = path.join(codexHome, entry);
+    }
+  }
+  if (!dbPath) return undefined;
+
+  return yield* Effect.sync((): CodexBackfillState | undefined => {
+    let db: NodeSqlite.DatabaseSync | undefined;
+    try {
+      db = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true, timeout: 250 });
+      const row = db.prepare("SELECT status, updated_at FROM backfill_state WHERE id = 1").get() as
+        | { readonly status?: unknown; readonly updated_at?: unknown }
+        | undefined;
+      if (typeof row?.status !== "string" || typeof row.updated_at !== "number") {
+        return undefined;
+      }
+      return { status: row.status, updatedAt: row.updated_at };
+    } catch {
+      return undefined;
+    } finally {
+      try {
+        db?.close();
+      } catch {
+        // ignore close errors on read-only inspection
+      }
+    }
+  });
+});
+
+const isOwnedCodexBackfillRunning = Effect.fn("isOwnedCodexBackfillRunning")(function* (
+  codexHome: string,
+  spawnedAtSec: number,
+) {
+  const state = yield* readCodexBackfillState(codexHome);
+  return state?.status === "running" && state.updatedAt >= spawnedAtSec - 1;
+});
+
 export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(function* (input: {
   readonly binaryPath: string;
   readonly homePath?: string | undefined;
   readonly launchArgs?: string | undefined;
   readonly cwd: string;
   readonly environment?: NodeJS.ProcessEnv | undefined;
+  readonly onSpawn?: (
+    child: Pick<ChildProcessSpawner.ChildProcessHandle, "pid" | "isRunning">,
+  ) => void;
 }) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const environment = yield* codexProcessEnvironment(input);
@@ -675,6 +747,7 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
           }),
       ),
     );
+  input.onSpawn?.(child);
   const clientContext = yield* Layer.build(CodexClient.layerChildProcess(child));
   const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
     Effect.provide(clientContext),
@@ -687,6 +760,11 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
 // Codex runs git (ssh for ssh URLs) for plugin marketplaces at launch and exits without waiting
 // for it, so stopping a short probe mid-fetch strands ssh in an SSH-agent request.
 const CODEX_STARTUP_WORK_GRACE = Duration.minutes(1);
+
+// Killing codex app-server mid-backfill leaves state_*.sqlite backfill_state.status = 'running'
+// with a 15-minute lease, causing subsequent 20s probes to stall on Codex's 30s backfill wait.
+const CODEX_BACKFILL_GRACE = Duration.minutes(5);
+const activeCodexBackfillHomes = new Set<string>();
 
 const codexProcessGroupIsBusy = Effect.fn("codexProcessGroupIsBusy")(
   function* (pid: number) {
@@ -704,6 +782,30 @@ const stopCodexAfterStartupWork = (pid: number, processScope: Scope.Closeable) =
     Effect.repeat({ schedule: Schedule.spaced("500 millis"), while: (busy) => busy }),
     Effect.timeoutOption(CODEX_STARTUP_WORK_GRACE),
     Effect.ensuring(Scope.close(processScope, Exit.void)),
+  );
+
+const codexBackfillIsBusy = Effect.fn("codexBackfillIsBusy")(function* (
+  codexHome: string,
+  isRunning: ChildProcessSpawner.ChildProcessHandle["isRunning"],
+) {
+  const running = yield* isRunning.pipe(Effect.orElseSucceed(() => false));
+  if (!running) return false;
+  return (yield* readCodexBackfillState(codexHome))?.status === "running";
+});
+
+const stopCodexAfterBackfill = (
+  codexHome: string,
+  isRunning: ChildProcessSpawner.ChildProcessHandle["isRunning"],
+  processScope: Scope.Closeable,
+) =>
+  codexBackfillIsBusy(codexHome, isRunning).pipe(
+    Effect.repeat({ schedule: Schedule.spaced("1 second"), while: (busy) => busy }),
+    Effect.timeoutOption(CODEX_BACKFILL_GRACE),
+    Effect.ensuring(
+      Effect.sync(() => {
+        activeCodexBackfillHomes.delete(codexHome);
+      }).pipe(Effect.andThen(Scope.close(processScope, Exit.void))),
+    ),
   );
 
 // Usage is an enrichment: a failure or a slow answer degrades to "no usage this
@@ -740,20 +842,49 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   readonly skipNativeUsage?: boolean;
 }) {
   const spawnedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+  const spawnedAtSec = Math.floor(spawnedAtMs / 1000);
+  const codexHome = yield* resolveCodexHomePath(input);
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const processScope = yield* Scope.make();
   let pid: number | undefined;
+  let spawnedChild: Pick<ChildProcessSpawner.ChildProcessHandle, "pid" | "isRunning"> | undefined;
   // Returning the snapshot must not wait for Codex's own startup work.
   yield* Effect.addFinalizer(() =>
-    pid === undefined
-      ? Scope.close(processScope, Exit.void)
-      : stopCodexAfterStartupWork(pid, processScope).pipe(
+    Effect.gen(function* () {
+      if (pid !== undefined) {
+        return yield* stopCodexAfterStartupWork(pid, processScope).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.forkDetach,
           Effect.asVoid,
-        ),
+        );
+      }
+      if (
+        spawnedChild !== undefined &&
+        !activeCodexBackfillHomes.has(codexHome) &&
+        (yield* isOwnedCodexBackfillRunning(codexHome, spawnedAtSec))
+      ) {
+        activeCodexBackfillHomes.add(codexHome);
+        return yield* stopCodexAfterBackfill(codexHome, spawnedChild.isRunning, processScope).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+          Effect.forkDetach,
+          Effect.asVoid,
+        );
+      }
+      return yield* Scope.close(processScope, Exit.void);
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    ),
   );
-  const opened = yield* withCodexAppServerClient(input).pipe(Scope.provide(processScope));
+  const opened = yield* withCodexAppServerClient({
+    ...input,
+    onSpawn: (child) => {
+      spawnedChild = child;
+    },
+  }).pipe(Scope.provide(processScope));
   pid = opened.pid;
   const { client, initialize } = opened;
 
@@ -1256,6 +1387,11 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   }
 
   if (Option.isNone(probeResult.success)) {
+    const codexHome = yield* resolveCodexHomePath({
+      homePath: codexSettings.homePath,
+      environment: resolvedEnvironment,
+    });
+    const backfillRunning = (yield* readCodexBackfillState(codexHome))?.status === "running";
     return buildServerProvider({
       presentation: CODEX_PRESENTATION,
       enabled: codexSettings.enabled,
@@ -1267,7 +1403,9 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message: "Timed out while checking Codex app-server provider status.",
+        message: backfillRunning
+          ? "Timed out while checking Codex app-server provider status because Codex is backfilling its local state database. Wait a moment and refresh, or increase T3CODE_CODEX_PROBE_TIMEOUT_MS."
+          : "Timed out while checking Codex app-server provider status.",
       },
     });
   }
