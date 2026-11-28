@@ -5679,6 +5679,8 @@
   "69858f722a57708c": "Pesquisar arquivos de {projectName}",
   "e1e1094e43a5f3d7": "{error} Clique para tentar novamente.",
   "ddb58ada5516a46d": "Arquivos de {projectName}",
+  "06d4ba1d1e5e757f": "Esta pasta não existe mais.",
+  "79ca8758fe2015ff": "Este checkout não existe mais. Se a limpeza removeu o worktree desta thread, enviar uma mensagem o recria.",
   "bb60a3700a8053c6": "Há mais resultados. Refine sua pesquisa.",
   "ffe1f2305d0a274d": "Carregando arquivos…",
   "723d88a5fa7e2fdd": "Nenhum arquivo correspondente.",

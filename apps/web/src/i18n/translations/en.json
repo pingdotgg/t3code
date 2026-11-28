@@ -5681,6 +5681,8 @@
   "69858f722a57708c": "Search {projectName} files",
   "e1e1094e43a5f3d7": "{error} Click to retry.",
   "ddb58ada5516a46d": "{projectName} files",
+  "06d4ba1d1e5e757f": "This folder no longer exists.",
+  "79ca8758fe2015ff": "This checkout no longer exists. If cleanup removed this thread's worktree, sending a message recreates it.",
   "bb60a3700a8053c6": "More matches available. Refine your search.",
   "ffe1f2305d0a274d": "Loading files…",
   "723d88a5fa7e2fdd": "No matching files.",
