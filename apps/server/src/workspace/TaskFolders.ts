@@ -1541,7 +1541,15 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const taskFolder = yield* store.findContaining(input.path);
     const target = path.resolve(input.path);
-    if (taskFolder === null || (target !== taskFolder.root && target !== taskFolder.projectPath))
+    // A thread can work in one of its folder's repositories (a delegated child of a Scratch thread).
+    if (
+      taskFolder === null ||
+      (target !== taskFolder.root &&
+        target !== taskFolder.projectPath &&
+        !taskFolder.repositories.some(
+          (repository) => path.resolve(repository.worktreePath) === target,
+        ))
+    )
       return false;
     const { kept } = yield* removeLocked(taskFolder, {
       force: input.force,
