@@ -79,7 +79,6 @@ const orgPath = (input: ProviderRepositoryRef) =>
   `orgs/${encodeURIComponent(input.repository.split("/").at(-2) ?? "")}`;
 const isNoOrg = (e: PullRequestProviderError) =>
   e.reason === "not-found" || (isForgejoCliError(e.cause) && e.cause.reason === "forbidden");
-const notAuth = (e: PullRequestProviderError) => e.reason !== "unauthenticated";
 const pullPath = (input: ProviderRepositoryRef & { readonly number: number }) =>
   `${repoPath(input)}/pulls/${input.number}`;
 const issuePath = (input: ProviderRepositoryRef & { readonly number: number }) =>
@@ -322,7 +321,12 @@ export const make = Effect.gen(function* () {
         // asked for. The service narrows the rest.
         const single = filters?.labels?.find((group) => group.length === 1)?.[0];
         if (single !== undefined) {
-          const labels = yield* Effect.catchIf(readLabels(input), notAuth, () => Effect.void);
+          // The filter is only a narrowing hint, so an unreadable label list just skips it.
+          const labels = yield* Effect.catchIf(
+            readLabels(input),
+            (error) => error.reason !== "unauthenticated",
+            () => Effect.void,
+          );
           const matches = (labels?.all ?? []).filter(
             (candidate) => candidate.name.toLowerCase() === single.trim().toLowerCase(),
           );
