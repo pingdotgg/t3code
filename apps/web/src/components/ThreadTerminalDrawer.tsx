@@ -1543,13 +1543,9 @@ function TerminalSidebarGroup({
               )}
             >
               {canOperateTerminal ? (
-                <PanelTabCloseButton
-                  label={closeTerminalLabel}
-                  onClick={() => onCloseTerminal(terminalId)}
-                  tooltip={closeTerminalLabel}
-                >
+                <span aria-hidden className="flex size-4 shrink-0 items-center justify-center">
                   <TerminalSquare className="size-3 shrink-0" />
-                </PanelTabCloseButton>
+                </span>
               ) : (
                 <TerminalSquare className="size-3 shrink-0" />
               )}
@@ -1560,6 +1556,13 @@ function TerminalSidebarGroup({
               >
                 <span className="truncate">{terminalLabel}</span>
               </button>
+              {canOperateTerminal ? (
+                <PanelTabCloseButton
+                  label={closeTerminalLabel}
+                  onClick={() => onCloseTerminal(terminalId)}
+                  tooltip={closeTerminalLabel}
+                />
+              ) : null}
             </div>
           );
         })}

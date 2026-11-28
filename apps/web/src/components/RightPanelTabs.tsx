@@ -1056,7 +1056,7 @@ function RightPanelTab(
   const sideChatState = sideChatTabState(sideChatShell);
   const content = (
     <>
-      <PanelTabCloseButton label={gt("Close {title}", { title })} onClick={() => onClose(surface)}>
+      <span aria-hidden className="relative flex size-4 shrink-0 items-center justify-center">
         <SurfaceIcon
           surface={surface}
           previewUrl={props.previewUrl}
@@ -1071,7 +1071,7 @@ function RightPanelTab(
             aria-hidden
           />
         ) : null}
-      </PanelTabCloseButton>
+      </span>
       {audio === "none" || !audioRuntimeTabId ? null : (
         <SharedTooltipTrigger
           render={
@@ -1156,6 +1156,10 @@ function RightPanelTab(
           }
         />
       )}
+      <PanelTabCloseButton
+        label={gt("Close {title}", { title })}
+        onClick={() => onClose(surface)}
+      />
     </>
   );
   return (
