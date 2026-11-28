@@ -183,6 +183,10 @@ vi.mock("../lib/composerDraftUploads", () => ({
 vi.mock("../localApi", () => ({
   readLocalApi: () => ({ dialogs: { confirm: state.confirm } }),
 }));
+vi.mock("../lib/workspaceFocus", () => ({
+  readWorkspaceFocusTarget: () => null,
+  requestWorkspaceFocus: () => {},
+}));
 vi.mock("../threadRoutes", () => ({
   resolveThreadRouteRef: () => null,
   buildThreadRouteParams: (ref: ScopedThreadRef) => ref,
