@@ -1,11 +1,14 @@
 import type { OpenCodeClient } from "@opencode/client/effect";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import { openCodePrice, type OpenCode2Model } from "./status.ts";
 
 // Cold catalogs take seconds; model reads already retry empty catalogs.
 const PROVIDER_NAME_TIMEOUT = "3 seconds";
+// Activation took up to 2 seconds on cold OpenCode 2.0 to 2.4 servers.
+const PLUGIN_ACTIVATION_WAIT = "5 seconds";
 
 const locationOf = (directory: string | undefined) =>
   directory === undefined ? {} : { location: { directory } };
@@ -21,14 +24,24 @@ const readCatalog = <E>(
   directory: string | undefined,
   providers: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly name: string }>, E>,
 ): Effect.Effect<ReadonlyArray<OpenCode2Model>, OpenCodeRuntime.OpenCodeRuntimeError> =>
-  Effect.all(
-    {
-      // Callers bound the read: a busy host can hold it past OpenCode's own activation wait.
-      models: client.model.list(locationOf(directory)).pipe(Effect.map((list) => list.data)),
-      providers,
-    },
-    { concurrency: "unbounded" },
-  ).pipe(
+  client.plugin.list(locationOf(directory)).pipe(
+    // A location lists its startup catalog until its plugins activate, and lists no plugin before.
+    Effect.repeat({
+      until: (plugins) => plugins.data.length > 0,
+      schedule: Schedule.spaced("250 millis"),
+    }),
+    // A server that never lists a plugin must still list its models.
+    Effect.timeoutOption(PLUGIN_ACTIVATION_WAIT),
+    Effect.andThen(
+      Effect.all(
+        {
+          // Callers bound the read: a busy host can hold it past OpenCode's own activation wait.
+          models: client.model.list(locationOf(directory)).pipe(Effect.map((list) => list.data)),
+          providers,
+        },
+        { concurrency: "unbounded" },
+      ),
+    ),
     Effect.map(({ models, providers }) => {
       const providerNames = new Map(providers.map((provider) => [provider.id, provider.name]));
       return models.map((model) => {
