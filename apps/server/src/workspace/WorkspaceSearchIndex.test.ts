@@ -547,6 +547,8 @@ it.live("answers content searches with git grep while a slow content index build
         `${" ".repeat(507)}tokenized`,
         `é token ${"d".repeat(600)} token`,
         `é tokenized${" ".repeat(600)}token`,
+        // The cap falls inside the emoji, so the shown line drops it whole.
+        `token ${"a".repeat(505)}😀`,
       ].join("\n"),
     );
     const longLines = (input: Partial<Parameters<typeof searchIndex.searchContents>[0]>) =>
@@ -563,6 +565,7 @@ it.live("answers content searches with git grep while a slow content index build
       [1, 512, []],
       [3, 512, [{ start: 2, end: 7 }]],
       [4, 512, []],
+      [5, 511, [{ start: 0, end: 5 }]],
     ];
     expect(yield* longLines({ wholeWord: true })).toEqual(wholeWordLines);
     expect(yield* longLines({ query: "tok+en", wholeWord: true, useRegex: true })).toEqual(
@@ -573,7 +576,28 @@ it.live("answers content searches with git grep while a slow content index build
       [2, 512, []],
       [3, 512, [{ start: 2, end: 7 }]],
       [4, 512, [{ start: 2, end: 11 }]],
+      [5, 511, [{ start: 0, end: 5 }]],
     ]);
+
+    // Windows cannot name a file with a newline.
+    if (HostProcess.Platform.defaultValue() !== "win32") {
+      const newlinePath = "src/one\ntwo.txt";
+      yield* fileSystem.writeFileString(path.join(cwd, newlinePath), "unique_lf_needle\n");
+      for (const input of [
+        { query: "unique_lf_needle" },
+        { query: "unique_lf_n.+", useRegex: true },
+      ]) {
+        expect((yield* search({ ...input, caseSensitive: true })).matches).toEqual([
+          {
+            path: newlinePath,
+            lineNumber: 1,
+            lineContent: "unique_lf_needle",
+            matchRanges: [{ start: 0, end: 16 }],
+          },
+        ]);
+      }
+      yield* fileSystem.remove(path.join(cwd, newlinePath));
+    }
 
     isWarmupComplete = true;
     yield* search({});

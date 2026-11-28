@@ -353,12 +353,16 @@ export function useComposerAttachmentIntake(input: {
                 : [],
         ),
     );
+    const completionErrors = [...compressionErrors]
+      .filter(([id]) => isPreparingComposerImage(completionTargetKey, id))
+      .map(([, message]) => message)
+      .slice(-1);
     // Keep the placeholders until the draft decides whether the recovered images fit,
     // so a held send can be cancelled before the last placeholder disappears.
     const stillPreparingIds = removePreparingComposerImages(
       completionTargetKey,
       new Set(preparingImages.map((image) => image.id)),
-      { cancelSubmission: compressionErrors.size > 0 || unrestoredImageNames.length > 0 },
+      { cancelSubmission: completionErrors.length > 0 || unrestoredImageNames.length > 0 },
     );
     if (questionAttachmentTarget && !movedThread)
       changeQuestionAttachmentPreparation(questionAttachmentTarget, -stillPreparingIds.size);
@@ -381,10 +385,6 @@ export function useComposerAttachmentIntake(input: {
     // now other work (a failed send, an overlapping paste) may have set a
     // thread error this call knows nothing about, and clearing it would
     // swallow that message.
-    const completionErrors = [...compressionErrors]
-      .filter(([id]) => stillPreparingIds.has(id))
-      .map(([, message]) => message)
-      .slice(-1);
     if (unrestoredImageNames.length > 0) {
       completionErrors.push(
         m(

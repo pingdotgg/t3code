@@ -63,12 +63,15 @@ export interface RpcSession {
   readonly probe: Effect.Effect<void, ConnectionAttemptError>;
   /** Frames received so far: proof the socket is alive that needs no reply. */
   readonly inboundFrames: Effect.Effect<number>;
+  /** Whether a request went out after the last frame came in. */
+  readonly awaitingReply: Effect.Effect<boolean>;
   readonly closed: Effect.Effect<never, ConnectionAttemptError>;
 }
 
 export interface RpcSessionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
+  readonly hostPressure?: boolean;
   readonly usageLimitsCommand?: boolean;
   readonly providerCatalogsOnDemand?: boolean;
   readonly providerCatalogDigests?: boolean;
@@ -107,12 +110,17 @@ type UsageLimitSourcesUpdatedEvent = Extract<
   ServerConfigStreamEvent,
   { readonly type: "usageLimitSourcesUpdated" }
 >;
+type HostPressureUpdatedEvent = Extract<
+  ServerConfigStreamEvent,
+  { readonly type: "hostPressureUpdated" }
+>;
 
 interface ServerConfigReplayState {
   readonly projection: ServerConfigProjection;
   readonly revision: number;
   readonly themesEvent: EnvironmentThemesUpdatedEvent | undefined;
   readonly sourcesEvent: UsageLimitSourcesUpdatedEvent | undefined;
+  readonly pressureEvent: HostPressureUpdatedEvent | undefined;
 }
 
 interface BufferedServerConfigEvent {
@@ -133,6 +141,7 @@ function serverConfigReplayEvents(
     snapshot,
     ...(state.themesEvent === undefined ? [] : [state.themesEvent]),
     ...(state.sourcesEvent === undefined ? [] : [state.sourcesEvent]),
+    ...(state.pressureEvent === undefined ? [] : [state.pressureEvent]),
   ];
 }
 
@@ -187,6 +196,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
   const serverConfigInput: ServerConfigSubscriptionInput = {
     ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
     ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
+    ...(options.hostPressure === true ? { hostPressure: true } : {}),
     ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
     ...(options.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
     ...(options.providerCatalogDigests === true ? { providerCatalogDigests: true } : {}),
@@ -242,10 +252,12 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     // The protocol never reopens its socket, so every frame counted here came
     // from this session's one socket.
     let inboundFrames = 0;
+    let awaitingReply = false;
     const countingWebSocketConstructor: typeof webSocketConstructor = (url, options) => {
       const socket = webSocketConstructor(url, options);
       socket.addEventListener("message", () => {
         inboundFrames += 1;
+        awaitingReply = false;
       });
       return socket;
     };
@@ -280,9 +292,13 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         Effect.map((protocol) => ({
           ...protocol,
           send: (clientId, request, transferables) =>
-            request._tag !== "Request" && Deferred.isDoneUnsafe(disconnected)
-              ? Effect.void
-              : protocol.send(clientId, request, transferables),
+            request._tag === "Request"
+              ? Effect.sync(() => {
+                  awaitingReply = true;
+                }).pipe(Effect.andThen(protocol.send(clientId, request, transferables)))
+              : Deferred.isDoneUnsafe(disconnected)
+                ? Effect.void
+                : protocol.send(clientId, request, transferables),
         })),
       ),
     ).pipe(
@@ -348,6 +364,10 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
                 event.type === "usageLimitSourcesUpdated"
                   ? event
                   : Option.getOrUndefined(current)?.sourcesEvent,
+              pressureEvent:
+                event.type === "hostPressureUpdated"
+                  ? event
+                  : Option.getOrUndefined(current)?.pressureEvent,
             } satisfies ServerConfigReplayState;
             return [
               Option.some({ event, replay: next, revision: next.revision }),
@@ -541,6 +561,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       ready: initialConfig.pipe(Effect.asVoid),
       probe,
       inboundFrames: Effect.sync(() => inboundFrames),
+      awaitingReply: Effect.sync(() => awaitingReply),
       // The config stream also fails on disconnect, and only it can report a decode failure.
       closed: Deferred.await(configSubscriptionClosed),
     } satisfies RpcSession;

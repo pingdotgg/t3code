@@ -3007,27 +3007,34 @@ function nextClaudeGoal(
       checks: Number(active[2] ?? 0),
     };
   }
+  if (current === null) return undefined;
+  const prefix = `[${current.objective}]: `;
+  const feedback = claudeStopHookFeedback(message);
+  if (feedback === undefined || !feedback.startsWith(prefix)) return undefined;
+  return {
+    ...current,
+    status: "active",
+    checks: (current.checks ?? 0) + 1,
+    lastCheck: feedback.slice(prefix.length).trim(),
+  };
+}
+
+/** What a blocking Stop hook told Claude when it continued the root turn, or undefined. */
+function claudeStopHookFeedback(message: SDKMessage): string | undefined {
   if (
     message.type !== "user" ||
     message.parent_tool_use_id !== null ||
-    message.isSynthetic !== true ||
-    current === null
+    message.isSynthetic !== true
   ) {
     return undefined;
   }
-  const prefix = `Stop hook feedback:\n[${current.objective}]: `;
+  const prefix = "Stop hook feedback:\n";
   const content = message.message.content;
   const text =
     typeof content === "string"
       ? content
       : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
-  if (!text.startsWith(prefix)) return undefined;
-  return {
-    ...current,
-    status: "active",
-    checks: (current.checks ?? 0) + 1,
-    lastCheck: text.slice(prefix.length).trim(),
-  };
+  return text.startsWith(prefix) ? text.slice(prefix.length) : undefined;
 }
 
 /** The CLI confirms a goal change as a synthetic reply; the goal row shows that change instead. */
@@ -7036,10 +7043,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return Queue.offer(events, event).pipe(Effect.asVoid);
         };
 
+        // `launch` describes the next turn, so an open turn (one being stopped too) never shows it.
+        const nextTurnLaunches = () => {
+          const live = Ref.getUnsafe(queryContext);
+          return Ref.getUnsafe(activeTurn) === null && (live === null || live.stopping);
+        };
         let reportedStartupPhase: string | undefined;
         const reportStartupPhase = Effect.fn("ClaudeAdapterV2.reportStartupPhase")(function* (
-          phase: string | undefined,
+          requested: string | undefined,
         ) {
+          const phase = requested ?? (nextTurnLaunches() ? "launch" : undefined);
           if (phase === reportedStartupPhase) return;
           reportedStartupPhase = phase;
           yield* emitProviderEvent({
@@ -7052,9 +7065,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             },
           });
         });
+        // Keeps a step a replacement CLI's open is reporting.
+        const reportCliGone = Effect.suspend(() =>
+          reportedStartupPhase === undefined ? reportStartupPhase(undefined) : Effect.void,
+        );
         // Only a process's first API request is startup; a reused process is already connected.
         const requestedQueries = new WeakSet<ClaudeAgentSdkQuerySession>();
-        let connectingTurn: ActiveClaudeTurnContext | undefined;
 
         const persistAttachmentBudget = Effect.fnUntraced(function* (nativeThreadId: string) {
           const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
@@ -10260,8 +10276,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? { ...requested, status: "failed" as const, failure: retryBudgetFailure }
               : requested;
           input.context.steersClosed = true;
-          if (connectingTurn === input.context) {
-            connectingTurn = undefined;
+          if ((yield* Ref.get(activeTurn))?.providerTurnId === input.context.providerTurnId) {
             yield* reportStartupPhase(undefined);
           }
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
@@ -10647,6 +10662,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* Ref.update(activeTurn, (current) =>
             current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
+          yield* reportCliGone;
           yield* clearUnansweredRequestWatch(input.context);
           if (input.status === "completed") {
             settledTurnByNativeThread.set(input.context.nativeThreadId, input.context);
@@ -10746,6 +10762,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           closedQuery: ClaudeLiveQueryContext,
           cause?: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
         ) {
+          yield* reportCliGone;
           const current = yield* Ref.get(activeTurn);
           // A replacement query can reuse the native thread id; only this query's turn is ours.
           const context = closedQuery.lastTurn;
@@ -11745,7 +11762,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 !requestedQueries.has(input.query)
               ) {
                 requestedQueries.add(input.query);
-                connectingTurn = context;
                 yield* reportStartupPhase("connecting");
               }
               const since = yield* DateTime.now;
@@ -11775,10 +11791,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ) {
               context.unansweredRequestSince = undefined;
               yield* clearUnansweredRequestWatch(context);
-              if (connectingTurn === context) {
-                connectingTurn = undefined;
-                yield* reportStartupPhase(undefined);
-              }
+              if (reportedStartupPhase === "connecting") yield* reportStartupPhase(undefined);
             }
           }
           const focusedPlugin = claudeFocusRequestedPanePlugin(message);
@@ -11802,6 +11815,61 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // without answering it. Not interrupt: the held CLI may never ack it.
             yield* liveQuery.query.close.pipe(Effect.ignore);
             return;
+          }
+          const stopHookFeedback = claudeStopHookFeedback(message);
+          if (
+            message.type === "user" &&
+            stopHookFeedback !== undefined &&
+            nextClaudeGoal(goalsByNativeThread.get(liveQuery.nativeThreadId) ?? null, message) ===
+              undefined
+          ) {
+            const now = yield* DateTime.now;
+            // Claude ended its native turn on this reply; the run continues only for the hook.
+            const answer = context.assistant.lastReply;
+            if (answer !== null) {
+              yield* publishAssistantArtifacts({
+                context,
+                ...answer,
+                createdAt: answer.startedAt,
+                status: "completed",
+                completedAt: now,
+                finalAnswer: true,
+              });
+            }
+            const nativeItemId =
+              message.uuid ?? `stop-hook:${context.providerTurnId}:${context.itemOrdinals.size}`;
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: {
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CLAUDE_PROVIDER,
+                  nativeItemId,
+                }),
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                nodeId: context.input.rootNodeId,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemRef: {
+                  driver: CLAUDE_PROVIDER,
+                  nativeId: nativeItemId,
+                  strength: message.uuid === undefined ? "weak" : "strong",
+                },
+                parentItemId: null,
+                ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                type: "notification",
+                status: "completed",
+                title: "Stop hook asked Claude to continue",
+                source: { kind: "system" },
+                outcome: "updated",
+                summary: "Stop hook asked Claude to continue",
+                detail: stopHookFeedback.trim(),
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+              },
+            });
           }
           yield* trackClaudeGoal({ nativeThreadId: liveQuery.nativeThreadId, context, message });
 
@@ -14297,7 +14365,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             .realPath(turnInput.runtimePolicy.cwd ?? ".")
             .pipe(Effect.orElseSucceed(() => turnInput.runtimePolicy.cwd));
           // Read right before opening so an update during startup counts too.
-          const openQueryRuntime = readProgram.pipe(
+          const openQueryRuntime = reportStartupPhase("launch").pipe(
+            Effect.andThen(readProgram),
             Effect.flatMap((program) =>
               queryRunner
                 .open({
@@ -14994,6 +15063,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           (effect, turnInput) =>
             effect.pipe(
               Effect.scoped,
+              Effect.onError(() =>
+                Ref.get(activeTurn).pipe(
+                  Effect.flatMap((turn) =>
+                    turn === null ? reportStartupPhase(undefined) : Effect.void,
+                  ),
+                ),
+              ),
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapter.ProviderAdapterTurnStartError({
@@ -15416,7 +15492,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           instanceId: adapterOptions.instanceId,
           driver: CLAUDE_PROVIDER,
           providerSessionId: input.providerSessionId,
-          providerSession: session,
+          get providerSession() {
+            const phase = reportedStartupPhase ?? (nextTurnLaunches() ? "launch" : undefined);
+            return phase === undefined ? session : { ...session, startupPhase: phase };
+          },
           getModelContextWindow: (selection) => claudeContextWindow(selection) ?? undefined,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           backgroundTasksEndWithProcess: true,
@@ -16162,7 +16241,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
     const baseEnvironment = yield* mergeClaudeProcessEnvironment(
-      config,
+      { ...config, enabled },
       environment,
       hostEnvironment,
     );

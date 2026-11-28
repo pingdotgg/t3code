@@ -90,7 +90,7 @@ const ICON_REL_VALUE = String.raw`(?:"(?:[^"]*[\t\n\f\r ])?icon(?=[\t\n\f\r "])|
 const HTML_ATTRIBUTE_RE =
   /([^\t\n\f\r "'<>/=]+)(?:[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"|'([^']*)'|([^\t\n\f\r >]+)))?/g;
 const ICON_REL_RE = new RegExp(String.raw`\brel\s*:\s*${ICON_REL_VALUE}`, "i");
-const ICON_HREF_RE = /\bhref\s*:\s*["']([^"'?#]+)/i;
+const ICON_HREF_RE = /\bhref\s*:\s*(?:"([^"?#]+)|'([^'?#]+))/i;
 // https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-end-state
 const HTML_C1_REPLACEMENTS: Readonly<Partial<Record<number, number>>> = {
   0x80: 0x20ac,
@@ -159,8 +159,8 @@ export class ProjectFaviconResolver extends Context.Service<
   }
 >()("t3/project/ProjectFaviconResolver") {}
 
-function decodeHtmlHref(href: string, html: boolean): string {
-  return href.replace(
+function decodeHtmlAttribute(value: string, html: boolean): string {
+  return value.replace(
     /&(?:([a-z][a-z\d]*)([;=]?)|#(?:(\d+)|x([a-f\d]+));?)/gi,
     (reference, name?: string, terminator?: string, decimal?: string, hex?: string) => {
       if (name !== undefined) {
@@ -195,21 +195,23 @@ function* extractIconHrefs(source: string, html: boolean): Generator<string> {
         quoted: quotedValue !== undefined,
       });
     }
-    const rel = attributes
-      .get("rel")
-      ?.value.toLowerCase()
+    const rawRel = attributes.get("rel")?.value;
+    if (rawRel === undefined) continue;
+    const rel = (html ? decodeHtmlAttribute(rawRel, true) : rawRel)
+      .toLowerCase()
       .split(/[\t\n\f\r ]+/);
-    if (!rel?.includes("icon")) continue;
+    if (!rel.includes("icon")) continue;
     const href = attributes.get("href");
     // An unquoted `{...}` is a JSX expression, not a path.
     if (!href || (!href.quoted && href.value.startsWith("{"))) continue;
-    const path = decodeHtmlHref(href.value, html).split(/[?#]/, 1)[0];
+    const path = decodeHtmlAttribute(href.value, html).split(/[?#]/, 1)[0];
     if (path) yield path;
   }
   for (const run of source.split("}")) {
     if (!ICON_REL_RE.test(run)) continue;
     const hrefMatch = run.match(ICON_HREF_RE);
-    if (hrefMatch?.[1]) yield hrefMatch[1];
+    const href = hrefMatch?.[1] ?? hrefMatch?.[2];
+    if (href) yield href;
   }
 }
 
