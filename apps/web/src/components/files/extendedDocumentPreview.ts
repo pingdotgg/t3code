@@ -87,6 +87,17 @@ function odfSpanHidden(styles: Map<string, XmlNode>, name = ""): boolean | undef
   }
   return undefined;
 }
+// Writer recomputes hidden-text and hidden-paragraph fields from text:condition on load and ignores
+// the saved text:is-hidden, so only a literal condition can be decided here; others stay undecided.
+function odfFieldHidden(field: XmlNode): boolean | undefined {
+  const condition = (field.attrs["text:condition"] ?? "")
+    .trim()
+    .replace(/^ooow:/, "")
+    .trim();
+  if (!condition || /^false$/i.test(condition)) return false;
+  if (/^true$/i.test(condition)) return true;
+  return /^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(condition) ? Number(condition) !== 0 : undefined;
+}
 async function odfHtml(
   node: XmlNode,
   archive: JSZip,
@@ -111,6 +122,26 @@ async function odfHtml(
       `<span data-odf-whitespace>${node.name === "text:tab" ? "&#9;" : " ".repeat(repeat(node.attrs["text:c"], 100))}</span>`,
     );
   if (node.name === "text:line-break") return boundedMarkup("<br>");
+  if (node.name === "text:hidden-text") {
+    const value = node.attrs["text:string-value"];
+    const fieldHidden = odfFieldHidden(node);
+    if (fieldHidden) return "";
+    if (fieldHidden === false && value !== undefined)
+      return hidden ? "" : pipe(value, escape, boundedMarkup);
+  }
+  if (node.name === "text:p" || node.name === "text:h") {
+    // A frame or note anchored here holds its own paragraphs, whose fields do not hide this one.
+    const ownFields = (parent: XmlNode): XmlNode[] =>
+      parent.children.flatMap((child) =>
+        child.name === "text:hidden-paragraph"
+          ? [child]
+          : child.name === "text:p" || child.name === "text:h"
+            ? []
+            : ownFields(child),
+      );
+    const fields = ownFields(node);
+    if (fields.length && fields.every((field) => odfFieldHidden(field))) return "";
+  }
   if (node.name === "text:note") {
     const mark = `<sup>${escape(find(node, "text:note-citation", "text:note-body").map(text).join(""))}</sup>`;
     const [body] = find(node, "text:note-body");
@@ -207,6 +238,8 @@ async function odfHtml(
     "table:table": "table",
     "table:table-row": "tr",
     "table:table-cell": "td",
+    "text:ruby": "ruby",
+    "text:ruby-text": "rt",
   };
   const level = node.name === "text:h" ? Number(node.attrs["text:outline-level"]) : NaN;
   const tag =
@@ -279,7 +312,15 @@ export async function openDocument(
             const value =
               cell.name === "table:covered-table-cell"
                 ? ""
-                : find(cell, "text:p", "office:annotation").map(text).join("\n") ||
+                : cell.children
+                    // Shapes anchored to a cell float over the sheet; their text is not the cell's value.
+                    .filter(
+                      (child) =>
+                        child.name !== "office:annotation" && !child.name.startsWith("draw:"),
+                    )
+                    .flatMap((child) => (child.name === "text:p" ? [child] : find(child, "text:p")))
+                    .map(text)
+                    .join("\n") ||
                   cell.attrs["office:value"] ||
                   cell.attrs["office:date-value"] ||
                   cell.attrs["office:time-value"] ||
@@ -504,6 +545,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     bold: false,
     italic: false,
     underline: false,
+    strike: false,
+    script: null as "sup" | "sub" | null,
     uc: 1,
     font: 0,
     fontTable: false,
@@ -547,6 +590,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     if (state.bold) span = `<strong>${span}</strong>`;
     if (state.italic) span = `<em>${span}</em>`;
     if (state.underline) span = `<u>${span}</u>`;
+    if (state.strike) span = `<s>${span}</s>`;
+    if (state.script) span = `<${state.script}>${span}</${state.script}>`;
     html += span;
     run = "";
   };
@@ -696,6 +741,10 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       else if (word === "i") state.italic = arg !== 0;
       else if (RTF_UNDERLINE_WORD.test(word!)) state.underline = arg !== 0;
       else if (word === "ulnone") state.underline = false;
+      else if (word === "strike" || word === "striked") state.strike = arg !== 0;
+      else if (word === "super") state.script = "sup";
+      else if (word === "sub") state.script = "sub";
+      else if (word === "nosupersub") state.script = null;
       else if (word === "deleted") state.deleted = arg !== 0;
       else if (word === "v") state.hiddenText = arg !== 0;
       // \intbl is a paragraph property, so it lasts until \pard resets the paragraph.
@@ -708,6 +757,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
           bold: false,
           italic: false,
           underline: false,
+          strike: false,
+          script: null,
           font: defaultFont,
         };
       else if (word === "uc") state.uc = Math.max(0, Math.min(10, arg));
