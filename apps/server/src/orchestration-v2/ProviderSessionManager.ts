@@ -1766,6 +1766,7 @@ export const layerWithOptions = (
                 threadId: pending.threadId,
                 providerThreadId,
                 generation: pending.generation,
+                idleSinceMs: input.idleSinceMs,
                 archiveOnly: true,
               }),
             { discard: true },
@@ -2265,7 +2266,7 @@ export const layerWithOptions = (
           readonly threadId: ThreadId;
           readonly providerThreadId: ProviderThreadId;
           readonly generation: number;
-          /** Unset when the session release unloads it. */
+          /** Set when an open thread may defer the unload; archive-only calls then skip it. */
           readonly idleSinceMs?: number;
           /** Session release unloads only the threads it would archive, and never waits. */
           readonly archiveOnly?: boolean;
