@@ -164,10 +164,78 @@ const killStartingWindowsPty = (process: import("node-pty").IPty) =>
     ),
   );
 
+const MAX_PENDING_STARTUP_SEQUENCE = 256;
+const LEADING_STARTUP_SEQUENCE =
+  /^(?:\u001b\[[\x20-\x3f]*[\x40-\x7e]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\))/;
+const INCOMPLETE_STARTUP_SEQUENCE = /^\u001b(?:\[[\x20-\x3f]*|\][^\u0007\u001b]*\u001b?)?$/;
+
+const isAlternateScreenEnter = (sequence: string) =>
+  sequence.startsWith("\u001b[?") &&
+  sequence.endsWith("h") &&
+  sequence
+    .slice(3, -1)
+    .split(";")
+    .some((part) => {
+      const mode = Number(part);
+      return mode === 47 || mode === 1047 || mode === 1049;
+    });
+
+// ConPTY initializes every new PTY with CSI 2 J, which erases active viewport rows in place
+// instead of scrolling them into scrollback, wiping the tail of restored session history.
+// Rewriting that initial erase to CSI 22 J preserves active rows in scrollback on Ghostty
+// while remaining a no-op on an empty screen.
+function createWindowsInitialClearRewriter() {
+  let done = false;
+  let pending = "";
+
+  const push = (chunk: string): string => {
+    if (done) return chunk;
+    const input = pending + chunk;
+    pending = "";
+    let index = 0;
+
+    while (index < input.length) {
+      const rest = input.slice(index);
+      const match = LEADING_STARTUP_SEQUENCE.exec(rest);
+      if (match) {
+        const sequence = match[0];
+        if (sequence === "\u001b[2J") {
+          done = true;
+          return `${input.slice(0, index)}\u001b[22J${input.slice(index + sequence.length)}`;
+        }
+        if (isAlternateScreenEnter(sequence)) {
+          done = true;
+          return input;
+        }
+        index += sequence.length;
+        continue;
+      }
+      if (rest.length <= MAX_PENDING_STARTUP_SEQUENCE && INCOMPLETE_STARTUP_SEQUENCE.test(rest)) {
+        pending = rest;
+        return input.slice(0, index);
+      }
+      done = true;
+      return input;
+    }
+
+    return input;
+  };
+
+  const flush = (): string => {
+    done = true;
+    const remainder = pending;
+    pending = "";
+    return remainder;
+  };
+
+  return { push, flush };
+}
+
 class NodePtyProcess implements PtyAdapter.PtyProcess {
   private readonly process: import("node-pty").IPty;
   private readonly platform: NodeJS.Platform;
   private exitEvent: PtyAdapter.PtyExitEvent | undefined;
+  private readonly dataFlushers = new Set<() => void>();
   private readonly exitListeners = new Set<(event: PtyAdapter.PtyExitEvent) => void>();
   private readonly exitSubscription: import("node-pty").IDisposable;
 
@@ -178,6 +246,8 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
       if (this.exitEvent) return;
       this.exitEvent = { exitCode: event.exitCode, signal: event.signal ?? null };
       this.exitSubscription.dispose();
+      for (const flush of this.dataFlushers) flush();
+      this.dataFlushers.clear();
       for (const listener of this.exitListeners) listener(this.exitEvent);
       this.exitListeners.clear();
     });
@@ -201,8 +271,25 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
   }
 
   onData(callback: (data: string) => void): () => void {
-    const disposable = this.process.onData(callback);
+    if (this.platform !== "win32") {
+      const disposable = this.process.onData(callback);
+      return () => {
+        disposable.dispose();
+      };
+    }
+
+    const rewriter = createWindowsInitialClearRewriter();
+    const flush = () => {
+      const tail = rewriter.flush();
+      if (tail.length > 0) callback(tail);
+    };
+    this.dataFlushers.add(flush);
+    const disposable = this.process.onData((data) => {
+      const rewritten = rewriter.push(data);
+      if (rewritten.length > 0) callback(rewritten);
+    });
     return () => {
+      this.dataFlushers.delete(flush);
       disposable.dispose();
     };
   }
@@ -220,6 +307,7 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
 
   disposeExitSubscription(): void {
     this.exitSubscription.dispose();
+    this.dataFlushers.clear();
     this.exitListeners.clear();
   }
 }
