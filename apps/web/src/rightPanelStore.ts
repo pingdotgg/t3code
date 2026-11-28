@@ -235,7 +235,7 @@ interface RightPanelStoreState {
     ref: ScopedThreadRef,
     surfaceId: string,
     terminalId: string,
-    direction?: "horizontal" | "vertical" | null,
+    direction?: "horizontal" | "vertical",
   ) => void;
   setTerminalSplitDirection: (
     ref: ScopedThreadRef,
@@ -1108,9 +1108,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                   ? surface.terminalIds
                   : [...surface.terminalIds, terminalId],
                 activeTerminalId: terminalId,
-                ...((direction ?? _splitDirection) === "vertical"
-                  ? { splitDirection: "vertical" as const }
-                  : {}),
+                ...(direction === "vertical" ? { splitDirection: "vertical" as const } : {}),
               };
             }),
           })),

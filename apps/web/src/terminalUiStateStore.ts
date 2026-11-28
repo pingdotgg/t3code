@@ -247,7 +247,7 @@ function upsertTerminalIntoGroups(
   state: ThreadTerminalUiState,
   terminalId: string,
   mode: "split" | "new",
-  splitDirection: "horizontal" | "vertical" | null = "horizontal",
+  splitDirection: "horizontal" | "vertical" = "horizontal",
 ): ThreadTerminalUiState {
   const normalized = normalizeThreadTerminalUiState(state);
   const effectiveMode: "split" | "new" = normalized.terminalIds.length === 0 ? "new" : mode;
@@ -325,7 +325,7 @@ function upsertTerminalIntoGroups(
   }
   if (splitDirection === "vertical") {
     destinationGroup.splitDirection = "vertical";
-  } else if (splitDirection === "horizontal") {
+  } else {
     delete destinationGroup.splitDirection;
   }
 
@@ -362,7 +362,7 @@ function setThreadTerminalHeight(
 function splitThreadTerminal(
   state: ThreadTerminalUiState,
   terminalId: string,
-  direction: "horizontal" | "vertical" | null = "horizontal",
+  direction: "horizontal" | "vertical" = "horizontal",
 ): ThreadTerminalUiState {
   return upsertTerminalIntoGroups(state, terminalId, "split", direction);
 }
@@ -593,7 +593,7 @@ interface TerminalUiStateStoreState {
   splitTerminal: (
     threadRef: ScopedThreadRef,
     terminalId: string,
-    direction?: "horizontal" | "vertical" | null,
+    direction?: "horizontal" | "vertical",
   ) => void;
   setSplitDirection: (
     threadRef: ScopedThreadRef,

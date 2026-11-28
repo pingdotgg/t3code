@@ -92,7 +92,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
         }
       : null;
 
-  /** place mounts the destination before the server open resolves. */
+  /** place mounts the destination before the server open resolves and may return an undo for a rejected open. */
   const launchTerminal = (input: {
     readonly place: (terminalId: string) => void | (() => void);
     readonly reportRejection?: boolean;
@@ -111,7 +111,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
       input.terminalId === undefined
         ? useTerminalUiStateStore.getState().trackTerminalPlacement(threadRef, terminalId)
         : undefined;
-    const onOpened = input.place(terminalId);
+    const undoPlacement = input.place(terminalId);
     const result = openTerminalCommand({
       environmentId: threadRef.environmentId,
       input: {
@@ -130,9 +130,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     }).then((outcome) => {
       const rejected = outcome._tag === "Failure" && !isAtomCommandInterrupted(outcome);
       settlePlacement?.(rejected);
-      if (outcome._tag === "Success") {
-        onOpened?.();
-      } else if (rejected) {
+      if (rejected) {
         // A supplied ID refers to a reusable session. A rejected reopen does not delete it.
         if (input.terminalId === undefined) {
           const panel = useRightPanelStore.getState();
@@ -141,6 +139,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
           );
           if (surface) panel.closeTerminal(panelRef, surface.id, terminalId);
         }
+        undoPlacement?.();
         if (input.reportRejection !== false) {
           toastManager.add(
             stackedThreadToast({
@@ -167,16 +166,29 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     return launchTerminal({
       location: input.location ?? null,
       place: (terminalId) => {
-        // Mount the new pane immediately. Keep the surviving panes' layout until the open succeeds.
+        // A rejected split restores the surviving panes' previous layout.
         if (surfaceId !== undefined) {
           const panel = useRightPanelStore.getState();
           const panelRef = rightPanelHostRef(threadRef);
-          panel.splitTerminal(threadRef, surfaceId, terminalId, null);
-          return () => panel.setTerminalSplitDirection(panelRef, surfaceId, terminalId, direction);
+          const surface = selectThreadRightPanelState(panel.byThreadKey, panelRef).surfaces.find(
+            (entry) => entry.id === surfaceId,
+          );
+          if (surface?.kind !== "terminal") return;
+          const { activeTerminalId, splitDirection = "horizontal" } = surface;
+          panel.splitTerminal(threadRef, surfaceId, terminalId, direction);
+          return () =>
+            panel.setTerminalSplitDirection(panelRef, surfaceId, activeTerminalId, splitDirection);
         }
         const drawer = useTerminalUiStateStore.getState();
-        drawer.splitTerminal(threadRef, terminalId, null);
-        return () => drawer.setSplitDirection(threadRef, terminalId, direction);
+        const { activeTerminalId, terminalGroups } = selectThreadTerminalUiState(
+          drawer.terminalUiStateByThreadKey,
+          threadRef,
+        );
+        const splitDirection =
+          terminalGroups.find((group) => group.terminalIds.includes(activeTerminalId))
+            ?.splitDirection ?? "horizontal";
+        drawer.splitTerminal(threadRef, terminalId, direction);
+        return () => drawer.setSplitDirection(threadRef, activeTerminalId, splitDirection);
       },
     });
   };

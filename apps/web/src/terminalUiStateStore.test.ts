@@ -28,16 +28,16 @@ describe("terminalUiStateStore actions", () => {
     });
   });
 
-  it("discards a failed split without changing layout or hiding a later session with its ID", () => {
+  it("discards a failed split without hiding a later session with its ID", () => {
     const store = useTerminalUiStateStore.getState();
     store.newTerminal(THREAD_REF, "first");
     store.splitTerminalVertical(THREAD_REF, "second");
     const settle = store.trackTerminalPlacement(THREAD_REF, "pending");
-    store.splitTerminal(THREAD_REF, "pending", null);
+    store.splitTerminal(THREAD_REF, "pending");
 
     settle(true);
     expect(layout().terminalGroups).toEqual([
-      expect.objectContaining({ terminalIds: ["first", "second"], splitDirection: "vertical" }),
+      expect.objectContaining({ terminalIds: ["first", "second"] }),
     ]);
 
     store.reconcileTerminalIds(THREAD_REF, ["first", "second", "pending"]);
