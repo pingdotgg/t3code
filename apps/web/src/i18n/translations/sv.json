@@ -13102,5 +13102,37 @@
   "c63d942911808821": "Grön",
   "75f923f6e3e41def": "Vit",
   "04cabf0f2aa08368": "Svart",
-  "a992afd4cdaa1317": "Avbryt ritning"
+  "a992afd4cdaa1317": "Avbryt ritning",
+  "175fd48b1f788f46": "Tillåt användningsåtkomst för att visa den här agentens gränser.",
+  "e69560805f86c879": "Konfigurera",
+  "ffbe05f2f405850a": "Användningsåtkomst",
+  "40b7d767de71d529": "Användningsåtkomst för {provider}",
+  "b1407315384f1c1b": "Det gick inte att spara användningsåtkomsten",
+  "d0eb90f0a42166b7": "Tillåt inte",
+  "c23c1f8ee3808edb": "Tillåt",
+  "53d6f3510e1d2505": "Ta med dina projekt",
+  "f38cfff76578bff1": "Hitta mina projekt",
+  "845c5d64893a2cd1": "Läser sessionshistoriken och inloggningen för att fråga xAI om dina krediter.",
+  "693a46777fff9c2c": "Läser användningsdatabasen och Go-nyckeln för att fråga OpenCode om dina Go-gränser.",
+  "53e3445f40979e50": "Läser konversationshistoriken.",
+  "a7990527035b13c7": "Frågar Cursor om kontots användning med API-nyckeln du gav T3 Code.",
+  "dd05e52097323d6a": "Läser sessionshistoriken.",
+  "1c90379ba4454864": "Visa även min användningsstatistik från dessa agenter, vilket kan läsa deras inloggning för att kontrollera gränser",
+  "16d657e5243b12c1": [
+    "T3 Code kan läsa din sessionshistorik från ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " för att hitta mapparna du arbetat i och deras git-remotes."
+  ],
+  "bdce0ad68690fdc1": "Läser sessionshistoriken och inloggningen för att koppla gränserna till ditt konto och fråga Anthropic om dina återställningskrediter.",
+  "8d802467f2a7f93b": "Visa agenternas användning?",
+  "7722abfa18e471c0": "T3 Code läser det här från varje agent, i hela systemet. Välj vilka agenter du tillåter.",
+  "0ef08693f1224444": "Sessionshistorik och inloggning",
+  "bb9866823586b67a": "Användningsdatabas och Go-nyckel",
+  "8380d6f1828fe191": "Konversationshistorik",
+  "1f2036cf25caaf16": "Kontots användning från Cursor",
+  "51aa7700c1f967d2": "Sessionshistorik"
 }
