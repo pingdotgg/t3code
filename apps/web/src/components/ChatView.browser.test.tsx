@@ -1390,3 +1390,50 @@ it("/clear with a still-compressing image offers to steer or queue during a runn
   await expect.element(page.getByRole("button", { name: /^(Steer|Queue) message$/ })).toBeVisible();
   compressed.resolve();
 });
+
+it("picking /clear while editing a queued message does not arm a fresh session", async () => {
+  const history = threadWithHistory("clear-queued-edit", 2);
+  const [active, queued] = history.runs;
+  const thread = {
+    ...history,
+    runs: [
+      { ...active!, status: "running" as const, completedAt: null },
+      { ...queued!, status: "queued" as const, startedAt: null, completedAt: null },
+    ],
+    // The queued run has its message but no answer yet.
+    items: history.items.slice(0, 3),
+  };
+  using _environment = installFakeEnvironment([thread], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByRole("button", { name: "Stop generation" })).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Edit queued message" }));
+  await expect.element(page.getByText("Editing in the composer")).toBeVisible();
+  const editor = page.getByTestId("composer-editor");
+
+  await userEvent.click(editor);
+  await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
+  await insertText("/");
+  await expect.element(page.getByRole("listbox", { name: "Commands" })).toBeVisible();
+  await insertText("clear");
+  await expect.element(editor).toHaveTextContent("/clear");
+  // A fix may leave `/clear` out of the menu here; picking it is what armed the session.
+  const clearItem = page.getByText("Start a fresh session; earlier messages stay visible");
+  if (clearItem.query() !== null) await userEvent.click(clearItem);
+
+  // The queued edit owns the composer, so its send can't carry a fresh session (as on mobile).
+  await expect.element(page.getByText("Editing in the composer")).toBeVisible();
+  await expect
+    .element(page.getByText("Your next message starts a fresh session"))
+    .not.toBeInTheDocument();
+});
