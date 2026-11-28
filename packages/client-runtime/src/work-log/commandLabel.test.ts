@@ -187,6 +187,9 @@ describe("commandDisplayText with shell option terminators", () => {
     ["zsh --no-exec -c 'printf SHOULD_NOT_RUN'", "zsh --no-exec -c 'printf SHOULD_NOT_RUN'"],
     ["bash -n +n -c 'printf SHOULD_RUN'", "printf SHOULD_RUN"],
     ["zsh -n -o exec -c 'printf SHOULD_RUN'", "printf SHOULD_RUN"],
+    ["zsh -n -o _EXEC_ -c 'printf SHOULD_RUN'", "printf SHOULD_RUN"],
+    ["zsh -oextendedglob -c 'printf SHOULD_RUN'", "printf SHOULD_RUN"],
+    ["zsh -onoexec -c 'printf SHOULD_NOT_RUN'", "zsh -onoexec -c 'printf SHOULD_NOT_RUN'"],
   ])("shows %j as %j", (input, expected) => {
     expect(commandDisplayText(input)).toBe(expected);
   });

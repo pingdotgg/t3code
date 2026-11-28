@@ -231,6 +231,23 @@ const TERMINAL_SHELL_PROGRAMS = new Set([
   "while",
 ]);
 
+function applyShellOptionNameNoexec(
+  shell: string,
+  optionName: string | undefined,
+  enabling: boolean,
+  current: boolean,
+): boolean {
+  if (!optionName) return current;
+  const normalized = shell === "zsh" ? optionName.toLowerCase().replaceAll("_", "") : optionName;
+  if (normalized === "noexec" || normalized === "no_exec") {
+    return enabling;
+  }
+  if (shell === "zsh" && normalized === "exec") {
+    return !enabling;
+  }
+  return current;
+}
+
 function shellCommandArgumentIndex(
   shell: string,
   tokens: ReadonlyArray<string>,
@@ -249,17 +266,33 @@ function shellCommandArgumentIndex(
       noexec = false;
       continue;
     }
+    if (shell === "zsh") {
+      const attachedOption = /^([-+])([a-zA-Z]*?)o(.+)$/.exec(option);
+      if (attachedOption) {
+        const [, prefix, leadingFlags, optionName] = attachedOption;
+        const enabling = prefix === "-";
+        if (leadingFlags!.includes("n")) {
+          noexec = enabling;
+        }
+        noexec = applyShellOptionNameNoexec(shell, optionName, enabling, noexec);
+        if (enabling && leadingFlags!.includes("c")) {
+          if (noexec) return null;
+          return index + (tokens[index + 1] === "--" ? 2 : 1);
+        }
+        continue;
+      }
+    }
     if (/^[-+][a-zA-Z]+$/.test(option) && option.includes("n")) {
       noexec = option.startsWith("-");
     }
     if (SHELL_OPTIONS_WITH_VALUE.has(option) || SHELL_OPTION_BUNDLE_WITH_VALUE.test(option)) {
       if (option.endsWith("o")) {
-        const optionName = tokens[index + 1];
-        if (optionName === "noexec" || optionName === "no_exec") {
-          noexec = option.startsWith("-");
-        } else if (shell === "zsh" && optionName === "exec") {
-          noexec = !option.startsWith("-");
-        }
+        noexec = applyShellOptionNameNoexec(
+          shell,
+          tokens[index + 1],
+          option.startsWith("-"),
+          noexec,
+        );
       }
       index += 1;
       continue;
