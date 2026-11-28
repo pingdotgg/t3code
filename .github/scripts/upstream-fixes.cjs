@@ -32,8 +32,27 @@ const PROTECTED_FILES = new Set([
   "apps/mobile/src/features/observability/observe.ts",
   "apps/web/src/branding.ts",
   "apps/web/src/legalLinks.ts",
+  "apps/server/src/auth/ServerSecretStore.ts",
+  "apps/server/src/auth/VaultCipher.ts",
+  "packages/contracts/src/localVault.ts",
+  "packages/contracts/src/secretRequest.ts",
+  "packages/client-runtime/src/secretRequest.ts",
+  "apps/web/src/components/settings/LocalVaultSettings.tsx",
+  "apps/web/src/components/settings/GmailVaultDialog.tsx",
+  "apps/web/src/components/settings/GmailVaultRoute.ts",
+  "apps/web/src/components/settings/privateVaultRoute.ts",
+  "apps/web/src/components/chat/PrivateReadRequestCard.tsx",
+  "apps/web/src/components/chat/SecretRequestCard.tsx",
+  "apps/web/src/components/chat/composerVaultMentions.ts",
+  "apps/web/src/components/chat/useVaultApprovalToast.ts",
 ]);
-const PROTECTED_PREFIXES = ["assets/", "apps/desktop/resources/startup/"];
+const PROTECTED_PREFIXES = [
+  "assets/",
+  "apps/desktop/resources/startup/",
+  "apps/server/src/secrets/",
+  "apps/web/src/components/settings/Vault",
+  "apps/web/src/components/chat/Vault",
+];
 
 // Text a fix must not add: upstream's name and hosts, and analytics or tracing services.
 const FORBIDDEN = [
@@ -156,7 +175,20 @@ function main(argv) {
   };
   const max = batchSize(option("--max", String(MAX_PICKS)));
   const summaryFile = option("--summary", "");
+  if (git(["status", "--porcelain", "--untracked-files=normal"])) {
+    throw new Error("Upstream fixes require a clean worktree; commit or stash local work first.");
+  }
   const cursor = fs.readFileSync(CURSOR_FILE, "utf8").trim();
+  try {
+    git(["merge-base", "--is-ancestor", cursor, upstream]);
+  } catch (cause) {
+    throw new Error(
+      `The upstream cursor must be an ancestor of ${upstream}. Check the fetched ref.`,
+      {
+        cause,
+      },
+    );
+  }
   const skip = fs.existsSync(SKIP_FILE) ? readSkip(fs.readFileSync(SKIP_FILE, "utf8")) : new Set();
   const range = git([
     "rev-list",
@@ -186,26 +218,28 @@ function main(argv) {
       filtered[verdict.reason] = (filtered[verdict.reason] || 0) + 1;
       continue;
     }
+    const before = git(["rev-parse", "HEAD"]);
     try {
-      const before = git(["rev-parse", "HEAD"]);
       git(["cherry-pick", "-x", "--empty=drop", sha]);
-      if (git(["rev-parse", "HEAD"]) === before) continue;
-      const files = git(["diff", "--name-only", before, "HEAD"]).split("\n").filter(Boolean);
-      const why = guard(files, addedLines(git(["diff", "-U0", before, "HEAD"])));
-      if (why) {
-        git(["reset", "--hard", before]);
-        guarded.push({ ...commit, why });
-        continue;
+    } catch (cause) {
+      if (!git(["diff", "--name-only", "--diff-filter=U"])) {
+        throw new Error(`Could not cherry-pick ${sha}; the upstream cursor has not advanced.`, {
+          cause,
+        });
       }
-      picked.push(commit);
-    } catch {
-      try {
-        git(["cherry-pick", "--abort"]);
-      } catch {
-        git(["reset", "--hard", "HEAD"]);
-      }
+      git(["cherry-pick", "--abort"]);
       conflicted.push(commit);
+      continue;
     }
+    if (git(["rev-parse", "HEAD"]) === before) continue;
+    const files = git(["diff", "--name-only", before, "HEAD"]).split("\n").filter(Boolean);
+    const why = guard(files, addedLines(git(["diff", "-U0", before, "HEAD"])));
+    if (why) {
+      git(["reset", "--hard", before]);
+      guarded.push({ ...commit, why });
+      continue;
+    }
+    picked.push(commit);
   }
 
   if (last !== cursor) fs.writeFileSync(CURSOR_FILE, `${last}\n`);

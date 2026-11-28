@@ -2,7 +2,11 @@ name: Upstream Fixes
 
 on:
   schedule:
-    - cron: "17 */6 * * *"
+    - cron: "37 */6 * * *"
+    - cron: "37 1,7,13,19 * * *"
+  pull_request:
+    types: [closed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       max:
@@ -22,6 +26,11 @@ concurrency:
 jobs:
   pick:
     name: Propose upstream fixes
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.merged == true &&
+       github.event.pull_request.head.ref == 'upstream-fixes' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -31,10 +40,19 @@ jobs:
       - name: Check for an open batch
         id: batch
         run: |
-          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base main --state open --json number --jq '.[0].number // empty')
+          batch=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base main --state open --json number,url --jq '.[0] // empty')
+          pr=$(jq -r '.number // empty' <<< "$batch")
           echo "number=$pr" >> "$GITHUB_OUTPUT"
           if [ -n "$pr" ]; then
-            printf 'Upstream fixes are waiting for review in #%s. No branch changes made.\n' "$pr" >> "$GITHUB_STEP_SUMMARY"
+            url=$(jq -r '.url' <<< "$batch")
+            {
+              printf '### Waiting for [upstream batch #%s](%s)\n\n' "$pr" "$url"
+              printf 'No new fixes will be proposed until this batch is reviewed and merged or closed. Its branch and history have been left untouched.\n\n'
+              printf 'Current checks:\n\n'
+              gh pr view "$pr" --repo "$GITHUB_REPOSITORY" --json statusCheckRollup \
+                --jq '.statusCheckRollup[]? | "- \(.name // .context): \((.conclusion // .state // .status) | if . == "" then "pending" else . end)"' \
+                || printf 'Check status is unavailable; see the linked pull request.\n'
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Checkout
