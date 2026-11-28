@@ -296,19 +296,14 @@ function withoutOdsDrawings(node: XmlNode): XmlNode | undefined {
   }
   return children ? { ...node, children } : node;
 }
-
 function odsCellText(cell: XmlNode): string {
   const paragraphs = cell.children
-    .flatMap((child) => {
-      if (child.name === "office:annotation") return [];
-      const content = withoutOdsDrawings(child);
-      if (!content) return [];
-      return content.name === "text:p" ? [content] : find(content, "text:p");
-    })
+    .filter((child) => child.name !== "office:annotation")
+    .map(withoutOdsDrawings)
+    .flatMap((child) => (!child ? [] : child.name === "text:p" ? [child] : find(child, "text:p")))
     .map(text);
   return paragraphs.some(Boolean) ? paragraphs.join("\n") : "";
 }
-
 export async function openDocument(
   archive: JSZip,
   kind: "odt" | "ods" | "odp",
