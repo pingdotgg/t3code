@@ -241,25 +241,12 @@ export function BranchToolbarBranchSelector({
       onActiveThreadBranchOverrideChange?.(branch);
       return true;
     }
-    const draftTarget = draftId ?? threadRef;
-    const currentDraft = useComposerDraftStore.getState().getDraftThread(draftTarget);
-    // The draft may have changed since the render that started this selection.
-    if (
-      !currentDraft ||
-      currentDraft.promotedTo ||
-      currentDraft.environmentId !== environmentId ||
-      currentDraft.projectId !== activeProject.id ||
-      currentDraft.envMode !== draftThread?.envMode ||
-      currentDraft.worktreePath !== draftThread?.worktreePath
-    ) {
-      return false;
-    }
     const nextDraftEnvMode = resolveDraftEnvModeAfterBranchChange({
       nextWorktreePath: worktreePath,
       currentWorktreePath: activeWorktreePath,
       effectiveEnvMode,
     });
-    setDraftThreadContext(draftTarget, {
+    setDraftThreadContext(draftId ?? threadRef, {
       branch,
       worktreePath,
       envMode: nextDraftEnvMode,
