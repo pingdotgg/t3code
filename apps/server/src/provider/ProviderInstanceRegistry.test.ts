@@ -1192,6 +1192,65 @@ describe("ProviderInstanceRegistry secret environment", () => {
     });
   });
 
+  it.effect("keeps providers available after their credential reload is interrupted", () =>
+    Effect.gen(function* () {
+      const first = ProviderInstanceId.make("first");
+      const second = ProviderInstanceId.make("second");
+      const secondBuildStarted = yield* Deferred.make<void>();
+      const finishSecondBuild = yield* Deferred.make<void>();
+      let credential = "original";
+      let pauseSecondBuild = false;
+      const driver: AnyProviderDriver = {
+        driverKind,
+        metadata: { displayName: "Fake" },
+        configSchema: Schema.Unknown,
+        defaultConfig: () => ({}),
+        create: (input) =>
+          Effect.gen(function* () {
+            if (input.instanceId === second && pauseSecondBuild) {
+              yield* Deferred.succeed(secondBuildStarted, undefined);
+              yield* Deferred.await(finishSecondBuild);
+            }
+            return { instanceId: input.instanceId, enabled: input.enabled } as ProviderInstance;
+          }),
+      };
+      const entry = {
+        driver: driverKind,
+        config: {},
+        environment: [{ name: "API_KEY", value: secret, sensitive: true }],
+      };
+      const { registry, mutator } = yield* makeProviderInstanceRegistry({
+        drivers: [driver],
+        configMap: { [first]: entry, [second]: entry },
+      }).pipe(
+        Effect.provideService(SecretResolver.SecretResolver, {
+          label: (provider) => Effect.succeed(provider),
+          read: (references) => Effect.sync(() => references.map(() => credential)),
+          invalidate: () => Effect.void,
+        }),
+      );
+      // Ensure any deferred startup builds are complete before rotating the secret.
+      yield* mutator.reloadSecrets();
+      expect((yield* registry.listInstances).map((instance) => instance.instanceId)).toEqual([
+        first,
+        second,
+      ]);
+
+      credential = "rotated";
+      pauseSecondBuild = true;
+      const reload = yield* mutator.reloadSecrets().pipe(Effect.forkChild);
+      yield* Deferred.await(secondBuildStarted);
+      yield* Fiber.interrupt(reload).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.succeed(finishSecondBuild, undefined);
+      yield* Fiber.await(reload);
+
+      expect((yield* registry.listInstances).map((instance) => instance.instanceId)).toEqual([
+        first,
+        second,
+      ]);
+    }),
+  );
+
   it.effect("keeps a working instance live when a reload cannot read its secret", () => {
     const fixture = setup({ [secret.reference]: "sk-live" });
     return Effect.gen(function* () {
