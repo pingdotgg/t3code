@@ -1953,14 +1953,15 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "xl/workbook.xml":
-              '<workbook><workbookPr date1904="true"/><sheets><sheet name="Dates" r:id="a"/></sheets></workbook>',
+              '<workbook><workbookPr date1904=" true "/><sheets><sheet name="Dates" r:id="a"/></sheets></workbook>',
             "xl/_rels/workbook.xml.rels":
               '<Relationships><Relationship Id="a" Target="worksheets/dates.xml"/></Relationships>',
             "xl/styles.xml": '<styleSheet><cellXfs><xf numFmtId="14"/></cellXfs></styleSheet>',
             "xl/worksheets/dates.xml":
               "<worksheet><sheetData><row><c><v>1</v></c></row></sheetData></worksheet>",
           },
-          expected: ["## Sheet: Dates", "1 [Excel numFmtId=14; date system 1904]"],
+          expected: [],
+          exact: "## Sheet: Dates\n1 [Excel numFmtId=14; date system 1904]",
         },
         {
           ext: "xlsx",

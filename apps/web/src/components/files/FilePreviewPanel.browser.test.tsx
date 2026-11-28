@@ -938,6 +938,51 @@ describe("rendered Markdown select all", () => {
     document.execCommand("copy");
     expect(copied).toBe(contents);
   });
+
+  it("selects and copies the whole file in a large rendered Markdown preview", async () => {
+    using _settings = setup();
+    using _style = withAppCss();
+    const block = `## Section\n\n${"Paragraph body text. ".repeat(4)}\n\n`;
+    const contents = `Loaded opening body.\n\n${block.repeat(400)}Trailing sentinel.`;
+    state.assetUrl = {
+      _tag: "Success",
+      url: "/assets/large.md",
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    };
+    const realFetch = globalThis.fetch;
+    using _fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input, init) =>
+        new URL(String(input), location.href).pathname === "/assets/large.md"
+          ? Promise.resolve(new Response(contents))
+          : realFetch(input, init),
+      );
+    await using screen = await render(
+      <>
+        <p>Transcript text from the chat thread.</p>
+        {sized(markdownPreview(true, `Initial preview.\n\n${block.repeat(40)}`, "large.md"))}
+      </>,
+    );
+    await expect.element(screen.getByText("Loaded opening body.")).toBeVisible();
+    expect(screen.container.textContent).not.toContain("Trailing sentinel.");
+
+    await userEvent.click(screen.getByText("Loaded opening body."));
+    await userEvent.keyboard(
+      isMacPlatform(navigator.platform) ? "{Meta>}a{/Meta}" : "{Control>}a{/Control}",
+    );
+    const selection = window.getSelection()?.toString() ?? "";
+    expect(selection).toContain("Loaded opening body.");
+    expect(selection).not.toContain("Transcript text from the chat thread.");
+
+    let copied: string | undefined;
+    const read = (event: ClipboardEvent) => {
+      copied = event.clipboardData?.getData("text/plain");
+    };
+    window.addEventListener("copy", read);
+    using _listener = { [Symbol.dispose]: () => window.removeEventListener("copy", read) };
+    document.execCommand("copy");
+    expect(copied).toBe(contents);
+  });
 });
 
 describe("rendered Markdown relative images", () => {
