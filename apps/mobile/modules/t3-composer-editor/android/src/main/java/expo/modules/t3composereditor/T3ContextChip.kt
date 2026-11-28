@@ -16,6 +16,7 @@ import kotlin.math.min
 class T3ContextChip(
   content: Content,
   fontSize: Float,
+  chipTypeface: Typeface,
   private val color: Int,
   maximumWidth: Float,
   density: Float
@@ -30,14 +31,14 @@ class T3ContextChip(
 
   private val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
     textSize = fontSize
-    typeface = chipTypeface()
+    typeface = chipTypeface
     color = this@T3ContextChip.color
   }
   private val em = fontSize
 
   private val detailPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
     textSize = fontSize * 0.84f
-    typeface = chipTypeface()
+    typeface = chipTypeface
     color = this@T3ContextChip.color
   }
   private val detailText = if (content.detail.isEmpty()) "" else " ${content.detail}"
@@ -87,13 +88,13 @@ class T3ContextChip(
   }
 
   companion object {
-    private const val CHIP_FONT_FAMILY = "DMSans-Medium"
+    private const val DM_SANS_MEDIUM = "DMSans-Medium"
 
-    // Matches the iOS chips; builds without the bundled font keep the platform medium.
-    private fun chipTypeface(): Typeface {
+    /** Matches the iOS chips: DM Sans text gets DM Sans Medium, anything else the platform medium. */
+    fun typefaceFor(fontFamily: String): Typeface {
       val fonts = ReactFontManager.getInstance()
-      return if (CHIP_FONT_FAMILY in fonts.customFontFamilies) {
-        fonts.getTypeface(CHIP_FONT_FAMILY, Typeface.NORMAL, null)
+      return if (fontFamily.startsWith("DMSans") && DM_SANS_MEDIUM in fonts.customFontFamilies) {
+        fonts.getTypeface(DM_SANS_MEDIUM, Typeface.NORMAL, null)
       } else {
         Typeface.create("sans-serif-medium", Typeface.NORMAL)
       }

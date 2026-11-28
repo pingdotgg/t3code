@@ -23,7 +23,7 @@ allowBuilds:
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
-  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.19-a01cbf49.tgz": true
+  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.19-9a8bc858.tgz": true
   sharp: true
   utf-8-validate: false
   workerd: false
@@ -44,15 +44,15 @@ catalog:
   # Must match the version alchemy depends on: the relay overrides its
   # Cloudflare retry policy through this package's Retry service.
   "@distilled.cloud/cloudflare": 1.0.0-rc.18
-  "@effect/atom-react": 4.1.5
-  "@effect/graphql-generator": 4.1.5
-  "@effect/openapi-generator": 4.1.5
-  "@effect/platform-bun": 4.1.5
-  "@effect/platform-node": 4.1.5
-  "@effect/platform-node-shared": 4.1.5
-  "@effect/sql-pg": 4.1.5
-  "@effect/sql-sqlite-do": 4.1.5
-  "@effect/vitest": 4.1.5
+  "@effect/atom-react": 4.1.6
+  "@effect/graphql-generator": 4.1.6
+  "@effect/openapi-generator": 4.1.6
+  "@effect/platform-bun": 4.1.6
+  "@effect/platform-node": 4.1.6
+  "@effect/platform-node-shared": 4.1.6
+  "@effect/sql-pg": 4.1.6
+  "@effect/sql-sqlite-do": 4.1.6
+  "@effect/vitest": 4.1.6
   "@electron-webauthn/macos": 1.3.1
   "@legendapp/list": 3.9.0
   "@noble/curves": 1.9.1
@@ -69,7 +69,7 @@ catalog:
   "@types/react-dom": ~19.3.0
   "@types/ws": 8.18.2
   alchemy: 2.0.0-beta.85
-  effect: 4.1.5
+  effect: 4.1.6
   electron-webauthn: 1.3.1
   jose: 6.2.2
   lightningcss: 1.33.0
@@ -104,6 +104,7 @@ overrides:
   # Pin every patched package, including transitive dependencies, so lockfile-free
   # release installs cannot drift past the patch. Update these with patchedDependencies.
   react-native-image-viewing: 0.2.2
+  "@exodus/bytes": 1.15.1
   mdast-util-math: 3.0.0
   micromark-extension-llm-math: 3.1.0
   micromark: 4.0.2
@@ -122,8 +123,10 @@ overrides:
   "@react-navigation/native-stack": 7.21.0
   dbus-next: 0.10.2
   node-pty: 1.2.0-beta.15
+  "@vitest/browser": 5.1.1
   react-native-gesture-handler: 3.5.0
   react-native-reanimated: 4.8.0
+  react-native-worklets: 0.14.0
   react-native-keyboard-controller: 1.23.0
   # 6.1.1 cannot build Android: it downloads PDFium from a release asset that was never published.
   react-native-pdf-jsi: 6.1.0
@@ -229,6 +232,9 @@ packageExtensions:
       vite-plus: "catalog:"
 
 patchedDependencies:
+  # Mobile's GB18030 TextDecoder polyfill imports these typings; their unused Node reference would
+  # give the React Native program Node's globals.
+  "@exodus/bytes@1.15.1": patches/@exodus__bytes@1.15.1.patch
   react-native-image-viewing@0.2.2: patches/react-native-image-viewing@0.2.2.patch
   mdast-util-math@3.0.0: patches/mdast-util-math@3.0.0.patch
   micromark-extension-llm-math@3.1.0: patches/micromark-extension-llm-math@3.1.0.patch
@@ -241,7 +247,7 @@ patchedDependencies:
   expo-network@58.0.5: patches/expo-network@58.0.5.patch
   "@clerk/expo-native-components@0.4.8": patches/@clerk__expo-native-components@0.4.8.patch
   "@alchemy.run/test@2.0.0-beta.85": patches/@alchemy.run__test@2.0.0-beta.85.patch
-  "@effect/vitest@4.1.5": patches/@effect__vitest@4.1.5.patch
+  "@effect/vitest@4.1.6": patches/@effect__vitest@4.1.6.patch
   expo-sharing@58.0.23: patches/expo-sharing@58.0.23.patch
   expo-widgets@58.0.29: patches/expo-widgets@58.0.29.patch
   # Android: an RNHostView without a scrolling descendant (an app bar's buttons) is no longer the
@@ -260,6 +266,9 @@ patchedDependencies:
   # Screens v5 stack, split and tab screens leave at once, like legacy screens. Exiting animations
   # inside one otherwise hold its removal for a later mount, after its stack has moved on.
   react-native-reanimated@4.8.0: patches/react-native-reanimated@4.8.0.patch
+  # iOS: the frame queue's display link stays running through a few idle frames, so mappers fed by
+  # scroll events no longer toggle it every vsync and halve ProMotion scrolling to 30 Hz.
+  react-native-worklets@0.14.0: patches/react-native-worklets@0.14.0.patch
   react-native-keyboard-controller@1.23.0: patches/react-native-keyboard-controller@1.23.0.patch
   # Android: a nested WebView hands a vertical drag to its scrolling parent at the page's edge.
   react-native-webview@14.0.1: patches/react-native-webview@14.0.1.patch
@@ -271,7 +280,7 @@ patchedDependencies:
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
   # The spawner takes an injected spawn function (and uses it for taskkill) so Windows launches
   # can run on worker threads: apps/server/src/process/SpawnWorker.ts.
-  "@effect/platform-node-shared@4.1.5": patches/@effect__platform-node-shared@4.1.5.patch
+  "@effect/platform-node-shared@4.1.6": patches/@effect__platform-node-shared@4.1.6.patch
   # Electron net requests never emit "socket", so upstream's idle timeout never fires and a
   # stalled update download hangs forever.
   electron-updater@6.8.9: patches/electron-updater@6.8.9.patch
@@ -288,9 +297,15 @@ patchedDependencies:
   # before the async native write lands.
   gt-react-native@11.4.18: patches/gt-react-native@11.4.18.patch
   # The MCP Events extension (SEP-3415) on effect/ai, until Effect ships it.
-  effect@4.1.5: patches/effect@4.1.5.patch
+  effect@4.1.6: patches/effect@4.1.6.patch
   "@generaltranslation/format@0.1.9": patches/@generaltranslation__format@0.1.9.patch
   gt-i18n@1.0.40: patches/gt-i18n@1.0.40.patch
+  # A browser test's first tester socket can close before opening on a busy runner; the
+  # reconnect then opens but the tester keeps waiting on the dead attempt and fails after 60s.
+  # https://github.com/vitest-dev/vitest/issues/10166
+  "@vitest/browser@5.1.1": patches/@vitest__browser@5.1.1.patch
+  # Hermes cannot parse the computed import for optional external codecs. Built-in ZIP codecs still work.
+  "@zip.js/zip.js@2.25.0": patches/@zip.js__zip.js@2.25.0.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.
@@ -342,16 +357,16 @@ minimumReleaseAgeExclude:
   - "@cursor/sdk-linux-x64@1.5.0"
   - "@cursor/sdk-win32-x64@1.5.0"
   - "@cursor/sdk@1.5.0"
-  - "@effect/atom-react@4.1.5"
-  - "@effect/graphql-generator@4.1.5"
-  - "@effect/openapi-generator@4.1.5"
-  - "@effect/platform-bun@4.1.5"
-  - "@effect/platform-node-shared@4.1.5"
-  - "@effect/platform-node@4.1.5"
-  - "@effect/sql-pg@4.1.5"
-  - "@effect/sql-sqlite-do@4.1.5"
-  - "@effect/vitest@4.1.5"
-  - effect@4.1.5
+  - "@effect/atom-react@4.1.6"
+  - "@effect/graphql-generator@4.1.6"
+  - "@effect/openapi-generator@4.1.6"
+  - "@effect/platform-bun@4.1.6"
+  - "@effect/platform-node-shared@4.1.6"
+  - "@effect/platform-node@4.1.6"
+  - "@effect/sql-pg@4.1.6"
+  - "@effect/sql-sqlite-do@4.1.6"
+  - "@effect/vitest@4.1.6"
+  - effect@4.1.6
   - "@voidzero-dev/vite-plus-core@8.3.8001"
   - "@voidzero-dev/vite-plus-darwin-arm64@1.8.0"
   - "@voidzero-dev/vite-plus-darwin-x64@1.8.0"

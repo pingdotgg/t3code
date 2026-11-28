@@ -1,7 +1,7 @@
 {
   "name": "@effect/openapi-generator",
   "type": "module",
-  "version": "4.1.5",
+  "version": "4.1.6",
   "license": "MIT",
   "description": "Generate Effect Schema types, HTTP clients, and HttpApi modules from OpenAPI specifications",
   "homepage": "https://effect.website",
@@ -73,6 +73,6 @@
     "effect": "workspace:^",
     "json-schema-typed": "^9.0.0",
     "openapi-typescript": "^7.13.0",
-    "rolldown": "^1.3.2"
+    "rolldown": "^1.3.3"
   }
 }

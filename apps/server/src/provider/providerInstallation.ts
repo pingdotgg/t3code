@@ -4,7 +4,7 @@ import {
   ProviderDriverKind,
   type ProviderInstallCancelInput,
   type ProviderInstallState,
-  ProviderInstanceId,
+  type ProviderInstanceId,
   ProviderSetupError,
   type ProviderSetupInput,
 } from "@t3tools/contracts";
@@ -46,13 +46,6 @@ export class ProviderInstallation extends Context.Service<
     readonly remove: (
       input: ProviderSetupInput,
     ) => Effect.Effect<ProviderInstallState, ProviderSetupError>;
-    /**
-     * Refreshes model catalogs for every enabled managed Antigravity instance once per operation,
-     * shared between Settings-triggered and sidebar-triggered managed updates.
-     */
-    readonly refreshManagedAntigravityInstances: (
-      operationId: string | null,
-    ) => Effect.Effect<void>;
   }
 >()("t3/provider/providerInstallation") {}
 
@@ -256,19 +249,7 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
     return yield* installation.state;
   });
 
-  const refreshManagedAntigravityInstances = Effect.fn(
-    "ProviderInstallation.refreshManagedAntigravityInstances",
-  )(function* (operationId: string | null) {
-    if (operationId !== null) {
-      if (accountCheckOperation === operationId) return;
-      accountCheckOperation = operationId;
-    }
-    yield* checkManagedRuntimeInstances(ProviderInstanceId.make("antigravity")).pipe(
-      Effect.ignore({ log: true }),
-    );
-  });
-
-  return { start, cancel, subscribe, remove, refreshManagedAntigravityInstances };
+  return { start, cancel, subscribe, remove };
 });
 
 export const layer = Layer.effect(ProviderInstallation, make());

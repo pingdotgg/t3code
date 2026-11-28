@@ -224,8 +224,10 @@ function makeRegistry(
         );
       },
       refreshWorkspaceSnapshot: () => Ref.get(providersRef),
+      runtimeModeLimits: () => Effect.succeed([]),
       invalidateModelCaches: () => Effect.void,
       refreshModelCatalog: Effect.void,
+      refreshUsageLimits: () => Effect.void,
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
         Effect.succeed(lifecycleFor(provider)),
       setProviderMaintenanceActionState,

@@ -119,8 +119,6 @@ interface AntigravityInstallationService {
   readonly state: Effect.Effect<ProviderInstallState>;
   readonly changes: Stream.Stream<ProviderInstallState>;
   readonly checkForUpdate: Effect.Effect<void>;
-  /** Fetches the latest eligible managed Antigravity CLI version, bypassing the hourly throttle. */
-  readonly lookupLatestVersion: Effect.Effect<string | null>;
   readonly remove: (
     protectedBinaryPaths?: ReadonlyArray<string>,
   ) => Effect.Effect<void, AntigravityInstallationError>;
@@ -218,7 +216,6 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       }),
     );
   const gate = yield* Semaphore.make(1);
-  const updateCheckGate = yield* Semaphore.make(1);
   const leases = new Map<string, number>();
   let running: { readonly operationId: string; readonly fiber: Fiber.Fiber<void> } | undefined;
   const state = yield* SubscriptionRef.make<ProviderInstallState>({
@@ -764,7 +761,6 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           tempDirectory: profileDirectory,
         });
         const runtime = yield* makeAntigravityAcpRuntime({
-          runtimeVersion: expectedVersion,
           spawn: buildAntigravityAcpSpawnInput({
             installation: executable,
             profile,
@@ -1223,7 +1219,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   );
 
   let lastUpdateCheck: number | undefined;
-  const refreshReleaseUnlocked = Effect.fn("AntigravityInstallation.refreshRelease")(function* (
+  const refreshRelease = Effect.fn("AntigravityInstallation.refreshRelease")(function* (
     explicit = false,
   ) {
     if (options.releaseAsset !== undefined || !supported) return;
@@ -1248,15 +1244,6 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     if (latest === null) return;
     if (yield* isWithdrawn(latest.version)) {
       releaseAsset = null;
-      yield* SubscriptionRef.update(state, (value) =>
-        isRunning(value)
-          ? value
-          : {
-              ...value,
-              version: value.installedVersion,
-              totalBytes: null,
-            },
-      );
       return;
     }
     releaseAsset = latest;
@@ -1276,8 +1263,6 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           }),
     );
   });
-  const refreshRelease = (explicit = false) =>
-    updateCheckGate.withPermits(1)(refreshReleaseUnlocked(explicit));
 
   const start = Effect.gen(function* () {
     const current = yield* SubscriptionRef.get(state);
@@ -1525,29 +1510,6 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   // A startup install prunes when it activates; pruning now could delete the release it is verifying.
   if (!isRunning(yield* SubscriptionRef.get(state))) yield* pruneInactiveReleases;
 
-  const lookupLatestVersion = updateCheckGate
-    .withPermits(1)(
-      Effect.gen(function* () {
-        yield* refreshReleaseUnlocked(true);
-        if (releaseAsset === null) return null;
-        if (yield* isWithdrawn(releaseAsset.version)) {
-          releaseAsset = null;
-          yield* SubscriptionRef.update(state, (value) =>
-            isRunning(value)
-              ? value
-              : {
-                  ...value,
-                  version: value.installedVersion,
-                  totalBytes: null,
-                },
-          );
-          return null;
-        }
-        return releaseAsset.version;
-      }),
-    )
-    .pipe(Effect.orElseSucceed(() => null));
-
   return AntigravityInstallation.of({
     managedDirectory,
     resolve,
@@ -1557,10 +1519,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     cancel,
     state: SubscriptionRef.get(state),
     changes: SubscriptionRef.changes(state),
-    checkForUpdate: updateCheckGate
-      .withPermitsIfAvailable(1)(refreshReleaseUnlocked(false))
-      .pipe(Effect.ignore),
-    lookupLatestVersion,
+    checkForUpdate: refreshRelease().pipe(Effect.ignore),
     remove,
   });
 });

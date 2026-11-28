@@ -8,18 +8,15 @@ import {
   type ServerProvider,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
-  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
-import { compareSemverVersions } from "@t3tools/shared/semver";
-import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as FiberHandle from "effect/FiberHandle";
+import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as EffectAcpErrors from "effect-acp/errors";
@@ -41,12 +38,6 @@ import {
   isCommandMissingCause,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
-import {
-  haveProviderSnapshotSettingsChanged,
-  makeProviderSnapshotSettingsSource,
-  type ProviderSnapshotSettings,
-} from "@t3tools/provider-core/server/snapshotSettings";
-import { resolveUsageLimitsAfterProbe } from "@t3tools/provider-core/server/usageLimits";
 
 import { antigravityThinkingConfig } from "./acp/AntigravityAcpSupport.ts";
 
@@ -56,10 +47,6 @@ const HEALTH_CHECK_TIMEOUT_MS = 90_000;
 const SIGN_IN_MESSAGE = "Sign in with Google to use Antigravity.";
 const AUTH_UNCHECKED_MESSAGE =
   "Antigravity is installed. Google account access is not checked yet.";
-// Set while a finished quota read republishes, so that health check does not read again.
-const PublishingUsage = Context.Reference<boolean>("t3/provider/AntigravityPublishingUsage", {
-  defaultValue: () => false,
-});
 
 type SessionSetupResult = Pick<
   AcpSessionRuntime.AcpSessionRuntimeStartResult["sessionSetupResult"],
@@ -79,9 +66,38 @@ function thinkingCapabilities(config: ThinkingConfig | null | undefined) {
   return createModelCapabilities({ optionDescriptors: [descriptor] });
 }
 
+function selectOptionValues(config: ThinkingConfig): ReadonlyArray<string> {
+  return config.options.flatMap((entry) =>
+    "value" in entry ? [entry.value] : entry.options.map((option) => option.value),
+  );
+}
+
+function mergeLiveThinkingConfig(
+  existing: ThinkingConfig | null | undefined,
+  next: ThinkingConfig | null,
+): ThinkingConfig | null | undefined {
+  if (existing === undefined) return undefined;
+  if (next === null) return null;
+  if (existing === null) return undefined;
+  return selectOptionValues(next).includes(existing.currentValue)
+    ? { ...next, currentValue: existing.currentValue }
+    : next;
+}
+
+function sessionModelSlug(setup: SessionSetupResult): string | undefined {
+  const config = setup.configOptions?.find(
+    (option) => option.id === "model" || option.category === "model",
+  );
+  return config?.type === "select" ? config.currentValue : setup.models?.currentModelId;
+}
+
 export function buildAntigravityModelsFromSession(
   setup: SessionSetupResult,
   thinkingLevels: AntigravityThinkingLevels = new Map(),
+  options?: {
+    readonly defaultModel?: string | undefined;
+    readonly authoritative?: boolean;
+  },
 ): ReadonlyArray<ServerProviderModel> {
   const config = setup.configOptions?.find(
     (option) => option.id === "model" || option.category === "model",
@@ -97,6 +113,15 @@ export function buildAntigravityModelsFromSession(
             name: model.name,
           })) ?? [])
         : [];
+  const authoritative = options?.authoritative ?? true;
+  const defaultModel =
+    options?.defaultModel !== undefined
+      ? entries.some((entry) => entry.value === options.defaultModel)
+        ? options.defaultModel
+        : currentValue
+      : authoritative
+        ? currentValue
+        : undefined;
   const currentThinking = antigravityThinkingConfig(setup.configOptions);
   const seen = new Set<string>();
   // The agent can list two IDs under one name; label the later ones so the picker tells them apart.
@@ -108,13 +133,15 @@ export function buildAntigravityModelsFromSession(
     const name = names.has(baseName) ? `${baseName} (${entry.value})` : baseName;
     names.add(baseName);
     const observed =
-      entry.value === currentValue ? (currentThinking ?? null) : thinkingLevels.get(entry.value);
+      authoritative && entry.value === currentValue
+        ? (currentThinking ?? null)
+        : thinkingLevels.get(entry.value);
     return [
       {
         slug: entry.value,
         name,
         isCustom: false,
-        ...(entry.value === currentValue
+        ...(entry.value === defaultModel
           ? { isDefault: true, aliases: [ANTIGRAVITY_DEFAULT_MODEL] }
           : {}),
         // Levels differ per model; an unobserved model reports none so the registry keeps its cached ones.
@@ -143,7 +170,9 @@ function nativeCommands(
   });
 }
 
-function isMissingInstallation(error: EffectAcpErrors.AcpError | ProviderSetupError): boolean {
+function isMissingInstallation(
+  error: EffectAcpErrors.AcpError | ProviderSetupError | AntigravityProbeIncompatibility,
+): boolean {
   if (error._tag === "AcpSpawnError") {
     return (
       isCommandMissingCause(error.cause) ||
@@ -157,46 +186,25 @@ function isMissingInstallation(error: EffectAcpErrors.AcpError | ProviderSetupEr
   );
 }
 
-function sameVersionAdvisory(
-  left: ServerProvider["versionAdvisory"],
-  right: ServerProvider["versionAdvisory"],
-): boolean {
-  if (left === right) return true;
-  if (left === undefined || right === undefined) return false;
-  return (
-    left.status === right.status &&
-    left.currentVersion === right.currentVersion &&
-    left.latestVersion === right.latestVersion &&
-    left.updateCommand === right.updateCommand &&
-    left.canUpdate === right.canUpdate &&
-    left.canInstallVersion === right.canInstallVersion &&
-    left.message === right.message
-  );
-}
-
 interface AntigravityProviderState {
   readonly draft: ServerProviderDraft;
   readonly authRevision: number;
-  readonly versionFromCheck: boolean;
 }
+
+export class AntigravityProbeIncompatibility extends Schema.TaggedError<AntigravityProbeIncompatibility>()(
+  "AntigravityProbeIncompatibility",
+  { version: Schema.String, detail: Schema.String },
+) {}
 
 interface AntigravityProviderOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly stampIdentity: (snapshot: ServerProviderDraft) => Effect.Effect<ServerProvider>;
   readonly probe: Effect.Effect<
-    EffectAcpSchema.InitializeResponse,
-    EffectAcpErrors.AcpError | ProviderSetupError
+    EffectAcpSchema.InitializeResponse & { readonly invalidatedVersion?: string },
+    EffectAcpErrors.AcpError | ProviderSetupError | AntigravityProbeIncompatibility
   >;
   readonly supportsTextGeneration: Effect.Effect<boolean>;
-  readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
-  readonly clearUsage?: Effect.Effect<void>;
-  readonly resolveMaintenance?: (options?: {
-    readonly fresh?: boolean;
-  }) => Effect.Effect<ProviderMaintenanceCapabilities>;
-  readonly enrichVersionAdvisory?: (
-    snapshot: ServerProvider,
-    enableProviderUpdateChecks: boolean,
-  ) => Effect.Effect<ServerProvider["versionAdvisory"]>;
+  readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
   readonly auth?: { readonly type: string; readonly label: string };
   /** Modes the last session advertised, saved because initialize alone does not report them. */
   readonly rememberedRuntimeModes?: ReadonlyArray<RuntimeMode>;
@@ -261,19 +269,29 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   const metadata = yield* SubscriptionRef.make<AntigravityProviderState>({
     draft: initialDraft,
     authRevision: 0,
-    versionFromCheck: false,
   });
-  // Preserve disk-discovered skills when callbacks replace workspace commands; the registry will not rescan them.
+  // Skills from the registry's last scan of each folder. A folder without them stays pending so it is scanned.
   const discoveredSkills = new Map<string, ServerProvider["skills"]>();
+  // Commands of folders whose draft entry a skill scan dropped, so later scans still report them.
+  const workspaceCommands = new Map<string, ServerProvider["slashCommands"]>();
   const thinkingLevels = new Map<string, ThinkingConfig | null>();
+  let defaultModelSlug: string | undefined;
   const observeThinkingLevels = (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+    authoritative: boolean,
   ) => {
     const model = configOptions?.find(
       (option) => option.id === "model" || option.category === "model",
     );
-    if (model?.type === "select" && model.currentValue) {
-      thinkingLevels.set(model.currentValue, antigravityThinkingConfig(configOptions) ?? null);
+    if (model?.type !== "select" || !model.currentValue) return;
+    const next = antigravityThinkingConfig(configOptions) ?? null;
+    if (authoritative) {
+      thinkingLevels.set(model.currentValue, next);
+      return;
+    }
+    const merged = mergeLiveThinkingConfig(thinkingLevels.get(model.currentValue), next);
+    if (merged !== undefined) {
+      thinkingLevels.set(model.currentValue, merged);
     }
   };
   const rememberRuntimeModes = Effect.fn("AntigravityProvider.rememberRuntimeModes")(function* (
@@ -288,47 +306,6 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     Effect.flatMap((state) => options.stampIdentity(state.draft)),
   );
 
-  // The quota read can take 30 seconds, so it never blocks readiness or a session start.
-  // One read runs at a time; sign-in and sign-out interrupt it so a stale account never lands.
-  const usageRead = yield* FiberHandle.make();
-  const republish = yield* Deferred.make<Effect.Effect<ServerProvider>>();
-  const scope = yield* Effect.scope;
-  const refreshUsage = Effect.fn("AntigravityProvider.refreshUsage")(function* () {
-    if (!options.probeUsage || (yield* PublishingUsage)) return;
-    yield* FiberHandle.run(
-      usageRead,
-      options.probeUsage.pipe(
-        Effect.flatMap((probed) =>
-          SubscriptionRef.update(metadata, (state) => ({
-            ...state,
-            draft: {
-              ...state.draft,
-              usageLimits: resolveUsageLimitsAfterProbe({
-                published: state.draft.usageLimits,
-                probed,
-              }),
-            },
-          })),
-        ),
-        // Enrichment cannot change published limits; a health check publishes them.
-        Effect.andThen(
-          Deferred.await(republish).pipe(
-            Effect.flatten,
-            Effect.provideService(PublishingUsage, true),
-            Effect.ignoreCause({ log: true }),
-            Effect.forkIn(scope),
-          ),
-        ),
-      ),
-      // Store the fiber before it runs, so a sign-out during the read can interrupt it.
-      { onlyIfMissing: true, startImmediately: false },
-    );
-  });
-  const resetUsage = Effect.gen(function* () {
-    yield* FiberHandle.clear(usageRead);
-    if (options.clearUsage) yield* options.clearUsage;
-  });
-
   const checkProvider = Effect.fn("checkAntigravityProvider")(function* () {
     if (!settings.enabled) return yield* getSnapshot;
     const before = yield* SubscriptionRef.get(metadata);
@@ -340,14 +317,16 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const result = yield* options.probe.pipe(Effect.timeoutOption(timeoutMs), Effect.result);
     const initialized =
       Result.isSuccess(result) && Option.isSome(result.success) ? result.success.value : undefined;
-    const version = initialized?.agentInfo?.version;
     const failure = Result.isFailure(result) ? result.failure : undefined;
+    const incompatible = failure?._tag === "AntigravityProbeIncompatibility" ? failure : undefined;
+    const version = incompatible?.version ?? initialized?.agentInfo?.version;
     const missingInstallation = failure !== undefined && isMissingInstallation(failure);
+    const detail = failure?._tag === "ProviderSetupError" ? failure.detail : incompatible?.detail;
     const errorMessage =
       initialized !== undefined
         ? undefined
-        : failure?._tag === "ProviderSetupError"
-          ? failure.detail.trim() || "Antigravity could not complete its local health check."
+        : detail !== undefined
+          ? detail.trim() || "Antigravity could not complete its local health check."
           : missingInstallation
             ? "Antigravity ACP runtime is not installed or its executable could not be found."
             : failure
@@ -358,27 +337,10 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     const applyCheck = (state: AntigravityProviderState) => {
       if (state.authRevision !== before.authRevision) return state;
-      const {
-        message: _previousMessage,
-        versionAdvisory: previousVersionAdvisory,
-        ...draft
-      } = state.draft;
+      const { message: _previousMessage, ...draft } = state.draft;
+      const previousVersion =
+        initialized?.invalidatedVersion === draft.version ? null : draft.version;
       const authenticated = draft.auth.status === "authenticated";
-      const nextInstalled = !missingInstallation;
-      // Lightweight custom-launcher probes lack versions; preserve the real handshake's version.
-      const checkedVersion = version && version !== "unknown" ? version : undefined;
-      const nextVersion = checkedVersion ?? draft.version;
-      const versionFromCheck =
-        checkedVersion !== undefined
-          ? true
-          : initialized !== undefined || missingInstallation
-            ? false
-            : state.versionFromCheck;
-      const keepVersionAdvisory =
-        previousVersionAdvisory !== undefined &&
-        nextInstalled &&
-        draft.installed &&
-        nextVersion === draft.version;
       const message =
         errorMessage ??
         (authenticated
@@ -388,15 +350,13 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             : authUncheckedMessage);
       return {
         ...state,
-        versionFromCheck,
         draft: {
           ...draft,
-          installed: nextInstalled,
-          version: nextVersion,
-          ...(keepVersionAdvisory ? { versionAdvisory: previousVersionAdvisory } : {}),
+          installed: !missingInstallation,
+          // Lightweight custom-launcher probes lack versions; preserve the real handshake's version.
+          version: version === "unknown" ? previousVersion : version || previousVersion,
           status: errorMessage ? "error" : authenticated ? "ready" : "warning",
           checkedAt: updatedAt,
-          usageLimits: missingInstallation ? undefined : draft.usageLimits,
           ...(missingInstallation
             ? {
                 models: [],
@@ -423,69 +383,42 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       const stored = deferFailure && state.draft.status === "ready" ? state : checked;
       return [checked, stored === state ? Option.none() : Option.some(stored)];
     });
-    if (initialized !== undefined) yield* refreshUsage();
     return yield* options.stampIdentity(next.draft);
   });
 
-  const defaultMaintenanceCapabilities = makeManualOnlyProviderMaintenanceCapabilities({
-    provider: ProviderDriverKind.make("antigravity"),
-    packageName: null,
-  });
-  const resolveMaintenance =
-    options.resolveMaintenance ?? (() => Effect.succeed(defaultMaintenanceCapabilities));
-  const snapshotSettings = yield* makeProviderSnapshotSettingsSource(settings);
-  const managed = yield* makeManagedServerProvider<ProviderSnapshotSettings<AntigravitySettings>>({
-    resolveMaintenance,
-    getSettings: snapshotSettings.getSettings,
-    streamSettings: snapshotSettings.streamSettings,
-    haveSettingsChanged: haveProviderSnapshotSettingsChanged,
-    checkProviderOnSettingsChange: () => false,
+  const maintenanceCapabilities =
+    options.maintenanceCapabilities ??
+    makeManualOnlyProviderMaintenanceCapabilities({
+      provider: ProviderDriverKind.make("antigravity"),
+      packageName: null,
+    });
+  const managed = yield* makeManagedServerProvider({
+    resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+    getSettings: Effect.succeed(settings),
+    streamSettings: Stream.empty,
+    haveSettingsChanged: () => false,
     initialSnapshot: () => getSnapshot,
     checkProvider: checkProvider(),
-    enrichSnapshot: ({ settings: currentSettings, snapshot, publishSnapshot }) => {
-      const streamMetadata = SubscriptionRef.changes(metadata).pipe(
+    enrichSnapshot: ({ publishSnapshot }) =>
+      SubscriptionRef.changes(metadata).pipe(
         Stream.runForEach((state) =>
           options.stampIdentity(state.draft).pipe(Effect.flatMap(publishSnapshot)),
         ),
-      );
-      if (!options.enrichVersionAdvisory) {
-        return streamMetadata;
-      }
-      const enrichAdvisory = options
-        .enrichVersionAdvisory(snapshot, currentSettings.enableProviderUpdateChecks)
-        .pipe(
-          Effect.flatMap((versionAdvisory) =>
-            SubscriptionRef.update(metadata, (state) => {
-              if (
-                state.draft.version !== snapshot.version ||
-                state.draft.installed !== snapshot.installed ||
-                sameVersionAdvisory(state.draft.versionAdvisory, versionAdvisory)
-              ) {
-                return state;
-              }
-              const { versionAdvisory: _previous, ...rest } = state.draft;
-              return {
-                ...state,
-                draft: versionAdvisory ? { ...rest, versionAdvisory } : rest,
-              };
-            }),
-          ),
-          Effect.ignoreCause({ log: true }),
-        );
-      return Effect.all([streamMetadata, enrichAdvisory], {
-        concurrency: "unbounded",
-        discard: true,
-      });
-    },
+      ),
   });
-  yield* Deferred.succeed(republish, managed.refresh);
 
   const onSessionStarted = Effect.fn("AntigravityProvider.onSessionStarted")(function* (
     started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
     cwd?: string,
+    session?: { readonly resumed?: boolean },
   ) {
     if (!settings.enabled) return;
-    observeThinkingLevels(started.sessionSetupResult.configOptions);
+    const authoritative = session?.resumed !== true;
+    if (authoritative) {
+      const modelSlug = sessionModelSlug(started.sessionSetupResult);
+      if (modelSlug) defaultModelSlug = modelSlug;
+    }
+    observeThinkingLevels(started.sessionSetupResult.configOptions, authoritative);
     const before = yield* SubscriptionRef.get(metadata);
     const supportsTextGeneration = yield* options.supportsTextGeneration;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
@@ -497,42 +430,27 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       ) {
         return [supportedRuntimeModes, state] as const;
       }
-      const {
-        message: _previousMessage,
-        versionAdvisory: previousVersionAdvisory,
-        ...draft
-      } = state.draft;
-      const handshakeVersion = started.initializeResult.agentInfo?.version;
-      // Only guard versions established by an authoritative health check so an older managed
-      // lease finishing its handshake after an upgrade cannot regress draft.version, while
-      // custom-launcher handshakes can still report downgrades.
-      const nextVersion =
-        handshakeVersion &&
-        (!state.versionFromCheck ||
-          !draft.version ||
-          compareSemverVersions(handshakeVersion, draft.version) >= 0)
-          ? handshakeVersion
-          : draft.version;
-      const keepVersionAdvisory =
-        previousVersionAdvisory !== undefined && nextVersion === draft.version;
+      const { message: _previousMessage, ...draft } = state.draft;
       const workspaces = draft.workspaceSnapshots ?? [];
       const workspace = cwd ? workspaces.find((entry) => entry.cwd === cwd) : undefined;
+      const skills = cwd ? discoveredSkills.get(cwd) : undefined;
       const next = {
         authRevision: state.authRevision + 1,
-        versionFromCheck: state.versionFromCheck,
         draft: {
           ...draft,
           installed: true,
           status: "ready",
-          version: nextVersion,
-          ...(keepVersionAdvisory ? { versionAdvisory: previousVersionAdvisory } : {}),
+          version: started.initializeResult.agentInfo?.version || draft.version,
           auth: {
             status: "authenticated",
             type: options.auth?.type ?? "oauth-personal",
             label: options.auth?.label ?? "Google account",
           },
           checkedAt: updatedAt,
-          models: buildAntigravityModelsFromSession(started.sessionSetupResult, thinkingLevels),
+          models: buildAntigravityModelsFromSession(started.sessionSetupResult, thinkingLevels, {
+            defaultModel: defaultModelSlug,
+            authoritative,
+          }),
           supportedRuntimeModes,
           supportsTextGeneration,
           ...(cwd
@@ -542,8 +460,10 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
                   {
                     cwd,
                     checkedAt: updatedAt,
-                    slashCommands: workspace?.slashCommands ?? draft.slashCommands,
-                    skills: workspace?.skills ?? discoveredSkills.get(cwd) ?? [],
+                    slashCommands:
+                      workspace?.slashCommands ?? workspaceCommands.get(cwd) ?? draft.slashCommands,
+                    skills: skills ?? workspace?.skills ?? [],
+                    ...(skills ? {} : { slashCommandsPending: true }),
                   },
                 ].slice(-MAX_WORKSPACE_SNAPSHOTS),
               }
@@ -553,17 +473,24 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       return [draft.supportedRuntimeModes, next] as const;
     });
     yield* rememberRuntimeModes(previousModes, supportedRuntimeModes);
-    if (!before.draft.usageLimits || before.draft.usageLimits.unavailable) yield* refreshUsage();
   });
 
   const onConfigOptionsUpdated = Effect.fn("AntigravityProvider.onConfigOptionsUpdated")(function* (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+    update?: { readonly fromCatalogProbe?: boolean },
   ) {
-    observeThinkingLevels(configOptions);
-    const models = buildAntigravityModelsFromSession({ configOptions }, thinkingLevels);
-    yield* SubscriptionRef.update(metadata, (state) => {
-      if (state.draft.auth.status !== "authenticated") return state;
-      return { ...state, draft: { ...state.draft, models } };
+    // Only catalog probes report a model's default level; live sessions carry per-thread overrides.
+    const authoritative = update?.fromCatalogProbe === true;
+    observeThinkingLevels(configOptions, authoritative);
+    const models = buildAntigravityModelsFromSession({ configOptions }, thinkingLevels, {
+      defaultModel: defaultModelSlug,
+      authoritative,
+    });
+    yield* SubscriptionRef.updateSome(metadata, (state) => {
+      if (state.draft.auth.status !== "authenticated" || Equal.equals(state.draft.models, models)) {
+        return Option.none();
+      }
+      return Option.some({ ...state, draft: { ...state.draft, models } });
     });
   });
 
@@ -574,6 +501,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     if (!settings.enabled) return;
     const slashCommands = nativeCommands(commands);
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
+    const skills = cwd ? discoveredSkills.get(cwd) : undefined;
     yield* SubscriptionRef.update(metadata, (state) => {
       if (state.draft.auth.status === "unauthenticated") return state;
       return {
@@ -590,9 +518,10 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
                     checkedAt: updatedAt,
                     slashCommands,
                     skills:
+                      skills ??
                       state.draft.workspaceSnapshots?.find((entry) => entry.cwd === cwd)?.skills ??
-                      discoveredSkills.get(cwd) ??
                       [],
+                    ...(skills ? {} : { slashCommandsPending: true }),
                   },
                 ].slice(-MAX_WORKSPACE_SNAPSHOTS),
               }
@@ -603,13 +532,11 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   });
 
   const clearAccountMetadata = Effect.fn("AntigravityProvider.clearAccountMetadata")(function* () {
-    yield* resetUsage;
     if (!settings.enabled) return;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     const previousModes = yield* SubscriptionRef.modify(metadata, (state) => [
       state.draft.supportedRuntimeModes,
       {
-        ...state,
         authRevision: state.authRevision + 1,
         draft: {
           ...state.draft,
@@ -626,40 +553,44 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           workspaceSnapshots: [],
           supportedRuntimeModes: RUNTIME_MODES_WITHOUT_AUTO,
           supportsTextGeneration: false,
-          usageLimits: undefined,
         },
       } satisfies AntigravityProviderState,
     ]);
     yield* rememberRuntimeModes(previousModes, RUNTIME_MODES_WITHOUT_AUTO);
     discoveredSkills.clear();
+    workspaceCommands.clear();
     thinkingLevels.clear();
+    defaultModelSlug = undefined;
   });
 
   const snapshotForCwd = Effect.fn("AntigravityProvider.snapshotForCwd")(function* (
     cwd: string,
     skills?: ServerProvider["skills"],
   ) {
+    const snapshot = yield* getSnapshot;
+    const workspace = snapshot.workspaceSnapshots?.find((entry) => entry.cwd === cwd);
     if (skills) {
       discoveredSkills.set(cwd, skills);
-      yield* SubscriptionRef.update(metadata, (state) =>
+      if (workspace) workspaceCommands.set(cwd, workspace.slashCommands);
+      // The registry keeps the folder it scans. Changing the entry mid-scan would discard the scan.
+      yield* SubscriptionRef.updateSome(metadata, (state) =>
         state.draft.workspaceSnapshots?.some((entry) => entry.cwd === cwd)
-          ? {
+          ? Option.some({
               ...state,
               draft: {
                 ...state.draft,
-                workspaceSnapshots: state.draft.workspaceSnapshots.map((entry) =>
-                  entry.cwd === cwd ? { ...entry, skills } : entry,
+                workspaceSnapshots: state.draft.workspaceSnapshots.filter(
+                  (entry) => entry.cwd !== cwd,
                 ),
               },
-            }
-          : state,
+            })
+          : Option.none(),
       );
     }
-    const snapshot = yield* getSnapshot;
-    const workspace = snapshot.workspaceSnapshots?.find((entry) => entry.cwd === cwd);
     const resolvedSkills = skills ?? workspace?.skills ?? discoveredSkills.get(cwd) ?? [];
-    return workspace
-      ? { ...snapshot, slashCommands: workspace.slashCommands, skills: resolvedSkills }
+    const slashCommands = workspace?.slashCommands ?? workspaceCommands.get(cwd);
+    return slashCommands
+      ? { ...snapshot, slashCommands, skills: resolvedSkills }
       : { ...snapshot, skills: resolvedSkills };
   });
 
@@ -668,23 +599,6 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     onSessionStarted,
     onConfigOptionsUpdated,
     onAvailableCommands,
-    // The new sign-in may be another account. Clear and republish its limits so a failed read
-    // cannot fall back to them; the session start then reads the new account's limits.
-    onSignedIn: resetUsage.pipe(
-      Effect.andThen(
-        SubscriptionRef.update(metadata, (state) => {
-          const { usageLimits: _previousAccount, ...draft } = state.draft;
-          return { ...state, draft };
-        }),
-      ),
-      Effect.andThen(
-        Deferred.await(republish).pipe(
-          Effect.flatten,
-          Effect.provideService(PublishingUsage, true),
-        ),
-      ),
-      Effect.asVoid,
-    ),
     onSignedOut: clearAccountMetadata(),
     onAuthRequired: clearAccountMetadata(),
     snapshotForCwd,

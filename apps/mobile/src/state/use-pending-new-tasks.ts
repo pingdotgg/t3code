@@ -72,6 +72,7 @@ export function usePendingNewTasks(): ReadonlyArray<PendingNewTask> {
 export function useLaunchingThreads(
   threads: ReadonlyArray<EnvironmentThreadShell>,
 ): ReadonlyArray<EnvironmentThreadShell> {
+  const resolve = useMessages();
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const outcomes = useAtomValue(pendingThreadCreationOutcomesAtom);
   const hiddenThreadKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
@@ -85,6 +86,6 @@ export function useLaunchingThreads(
         outcome.kind === "delivered" ? [outcome.message] : [],
       ),
     ];
-    return withLaunchingThreads({ threads, launches, hiddenThreadKeys });
-  }, [threads, queuedMessagesByThreadKey, outcomes, hiddenThreadKeys, sendGate]);
+    return withLaunchingThreads({ threads, launches, hiddenThreadKeys }, resolve);
+  }, [threads, queuedMessagesByThreadKey, outcomes, hiddenThreadKeys, sendGate, resolve]);
 }
