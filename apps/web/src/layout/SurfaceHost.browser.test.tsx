@@ -30,6 +30,7 @@ import {
   findLayoutChatForThread,
   findLayoutSurfaceTabs,
   LAYOUT_READABLE_COLUMN_PX,
+  selectFocusedPane,
   selectFocusedTab,
   type LayoutColumn,
   type LayoutTab,
@@ -42,6 +43,7 @@ import {
 import { LayoutDropZones } from "./DropZones";
 import { toggleThreadSidePane } from "./openRules";
 import { buildLayoutTabMenuItems, runLayoutTabMenuAction } from "./PaneTabs";
+import { useLayoutKeyboardCommands } from "./layoutCommands";
 import { clearPaneTabSelection } from "./paneTabSelection";
 import { LayoutSurfaceHost, selectSurfaceMounts } from "./SurfaceHost";
 import { requestLayoutSurfacePlacement, useLayoutSurfaceSync } from "./surfaceSync";
@@ -1797,5 +1799,65 @@ it("supports Shift-range, Cmd/Ctrl-toggle, Escape/plain-click clear, per-pane sc
   await act(() => runLayoutTabMenuAction("layout:close-selected-tabs", p2t0!.id));
   await vi.waitFor(() => {
     expect(useLayoutStore.getState().layout.workspaces[0]!.columns).toHaveLength(1);
+  });
+});
+
+it("multi-selecting in an unfocused pane focuses it so Cmd+W closes that pane's selection", async () => {
+  const settings = getClientSettings();
+  __setClientSettingsForTests({ ...settings, scrollingWorkspacesEnabled: true });
+  const original = useLayoutStore.getState().layout;
+  const tour = localStorage.getItem(TOUR_KEY);
+  localStorage.setItem(TOUR_KEY, "true");
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  useLayoutStore.setState({ layout: createLayoutState() });
+  const store = useLayoutStore.getState();
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  store.openTab(createLayoutLauncherContent(null), { placement: "new-column" });
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  const initialLayout = useLayoutStore.getState().layout;
+  const firstPane = initialLayout.workspaces[0]!.columns[0]!.panes[0]!;
+  const secondPane = initialLayout.workspaces[0]!.columns[1]!.panes[0]!;
+  const [p1t0, p1t1] = firstPane.tabs;
+  const [p2t0, p2t1] = secondPane.tabs;
+  store.focusTab(p1t1!.id);
+  using _cleanup = {
+    [Symbol.dispose]: () => {
+      clearPaneTabSelection();
+      __setClientSettingsForTests(settings);
+      useLayoutStore.setState({ layout: original });
+      if (tour === null) localStorage.removeItem(TOUR_KEY);
+      else localStorage.setItem(TOUR_KEY, tour);
+    },
+  };
+
+  function HostWithCommands() {
+    useLayoutKeyboardCommands();
+    return <Host />;
+  }
+
+  await page.viewport(1200, 600);
+  const container = document.createElement("div");
+  container.style.cssText = "position:fixed;inset:0;display:flex;";
+  await using _screen = await render(<HostWithCommands />, { container });
+  const tabEl = (id: string) =>
+    page.elementLocator(document.querySelector<HTMLElement>(`[data-layout-pane-tab="${id}"]`)!);
+
+  expect(selectFocusedPane(useLayoutStore.getState().layout)?.id).toBe(firstPane.id);
+  // Keyboard Shift+Enter on an inactive tab in unfocused pane 2 (no pointerdown) focuses pane 2
+  // while keeping p2t1 active.
+  const p2t0El = document.querySelector<HTMLElement>(`[data-layout-pane-tab="${p2t0!.id}"]`)!;
+  p2t0El.focus();
+  await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
+  expect(selectFocusedPane(useLayoutStore.getState().layout)?.id).toBe(secondPane.id);
+  expect(focusedTabId()).toBe(p2t1!.id);
+  await expect.element(tabEl(p2t0!.id)).toHaveAttribute("aria-pressed", "true");
+  await expect.element(tabEl(p2t1!.id)).toHaveAttribute("data-selected-tab", "");
+
+  // Cmd+W closes pane 2's selected tabs, leaving pane 1 untouched.
+  await userEvent.keyboard("{Meta>}w{/Meta}");
+  await vi.waitFor(() => {
+    const columns = useLayoutStore.getState().layout.workspaces[0]!.columns;
+    expect(columns).toHaveLength(1);
+    expect(columns[0]!.panes[0]!.tabs.map((tab) => tab.id)).toEqual([p1t0!.id, p1t1!.id]);
   });
 });

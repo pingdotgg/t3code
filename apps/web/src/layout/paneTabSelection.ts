@@ -72,11 +72,19 @@ export function isTabToggleModifier(event: {
     : event.ctrlKey && !event.metaKey;
 }
 
+function focusPaneForSelection(paneId: string): void {
+  const store = useLayoutStore.getState();
+  if (selectFocusedPane(store.layout)?.id !== paneId) {
+    store.focusPane(paneId);
+  }
+}
+
 /** Shift-click range selection anchored at the pane's active tab (or last toggle anchor). */
 function selectPaneTabRange(tabId: string): void {
   const location = findLayoutTab(useLayoutStore.getState().layout, (tab) => tab.id === tabId);
   if (!location) return;
   const { pane } = location;
+  focusPaneForSelection(pane.id);
   const current = usePaneTabSelectionStore.getState();
   const samePane = current.paneId === pane.id;
   const anchorId = (samePane ? current.anchorId : null) ?? pane.activeTabId;
@@ -103,6 +111,7 @@ function togglePaneTabSelection(tabId: string): void {
   const location = findLayoutTab(useLayoutStore.getState().layout, (tab) => tab.id === tabId);
   if (!location) return;
   const { pane } = location;
+  focusPaneForSelection(pane.id);
   const current = usePaneTabSelectionStore.getState();
   const samePane = current.paneId === pane.id;
   const next = new Set<string>(
