@@ -157,13 +157,11 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
 
   const launchDrawerTerminal = (place: (terminalId: string) => void) => {
     if (!cwd) return;
-    const launched = terminalActions.launchTerminal({
+    const terminalId = terminalActions.launchDrawerTerminal({
       place,
       location: { cwd, worktreePath: effectiveWorktreePath },
     });
-    if (!launched) return;
-    if (visible) focusTerminal(threadRef, launched.terminalId);
-    void launched.result;
+    if (visible && terminalId !== null) focusTerminal(threadRef, terminalId);
   };
   const splitTerminal = useStableCallback(() =>
     launchDrawerTerminal((terminalId) => storeSplitTerminal(threadRef, terminalId)),

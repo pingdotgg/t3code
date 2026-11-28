@@ -116,6 +116,24 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     return { terminalId, result };
   };
 
+  const launchDrawerTerminal = (
+    input: Pick<Parameters<typeof launchTerminal>[0], "place" | "location">,
+  ) => {
+    if (!threadRef) return null;
+    const launched = launchTerminal(input);
+    if (!launched) return null;
+    const { terminalId, result } = launched;
+    void result.then((outcome) => {
+      if (outcome._tag !== "Failure") return;
+      const store = useTerminalUiStateStore.getState();
+      const drawer = selectThreadTerminalUiState(store.terminalUiStateByThreadKey, threadRef);
+      if (drawer.terminalIds.includes(terminalId)) {
+        store.closeTerminal(threadRef, terminalId);
+      }
+    });
+    return terminalId;
+  };
+
   /** Ends a session and deletes its history. A failed close falls back to typing `exit`. */
   const closeTerminalSession = (terminalId: string, target = threadRef) => {
     if (!target || !readEnvironmentScope(target.environmentId, AuthTerminalOperateScope)) return;
@@ -148,6 +166,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     canWrite: useStableCallback(canWrite),
     allocateTerminalId: useStableCallback(allocateTerminalId),
     launchTerminal: useStableCallback(launchTerminal),
+    launchDrawerTerminal: useStableCallback(launchDrawerTerminal),
     closeTerminalSession: useStableCallback(closeTerminalSession),
     writeToTerminal: useStableCallback(writeToTerminal),
   };

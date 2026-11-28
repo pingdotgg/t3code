@@ -167,9 +167,9 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         focusActiveDrawerTerminal(activeThreadRef);
         return;
       }
-      void terminalActions.launchTerminal({
+      terminalActions.launchDrawerTerminal({
         place: (terminalId) => storeEnsureTerminal(activeThreadRef, terminalId, { open: true }),
-      })?.result;
+      });
       focusActiveDrawerTerminal(activeThreadRef);
       return;
     }
@@ -178,25 +178,21 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const toggleTerminalVisibilityStable = useStableCallback(toggleTerminalVisibility);
   const splitTerminal = (direction: "horizontal" | "vertical" = "horizontal") => {
     if (!activeThreadRef || hasReachedSplitLimit) return;
-    const launched = terminalActions.launchTerminal({
+    const terminalId = terminalActions.launchDrawerTerminal({
       place: (terminalId) =>
         direction === "vertical"
           ? storeSplitTerminalVertical(activeThreadRef, terminalId)
           : storeSplitTerminal(activeThreadRef, terminalId),
     });
-    if (!launched) return;
-    focusTerminal(activeThreadRef, launched.terminalId);
-    void launched.result;
+    if (terminalId !== null) focusTerminal(activeThreadRef, terminalId);
   };
   const splitTerminalStable = useStableCallback(splitTerminal);
   const createNewTerminal = () => {
     if (!activeThreadRef) return;
-    const launched = terminalActions.launchTerminal({
+    const terminalId = terminalActions.launchDrawerTerminal({
       place: (terminalId) => storeNewTerminal(activeThreadRef, terminalId),
     });
-    if (!launched) return;
-    focusTerminal(activeThreadRef, launched.terminalId);
-    void launched.result;
+    if (terminalId !== null) focusTerminal(activeThreadRef, terminalId);
   };
   const createNewTerminalStable = useStableCallback(createNewTerminal);
   const closeTerminal = (terminalId: string) => {
