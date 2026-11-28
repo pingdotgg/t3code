@@ -17,6 +17,7 @@ import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindin
 import { isEditableFocused } from "../lib/editableFocus";
 import { isKeybindingCaptureTarget } from "../lib/keybindingCapture";
 import { isModalDialogOpen } from "../lib/modalDialog";
+import { openLayerMatches } from "../lib/openLayers";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform } from "../lib/utils";
@@ -247,6 +248,19 @@ function isTypedText(event: KeyboardEvent): boolean {
 
 const MODIFIER_KEYS: ReadonlySet<string> = new Set(["Alt", "Control", "Meta", "Shift"]);
 
+const ESCAPE_BLOCKING_POPUP_SLOTS = [
+  '[data-slot="popover-popup"]',
+  '[data-slot="select-popup"]',
+  '[data-slot="combobox-popup"]',
+  '[data-slot="menu-popup"]',
+  '[data-slot="autocomplete-popup"]',
+  '[data-slot="sheet-popup"]',
+];
+const ESCAPE_BLOCKING_POPUP_SELECTOR = ESCAPE_BLOCKING_POPUP_SLOTS.map(
+  (selector) => `${selector}:is([data-open],[data-ending-style])`,
+).join(",");
+const ESCAPE_BLOCKING_TARGET_SELECTOR = ESCAPE_BLOCKING_POPUP_SLOTS.join(",");
+
 /** Commands the chat route answers without a ChatView, so a new tab can keep waiting. */
 const CHAT_FREE_COMMANDS: ReadonlySet<string> = new Set([
   "tab.new",
@@ -291,7 +305,8 @@ export function useLayoutKeyboardCommands(): void {
         hasPaneTabSelection() &&
         !isLayoutDragActive() &&
         !isEditableFocused(event.target) &&
-        !(event.target instanceof Element && event.target.closest('[data-slot="menu-popup"]'))
+        !openLayerMatches(ESCAPE_BLOCKING_POPUP_SELECTOR) &&
+        !(event.target instanceof Element && event.target.closest(ESCAPE_BLOCKING_TARGET_SELECTOR))
       ) {
         event.preventDefault();
         event.stopImmediatePropagation();

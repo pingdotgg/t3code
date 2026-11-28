@@ -1925,3 +1925,69 @@ it("keeps keyboard focus ring on selected tabs and skips start-edge hover corner
   expect(t1El.matches(":focus-visible")).toBe(true);
   expect(getComputedStyle(t1El).boxShadow).toBe(unselectedFocusShadow);
 });
+
+it("lets Escape dismiss an open popover before clearing pane tab selection", async () => {
+  const settings = getClientSettings();
+  __setClientSettingsForTests({ ...settings, scrollingWorkspacesEnabled: true });
+  const original = useLayoutStore.getState().layout;
+  const tour = localStorage.getItem(TOUR_KEY);
+  localStorage.setItem(TOUR_KEY, "true");
+  useLayoutStore.setState({ layout: createLayoutState() });
+  const store = useLayoutStore.getState();
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  const [t0, t1] = useLayoutStore.getState().layout.workspaces[0]!.columns[0]!.panes[0]!.tabs;
+  store.focusTab(t0!.id);
+
+  const popup = document.createElement("div");
+  popup.dataset.slot = "popover-popup";
+  popup.dataset.open = "";
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.textContent = "Popover trigger";
+  let bubbleEscapes = 0;
+  const onBubbleKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Escape") bubbleEscapes += 1;
+  };
+  window.addEventListener("keydown", onBubbleKeyDown);
+  document.body.append(trigger, popup);
+
+  using _cleanup = {
+    [Symbol.dispose]: () => {
+      window.removeEventListener("keydown", onBubbleKeyDown);
+      popup.remove();
+      trigger.remove();
+      clearPaneTabSelection();
+      __setClientSettingsForTests(settings);
+      useLayoutStore.setState({ layout: original });
+      if (tour === null) localStorage.removeItem(TOUR_KEY);
+      else localStorage.setItem(TOUR_KEY, tour);
+    },
+  };
+
+  function HostWithCommands() {
+    useLayoutKeyboardCommands();
+    return <Host />;
+  }
+
+  await page.viewport(1200, 600);
+  const container = document.createElement("div");
+  container.style.cssText = "position:fixed;inset:0;display:flex;";
+  await using _screen = await render(<HostWithCommands />, { container });
+  const tabEl = (id: string) =>
+    page.elementLocator(document.querySelector<HTMLElement>(`[data-layout-pane-tab="${id}"]`)!);
+
+  await userEvent.click(tabEl(t1!.id), { modifiers: ["Shift"] });
+  await expect.element(tabEl(t1!.id)).toHaveAttribute("aria-pressed", "true");
+
+  // With focus on a non-editable trigger and an open popover in the DOM, Escape must reach bubble
+  // listeners and leave the tab selection intact.
+  trigger.focus();
+  await userEvent.keyboard("{Escape}");
+  expect(bubbleEscapes).toBe(1);
+  await expect.element(tabEl(t1!.id)).toHaveAttribute("aria-pressed", "true");
+
+  // Once the popover closes, Escape clears the tab selection.
+  popup.remove();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(tabEl(t1!.id)).toHaveAttribute("aria-pressed", "false");
+});
