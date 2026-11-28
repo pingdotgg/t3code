@@ -2034,6 +2034,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
       const detail = yield* cli.getMergeRequestDetail({
         cwd: "/w",
         repository: "acme/web",
+        host: "gitlab.com",
         number: 7,
       });
 
@@ -2041,6 +2042,10 @@ layer("GitLabPullRequestCli.layer", (it) => {
         ["Pipeline", "success", "https://gitlab.com/bilal/web/-/pipelines/31"],
         ["deploy", "failure", "https://gitlab.com/bilal/web/-/pipelines/32"],
       ]);
+      expect(
+        mockedExecute.mock.calls.find(([request]) => request.args[1]?.includes("/bridges"))?.[0]
+          .host,
+      ).toBe("gitlab.com");
     }),
   );
 

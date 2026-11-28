@@ -184,6 +184,26 @@ export const make = Effect.gen(function* () {
     readonly number: number;
   }) => Cache.get(mergeRequestDetails, detailKey(input));
 
+  const forgetChangeRequestReads: NonNullable<
+    PullRequestProviderApi["forgetChangeRequestReads"]
+  > = (scope) =>
+    Cache.keys(mergeRequestDetails).pipe(
+      Effect.flatMap((keys) =>
+        Effect.forEach(
+          Array.from(keys).filter((key) => {
+            if (scope === undefined) return true;
+            const [, repository, number] = JSON.parse(key) as [string, string, number];
+            return (
+              repository.toLowerCase() === scope.repository.toLowerCase() &&
+              (scope.number === undefined || number === scope.number)
+            );
+          }),
+          (key) => Cache.invalidate(mergeRequestDetails, key),
+          { discard: true },
+        ),
+      ),
+    );
+
   // Dropped on both sides, as the service does with its own reads: a read that starts while the
   // write is in flight must not outlive it.
   const writing =
@@ -325,6 +345,17 @@ export const make = Effect.gen(function* () {
         Effect.map(({ state, checks }) => ({ state, checks })),
         Effect.mapError(fail("getChangeRequestChecks")),
       ),
+
+    getCheckLogs: (input) => cli.readCheckLogs(input).pipe(Effect.mapError(fail("getCheckLogs"))),
+
+    rerunChecks: (input) => {
+      const invalidate = forgetChangeRequestReads({ repository: input.repository });
+      return invalidate.pipe(
+        Effect.andThen(cli.rerunChecks(input)),
+        Effect.ensuring(invalidate),
+        Effect.mapError(fail("rerunChecks")),
+      );
+    },
 
     // Merge settings only affect the detail panel's actions.
     getChangeRequestPreview: (input) =>
@@ -481,23 +512,7 @@ export const make = Effect.gen(function* () {
         .getMergeRequestDetail({ ...input, downstreamChecks: false })
         .pipe(Effect.mapError(fail("getViewerPermissions")), Effect.map(gitLabViewerPermissions)),
 
-    forgetChangeRequestReads: (scope) =>
-      Cache.keys(mergeRequestDetails).pipe(
-        Effect.flatMap((keys) =>
-          Effect.forEach(
-            Array.from(keys).filter((key) => {
-              if (scope === undefined) return true;
-              const [, repository, number] = JSON.parse(key) as [string, string, number];
-              return (
-                repository.toLowerCase() === scope.repository.toLowerCase() &&
-                (scope.number === undefined || number === scope.number)
-              );
-            }),
-            (key) => Cache.invalidate(mergeRequestDetails, key),
-            { discard: true },
-          ),
-        ),
-      ),
+    forgetChangeRequestReads,
 
     getDiff: (input) => cli.getMergeRequestDiff(input).pipe(Effect.mapError(fail("getDiff"))),
 

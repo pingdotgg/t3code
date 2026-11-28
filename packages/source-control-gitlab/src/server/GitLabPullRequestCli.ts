@@ -94,11 +94,17 @@ import {
   type GitLabMergeRequestListState,
   type GitLabProjectUsers,
 } from "./gitLabMergeRequestJson.ts";
-import type {
-  ProviderChangeRequestSummary,
-  ProviderChangeRequestWatchFingerprint,
-  ProviderFileStats,
-  ProviderListCursor,
+import {
+  type ProviderCheck,
+  type ProviderCheckLog,
+  type ProviderCheckReference,
+  type ProviderCheckRerun,
+  type ProviderChangeRequestSummary,
+  type ProviderChangeRequestWatchFingerprint,
+  type ProviderFileStats,
+  type ProviderListCursor,
+  type ProviderRepositoryRef,
+  tailLogLines,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 
 export class GitLabMergeRequestReadError extends Schema.TaggedError<GitLabMergeRequestReadError>()(
@@ -356,6 +362,8 @@ const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 // REST list rows carry full descriptions, so a page can pass the 1 MB default output cap.
 const MERGE_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const CHECK_LOG_MAX_BYTES = 16 * 1024 * 1024;
+const CHECK_IS_NOT_A_JOB = "This check does not identify a native GitLab job.";
 
 export interface GitLabDiscussionThreads {
   readonly threads: ReadonlyArray<PullRequestConversationThread>;
@@ -424,6 +432,17 @@ export class GitLabPullRequestCli extends Context.Service<
       /** `false` skips a fork's maintainer edits permission read, for views that never show it. */
       readonly maintainerEdits?: boolean;
     }) => Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError>;
+
+    readonly readCheckLogs: (
+      input: ProviderRepositoryRef & {
+        readonly checks: ReadonlyArray<ProviderCheckReference>;
+        readonly tailLines: number;
+      },
+    ) => Effect.Effect<ReadonlyArray<ProviderCheckLog>, GitLabPullRequestCliError>;
+
+    readonly rerunChecks: (
+      input: ProviderRepositoryRef & { readonly checks: ReadonlyArray<ProviderCheckReference> },
+    ) => Effect.Effect<ReadonlyArray<ProviderCheckRerun>, GitLabPullRequestCliError>;
 
     /** Approval and head pipeline state, read in one GraphQL request per 100 merge requests. */
     readonly getListStates: (input: {
@@ -696,6 +715,13 @@ export class GitLabPullRequestCli extends Context.Service<
 
 function projectPath(repository: string): string {
   return encodeURIComponent(repository.trim());
+}
+
+function checkJobPath(check: ProviderCheckReference): string | null {
+  const [, projectId, jobId] = /^([1-9]\d*)\/([1-9]\d*)$/.exec(check.nativeId ?? "") ?? [];
+  return projectId === undefined || jobId === undefined
+    ? null
+    : `projects/${projectId}/jobs/${jobId}`;
 }
 
 function gitLabReviewPositionLines(
@@ -1622,46 +1648,53 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  // Best-effort: a trigger job read that fails, or a full page that may have left out the one
+  // Best-effort: an unanswered trigger job read, or a full page that may have left out the one
   // whose pipeline failed, adds no rows and leaves the detail as it was.
   const triggerJobChecks = (input: {
     readonly cwd: string;
+    readonly host?: string | undefined;
     readonly pipeline: { readonly id: number; readonly projectId: number };
-  }): Effect.Effect<ReadonlyArray<PullRequestCheck>> =>
-    api({
-      cwd: input.cwd,
-      // `bridges` rather than `trigger_jobs`: GitLab 19.2 deprecates it but still serves it, and
-      // older self-managed installs know no other name.
-      path: `projects/${input.pipeline.projectId}/pipelines/${input.pipeline.id}/bridges?${query([
-        ["per_page", String(MAX_PAGE_SIZE)],
-      ])}`,
-    }).pipe(
-      Effect.map((result) => {
-        const decoded = decodeTriggerJobChecksJson(result.stdout.trim());
-        return Result.isSuccess(decoded) && decoded.success.rawCount < MAX_PAGE_SIZE
-          ? decoded.success.checks
-          : [];
-      }),
-      Effect.orElseSucceed((): ReadonlyArray<PullRequestCheck> => []),
+  }): Effect.Effect<ReadonlyArray<PullRequestCheck>, GitLabPullRequestCliError> =>
+    orWhenUnanswered(
+      api({
+        cwd: input.cwd,
+        host: input.host,
+        // `bridges` rather than `trigger_jobs`: GitLab 19.2 deprecates it but still serves it, and
+        // older self-managed installs know no other name.
+        path: `projects/${input.pipeline.projectId}/pipelines/${input.pipeline.id}/bridges?${query([
+          ["per_page", String(MAX_PAGE_SIZE)],
+        ])}`,
+      }).pipe(
+        Effect.map((result) => {
+          const decoded = decodeTriggerJobChecksJson(result.stdout.trim());
+          return Result.isSuccess(decoded) && decoded.success.rawCount < MAX_PAGE_SIZE
+            ? decoded.success.checks
+            : [];
+        }),
+      ),
+      [],
     );
 
-  // Best-effort: stages that can't be read keep the merge request's single pipeline check.
+  // Best-effort: an unanswered stage read keeps the merge request's single pipeline check.
   const pipelineStageChecks = (input: {
     readonly cwd: string;
     readonly host?: string | undefined;
     readonly repository: string;
     readonly number: number;
     readonly url: string;
-  }): Effect.Effect<ReadonlyArray<PullRequestCheck> | null> =>
+  }): Effect.Effect<ReadonlyArray<ProviderCheck> | null, GitLabPullRequestCliError> =>
     URL.canParse(input.url)
-      ? graphqlRead({
-          cwd: input.cwd,
-          host: input.host,
-          operation: "getPipelineStageChecks",
-          query: PIPELINE_STAGES_GRAPHQL_QUERY,
-          variables: { fullPath: input.repository, iid: String(input.number) },
-          decode: (raw) => decodePipelineStageChecksJson(raw, new URL(input.url).origin),
-        }).pipe(Effect.orElseSucceed(() => null))
+      ? orWhenUnanswered(
+          graphqlRead({
+            cwd: input.cwd,
+            host: input.host,
+            operation: "getPipelineStageChecks",
+            query: PIPELINE_STAGES_GRAPHQL_QUERY,
+            variables: { fullPath: input.repository, iid: String(input.number) },
+            decode: (raw) => decodePipelineStageChecksJson(raw, new URL(input.url).origin),
+          }),
+          null,
+        )
       : Effect.succeed(null);
 
   const projectUsers = (input: {
@@ -2295,6 +2328,82 @@ export const make = Effect.gen(function* () {
   return GitLabPullRequestCli.of({
     getViewerUsername: viewerUsername,
 
+    readCheckLogs: Effect.fn("GitLabPullRequestCli.readCheckLogs")(function* (input) {
+      return yield* Effect.forEach(
+        input.checks,
+        (check): Effect.Effect<ProviderCheckLog, GitLabPullRequestCliError> => {
+          const { name, url } = check;
+          const path = checkJobPath(check);
+          if (path === null) {
+            return Effect.succeed({
+              name,
+              url,
+              log: null,
+              truncated: false,
+              detail: CHECK_IS_NOT_A_JOB,
+            });
+          }
+          return api({
+            cwd: input.cwd,
+            host: input.host,
+            path: `${path}/trace`,
+            maxOutputBytes: CHECK_LOG_MAX_BYTES,
+            timeoutMs: 60_000,
+          }).pipe(
+            Effect.map((response) => {
+              if (response.stdout === "" && !response.stdoutTruncated) {
+                return {
+                  name,
+                  url,
+                  log: null,
+                  truncated: false,
+                  detail: "GitLab returned an empty log for this job.",
+                };
+              }
+              const tail = tailLogLines(response.stdout, input.tailLines);
+              return {
+                name,
+                url,
+                log: tail.log,
+                truncated: tail.truncated || response.stdoutTruncated,
+                detail: response.stdoutTruncated
+                  ? "The log is too large; this is from its start."
+                  : null,
+              };
+            }),
+            Effect.catchTags({
+              GitLabCliCommandError: (error) =>
+                Effect.succeed({ name, url, log: null, truncated: false, detail: error.detail }),
+            }),
+          );
+        },
+        { concurrency: 4 },
+      );
+    }),
+
+    rerunChecks: Effect.fn("GitLabPullRequestCli.rerunChecks")(function* (input) {
+      const located = input.checks.map((check) => ({
+        check,
+        path: checkJobPath(check),
+      }));
+      const paths = new Set(located.flatMap(({ path }) => (path === null ? [] : [path])));
+      const outcomes = new Map<string, string | null>();
+      yield* Effect.forEach(
+        paths,
+        (path) =>
+          api({ cwd: input.cwd, host: input.host, path: `${path}/retry`, method: "POST" }).pipe(
+            Effect.as<string | null>(null),
+            Effect.catchTags({ GitLabCliCommandError: (error) => Effect.succeed(error.detail) }),
+            Effect.tap((detail) => Effect.sync(() => outcomes.set(path, detail))),
+          ),
+        { discard: true },
+      );
+      return located.map(({ check, path }) => {
+        const detail = path === null ? CHECK_IS_NOT_A_JOB : (outcomes.get(path) ?? null);
+        return { name: check.name, rerun: detail === null, detail };
+      });
+    }),
+
     listMergeRequests: Effect.fn("GitLabPullRequestCli.listMergeRequests")(function (input) {
       const perPage = Math.min(input.limit + 1, MAX_PAGE_SIZE);
       const page = Math.floor((input.cursor?.delivered ?? 0) / perPage) + 1;
@@ -2386,6 +2495,7 @@ export const make = Effect.gen(function* () {
         if (stages !== null) return { ...detail, checks: stages };
         const downstream = yield* triggerJobChecks({
           cwd: input.cwd,
+          host: input.host,
           pipeline: detail.headPipeline,
         });
         return downstream.length === 0

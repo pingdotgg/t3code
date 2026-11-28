@@ -122,6 +122,363 @@ it.effect.each(["merge", "disable-auto-merge"] as const)(
     }),
 );
 
+it.effect(
+  "reads and retries concrete GitLab jobs on their project and refreshes cached checks",
+  () =>
+    Effect.gen(function* () {
+      const reference = {
+        cwd: "/repo",
+        repository: "target/web",
+        host: "gitlab.example.test:8443",
+        number: 7,
+      };
+      const root = `https://${reference.host}/gitlab`;
+      const job = { name: "test / unit", url: `${root}/fork/team/web/-/jobs/11` };
+      const external = { name: "test / external", url: `${root}/fork/team/web/-/jobs/15` };
+      const long = { name: "large log", url: `${root}/target/web/-/jobs/12`, nativeId: "42/12" };
+      const rejected = { name: "denied", url: `${root}/target/web/-/jobs/13`, nativeId: "42/13" };
+      const limited = { name: "limited", url: `${root}/target/web/-/jobs/14`, nativeId: "42/14" };
+      const empty = { name: "empty log", url: `${root}/target/web/-/jobs/16`, nativeId: "42/16" };
+      const unsupported = [
+        { name: "stage", url: `${root}/target/web/-/pipelines/9` },
+        { name: "external", url: "https://other.example.test/target/web/-/jobs/11" },
+        { name: "other port", url: "https://gitlab.example.test/target/web/-/jobs/11" },
+        { name: "malformed", url: `${root}/target/%zz/-/jobs/15` },
+        { name: "invalid identity", url: job.url, nativeId: "42/11/retry" },
+        { name: "no URL", url: null },
+      ];
+      const commands: Array<{
+        readonly host: string | undefined;
+        readonly args: ReadonlyArray<string>;
+      }> = [];
+      let status = "FAILED";
+      let jobId = 11;
+      const cli = yield* GitLabPullRequestCli.make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabCli.GitLabCli)({
+            execute: (input) => {
+              const path = input.args[1] ?? "";
+              if (path.includes("/jobs/")) {
+                commands.push({ host: input.host, args: input.args });
+                const context = {
+                  operation: "execute" as const,
+                  command: "glab" as const,
+                  cwd: input.cwd,
+                  cause: null,
+                };
+                if (path.includes("/jobs/14/")) {
+                  return Effect.fail(new GitLabCli.GitLabCliRateLimitError(context));
+                }
+                if (path.includes("/jobs/13/")) {
+                  return Effect.fail(new GitLabCli.GitLabCliCommandError(context));
+                }
+                if (path.includes("/jobs/16/")) {
+                  return Effect.succeed(TestSourceControlHost.processOutput(""));
+                }
+                if (path.endsWith("/retry")) {
+                  status = "PENDING";
+                  jobId = 21;
+                  return Effect.succeed(
+                    TestSourceControlHost.processOutput('{"id":21,"status":"pending"}'),
+                  );
+                }
+                return Effect.succeed({
+                  ...TestSourceControlHost.processOutput("first\nsecond\nthird\n"),
+                  stdoutTruncated: path.includes("/jobs/12/"),
+                });
+              }
+              if (path === "graphql") {
+                return Effect.succeed(
+                  TestSourceControlHost.processOutput(
+                    JSON.stringify({
+                      data: {
+                        project: {
+                          mergeRequest: input.stdin?.includes("stages(first")
+                            ? {
+                                headPipeline: {
+                                  path: "/gitlab/fork/team/web/-/pipelines/9",
+                                  project: { id: "gid://gitlab/Project/42" },
+                                  stages: {
+                                    nodes: [
+                                      {
+                                        name: "test",
+                                        status,
+                                        jobs: {
+                                          nodes: [
+                                            {
+                                              id: `gid://gitlab/Ci::Build/${jobId}`,
+                                              name: "unit",
+                                              status,
+                                              webPath: `/gitlab/fork/team/web/-/jobs/${jobId}`,
+                                            },
+                                            {
+                                              id: "gid://gitlab/GenericCommitStatus/15",
+                                              name: "external",
+                                              status: "FAILED",
+                                              webPath: "/gitlab/fork/team/web/-/jobs/15",
+                                            },
+                                          ],
+                                        },
+                                      },
+                                    ],
+                                  },
+                                },
+                              }
+                            : { userPermissions: { adminMergeRequest: false } },
+                        },
+                      },
+                    }),
+                  ),
+                );
+              }
+              return Effect.succeed(
+                TestSourceControlHost.processOutput(
+                  JSON.stringify({
+                    iid: 7,
+                    title: "Merge request",
+                    web_url: `${root}/target/web/-/merge_requests/7`,
+                    source_branch: "feature",
+                    target_branch: "main",
+                    state: "opened",
+                    created_at: "2026-07-01T00:00:00Z",
+                    updated_at: "2026-07-02T00:00:00Z",
+                    head_pipeline: {
+                      id: 9,
+                      project_id: 42,
+                      status: status.toLowerCase(),
+                      web_url: `${root}/fork/team/web/-/pipelines/9`,
+                    },
+                  }),
+                ),
+              );
+            },
+          }),
+        ),
+      );
+      const provider = yield* make.pipe(
+        Effect.provideService(GitLabPullRequestCli.GitLabPullRequestCli, cli),
+      );
+      assert.isDefined(provider.getCheckLogs);
+      assert.isDefined(provider.rerunChecks);
+      assert.isDefined(provider.getChangeRequestChecks);
+      const { checks } = yield* provider.getChangeRequestChecks(reference);
+      expect(checks).toMatchObject([
+        { ...job, status: "failure", nativeId: "42/11" },
+        { ...external, status: "failure" },
+      ]);
+      const [nativeJob, externalStatus] = checks;
+      assert.isDefined(nativeJob);
+      assert.isDefined(externalStatus);
+      expect(externalStatus).not.toHaveProperty("nativeId");
+      const unavailable = [externalStatus, ...unsupported];
+
+      const logs = yield* provider.getCheckLogs({
+        ...reference,
+        checks: [nativeJob, long, rejected, empty, ...unavailable],
+        tailLines: 2,
+      });
+      expect(logs.slice(0, 4)).toMatchObject([
+        { ...job, log: "second\nthird", truncated: true, detail: null },
+        {
+          name: long.name,
+          url: long.url,
+          log: "second\nthird",
+          truncated: true,
+          detail: expect.stringContaining("too large"),
+        },
+        {
+          name: rejected.name,
+          url: rejected.url,
+          log: null,
+          truncated: false,
+          detail: expect.stringContaining("failed"),
+        },
+        {
+          name: empty.name,
+          url: empty.url,
+          log: null,
+          truncated: false,
+          detail: "GitLab returned an empty log for this job.",
+        },
+      ]);
+      expect(logs.every((log) => !("nativeId" in log))).toBe(true);
+      expect(logs.slice(4)).toEqual(
+        unavailable.map(({ name, url }) => ({
+          name,
+          url,
+          log: null,
+          truncated: false,
+          detail: expect.any(String),
+        })),
+      );
+
+      const reruns = yield* provider.rerunChecks({
+        ...reference,
+        checks: [nativeJob, { ...nativeJob, url: `${job.url}#trace` }, rejected, ...unavailable],
+      });
+      expect(reruns.map((item) => item.rerun)).toEqual([
+        true,
+        true,
+        false,
+        ...unavailable.map(() => false),
+      ]);
+      expect(commands.filter(({ args }) => args.includes("POST")).map(({ args }) => args)).toEqual([
+        ["api", "projects/42/jobs/11/retry", "--method", "POST"],
+        ["api", "projects/42/jobs/13/retry", "--method", "POST"],
+      ]);
+      expect(
+        commands
+          .filter(({ args }) => !args.includes("POST"))
+          .map(({ args }) => args[1])
+          .sort(),
+      ).toEqual([
+        "projects/42/jobs/11/trace",
+        "projects/42/jobs/12/trace",
+        "projects/42/jobs/13/trace",
+        "projects/42/jobs/16/trace",
+      ]);
+      expect(commands.every((command) => command.host === reference.host)).toBe(true);
+      expect((yield* provider.getChangeRequestChecks(reference)).checks).toMatchObject([
+        { ...job, url: `${root}/fork/team/web/-/jobs/21`, status: "pending", nativeId: "42/21" },
+        { ...external, status: "failure" },
+      ]);
+
+      expect(
+        yield* Effect.result(
+          provider.getCheckLogs({ ...reference, checks: [limited], tailLines: 2 }),
+        ),
+      ).toMatchObject({ _tag: "Failure", failure: { reason: "rate-limited" } });
+      expect(
+        yield* Effect.result(provider.rerunChecks({ ...reference, checks: [limited] })),
+      ).toMatchObject({ _tag: "Failure", failure: { reason: "rate-limited" } });
+    }),
+);
+
+it.effect.each(
+  (["stages", "bridges"] as const).flatMap((read) => [
+    { read, errorClass: GitLabCli.GitLabCliRateLimitError, reason: "rate-limited" },
+    { read, errorClass: GitLabCli.GitLabCliAuthenticationError, reason: "unauthenticated" },
+    { read, errorClass: GitLabCli.GitLabCliUnavailableError, reason: "missing-tool" },
+  ]),
+)(
+  "propagates $reason from the $read check read without caching it",
+  ({ read, errorClass, reason }) =>
+    Effect.gen(function* () {
+      const reference = {
+        cwd: "/repo",
+        repository: "acme/web",
+        host: "gitlab.example.test:8443",
+        number: 7,
+      };
+      const context = {
+        operation: "execute" as const,
+        command: "glab" as const,
+        cwd: reference.cwd,
+        cause: null,
+      };
+      const failure = new errorClass(context);
+      const bridgeHosts: Array<string | undefined> = [];
+      let unavailable = true;
+      let stageReads = 0;
+      const cli = yield* GitLabPullRequestCli.make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabCli.GitLabCli)({
+            execute: (input) => {
+              const path = input.args[1] ?? "";
+              if (path === "graphql" && input.stdin?.includes("stages(first")) {
+                stageReads++;
+                if (unavailable) {
+                  return Effect.fail(
+                    read === "stages" ? failure : new GitLabCli.GitLabCliCommandError(context),
+                  );
+                }
+                return Effect.succeed(
+                  TestSourceControlHost.processOutput(
+                    JSON.stringify({
+                      data: {
+                        project: {
+                          mergeRequest: {
+                            headPipeline: {
+                              project: { id: "gid://gitlab/Project/42" },
+                              stages: {
+                                nodes: [
+                                  {
+                                    name: "test",
+                                    status: "failed",
+                                    jobs: {
+                                      nodes: [
+                                        {
+                                          id: "gid://gitlab/Ci::Build/11",
+                                          name: "unit",
+                                          status: "FAILED",
+                                        },
+                                      ],
+                                    },
+                                  },
+                                ],
+                              },
+                            },
+                          },
+                        },
+                      },
+                    }),
+                  ),
+                );
+              }
+              if (path.includes("/bridges?")) {
+                bridgeHosts.push(input.host);
+                return read === "bridges"
+                  ? Effect.fail(failure)
+                  : Effect.succeed(TestSourceControlHost.processOutput("[]"));
+              }
+              return Effect.succeed(
+                TestSourceControlHost.processOutput(
+                  JSON.stringify(
+                    path === "graphql"
+                      ? {
+                          data: {
+                            project: {
+                              mergeRequest: { userPermissions: { adminMergeRequest: false } },
+                            },
+                          },
+                        }
+                      : {
+                          iid: 7,
+                          title: "Merge request",
+                          web_url: `https://${reference.host}/acme/web/-/merge_requests/7`,
+                          source_branch: "feature",
+                          target_branch: "main",
+                          state: "opened",
+                          created_at: "2026-07-01T00:00:00Z",
+                          updated_at: "2026-07-02T00:00:00Z",
+                          head_pipeline: { id: 9, project_id: 42, status: "failed" },
+                        },
+                  ),
+                ),
+              );
+            },
+          }),
+        ),
+      );
+      const provider = yield* make.pipe(
+        Effect.provideService(GitLabPullRequestCli.GitLabPullRequestCli, cli),
+      );
+      assert.isDefined(provider.getChangeRequestChecks);
+      expect(yield* Effect.result(provider.getChangeRequestChecks(reference))).toMatchObject({
+        _tag: "Failure",
+        failure: { reason },
+      });
+      expect(bridgeHosts).toEqual(read === "bridges" ? [reference.host] : []);
+
+      // A failed lookup must not be cached as a successful, aggregate-only check read.
+      unavailable = false;
+      expect((yield* provider.getChangeRequestChecks(reference)).checks).toMatchObject([
+        { name: "test / unit", nativeId: "42/11", status: "failure" },
+      ]);
+      expect(stageReads).toBe(2);
+    }),
+);
+
 describe("gitLabViewerPermissions", () => {
   it("offers everything to a viewer GitLab says can merge", () => {
     expect(
