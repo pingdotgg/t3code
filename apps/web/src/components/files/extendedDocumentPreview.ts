@@ -446,11 +446,12 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   const explicitLanguage = [record(metadata.language_info).name, kernelspec.language].find(
     (value): value is string => typeof value === "string" && value !== "",
   );
-  const kernelName = kernelspec.name;
   const language =
     (
       explicitLanguage ??
-      (typeof kernelName === "string" && kernelName.toLowerCase() === "python3" ? "python" : "")
+      (typeof kernelspec.name === "string" && kernelspec.name.toLowerCase() === "python3"
+        ? "python"
+        : "")
     )
       .replaceAll(/[^a-z\d+#-]/gi, "")
       .slice(0, 40) || "text";
