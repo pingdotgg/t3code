@@ -3618,22 +3618,27 @@ export const make = Effect.gen(function* () {
 
   const checkedOutPullRequestKey = (branch: string) => `branch.${branch}.t3-pull-request`;
 
-  const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
-    "branchPullRequest",
-  )(function* ({ cwd, branch }, options) {
-    const cacheCwd = yield* normalizeStatusCacheKey(cwd);
-    const refresh = options?.refresh === true;
-    const freshGitState = refresh || options?.freshGitState === true;
+  const runBranchPullRequest = Effect.fn("runBranchPullRequest")(function* (
+    cacheCwd: string,
+    branch: string,
+    options: {
+      readonly refresh: boolean;
+      readonly freshGitState: boolean;
+      readonly confirmTerminal: boolean;
+      readonly includeHeadRepository: boolean;
+    },
+  ) {
+    const { refresh, freshGitState } = options;
     const pullRequest = yield* lookupBranchPullRequest(cacheCwd, branch, {
       refresh,
       freshGitState,
-      includeHeadRepository: options?.includeHeadRepository,
+      includeHeadRepository: options.includeHeadRepository,
     });
     if (
       pullRequest === null ||
       pullRequest.state === "open" ||
       freshGitState ||
-      options?.confirmTerminal === false
+      !options.confirmTerminal
     ) {
       return pullRequest;
     }
@@ -3655,7 +3660,7 @@ export const make = Effect.gen(function* () {
     const confirmed = yield* lookupBranchPullRequest(cacheCwd, branch, {
       refresh: false,
       freshGitState: true,
-      includeHeadRepository: options?.includeHeadRepository,
+      includeHeadRepository: options.includeHeadRepository,
     });
     settledPrLookupByBranchKey.delete(settledKey);
     if (confirmed !== null && confirmed.state !== "open") {
@@ -3671,6 +3676,41 @@ export const make = Effect.gen(function* () {
     }
     return confirmed;
   }, branchPrLookups.withPermits(1));
+  // Concurrent callers with the same options share one running lookup; nothing is kept after
+  // it ends. The epoch keeps a caller that follows a T3 git action off an older lookup.
+  const inFlightBranchPullRequests = yield* Cache.makeWith(
+    (key: string) => {
+      const [cacheCwd = "", branch = "", flags = ""] = key.split("\u0000");
+      return runBranchPullRequest(cacheCwd, branch, {
+        refresh: flags[0] === "1",
+        freshGitState: flags[1] === "1",
+        confirmTerminal: flags[2] === "1",
+        includeHeadRepository: flags[3] === "1",
+      });
+    },
+    { capacity: PR_LOOKUP_CACHE_CAPACITY, timeToLive: () => Duration.zero },
+  );
+
+  const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
+    "branchPullRequest",
+  )(function* ({ cwd, branch }, options) {
+    const cacheCwd = yield* normalizeStatusCacheKey(cwd);
+    const refresh = options?.refresh === true;
+    const flags = [
+      refresh,
+      refresh || options?.freshGitState === true,
+      options?.confirmTerminal !== false,
+      options?.includeHeadRepository === true,
+    ]
+      .map((flag) => (flag ? "1" : "0"))
+      .join("");
+    return yield* detachStackFrame(
+      Cache.get(
+        inFlightBranchPullRequests,
+        [cacheCwd, branch, flags, String(prLookupEpoch(cacheCwd))].join("\u0000"),
+      ),
+    );
+  });
 
   const checkedOutPullRequest: GitManager["Service"]["checkedOutPullRequest"] = Effect.fn(
     "checkedOutPullRequest",

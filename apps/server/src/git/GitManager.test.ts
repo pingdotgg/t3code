@@ -1279,6 +1279,46 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("concurrent lookups of one branch share one lookup's git reads and host query", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/shared"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/shared"]);
+      const merged: FakeChangeRequest = {
+        number: 1,
+        title: "Shared",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/1",
+        baseRefName: "main",
+        headRefName: "feature/shared",
+        state: "merged",
+        updatedAt: "2026-04-01T15:00:00Z",
+      };
+      const lookupCost = Effect.fn(function* (callers: number) {
+        const gitCommands: string[] = [];
+        const { manager, providerCalls } = yield* makeManager({
+          gitCommands,
+          providerScenario: { prListOtherwise: [merged] },
+        });
+        // Threads on one branch, as the start-up backfill and settlement sweep read them.
+        yield* Effect.all(
+          Array.from({ length: callers }, () =>
+            manager.branchPullRequest({ cwd: repoDir, branch: "feature/shared" }),
+          ),
+          { concurrency: "unbounded" },
+        );
+        return { git: gitCommands.length, hostQueries: listed(providerCalls).length };
+      });
+
+      const one = yield* lookupCost(1);
+      const eight = yield* lookupCost(8);
+      expect(eight).toEqual(one);
+    }),
+  );
+
   it.effect("a settled branch PR is rechecked only when the branch moves or every 15 minutes", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
