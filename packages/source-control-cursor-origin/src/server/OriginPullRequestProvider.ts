@@ -398,7 +398,7 @@ export const make = Effect.gen(function* () {
   // against the rate limit, so a definite answer is kept for that pair of commits.
   const mergeabilities = yield* Cache.makeWith(
     (key: string) => {
-      const [cwd = "", repository = "", number = "", head = ""] = key.split("\n");
+      const [cwd = "", repository = "", number = "", head = "", base = ""] = key.split("\n");
       return cli
         .api(
           {
@@ -414,8 +414,9 @@ export const make = Effect.gen(function* () {
         )
         .pipe(
           Effect.map((answer): PullRequestMergeability =>
-            // A head pushed since the key was made answers for other commits.
-            answer.headSha && answer.headSha !== head
+            // A head or base pushed since the key was made answers for other commits.
+            (answer.headSha && answer.headSha !== head) ||
+            (answer.baseSha && answer.baseSha !== base)
               ? "unknown"
               : (answer.blockers ?? []).some((blocker) => blocker.kind === "merge_conflict")
                 ? "conflicting"
