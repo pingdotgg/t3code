@@ -166,6 +166,72 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
     );
 
     it.effect.skipIf(!symlinksSupported)(
+      "keeps auth-like entries private to each home without touching shared copies",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+          const shadowHome = path.join(shadowRoot, "shadow");
+          const authLikeNames = [
+            "auth-fixture-a.json",
+            "auth_fixture_b.json",
+            "auth.json.bak",
+            "AUTH.Backup",
+            "auth.lock",
+          ];
+
+          for (const name of authLikeNames) {
+            yield* writeTextFile(path.join(sharedHome, name), `{"shared":"${name}"}\n`);
+          }
+          yield* writeTextFile(path.join(sharedHome, "author.json"), '{"author":true}\n');
+          yield* writeTextFile(path.join(shadowHome, "auth.json"), '{"shadow":true}\n');
+          yield* fileSystem.symlink(
+            path.join(sharedHome, "auth.lock"),
+            path.join(shadowHome, "auth.lock"),
+          );
+
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          );
+
+          yield* materializeCodexShadowHome(layout);
+
+          for (const name of authLikeNames) {
+            const shadowEntry = yield* fileSystem
+              .stat(path.join(shadowHome, name))
+              .pipe(Effect.result);
+            expect({ name, tag: shadowEntry._tag }).toEqual({ name, tag: "Failure" });
+            expect(yield* fileSystem.readFileString(path.join(sharedHome, name))).toBe(
+              `{"shared":"${name}"}\n`,
+            );
+          }
+          expect(yield* fileSystem.readLink(path.join(shadowHome, "author.json"))).toBe(
+            path.join(sharedHome, "author.json"),
+          );
+          expect(yield* fileSystem.readFileString(path.join(shadowHome, "auth.json"))).toBe(
+            '{"shadow":true}\n',
+          );
+
+          // Older versions linked auth-like backups into shadow homes; those links fail closed.
+          const backupLink = path.join(shadowHome, "auth.json.bak");
+          yield* fileSystem.symlink(path.join(sharedHome, "auth.json.bak"), backupLink);
+          const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
+          expect(error).toMatchObject({
+            _tag: "CodexShadowHomePrivateEntrySymlinkError",
+            entryName: "auth.json.bak",
+          });
+          expect(yield* fileSystem.readLink(backupLink)).toBe(
+            path.join(sharedHome, "auth.json.bak"),
+          );
+          expect(yield* fileSystem.readFileString(path.join(sharedHome, "auth.json.bak"))).toBe(
+            '{"shared":"auth.json.bak"}\n',
+          );
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
       "replaces a Codex-created local sqlite maintenance lock with the shared lock",
       () =>
         Effect.gen(function* () {
