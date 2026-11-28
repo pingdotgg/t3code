@@ -26,6 +26,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@t3tools/source-control-testing": "workspace:*",
     "@types/node": "catalog:",
     "vite-plus": "catalog:"
   }

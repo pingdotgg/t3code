@@ -31,15 +31,14 @@ const discovery = {
   label: "Cursor Origin",
   executable: OriginCli.ORIGIN_COMMAND,
   versionArgs: ["--version"],
-  authArgs: ["auth", "status", "--json"],
+  // Without `account`, `origin` answers locally instead of calling Cursor's API.
+  authArgs: ["auth", "status", "--json", "authenticated,tokenValid"],
   parseAuth: (input) => {
     const status = OriginCli.parseOriginAuthStatus(input.stdout);
-    const account = OriginCli.originAccount(status);
     if (status === null) return providerAuth({ status: "unknown" });
     return status.authenticated && status.tokenValid !== false
       ? providerAuth({
           status: "authenticated",
-          account: account ?? undefined,
           host: "origin.cursor.com",
         })
       : providerAuth({
