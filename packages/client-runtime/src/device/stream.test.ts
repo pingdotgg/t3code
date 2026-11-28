@@ -213,12 +213,13 @@ describe("native device stream transport", () => {
     client.stop();
   });
 
-  const connectIosKeys = async (usLayout?: boolean) => {
+  const connectIosKeys = async (usLayout?: boolean, admitted = true) => {
     const { client, opened } = setup("ios");
     client.start();
     const socket = await opened;
     socket.onopen?.();
-    socket.onmessage?.({ data: Uint8Array.of(0x83).buffer });
+    const admit = () => socket.onmessage?.({ data: Uint8Array.of(0x83).buffer });
+    if (admitted) admit();
     const take = () => {
       const keys = socket.send.mock.calls.map(([packet]) => {
         const { type, usage } = JSON.parse(new TextDecoder().decode(packet.subarray(1)));
@@ -245,7 +246,7 @@ describe("native device stream transport", () => {
       client.sendKey(event, "down", usLayout);
       client.sendKey(event, "up", usLayout);
     };
-    return { client, take, keyEvent, press };
+    return { client, take, keyEvent, press, admit };
   };
 
   it("types the character from the user's layout with the simulator's US keys", async () => {
@@ -314,7 +315,7 @@ describe("native device stream transport", () => {
 
   it("sends the key places when the simulator layout is not known to be US", async () => {
     vi.stubGlobal("navigator", { platform: "Win32" });
-    const { client, take, press } = await connectIosKeys();
+    const { client, take, keyEvent, press } = await connectIosKeys();
     const ctrlAlt = { ctrlKey: true, altKey: true };
 
     // Windows Russian keys.
@@ -337,6 +338,25 @@ describe("native device stream transport", () => {
     // Shortcuts use the key place, which has the same letter on both keyboards.
     press("KeyA", "ф", { ctrlKey: true });
     expect(take()).toEqual(["down e3", "up e2", "down 4", "up 4"]);
+    client.sendKey(keyEvent("ControlLeft", "Control"), "up");
+    take();
+    // The simulator's own layout composes dead keys.
+    press("BracketLeft", "Dead");
+    press("KeyE", "ê");
+    expect(take()).toEqual(["down 2f", "up 2f", "down 8", "up 8"]);
+    client.stop();
+  });
+
+  it("sends a shortcut's modifier once the simulator admits input", async () => {
+    vi.stubGlobal("navigator", { platform: "Win32" });
+    const { client, take, keyEvent, admit } = await connectIosKeys(true, false);
+    const ctrlA = keyEvent("KeyA", "a", { ctrlKey: true });
+    client.sendKey(ctrlA, "down", true);
+    expect(take()).toEqual([]);
+    admit();
+    take();
+    client.sendKey(ctrlA, "down", true);
+    expect(take()).toEqual(["down e3", "down 4"]);
     client.stop();
   });
 });

@@ -449,6 +449,10 @@ export function createDeviceStreamClient(
   let decodedVideoGeneration: number | null = null;
   let iosInputAdmitted = false;
   let iosInputUnavailable = false;
+  const inputOpen = () =>
+    !stopped &&
+    (!avcc || (iosInputAdmitted && !iosInputUnavailable)) &&
+    socket?.readyState === WebSocket.OPEN;
   const iosHeldModifiers = new Set<string>();
   const iosPressedKeys = new Map<string, number>();
   const sendIosKey = (type: "down" | "up", usage: number) =>
@@ -480,7 +484,13 @@ export function createDeviceStreamClient(
     }
   };
   const pressIosKey = (event: KeyboardEvent, usLayout: boolean) => {
-    if (event.isComposing || event.key === "Dead" || /^(Shift|Control|Alt|Meta)/.test(event.code)) {
+    if (
+      !inputOpen() ||
+      event.isComposing ||
+      // The next keydown carries the composed character, which US strokes type in full.
+      (usLayout && event.key === "Dead") ||
+      /^(Shift|Control|Alt|Meta)/.test(event.code)
+    ) {
       return;
     }
     const character = typedCharacter(event);
@@ -1260,6 +1270,8 @@ export function createDeviceStreamClient(
     socket = ws;
     iosInputAdmitted = false;
     iosInputUnavailable = false;
+    iosHeldModifiers.clear();
+    iosPressedKeys.clear();
     ws.onmessage = (event) => {
       if (stopped || socket !== ws) return;
       if (!(event.data instanceof ArrayBuffer)) return;
@@ -1487,12 +1499,7 @@ export function createDeviceStreamClient(
   };
 
   const send = (payload: Uint8Array<ArrayBuffer> | string) => {
-    if (
-      !stopped &&
-      (!avcc || (iosInputAdmitted && !iosInputUnavailable)) &&
-      socket?.readyState === WebSocket.OPEN
-    )
-      socket.send(payload);
+    if (inputOpen()) socket?.send(payload);
   };
 
   const rawPoint = (x: number, y: number) => {
