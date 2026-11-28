@@ -26,7 +26,7 @@ export function ComposerAttachmentButton(props: {
       accessibilityLabel={gt("Add attachment")}
       accessibilityRole="button"
       accessibilityState={{ disabled: props.disabled }}
-      className="size-[44px] shrink-0 items-center justify-center rounded-full active:opacity-70 disabled:opacity-50"
+      className="size-[44px] shrink-0 items-center justify-center rounded-full active:opacity-70 disabled:opacity-50 android:size-[48px]"
       disabled={props.disabled}
       onPress={props.supportsFiles ? undefined : () => void props.onPickMedia()}
     >

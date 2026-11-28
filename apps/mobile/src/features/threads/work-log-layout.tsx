@@ -1,7 +1,7 @@
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import type { ComponentProps, ReactNode } from "react";
-import { Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { THREAD_WORK_ROW_MIN_HEIGHT, type deriveThreadWorkLogSizing } from "../../lib/layout";
 
 export function WorkLogBlock({
@@ -36,11 +36,22 @@ export function WorkLogPressable({
   children: ReactNode;
   rowSizing?: ReturnType<typeof deriveThreadWorkLogSizing>;
 }) {
+  const interactiveMinHeight =
+    props.accessibilityRole === "button" || props.accessibilityRole === "link"
+      ? Platform.OS === "android"
+        ? 48
+        : 44
+      : THREAD_WORK_ROW_MIN_HEIGHT;
   return (
     <Pressable {...props} hitSlop={4} className="rounded-md px-0.5 py-0 active:bg-subtle">
       <View
         className="flex-row items-center gap-1.5"
-        style={{ minHeight: rowSizing?.estimatedRowHeight ?? THREAD_WORK_ROW_MIN_HEIGHT }}
+        style={{
+          minHeight: Math.max(
+            interactiveMinHeight,
+            rowSizing?.estimatedRowHeight ?? THREAD_WORK_ROW_MIN_HEIGHT,
+          ),
+        }}
       >
         {children}
       </View>

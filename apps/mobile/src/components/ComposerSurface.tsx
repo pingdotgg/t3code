@@ -64,7 +64,7 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string, an
     value.length > 0 &&
     (contentHeight > text.lineHeight * 1.5 ||
       (compactWidth > 0 && contentSize.width > compactWidth));
-  const compactRowHeight = Math.max(44, minimum);
+  const compactRowHeight = Math.max(Platform.OS === "android" ? 48 : 44, minimum);
   const compactBottom = (compactRowHeight - minimum) / 2;
   const isRTL = I18nManager.isRTL;
   const expandedRowHeight = height + EXPANDED_EDITOR_BOTTOM;
@@ -165,7 +165,7 @@ const composerHeightTransition: LayoutAnimationFunction = (values) => {
 const COMPOSER_LAYOUT_TRANSITION = Platform.OS === "android" ? undefined : composerHeightTransition;
 // Share of the one-row composer the draft keeps; a long model name truncates first.
 export const INLINE_EDITOR_MIN_WIDTH = "40%";
-const INLINE_EDITOR_HEIGHT = 36;
+const INLINE_EDITOR_HEIGHT = Platform.OS === "android" ? 48 : 36;
 
 const AnimatedGlassSurface = Animated.createAnimatedComponent(GlassSurface);
 

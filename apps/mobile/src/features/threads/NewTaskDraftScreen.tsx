@@ -836,14 +836,16 @@ export function NewTaskDraftScreen(props: {
             accessibilityRole="button"
             disabled={isComposerInteractionLocked}
             onPress={chooseProject}
-            className="min-w-0 max-w-[250px] border-b border-foreground-muted active:opacity-65"
+            className="min-h-[44px] min-w-0 max-w-[250px] justify-center active:opacity-65 android:min-h-[48px]"
           >
-            <Text
-              className="text-2xl font-t3-medium tracking-tight text-foreground"
-              numberOfLines={1}
-            >
-              {selectedProjectLabel ?? selectedProject.title}
-            </Text>
+            <View className="border-b border-foreground-muted">
+              <Text
+                className="text-2xl font-t3-medium tracking-tight text-foreground"
+                numberOfLines={1}
+              >
+                {selectedProjectLabel ?? selectedProject.title}
+              </Text>
+            </View>
           </Pressable>
           <Text className="text-2xl font-t3-medium tracking-tight text-foreground">
             {headingAfter}

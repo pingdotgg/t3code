@@ -37,6 +37,7 @@ import {
 import {
   Animated as NativeAnimated,
   type ColorValue,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -438,18 +439,28 @@ function isFreshRow(createdAt: string): boolean {
 
 // Match min-h-8; disable exact sizing when native accessibility scaling can exceed it.
 const WORK_ROW_HEIGHT = THREAD_WORK_ROW_MIN_HEIGHT;
+const INTERACTIVE_WORK_ROW_HEIGHT = Platform.OS === "android" ? 48 : 44;
 const WORK_ROW_GAP = 1;
 const WORK_LOG_BOTTOM_MARGIN = 3.5;
 const WORK_GROUP_MAX_HEIGHT = 256;
 const WORK_GROUP_EDGE_FADE_HEIGHT = 12;
 
-export const WORK_GROUP_TOGGLE_HEIGHT = THREAD_WORK_ROW_MIN_HEIGHT;
+export const WORK_GROUP_TOGGLE_HEIGHT = INTERACTIVE_WORK_ROW_HEIGHT;
 
 function workLogRowsHeight(
   activities: ReadonlyArray<ThreadFeedActivity>,
-  rowHeight = WORK_ROW_HEIGHT,
+  rowHeight?: number,
 ): number {
-  return activities.length * rowHeight + Math.max(0, activities.length - 1) * WORK_ROW_GAP;
+  const rowsHeight = activities.reduce(
+    (total, activity) =>
+      total +
+      (rowHeight ??
+        (activity.canExpand || activity.projectedItem.item.type === "notification"
+          ? INTERACTIVE_WORK_ROW_HEIGHT
+          : WORK_ROW_HEIGHT)),
+    0,
+  );
+  return rowsHeight + Math.max(0, activities.length - 1) * WORK_ROW_GAP;
 }
 
 export function collapsedWorkLogHeight(
@@ -698,7 +709,10 @@ function ThreadWorkGroupList(props: {
   const getFixedItemSize = (row: ThreadFeedActivity, index: number) =>
     props.expandedRows[row.id] || props.rowSizing.fixedRowHeight === undefined
       ? undefined
-      : props.rowSizing.fixedRowHeight + (index < props.activities.length - 1 ? WORK_ROW_GAP : 0);
+      : (row.canExpand || row.projectedItem.item.type === "notification"
+          ? INTERACTIVE_WORK_ROW_HEIGHT
+          : props.rowSizing.fixedRowHeight) +
+        (index < props.activities.length - 1 ? WORK_ROW_GAP : 0);
   const renderItem = ({ item, index }: { item: ThreadFeedActivity; index: number }) => (
     <View className={index < props.activities.length - 1 ? "pb-px" : undefined}>
       {props.renderRow(item)}

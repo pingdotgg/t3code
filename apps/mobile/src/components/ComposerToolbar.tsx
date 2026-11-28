@@ -66,7 +66,7 @@ export function ComposerInlineControl(props: {
         accessibilityState={
           props.static ? undefined : { disabled: props.disabled, selected: props.selected }
         }
-        className="h-[44px] flex-row items-center gap-2 rounded-xl px-2 active:bg-subtle"
+        className="h-[44px] flex-row items-center gap-2 rounded-xl px-2 active:bg-subtle android:h-[48px] android:min-w-[48px]"
         disabled={props.disabled || props.static}
         onPress={props.onPress}
         style={{ opacity: props.disabled ? 0.45 : 1 }}
@@ -302,7 +302,7 @@ export function ComposerActionButton(props: {
       accessibilityLabel={props.accessibilityLabel}
       accessibilityRole="button"
       accessibilityState={{ disabled: props.disabled }}
-      className="size-[44px] shrink-0 items-center justify-center active:opacity-70"
+      className="size-[44px] shrink-0 items-center justify-center active:opacity-70 android:size-[48px]"
       style={props.size === "large" ? { width: 62 } : undefined}
       disabled={props.disabled}
       onPress={props.onPress}
