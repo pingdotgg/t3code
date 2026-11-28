@@ -526,6 +526,11 @@ describe("hosted thread links", () => {
       ...ref("env-1", "thread-1"),
       hosted: true,
     });
+    expect(parseThreadLinkHref("https://app.t3.codes/threads/env.1/task.foo")).toEqual({
+      ...ref("env.1", "task.foo"),
+      hosted: true,
+    });
+    expect(parseThreadLinkHref("https://app.t3.codes/threads/local/task.")).toBeNull();
     expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1/thread-1?prompt=go")).toBeNull();
     expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1/thread-1/extra")).toBeNull();
     expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1")).toBeNull();
@@ -541,15 +546,18 @@ describe("hosted thread links", () => {
   });
 
   it("titles hosted links in every Markdown form and writes them as v2 links", () => {
-    const title = titlesIn({ there: { t1: "There" } });
+    const title = titlesIn({ there: { t1: "There" }, local: { "task.foo": "Dotted" } });
     expect(
       relabelThreadLinks(
         [
           "See https://app.t3.codes/threads/there/t1.",
+          "See https://app.t3.codes/threads/local/task.foo.",
           "[old](https://app.t3.codes/threads/there/t1)",
           "<https://app.t3.codes/threads/there/t1>",
           "`https://app.t3.codes/threads/there/t1`",
           "https://app.t3.codes/threads/there/t1?prompt=go",
+          "https://app.t3.codes/threads/local/task.foo?prompt=go",
+          "https://app.t3.codes/threads/local/task.foo/extra",
         ].join("\n"),
         local,
         title,
@@ -557,10 +565,13 @@ describe("hosted thread links", () => {
     ).toBe(
       [
         "See [There](t3-thread://v2/there/t1).",
+        "See [Dotted](t3-thread://v2/local/task.foo).",
         "[There](t3-thread://v2/there/t1)",
         "[There](t3-thread://v2/there/t1)",
         "`https://app.t3.codes/threads/there/t1`",
         "https://app.t3.codes/threads/there/t1?prompt=go",
+        "https://app.t3.codes/threads/local/task.foo?prompt=go",
+        "https://app.t3.codes/threads/local/task.foo/extra",
       ].join("\n"),
     );
     expect(
@@ -569,6 +580,12 @@ describe("hosted thread links", () => {
     expect(threadLinkRefs("Open https://app.t3.codes/threads/there/t%3A1", local)).toEqual([
       ref("there", "t:1"),
     ]);
+    expect(threadLinkRefs("https://app.t3.codes/threads/local/task.foo", local)).toEqual([
+      ref("local", "task.foo"),
+    ]);
+    expect(threadLinkRefs("https://app.t3.codes/threads/local/task.foo?prompt=go", local)).toEqual(
+      [],
+    );
   });
 
   it("leaves a hosted link that is part of another link as written", () => {

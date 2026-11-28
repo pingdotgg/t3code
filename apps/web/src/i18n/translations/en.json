@@ -4090,6 +4090,7 @@
       "v": "v"
     }
   ],
+  "42102b61a3c388ad": "The drawing could not be saved. Try again or cancel.",
   "650afcc1cdb79840": "Theme color",
   "677fbda9e901b45e": "Red",
   "c23be241b9d249c9": "Orange",
@@ -4103,7 +4104,6 @@
   "d921a0a1ba87a665": "Erase a stroke (E)",
   "449a265c477785b0": "Erase",
   "a8ed2dbdd7333ead": "Stroke color",
-  "42102b61a3c388ad": "The drawing could not be saved. Try again or cancel.",
   "63fd02d55f0e4417": "Link a machine to this environment",
   "4136b6bb217cc0b8": "Link {target} to this environment",
   "0986757d94229f8f": "Choose machine…",
@@ -4746,7 +4746,7 @@
   ],
   "159ddd0d146a0f22": "Watching: the agent wakes when checks finish, someone comments, or the branch conflicts. Click to stop.",
   "1cbc8b5db51b4c77": "Merge",
-  "353b08f4363dbb2c": "Pending",
+  "f55c5e2d516fc269": "Pending",
   "7342bfc328008926": "Running",
   "fae3639874428042": "Tasks",
   "291bc7eb04e08b2e": "All done",
@@ -13052,6 +13052,7 @@
   "ade06f6723949b39": "Error occurred",
   "021fe65858278fe9": "Snooze thread",
   "26375cafb52d0503": "Goal",
+  "353b08f4363dbb2c": "Pending",
   "f31a95961de19433": "Issue {key}: {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, one {{count} linked issue} other {{count} linked issues}}",
   "e9ced65134f2f36c": "Wake thread now",

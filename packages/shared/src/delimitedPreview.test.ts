@@ -39,6 +39,10 @@ describe("delimited file previews", () => {
     ]);
   });
   it("detects semicolon-separated CSV from its first records outside quotes", () => {
+    expect(parseDelimitedPreview("Mass, kg;Count\n5;2", ",").rows).toEqual([
+      ["Mass, kg", "Count"],
+      ["5", "2"],
+    ]);
     expect(parseDelimitedPreview("a;b\r\n1;2,5", ",").rows).toEqual([
       ["a", "b"],
       ["1", "2,5"],

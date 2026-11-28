@@ -27,6 +27,8 @@ export default function VirtualTablePreview(props: {
   readonly indexing?: boolean;
   readonly header?: readonly string[] | undefined;
   readonly columnKinds?: readonly DelimitedColumnKind[] | undefined;
+  readonly rowIndexes?: readonly number[] | undefined;
+  readonly columnIndexes?: readonly number[] | undefined;
   readonly source?: boolean;
   readonly wrap?: boolean;
   readonly revealLine?: number | null;
@@ -193,10 +195,13 @@ export default function VirtualTablePreview(props: {
                       )}
                       style={{ width: sizes[column] }}
                     >
-                      {props.header?.[column] ?? columnLabel(column)}
+                      {props.header?.[column] ??
+                        columnLabel(props.columnIndexes?.[column] ?? column)}
                     </div>
                   }
-                  label={props.header?.[column] ?? columnLabel(column)}
+                  label={
+                    props.header?.[column] ?? columnLabel(props.columnIndexes?.[column] ?? column)
+                  }
                 />
               ))}
             </PanelFrame.Toolbar>
@@ -276,7 +281,9 @@ function RowPage(
                 transform: props.source ? undefined : "translateX(var(--preview-scroll-left, 0px))",
               }}
             >
-              <span className="sticky top-0 block">{index + (props.header ? 0 : 1)}</span>
+              <span className="sticky top-0 block">
+                {(props.rowIndexes?.[index] ?? index - (props.header ? 1 : 0)) + 1}
+              </span>
             </div>
             {!props.source ? (
               <div

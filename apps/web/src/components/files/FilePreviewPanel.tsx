@@ -67,7 +67,6 @@ import {
   useRef,
   useState,
   type ComponentProps,
-  type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
 import { useLayoutStore } from "~/layout/layoutStore";
@@ -93,7 +92,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
-import { cn, isMacPlatform } from "~/lib/utils";
+import { cn } from "~/lib/utils";
 import { requestWorkspaceFocus } from "~/lib/workspaceFocus";
 import type { ChatFileAttachment } from "~/types";
 import { isHostPath } from "@t3tools/shared/path";
@@ -310,6 +309,7 @@ export function WorkspaceBrowserPreview(props: {
   readonly workspaceRoot: string;
   readonly title: string;
   readonly workspaceMutationId: string | null;
+  readonly refreshRevision?: number;
 }) {
   const pdf = isPdfPreviewFile(props.absolutePath);
   const resource = workspaceAssetResource({
@@ -319,14 +319,21 @@ export function WorkspaceBrowserPreview(props: {
     workspaceRoot: props.workspaceRoot,
     absolutePath: props.absolutePath,
   });
-  // Each workspace mutation re-mints the URL: a file outside the workspace is signed by its
-  // inode, which an atomic replace changes.
-  const assetUrl = useAssetUrlState(props.environmentId, resource, props.workspaceMutationId);
+  const refreshRevision = props.refreshRevision ?? 0;
+  const assetRevision =
+    refreshRevision > 0
+      ? props.workspaceMutationId === null
+        ? `refresh:${refreshRevision}`
+        : `${props.workspaceMutationId}:refresh:${refreshRevision}`
+      : props.workspaceMutationId;
+  // Each workspace mutation or manual refresh re-mints the URL: a file outside the workspace is
+  // signed by its inode, which an atomic replace changes.
+  const assetUrl = useAssetUrlState(props.environmentId, resource, assetRevision);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   // Servers that report the file's revision let an unchanged page stay loaded; older ones only
   // offer the workspace mutation, which changes after every command.
   const fileRevision = assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
-  const latestRevision = fileRevision ?? props.workspaceMutationId;
+  const latestRevision = fileRevision ?? assetRevision;
   // The HTML frame keeps the URL it loaded, so it moves only once a re-minted URL has arrived.
   const [frame, setFrame] = useState<HtmlPreviewFrame | null>(null);
   const [endingGrant, setEndingGrant] = useState<string | null>(null);
@@ -1332,25 +1339,6 @@ function EditableFileSurface({
   );
 }
 
-function selectRenderedContentOnSelectAll(event: ReactKeyboardEvent<HTMLElement>) {
-  const mac = isMacPlatform(navigator.platform);
-  const selectAll =
-    event.key.toLowerCase() === "a" &&
-    (mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey) &&
-    !event.shiftKey &&
-    !event.altKey;
-  // React bubbles keys from portaled children (the image dialog) through this surface.
-  if (
-    !selectAll ||
-    !(event.target instanceof Node) ||
-    !event.currentTarget.contains(event.target)
-  ) {
-    return;
-  }
-  event.preventDefault();
-  window.getSelection()?.selectAllChildren(event.currentTarget);
-}
-
 function RenderedMarkdownSurface({
   environmentId,
   cwd,
@@ -1394,7 +1382,6 @@ function RenderedMarkdownSurface({
       relativePath={relativePath}
       threadRef={threadRef}
       workspaceMutationId={workspaceMutationId}
-      onKeyDown={selectRenderedContentOnSelectAll}
       onTaskListChange={onTaskListChange}
     />
   );
@@ -1604,6 +1591,7 @@ function FilePreviewPanelContent({
     (!isMarkdown || markdownRenderable);
   const showsRawText =
     previewPath !== null &&
+    !isMedia &&
     file.data !== null &&
     !(isMarkdown && renderMarkdown) &&
     !renderMermaid &&
@@ -2118,6 +2106,7 @@ function FilePreviewPanelContent({
               workspaceRoot={cwd}
               title={relativePath}
               workspaceMutationId={workspaceMutationId}
+              refreshRevision={fileRefreshRevision}
             />
           ) : relativePath && absolutePath && showsLargeText ? (
             <WorkspaceLargeTextPreview

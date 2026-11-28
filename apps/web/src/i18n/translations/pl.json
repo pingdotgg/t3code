@@ -4090,6 +4090,7 @@
       "v": "v"
     }
   ],
+  "42102b61a3c388ad": "Nie udało się zapisać rysunku. Spróbuj ponownie lub anuluj.",
   "650afcc1cdb79840": "Kolor motywu",
   "677fbda9e901b45e": "Czerwony",
   "c23be241b9d249c9": "Pomarańczowy",
@@ -4103,7 +4104,6 @@
   "d921a0a1ba87a665": "Usuń linię (E)",
   "449a265c477785b0": "Gumka",
   "a8ed2dbdd7333ead": "Kolor linii",
-  "42102b61a3c388ad": "Nie udało się zapisać rysunku. Spróbuj ponownie lub anuluj.",
   "63fd02d55f0e4417": "Powiąż komputer z tym środowiskiem",
   "4136b6bb217cc0b8": "Powiąż {target} z tym środowiskiem",
   "0986757d94229f8f": "Wybierz komputer…",
@@ -4746,7 +4746,7 @@
   ],
   "159ddd0d146a0f22": "Obserwacja: agent budzi się, gdy zakończą się sprawdzenia, ktoś doda komentarz lub gałęzie wejdą w konflikt. Kliknij, aby zatrzymać.",
   "1cbc8b5db51b4c77": "Scal",
-  "353b08f4363dbb2c": "Oczekujące",
+  "f55c5e2d516fc269": "Nie rozpoczęto",
   "7342bfc328008926": "W toku",
   "fae3639874428042": "Zadania",
   "291bc7eb04e08b2e": "Wszystko gotowe",
@@ -13053,6 +13053,7 @@
   "ade06f6723949b39": "Wystąpił błąd",
   "021fe65858278fe9": "Uśpij wątek",
   "26375cafb52d0503": "Cel",
+  "353b08f4363dbb2c": "Oczekujące",
   "f31a95961de19433": "Zgłoszenie {key}: {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, one {{count} powiązane zgłoszenie} few {{count} powiązane zgłoszenia} many {{count} powiązanych zgłoszeń} other {{count} powiązanych zgłoszeń}}",
   "e9ced65134f2f36c": "Obudź wątek teraz",

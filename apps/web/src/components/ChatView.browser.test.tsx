@@ -1622,3 +1622,106 @@ it("a new thread on a branch with changes opens them from thread details", async
   // The panel reads the draft's checkout; without one it asks for a thread instead.
   await expect.element(page.getByText("Loading changes...")).toBeVisible();
 });
+
+async function renderRunningThread(name: string) {
+  const thread = threadWithHistory(name, 1);
+  const environment = installFakeEnvironment([thread], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  const app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+  const running = { ...thread.runs[0]!, status: "running" as const, completedAt: null };
+  await act(() => emitThreadEvent(thread.id, { type: "run.updated", payload: running }));
+  await expect.element(page.getByRole("button", { name: "Stop generation" })).toBeVisible();
+  return {
+    editor: page.getByTestId("composer-editor"),
+    [Symbol.asyncDispose]: async () => {
+      await app[Symbol.asyncDispose]();
+      environment[Symbol.dispose]();
+    },
+  };
+}
+
+it("/clear after an unresolved context reference shows plain send during a running turn", async () => {
+  await using view = await renderRunningThread("clear-dangling-reference");
+  await userEvent.click(view.editor);
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", "[Reply](t3-context://v1/response/response_gone) ");
+  view.editor
+    .element()
+    .dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+  await insertText("/clear ");
+
+  // Enter strips the reference and runs `/clear` locally, so it must not offer to steer.
+  await expect.element(page.getByRole("button", { name: "Submit message" })).toBeVisible();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByText("Your next message starts a fresh session")).toBeVisible();
+});
+
+it("/clear with a still-compressing image offers to steer or queue during a running turn", async () => {
+  await using view = await renderRunningThread("clear-compressing-image");
+  const compressed = Promise.withResolvers<void>();
+  compression.gate = compressed.promise;
+  using _compression = { [Symbol.dispose]: () => (compression.gate = null) };
+  using _uploads = acceptAttachmentUploads();
+  await userEvent.click(view.editor);
+  await insertText("/clear ");
+  const clipboardData = new DataTransfer();
+  clipboardData.items.add(new File([PNG], "shot.png", { type: "image/png" }));
+  view.editor
+    .element()
+    .dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+
+  // Enter waits for the image and sends `/clear` with it to the agent, not as a local command.
+  await expect.element(page.getByRole("button", { name: /^(Steer|Queue) message$/ })).toBeVisible();
+  compressed.resolve();
+});
+
+it("picking /clear while editing a queued message does not arm a fresh session", async () => {
+  const name = "clear-queued-edit";
+  const history = threadWithHistory(name, 2);
+  const thread = {
+    ...history,
+    runs: [
+      { ...history.runs[0]!, status: "running" as const, completedAt: null },
+      { ...history.runs[1]!, status: "queued" as const, startedAt: null, completedAt: null },
+    ],
+    items: history.items.filter((item) => item.id !== `${name}-assistant-1`),
+  };
+  using _environment = installFakeEnvironment([thread], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await page.getByRole("button", { name: "Edit queued message" }).click();
+  await expect.element(page.getByText("Editing in the composer")).toBeVisible();
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.click(editor);
+  await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
+  await insertText("/");
+  await expect.element(page.getByRole("option", { name: /^\/model/ })).toBeVisible();
+
+  // The queued edit owns the composer, as on mobile, so /clear must not arm the next send.
+  expect(page.getByRole("option", { name: /^\/clear/ }).query()).toBeNull();
+  await expect.element(page.getByText("Editing in the composer")).toBeVisible();
+  await expect
+    .element(page.getByText("Your next message starts a fresh session"))
+    .not.toBeInTheDocument();
+});

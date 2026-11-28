@@ -427,3 +427,67 @@ it("Escape cancels a column resize without closing the panel sheet", async () =>
   await userEvent.keyboard("{Escape}");
   await vi.waitFor(() => expect(onCloseSheet).toHaveBeenCalledOnce());
 });
+
+it("Shift+Click on a hyperlinked cell does not follow the link", async () => {
+  const archive = new JSZip();
+  archive.file(
+    "xl/workbook.xml",
+    '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Summary" sheetId="1" r:id="rId1"/></sheets></workbook>',
+  );
+  archive.file(
+    "xl/_rels/workbook.xml.rels",
+    '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+  );
+  archive.file(
+    "xl/worksheets/sheet1.xml",
+    '<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Example</t></is></c></row></sheetData><hyperlinks><hyperlink ref="A1" r:id="rId1"/></hyperlinks></worksheet>',
+  );
+  archive.file(
+    "xl/worksheets/_rels/sheet1.xml.rels",
+    '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com" TargetMode="External"/></Relationships>',
+  );
+  const bytes = await archive.generateAsync({ type: "arraybuffer" });
+  const container = document.createElement("div");
+  Object.assign(container.style, { display: "flex", width: "500px", height: "300px" });
+  await using screen = await render(
+    createElement(Spreadsheet, {
+      bytes,
+      view: { digitWidth: 7, themeFonts: { major: "Calibri Light", minor: "Calibri" } },
+      onDetails: vi.fn(),
+      onError: vi.fn(),
+    }),
+    { container },
+  );
+  const summary = screen.getByRole("grid", { name: "Summary" });
+  await expect.element(summary).toBeVisible();
+  const root = summary.element();
+  const canvas = root.querySelector("canvas")!;
+  await vi.waitFor(() => {
+    expect(canvas.getContext("2d")!.getImageData(10, 10, 1, 1).data[0]).toBeGreaterThan(0);
+    expect(canvas.getContext("2d")!.getImageData(10, 10, 1, 1).data[0]).toBeLessThan(255);
+  });
+  // Synthetic pointer events have no browser pointer to capture.
+  using _capture = vi.spyOn(root, "setPointerCapture").mockImplementation(() => {});
+  using _release = vi.spyOn(root, "releasePointerCapture").mockImplementation(() => {});
+  using open = vi.spyOn(window, "open").mockReturnValue(null);
+  const rect = canvas.getBoundingClientRect();
+  const clickLink = (shiftKey: boolean) =>
+    act(() => {
+      const init = {
+        bubbles: true,
+        pointerId: 1,
+        button: 0,
+        clientX: rect.left + 76,
+        clientY: rect.top + 30,
+        shiftKey,
+      };
+      root.dispatchEvent(new PointerEvent("pointerdown", init));
+      root.dispatchEvent(new PointerEvent("pointerup", init));
+    });
+
+  await clickLink(true);
+  expect(open).not.toHaveBeenCalled();
+
+  await clickLink(false);
+  expect(open).toHaveBeenCalledWith("https://example.com/", "_blank", "noopener,noreferrer");
+});
