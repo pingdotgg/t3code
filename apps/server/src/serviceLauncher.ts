@@ -39,7 +39,6 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
   SERVICE_RESTART_PENDING_FILE,
-  SERVICE_STOP_MARKER_FILE,
   SERVICE_UNIT_ENV,
   systemdUnitDirectoryOf,
 } from "./cloud/serviceProtocol.ts";
@@ -962,8 +961,6 @@ export async function stateDirOwned(baseDir: string): Promise<boolean> {
   return legacyOwnerStartedBeforeRecord(output, recordedAt, platform);
 }
 
-const stopMarkerPath = (baseDir: string) =>
-  NodePath.join(baseDir, "runtime", SERVICE_STOP_MARKER_FILE);
 const restartPendingPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
 
@@ -1103,10 +1100,6 @@ export class Launcher {
   }
 
   async stop(signal: NodeJS.Signals): Promise<void> {
-    // Write synchronously on signal receipt; a terminating child needs the marker in its finalizer.
-    try {
-      NodeFS.writeFileSync(stopMarkerPath(this.#baseDir), "", { mode: 0o600 });
-    } catch {}
     if (this.#stopRequested || this.#stopping) {
       await this.#completion.promise.catch(() => undefined);
       return;
@@ -1115,7 +1108,7 @@ export class Launcher {
     this.#stopSignal.abort();
     this.#clearTimer();
     this.#enqueue(async () => {
-      // Let in-progress updates start replacements first; replacements observe the marker and own pre-activation tunnel cleanup.
+      // Let in-progress updates start replacements first.
       this.#stopping = true;
       // An exit-78 transition queued before this one may have started the owner poll.
       this.#clearTimer();
@@ -1204,8 +1197,7 @@ export class Launcher {
 
   async #recover(): Promise<void> {
     await this.#claimServing();
-    // Clear old stop markers to preserve future tunnels; clear restart-pending only for the awaited version to avoid CLI races.
-    await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
+    // Clear a deferred restart only after the requested version starts.
     const restartPending = restartPendingPath(this.#baseDir);
     try {
       const release = await acquireServiceSelectionLock(this.#statePath);

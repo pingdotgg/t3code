@@ -41,10 +41,8 @@ Deployment and Clerk configuration live in the [Connect setup runbook](../operat
 - CLI authorization, desired exposure, and a running connector have separate lifetimes: linking can
   record intent while stopped, and logout revokes cloud credentials without uninstalling the
   background service.
-- Normal CLI shutdown releases its paid tunnel while keeping the hostname reservation and allocation
-  record (so the environment shows offline rather than unauthorized). Client-installed links and
-  update handoffs retain the tunnel across shutdown so updates do not pay DNS/routing propagation
-  delay.
+- Server shutdown stops the connector and retains the tunnel and its saved configuration. A restart
+  can reconnect without provisioning a tunnel or waiting for its route to propagate.
 - Every allocation mutation bumps its `generation`. Unlink commits authorization revocation before
   external teardown, and release/reclamation lock on the claimed generation so delayed cleanup never
   deletes a tunnel reused by a concurrent restart or relink
