@@ -259,6 +259,26 @@ describe("parseOriginUrlFromGitConfig", () => {
     ).toBe("https://github.com/acme/\t\trepo.git");
   });
 
+  it.each(["\u2028", "\u2029"])(
+    "preserves Unicode line separators in remote urls: %j",
+    (separator) => {
+      const url = `ssh://git@forge.example/org/first${separator}last.git${separator}`;
+      for (const gap of ["\n", "\r\n", " "]) {
+        expect(parseOriginUrlFromGitConfig(`[remote "origin"]${gap}url = ${url}\n`)).toBe(url);
+        expect(parseOriginUrlFromGitConfig(`[remote "origin"]${gap}url = "${url}"\n`)).toBe(url);
+      }
+    },
+  );
+
+  // A quadratic trim blocks for tens of seconds here, well past the test timeout.
+  it("trims long whitespace runs in linear time", () => {
+    const url = "ssh://git@forge.example/org/repo.git";
+    const padding = " ".repeat(200_000);
+    expect(
+      parseOriginUrlFromGitConfig(`[remote "origin"]\nurl = ${padding}${url}${padding}\n`),
+    ).toBe(url);
+  });
+
   it("reads settings on the remote header line", () => {
     const upstream = '\n[remote "upstream"]\n\turl = https://github.com/other/source.git\n';
     expect(
