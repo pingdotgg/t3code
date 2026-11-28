@@ -3,9 +3,11 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import { expect } from "e2e";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 import { T3_HOME } from "../e2e.config.ts";
-import { makeState, runPromise, test, WEB } from "./t3.ts";
+import { makeState, rpcClient, runPromise, test, WEB } from "./t3.ts";
 
 const ACP = `
 import { execFileSync } from "node:child_process";
@@ -109,34 +111,40 @@ test(
     };
     try {
       await NodeFSP.writeFile(settingsPath, JSON.stringify(settings));
+      // The settings watcher registers the agent asynchronously; start once the server lists it.
+      await runPromise(
+        Effect.gen(function* () {
+          const client = yield* rpcClient(T3_HOME, app.baseUrl ?? "");
+          yield* client.subscribeServerConfig({}).pipe(
+            Stream.filter((event) =>
+              (event.type === "snapshot"
+                ? event.config.providers
+                : event.type === "providerStatuses"
+                  ? event.payload.providers
+                  : []
+              ).some((provider) => provider.instanceId === "html-render-fallback-agent"),
+            ),
+            Stream.runHead,
+          );
+        }).pipe(Effect.scoped),
+      );
       const { cli } = makeState(T3_HOME);
-      // The watcher reloads settings asynchronously. Retry only before a thread was created.
-      let threadId: string | undefined;
-      for (let attempt = 0; attempt < 8 && threadId === undefined; attempt++) {
-        const started = await runPromise(
-          cli(
-            [
-              "thread",
-              "start",
-              project,
-              "Render both inline pages.",
-              "--title",
-              "ACP html_render fallback",
-              "--provider",
-              "html-render-fallback-agent",
-              "--model",
-              "default",
-              "--json",
-            ],
-            [0, 1],
-          ),
-        );
-        if (!started.stdout.includes("threadId")) continue;
-        threadId = (JSON.parse(started.stdout) as { threadId: string }).threadId;
-      }
-      if (threadId === undefined) {
-        throw new Error("Could not start the html_render fallback agent's turn.");
-      }
+      const started = await runPromise(
+        cli([
+          "thread",
+          "start",
+          project,
+          "Render both inline pages.",
+          "--title",
+          "ACP html_render fallback",
+          "--provider",
+          "html-render-fallback-agent",
+          "--model",
+          "default",
+          "--json",
+        ]),
+      );
+      const { threadId } = JSON.parse(started.stdout) as { threadId: string };
 
       await t3.open({ threadId });
       await expect(screen.getByText("Rendered both fallback pages.")).toBeVisible();
