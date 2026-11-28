@@ -21,6 +21,7 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { Chip } from "../../components/ui/Chip";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListSection } from "../../components/ui/ListSection";
+import { RowActionSlot } from "../../components/ui/RowActionSlot";
 import { RowPressable } from "../../components/ui/RowPressable";
 import { cn } from "../../lib/cn";
 import { useEnvironmentServerConfig, useThreadShell } from "../../state/entities";
@@ -90,11 +91,13 @@ export function ThreadWorkflowGroup(props: {
               }
             />
           </RowPressable>
-          <SubagentStopButton
-            environmentId={props.environmentId}
-            subagent={props.subagent}
-            className="android:mr-2"
-          />
+          <RowActionSlot>
+            <SubagentStopButton
+              environmentId={props.environmentId}
+              subagent={props.subagent}
+              className="android:mr-2"
+            />
+          </RowActionSlot>
         </View>
         {rail.length > 0 ? (
           <ScrollView
