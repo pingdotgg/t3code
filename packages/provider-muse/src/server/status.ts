@@ -6,10 +6,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 
-import { createMuseSdkHost, makeMuseEnvironment, MuseSdkError } from "./sdk.ts";
+import { createMuseSdkHost, makeMuseEnvironment } from "./sdk.ts";
 import { parseMuseVersion } from "./maintenance.ts";
 import {
   discoverMuseModels,
@@ -35,7 +34,6 @@ const MUSE_PRESENTATION = {
   // Muse has no accept-edits mode; map only :ask-me and :unrestricted.
   supportedRuntimeModes: ["approval-required", "full-access"],
 } as const;
-const isMuseSdkError = Schema.is(MuseSdkError);
 
 const FALLBACK_CAPABILITIES = museModelCapabilities();
 
@@ -150,7 +148,8 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       message:
         "Muse Code SDK could not read the model catalog. Check your Muse installation and run `muse login` on this T3 server host.",
       timedOut: Result.isFailure(catalog)
-        ? isMuseSdkError(catalog.failure) && catalog.failure.reason === "initializationTimeout"
+        ? catalog.failure._tag === "MuseSdkError" &&
+          catalog.failure.reason === "initializationTimeout"
         : true,
     });
   }
