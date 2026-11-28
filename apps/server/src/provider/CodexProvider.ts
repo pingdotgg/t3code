@@ -679,15 +679,18 @@ const resolveCodexSqliteHomePath = Effect.fn("resolveCodexSqliteHomePath")(funct
   const path = yield* Path.Path;
   const homeDir = yield* HostProcess.HomeDirectory;
   const codexHome = yield* resolveCodexHomePath(input);
+  const resolve = (value: string, base = "") => path.resolve(base, expandHomePath(value, homeDir));
   // Codex's own precedence: a launch override, then config.toml, then CODEX_SQLITE_HOME.
-  const configured =
-    codexSqliteHomeOverride(input.launchArgs) ||
-    (yield* fs.readFileString(path.join(codexHome, "config.toml")).pipe(
-      Effect.map(parseCodexSqliteHomeFromConfigToml),
-      Effect.orElseSucceed(() => undefined),
-    )) ||
-    input.environment?.CODEX_SQLITE_HOME?.trim();
-  return configured ? path.resolve(expandHomePath(configured, homeDir)) : codexHome;
+  const fromLaunchArgs = codexSqliteHomeOverride(input.launchArgs);
+  if (fromLaunchArgs) return resolve(fromLaunchArgs);
+  const fromConfig = yield* fs.readFileString(path.join(codexHome, "config.toml")).pipe(
+    Effect.map(parseCodexSqliteHomeFromConfigToml),
+    Effect.orElseSucceed(() => undefined),
+  );
+  // Codex resolves config-file paths against the file's directory.
+  if (fromConfig) return resolve(fromConfig, codexHome);
+  const fromEnv = input.environment?.CODEX_SQLITE_HOME?.trim();
+  return fromEnv ? resolve(fromEnv) : codexHome;
 });
 
 const CODEX_STATE_DB_PATTERN = /^state_(\d+)\.sqlite$/;
