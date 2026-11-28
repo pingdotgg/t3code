@@ -1,5 +1,3 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off - the test builds a real linked worktree with plain git.
-import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -18,34 +16,20 @@ import {
 } from "./ClaudeHome.ts";
 
 it.layer(NodeServices.layer)("ClaudeHome", (it) => {
-  it.effect(
-    "finds the main checkout from a linked worktree whose name holds a line separator",
-    () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const repo = yield* fileSystem.realPath(
-          yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-local-" }),
-        );
-        const worktree = path.join(repo, ".claude", "worktrees", "feature\u2028tools");
-        const git = (...args: string[]) =>
-          NodeChildProcess.execFileSync("git", ["-C", repo, ...args], { stdio: "ignore" });
-        git("init", "-q");
-        git(
-          "-c",
-          "user.name=t",
-          "-c",
-          "user.email=t@t",
-          "commit",
-          "-q",
-          "--allow-empty",
-          "-m",
-          "i",
-        );
-        git("worktree", "add", "-q", "--detach", worktree);
+  it.effect("finds the main checkout from a worktree whose name holds a line separator", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repo = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-local-" });
+      const worktree = path.join(repo, ".claude", "worktrees", "feature\u2028tools");
+      const worktreeGitDir = path.join(repo, ".git", "worktrees", "feature\u2028tools");
+      yield* fileSystem.makeDirectory(worktree, { recursive: true });
+      yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(worktree, ".git"), `gitdir: ${worktreeGitDir}\n`);
+      yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
 
-        expect(yield* claudeLocalSettingsDirectory(worktree)).toBe(repo);
-      }),
+      expect(yield* claudeLocalSettingsDirectory(worktree)).toBe(repo);
+    }),
   );
 
   describe("Claude home resolution", () => {
