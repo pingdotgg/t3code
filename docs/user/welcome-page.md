@@ -3,6 +3,7 @@
 The Welcome page runs on a fresh local installation to help you verify an agent, optionally import existing projects and conversations, and connect the mobile app. Only one ready agent is required to start.
 
 - Reopen it anytime from **Settings → About → Welcome page → Open**.
+- To import more projects later, open **Settings → Projects → Import projects and their threads**. It scans the environment shown there and opens the full project list; pick another environment in Settings to import from it.
 - Hosted `app.t3.codes` skips this page and prompts you to sign in to T3 Connect and run `t3 connect` on your computer instead.
 
 ## Agents

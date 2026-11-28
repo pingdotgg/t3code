@@ -15,10 +15,11 @@ function composerFileLinkBasename(path: string): string {
   return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
 }
 
-// Emphasis markers too: `__init__.py` would otherwise render as bold "init.py",
-// which no longer matches the path, so the label shows beside the chip.
+// Numeric bracket entities avoid TeX `\[…\]` math delimiters; emphasis and tildes stay escaped.
 function escapeMarkdownLinkLabel(label: string): string {
-  return label.replace(/[\\[\]*_&]/g, "\\$&");
+  return label.replace(/[\\[\]*_~&]/g, (char) =>
+    char === "[" ? "&#91;" : char === "]" ? "&#93;" : `\\${char}`,
+  );
 }
 
 function encodeMarkdownLinkDestination(path: string): string {
@@ -31,14 +32,16 @@ function encodeMarkdownLinkDestination(path: string): string {
     .replaceAll("\\", "%5C");
 }
 
-const URI_OR_ROOTED_PATH_PATTERN = /^(?:[a-z][a-z\d+.-]*:|[\\/])/i;
+const DRIVE_OR_ROOTED_PATH_PATTERN = /^(?:[a-z]:[\\/]|[\\/])/i;
+const URI_SCHEME_PREFIX_PATTERN = /^[a-z][a-z\d+.-]*:/i;
 
-// A relative destination the parser rejects (`C%23/Program.cs`) gets `./`, as codexFileCitations does.
+// Relative paths need `./` when the parser rejects them or reads their prefix as a URI scheme.
 function needsDotSlashPrefix(path: string): boolean {
   return (
     path.length > 0 &&
-    !parseMarkdownFileLink(encodeMarkdownLinkDestination(path)) &&
-    !URI_OR_ROOTED_PATH_PATTERN.test(path)
+    !DRIVE_OR_ROOTED_PATH_PATTERN.test(path) &&
+    (URI_SCHEME_PREFIX_PATTERN.test(path) ||
+      !parseMarkdownFileLink(encodeMarkdownLinkDestination(path)))
   );
 }
 

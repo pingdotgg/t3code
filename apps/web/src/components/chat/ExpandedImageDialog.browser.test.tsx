@@ -187,4 +187,50 @@ describe("ExpandedImageDialog", () => {
     expect(pointerFraction().x).toBeCloseTo(anchor.x, 2);
     expect(pointerFraction().y).toBeCloseTo(anchor.y, 2);
   });
+
+  it("draws in place: the image, its caption and the controls stay put", async () => {
+    const file = new File([await (await fetch(PIXEL)).blob()], "shot.png", { type: "image/png" });
+    const save = vi.fn(async () => null);
+    const onClose = vi.fn();
+    await using screen = await render(
+      <ExpandedImageDialog
+        preview={{
+          images: [
+            {
+              src: PIXEL,
+              name: "shot.png",
+              mimeType: "image/png",
+              edit: { file, name: "shot.png", mimeType: "image/png", save },
+            },
+            { src: PIXEL, name: "other.png" },
+          ],
+          index: 0,
+        }}
+        onClose={onClose}
+      />,
+      // The dialog renders no links and reads no route.
+      { router: false },
+    );
+    const image = screen.getByRole("img", { name: "shot.png", exact: true });
+    const caption = screen.getByText("shot.png (1/2)");
+    await expect.element(image).toBeVisible();
+    const rects = () =>
+      [image, caption].map((locator) => locator.element().getBoundingClientRect().toJSON());
+    const before = rects();
+
+    await userEvent.click(screen.getByRole("button", { name: "Draw on image" }));
+    await expect.element(screen.getByRole("button", { name: "Done" })).toHaveFocus();
+    expect(rects()).toEqual(before);
+    await expect
+      .element(screen.getByRole("button", { name: "Draw on image" }))
+      .toHaveAttribute("aria-pressed", "true");
+    await expect.element(screen.getByRole("button", { name: "Next media" })).toBeEnabled();
+
+    // The close button cancels the drawing and keeps the preview open.
+    await userEvent.click(screen.getByRole("button", { name: "Cancel drawing" }));
+    await expect.element(screen.getByRole("button", { name: "Done" })).not.toBeInTheDocument();
+    expect(rects()).toEqual(before);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
 });

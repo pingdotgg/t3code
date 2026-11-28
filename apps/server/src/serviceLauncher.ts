@@ -739,6 +739,73 @@ async function replaceFileDurably(filePath: string, contents: string | Uint8Arra
   }
 }
 
+async function readStateContents(statePath: string): Promise<string | undefined> {
+  return NodeFSP.readFile(statePath, "utf8").catch((cause: NodeJS.ErrnoException) => {
+    if (cause.code === "ENOENT") return undefined;
+    throw cause;
+  });
+}
+
+/** The runtime the service unit starts, else the newest complete one. */
+async function installedRuntimeVersion(
+  baseDir: string,
+  serviceUnit: ServiceUnit | undefined,
+): Promise<string | undefined> {
+  const unit =
+    serviceUnit &&
+    (await NodeFSP.readFile(serviceUnit.path)
+      .then(decodeServiceUnit)
+      .catch(() => undefined));
+  const unitVersion =
+    unit === undefined
+      ? undefined
+      : SERVICE_UNIT_PROGRAMS.map((program) => program.exec(unit)?.[2]).find(
+          (version) => version !== undefined,
+        );
+  if (
+    unitVersion !== undefined &&
+    isExactServiceVersion(unitVersion) &&
+    (await runtimeExists(baseDir, unitVersion))
+  ) {
+    return unitVersion;
+  }
+  const entries = await NodeFSP.readdir(NodePath.join(baseDir, "runtime", "versions")).catch(
+    () => [],
+  );
+  let newest: string | undefined;
+  for (const version of entries) {
+    if (
+      isExactServiceVersion(version) &&
+      (newest === undefined || compareExactServiceVersions(version, newest) > 0) &&
+      (await runtimeExists(baseDir, version))
+    ) {
+      newest = version;
+    }
+  }
+  return newest;
+}
+
+// Without the state file every start would fail; select the installed runtime again.
+async function recoverServiceState(
+  baseDir: string,
+  statePath: string,
+  serviceUnit: ServiceUnit | undefined,
+): Promise<string> {
+  const release = await acquireServiceSelectionLock(statePath);
+  try {
+    const written = await readStateContents(statePath);
+    if (written !== undefined) return written;
+    const activeVersion = await installedRuntimeVersion(baseDir, serviceUnit);
+    if (activeVersion === undefined) {
+      throw new Error("Service state is missing and no installed runtime was found.");
+    }
+    await writeServiceState(statePath, { protocol: SERVICE_LAUNCHER_PROTOCOL, activeVersion });
+    return NodeFSP.readFile(statePath, "utf8");
+  } finally {
+    release();
+  }
+}
+
 async function runtimeExists(baseDir: string, version: string): Promise<boolean> {
   const paths = runtimePaths(baseDir, version);
   try {
@@ -1608,7 +1675,10 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
     };
     const environment = await readServiceEnvironment(baseDir, managerEnvironment);
     const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
-    const contents = await NodeFSP.readFile(statePath, "utf8");
+    const serviceUnit = await serviceUnitFromEnvironment(managerEnvironment);
+    const contents =
+      (await readStateContents(statePath)) ??
+      (await recoverServiceState(baseDir, statePath, serviceUnit));
     let state = parseServiceState(contents);
     if (state === undefined) {
       state = adoptLegacyServiceState(contents);
@@ -1617,7 +1687,6 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
         throw new Error(`Selected t3@${state.activeVersion} runtime is missing or incomplete.`);
       }
     }
-    const serviceUnit = await serviceUnitFromEnvironment(managerEnvironment);
     const logPath = await serviceLogPath(options, serviceUnit);
     if (logPath !== undefined) {
       await boundServiceLog(logPath);

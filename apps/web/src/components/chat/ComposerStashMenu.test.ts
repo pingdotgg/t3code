@@ -29,4 +29,18 @@ describe("stashEntrySnippet", () => {
     });
     expect(stashEntrySnippet(entry(`Summarize ${file} please`))).toBe("Summarize README.md please");
   });
+
+  it("counts unreadable and still-saving images in an image-only prompt", () => {
+    expect(stashEntrySnippet({ ...entry(""), unreadableImageNames: ["shot.png"] })).toBe(
+      "(1 image)",
+    );
+    expect(
+      stashEntrySnippet({
+        ...entry(""),
+        droppedImageNames: ["big.png"],
+        unreadableImageNames: ["shot.png"],
+      }),
+    ).toBe("(2 images)");
+    expect(stashEntrySnippet({ ...entry(""), pendingImageCount: 1 })).toBe("(1 image)");
+  });
 });

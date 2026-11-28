@@ -225,7 +225,13 @@ export function listThreadPullRequests(
 ): ListThreadPullRequestsResult {
   const chains = resolveThreadPullRequestChains(thread.pullRequests ?? []);
   const after = visibleThreadPullRequests(thread.pullRequests ?? [])
-    .filter((link) => states === undefined || states.includes(link.snapshot?.state ?? "open"))
+    // An empty list is no filter: clients that fill every optional field send `[]`.
+    .filter(
+      (link) =>
+        states === undefined ||
+        states.length === 0 ||
+        states.includes(link.snapshot?.state ?? "open"),
+    )
     .map((link) => ({ link, position: pullRequestListPosition(link) }))
     .filter(({ position }) => cursor === undefined || position > cursor)
     .toSorted((left, right) => (left.position < right.position ? -1 : 1));

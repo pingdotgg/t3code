@@ -212,6 +212,7 @@ const make = Effect.gen(function* () {
           threadId: ThreadId.make(id),
           projectId,
           title: input.title,
+          titleRenamed: true,
           modelSelection,
           runtimeMode: input.launch?.runtimeMode ?? defaults.defaultRuntimeMode,
           interactionMode: input.launch?.interactionMode ?? "default",

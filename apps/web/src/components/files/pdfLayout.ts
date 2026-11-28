@@ -84,9 +84,14 @@ export function pdfPageText(
   return items.map((item) => ("str" in item ? item.str + (item.hasEOL ? "\n" : "") : "")).join("");
 }
 
-// A typed straight quote finds a typeset curly one, as pdf.js's own find does.
-function foldQuotes(text: string) {
-  return text.replace(/[\u2018-\u201b]/g, "'").replace(/[\u201c-\u201f]/g, '"');
+// A typed straight quote finds a typeset curly one, as pdf.js's own find does. Final sigma folds
+// to σ because lowercasing a whole page turns a word-final Σ into ς, but a lone run's into σ.
+function foldPdfFindCharacters(text: string) {
+  return text
+    .toLowerCase()
+    .replace(/ς/g, "σ")
+    .replace(/[\u2018-\u201b]/g, "'")
+    .replace(/[\u201c-\u201f]/g, '"');
 }
 
 /**
@@ -96,7 +101,7 @@ function foldQuotes(text: string) {
  */
 function pdfFindText(runs: readonly string[]) {
   const chars = runs.flatMap((run, index) =>
-    Array.from(foldQuotes(run.toLowerCase()), (char) => ({ char, run: index })),
+    Array.from(foldPdfFindCharacters(run), (char) => ({ char, run: index })),
   );
   let text = "";
   let last = "";
@@ -128,9 +133,9 @@ function pdfFindText(runs: readonly string[]) {
 /** Whether a page's text holds the query, under the same rules as `pdfFindMatchRuns`, without
  * mapping characters back to runs: the page scan checks every page on each query. */
 export function pdfFindIncludes(text: string, query: string) {
-  const needle = foldQuotes(query.toLowerCase()).replace(/\s+/g, " ");
+  const needle = foldPdfFindCharacters(query).replace(/\s+/g, " ");
   if (!needle.trim()) return false;
-  return foldQuotes(text.toLowerCase())
+  return foldPdfFindCharacters(text)
     .replace(/(\p{L})-\n(?=\p{L})/gu, "$1")
     .replace(/\s+/g, " ")
     .includes(needle);
@@ -139,7 +144,7 @@ export function pdfFindIncludes(text: string, query: string) {
 /** Which text runs hold part of a case-insensitive match, when pdf.js splits words across spans. */
 export function pdfFindMatchRuns(runs: readonly string[], query: string) {
   const { text, owner } = pdfFindText(runs);
-  const needle = foldQuotes(query.toLowerCase()).replace(/\s+/g, " ");
+  const needle = foldPdfFindCharacters(query).replace(/\s+/g, " ");
   const hits = runs.map(() => false);
   if (!needle.trim()) return hits;
   for (

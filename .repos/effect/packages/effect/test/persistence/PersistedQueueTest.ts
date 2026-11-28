@@ -24,32 +24,44 @@ export const suiteWith = <R>(
     readonly cleanupUsesClock?: boolean | undefined
     /** Set when the store fails `cleanup` as unsupported instead of running it. */
     readonly cleanup?: "supported" | "unsupported" | undefined
+    /**
+     * Wall-clock wait for state-only non-delivery assertions (default 1 second).
+     * Lower only for backends validated against claim/completion mutations.
+     */
+    readonly nonDeliveryWait?: Duration.Input | undefined
   }
 ) => {
   const timeout = options?.timeout ?? "30 seconds"
   const hookTimeout = options?.hookTimeout ?? timeout
+  const nonDeliveryWait = options?.nonDeliveryWait ?? "1 second"
   // Tests share and advance the same TestClock.
   const testOptions = { timeout: Duration.toMillis(timeout) }
 
   // give real-time stores a moment of wall-clock time
-  const liveSleep = (millis: number) =>
-    options?.virtualTime ? Effect.yieldNow : Effect.sleep(millis).pipe(TestClock.withLive)
+  const liveSleep = (duration: Duration.Input) =>
+    options?.virtualTime ? Effect.yieldNow : Effect.sleep(duration).pipe(TestClock.withLive)
 
   // advance the virtual clock one poll cycle, give real-time stores a moment,
-  // then check the forked take is still waiting
-  const assertNotDelivered = Effect.fnUntraced(function*<A, E>(fiber: Fiber.Fiber<A, E>) {
+  // then check the forked take is still waiting. State-only checks use
+  // `nonDeliveryWait`; offer-delay checks wait 1s so the assertion stays tied
+  // to the store's clock.
+  const assertNotDelivered = Effect.fnUntraced(function*<A, E>(
+    fiber: Fiber.Fiber<A, E>,
+    wait: Duration.Input = nonDeliveryWait
+  ) {
     yield* TestClock.adjust(1000)
-    yield* liveSleep(1000)
+    yield* liveSleep(wait)
     assert.isUndefined(fiber.pollUnsafe())
   })
 
   // advance both clocks until the forked take completes, including acknowledgement.
   // Keep advancing while it is pending: an SQL poll can miss a virtual-clock
-  // wakeup, and acknowledgement retries also sleep on the virtual clock.
+  // wakeup, and acknowledgement retries also sleep on the virtual clock. Each
+  // live wait ends as soon as the take settles.
   const awaitDelivery = Effect.fnUntraced(function*<A, E>(fiber: Fiber.Fiber<A, E>) {
     for (let i = 0; i < 8 && fiber.pollUnsafe() === undefined; i++) {
       yield* TestClock.adjust(1000)
-      yield* liveSleep(700)
+      yield* Effect.raceFirst(Fiber.await(fiber), liveSleep(700))
     }
     assert.isDefined(fiber.pollUnsafe())
     return yield* Fiber.join(fiber)
@@ -182,7 +194,7 @@ export const suiteWith = <R>(
           Effect.forkScoped
         )
 
-        yield* assertNotDelivered(fiber)
+        yield* assertNotDelivered(fiber, 1000)
 
         // the delay does not consume an attempt
         assert.deepStrictEqual(yield* awaitDelivery(fiber), { value: { n: 42n }, attempts: 1 })
@@ -235,7 +247,7 @@ export const suiteWith = <R>(
 
         // the undelayed duplicate does not make the element available early
         const fiber = yield* queue.take(Effect.succeed).pipe(Effect.forkScoped)
-        yield* assertNotDelivered(fiber)
+        yield* assertNotDelivered(fiber, 1000)
         assert.deepStrictEqual(yield* awaitDelivery(fiber), { n: 1n })
 
         const fiber2 = yield* queue.take(Effect.succeed).pipe(Effect.forkScoped)
@@ -488,7 +500,7 @@ export const suiteWith = <R>(
         // the re-offer is new work and honours its own delay
         yield* queue.offer({ n: 2n }, { ...offerOptions, delay: "3 seconds" })
         const fiber = yield* queue.take(Effect.succeed).pipe(Effect.forkScoped)
-        yield* assertNotDelivered(fiber)
+        yield* assertNotDelivered(fiber, 1000)
         assert.deepStrictEqual(yield* awaitDelivery(fiber), { n: 2n })
       }), testOptions)
 
@@ -597,9 +609,5 @@ export const suiteWith = <R>(
 export const suite = (
   name: string,
   layer: Layer.Layer<PersistedQueue.PersistedQueueStore, unknown>,
-  options?: {
-    readonly virtualTime?: boolean | undefined
-    readonly cleanupUsesClock?: boolean | undefined
-    readonly cleanup?: "supported" | "unsupported" | undefined
-  }
+  options?: Parameters<typeof suiteWith>[3]
 ) => suiteWith(name, layer, it, options)

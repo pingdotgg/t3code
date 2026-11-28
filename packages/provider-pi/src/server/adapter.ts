@@ -1,3 +1,4 @@
+import { imageMimeTypeFromBytes } from "@t3tools/shared/image";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeUtil from "node:util";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -1324,7 +1325,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             Effect.andThen(
               Effect.suspend(() => {
                 item.flushScheduled = false;
-                return item.completed ? Effect.void : emitStreamItem(turn, item, true);
+                // Gemini sends an empty text part on tool-use steps; publishing it would leave an empty message.
+                return item.completed || item.text.length === 0
+                  ? Effect.void
+                  : emitStreamItem(turn, item, true);
               }),
             ),
             Effect.forkIn(scope),
@@ -3422,7 +3426,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             images.push({
               type: "image",
               data: Buffer.from(bytes).toString("base64"),
-              mimeType: attachment.mimeType,
+              mimeType: imageMimeTypeFromBytes(bytes) ?? attachment.mimeType,
             });
           }
         }

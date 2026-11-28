@@ -77,6 +77,10 @@ export type TypeId = "~@effect/sql-pg/PgConnection"
  * `preparedStatementCacheSize`. Disable them for poolers that drop named
  * statements, such as PgBouncer with `max_prepared_statements = 0`, or for
  * workloads that generate unique SQL. Streams always use unnamed statements.
+ * With `multiplex`, PgBouncer before 1.26.0 with `max_prepared_statements > 0`
+ * can misorder or drop responses to pipelined `Close` messages and fail
+ * connections with `Unexpected ParseComplete during close`; set
+ * `prepare: false` or upgrade PgBouncer.
  *
  * With `multiplex` enabled, unpinned queries from multiple fibers are
  * pipelined. Transactions, streams, and listeners remain exclusive. An
@@ -133,6 +137,11 @@ export interface Config {
    * Forwarded without parsing `-c` flags or checking for duplicate GUCs.
    */
   readonly startupOptions?: string | undefined
+  /**
+   * Custom streams must emit `close` when their transport closes. Streams
+   * created with `emitClose: false` are unsupported; without the event, a pool
+   * slot can remain occupied indefinitely.
+   */
   readonly stream?: (() => Duplex) | undefined
   readonly types?: PgTypes.Registry | undefined
   readonly multiplex?: boolean | undefined
@@ -191,6 +200,22 @@ export interface Result {
 }
 
 /**
+ * The result of `queryTextValues`: positional rows holding each value as the
+ * server's text, or `null` for SQL `NULL`.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.1.6
+ */
+export interface TextResult {
+  readonly command: string
+  readonly rowCount: number
+  readonly oid: number | null
+  readonly fields: ReadonlyArray<Field>
+  readonly values: ReadonlyArray<ReadonlyArray<string | null>>
+}
+
+/**
  * A `NOTIFY` message received while listening on a channel.
  *
  * @stability unstable
@@ -223,8 +248,9 @@ export interface PgConnection {
    *
    * After release, queries, streams and listeners through the returned
    * connection fail, and its `interrupt` does nothing. Releasing a pin with
-   * an in-flight statement or an open listener closes the session and fails
-   * any listener queues, as does leaving a transaction the pin began aborted.
+   * an in-flight statement, an open listener, or an unfinished transaction it
+   * began closes the session and fails any listener queues. Transactions
+   * already open before the pin are left to the caller.
    */
   readonly pin: Effect.Effect<PgConnection, never, Scope.Scope>
   /**
@@ -254,6 +280,17 @@ export interface PgConnection {
     params?: ReadonlyArray<unknown>,
     prepare?: boolean
   ) => Effect.Effect<ReadonlyArray<ReadonlyArray<unknown>>, SqlError>
+  /**
+   * Runs a query and returns field metadata alongside positional rows of raw
+   * PostgreSQL text values (`string | null`), bypassing result codecs
+   * (including `Config.types`). Pass `false` to skip the prepared statement
+   * cache. Interruption behaves as for `query`.
+   */
+  readonly queryTextValues: (
+    sql: string,
+    params?: ReadonlyArray<unknown>,
+    prepare?: boolean
+  ) => Effect.Effect<TextResult, SqlError>
   /**
    * Streams rows without collecting the full result. The session is pinned for
    * the lifetime of the stream. An early abort behaves like an interrupted
@@ -422,7 +459,11 @@ class PgConnectionImpl implements PgConnection {
     this[internalsKey] = {
       base: this,
       deadError: () => this.deadWith,
-      retireHooks: this.retireHooks
+      retireHooks: this.retireHooks,
+      onTransportClose: (f) => {
+        if (session.socket.closed) f()
+        else session.socket.once("close", f)
+      }
     }
     session.parser.onFieldError = this.onFieldError
     session.socket.on("data", this.onData)
@@ -570,8 +611,9 @@ class PgConnectionImpl implements PgConnection {
   readonly encodeQuery = (
     sql: string,
     params: ReadonlyArray<unknown>,
-    cache: PreparedCache | undefined
-  ): Plan => encodeQuery(sql, params, this.registry, this.bindEncoder, cache)
+    cache: PreparedCache | undefined,
+    output: Output = "rows"
+  ): Plan => encodeQuery(sql, params, this.registry, this.bindEncoder, cache, output === "text")
 
   /**
    * Routes backend messages to the oldest statement still on the wire.
@@ -650,8 +692,9 @@ class PgConnectionImpl implements PgConnection {
     // be in place before the parser reads on.
     this.session.parser.readField = this.pipelineInFlight[this.pipelineHead]?.machine.readField
     if (!entry.abandoned) Deferred.doneUnsafe(entry.deferred, result)
-    if (this.pipelineHead === this.pipelineInFlight.length) {
-      this.pipelineInFlight.length = 0
+    // Compact once half consumed so a continuously busy pipeline stays bounded.
+    if (this.pipelineHead * 2 >= this.pipelineInFlight.length) {
+      this.pipelineInFlight.splice(0, this.pipelineHead)
       this.pipelineHead = 0
     }
   }
@@ -708,7 +751,7 @@ class PgConnectionImpl implements PgConnection {
   private readonly pipelineCycle = (
     sql: string,
     params: ReadonlyArray<unknown>,
-    wantRows: boolean,
+    output: Output,
     cache: PreparedCache | undefined
   ): Effect.Effect<QueryOutput, SqlError> =>
     Effect.flatMap(
@@ -716,13 +759,13 @@ class PgConnectionImpl implements PgConnection {
         if (this.deadWith !== undefined) return Effect.fail(this.deadWith)
         let plan: Plan
         try {
-          plan = this.encodeQuery(sql, params, cache)
+          plan = this.encodeQuery(sql, params, cache, output)
         } catch (cause) {
           return Effect.fail(queryError(cause, "PgConnection: Failed to encode query"))
         }
         const deferred = Deferred.makeUnsafe<QueryOutput, SqlError>()
         let entry: PipelineEntry
-        const machine = new QueryMachine(this, plan, wantRows, (result) => this.finishPipelineEntry(entry, result))
+        const machine = new QueryMachine(this, plan, output, (result) => this.finishPipelineEntry(entry, result))
         entry = { plan, deferred, machine, abandoned: false }
         this.pipelinePending.push(entry)
         this.consumer = this.pipelineConsumer
@@ -738,7 +781,7 @@ class PgConnectionImpl implements PgConnection {
           )
         )
         if (cache === undefined || entry.plan.parses) return awaited
-        return retryStale(entry.plan, cache, awaited, () => this.pipelineCycle(sql, params, wantRows, undefined))
+        return retryStale(entry.plan, cache, awaited, () => this.pipelineCycle(sql, params, output, undefined))
       }
     )
 
@@ -749,9 +792,9 @@ class PgConnectionImpl implements PgConnection {
   readonly cycleOwned = (
     sql: string,
     params: ReadonlyArray<unknown>,
-    wantRows: boolean,
+    output: Output,
     cache: PreparedCache | undefined
-  ): Effect.Effect<QueryOutput, SqlError> => Effect.suspend(() => this.attempt(sql, params, wantRows, cache))
+  ): Effect.Effect<QueryOutput, SqlError> => Effect.suspend(() => this.attempt(sql, params, output, cache))
 
   /**
    * Runs one cycle. A reused statement the backend has since dropped, or whose
@@ -761,19 +804,19 @@ class PgConnectionImpl implements PgConnection {
   private readonly attempt = (
     sql: string,
     params: ReadonlyArray<unknown>,
-    wantRows: boolean,
+    output: Output,
     cache: PreparedCache | undefined
   ): Effect.Effect<QueryOutput, SqlError> => {
     if (this.deadWith !== undefined) return Effect.fail(this.deadWith)
     let plan: Plan
     try {
-      plan = this.encodeQuery(sql, params, cache)
+      plan = this.encodeQuery(sql, params, cache, output)
     } catch (cause) {
       return Effect.fail(queryError(cause, "PgConnection: Failed to encode query"))
     }
-    const run = runQuery(this, plan, wantRows)
+    const run = runQuery(this, plan, output)
     if (cache === undefined || plan.parses) return run
-    return retryStale(plan, cache, run, () => this.attempt(sql, params, wantRows, undefined))
+    return retryStale(plan, cache, run, () => this.attempt(sql, params, output, undefined))
   }
 
   /** Sends a `CancelRequest` for this session on a side connection. */
@@ -820,12 +863,12 @@ class PgConnectionImpl implements PgConnection {
               new Error("Pinned connection released with work outstanding"),
               "PgConnection: Pinned connection released with work outstanding"
             ))
-          } else if (view.startedIdle && this.transactionStatus === "E") {
-            // A failed cleanup, such as a cancelled `ROLLBACK`, leaves every later
-            // statement failing. A transaction open before the pin is its caller's.
+          } else if (view.startedIdle && this.transactionStatus !== "I") {
+            // An unfinished transaction the pin began would leak into the next
+            // checkout; transactions open before the pin belong to the caller.
             this.fatal(connectionQueryError(
-              new Error("Pinned connection released in an aborted transaction"),
-              "PgConnection: Pinned connection released in an aborted transaction"
+              new Error("Pinned connection released inside a transaction"),
+              "PgConnection: Pinned connection released inside a transaction"
             ))
           }
           return idle ? Effect.andThen(this.wire.release(1), this.owner.release(1)) : this.owner.release(1)
@@ -837,24 +880,30 @@ class PgConnectionImpl implements PgConnection {
   private readonly run = (
     sql: string,
     params: ReadonlyArray<unknown>,
-    wantRows: boolean,
+    output: Output,
     prepare: boolean
   ): Effect.Effect<QueryOutput, SqlError> => {
     const cache = prepare ? this.prepared : undefined
     return this.multiplex
-      ? this.pipelineCycle(sql, params, wantRows, cache)
-      : this.owner.withPermit(this.cycleOwned(sql, params, wantRows, cache))
+      ? this.pipelineCycle(sql, params, output, cache)
+      : this.owner.withPermit(this.cycleOwned(sql, params, output, cache))
   }
 
   readonly query = (sql: string, params?: ReadonlyArray<unknown>, prepare = true): Effect.Effect<Result, SqlError> =>
-    Effect.map(this.run(sql, params ?? emptyParams, true, prepare), takeResult)
+    Effect.map(this.run(sql, params ?? emptyParams, "rows", prepare), takeResult)
 
   readonly queryValues = (
     sql: string,
     params?: ReadonlyArray<unknown>,
     prepare = true
   ): Effect.Effect<ReadonlyArray<ReadonlyArray<unknown>>, SqlError> =>
-    Effect.map(this.run(sql, params ?? emptyParams, false, prepare), takeValues)
+    Effect.map(this.run(sql, params ?? emptyParams, "values", prepare), takeValues)
+
+  readonly queryTextValues = (
+    sql: string,
+    params?: ReadonlyArray<unknown>,
+    prepare = true
+  ): Effect.Effect<TextResult, SqlError> => Effect.map(this.run(sql, params ?? emptyParams, "text", prepare), takeText)
 
   readonly stream = (sql: string, params?: ReadonlyArray<unknown>): Stream.Stream<Row, SqlError> =>
     streamRows(this, this.pin, sql, params ?? emptyParams)
@@ -896,13 +945,13 @@ class PinnedPgConnection implements PgConnection {
   private cycle(
     sql: string,
     params: ReadonlyArray<unknown>,
-    wantRows: boolean,
+    output: Output,
     prepare: boolean
   ): Effect.Effect<QueryOutput, SqlError> {
     return this.base.wire.withPermit(Effect.suspend(() =>
       this.released
         ? Effect.fail(pinReleasedError())
-        : this.base.cycleOwned(sql, params, wantRows, prepare ? this.base.prepared : undefined)
+        : this.base.cycleOwned(sql, params, output, prepare ? this.base.prepared : undefined)
     ))
   }
 
@@ -917,14 +966,21 @@ class PinnedPgConnection implements PgConnection {
   }
 
   readonly query = (sql: string, params?: ReadonlyArray<unknown>, prepare = true): Effect.Effect<Result, SqlError> =>
-    Effect.map(this.cycle(sql, params ?? emptyParams, true, prepare), takeResult)
+    Effect.map(this.cycle(sql, params ?? emptyParams, "rows", prepare), takeResult)
 
   readonly queryValues = (
     sql: string,
     params?: ReadonlyArray<unknown>,
     prepare = true
   ): Effect.Effect<ReadonlyArray<ReadonlyArray<unknown>>, SqlError> =>
-    Effect.map(this.cycle(sql, params ?? emptyParams, false, prepare), takeValues)
+    Effect.map(this.cycle(sql, params ?? emptyParams, "values", prepare), takeValues)
+
+  readonly queryTextValues = (
+    sql: string,
+    params?: ReadonlyArray<unknown>,
+    prepare = true
+  ): Effect.Effect<TextResult, SqlError> =>
+    Effect.map(this.cycle(sql, params ?? emptyParams, "text", prepare), takeText)
 
   readonly stream = (sql: string, params?: ReadonlyArray<unknown>): Stream.Stream<Row, SqlError> =>
     streamRows(this.base, this.pin, sql, params ?? emptyParams)
@@ -934,6 +990,9 @@ class PinnedPgConnection implements PgConnection {
   ): Effect.Effect<Queue.Dequeue<Notification, SqlError>, SqlError, Scope.Scope> =>
     listenChannel(this.base, this.pin, channel)
 }
+
+/** What a cycle collects: object rows, decoded positional rows, or positional text. */
+type Output = "rows" | "values" | "text"
 
 interface QueryOutput {
   readonly result: Result
@@ -1048,6 +1107,13 @@ const emptyParams: ReadonlyArray<unknown> = []
 
 const takeResult = (output: QueryOutput): Result => output.result
 const takeValues = (output: QueryOutput): ReadonlyArray<ReadonlyArray<unknown>> => output.values
+const takeText = ({ result, values }: QueryOutput): TextResult => ({
+  command: result.command,
+  rowCount: result.rowCount,
+  oid: result.oid,
+  fields: result.fields,
+  values: values as ReadonlyArray<ReadonlyArray<string | null>>
+})
 
 /**
  * The tail of every extended-query frame. `Describe` names the unnamed portal,
@@ -1108,11 +1174,12 @@ const encodeUnnamed = (
   sql: string,
   parameters: ReadonlyArray<PgTypes.Parameter>,
   parameterTypes: ReadonlyArray<number>,
-  encodeBind: BindEncoder
+  encodeBind: BindEncoder,
+  textResults: boolean
 ): Plan => {
   const parse = PgProtocol.encodeParse({ name: "", query: sql, parameterTypes })
   if (EffectResult.isFailure(parse)) throw parse.failure
-  const bind = encodeBind({ portal: "", statement: "", parameters })
+  const bind = encodeBind({ portal: "", statement: "", parameters, textResults })
   if (EffectResult.isFailure(bind)) throw bind.failure
   return {
     frame: concat([parse.success, bind.success, describeExecuteSync]),
@@ -1140,7 +1207,8 @@ const encodeQuery = (
   params: ReadonlyArray<unknown>,
   registry: PgTypes.Registry | undefined,
   encodeBind: BindEncoder,
-  cache: PreparedCache | undefined
+  cache: PreparedCache | undefined,
+  textResults: boolean
 ): Plan => {
   const count = params.length
   const parameters: Array<PgTypes.Parameter> = new Array(count)
@@ -1152,17 +1220,17 @@ const encodeQuery = (
   }
 
   if (cache === undefined) {
-    return encodeUnnamed(sql, parameters, parameterTypes, encodeBind)
+    return encodeUnnamed(sql, parameters, parameterTypes, encodeBind, textResults)
   }
 
-  const prepared = cache.get(sql, parameterTypes)
+  const prepared = cache.get(sql, parameterTypes, textResults)
   if (!prepared.ready && prepared.parsing) {
     // Another cycle is already on the wire carrying this name's `Parse`.
     // Naming it again would collide, and reusing it would mean binding to
     // columns nobody has seen yet, so this execution goes unnamed.
-    return encodeUnnamed(sql, parameters, parameterTypes, encodeBind)
+    return encodeUnnamed(sql, parameters, parameterTypes, encodeBind, textResults)
   }
-  const bind = encodeBind({ portal: "", statement: prepared.name, parameters })
+  const bind = encodeBind({ portal: "", statement: prepared.name, parameters, textResults })
   if (EffectResult.isFailure(bind)) throw bind.failure
   const parse = prepared.ready ? undefined : PgProtocol.encodeParse({ name: prepared.name, query: sql, parameterTypes })
   if (parse !== undefined && EffectResult.isFailure(parse)) throw parse.failure
@@ -1197,9 +1265,9 @@ const encodeQuery = (
 }
 
 /**
- * The statements one connection has prepared, keyed by SQL text and the
- * parameter OIDs inferred for it: the same text with differently typed
- * parameters is a different statement to the backend.
+ * Prepared statements for one connection, keyed by result format, parameter
+ * OIDs, and SQL text. Text-format runs are keyed separately because cached
+ * descriptions hold format-specific column readers.
  *
  * The cache is bounded and evicts least-recently-used. An evicted statement is
  * closed on the backend, but its `Close` waits for the next statement to go
@@ -1216,8 +1284,8 @@ class PreparedCache {
     this.max = max
   }
 
-  get(sql: string, parameterTypes: ReadonlyArray<number>): Prepared {
-    const key = parameterTypes.length === 0 ? sql : `${sql}\u0000${parameterTypes.join(",")}`
+  get(sql: string, parameterTypes: ReadonlyArray<number>, textResults: boolean): Prepared {
+    const key = `${textResults ? "T" : "B"}\u0000${parameterTypes.join(",")}\u0000${sql}`
     const found = this.statements.get(key)
     if (found !== undefined) {
       // Re-insert to move it to the end: `Map` iterates in insertion order, so
@@ -1307,6 +1375,7 @@ type BindEncoder = (options: {
   readonly portal: string
   readonly statement: string
   readonly parameters: ReadonlyArray<PgTypes.Parameter>
+  readonly textResults: boolean
 }) => EffectResult.Result<Uint8Array, PgProtocol.EncodeError | PgTypes.CodecError>
 
 /**
@@ -1407,6 +1476,7 @@ class QueryMachine implements Consumer {
   /** Object rows, or `undefined` when the caller asked for positional ones. */
   private readonly rows: Array<Row> | undefined
   private readonly values: Array<ReadonlyArray<unknown>> | undefined
+  private readonly textResults: boolean
 
   private closes: number
   private phase: QueryPhase
@@ -1424,14 +1494,15 @@ class QueryMachine implements Consumer {
   constructor(
     conn: PgConnectionImpl,
     plan: Plan,
-    wantRows: boolean,
+    output: Output,
     finish: (effect: Effect.Effect<QueryOutput, SqlError>) => void
   ) {
     this.conn = conn
     this.plan = plan
     this.finish = finish
-    this.rows = wantRows ? [] : undefined
-    this.values = wantRows ? undefined : []
+    this.rows = output === "rows" ? [] : undefined
+    this.values = output === "rows" ? undefined : []
+    this.textResults = output === "text"
     this.closes = plan.closes
     this.phase = plan.closes > 0 ? "close" : plan.parses ? "parse" : "bind"
     const description = plan.description
@@ -1522,7 +1593,7 @@ class QueryMachine implements Consumer {
         return
       case "RowDescription": {
         if (this.phase !== "describe") return this.failDesync(`Unexpected RowDescription during ${this.phase}`)
-        const description = describe(message.fields, this.conn.registry)
+        const description = describe(message.fields, this.conn.registry, this.textResults)
         if (EffectResult.isFailure(description)) {
           return this.conn.fatal(queryError(description.failure, "PgConnection: Failed to decode row"))
         }
@@ -1652,14 +1723,14 @@ const drainAborted = (
 const runQuery = (
   conn: PgConnectionImpl,
   plan: Plan,
-  wantRows: boolean
+  output: Output
 ): Effect.Effect<QueryOutput, SqlError> =>
   Effect.callback<QueryOutput, SqlError>((resume) => {
     if (conn.deadWith !== undefined) {
       resume(Effect.fail(conn.deadWith))
       return
     }
-    const machine = new QueryMachine(conn, plan, wantRows, (effect) => {
+    const machine = new QueryMachine(conn, plan, output, (effect) => {
       conn.consumer = undefined
       resume(effect)
     })
@@ -1683,6 +1754,27 @@ const runQuery = (
     })
   })
 
+// Preserve leading U+FEFF as data rather than stripping it as a BOM.
+const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
+
+const readText: PgProtocol.FieldReader<string | null> = (bytes, offset, size) =>
+  size < 0 ? null : textDecoder.decode(bytes.subarray(offset, offset + size))
+
+const makeTextReader = (
+  fields: ReadonlyArray<PgProtocol.FieldDescription>
+): EffectResult.Result<PgProtocol.FieldReader<string | null>, PgTypes.CodecError> => {
+  for (let index = 0; index < fields.length; index++) {
+    if (fields[index].format !== 0) {
+      return EffectResult.fail(
+        new PgTypes.CodecError({
+          message: `Only the text format is supported, column ${index} has format ${fields[index].format}`
+        })
+      )
+    }
+  }
+  return EffectResult.succeed(readText)
+}
+
 /** Turns one decoded row into an object keyed by column name. */
 type RowBuilder = (rowValues: ReadonlyArray<unknown>) => Row
 
@@ -1698,9 +1790,10 @@ const emptyFields: ReadonlyArray<Field> = []
 /** Derives the per-column readers and the row constructor for a description. */
 const describe = (
   fields: ReadonlyArray<PgProtocol.FieldDescription>,
-  registry: PgTypes.Registry | undefined
+  registry: PgTypes.Registry | undefined,
+  textResults = false
 ): EffectResult.Result<Description, PgTypes.CodecError> => {
-  const reader = PgTypes.makeFieldReader(fields, registry)
+  const reader = textResults ? makeTextReader(fields) : PgTypes.makeFieldReader(fields, registry)
   if (EffectResult.isFailure(reader)) return EffectResult.fail(reader.failure)
   const resultFields: Array<Field> = new Array(fields.length)
   for (let index = 0; index < fields.length; index++) {
@@ -2033,7 +2126,7 @@ const unlisten = (conn: PgConnectionImpl, pinned: PinnedPgConnection, identifier
         unlistenTimeoutMillis
       )
       return Effect.ensuring(
-        Effect.ignore(conn.cycleOwned(`UNLISTEN ${identifier}`, emptyParams, true, conn.prepared)),
+        Effect.ignore(conn.cycleOwned(`UNLISTEN ${identifier}`, emptyParams, "rows", conn.prepared)),
         Effect.andThen(Effect.sync(() => clearTimeout(timeout)), releaseUnlisten(conn, pinned))
       )
     }

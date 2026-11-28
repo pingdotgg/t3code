@@ -148,6 +148,9 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const cwd = yield* makeTempDir;
         const script = "#!/usr/bin/env python3\nprint('hello')\n";
         yield* writeTextFile(cwd, "run", script);
+        const nodeScript =
+          "#!/opt/python-tools/bin/node --conditions=python\nconsole.log('hello')\n";
+        yield* writeTextFile(cwd, "run-node", nodeScript);
         const image = path.join(cwd, "image");
         yield* fs.writeFile(
           image,
@@ -158,9 +161,12 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         emptyZip.set([0x50, 0x4b, 0x05, 0x06]);
         yield* fs.writeFile(archive, emptyZip);
         expect(
-          (yield* service.getMetadata({ paths: [path.join(cwd, "run"), image, archive] })).entries,
+          (yield* service.getMetadata({
+            paths: [path.join(cwd, "run"), path.join(cwd, "run-node"), image, archive],
+          })).entries,
         ).toEqual([
           { kind: "file", byteLength: script.length, mimeType: "text/x-python" },
+          { kind: "file", byteLength: nodeScript.length, mimeType: "text/javascript" },
           { kind: "file", byteLength: 8, mimeType: "image/png" },
           { kind: "file", byteLength: 22, mimeType: "application/zip" },
         ]);
@@ -532,7 +538,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     );
 
     it.effect.skipIf(!symlinksSupported)(
-      "rejects symlinks that resolve outside the workspace root",
+      "reads through symlinks that resolve outside the workspace root as read-only",
       () =>
         Effect.gen(function* () {
           const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -540,39 +546,29 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           const path = yield* Path.Path;
           const cwd = yield* makeTempDir;
           const outsideDir = yield* makeTempDir;
-          yield* writeTextFile(outsideDir, "secret.txt", "outside\n");
-          yield* fileSystem.symlink(
-            path.join(outsideDir, "secret.txt"),
-            path.join(cwd, "linked-secret.txt"),
-          );
+          yield* writeTextFile(outsideDir, "specs/design.md", "outside\n");
+          yield* writeTextFile(cwd, "inside.md", "inside\n");
+          yield* fileSystem.symlink(outsideDir, path.join(cwd, "_files"));
 
-          const error = yield* workspaceFileSystem
-            .readFile({ cwd, relativePath: "linked-secret.txt" })
-            .pipe(Effect.flip);
-          const resolvedWorkspaceRoot = yield* fileSystem.realPath(cwd);
-          const resolvedPath = yield* fileSystem.realPath(path.join(outsideDir, "secret.txt"));
-
-          expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFilePathEscapeError);
-          expect(error).toMatchObject({
-            workspaceRoot: cwd,
-            relativePath: "linked-secret.txt",
-            resolvedWorkspaceRoot,
-            resolvedPath,
+          const result = yield* workspaceFileSystem.readFile({
+            cwd,
+            relativePath: "_files/specs/design.md",
           });
-          expect("cause" in error).toBe(false);
+          expect(result).toMatchObject({
+            relativePath: "_files/specs/design.md",
+            contents: "outside\n",
+            readOnly: true,
+          });
 
-          yield* fileSystem.symlink(outsideDir, path.join(cwd, "linked-dir"));
-          const missingChildError = yield* workspaceFileSystem
-            .readFile(
-              Object.assign(
-                { cwd, relativePath: "linked-dir/missing/t3.json" },
-                { allowMissing: true },
-              ),
-            )
-            .pipe(Effect.flip);
-          expect(missingChildError).toBeInstanceOf(
-            WorkspaceFileSystem.WorkspaceFilePathEscapeError,
-          );
+          const inside = yield* workspaceFileSystem.readFile({ cwd, relativePath: "inside.md" });
+          expect(inside.readOnly).toBeUndefined();
+
+          const missing = yield* workspaceFileSystem.readFile({
+            cwd,
+            relativePath: "_files/missing/t3.json",
+            allowMissing: true,
+          });
+          expect(missing.exists).toBe(false);
         }),
     );
 

@@ -1318,15 +1318,16 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       };
     }),
     list: Effect.fn("Workflows.list")(function* (filter) {
-      const rows =
-        filter?.tag === undefined && filter?.subject === undefined
-          ? yield* store.runs(filter?.status)
-          : yield* store.runsWhere({
-              status: filter.status,
-              tag: filter.tag,
-              subject: filter.subject,
-            });
-      return rows.map(toRun);
+      if (filter?.tag === undefined && filter?.subject === undefined)
+        return (yield* store.runs(filter?.status)).map(toRun);
+      const where = { status: filter.status, tag: filter.tag, subject: filter.subject };
+      if (filter.status !== undefined) return (yield* store.runsWhere(where)).map(toRun);
+      // Skipped runs are counted apart, as in the unfiltered list, so they cannot push out the rest.
+      const rows = [
+        ...(yield* store.runsWhere({ ...where, skippedTopLevel: false })),
+        ...(yield* store.runsWhere({ ...where, skippedTopLevel: true })),
+      ];
+      return rows.toSorted((a, b) => b.started_at.localeCompare(a.started_at)).map(toRun);
     }),
     about: Effect.fn("Workflows.about")(function* (item) {
       // Keyed as the subject was kept, so an item named without its address is found too.
@@ -1336,17 +1337,29 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
           : item.pullRequest !== undefined
             ? pullRequestReferenceOf(item.pullRequest, { url: item.subject })
             : undefined;
-      const found = [
-        ...(yield* store.runsWhere({ subject: item.subject })),
-        ...(identity === undefined
-          ? []
-          : yield* store.runsWhere({ subject: { kind: identity.kind, key: identity.key } })),
-      ];
+      // Each partition is capped on its own, as in `list`, so skipped runs cannot push out the rest.
+      const newestFirst = (left: { started_at: string }, right: { started_at: string }) =>
+        right.started_at.localeCompare(left.started_at);
+      const found = [];
+      for (const skippedTopLevel of [false, true]) {
+        const rows = [
+          ...(yield* store.runsWhere({ subject: item.subject, skippedTopLevel })),
+          ...(identity === undefined
+            ? []
+            : yield* store.runsWhere({
+                subject: { kind: identity.kind, key: identity.key },
+                skippedTopLevel,
+              })),
+        ];
+        found.push(
+          ...[...new Map(rows.map((row) => [row.run_id, row])).values()]
+            .toSorted(newestFirst)
+            .slice(0, 500),
+        );
+      }
+      // The two lookups are separate reads, so a run that turned skipped between them can be in both.
       const runs = [...new Map(found.map((row) => [row.run_id, row])).values()]
-        .toSorted((left, right) =>
-          left.started_at === right.started_at ? 0 : left.started_at < right.started_at ? 1 : -1,
-        )
-        .slice(0, 500)
+        .toSorted(newestFirst)
         .map(toRun);
       const about = new Set(runs.map((run) => run.runId));
       const open = yield* questions;

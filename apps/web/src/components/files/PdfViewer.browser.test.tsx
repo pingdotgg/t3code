@@ -381,3 +381,20 @@ it("Escape in Find in PDF clears it without closing the panel sheet", async () =
     URL.revokeObjectURL(url);
   }
 });
+
+it("retries an incorrect password and renders the encrypted PDF", async () => {
+  const { default: src } = await import("../../../test/fixtures/file-passwords/locked.pdf?url");
+  const container = document.createElement("div");
+  container.style.cssText = "display:flex;width:500px;height:400px";
+  await using screen = await render(<PdfViewer src={src} title="Locked PDF" />, { container });
+  const password = screen.getByLabelText("File password");
+  await expect.element(password).toBeVisible();
+  await expect.element(password).not.toHaveFocus();
+  await password.fill("wrong");
+  await screen.getByRole("button", { name: "Unlock" }).click();
+  await expect.element(screen.getByText("Incorrect password. Try again.")).toBeVisible();
+  await expect.element(password).toHaveFocus();
+  await password.fill("open me");
+  await userEvent.keyboard("{Enter}");
+  await expect.element(screen.getByText("Unlocked PDF")).toBeVisible();
+});

@@ -8,7 +8,57 @@ import { act, render } from "../../../../test/render";
 import Spreadsheet from "./Spreadsheet";
 import { createWorkerClient } from "./worker-rpc";
 import type { SheetMethods } from "./sheet-protocol";
-import { maximumTrackSize } from "./sheet-sizing";
+
+it.each([
+  ["Calibri", 15],
+  ["_x0056_erdana", 19],
+] as const)(
+  "resizes a column in pixels using the workbook's default font %s",
+  async (family, digitWidth) => {
+    const archive = new JSZip();
+    archive.file(
+      "xl/workbook.xml",
+      '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Budget" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    );
+    archive.file(
+      "xl/_rels/workbook.xml.rels",
+      '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="custom-styles.xml"/></Relationships>',
+    );
+    archive.file(
+      "xl/custom-styles.xml",
+      `<styleSheet><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><sz val="22"/><name val="${family}"/></font></fonts><cellXfs count="1"><xf fontId="1" applyFont="on"/></cellXfs></styleSheet>`,
+    );
+    archive.file(
+      "xl/worksheets/sheet1.xml",
+      '<worksheet><sheetFormatPr defaultColWidth="30"/><sheetData><row r="1"><c r="A1"><v>42</v></c></row></sheetData></worksheet>',
+    );
+    const { prepareOffice } = await import("../officeArchive");
+    const { bytes, view } = await prepareOffice(
+      await archive.generateAsync({ type: "arraybuffer" }),
+      "xlsx",
+    );
+    const client = createWorkerClient<SheetMethods>(
+      new Worker(new URL("./spreadsheet.worker.ts", import.meta.url), { type: "module" }),
+    );
+    try {
+      await client.call("open", { bytes, view: view! });
+      const width = async () => {
+        const position = await client.call("position", { sheet: 0, cell: { row: 0, col: 0 } });
+        return position!.next.x - position!.start.x;
+      };
+      const initialWidth = 30 * digitWidth;
+      expect(await width()).toBe(initialWidth);
+      await client.call("resize", { sheet: 0, axis: "column", index: 0, delta: 35 });
+      expect(await width()).toBe(initialWidth + 35);
+      await client.call("resize", { sheet: 0, axis: "column", index: 0, delta: 10_000 });
+      expect(await width()).toBe(255 * digitWidth);
+      await client.call("resize", { sheet: 0, axis: "column", index: 0, delta: -10_000 });
+      expect(await width()).toBe(16);
+    } finally {
+      client.close();
+    }
+  },
+);
 
 it.each([false, true])(
   "reflows preview tracks through sheet switches, frozen and hidden tracks: %s",
@@ -59,7 +109,7 @@ it.each([false, true])(
     try {
       const opened = await client.call("open", {
         bytes,
-        view: { hiddenGridlines: [], themeFonts: { major: "Calibri Light", minor: "Calibri" } },
+        view: { digitWidth: 7, themeFonts: { major: "Calibri Light", minor: "Calibri" } },
       });
       expect(opened!.layout.chartWidth).toBeGreaterThan(0);
       expect(opened!.layout.chartHeight).toBeGreaterThan(0);
@@ -138,7 +188,7 @@ it.each([false, true])(
         offset: { x: 0, y: 0 },
         wider: undefined,
       });
-      expect(limited!.grid!.colOffsets[1]).toBeCloseTo(maximumTrackSize.column, 0);
+      expect(limited!.grid!.colOffsets[1]).toBeCloseTo(255 * 7, 0);
       expect(limited!.grid!.rowOffsets[1]).toBeCloseTo(16, 0);
       limited!.bitmap.close();
     } finally {
@@ -196,7 +246,7 @@ it.each([false, true])(
     try {
       await client.call("open", {
         bytes,
-        view: { hiddenGridlines: [], themeFonts: { major: "Calibri Light", minor: "Calibri" } },
+        view: { digitWidth: 7, themeFonts: { major: "Calibri Light", minor: "Calibri" } },
       });
       // B2's text overflows to the right well past B, and the merge centres C4's text far below row 4.
       const panes = frozen ? { x: 64, y: 20 } : { x: 0, y: 0 };
@@ -231,7 +281,7 @@ it("requests current dimensions after resizing and scrolling away and back befor
   await using screen = await render(
     createElement(Spreadsheet, {
       bytes,
-      view: { hiddenGridlines: [], themeFonts: { major: "Calibri Light", minor: "Calibri" } },
+      view: { digitWidth: 7, themeFonts: { major: "Calibri Light", minor: "Calibri" } },
       onDetails: vi.fn(),
       onError,
     }),
@@ -331,7 +381,7 @@ it("Escape cancels a column resize without closing the panel sheet", async () =>
         { style: { display: "flex", width: "300px", height: "300px" } },
         createElement(Spreadsheet, {
           bytes,
-          view: { hiddenGridlines: [], themeFonts: { major: "Calibri Light", minor: "Calibri" } },
+          view: { digitWidth: 7, themeFonts: { major: "Calibri Light", minor: "Calibri" } },
           onDetails: vi.fn(),
           onError: vi.fn(),
         }),
@@ -368,4 +418,68 @@ it("Escape cancels a column resize without closing the panel sheet", async () =>
 
   await userEvent.keyboard("{Escape}");
   await vi.waitFor(() => expect(onCloseSheet).toHaveBeenCalledOnce());
+});
+
+it("Shift+Click on a hyperlinked cell does not follow the link", async () => {
+  const archive = new JSZip();
+  archive.file(
+    "xl/workbook.xml",
+    '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Summary" sheetId="1" r:id="rId1"/></sheets></workbook>',
+  );
+  archive.file(
+    "xl/_rels/workbook.xml.rels",
+    '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+  );
+  archive.file(
+    "xl/worksheets/sheet1.xml",
+    '<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Example</t></is></c></row></sheetData><hyperlinks><hyperlink ref="A1" r:id="rId1"/></hyperlinks></worksheet>',
+  );
+  archive.file(
+    "xl/worksheets/_rels/sheet1.xml.rels",
+    '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com" TargetMode="External"/></Relationships>',
+  );
+  const bytes = await archive.generateAsync({ type: "arraybuffer" });
+  const container = document.createElement("div");
+  Object.assign(container.style, { display: "flex", width: "500px", height: "300px" });
+  await using screen = await render(
+    createElement(Spreadsheet, {
+      bytes,
+      view: { digitWidth: 7, themeFonts: { major: "Calibri Light", minor: "Calibri" } },
+      onDetails: vi.fn(),
+      onError: vi.fn(),
+    }),
+    { container },
+  );
+  const summary = screen.getByRole("grid", { name: "Summary" });
+  await expect.element(summary).toBeVisible();
+  const root = summary.element();
+  const canvas = root.querySelector("canvas")!;
+  await vi.waitFor(() => {
+    expect(canvas.getContext("2d")!.getImageData(10, 10, 1, 1).data[0]).toBeGreaterThan(0);
+    expect(canvas.getContext("2d")!.getImageData(10, 10, 1, 1).data[0]).toBeLessThan(255);
+  });
+  // Synthetic pointer events have no browser pointer to capture.
+  using _capture = vi.spyOn(root, "setPointerCapture").mockImplementation(() => {});
+  using _release = vi.spyOn(root, "releasePointerCapture").mockImplementation(() => {});
+  using open = vi.spyOn(window, "open").mockReturnValue(null);
+  const rect = canvas.getBoundingClientRect();
+  const clickLink = (shiftKey: boolean) =>
+    act(() => {
+      const init = {
+        bubbles: true,
+        pointerId: 1,
+        button: 0,
+        clientX: rect.left + 76,
+        clientY: rect.top + 30,
+        shiftKey,
+      };
+      root.dispatchEvent(new PointerEvent("pointerdown", init));
+      root.dispatchEvent(new PointerEvent("pointerup", init));
+    });
+
+  await clickLink(true);
+  expect(open).not.toHaveBeenCalled();
+
+  await clickLink(false);
+  expect(open).toHaveBeenCalledWith("https://example.com/", "_blank", "noopener,noreferrer");
 });

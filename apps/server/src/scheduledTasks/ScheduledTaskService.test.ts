@@ -824,6 +824,59 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect("an unbound task's launch carries its name as a chosen title", () =>
+  Effect.gen(function* () {
+    const launchInputs = yield* Ref.make<
+      Array<{ readonly title: string; readonly titleRenamed: boolean | undefined }>
+    >([]);
+    const launched = ThreadId.make("thread:named-task");
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            launch: (input) =>
+              Ref.update(launchInputs, (all) => [
+                ...all,
+                { title: input.title, titleRenamed: input.titleRenamed },
+              ]).pipe(Effect.as({ threadId: launched, resumed: false } as never)),
+          }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const id = ScheduledTaskId.make("task:named");
+      yield* service.upsert({
+        id,
+        title: "Nightly triage",
+        prompt: "Triage new issues",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: ProjectId.make("project:test"),
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        threadMode: "new_thread",
+      } as const);
+      yield* service.runNow({ id });
+
+      assert.deepEqual(yield* Ref.get(launchInputs), [
+        { title: "Nightly triage", titleRenamed: true },
+      ]);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect("a refused dispatch records its refusal, and opaque causes stay generic", () =>
   Effect.gen(function* () {
     const refusal = "Thread thread:refused was stopped.";

@@ -120,6 +120,14 @@ export interface MakeOptions<ROut, E, RIn> {
    * `CloudflareCluster.LayerOptions`. Defaults to 30 seconds.
    */
   readonly keepAliveHeartbeat?: Duration.Input | undefined
+  /**
+   * Restricts all four cluster Durable Object bindings to a Cloudflare
+   * jurisdiction (for example `"eu"`). Opting in does not migrate existing
+   * objects or remove unrestricted twins with the same name. Falls back to
+   * unrestricted bindings under `alchemy dev` where local workerd does not
+   * implement jurisdictions. Defaults to no restriction.
+   */
+  readonly jurisdiction?: DurableObjectJurisdiction | undefined
 }
 
 // One alchemy Durable Object class per cluster program. The outer effect
@@ -163,7 +171,8 @@ const makeUnsafe = Effect.fnUntraced(function*(options: MakeOptions<any, any, an
     entities: options.entities,
     layer: options.layer,
     env,
-    keepAliveHeartbeat: options.keepAliveHeartbeat
+    keepAliveHeartbeat: options.keepAliveHeartbeat,
+    jurisdiction: options.jurisdiction
   })
 })
 

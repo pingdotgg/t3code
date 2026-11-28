@@ -4173,6 +4173,48 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect.each([{ indexLocked: false }, { indexLocked: true }])(
+    "reports the branch after a failing post-checkout hook switches HEAD (index locked: $indexLocked)",
+    ({ indexLocked }) =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(cwd);
+        yield* runGit(cwd, ["config", "core.hooksPath", ".git/hooks"]);
+        NodeFS.mkdirSync(NodePath.join(cwd, ".git", "hooks"), { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(cwd, ".git", "hooks", "post-checkout"),
+          `#!/bin/sh\n${indexLocked ? ": > .git/index.lock\n" : ""}exit 1\n`,
+          { mode: 0o755 },
+        );
+        NodeFS.writeFileSync(NodePath.join(cwd, "README.md"), "pending change\n");
+        const { manager } = yield* makeManager();
+        const events: GitActionProgressEvent[] = [];
+        const error = yield* runStackedAction(
+          manager,
+          { cwd, action: "commit", featureBranch: true, commitMessage: "Retry checkout" },
+          {
+            progressReporter: {
+              publish: (event) =>
+                Effect.sync(() => {
+                  events.push(event);
+                }),
+            },
+          },
+        ).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(GitCommandError);
+        expect(NodeFS.existsSync(NodePath.join(cwd, ".git", "index.lock"))).toBe(indexLocked);
+        expect((yield* runGit(cwd, ["branch", "--show-current"])).stdout.trim()).toBe(
+          "feature/retry-checkout",
+        );
+        expect(events.at(-1)).toMatchObject({
+          kind: "action_failed",
+          phase: "branch",
+          createdBranch: "feature/retry-checkout",
+        });
+      }),
+  );
+
   it.effect.each([
     { branch: "fix/name", existingBranches: ["fix"], expected: "fix-2/name" },
     { branch: "fix/name", existingBranches: ["fix/name/child"], expected: "fix/name-2" },
@@ -4918,6 +4960,20 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               exitCode: 1,
             },
             {
+              ...itemBase(6, completedRun.id),
+              type: "command_execution" as const,
+              input: "vp run split-tail",
+              output: `😀${"b".repeat(1_999)}`,
+              exitCode: 0,
+            },
+            {
+              ...itemBase(7, completedRun.id),
+              type: "command_execution" as const,
+              input: "vp run whole-tail",
+              output: `a😀${"c".repeat(1_998)}`,
+              exitCode: 0,
+            },
+            {
               ...itemBase(5, abandonedRun.id),
               type: "command_execution" as const,
               input: "vp run abandoned",
@@ -4950,6 +5006,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(generatedPrompt).toContain("Make the PR writer see the thread");
       expect(generatedPrompt).toContain("Command: vp lint\nExit code: 1");
       expect(generatedPrompt).toContain("2 lint errors");
+      expect(generatedPrompt).toContain(`Exit code: 0\n[truncated]\n${"b".repeat(1_999)}`);
+      expect(generatedPrompt).toContain(`Exit code: 0\n[truncated]\n😀${"c".repeat(1_998)}`);
+      expect(generatedPrompt.isWellFormed()).toBe(true);
       expect(generatedPrompt).not.toContain("vp run abandoned");
       expect(generatedPrompt).not.toContain("abandoned output");
       expect(Buffer.byteLength(generatedThreadContext ?? "")).toBeLessThanOrEqual(16_000);

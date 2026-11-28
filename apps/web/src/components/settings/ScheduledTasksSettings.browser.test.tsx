@@ -13,10 +13,12 @@ import {
   ThreadId,
   type ScheduledTask,
 } from "@t3tools/contracts";
+import { getTranslationsSnapshot, GTProvider } from "gt-react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
+import { initializeI18n } from "~/i18n/initializeI18n";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { act, render } from "../../../test/render";
 import { ScheduledTasksSettings } from "./ScheduledTasksSettings";
@@ -83,6 +85,8 @@ function taskList(id: string) {
 }
 
 function setup() {
+  // GTProvider leaves its locale in a cookie; this sets it back to English.
+  initializeI18n(() => {});
   state.connected = true;
   state.tasksLoaded = true;
   state.remove.mockReset().mockReturnValue(Effect.succeed({ id: task.id }));
@@ -451,6 +455,47 @@ describe("ScheduledTasksSettings", () => {
 
     await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeInTheDocument();
     await expect.element(name).toHaveValue("My draft");
+  });
+
+  it.each([
+    { locale: "en", one: "minute", other: "minutes" },
+    { locale: "de", one: "Minute", other: "Minuten" },
+  ])(
+    "labels intervals of 1, 15 and 1.5 as $one or $other in $locale",
+    async ({ locale, one, other }) => {
+      setup();
+      const translations = await getTranslationsSnapshot(locale);
+      await using _screen = await render(
+        <GTProvider locale={locale} translations={translations}>
+          <ScheduledTasksSettings taskId={task.id} />
+        </GTProvider>,
+      );
+      const interval = page.elementLocator(document.getElementById("scheduled-task-interval")!);
+      const unit = () =>
+        document.getElementById("scheduled-task-interval")?.parentElement?.nextElementSibling;
+
+      await expect.element(interval).toHaveValue(1);
+      expect(unit()?.textContent).toBe(one);
+      await userEvent.fill(interval, "15");
+      await expect.poll(() => unit()?.textContent).toBe(other);
+      await userEvent.fill(interval, "1.5");
+      await expect.poll(() => unit()?.textContent).toBe(other);
+    },
+  );
+
+  it("names the Delete action in the UI language", async () => {
+    setup();
+    const translations = await getTranslationsSnapshot("de");
+    await using screen = await render(
+      <GTProvider locale="de" translations={translations}>
+        <ScheduledTasksSettings />
+      </GTProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Aktionen für Review issues" }));
+
+    await expect
+      .element(page.getByRole("menuitem", { name: "Löschen", exact: true }))
+      .toBeVisible();
   });
 
   it("keeps a new task's draft when the user clicks outside the editor", async () => {

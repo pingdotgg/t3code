@@ -160,6 +160,22 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
+  it.each([
+    [String.raw`@"C:\My Files\notes.md"`, String.raw`C:\My Files\notes.md`],
+    [String.raw`@"C:\\My Files\\notes.md"`, String.raw`C:\My Files\notes.md`],
+    [String.raw`@"docs/My \"draft\".md"`, 'docs/My "draft".md'],
+  ])("decodes quoted file mention %s without losing path characters", (source, value) => {
+    expect(collectComposerInlineTokens(`${source} `)).toEqual([
+      {
+        type: "mention",
+        value,
+        source,
+        start: 0,
+        end: source.length,
+      },
+    ]);
+  });
+
   it("still collects a file link whose label is at the length cap", () => {
     const label = `${"a".repeat(508)}.tsx`;
     const tokens = collectComposerInlineTokens(`see [${label}](src/${label}) ok`);
@@ -206,10 +222,21 @@ describe("collectComposerInlineTokens", () => {
     "src/routes/_chat.$environmentId.$threadId.tsx",
     "pages/posts/[id].tsx",
     "app/blog/[...slug].tsx",
+    "notes/[TODO].md",
+    "notes/~~draft~~.md",
+    "notes/&#91;TODO&#93;.md",
+    `notes/${"[".repeat(120)}].md`,
   ])("keeps a file link whose name looks like TeX as one mention: %s", (path) => {
     const link = serializeComposerFileLink(path);
     expect(collectComposerInlineTokens(`fix ${link} please`)).toMatchObject([
       { type: "mention", value: path, source: link },
+    ]);
+  });
+
+  it("still reads legacy backslash-escaped bracket file links as mentions", () => {
+    const link = String.raw`[\[TODO\].md](notes/%5BTODO%5D.md)`;
+    expect(collectComposerInlineTokens(`fix ${link} please`)).toMatchObject([
+      { type: "mention", value: "notes/[TODO].md", source: link },
     ]);
   });
 
@@ -222,6 +249,8 @@ describe("collectComposerInlineTokens", () => {
     "docs/100%.md",
     "docs/why?.md",
     "icon@2x.png",
+    "reports:final.md",
+    "file:notes.md",
   ])("reads a link to the punctuated file %s as that file's path", (path) => {
     const link = serializeComposerFileLink(path);
     expect(collectComposerInlineTokens(`fix ${link} please`)).toMatchObject([
@@ -229,14 +258,64 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
+  it("keeps external links out of file chips even with matching labels", () => {
+    for (const link of [
+      "[docs](https://example.com/docs)",
+      "[reports:final.md](reports:final.md)",
+      "[guide.md](//example.com/docs/guide.md)",
+    ]) {
+      expect(collectComposerInlineTokens(`${link} `)).toEqual([]);
+      expect(composerFileLinksToPlainText(`${link} `)).toBe(`${link} `);
+    }
+  });
+
+  it("keeps a UNC path, whose leading slashes are encoded, as a file chip", () => {
+    const path = "\\\\server\\docs\\guide.md";
+    const link = serializeComposerFileLink(path);
+    expect(collectComposerInlineTokens(`${link} `)).toMatchObject([
+      { type: "mention", value: path, source: link },
+    ]);
+  });
+
   // regression: #41223 a `./` the author wrote keeps its meaning, even where the parser rejects the rest
   it.each([
-    ["[draft:notes.md](./draft:notes.md)", "./draft:notes.md"],
     ["[scratch](./%2Fscratch)", ".//scratch"],
     ["[a.ts](./src/a.ts)", "./src/a.ts"],
   ])("keeps the authored link %s as its own path", (link, value) => {
     expect(collectComposerInlineTokens(`fix ${link} please`)).toMatchObject([
       { type: "mention", value, source: link },
+    ]);
+  });
+
+  it.each(["docs/🧪 @abc final.md", "docs/use $ui kit.md"])(
+    "does not emit nested tokens inside a file link label: %s",
+    (path) => {
+      const link = serializeComposerFileLink(path);
+      expect(collectComposerInlineTokens(`${link} remainder`)).toEqual([
+        {
+          type: "mention",
+          value: path,
+          source: link,
+          start: 0,
+          end: link.length,
+        },
+      ]);
+    },
+  );
+
+  it("keeps only the preserved trailing file link when its label contains a bare mention", () => {
+    const path = "docs/🧪 @abc final.md";
+    const link = serializeComposerFileLink(path);
+    const confirmed = collectComposerInlineTokens(`${link} `);
+
+    expect(collectComposerInlineTokens(link, { preserveTrailingFrom: confirmed })).toEqual([
+      {
+        type: "mention",
+        value: path,
+        source: link,
+        start: 0,
+        end: link.length,
+      },
     ]);
   });
 
@@ -276,11 +355,19 @@ describe("collectComposerInlineTokens", () => {
 
 describe("composerFileLinksToPlainText", () => {
   it("shows file mentions by name and leaves other links as written", () => {
-    const mentions = ["src/foo.ts", ".gitignore", "pkg/__init__.py", "docs/My File (draft).md"]
+    const mentions = [
+      "src/foo.ts",
+      ".gitignore",
+      "pkg/__init__.py",
+      "docs/My File (draft).md",
+      "notes/[TODO].md",
+      "notes/~~draft~~.md",
+      "notes/&#91;TODO&#93;.md",
+    ]
       .map(serializeComposerFileLink)
       .join(" ");
     expect(composerFileLinksToPlainText(`Review ${mentions}`)).toBe(
-      "Review foo.ts .gitignore __init__.py My File (draft).md",
+      "Review foo.ts .gitignore __init__.py My File (draft).md [TODO].md ~~draft~~.md &#91;TODO&#93;.md",
     );
     const links = "See [docs](https://example.com) and [the config](src/config.ts)";
     expect(composerFileLinksToPlainText(links)).toBe(links);

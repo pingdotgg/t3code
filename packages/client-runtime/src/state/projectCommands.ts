@@ -103,7 +103,9 @@ export function createProjectEnvironmentAtoms<R, E>(
   const readFile = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:projects:read-file",
     tag: WS_METHODS.projectsReadFile,
-    staleTimeMs: 30_000,
+    // A file can change outside this client, so reopening it reads it again. The idle TTL only
+    // keeps the last contents on screen while that read runs.
+    staleTimeMs: 0,
     idleTtlMs: 5 * 60_000,
     onAnswer: (target, _value, registry): Effect.Effect<void> =>
       Effect.sync(() => {

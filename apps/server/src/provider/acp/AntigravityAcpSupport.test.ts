@@ -15,8 +15,8 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
   applyAntigravityAcpModelSelection,
-  antigravityClientInfo,
   antigravityPermissionDisposition,
+  antigravityServesT3Code,
   antigravitySessionMeta,
   antigravitySessionMode,
   buildAntigravityPrompt,
@@ -58,35 +58,36 @@ function makeModelRuntime(
   };
 }
 
-describe("Antigravity release gates", () => {
+describe("antigravityServesT3Code", () => {
+  // The model manifest accepts the same `v` and `agy_acp_server_` prefixes.
   it.each([
-    { version: "1.5.0", ownName: false, advertisedAppend: false },
-    { version: "1.5.1", ownName: true, advertisedAppend: false },
-    { version: "1.5.7", ownName: true, advertisedAppend: true },
-    { version: undefined, ownName: false, advertisedAppend: false },
-    { version: "unknown", ownName: false, advertisedAppend: false },
-  ])(
-    "$version: advertised system append $advertisedAppend, own client name $ownName",
-    ({ version, ownName, advertisedAppend }) => {
-      const initialize = {
-        protocolVersion: 1,
-        ...(advertisedAppend
-          ? { agentCapabilities: { _meta: { antigravity: { systemPrompt: { append: true } } } } }
-          : {}),
-        ...(version === undefined
-          ? {}
-          : { agentInfo: { name: "Antigravity ACP Server", version } }),
-      };
-      // Helpers send no append.
-      expect(antigravitySessionMeta(initialize)).toBeUndefined();
-      expect(antigravitySessionMeta(initialize, "<pull_request_linking/>")).toEqual(
-        advertisedAppend
-          ? { antigravity: { systemPrompt: { append: "<pull_request_linking/>" } } }
-          : undefined,
-      );
-      expect(antigravityClientInfo(version).name).toBe(ownName ? "t3-code" : "zed");
-    },
-  );
+    ["1.5.0", false],
+    ["v1.5.0", false],
+    ["agy_acp_server_1.5.0", false],
+    ["1.5.1", true],
+    ["agy_acp_server_1.5.12", true],
+    ["custom", true],
+  ] as const)("%s → %s", (version, serves) => {
+    expect(antigravityServesT3Code(version)).toBe(serves);
+  });
+});
+
+describe("Antigravity system prompt append", () => {
+  it.each([false, true])("advertised append %s", (advertisedAppend) => {
+    const initialize = {
+      protocolVersion: 1,
+      ...(advertisedAppend
+        ? { agentCapabilities: { _meta: { antigravity: { systemPrompt: { append: true } } } } }
+        : {}),
+    };
+    // Helpers send no append.
+    expect(antigravitySessionMeta(initialize)).toBeUndefined();
+    expect(antigravitySessionMeta(initialize, "<pull_request_linking/>")).toEqual(
+      advertisedAppend
+        ? { antigravity: { systemPrompt: { append: "<pull_request_linking/>" } } }
+        : undefined,
+    );
+  });
 });
 
 describe("Antigravity Auto", () => {
@@ -148,7 +149,14 @@ describe("Antigravity Auto", () => {
       });
       for (const t3Call of [
         request("Run mcp_t3-code_t3_thread_list?"),
+        request("Run mcp_t3-code_tool_search?"),
+        request("Run mcp_t3-code_tool_call?", { name: "preview_status", arguments: {} }),
         request("MCP Tool delegate_task", { ServerName: "t3-code", ToolName: "delegate_task" }),
+        request("MCP Tool tool_call", {
+          ServerName: "t3-code",
+          ToolName: "tool_call",
+          Arguments: { name: "preview_status", arguments: {} },
+        }),
       ]) {
         expect(antigravityPermissionDisposition(policy, t3Call)).toBe("allow");
         expect(
@@ -164,8 +172,19 @@ describe("Antigravity Auto", () => {
       for (const otherCall of [
         // Names no server, so another MCP server's tool of the same name looks identical.
         request("Running preview_status"),
+        request("Running tool_call"),
+        request("Run mcp_t3-code_tool_call?"),
+        request("Run mcp_t3-code_tool_call?", { name: "tool_call", arguments: {} }),
+        request("Run mcp_t3-code_tool_call?", { name: "tool_search", arguments: {} }),
+        request("Run mcp_t3-code_tool_call?", { name: "unknown_tool", arguments: {} }),
+        request("MCP Tool tool_call", {
+          ServerName: "t3-code",
+          ToolName: "tool_call",
+          Arguments: { name: "unknown_tool", arguments: {} },
+        }),
         request("Run mcp_github_create_issue"),
         request("MCP Tool preview_status", { ServerName: "other", ToolName: "preview_status" }),
+        request("MCP Tool tool_call", { ServerName: "other", ToolName: "tool_call" }),
         request("Run mcp_t3-code_preview_status", {
           CommandLine: "Run mcp_t3-code_preview_status",
         }),
@@ -370,6 +389,27 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
         { type: "text", text: "Explain this image." },
         { type: "image", data: bytes.toString("base64"), mimeType: "image/png" },
       ]);
+    }),
+  );
+
+  it.effect("labels an image with the type its bytes have, not the declared one", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeAttachmentFixture();
+      const mislabelled = { ...imageAttachment, name: "screen.jpg", mimeType: "image/jpeg" };
+      const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      yield* fixture.write(mislabelled, bytes);
+      const prompt = yield* buildAntigravityPrompt({
+        input: "Explain this image.",
+        attachments: [mislabelled],
+        resolveAttachmentPath: fixture.resolve,
+        promptCapabilities: { image: true, audio: true, embeddedContext: true },
+      });
+
+      expect(prompt).toContainEqual({
+        type: "image",
+        data: bytes.toString("base64"),
+        mimeType: "image/png",
+      });
     }),
   );
 

@@ -115,6 +115,9 @@ export function formatPercent(share: number, digits = 1): string {
   const percent = share * 100;
   const smallest = 10 ** -digits;
   if (percent > 0 && percent < smallest) return `<${smallest.toFixed(digits)}%`;
+  // A share short of the whole must not round up to 100%, as a nonzero one must not read 0%.
+  const largest = 100 - smallest;
+  if (percent < 100 && percent > largest) return `>${largest.toFixed(digits)}%`;
   return `${percent.toFixed(digits)}%`;
 }
 
