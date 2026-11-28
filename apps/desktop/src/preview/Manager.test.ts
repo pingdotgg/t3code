@@ -232,6 +232,10 @@ const layerFileSystem = FileSystem.layerNoop({
     }),
 });
 
+const attachPasskeyGuest = vi.fn(
+  (_guest: Electron.WebContents, _whenShown: () => Promise<void>) => () => {},
+);
+
 const managerLayer = (platform: NodeJS.Platform = "darwin") =>
   PreviewManager.layer.pipe(
     Layer.provideMerge(
@@ -246,8 +250,9 @@ const managerLayer = (platform: NodeJS.Platform = "darwin") =>
     Layer.provideMerge(
       Layer.mock(PreviewPasskeys.PreviewPasskeys)({
         bridgeEnabled: false,
+        gateEnabled: false,
         installSessionHandlers: () => {},
-        attachGuest: () => () => {},
+        attachGuest: attachPasskeyGuest,
       }),
     ),
     Layer.provideMerge(layerEnvironment),
@@ -692,6 +697,7 @@ describe("PreviewManager", () => {
               }),
               Layer.mock(PreviewPasskeys.PreviewPasskeys)({
                 bridgeEnabled: false,
+                gateEnabled: false,
                 installSessionHandlers: () => {},
                 attachGuest: () => () => {},
               }),
@@ -878,6 +884,43 @@ describe("PreviewManager", () => {
         yield* Fiber.join(leaving);
 
         expect(navigatedAfterStop).toEqual([true]);
+      }),
+    ),
+  );
+
+  effectIt.effect("holds passkeys until the renderer reports the tab shown", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.createTab("tab_passkey");
+        yield* manager.registerWebview("tab_passkey", 42);
+        const whenShown = attachPasskeyGuest.mock.calls.at(-1)?.[1];
+        expect(whenShown, "guest was not attached to passkeys").toBeDefined();
+        const settles = (promise: Promise<void>) => {
+          const state = { settled: false };
+          void promise.then(() => {
+            state.settled = true;
+          });
+          return state;
+        };
+        const flush = Effect.promise(() => Promise.resolve());
+
+        // A page can ask before its first report arrives, so the request waits instead of failing.
+        const first = settles(whenShown!());
+        yield* flush;
+        expect(first.settled).toBe(false);
+        yield* manager.setShown("tab_passkey", true);
+        yield* flush;
+        expect(first.settled).toBe(true);
+        // Switching threads hides the tab but keeps its guest alive.
+        yield* manager.setShown("tab_passkey", false);
+        const hidden = settles(whenShown!());
+        yield* flush;
+        expect(hidden.settled).toBe(false);
+        yield* manager.setShown("tab_passkey", true);
+        yield* flush;
+        expect(hidden.settled).toBe(true);
       }),
     ),
   );

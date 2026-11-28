@@ -52,6 +52,7 @@ import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import {
   PASSKEY_BRIDGE_ARGUMENT,
+  PASSKEY_GATE_ARGUMENT,
   PRIMARY_PASTE_DISABLED_ARGUMENT,
 } from "../preview/GuestProtocol.ts";
 import * as PreviewManager from "../preview/Manager.ts";
@@ -266,6 +267,7 @@ function layerTest(input: {
   }>;
   readonly primaryPasteEnabled?: boolean;
   readonly previewPasskeyBridgeEnabled?: boolean;
+  readonly previewPasskeyGateEnabled?: boolean;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const layerDesktopAppSettings = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -374,6 +376,7 @@ function layerTest(input: {
         }),
         Layer.mock(PreviewPasskeys.PreviewPasskeys)({
           bridgeEnabled: input.previewPasskeyBridgeEnabled ?? false,
+          gateEnabled: input.previewPasskeyGateEnabled ?? false,
           installSessionHandlers: () => {},
           attachGuest: () => () => {},
         }),
@@ -486,6 +489,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
           Layer.mock(PreviewPasskeys.PreviewPasskeys)({
             bridgeEnabled: false,
+            gateEnabled: false,
             installSessionHandlers: () => {},
             attachGuest: () => () => {},
           }),
@@ -1540,9 +1544,10 @@ describe("DesktopWindow", () => {
       expected: [PASSKEY_BRIDGE_ARGUMENT, PRIMARY_PASTE_DISABLED_ARGUMENT],
     },
     { primaryPasteEnabled: true, expected: [PASSKEY_BRIDGE_ARGUMENT] },
+    { primaryPasteEnabled: true, passkeyGate: true, expected: [PASSKEY_GATE_ARGUMENT] },
   ])(
     "isolates preview guests and passes them the primary-paste setting (enabled: $primaryPasteEnabled)",
-    ({ primaryPasteEnabled, expected }) =>
+    ({ primaryPasteEnabled, passkeyGate = false, expected }) =>
       Effect.gen(function* () {
         const fakeWindow = makeFakeBrowserWindow();
         const layer = layerTest({
@@ -1550,7 +1555,8 @@ describe("DesktopWindow", () => {
           createCount: yield* Ref.make(0),
           mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
           primaryPasteEnabled,
-          previewPasskeyBridgeEnabled: true,
+          previewPasskeyBridgeEnabled: !passkeyGate,
+          previewPasskeyGateEnabled: passkeyGate,
         });
 
         yield* Effect.gen(function* () {

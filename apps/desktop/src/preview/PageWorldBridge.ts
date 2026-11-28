@@ -3,6 +3,8 @@ import { contextBridge, ipcRenderer } from "electron";
 import {
   PASSKEY_BRIDGE_ARGUMENT,
   PASSKEY_CREATE_CHANNEL,
+  PASSKEY_GATE_ARGUMENT,
+  PASSKEY_GATE_CHANNEL,
   PASSKEY_GET_CHANNEL,
 } from "./GuestProtocol.ts";
 import { installPageWorld, type PageWorldHost } from "./PageWorld.ts";
@@ -16,7 +18,9 @@ const host: PageWorldHost = process.argv.includes(PASSKEY_BRIDGE_ARGUMENT)
           ? ipcRenderer.invoke(channel, publicKey)
           : Promise.reject(new Error("Unsupported passkey channel.")),
     }
-  : {};
+  : process.argv.includes(PASSKEY_GATE_ARGUMENT)
+    ? { passkeyAllowed: () => ipcRenderer.invoke(PASSKEY_GATE_CHANNEL) }
+    : {};
 
 /** Installed before any page script runs; calls cross into the page's world and back. */
 export const pageWorld: ReturnType<typeof installPageWorld> = contextBridge.executeInMainWorld({

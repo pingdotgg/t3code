@@ -10,7 +10,11 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { m } from "../i18n/messages.ts";
-import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
+import {
+  PASSKEY_CREATE_CHANNEL,
+  PASSKEY_GATE_CHANNEL,
+  PASSKEY_GET_CHANNEL,
+} from "./GuestProtocol.ts";
 import type { PasskeyBackend, PasskeyCeremonyContext } from "./PasskeyBackend.ts";
 import { macPasskeyBackend } from "./PasskeyBackendMac.ts";
 import type { PasskeyCeremonyResult } from "./PasskeyBridge.ts";
@@ -43,10 +47,13 @@ export class PreviewPasskeys extends Context.Service<
   PreviewPasskeys,
   {
     readonly bridgeEnabled: boolean;
+    /** Chromium runs the native ceremony, but the guest must ask whether it is shown first. */
+    readonly gateEnabled: boolean;
     /** Runs after app ready. */
     readonly configure: Effect.Effect<void>;
     readonly installSessionHandlers: (session: Session) => void;
-    readonly attachGuest: (guest: WebContents) => () => void;
+    /** `whenShown` settles once the renderer shows this guest's tab. */
+    readonly attachGuest: (guest: WebContents, whenShown: () => Promise<void>) => () => void;
   }
 >()("@t3tools/desktop/preview/Passkeys/PreviewPasskeys") {}
 
@@ -132,10 +139,12 @@ const make = Effect.gen(function* () {
   const keychainAccessGroup = metadata?.touchIdKeychainAccessGroup;
   const backend = metadata?.browserPasskeys === true ? backendFor(environment.platform) : undefined;
   const bridgeEnabled = backend !== undefined;
+  const gateEnabled = environment.platform === "win32";
   const sessionsWithHandlers = new WeakSet<Session>();
 
   return PreviewPasskeys.of({
     bridgeEnabled,
+    gateEnabled,
     configure: Effect.gen(function* () {
       if (keychainAccessGroup === undefined) return;
       yield* Effect.try({
@@ -154,8 +163,18 @@ const make = Effect.gen(function* () {
         );
       });
     },
-    attachGuest: (guest) => {
-      if (backend === undefined) return () => {};
+    attachGuest: (guest, whenShown) => {
+      if (backend === undefined) {
+        if (!gateEnabled) return () => {};
+        guest.ipc.removeHandler(PASSKEY_GATE_CHANNEL);
+        // A hidden tab's request waits rather than fails, so a page that retries cannot loop.
+        guest.ipc.handle(PASSKEY_GATE_CHANNEL, async (event) => {
+          if (event.senderFrame !== guest.mainFrame) return false;
+          await whenShown();
+          return true;
+        });
+        return () => guest.ipc.removeHandler(PASSKEY_GATE_CHANNEL);
+      }
       let ceremonyPending = false;
       const serve = async (
         event: IpcMainInvokeEvent,

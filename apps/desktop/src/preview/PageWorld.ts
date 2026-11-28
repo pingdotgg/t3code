@@ -1,10 +1,12 @@
 import { getElementContext } from "react-grab/primitives";
 
-import { installPasskeyBridge } from "./PasskeyBridge.ts";
+import { installPasskeyBridge, installPasskeyGate } from "./PasskeyBridge.ts";
 
 export interface PageWorldHost {
   /** Absent when this guest has no passkey bridge. */
   readonly invokePasskey?: Parameters<typeof installPasskeyBridge>[0];
+  /** Absent when this guest's native passkey requests need no host check. */
+  readonly passkeyAllowed?: Parameters<typeof installPasskeyGate>[0];
 }
 
 /**
@@ -15,6 +17,7 @@ export interface PageWorldHost {
  */
 export function installPageWorld(host: PageWorldHost) {
   if (host.invokePasskey) installPasskeyBridge(host.invokePasskey);
+  else if (host.passkeyAllowed) installPasskeyGate(host.passkeyAllowed);
   return {
     elementContext: async (element: Element) => {
       const context = await getElementContext(element);

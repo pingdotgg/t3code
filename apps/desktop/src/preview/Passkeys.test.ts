@@ -21,16 +21,20 @@ vi.mock("electron", () => ({
 vi.mock("electron-webauthn", () => webauthn);
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
+import {
+  PASSKEY_CREATE_CHANNEL,
+  PASSKEY_GATE_CHANNEL,
+  PASSKEY_GET_CHANNEL,
+} from "./GuestProtocol.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 
-const layerFor = (packageJson: object, isPackaged = true) =>
+const layerFor = (packageJson: object, isPackaged = true, platform: NodeJS.Platform = "darwin") =>
   PreviewPasskeys.layer.pipe(
     Layer.provide(
       Layer.succeed(
         DesktopEnvironment.DesktopEnvironment,
         DesktopEnvironment.DesktopEnvironment.of({
-          platform: "darwin",
+          platform,
           isPackaged,
           appRoot: "/app",
           path: { join: (...parts: ReadonlyArray<string>) => parts.join("/") },
@@ -106,7 +110,7 @@ describe("PreviewPasskeys", () => {
         errorObject: new Error("native detail"),
       });
 
-      const detach = passkeys.attachGuest(guest);
+      const detach = passkeys.attachGuest(guest, () => Promise.resolve());
       const publicKey = { challenge: new Uint8Array([1]), rpId: "example.com" };
       const result = yield* call(PASSKEY_GET_CHANNEL, publicKey);
 
@@ -138,7 +142,7 @@ describe("PreviewPasskeys", () => {
     Effect.gen(function* () {
       const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
       const { guest, call } = makeGuest();
-      passkeys.attachGuest(guest);
+      passkeys.attachGuest(guest, () => Promise.resolve());
       webauthn.createCredential.mockResolvedValue({
         success: true,
         data: {
@@ -200,7 +204,7 @@ describe("PreviewPasskeys", () => {
     Effect.gen(function* () {
       const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
       const { guest, call } = makeGuest();
-      passkeys.attachGuest(guest);
+      passkeys.attachGuest(guest, () => Promise.resolve());
       const assertion = (credentialId: string) => ({
         success: true,
         data: {
@@ -240,14 +244,14 @@ describe("PreviewPasskeys", () => {
       const publicKey = { challenge: new Uint8Array([1]), rpId: "example.com" };
 
       const lan = makeGuest("http://192.168.1.5:3000");
-      passkeys.attachGuest(lan.guest);
+      passkeys.attachGuest(lan.guest, () => Promise.resolve());
       assert.deepStrictEqual(yield* lan.call(PASSKEY_GET_CHANNEL, publicKey), notAllowed);
       const subdomain = makeGuest("http://app.localhost:3000");
-      passkeys.attachGuest(subdomain.guest);
+      passkeys.attachGuest(subdomain.guest, () => Promise.resolve());
       assert.deepStrictEqual(yield* subdomain.call(PASSKEY_GET_CHANNEL, publicKey), notAllowed);
 
       const page = makeGuest();
-      passkeys.attachGuest(page.guest);
+      passkeys.attachGuest(page.guest, () => Promise.resolve());
       page.state.focused = false;
       assert.deepStrictEqual(yield* page.call(PASSKEY_GET_CHANNEL, publicKey), notAllowed);
       assert.strictEqual(webauthn.getCredential.mock.calls.length, 0);
@@ -269,6 +273,36 @@ describe("PreviewPasskeys", () => {
     }).pipe(Effect.provide(bridgeLayer)),
   );
 
+  it.effect("on Windows, holds a main frame's passkey request until its tab is shown", () =>
+    Effect.gen(function* () {
+      const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
+      assert.isFalse(passkeys.bridgeEnabled);
+      assert.isTrue(passkeys.gateEnabled);
+      const { guest, handlers, call } = makeGuest();
+      let show = () => {};
+      const shown = new Promise<void>((resolve) => {
+        show = resolve;
+      });
+      const detach = passkeys.attachGuest(guest, () => shown);
+
+      assert.isFalse(yield* call(PASSKEY_GATE_CHANNEL, undefined, {}));
+      let answer: unknown;
+      const pending = Promise.resolve(
+        handlers.get(PASSKEY_GATE_CHANNEL)?.({ senderFrame: guest.mainFrame }, undefined),
+      ).then((value) => {
+        answer = value;
+      });
+      yield* Effect.promise(() => Promise.resolve());
+      assert.isUndefined(answer, "a hidden tab's request must wait, not fail");
+      show();
+      yield* Effect.promise(() => pending);
+      assert.isTrue(answer);
+
+      detach();
+      assert.strictEqual(handlers.size, 0);
+    }).pipe(Effect.provide(layerFor({}, true, "win32"))),
+  );
+
   it.effect("turns each path on only for builds signed for it", () =>
     Effect.gen(function* () {
       const entitled = yield* PreviewPasskeys.PreviewPasskeys.pipe(
@@ -287,7 +321,7 @@ describe("PreviewPasskeys", () => {
       ]);
       assert.isFalse(entitled.bridgeEnabled);
       const { guest, handlers } = makeGuest();
-      entitled.attachGuest(guest);
+      entitled.attachGuest(guest, () => Promise.resolve());
       assert.strictEqual(handlers.size, 0);
 
       const unpackaged = yield* PreviewPasskeys.PreviewPasskeys.pipe(

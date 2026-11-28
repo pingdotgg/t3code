@@ -197,6 +197,42 @@ const credentialFromGetResult = (data: Extract<GetCredentialResult, { success: t
 const abortReason = (signal: AbortSignal) =>
   signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
 
+/**
+ * Where Chromium runs the native ceremony itself, a modal request waits until the host shows
+ * this tab: Chromium opens the system dialog for a hidden guest too.
+ */
+export function installPasskeyGate(allowed: () => Promise<unknown>) {
+  if (typeof CredentialsContainer === "undefined") return;
+  const container = CredentialsContainer.prototype;
+  const gate = (native: (options?: never) => Promise<Credential | null>) =>
+    async function (
+      this: CredentialsContainer,
+      options?: CreationOptions & CredentialRequestOptions,
+    ): Promise<Credential | null> {
+      if (options?.publicKey && options.mediation !== "conditional") {
+        const signal = options.signal;
+        if (signal?.aborted) throw abortReason(signal);
+        const allow = await new Promise<unknown>((resolve, reject) => {
+          const onAbort = () => signal && reject(abortReason(signal));
+          signal?.addEventListener("abort", onAbort, { once: true });
+          allowed()
+            .catch(() => false)
+            .then(resolve)
+            .finally(() => signal?.removeEventListener("abort", onAbort));
+        });
+        if (allow !== true) throw ceremonyError("NotAllowedError");
+      }
+      return Reflect.apply(native, this, [options]);
+    };
+  for (const key of ["create", "get"] as const) {
+    Object.defineProperty(container, key, {
+      value: gate(container[key]),
+      configurable: true,
+      writable: true,
+    });
+  }
+}
+
 /** Keep conditional requests native so autofill and upgrades cannot open a modal sheet unprompted. */
 export function installPasskeyBridge(invoke: InvokePasskeyCeremony) {
   if (typeof CredentialsContainer === "undefined" || typeof PublicKeyCredential === "undefined") {

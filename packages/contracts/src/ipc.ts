@@ -1354,7 +1354,7 @@ export interface DesktopPreviewBridge {
     options: { forward: boolean; newSession: boolean },
   ) => Promise<void>;
   stopFindInPage: (tabId: string) => Promise<void>;
-  /** Tells the tab's server whether its webview is on screen. */
+  /** Whether the tab's webview is on screen, for its server and the desktop host. */
   setShown: (tabId: string, shown: boolean) => Promise<void>;
   /** Tells the tab's server whether its webview is drawn at full detail for a capture. */
   setCaptureDrawn: (tabId: string, drawn: boolean) => Promise<void>;

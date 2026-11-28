@@ -2,7 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { afterEach, vi } from "vite-plus/test";
 
 import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
-import { installPasskeyBridge } from "./PasskeyBridge.ts";
+import { installPasskeyBridge, installPasskeyGate } from "./PasskeyBridge.ts";
 
 const base64Url = (bytes: ReadonlyArray<number>) => Buffer.from(bytes).toString("base64url");
 const bytesOf = (buffer: ArrayBuffer | null) => (buffer ? [...new Uint8Array(buffer)] : null);
@@ -157,5 +157,66 @@ describe("installPasskeyBridge", () => {
     const error = await pending;
     assert.instanceOf(error, DOMException);
     assert.strictEqual((error as DOMException).name, "AbortError");
+  });
+});
+
+describe("installPasskeyGate", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const installGate = (allowed: () => Promise<unknown>) => {
+    const native = vi.fn(async (..._args: ReadonlyArray<unknown>) => "native");
+    class FakeCredentialsContainer {
+      create(options?: unknown) {
+        return native("create", options);
+      }
+      get(options?: unknown) {
+        return native("get", options);
+      }
+    }
+    vi.stubGlobal("CredentialsContainer", FakeCredentialsContainer);
+    installPasskeyGate(allowed);
+    return {
+      native,
+      credentials: new FakeCredentialsContainer() as unknown as CredentialsContainer,
+    };
+  };
+
+  it("refuses modal requests from a tab the host does not show, and passes the rest to Chromium", async () => {
+    let shown = false;
+    const allowed = vi.fn(async () => shown);
+    const { native, credentials } = installGate(allowed);
+    const publicKey = { challenge: new Uint8Array([1]) };
+
+    const hidden = await credentials.get({ publicKey }).catch((error: unknown) => error);
+    assert.instanceOf(hidden, DOMException);
+    assert.strictEqual((hidden as DOMException).name, "NotAllowedError");
+    const hiddenCreate = await credentials
+      .create({ publicKey: creationOptions })
+      .catch((error: unknown) => error);
+    assert.strictEqual((hiddenCreate as DOMException).name, "NotAllowedError");
+    assert.strictEqual(native.mock.calls.length, 0);
+
+    // Conditional and password requests open no modal, so they skip the host.
+    await credentials.get({ publicKey, mediation: "conditional" });
+    await credentials.get({ password: true } as CredentialRequestOptions);
+    assert.strictEqual(allowed.mock.calls.length, 2);
+
+    shown = true;
+    assert.strictEqual<unknown>(await credentials.get({ publicKey }), "native");
+    assert.deepStrictEqual(native.mock.calls.at(-1), ["get", { publicKey }]);
+  });
+
+  it("stops waiting for the host as soon as the page aborts", async () => {
+    const { native, credentials } = installGate(() => new Promise(() => {}));
+    const controller = new AbortController();
+    const request = credentials
+      .get({ publicKey: { challenge: new Uint8Array([1]) }, signal: controller.signal })
+      .catch((error: unknown) => error);
+    controller.abort();
+
+    assert.strictEqual(((await request) as DOMException).name, "AbortError");
+    assert.strictEqual(native.mock.calls.length, 0);
   });
 });

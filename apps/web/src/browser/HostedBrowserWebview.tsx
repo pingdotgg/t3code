@@ -145,7 +145,7 @@ export function HostedBrowserWebview(props: {
   const [recoverySrc, setRecoverySrc] = useState(initialSrc);
   const active = presentation.visible && presentation.rect !== null;
   const shown = active || pictureInPicture;
-  const reportedShown = useEffectEvent(() => serverDriven && shown);
+  const reportedShown = useEffectEvent(() => shown);
   const remountCrashedWebview = useEffectEvent(() => {
     setRecoverySrc(initialUrl ?? initialSrc);
     setWebviewGeneration((generation) => generation + 1);
@@ -318,10 +318,10 @@ export function HostedBrowserWebview(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Report the mounted webview's visibility to the desktop host.
   useEffect(() => {
     const bridge = window.desktopBridge?.preview;
-    if (!clientSettingsHydrated || !bridge || !serverDriven) return;
+    if (!clientSettingsHydrated || !bridge) return;
     withDesktopTab(runtimeTabId, () => bridge.setShown(runtimeTabId, shown));
     return () => withDesktopTab(runtimeTabId, () => bridge.setShown(runtimeTabId, false));
-  }, [clientSettingsHydrated, runtimeTabId, serverDriven, shown]);
+  }, [clientSettingsHydrated, runtimeTabId, shown]);
 
   // Captures copy the guest's raster, which a scaled guest only keeps at full detail on request.
   const fullDetail = backgroundActivity || pictureInPicture || recordingActive;
