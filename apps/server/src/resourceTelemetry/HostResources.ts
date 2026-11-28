@@ -96,6 +96,116 @@ export function psiAverage(
   return value === undefined ? null : Number(value);
 }
 
+/**
+ * `/proc/diskstats` summed over whole devices: milliseconds with I/O in flight (`io_ticks`)
+ * and requests in flight now. Partitions repeat their device's time, so they are left out.
+ */
+export function blockDeviceActivity(
+  diskstats: string,
+  devices: ReadonlySet<string>,
+): { readonly busyMs: number; readonly inFlight: boolean } | null {
+  let found = false;
+  let busyMs = 0;
+  let inFlight = false;
+  for (const line of diskstats.split("\n")) {
+    const fields = line.trim().split(/\s+/);
+    const requests = Number(fields[11]);
+    const ioTicks = Number(fields[12]);
+    if (!devices.has(fields[2] ?? "") || !Number.isFinite(requests) || !Number.isFinite(ioTicks)) {
+      continue;
+    }
+    found = true;
+    busyMs += ioTicks;
+    inFlight ||= requests > 0;
+  }
+  return found ? { busyMs, inFlight } : null;
+}
+
+// Types on an anonymous device (major 0) whose waits still end at a block device, or nowhere.
+// Network and FUSE filesystems are absent on purpose, and so is anything unknown.
+const LOCAL_ANONYMOUS_FILESYSTEMS = new Set([
+  "autofs",
+  "bcachefs",
+  "binder",
+  "binfmt_misc",
+  "bpf",
+  "btrfs",
+  "cgroup",
+  "cgroup2",
+  "configfs",
+  "debugfs",
+  "devpts",
+  "devtmpfs",
+  "ecryptfs",
+  "efivarfs",
+  "fuse.lxcfs",
+  // Passes documents through from other mounts, which are judged by their own rows.
+  "fuse.portal",
+  "fusectl",
+  "hugetlbfs",
+  "mqueue",
+  "nfsd",
+  "nsfs",
+  "overlay",
+  "proc",
+  "pstore",
+  "ramfs",
+  "rootfs",
+  "rpc_pipefs",
+  "securityfs",
+  "selinuxfs",
+  "sysfs",
+  "tmpfs",
+  "tracefs",
+  "zfs",
+]);
+
+/**
+ * Whether `/proc/self/mountinfo` has a filesystem whose stalls may never reach a block device
+ * (NFS, CIFS, 9p, FUSE). Being mounted is enough: no counter tells a stalled mount from an
+ * unused one, and looking for stuck tasks misses every stall that ends between two samples.
+ */
+export function mountsOffBlockDevices(mountinfo: string): boolean {
+  const mounts = mountinfo.split("\n").filter((line) => line.trim() !== "");
+  return (
+    mounts.length === 0 ||
+    mounts.some((line) => {
+      const mount = /^\d+ \d+ (\d+):\d+ .* - (\S+) /.exec(line);
+      return !mount || (mount[1] === "0" && !LOCAL_ANONYMOUS_FILESYSTEMS.has(mount[2]!));
+    })
+  );
+}
+
+export interface BlockReading {
+  readonly at: number;
+  /** Null when block devices cannot account for every storage stall, or were unreadable. */
+  readonly busyMs: number | null;
+  readonly inFlight: boolean;
+}
+
+/**
+ * An upper bound, in percent, on the share of the readings' span that tasks waited on a block
+ * device: none can wait longer than some device has I/O in flight, and devices busy at
+ * different times add up. Null when any reading leaves that open.
+ */
+export function blockBusyPercent(readings: ReadonlyArray<BlockReading>): number | null {
+  const first = readings[0];
+  const last = readings.at(-1);
+  if (!first || !last || last.at <= first.at) return null;
+  let busyMs = 0;
+  for (const [index, reading] of readings.entries()) {
+    if (reading.busyMs === null) return null;
+    const before = readings[index - 1];
+    if (!before || before.busyMs === null) continue;
+    // A removed device or a counter reset.
+    if (reading.busyMs < before.busyMs) return null;
+    // `io_ticks` counts a request when it completes, so a hung disk never advances it.
+    busyMs +=
+      before.inFlight && reading.inFlight ? reading.at - before.at : reading.busyMs - before.busyMs;
+  }
+  return Math.min(100, (busyMs / (last.at - first.at)) * 100);
+}
+
 export interface PressureSample {
   /** Linux PSI avg10 percentages for memory. */
   readonly memorySome: number | null;
@@ -106,6 +216,11 @@ export interface PressureSample {
   /** Linux PSI avg60 percentages; a minute, so a build's burst is not an overload. */
   readonly cpuSome: number | null;
   readonly ioFull: number | null;
+  /**
+   * `blockBusyPercent` over about the same minute. PSI also counts waits behind which no
+   * storage works, such as a terminal idling in `io_uring_enter`, so it is capped by this.
+   */
+  readonly blockBusy: number | null;
   /** One-minute load average per CPU, where PSI is missing. */
   readonly loadPerCpu: number | null;
   readonly diskFreeBytes: number | null;
@@ -125,6 +240,7 @@ const RANK = { none: 0, elevated: 1, severe: 2 } as const;
 // A level is left only well below where it was entered, so it does not flicker.
 const EXIT_RATIO = 0.4;
 const GiB = 1024 ** 3;
+const IO_ELEVATED = 10;
 
 const worst = (levels: ReadonlyArray<HostPressureLevel>): HostPressureLevel =>
   levels.reduce((left, right) => (RANK[right] > RANK[left] ? right : left), "none");
@@ -183,7 +299,15 @@ export function nextPressureLevels(
       : sample.loadPerCpu !== null
         ? grade(previous.cpu, sample.loadPerCpu, 1.5, 3)
         : previous.cpu;
-  const io = sample.ioFull === null ? previous.io : grade(previous.io, sample.ioFull, 10, 30);
+  const io =
+    sample.ioFull === null
+      ? previous.io
+      : grade(
+          previous.io,
+          sample.blockBusy === null ? sample.ioFull : Math.min(sample.ioFull, sample.blockBusy),
+          IO_ELEVATED,
+          30,
+        );
   const disk =
     sample.diskFreeBytes === null || sample.diskTotalBytes === null
       ? previous.disk
@@ -195,6 +319,8 @@ const PRESSURE_INTERVAL = "5 seconds";
 const MAX_UNREAD_PRESSURE_SAMPLES = 6;
 const HEAVIEST_AGENT_COUNT = 3;
 const CPU_SAMPLE_MAX_AGE_MS = 30_000;
+// The span of the avg60 PSI that io pressure is graded on.
+const BLOCK_BUSY_WINDOW_MS = 60_000;
 
 /** Up to about an eighth coarser, so ordinary growth does not push an update every sample. */
 export function roundCoarsely(bytes: number): number {
@@ -245,6 +371,7 @@ const make = Effect.fn("makeHostResources")(function* () {
     readonly at: number;
     readonly usage: ReadonlyMap<string, number>;
   } | null>(null);
+  const blockReadings = yield* Ref.make<ReadonlyArray<BlockReading>>([]);
 
   const readFile = (path: string) => fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
 
@@ -293,6 +420,31 @@ const make = Effect.fn("makeHostResources")(function* () {
     );
   });
 
+  const readBlockDevices = Effect.gen(function* () {
+    const devices = yield* fs.readDirectory("/sys/block").pipe(Effect.orElseSucceed(() => []));
+    const activity = blockDeviceActivity(yield* readFile("/proc/diskstats"), new Set(devices));
+    const bounded =
+      activity !== null && !mountsOffBlockDevices(yield* readFile("/proc/self/mountinfo"));
+    return {
+      at: yield* Clock.currentTimeMillis,
+      busyMs: bounded ? activity.busyMs : null,
+      inFlight: activity?.inFlight ?? false,
+    } satisfies BlockReading;
+  });
+  // Every sample is kept for a minute, so the bound covers the stalls PSI still remembers.
+  // With nothing kept, a reading 200 ms later stands in, taken only when PSI could raise a level.
+  const sampleBlockBusy = Effect.fnUntraced(function* (ioFull: number) {
+    const reading = yield* readBlockDevices;
+    const kept = (yield* Ref.get(blockReadings)).filter(
+      (earlier) => reading.at - earlier.at <= BLOCK_BUSY_WINDOW_MS,
+    );
+    yield* Ref.set(blockReadings, [...kept, reading]);
+    if (kept.length > 0) return blockBusyPercent([...kept, reading]);
+    if (ioFull < IO_ELEVATED * EXIT_RATIO) return null;
+    yield* Effect.sleep("200 millis");
+    return blockBusyPercent([reading, yield* readBlockDevices]);
+  });
+
   // Untraced: it runs every few seconds while a client listens.
   const samplePressure = Effect.fnUntraced(function* () {
     const linux = platform === "linux";
@@ -314,13 +466,15 @@ const make = Effect.fn("makeHostResources")(function* () {
         ? NodeOS.loadavg()[0]! / Math.max(1, NodeOS.availableParallelism())
         : null;
     const disk = yield* diskSpace;
+    const ioFull = psiAverage(ioPsi, "full", "avg60");
     const sample: PressureSample = {
       memorySome: psiAverage(memoryPsi, "some", "avg10"),
       memoryFull: psiAverage(memoryPsi, "full", "avg10"),
       agentsMemoryFull: psiAverage(agentsPsi, "full", "avg10"),
       darwinMemoryLevel,
       cpuSome,
-      ioFull: psiAverage(ioPsi, "full", "avg60"),
+      ioFull,
+      blockBusy: ioFull === null ? null : yield* sampleBlockBusy(ioFull),
       loadPerCpu,
       diskFreeBytes: disk?.free ?? null,
       diskTotalBytes: disk?.total ?? null,

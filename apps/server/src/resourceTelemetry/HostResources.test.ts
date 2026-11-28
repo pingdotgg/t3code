@@ -110,6 +110,14 @@ const linuxHost = (files: Record<string, ReadonlyArray<string>>) => {
             reads.set(path, index + 1);
             return Effect.succeed(values[Math.min(index, values.length - 1)]!);
           },
+          readDirectory: (path) =>
+            Effect.succeed([
+              ...new Set(
+                Object.keys(files)
+                  .filter((file) => file.startsWith(`${path}/`))
+                  .map((file) => file.slice(path.length + 1).split("/")[0]!),
+              ),
+            ]),
         }),
         Layer.succeed(HostProcess.Platform, "linux"),
         NativeTelemetryClient.layerTest(),
@@ -272,6 +280,7 @@ const quiet: HostResources.PressureSample = {
   darwinMemoryLevel: null,
   cpuSome: 0,
   ioFull: 0,
+  blockBusy: null,
   loadPerCpu: null,
   diskFreeBytes: 500 * GiB,
   diskTotalBytes: 1000 * GiB,
@@ -283,6 +292,7 @@ const unread: HostResources.PressureSample = {
   darwinMemoryLevel: null,
   cpuSome: null,
   ioFull: null,
+  blockBusy: null,
   loadPerCpu: null,
   diskFreeBytes: null,
   diskTotalBytes: null,
@@ -299,6 +309,60 @@ describe("pressure levels", () => {
     expect(HostResources.psiAverage(text, "some", "avg10")).toBe(12.5);
     expect(HostResources.psiAverage(text, "full", "avg60")).toBe(1);
     expect(HostResources.psiAverage("", "full", "avg10")).toBeNull();
+  });
+
+  it("bounds storage stalls by the time block devices had I/O in flight", () => {
+    const disk = (name: string, inFlight: number, ioTicks: number) =>
+      `   8       0 ${name} 5 0 9 1 7 0 3 2 ${inFlight} ${ioTicks} 4 0 0 0 0 0 0\n`;
+    const devices = new Set(["sda", "sdb"]);
+    const reading = (at: number, stats: string) => ({
+      at,
+      ...HostResources.blockDeviceActivity(stats, devices)!,
+    });
+    // A partition repeats its device's time.
+    expect(
+      HostResources.blockDeviceActivity(disk("sda", 0, 500) + disk("sda1", 0, 500), devices),
+    ).toEqual({ busyMs: 500, inFlight: false });
+    expect(HostResources.blockDeviceActivity("", devices)).toBeNull();
+    // Two disks that stalled at different times add up.
+    expect(
+      HostResources.blockBusyPercent([
+        reading(0, disk("sda", 0, 0) + disk("sdb", 0, 0)),
+        reading(30_000, disk("sda", 0, 12_000) + disk("sdb", 0, 0)),
+        reading(60_000, disk("sda", 0, 12_000) + disk("sdb", 0, 12_000)),
+      ]),
+    ).toBe(40);
+    // A hung request never completes, so it never reaches io_ticks.
+    expect(
+      HostResources.blockBusyPercent([
+        reading(0, disk("sda", 1, 700)),
+        reading(5_000, disk("sda", 1, 700)),
+      ]),
+    ).toBe(100);
+    expect(
+      HostResources.blockBusyPercent([
+        { at: 0, busyMs: null, inFlight: false },
+        reading(5_000, disk("sda", 0, 700)),
+      ]),
+    ).toBeNull();
+  });
+
+  it("tells mounts that stall off block devices from local ones", () => {
+    const local =
+      "22 1 259:2 / / rw,relatime shared:1 - ext4 /dev/nvme0n1p2 rw\n" +
+      "23 22 0:21 / /proc rw,nosuid shared:5 - proc proc rw\n" +
+      "24 22 0:27 /@home /home rw shared:9 - btrfs /dev/mapper/root rw,subvol=/@home\n" +
+      "30 22 0:59 / /run/user/1000/doc rw shared:498 - fuse.portal portal rw,user_id=1000\n";
+    expect(HostResources.mountsOffBlockDevices(local)).toBe(false);
+    for (const mount of [
+      "40 22 0:61 / /mnt/work rw shared:60 - nfs4 nas:/work rw,hard\n",
+      "41 22 0:62 / /mnt/remote rw - fuse.sshfs user@host:/srv rw,user_id=1000\n",
+      "42 22 0:63 / /mnt/new rw - some-new-fs none rw\n",
+    ]) {
+      expect(HostResources.mountsOffBlockDevices(local + mount)).toBe(true);
+    }
+    // An unreadable table rules nothing out.
+    expect(HostResources.mountsOffBlockDevices("")).toBe(true);
   });
 
   it("keeps small agents listed while rounding large ones coarsely", () => {
@@ -396,6 +460,18 @@ describe("pressure levels", () => {
       expected: { io: "elevated" },
     },
     {
+      name: "io PSI with no storage at work, such as a terminal idling in io_uring",
+      previous: {},
+      sample: { ...quiet, ioFull: 77, blockBusy: 1.5 },
+      expected: {},
+    },
+    {
+      name: "io PSI that outlasts the storage stall behind it",
+      previous: { io: "severe" },
+      sample: { ...quiet, ioFull: 40, blockBusy: 1 },
+      expected: {},
+    },
+    {
       name: "a disk under 20 GiB free",
       previous: {},
       sample: { ...quiet, diskFreeBytes: 15 * GiB },
@@ -470,6 +546,66 @@ describe("HostResources pressure on Linux", () => {
         { threadId: "thread-1", agent: "claude", memoryBytes: 960 * MiB, cpuCores: 3 },
       ]);
     }).pipe(Effect.provide(pressured({}))),
+  );
+
+  const calmCpu = "some avg10=0.00 avg60=0.00\nfull avg10=0.00 avg60=0.00\n";
+  const ioStalled = "some avg10=45.00 avg60=42.00\nfull avg10=44.00 avg60=40.00\n";
+  const diskstats = (ioTicks: number) =>
+    ` 259       0 nvme0n1 5 0 9 1 7 0 3 2 0 ${ioTicks} 4 0 0 0 0 0 0\n` +
+    ` 259       2 nvme0n1p2 5 0 9 1 7 0 3 2 0 ${ioTicks} 4 0 0 0 0 0 0\n`;
+  const localMounts =
+    "22 1 259:2 / / rw,relatime shared:1 - ext4 /dev/nvme0n1p2 rw\n" +
+    "23 22 0:21 / /proc rw,nosuid shared:5 - proc proc rw\n";
+  const ioPressured = (ioTicks: ReadonlyArray<number>, mounts = localMounts) =>
+    pressured({
+      "/proc/pressure/cpu": [calmCpu],
+      "/proc/pressure/io": [ioStalled],
+      "/proc/diskstats": ioTicks.map(diskstats),
+      "/proc/self/mountinfo": [mounts],
+      "/sys/block/nvme0n1/stat": [""],
+    });
+  const firstIo = Effect.gen(function* () {
+    setup();
+    const hostResources = yield* HostResources.HostResources;
+    const fiber = yield* Effect.forkChild(hostResources.readPressure);
+    yield* TestClock.adjust("200 millis");
+    return (yield* Fiber.join(fiber)).io;
+  });
+
+  it.effect("ignores io PSI while no block device is busy", () =>
+    Effect.gen(function* () {
+      // 3 ms with I/O in flight over 200 ms, as beside a terminal waiting in io_uring.
+      expect(yield* firstIo).toBe("none");
+    }).pipe(Effect.provide(ioPressured([1000, 1003]))),
+  );
+
+  it.effect("keeps io pressure beside idle disks while a network filesystem is mounted", () =>
+    Effect.gen(function* () {
+      // Stalls that end between two samples leave no trace but PSI, so the mount alone decides.
+      expect(yield* firstIo).toBe("severe");
+    }).pipe(
+      Effect.provide(
+        ioPressured(
+          [1000, 1000],
+          `${localMounts}40 22 0:61 / /mnt/work rw shared:60 - nfs4 nas:/work rw,hard\n`,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("reports a disk stall that the first, short reading missed", () =>
+    Effect.gen(function* () {
+      setup();
+      const hostResources = yield* HostResources.HostResources;
+      const samples = yield* Stream.take(hostResources.pressure, 2).pipe(
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* TestClock.adjust("200 millis");
+      yield* TestClock.adjust("5 seconds");
+      // Idle for the first 200 ms, then 2 s with I/O in flight before the next sample.
+      expect((yield* Fiber.join(samples)).map((sample) => sample.io)).toEqual(["none", "severe"]);
+    }).pipe(Effect.provide(ioPressured([1000, 1000, 3000]))),
   );
 
   it.effect("reports a nearly full disk with its free space", () =>
