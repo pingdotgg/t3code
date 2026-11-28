@@ -21,6 +21,8 @@ export function LinkedThreadPage(props: {
   readonly viaEnvironmentId: EnvironmentId;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  /** Pair with the thread's environment at once instead of waiting for "Connect to interact". */
+  readonly autoConnect?: boolean;
 }) {
   const { viaEnvironmentId, environmentId, threadId } = props;
   const gt = useGT();
@@ -52,6 +54,7 @@ export function LinkedThreadPage(props: {
         panelRef={null}
         surface={surface}
         visible
+        autoConnect={props.autoConnect === true}
         renderHeader={(title) => (
           <WorkspacePageHeader electron={isElectron} className="relative bg-background">
             <WorkspaceBreadcrumb ariaLabel={gt("Thread breadcrumb")}>

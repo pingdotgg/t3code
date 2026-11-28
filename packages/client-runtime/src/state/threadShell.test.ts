@@ -14,11 +14,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
 import { v2Now, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
+import { threadKey } from "./entities.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import { isThreadWorking } from "./threadInbox.ts";
 import {
   childThreadInputsTitle,
   createEnvironmentThreadShellAtoms,
+  movedThreadCopyKeys,
   resolveListedAncestorThreadRef,
 } from "./threadShell.ts";
 
@@ -712,6 +714,32 @@ describe("v2 thread shell lists", () => {
       dispose();
       harness.registry.dispose();
     }
+  });
+});
+
+describe("movedThreadCopyKeys", () => {
+  it("hides a moved thread's copy only where its continuation is listed too", () => {
+    const box = EnvironmentId.make("environment-box");
+    const elsewhere = EnvironmentId.make("environment-elsewhere");
+    const departed = (id: string, to: EnvironmentId, threadId: string) => ({
+      environmentId,
+      id: ThreadId.make(id),
+      handoff: {
+        state: "departed" as const,
+        handoffId: id,
+        environmentId: to,
+        label: "Box",
+        threadId: ThreadId.make(threadId),
+      },
+    });
+    const keys = movedThreadCopyKeys([
+      departed("thread-followed", box, "thread-there"),
+      departed("thread-out-of-reach", elsewhere, "thread-unlisted"),
+      { environmentId: box, id: ThreadId.make("thread-there"), handoff: null },
+    ]);
+    expect([...keys]).toEqual([
+      threadKey({ environmentId, threadId: ThreadId.make("thread-followed") }),
+    ]);
   });
 });
 

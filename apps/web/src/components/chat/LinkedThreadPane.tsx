@@ -2,7 +2,7 @@ import { isLinkedThreadWorking, linkedThreadFailure } from "@t3tools/client-runt
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { T, useGT, useMessages, Var } from "gt-react";
 import { EyeIcon, PlugIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
 
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type LinkedThreadSurface, linkedThreadTitle } from "../../linkedThreadSurface";
@@ -67,6 +67,9 @@ function LinkedThreadComposer(props: {
   );
 }
 
+/** Environments an unasked connect was tried for; a failed one waits for the button after that. */
+const autoConnectTried = new Set<string>();
+
 const NO_ATTACHMENT_URLS: ReadonlyMap<string, string> = new Map();
 const noAttachmentUrls = () => NO_ATTACHMENT_URLS;
 const ignore = () => {};
@@ -84,6 +87,8 @@ export function LinkedThread(props: {
   readonly visible: boolean;
   /** What sits above the timeline on the main screen; a tab already names the thread. */
   readonly renderHeader?: (title: string) => ReactNode;
+  /** Connect once without being asked; what it cannot do alone is left to the button. */
+  readonly autoConnect?: boolean;
 }) {
   const { surface, panelRef } = props;
   const gt = useGT();
@@ -96,6 +101,13 @@ export function LinkedThread(props: {
   const connection = useConnectLinkedEnvironment(panelRef, surface);
   const connectState = connection.state;
   const connecting = connectState.phase === "connecting";
+  const autoConnect = useEffectEvent(() => {
+    if (props.autoConnect !== true || autoConnectTried.has(surface.environmentId)) return;
+    autoConnectTried.add(surface.environmentId);
+    void connection.connect({ unasked: true });
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pairing starts a network exchange with another machine, once when a moved thread opens
+  useEffect(() => autoConnect(), []);
   const connect = async () => {
     const outcome = await connection.connect();
     if (outcome.type === "connected") {

@@ -28,6 +28,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { environmentThreadDetails } from "../../state/threads";
+import { useEnvironments } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { ThreadContextDivider } from "./thread-context-divider";
 
@@ -50,6 +51,28 @@ function handoffEndpointsAtom(
     if (JSON.stringify(next) !== JSON.stringify(previous)) previous = next;
     return previous;
   });
+}
+
+/** Where a thread that moved from another machine picks up; what is above it happened there. */
+export function ThreadMovedDivider(props: {
+  environmentId: EnvironmentId | undefined;
+  iconColor: ColorValue;
+}) {
+  const gt = useGT();
+  const machine = useEnvironments().environments.find(
+    (environment) => environment.environmentId === props.environmentId,
+  )?.label;
+  return (
+    <ThreadContextDivider
+      icon="arrow.up.right"
+      iconColor={props.iconColor}
+      label={
+        machine === undefined
+          ? gt("Moved here from another machine")
+          : gt("Moved here from {machine}", { machine })
+      }
+    />
+  );
 }
 
 /** A same-harness model or effort change. Shows only what changed. */

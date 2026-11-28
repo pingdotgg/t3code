@@ -724,6 +724,19 @@ export const OrchestratorMcpThreadImportInput = Schema.Struct({
 });
 export type OrchestratorMcpThreadImportInput = typeof OrchestratorMcpThreadImportInput.Type;
 
+/** The message that starts a moved thread's first turn where it landed. */
+export const threadMoveMessageId = (threadId: ThreadId) => MessageId.make(`${threadId}:continue`);
+
+/**
+ * Whether a user message is the one a move started the thread with. It names the thread it
+ * came from as its sender, and clients draw it as a divider instead of a message.
+ */
+export const isThreadMoveMessage = (message: {
+  readonly id: string;
+  readonly linkedSender?: unknown;
+}): boolean =>
+  message.linkedSender !== undefined && /^thread:import:[0-9a-f]+:continue$/.test(message.id);
+
 export const OrchestratorMcpThreadImportResult = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,

@@ -1,11 +1,11 @@
-import { useNavigation } from "@react-navigation/native";
+import { StackActions, useNavigation } from "@react-navigation/native";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useGT } from "gt-react-native";
-import { useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -13,13 +13,19 @@ import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { cn } from "../../lib/cn";
 import { useEnvironments } from "../../state/environments";
+import { useConnectLinkedEnvironment } from "../../state/linkedThread";
 import { threadHandoffEnvironment, useCanMoveThreads } from "../../state/threadHandoff";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOpenLinkedThread, useOpenLinkedThreadRead } from "./useOpenLinkedThread";
 
+/** Machines an unasked connect was tried for; a failed one leaves the card's button after that. */
+const followTried = new Set<string>();
+
 /**
  * A thread's move to a linked machine: waiting for its turn to end (with a way to keep it here),
- * under way, moved (with a way to open it there), or failed (with a way to try again).
+ * under way, or failed (with a way to try again). A moved thread is followed to where it
+ * continues, pairing with that machine first when needed, so it reads as one thread; the card
+ * stays only when this device cannot reach the machine.
  */
 export function ThreadHandoffCard({ thread }: { readonly thread: EnvironmentThreadShell }) {
   const gt = useGT();
@@ -32,6 +38,36 @@ export function ThreadHandoffCard({ thread }: { readonly thread: EnvironmentThre
   const [cancelling, setCancelling] = useState(false);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const handoff = thread.handoff;
+  const moved = handoff?.state === "departed" ? handoff : null;
+  const movedId = moved?.handoffId;
+  const connectedThere =
+    moved !== null && presentationById.get(moved.environmentId)?.connection.phase === "connected";
+  const connection = useConnectLinkedEnvironment({
+    viaEnvironmentId: thread.environmentId,
+    environmentId: moved?.environmentId ?? thread.environmentId,
+    threadId: moved?.threadId ?? thread.id,
+    label: moved?.label ?? "",
+    title: thread.title,
+  });
+  const follow = useEffectEvent((reachable: boolean) => {
+    if (moved === null) return;
+    if (reachable) {
+      navigation.dispatch(
+        StackActions.replace("Thread", {
+          environmentId: moved.environmentId,
+          threadId: moved.threadId,
+        }),
+      );
+      return;
+    }
+    if (followTried.has(moved.environmentId)) return;
+    followTried.add(moved.environmentId);
+    void connection.connect();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a move the server reports takes the screen to the thread it continues as, pairing over the network first
+  useEffect(() => {
+    if (movedId !== undefined) follow(connectedThere);
+  }, [movedId, connectedThere]);
   if (handoff === null || (handoff.state === "failed" && dismissed === handoff.handoffId)) {
     return null;
   }
@@ -72,7 +108,9 @@ export function ThreadHandoffCard({ thread }: { readonly thread: EnvironmentThre
       : handoff.state === "departing"
         ? gt("Moving to {machine}…", { machine })
         : handoff.state === "departed"
-          ? gt("This thread continues on {machine}", { machine })
+          ? connection.state.phase === "connecting"
+            ? gt("Connecting to {machine}…", { machine })
+            : gt("This thread continues on {machine}", { machine })
           : gt("Could not move to {machine}", { machine });
   const detail =
     handoff.state === "pending"

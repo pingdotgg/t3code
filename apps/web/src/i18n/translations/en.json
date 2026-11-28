@@ -4347,6 +4347,8 @@
   "e7ba3939542e8ee1": "Moving to {machine}…",
   "c3f86e567586e075": "This thread continues on {machine}",
   "6de54bd779ddbea2": "This copy is read-only.",
+  "5cb99caa0ee7d72d": "Moved here from {machine}",
+  "65285be62f1e3db4": "Moved here from another machine",
   "6ef05430a4278089": "Open on {machine}",
   "7417d72c5c18c78f": "Could not move to {machine}",
   "ac6f0547a17af482": "running",

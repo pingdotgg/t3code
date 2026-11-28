@@ -6,6 +6,7 @@ import { T, useGT, useMessages, Var } from "gt-react";
 import { findRevealRef } from "./markdownFindContext";
 import {
   type EnvironmentId,
+  isThreadMoveMessage,
   type MessageId,
   type ScheduledTaskId,
   type ServerProviderSkill,
@@ -38,11 +39,13 @@ import {
   EyeIcon,
   type LucideIcon,
   MessagesSquareIcon,
+  MonitorUpIcon,
   Redo2Icon,
   PencilIcon,
   LinkIcon,
 } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
+import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { FreshSessionRow, ModelSwitchRow } from "./V2LifecycleRow";
 import { useAssetUrlRefresh, useAssetUrls, useAssetUrlState } from "../../assets/assetUrls";
 import { AttachmentImage } from "../media/AttachmentImage";
@@ -289,10 +292,28 @@ function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "messag
         ctx.onOpenThread(ThreadId.make(threadId), undefined, intent)
       }
     />
+  ) : isThreadMoveMessage(row.message) ? (
+    <ThreadMovedRow environmentId={row.message.linkedSender?.environmentId ?? null} />
   ) : resolveUserMessagePresentation(row.message).attribution === "automation" ? (
     <AutomationMessageRow row={row} />
   ) : (
     <UserTimelineRow row={row} />
+  );
+}
+
+/** Where a thread that moved from another machine picks up; what is above it happened there. */
+function ThreadMovedRow({ environmentId }: { readonly environmentId: EnvironmentId | null }) {
+  const gt = useGT();
+  const machine = useEnvironment(environmentId)?.label;
+  return (
+    <TimelineSystemDivider
+      icon={MonitorUpIcon}
+      label={
+        machine === undefined
+          ? gt("Moved here from another machine")
+          : gt("Moved here from {machine}", { machine })
+      }
+    />
   );
 }
 

@@ -206,7 +206,8 @@ export function useConnectLinkedEnvironment(
     setPrefill(prefill);
     void navigate({ to: "/settings/connections" });
   };
-  const connect = async () => {
+  /** `unasked` leaves a pairing code to the notice's button instead of opening Settings. */
+  const connect = async (options?: { readonly unasked?: boolean }) => {
     setState({ phase: "connecting" });
     const startedOn = router.state.location.href;
     let tabClosed = false;
@@ -268,7 +269,7 @@ export function useConnectLinkedEnvironment(
       host: outcome.host,
     };
     setState({ phase: "manual", prefill });
-    if (stayed()) addWithCode(prefill);
+    if (stayed() && options?.unasked !== true) addWithCode(prefill);
     return outcome;
   };
   return { state, connect, addWithCode };

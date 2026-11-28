@@ -1,7 +1,7 @@
 import {
   CommandId,
   EventId,
-  MessageId,
+  threadMoveMessageId,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2LinkOrigin,
@@ -219,7 +219,13 @@ const make = Effect.gen(function* () {
             type: "message.dispatch",
             commandId: CommandId.make(`command:thread-import:${threadId}:continue`),
             threadId,
-            messageId: MessageId.make(`${threadId}:continue`),
+            messageId: threadMoveMessageId(threadId),
+            // Names where the thread came from; clients draw this message as the move's divider.
+            linkedSender: {
+              environmentId: input.source.environmentId,
+              threadId: input.source.threadId,
+              title: input.title,
+            },
             text: input.continuationPrompt,
             attachments: [],
             modelSelection: input.modelSelection,

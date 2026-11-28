@@ -69,6 +69,36 @@ export function isShownUnderParent(
   return !isListedThreadLineage(lineage) || delegatedUnderParent.has(threadKey(ref));
 }
 
+/**
+ * Keys of the copies that moved threads left behind, where this client also lists the thread
+ * they continue as. The two are one conversation, so lists show only where it continues. A copy
+ * whose continuation the client cannot list stays, and opening it follows the move.
+ */
+export function movedThreadCopyKeys(
+  threads: Iterable<
+    Pick<EnvironmentThreadShell, "environmentId" | "id"> & {
+      readonly handoff?: EnvironmentThreadShell["handoff"];
+    }
+  >,
+): ReadonlySet<string> {
+  const departed: Array<{ readonly key: string; readonly continuesAs: string }> = [];
+  const listed = new Set<string>();
+  for (const thread of threads) {
+    const key = threadKey({ environmentId: thread.environmentId, threadId: thread.id });
+    listed.add(key);
+    if (thread.handoff?.state === "departed") {
+      departed.push({
+        key,
+        continuesAs: threadKey({
+          environmentId: thread.handoff.environmentId,
+          threadId: thread.handoff.threadId,
+        }),
+      });
+    }
+  }
+  return new Set(departed.flatMap((copy) => (listed.has(copy.continuesAs) ? [copy.key] : [])));
+}
+
 // Subagents, side chats and tasks delegated from a listed parent have no list row,
 // so an open one is represented by its nearest listed ancestor. A broken chain
 // (missing or archived parent, cycle) resolves to the thread itself, which then matches no row.
@@ -785,6 +815,15 @@ export function createEnvironmentThreadShellAtoms(input: {
         }
         next.push(scopedThread(environmentId, thread, subagentRequests));
       }
+    }
+    const movedCopies = movedThreadCopyKeys(next);
+    if (movedCopies.size > 0) {
+      const listed = next.filter(
+        (thread) =>
+          !movedCopies.has(threadKey({ environmentId: thread.environmentId, threadId: thread.id })),
+      );
+      next.length = 0;
+      next.push(...listed);
     }
     if (arrayElementsEqual(previousNavigationShells, next)) return previousNavigationShells;
     previousNavigationShells = next;

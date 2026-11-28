@@ -4345,6 +4345,8 @@
   "e7ba3939542e8ee1": "Movendo para {machine}…",
   "c3f86e567586e075": "Esta thread continua em {machine}",
   "6de54bd779ddbea2": "Esta cópia é somente leitura.",
+  "5cb99caa0ee7d72d": "Movida para cá de {machine}",
+  "65285be62f1e3db4": "Movida para cá de outra máquina",
   "6ef05430a4278089": "Abrir em {machine}",
   "7417d72c5c18c78f": "Não foi possível mover para {machine}",
   "ac6f0547a17af482": "em execução",

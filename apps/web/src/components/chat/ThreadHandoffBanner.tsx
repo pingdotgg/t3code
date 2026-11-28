@@ -6,7 +6,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { useNavigate } from "@tanstack/react-router";
+import { Navigate, useNavigate } from "@tanstack/react-router";
 import { msg, useGT } from "gt-react";
 import { ArrowUpRightIcon, MonitorUpIcon, TriangleAlertIcon } from "lucide-react";
 import { useState } from "react";
@@ -39,6 +39,32 @@ export function threadHandoffSendBlockReason(
   return handoff.state === "departing"
     ? resolve(msg("Moving to {machine}", { machine: handoff.label }))
     : resolve(msg("Continues on {machine}", { machine: handoff.label }));
+}
+
+/**
+ * Takes the client to where a moved thread continues, so the conversation reads as one thread:
+ * its own connection to that machine when it has one, else a view over the link that pairs
+ * with the machine by itself.
+ */
+export function ThreadHandoffFollower({
+  shell,
+}: {
+  readonly shell: HandoffShell | null | undefined;
+}) {
+  const connected = useConnectedEnvironmentIds();
+  const handoff = shell?.handoff;
+  if (shell == null || handoff?.state !== "departed") return null;
+  const there = scopeThreadRef(handoff.environmentId, handoff.threadId);
+  return connected.includes(handoff.environmentId) ? (
+    <Navigate to="/$environmentId/$threadId" params={buildThreadRouteParams(there)} replace />
+  ) : (
+    <Navigate
+      to="/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId"
+      params={linkedThreadRouteParams({ viaEnvironmentId: shell.environmentId, ...there })}
+      search={{ connect: true }}
+      replace
+    />
+  );
 }
 
 /**

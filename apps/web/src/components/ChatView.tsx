@@ -217,6 +217,7 @@ import { threadPullRequestPanelTarget } from "./pullRequest/pullRequestDetail.lo
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { GuestPendingMessages } from "./chat/GuestShareControls";
 import {
+  ThreadHandoffFollower,
   threadHandoffSendBlockReason,
   useThreadHandoffBannerItem,
 } from "./chat/ThreadHandoffBanner";
@@ -4342,6 +4343,7 @@ export default function ChatView(props: ChatViewProps) {
         onConfirm={onConfirmRevertStable}
       />
       {embedded ? null : <LinkPullRequestDialogHost />}
+      {embedded ? null : <ThreadHandoffFollower shell={activeThreadShell} />}
       <ThreadVisitWatermark threadRef={routeThreadRef} />
       <ExpandedImageDialogHost threadKey={routeThreadKey} />
     </div>

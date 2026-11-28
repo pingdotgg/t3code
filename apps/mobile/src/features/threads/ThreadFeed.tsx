@@ -37,6 +37,7 @@ import {
 } from "./thread-context-divider";
 import {
   ThreadHandoffDivider,
+  ThreadMovedDivider,
   ThreadHandoffRow,
   ThreadModelSwitchDivider,
 } from "./thread-handoff-row";
@@ -76,6 +77,7 @@ import {
   type ChatFileAttachment,
   type ChatImageAttachment,
   type EnvironmentId,
+  isThreadMoveMessage,
   type MessageId,
   type OrchestrationV2ProjectedTurnItem,
   type RunId,
@@ -2296,6 +2298,14 @@ function renderFeedEntry(
           environmentId={props.environmentId}
           threadId={props.threadId}
           opening={props.workflowOpening}
+        />
+      );
+    }
+    if (isUser && isThreadMoveMessage(message)) {
+      return (
+        <ThreadMovedDivider
+          environmentId={message.linkedSender?.environmentId}
+          iconColor={iconSubtleColor}
         />
       );
     }
