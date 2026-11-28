@@ -258,6 +258,47 @@ describe("mergePathEntries", () => {
       "/opt/bin :/opt/bin:/usr/bin",
     );
   });
+
+  it.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "preserves current-directory command lookup after merging a POSIX PATH",
+    () => {
+      const cwd = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-merge-path-"));
+      try {
+        const command = "t3-path-merge-fixture";
+        NodeFS.writeFileSync(NodePath.join(cwd, command), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+        const lookup = (pathValue: string | undefined) => {
+          const result = NodeChildProcess.spawnSync(
+            "/bin/sh",
+            ["-c", 'command -v "$1"', "sh", command],
+            {
+              cwd,
+              env: { PATH: pathValue },
+              encoding: "utf8",
+            },
+          );
+          return { status: result.status, output: result.stdout.trim() };
+        };
+        const originalPath = ":/usr/bin";
+        const original = lookup(originalPath);
+        expect(original.status).toBe(0);
+        expect(
+          lookup(mergePathEntries(originalPath, undefined, HostProcess.Platform.defaultValue())),
+        ).toEqual(original);
+      } finally {
+        NodeFS.rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("keeps the first POSIX current-directory entry in search order", () => {
+    expect(mergePathEntries("/first::/second:", ":/third", "darwin")).toBe(
+      "/first::/second:/third",
+    );
+    expect(mergePathEntries("/first", "/second:", "linux")).toBe("/first:/second:");
+    expect(mergePathEntries("::", undefined, "linux")).toBe(":");
+    expect(mergePathEntries("", undefined, "linux")).toBeUndefined();
+    expect(mergePathEntries("; C:\\bin ;;", undefined, "win32")).toBe("C:\\bin");
+  });
 });
 
 describe("windowsEnvironmentValueCommand", () => {
@@ -551,6 +592,7 @@ describe("mergePathValues", () => {
       "/opt/bin :/opt/bin:/usr/bin",
     );
     expect(mergePathValues('/opt/bin"', "/opt/bin", "linux")).toBe('/opt/bin":/opt/bin');
+    expect(mergePathValues(":/usr/bin", "/usr/bin:", "linux")).toBe(":/usr/bin");
   });
 });
 

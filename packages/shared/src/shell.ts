@@ -213,7 +213,7 @@ export function mergePathEntries(
     if (!pathValue) continue;
     for (const entry of pathValue.split(delimiter)) {
       const trimmedEntry = trimPathEntry(entry, platform);
-      if (!trimmedEntry || seen.has(trimmedEntry)) {
+      if ((platform === "win32" && trimmedEntry === "") || seen.has(trimmedEntry)) {
         continue;
       }
       seen.add(trimmedEntry);
@@ -221,6 +221,7 @@ export function mergePathEntries(
     }
   }
 
+  if (merged.length === 1 && merged[0] === "") return delimiter;
   return merged.length > 0 ? merged.join(delimiter) : undefined;
 }
 
@@ -513,6 +514,8 @@ export function mergePathValues(
   inheritedPath: string | undefined,
   platform: NodeJS.Platform,
 ): string | undefined {
+  if (platform !== "win32") return mergePathEntries(preferredPath, inheritedPath, platform);
+
   const delimiter = pathDelimiterForPlatform(platform);
   const merged: string[] = [];
   const seen = new Set<string>();
