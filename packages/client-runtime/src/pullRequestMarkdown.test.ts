@@ -106,6 +106,31 @@ describe("pull request body segmentation", () => {
         media: "video",
       },
     ]);
+    for (const body of [
+      '<video src="https://example.org/right.mp4" data-src="https://example.org/wrong.mp4"></video>',
+      '<video data-src="https://example.org/wrong.mp4" src="https://example.org/right.mp4"></video>',
+    ]) {
+      expect(split(body)).toEqual([
+        {
+          id: "attachment:0",
+          kind: "attachment",
+          url: "https://example.org/right.mp4",
+          media: "video",
+        },
+      ]);
+    }
+    expect(split("<video src=https://example.org/demo.mp4?token=abc></video>")).toEqual([
+      {
+        id: "attachment:0",
+        kind: "attachment",
+        url: "https://example.org/demo.mp4?token=abc",
+        media: "video",
+      },
+    ]);
+    const dataSrcOnly = '<video data-src="https://example.org/wrong.mp4"></video>';
+    expect(split(dataSrcOnly)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: dataSrcOnly, sourceOffset: 0 },
+    ]);
   });
 
   it("leaves the img tag GitHub writes for a dropped image as markdown", () => {
@@ -225,6 +250,29 @@ describe("pull request body segmentation", () => {
     expect(split(body)).toEqual([
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
+  });
+
+  it("never lifts media out of an HTML comment, while lifting media after it", () => {
+    const visible = {
+      id: "attachment:1",
+      kind: "attachment",
+      url: "https://example.org/visible.mp4",
+      media: "video",
+    };
+    // A fence inside a comment is hidden too, so it must not open a code block.
+    const comment = [
+      "<!--",
+      "https://example.org/hidden.mp4",
+      '<video src="https://example.org/hidden-tag.mp4"></video>',
+      "```",
+      "-->",
+    ].join("\n");
+    for (const hidden of [comment, "<!-- template hint -->"]) {
+      expect(split(`${hidden}\n\nhttps://example.org/visible.mp4`)).toEqual([
+        { id: "markdown:0", kind: "markdown", text: hidden, sourceOffset: 0 },
+        visible,
+      ]);
+    }
   });
 
   it("leaves an unclosed video tag as prose without eating the rest of the body", () => {

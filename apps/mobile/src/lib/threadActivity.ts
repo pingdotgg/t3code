@@ -538,7 +538,7 @@ function itemLifecycleStatus(item: OrchestrationV2TurnItem): WorkLogToolLifecycl
       return "failed";
     case "cancelled":
     case "interrupted":
-      return "stopped";
+      return item.toolNonExecutionKind === "declined" ? "declined" : "stopped";
   }
 }
 
