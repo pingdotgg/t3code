@@ -3560,7 +3560,6 @@
   "e3332e8a849ddce3": "{count, plural, one {Exclui a entrada de checkout e as threads dela em todas as máquinas. Os arquivos no disco não são afetados.} other {Exclui todas as {count} entradas de checkout e as threads delas em todas as máquinas. Os arquivos no disco não são afetados.}}",
   "5ddf3891266c3c9e": "Exclui a entrada do projeto e as threads dela. Os arquivos no disco não são afetados.",
   "3f01a81eaf73280c": "Remover o checkout {path}",
-  "82c158f932fbb0db": "Escolha um projeto com o filtro acima para gerenciar o nome, os checkouts e a remoção dele.",
   "fa38c677c3af4f00": "Este projeto não tem checkout nos ambientes conectados selecionados. Altere o filtro acima.",
   "4614a422f1430cd7": "Nome",
   "89c5ab924f851b78": "Remover checkout",

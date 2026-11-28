@@ -3560,7 +3560,6 @@
   "e3332e8a849ddce3": "{count, plural, one {Elimina la entrada de checkout y sus hilos en todas las máquinas. No se tocan los archivos en disco.} other {Elimina las {count} entradas de checkout y sus hilos en todas las máquinas. No se tocan los archivos en disco.}}",
   "5ddf3891266c3c9e": "Elimina la entrada del proyecto y sus hilos. No se tocan los archivos en disco.",
   "3f01a81eaf73280c": "Quitar el checkout {path}",
-  "82c158f932fbb0db": "Elige un proyecto con el filtro de arriba para gestionar su nombre, sus checkouts y su eliminación.",
   "fa38c677c3af4f00": "Este proyecto no tiene checkout en los entornos conectados seleccionados. Cambia el filtro de arriba.",
   "4614a422f1430cd7": "Nombre",
   "89c5ab924f851b78": "Quitar checkout",

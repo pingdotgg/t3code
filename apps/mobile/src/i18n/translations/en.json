@@ -3567,7 +3567,6 @@
   "e3332e8a849ddce3": "{count, plural, other {Deletes all {count} checkout entries and their threads on every machine. Files on disk are not touched.}}",
   "5ddf3891266c3c9e": "Deletes the project entry and its threads. Files on disk are not touched.",
   "3f01a81eaf73280c": "Remove checkout {path}",
-  "82c158f932fbb0db": "Choose a project with the filter above to manage its name, checkouts and removal.",
   "fa38c677c3af4f00": "This project has no checkout on the selected connected environments. Change the filter above.",
   "4614a422f1430cd7": "Name",
   "89c5ab924f851b78": "Remove checkout",

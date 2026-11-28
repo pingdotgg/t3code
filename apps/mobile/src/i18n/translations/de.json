@@ -3565,7 +3565,6 @@
   "e3332e8a849ddce3": "{count, plural, one {Löscht {count} Checkout-Eintrag und seine Threads auf jedem Rechner. Dateien auf der Festplatte bleiben unberührt.} other {Löscht alle {count} Checkout-Einträge und ihre Threads auf jedem Rechner. Dateien auf der Festplatte bleiben unberührt.}}",
   "5ddf3891266c3c9e": "Löscht den Projekteintrag und seine Threads. Dateien auf der Festplatte bleiben unberührt.",
   "3f01a81eaf73280c": "Checkout {path} entfernen",
-  "82c158f932fbb0db": "Wähle mit dem Filter oben ein Projekt, um Name, Checkouts und Entfernen zu verwalten.",
   "fa38c677c3af4f00": "Dieses Projekt hat keinen Checkout in den ausgewählten verbundenen Umgebungen. Ändere den Filter oben.",
   "4614a422f1430cd7": "Name",
   "89c5ab924f851b78": "Checkout entfernen",
