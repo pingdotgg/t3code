@@ -19,6 +19,7 @@ import * as AcpErrors from "effect-acp/errors";
 
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { enterpriseBrowserBridgeSource } from "./antigravityBrowserBridge.ts";
 import {
   antigravityUserSkillDirectories,
   resolveAntigravityUserHome,
@@ -88,6 +89,7 @@ export interface AntigravityProfile {
   readonly tokenPath: string;
   readonly tempDirectory: string;
   readonly browserCommand: string;
+  readonly browserBridge?: { readonly executablePath: string; readonly scriptPath: string };
   readonly caBundlePath?: string;
 }
 
@@ -399,6 +401,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   readonly auth?: AntigravityAuthConfig;
   readonly userHome?: string;
   readonly tempDirectory?: string;
+  readonly captureBrowser?: boolean;
 }) {
   const auth = input.auth ?? ANTIGRAVITY_PERSONAL_AUTH;
   const fs = yield* FileSystem.FileSystem;
@@ -442,6 +445,13 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   const geminiHome = path.resolve(input.profileDirectory);
   const acpDirectory = path.join(geminiHome, "antigravity-acp");
   const tempDirectory = input.tempDirectory ?? path.join(acpDirectory, "tmp");
+  const browserBridge =
+    input.captureBrowser === true && platform === "linux" && auth.authMethod === "oauth-business"
+      ? {
+          executablePath: helperExecutable,
+          scriptPath: path.join(acpDirectory, "enterprise-browser.cjs"),
+        }
+      : undefined;
   let caBundlePath: string | undefined;
   if (platform === "linux") {
     // Bundled Python may look for certificates at paths absent on this distribution.
@@ -470,6 +480,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     tokenPath: path.join(acpDirectory, "acp_token.json"),
     tempDirectory,
     browserCommand,
+    ...(browserBridge === undefined ? {} : { browserBridge }),
     ...(caBundlePath === undefined ? {} : { caBundlePath }),
   };
   const environment = antigravityEnvironment(profile, input.baseEnv ?? process.env, auth);
@@ -530,6 +541,20 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
         );
     }
   }
+  if (browserBridge !== undefined) {
+    // Native Enterprise login discards launcher stdio; the private socket carries its URL back to ACP stderr.
+    yield* fs
+      .writeFileString(
+        browserBridge.scriptPath,
+        enterpriseBrowserBridgeSource(ANTIGRAVITY_AUTH_BROWSER_MARKER),
+        { mode: 0o600 },
+      )
+      .pipe(
+        Effect.mapError(() =>
+          authSupportError("The Enterprise sign-in URL recorder could not be created."),
+        ),
+      );
+  }
   yield* fs
     .writeFileString(path.join(acpDirectory, "settings.json"), antigravityProfileSettings(auth))
     .pipe(
@@ -552,23 +577,26 @@ export function buildAntigravityAcpSpawnInput(input: {
   readonly auth?: AntigravityAuthConfig;
   readonly runtimeTempDirectory?: string;
 }): AcpSessionRuntime.AcpSpawnInput {
+  const args = [
+    "acp",
+    "--gemini-dir",
+    input.profile.geminiHome,
+    "--app-data-dir",
+    "antigravity-acp",
+  ];
+  const env: NodeJS.ProcessEnv = antigravityEnvironment(
+    input.profile,
+    input.baseEnv ?? process.env,
+    input.auth ?? ANTIGRAVITY_PERSONAL_AUTH,
+    input.runtimeTempDirectory,
+  );
+  const bridge = input.profile.browserBridge;
   return {
-    command: input.installation.executablePath,
-    args: [
-      "acp",
-      "--gemini-dir",
-      input.profile.geminiHome,
-      "--app-data-dir",
-      // The CLI joins this beneath gemini-dir, including when the value is absolute.
-      "antigravity-acp",
-    ],
+    command: bridge?.executablePath ?? input.installation.executablePath,
+    args:
+      bridge === undefined ? args : [bridge.scriptPath, input.installation.executablePath, ...args],
     cwd: input.cwd,
-    env: antigravityEnvironment(
-      input.profile,
-      input.baseEnv ?? process.env,
-      input.auth ?? ANTIGRAVITY_PERSONAL_AUTH,
-      input.runtimeTempDirectory,
-    ),
+    env,
     extendEnv: false,
   };
 }
@@ -591,7 +619,9 @@ export const parseAntigravityAuthorizationUrl = Effect.fn("parseAntigravityAutho
     const redirectUri = url.searchParams.get("redirect_uri");
     if (
       url.origin !== "https://accounts.google.com" ||
-      url.pathname !== (kind === "loopback" ? "/o/oauth2/v2/auth" : "/o/oauth2/auth") ||
+      (kind === "loopback"
+        ? !["/o/oauth2/v2/auth", "/o/oauth2/auth"].includes(url.pathname)
+        : url.pathname !== "/o/oauth2/auth") ||
       url.username !== "" ||
       url.password !== "" ||
       url.hash !== "" ||
@@ -605,7 +635,9 @@ export const parseAntigravityAuthorizationUrl = Effect.fn("parseAntigravityAutho
       /\s/.test(state) ||
       redirectUri === null ||
       (kind === "loopback"
-        ? !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/$/.test(redirectUri)
+        ? !/^http:\/\/(?:127\.0\.0\.1:[1-9][0-9]{0,4}\/|(?:localhost|127\.0\.0\.1):[1-9][0-9]{0,4}\/auth\/callback)$/.test(
+            redirectUri,
+          )
         : redirectUri !== ANTIGRAVITY_CODE_REDIRECT_URI)
     ) {
       return yield* invalidUrl();
