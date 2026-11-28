@@ -2,10 +2,8 @@ import {
   addStrokePoint,
   openStrokePath,
   startStroke,
-  strokeBounds,
   type StrokeGeometry,
 } from "~/lib/annotationStroke";
-import type { PreviewAnnotationRect } from "@t3tools/contracts";
 import { useGT } from "gt-react";
 import { EraserIcon, PencilIcon, Undo2Icon } from "lucide-react";
 import { use, useEffect, useEffectEvent, useRef, useState, type PointerEvent } from "react";
@@ -43,7 +41,6 @@ interface DrawnStroke {
   readonly color: string;
   readonly width: number;
   readonly path: string;
-  readonly bounds: PreviewAnnotationRect;
 }
 
 interface ActiveStroke {
@@ -59,6 +56,7 @@ interface ActiveStroke {
 const SVG_NS = "http://www.w3.org/2000/svg";
 // The browser panel's Draw tool paints 4 CSS pixels wide in its theme's primary color.
 const STROKE_SCREEN_WIDTH = 4;
+const ERASER_SCREEN_WIDTH = 16;
 const PRIMARY_COLOR = "var(--primary)";
 const STROKE_COLORS = [PRIMARY_COLOR, "#ef4444", "#f59e0b", "#22c55e", "#ffffff", "#000000"];
 
@@ -219,20 +217,16 @@ export function ImageAnnotationOverlay({
   const onPointerDown = (event: PointerEvent<SVGSVGElement>) => {
     if (event.button !== 0 || saving || activeStrokeRef.current) return;
     event.preventDefault();
-    const { x, y, scale } = toViewPoint(event);
     if (tool === "erase") {
-      const index = strokes.findLastIndex(
-        (stroke) =>
-          x >= stroke.bounds.x &&
-          x <= stroke.bounds.x + stroke.bounds.width &&
-          y >= stroke.bounds.y &&
-          y <= stroke.bounds.y + stroke.bounds.height,
-      );
-      if (index >= 0) commit(strokes.filter((_, candidate) => candidate !== index));
+      const strokeId =
+        event.target instanceof SVGPathElement ? event.target.dataset.strokeId : undefined;
+      if (strokeId !== undefined)
+        commit(strokes.filter((stroke) => String(stroke.id) !== strokeId));
       return;
     }
     const layer = liveLayerRef.current;
     if (!layer) return;
+    const { x, y, scale } = toViewPoint(event);
     event.currentTarget.setPointerCapture(event.pointerId);
     const strokeColor = resolveColor(color);
     const width = STROKE_SCREEN_WIDTH * scale;
@@ -280,7 +274,6 @@ export function ImageAnnotationOverlay({
         color: active.color,
         width: active.width,
         path: [...active.closedPaths, openStrokePath(active.geometry)].join(" "),
-        bounds: strokeBounds(active.geometry, active.width),
       },
     ]);
   };
@@ -313,8 +306,29 @@ export function ImageAnnotationOverlay({
         onPointerUp={finishStroke}
         onPointerCancel={finishStroke}
       >
+        {tool === "erase" && (
+          <g>
+            {strokes.map((stroke) => (
+              <path
+                key={stroke.id}
+                data-stroke-id={stroke.id}
+                d={stroke.path}
+                stroke="transparent"
+                strokeWidth={ERASER_SCREEN_WIDTH}
+                vectorEffect="non-scaling-stroke"
+                pointerEvents="stroke"
+              />
+            ))}
+          </g>
+        )}
         {strokes.map((stroke) => (
-          <path key={stroke.id} d={stroke.path} stroke={stroke.color} strokeWidth={stroke.width} />
+          <path
+            key={stroke.id}
+            data-stroke-id={stroke.id}
+            d={stroke.path}
+            stroke={stroke.color}
+            strokeWidth={stroke.width}
+          />
         ))}
         <g ref={liveLayerRef} />
       </svg>

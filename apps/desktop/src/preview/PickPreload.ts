@@ -58,6 +58,7 @@ const PRIMARY_FILL = "color-mix(in srgb, var(--t3-primary) 10%, transparent)";
 const MAX_MARQUEE_ELEMENTS = 20;
 const ELEMENT_CONTEXT_TIMEOUT_MS = 5_000;
 const CONTENT_LAYER_Z_INDEX = 1;
+const ERASER_SCREEN_WIDTH = 16;
 const CHROME_LAYER_Z_INDEX = 10;
 // Page dialogs (Radix, react-remove-scroll) dismiss, refocus or block scrolling on document events
 // that shadow retargeting attributes to the overlay host.
@@ -611,6 +612,12 @@ function startAnnotation(
   svg.style.cssText = "position:fixed;inset:0;overflow:visible;pointer-events:none";
   svg.style.zIndex = String(CONTENT_LAYER_Z_INDEX);
   root.appendChild(svg);
+  const eraserHits = svg.appendChild(document.createElementNS(svg.namespaceURI, "g"));
+  eraserHits.setAttribute("fill", "none");
+  eraserHits.setAttribute("stroke", "transparent");
+  eraserHits.setAttribute("stroke-width", String(ERASER_SCREEN_WIDTH));
+  eraserHits.setAttribute("stroke-linecap", "round");
+  eraserHits.setAttribute("stroke-linejoin", "round");
 
   const toolbar = document.createElement("div");
   toolbar.setAttribute(OVERLAY_ATTRIBUTE, "");
@@ -953,6 +960,7 @@ function startAnnotation(
   };
 
   const refreshToolButtons = (): void => {
+    eraserHits.setAttribute("pointer-events", tool === "erase" ? "stroke" : "none");
     for (const [candidate, button] of toolButtons) {
       const active = candidate === tool;
       button.classList.toggle("bg-primary/10", active);
@@ -1424,7 +1432,7 @@ function startAnnotation(
   // A scrollbar appearing narrows the viewport without a window resize.
   const rootResizeObserver = new ResizeObserver(repaint);
 
-  const removeTargetAtPoint = (x: number, y: number): boolean => {
+  const removeTargetAtPoint = (x: number, y: number, strokeHit: Element | null): boolean => {
     for (const target of Array.from(selected.values()).toReversed()) {
       const rect = target.element.getBoundingClientRect();
       if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
@@ -1446,15 +1454,11 @@ function startAnnotation(
       updateStatus();
       return true;
     }
-    const strokeIndex = strokes.findIndex(
-      (stroke) =>
-        x >= stroke.bounds.x &&
-        x <= stroke.bounds.x + stroke.bounds.width &&
-        y >= stroke.bounds.y &&
-        y <= stroke.bounds.y + stroke.bounds.height,
-    );
+    const strokeId = strokeHit?.getAttribute("data-eraser-stroke-id");
+    const strokeIndex = strokes.findIndex((stroke) => stroke.id === strokeId);
     if (strokeIndex >= 0) {
       const [removed] = strokes.splice(strokeIndex, 1);
+      strokeHit?.remove();
       svg.querySelector(`[data-stroke-id="${removed?.id}"]`)?.remove();
       updateStatus();
       return true;
@@ -1537,7 +1541,15 @@ function startAnnotation(
   };
 
   const onPointerDown = (event: PointerEvent): void => {
-    if (event.button !== 0 || isAnnotationNode(event.target as Element)) return;
+    if (event.button !== 0) return;
+    let strokeHit: Element | null = null;
+    if (isAnnotationNode(event.target as Element)) {
+      if (tool !== "erase" || event.target !== host) return;
+      // Window listeners see the host when the pointer lands inside its closed shadow root.
+      const hit = shadowRoot.elementFromPoint(event.clientX, event.clientY);
+      if (!hit?.hasAttribute("data-eraser-stroke-id")) return;
+      strokeHit = hit;
+    }
     event.preventDefault();
     event.stopPropagation();
     if (tool === "select") {
@@ -1546,7 +1558,7 @@ function startAnnotation(
       return;
     }
     if (tool === "erase") {
-      removeTargetAtPoint(event.clientX, event.clientY);
+      removeTargetAtPoint(event.clientX, event.clientY, strokeHit);
       return;
     }
     dragStart = { x: event.clientX, y: event.clientY };
@@ -1597,8 +1609,17 @@ function startAnnotation(
         }
       }
     } else if (tool === "draw" && activeStroke) {
-      if (activeStroke.target.points.length > 1) strokes.push(activeStroke.target);
-      else activeStroke.group.remove();
+      if (activeStroke.target.points.length > 1) {
+        const { target, group } = activeStroke;
+        strokes.push(target);
+        const hit = eraserHits.appendChild(document.createElementNS(svg.namespaceURI, "path"));
+        hit.setAttribute("data-eraser-stroke-id", target.id);
+        hit.setAttribute("vector-effect", "non-scaling-stroke");
+        hit.setAttribute(
+          "d",
+          Array.from(group.children, (path) => path.getAttribute("d")).join(" "),
+        );
+      } else activeStroke.group.remove();
       activeStroke = null;
     }
     dragStart = null;
