@@ -236,14 +236,35 @@ function shellCommandArgumentIndex(
   tokens: ReadonlyArray<string>,
   start: number,
 ): number | null {
+  let noexec = false;
   for (let index = start; index < tokens.length; index += 1) {
     const option = tokens[index]!;
     if (option === "--" || !/^[-+]/.test(option)) return null;
+    if (option === "--noexec" || option === "--no-exec" || option === "--no-execute") {
+      noexec = true;
+      continue;
+    }
+    if (option === "--exec") {
+      noexec = false;
+      continue;
+    }
+    if (/^[-+][a-zA-Z]+$/.test(option) && option.includes("n")) {
+      noexec = option.startsWith("-");
+    }
     if (SHELL_OPTIONS_WITH_VALUE.has(option) || SHELL_OPTION_BUNDLE_WITH_VALUE.test(option)) {
+      if (option.endsWith("o")) {
+        const optionName = tokens[index + 1];
+        if (optionName === "noexec" || optionName === "no_exec") {
+          noexec = option.startsWith("-");
+        } else if (shell === "zsh" && optionName === "exec") {
+          noexec = !option.startsWith("-");
+        }
+      }
       index += 1;
       continue;
     }
     if (option === "--command" || /^-[a-zA-Z]*c[a-zA-Z]*$/.test(option)) {
+      if (noexec) return null;
       // fish takes the next token as the script even when it is `--`.
       return index + (shell !== "fish" && tokens[index + 1] === "--" ? 2 : 1);
     }
