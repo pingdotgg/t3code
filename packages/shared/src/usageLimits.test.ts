@@ -1175,6 +1175,65 @@ describe("pools", () => {
       }
     }
   });
+
+  it("does not present an offline environment's window that has since reset as current usage", () => {
+    const codex = ProviderDriverKind.make("codex");
+    const input = new Map([
+      [
+        EnvironmentId.make("local"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [
+              provider({
+                driver: codex,
+                auth: { status: "authenticated", email: "same@example.com" },
+                usageLimits: {
+                  checkedAt: "2026-09-03T11:59:00.000Z",
+                  windows: [],
+                  unavailable: { reason: "unsupported" },
+                },
+              }),
+            ],
+          },
+        },
+      ],
+      [
+        EnvironmentId.make("offline"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: {
+            providers: [
+              provider({
+                driver: codex,
+                auth: { status: "authenticated", email: "same@example.com" },
+                usageLimits: {
+                  checkedAt: "2026-09-01T12:00:00.000Z",
+                  windows: [
+                    {
+                      id: "secondary",
+                      kind: "weekly",
+                      label: "Weekly",
+                      usedPercent: 51,
+                      windowDurationMins: 7 * 24 * 60,
+                      resetsAt: "2026-09-02T12:00:00.000Z",
+                    },
+                  ],
+                },
+              }),
+            ],
+          },
+        },
+      ],
+    ]);
+    const windows = collectLimitPools(collectLimitAccounts(input), now).flatMap(
+      (pool) => pool.windows,
+    );
+    expect(windows.filter((pooled) => pooled.usedPercent === 51)).toEqual([]);
+    expect(windows.flatMap((pooled) => pooled.resets).filter((reset) => reset.at <= now)).toEqual(
+      [],
+    );
+  });
 });
 
 describe("pooled account columns", () => {
