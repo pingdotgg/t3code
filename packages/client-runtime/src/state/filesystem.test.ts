@@ -78,6 +78,13 @@ describe("filesystem browse model", () => {
       parentPath: "~/",
       canBrowseUp: true,
     });
+    expect(getFilesystemBrowsePath("D:", "Win32")).toEqual({
+      isBrowsing: true,
+      directoryPath: "D:\\",
+      filterQuery: "",
+      parentPath: null,
+      canBrowseUp: false,
+    });
     expect(getFilesystemBrowsePath("C:\\Users\\test", "MacIntel").isBrowsing).toBe(false);
     expect(getFilesystemBrowsePath("~/projects/", "", false).isBrowsing).toBe(false);
   });
@@ -119,6 +126,22 @@ describe("filesystem browse model", () => {
       ),
     ).toEqual({ name: "Open", isComplete: false });
     expect(getFilesystemBrowseTabCompletion([entry("t3code")], "tcd")).toBeNull();
+    // A decomposed and a composed name share their composed prefix.
+    expect(
+      getFilesystemBrowseTabCompletion([entry("e\u0301clair"), entry("\u00e9cole")], "\u00e9"),
+    ).toEqual({ name: "\u00e9c", isComplete: false });
+    // Names that already share a raw prefix keep their own spelling.
+    expect(getFilesystemBrowseTabCompletion([entry("e\u0301"), entry("e\u0301cole")], "e")).toEqual(
+      { name: "e\u0301", isComplete: false },
+    );
+    // Names that differ only in normalization are two folders on Linux; Tab never picks one.
+    expect(
+      getFilesystemBrowseTabCompletion([entry("e\u0301"), entry("\u00e9")], "\u00e9"),
+    ).toBeNull();
+    // The composed comparison must still extend what was typed.
+    expect(
+      getFilesystemBrowseTabCompletion([entry("e\u0301\u0323a"), entry("e\u0323\u0301b")], "e"),
+    ).toBeNull();
   });
 
   it("matches folder names stored decomposed, as macOS Finder names them", () => {

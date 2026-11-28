@@ -3,9 +3,12 @@ import * as Arbitrary from "effect/Arbitrary"
 import * as Config from "effect/Config"
 import * as ConfigProvider from "effect/ConfigProvider"
 import * as Aead from "effect/crypto/Aead"
+import * as Cipher from "effect/crypto/Cipher"
 import * as CryptoError from "effect/crypto/CryptoError"
 import * as Digest from "effect/crypto/Digest"
+import * as KeyAgreement from "effect/crypto/KeyAgreement"
 import * as KeyFormat from "effect/crypto/KeyFormat"
+import * as KeyWrap from "effect/crypto/KeyWrap"
 import * as Mac from "effect/crypto/Mac"
 import * as Signature from "effect/crypto/Signature"
 import * as Effect from "effect/Effect"
@@ -17,6 +20,8 @@ import * as Schema from "effect/Schema"
 import type * as SchemaIssue from "effect/SchemaIssue"
 import * as SchemaRepresentation from "effect/SchemaRepresentation"
 import * as NodeCrypto from "node:crypto"
+import { withGeneratedModule } from "../utils/generatedModule.ts"
+import { makeModule } from "../utils/schemaCodegen.ts"
 
 // An Ed25519 key pair encoded by node:crypto, independently of the module
 // under test.
@@ -42,6 +47,35 @@ const failure = <A>(exit: Exit.Exit<A, Schema.SchemaError>): SchemaIssue.Leaf =>
 }
 
 describe("Schema crypto keys", () => {
+  it("generates the same key schemas from their persisted algorithms", async () => {
+    const pss = Signature.rsaPss({ hash: Digest.sha384, modulusLength: 2048, saltLength: 16 })
+    const oaep = KeyWrap.rsaOaep({ hash: Digest.sha512, modulusLength: 4096 })
+    const schemas = [
+      Schema.MacKey(Mac.hmacSha256),
+      Schema.AeadKey(Aead.aes256Gcm),
+      Schema.CipherKey(Cipher.aes128Ctr),
+      Schema.SignaturePublicKey(pss),
+      Schema.SignaturePrivateKey(Signature.rsaPkcs1v15({ hash: Digest.sha256, modulusLength: 3072 })),
+      Schema.SignaturePrivateKey({ ...pss, hash: Digest.sha512 }),
+      Schema.KeyAgreementPublicKey(KeyAgreement.ecdhP384),
+      Schema.KeyAgreementPrivateKey(KeyAgreement.x25519),
+      Schema.KeyWrapKey(KeyWrap.aes256Kw),
+      Schema.KeyWrapPublicKey(oaep),
+      Schema.KeyWrapPrivateKey(oaep)
+    ]
+    for (const schema of schemas) {
+      const document = SchemaRepresentation.toRepresentations([schema.ast])
+      const json = SchemaRepresentation.toJsonMultiDocument(document)
+      const source = makeModule(SchemaRepresentation.fromJsonMultiDocument(json)).print()
+      await withGeneratedModule<{ TestRoot0: Schema.Top }>(source, ({ TestRoot0 }) => {
+        assert.deepStrictEqual(
+          SchemaRepresentation.toJsonMultiDocument(SchemaRepresentation.toRepresentations([TestRoot0.ast])),
+          json
+        )
+      })
+    }
+  })
+
   it.effect("declared schemas reject a key with a different operation-defining hash", () =>
     Effect.gen(function*() {
       const pair = NodeCrypto.generateKeyPairSync("ec", { namedCurve: "P-256" })
@@ -65,16 +99,13 @@ describe("Schema crypto keys", () => {
       const schema = Schema.SignaturePublicKey(algorithm)
       assert.isTrue(Schema.is(schema)(key))
 
-      const output = SchemaRepresentation.toCodeDocument(SchemaRepresentation.toRepresentations([schema.ast]))
-      assert.includeDeepMembers([...output.artifacts], [
-        { _tag: "Import", importDeclaration: `import * as Digest from "effect/crypto/Digest"` }
-      ])
-      const generated = new Function("Schema", "Signature", "Digest", `return ${output.codes[0].runtime}`)(
-        Schema,
-        Signature,
-        Digest
+      const module = makeModule(SchemaRepresentation.toRepresentations([schema.ast]))
+      assert.include(module.finalize().imports, `import * as Digest from "effect/crypto/Digest"`)
+      yield* Effect.promise(() =>
+        withGeneratedModule<{ TestRoot0: typeof schema }>(module.print(), ({ TestRoot0 }) => {
+          assert.isTrue(Schema.is(TestRoot0)(key))
+        })
       )
-      assert.isTrue(Schema.is(generated)(key))
     }))
 
   it.effect("declared RSA schemas ignore generation-only modulus length", () =>

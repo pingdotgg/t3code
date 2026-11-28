@@ -156,6 +156,9 @@ describe("resolvePathLinkTarget", () => {
     ],
     ["src/index.ts:12", "/home/jane/project", "/home/jane/project/src/index.ts:12"],
     ["./reports/draft.md:2", "/home/jane/project", "/home/jane/project/reports/draft.md:2"],
+    ["./note.txt", "/tmp/photos\\", "/tmp/photos\\/note.txt"],
+    ["./note.txt", "/tmp/C:\\files", "/tmp/C:\\files/note.txt"],
+    ["~\\note.txt", "/tmp/C:\\files", "/tmp/C:\\files/~\\note.txt"],
   ])("resolves %s using the connected environment cwd %s", (path, cwd, expected) => {
     expect(resolvePathLinkTarget(path, cwd)).toBe(expected);
   });
@@ -184,7 +187,16 @@ describe("fileLinkLabel", () => {
   it.each([
     [{ path: "/repo/src/http.ts", line: 42, column: 7 }, "http.ts · L42:C7"],
     [{ path: "/repo/src/http.ts", line: 42, endLine: 64 }, "http.ts · L42–64"],
+    // macOS file names can be NFD (decomposed Hangul jamo); the label shows composed syllables.
+    [{ path: "/repo/\u1109\u1175\u110b\u1161\u11ab" }, "\uc2dc\uc548"],
   ])("labels %o", (file, label) => {
     expect(fileLinkLabel(file, new Map())).toBe(label);
+  });
+
+  it("composes an NFD parent-folder suffix", () => {
+    const path = "/repo/\u1109\u1175\u110b\u1161\u11ab/a.txt";
+    expect(
+      fileLinkLabel({ path }, buildFileLinkParentSuffixByPath([path, "/repo/other/a.txt"])),
+    ).toBe("a.txt · repo/\uc2dc\uc548");
   });
 });

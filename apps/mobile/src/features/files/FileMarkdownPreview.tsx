@@ -6,11 +6,17 @@ import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
 import { useGT } from "gt-react-native";
 import { useState } from "react";
 import { StackActions, useNavigation } from "@react-navigation/native";
-import { ScrollView, View } from "react-native";
+import { View } from "react-native";
+import { LegendList } from "@legendapp/list/react-native";
+import {
+  LARGE_MARKDOWN_CHUNK_MAX_CHARS,
+  splitMarkdown,
+  withMarkdownDefinitions,
+} from "@t3tools/shared/markdownChunks";
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 
-import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
-import { FONT_FAMILIES } from "../../lib/fontFamilies";
+import { tryOpenWebLink } from "../../lib/openExternalUrl";
 import { resolveNativeMarkdownTypography } from "../../lib/appearancePreferences";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import {
@@ -34,14 +40,19 @@ import {
   type MarkdownImageRenderer,
   type NativeMarkdownTextStyle,
 } from "../../native/SelectableMarkdownText";
-import { fileRoutePathSegments, resolveWorkspaceFilePath } from "./filePath";
+import {
+  fileRoutePathSegments,
+  resolveMarkdownFileLinkPath,
+  resolveWorkspaceFilePath,
+} from "./filePath";
+import { SourceFileSurface } from "./SourceFileSurface";
 
 interface MarkdownPreviewStyles {
   readonly nativeTextStyle: NativeMarkdownTextStyle;
 }
 
 export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
-  const { appearance } = useAppearancePreferences();
+  const { appearance, fontFamilies, monoFontFamily } = useAppearancePreferences();
   const nativeMarkdownTypography = resolveNativeMarkdownTypography(appearance.baseFontSize);
   const theme = useUniwindTheme();
   const body = theme["--color-md-body"];
@@ -51,8 +62,8 @@ export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
   const codeBackground = theme["--color-md-code-bg"];
   const codeText = theme["--color-md-code-text"];
   const horizontalRule = theme["--color-md-hr"];
-  const regularFontFamily = FONT_FAMILIES.regular;
-  const boldFontFamily = FONT_FAMILIES.bold;
+  const regularFontFamily = fontFamilies.regular;
+  const boldFontFamily = fontFamilies.bold;
 
   return {
     nativeTextStyle: {
@@ -73,6 +84,7 @@ export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
       fontFamily: regularFontFamily,
       headingFontFamily: boldFontFamily,
       boldFontFamily,
+      monoFontFamily,
     },
   };
 }
@@ -200,9 +212,11 @@ export function FileMarkdownPreview(props: {
     if (!media || media.kind === "file") {
       const fileLink = resolveMarkdownLinkPresentation(href);
       if (props.captured || fileLink.kind !== "file") return false;
+      const target = resolveMarkdownFileLinkPath(props.cwd, markdownDirectory, fileLink.path);
+      if (target === null) return false;
       const params = {
         environmentId: String(props.environmentId),
-        path: fileRoutePathSegments(resolveWorkspaceFilePath(markdownDirectory, fileLink.path)),
+        path: fileRoutePathSegments(target),
         ...(fileLink.line ? { line: String(fileLink.line) } : {}),
       };
       if (props.threadId) {
@@ -220,47 +234,80 @@ export function FileMarkdownPreview(props: {
     openMedia(href, true);
   };
   const onLinkPress = (href: string) => {
-    if (!openMedia(href)) void tryOpenExternalUrl(href, "markdown-link");
+    if (!openMedia(href)) void tryOpenWebLink(href, "markdown-link");
   };
 
-  return (
-    <ScrollView
-      className="flex-1 bg-sheet"
-      contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={{ padding: 18 }}
-      refreshControl={
-        props.onRefresh ? (
-          <RefreshControl
-            refreshing={isPullRefreshing}
-            onRefresh={() => void handlePullToRefresh()}
-          />
-        ) : undefined
+  const refreshControl = props.onRefresh ? (
+    <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullToRefresh()} />
+  ) : undefined;
+  const renderMarkdown = (markdown: string) => (
+    <SelectableMarkdownText
+      markdown={markdown}
+      fileEmbedLabel={(href) =>
+        markdownFileEmbedLabel(
+          href,
+          {
+            environmentId: props.environmentId,
+            threadId: props.threadId ?? undefined,
+            workspaceRoot: markdownDirectory,
+            captured: props.captured,
+          },
+          false,
+        )
       }
-    >
-      <View className="mx-auto w-full max-w-[760px]">
-        <SelectableMarkdownText
-          markdown={maskMarkdownFrontmatter(props.markdown)}
-          fileEmbedLabel={(href) =>
-            markdownFileEmbedLabel(
-              href,
-              {
-                environmentId: props.environmentId,
-                threadId: props.threadId ?? undefined,
-                workspaceRoot: markdownDirectory,
-                captured: props.captured,
-              },
-              false,
-            )
-          }
-          onLinkPress={onLinkPress}
-          renderImage={renderImage}
-          resolveImageSource={resolveImageSource}
-          onImagePress={onImagePress}
-          textStyle={styles.nativeTextStyle}
-        />
-        <FilePreviewModal source={expandedFile} onRequestClose={() => setExpandedFile(null)} />
-        <VideoPreviewModal source={expandedVideo} onRequestClose={() => setExpandedVideo(null)} />
-      </View>
-    </ScrollView>
+      onLinkPress={onLinkPress}
+      renderImage={renderImage}
+      resolveImageSource={resolveImageSource}
+      onImagePress={onImagePress}
+      textStyle={styles.nativeTextStyle}
+    />
   );
+  const modals = (
+    <>
+      <FilePreviewModal source={expandedFile} onRequestClose={() => setExpandedFile(null)} />
+      <VideoPreviewModal source={expandedVideo} onRequestClose={() => setExpandedVideo(null)} />
+    </>
+  );
+  const markdown = maskMarkdownFrontmatter(props.markdown);
+
+  // Only chunks near the viewport mount, so only they pay for the JS rewrites and native parse.
+  const { chunks, definitions } = splitMarkdown(markdown);
+  if (chunks.some((chunk) => chunk.text.length > LARGE_MARKDOWN_CHUNK_MAX_CHARS)) {
+    return (
+      <SourceFileSurface
+        contents={props.markdown}
+        path={props.relativePath}
+        onRefresh={props.onRefresh}
+      />
+    );
+  }
+  return (
+    <View className="flex-1 bg-sheet">
+      <LegendList
+        renderScrollComponent={NativeScrollView}
+        contentInsetAdjustmentBehavior="automatic"
+        refreshControl={refreshControl}
+        data={chunks}
+        keyExtractor={(_chunk, index) => String(index)}
+        estimatedItemSize={
+          (styles.nativeTextStyle.lineHeight *
+            chunks.reduce((lines, chunk) => lines + chunk.lines, 0)) /
+          chunks.length
+        }
+        recycleItems={false}
+        contentContainerStyle={{ paddingHorizontal: 18, paddingVertical: 18 }}
+        ItemSeparatorComponent={ChunkSeparator}
+        renderItem={({ item }) => (
+          <View className="mx-auto w-full max-w-[760px]">
+            {renderMarkdown(withMarkdownDefinitions(item.text, definitions))}
+          </View>
+        )}
+      />
+      {modals}
+    </View>
+  );
+}
+
+function ChunkSeparator() {
+  return <View className="h-5" />;
 }

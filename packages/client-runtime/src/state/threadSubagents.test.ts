@@ -56,6 +56,24 @@ const activeRun = run("run-1", "running");
 const finishedRun = run("run-1", "completed");
 
 describe("deriveThreadTurnSubagents", () => {
+  it.each([
+    { total: 1, accessibilityLabel: "1 of 1 agent working" },
+    { total: 2, accessibilityLabel: "1 of 2 agents working" },
+  ])("pluralizes the working agent label by total ($total)", ({ total, accessibilityLabel }) => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [activeRun],
+      subagents: [
+        subagent({ id: "working" }),
+        ...(total === 2 ? [subagent({ id: "done", status: "completed" })] : []),
+      ],
+    });
+
+    expect(resolveSubagentPillSegment(turn)).toEqual({
+      label: `1/${total}`,
+      accessibilityLabel,
+    });
+  });
+
   it.each(["running", "completed"] as const)(
     "keeps finished workflows after a later %s turn",
     (status) => {

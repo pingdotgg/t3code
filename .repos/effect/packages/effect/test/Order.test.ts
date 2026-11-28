@@ -1,6 +1,7 @@
-import { describe, it } from "@effect/vitest"
+import { assert, describe, it } from "@effect/vitest"
 import { assertFalse, assertTrue, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
 import { Array as Arr, Order, pipe } from "effect"
+import { withIgnoredProperties } from "./utils/structFields.ts"
 
 describe("Order", () => {
   it("Struct", () => {
@@ -8,6 +9,19 @@ describe("Order", () => {
     strictEqual(O({ a: "a", b: "b" }, { a: "a", b: "c" }), -1)
     strictEqual(O({ a: "a", b: "b" }, { a: "a", b: "b" }), 0)
     strictEqual(O({ a: "a", b: "c" }, { a: "a", b: "b" }), 1)
+  })
+
+  it("Struct discovers only enumerable own fields and compares symbols after strings", () => {
+    const rank = Symbol("rank")
+    const O = Order.Struct(withIgnoredProperties({ [rank]: Order.Number, name: Order.String }))
+    const first = Object.defineProperties({ name: "a", [rank]: 2 }, {
+      name: { enumerable: false },
+      [rank]: { enumerable: false }
+    })
+    const second = { name: "a", [rank]: 1 }
+
+    assert.strictEqual(O(first, second), 1)
+    assert.strictEqual(O(first, { name: "b", [rank]: 1 }), -1)
   })
 
   it("Tuple", () => {
@@ -53,6 +67,25 @@ describe("Order", () => {
     strictEqual(clamp(-10), 1)
 
     strictEqual(Order.clamp(Order.Number)({ minimum: 1, maximum: 10 })(2), 2)
+  })
+
+  it("clamp returns the value itself when it is equal to a bound", () => {
+    const O = Order.mapInput(Order.Number, (a: { readonly n: number }) => a.n)
+    const minimum = { n: 1 }
+    const maximum = { n: 10 }
+    const clamp = Order.clamp(O)({ minimum, maximum })
+    const atMinimum = { n: 1 }
+    const atMaximum = { n: 10 }
+    strictEqual(clamp(atMinimum), atMinimum)
+    strictEqual(clamp(atMaximum), atMaximum)
+
+    const equalMin = { n: 5 }
+    const equalMax = { n: 5 }
+    const clampEqual = Order.clamp(O)({ minimum: equalMin, maximum: equalMax })
+    const atEqual = { n: 5 }
+    strictEqual(clampEqual(atEqual), atEqual)
+    strictEqual(clampEqual({ n: 4 }), equalMin)
+    strictEqual(clampEqual({ n: 6 }), equalMax)
   })
 
   it("isBetween checks inclusive bounds", () => {

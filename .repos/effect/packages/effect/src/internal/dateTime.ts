@@ -75,10 +75,12 @@ const ProtoTimeZoneNamed = {
   ...ProtoTimeZone,
   _tag: "Named",
   [Hash.symbol](this: DateTime.TimeZone.Named) {
-    return Hash.string(`Named:${this.id}`)
+    return Hash.string(`Named:${this.resolvedId}`)
   },
   [Equal.symbol](this: DateTime.TimeZone.Named, that: unknown) {
-    return isTimeZone(that) && that._tag === "Named" && this.id === that.id
+    // Zones from older copies of effect have no `resolvedId`; their `id` is the resolved one
+    return isTimeZone(that) && that._tag === "Named" &&
+      this.resolvedId === (that.resolvedId ?? that.id)
   },
   toString(this: DateTime.TimeZone.Named) {
     return `TimeZone.Named(${this.id})`
@@ -254,24 +256,41 @@ export const makeUnsafe = <A extends DateTime.DateTime.Input>(input: A): DateTim
     const date = new Date(0)
     setPartsDate(date, input)
     return fromDateUnsafe(date) as DateTime.DateTime.PreserveZone<A>
-  } else if (typeof input === "string" && !hasZone(input)) {
+  } else if (typeof input === "string" && !hasZone(input) && !dateOnlyRegExp.test(input)) {
     return fromDateUnsafe(new Date(input + "Z")) as DateTime.DateTime.PreserveZone<A>
   }
   return fromDateUnsafe(new Date(input)) as DateTime.DateTime.PreserveZone<A>
 }
 
-/**
- * Detects whether a date string already contains timezone info.
- * Without a zone, `new Date("2024-01-01T12:00:00")` is parsed as local time,
- * so `makeUnsafe` appends "Z" to force UTC interpretation.
- * This check prevents appending "Z" to strings that already have a zone
- * (e.g. "2024-01-01T12:00:00Z", "...+05:30", "...GMT"), which would produce invalid dates.
- * `Date.parse` also accepts a trailing `z` or `gmt` in any case. Only that trailing
- * match is case-insensitive, so lowercase letters in a comment like "(xyz)" do not
- * count as a zone.
- */
-const hasZone = (input: string): boolean =>
-  /Z|GMT|[+-]\d{2}$|[+-]\d{2}:?\d{2}$|\]$/.test(input) || /z$|gmt$/i.test(input)
+// ECMA-262 date-only strings already parse as UTC.
+const dateOnlyRegExp = /^(?:[+-]\d{6}|\d{4})(?:-\d{2}(?:-\d{2})?)?$/
+
+const withoutComments = (input: string): string => {
+  const first = input.indexOf("(")
+  if (first === -1) return input
+  let result = input.slice(0, first) + " "
+  let depth = 1
+  for (let i = first + 1; i < input.length; i++) {
+    const c = input[i]
+    if (c === "(") {
+      if (depth++ === 0) result += " "
+    } else if (depth === 0) result += c
+    else if (c === ")") depth--
+  }
+  return result
+}
+
+// Distinguish date hyphens (2024-1-15) from offset signs (12:00-0500).
+const offsetSignRegExp = /\+|(?<![a-z\d])-|[ap]m-|\d:\D*\d+(?:\.\d+)?-/i
+
+const hasZone = (input: string): boolean => {
+  const text = withoutComments(input).trimEnd()
+  if (text.endsWith("]")) return true
+  const firstNumber = text.search(/\d/)
+  if (firstNumber === -1) return false
+  const date = text.slice(firstNumber)
+  return offsetSignRegExp.test(date) || /(?:^|[^a-z])(?:z|gmt|utc?|[ecmp][sd]t)(?![a-z])/i.test(date)
+}
 
 const minEpochMillis = -8640000000000000 + (12 * 60 * 60 * 1000)
 const maxEpochMillis = 8640000000000000 - (14 * 60 * 60 * 1000)
@@ -315,14 +334,22 @@ export const makeZonedUnsafe = (input: DateTime.DateTime.Input, options?: {
 }
 
 /** @internal */
-export const makeZoned: (
+export const makeZoned = (
   input: DateTime.DateTime.Input,
   options?: {
     readonly timeZone?: number | string | DateTime.TimeZone | undefined
     readonly adjustForTimeZone?: boolean | undefined
     readonly disambiguation?: DateTime.Disambiguation | undefined
   }
-) => Option.Option<DateTime.Zoned> = Option.liftThrowable(makeZonedUnsafe)
+): Option.Option<DateTime.Zoned> => {
+  // Do not pass `makeZonedUnsafe` to a top-level call such as `Option.liftThrowable`,
+  // or AOT compilers that prune per function treat `Intl` as reachable whenever this module loads.
+  try {
+    return Option.some(makeZonedUnsafe(input, options))
+  } catch {
+    return Option.none()
+  }
+}
 
 /** @internal */
 export const make: <A extends DateTime.DateTime.Input>(input: A) => Option.Option<DateTime.DateTime.PreserveZone<A>> =
@@ -405,16 +432,20 @@ const formatOptions: Intl.DateTimeFormatOptions = {
   hourCycle: "h23"
 }
 
-const zoneMakeIntl = (format: Intl.DateTimeFormat): DateTime.TimeZone.Named => {
-  const zoneId = format.resolvedOptions().timeZone
-  const cached = validZoneCache.get(zoneId)
+const zoneMakeIntl = (
+  format: Intl.DateTimeFormat,
+  resolvedId: string,
+  id: string = resolvedId
+): DateTime.TimeZone.Named => {
+  const cached = validZoneCache.get(id)
   if (cached !== undefined) {
     return cached
   }
   const zone = Object.create(ProtoTimeZoneNamed)
-  zone.id = zoneId
+  zone.id = id
+  zone.resolvedId = resolvedId
   zone.format = format
-  validZoneCache.set(zoneId, zone)
+  validZoneCache.set(id, zone)
   return zone
 }
 
@@ -425,11 +456,17 @@ export const zoneMakeNamedUnsafe = (zoneId: string): DateTime.TimeZone.Named => 
     return cached
   }
   try {
+    const format = new Intl.DateTimeFormat("en-US", {
+      ...formatOptions,
+      timeZone: zoneId
+    })
+    // Intl may resolve a zone to an older alias ("Asia/Kolkata" to "Asia/Calcutta"),
+    // so keep the supplied name and take only its casing from Intl
+    const resolvedId = format.resolvedOptions().timeZone
     const zone = zoneMakeIntl(
-      new Intl.DateTimeFormat("en-US", {
-        ...formatOptions,
-        timeZone: zoneId
-      })
+      format,
+      resolvedId,
+      resolvedId.toLowerCase() === zoneId.toLowerCase() ? resolvedId : zoneId
     )
     validZoneCache.set(zoneId, zone)
     return zone
@@ -446,9 +483,14 @@ export const zoneMakeOffset = (offset: number): DateTime.TimeZone.Offset => {
 }
 
 /** @internal */
-export const zoneMakeNamed: (zoneId: string) => Option.Option<DateTime.TimeZone.Named> = Option.liftThrowable(
-  zoneMakeNamedUnsafe
-)
+export const zoneMakeNamed = (zoneId: string): Option.Option<DateTime.TimeZone.Named> => {
+  // Plain function for the same reason as `makeZoned`.
+  try {
+    return Option.some(zoneMakeNamedUnsafe(zoneId))
+  } catch {
+    return Option.none()
+  }
+}
 
 /** @internal */
 export const zoneMakeNamedEffect = (zoneId: string): Effect.Effect<DateTime.TimeZone.Named, IllegalArgumentError> =>
@@ -458,8 +500,10 @@ export const zoneMakeNamedEffect = (zoneId: string): Effect.Effect<DateTime.Time
   })
 
 /** @internal */
-export const zoneMakeLocal = (): DateTime.TimeZone.Named =>
-  zoneMakeIntl(new Intl.DateTimeFormat("en-US", formatOptions))
+export const zoneMakeLocal = (): DateTime.TimeZone.Named => {
+  const format = new Intl.DateTimeFormat("en-US", formatOptions)
+  return zoneMakeIntl(format, format.resolvedOptions().timeZone)
+}
 
 const offsetZoneRegExp = /^(?:GMT)?[+-]/
 
@@ -747,7 +791,7 @@ export const setParts: {
 } = dual(
   2,
   (self: DateTime.DateTime, parts: Partial<DateTime.DateTime.PartsWithWeekday>): DateTime.DateTime =>
-    mutate(self, (date) => setPartsDate(date, parts))
+    mutateWithOffset(self, (date) => setPartsDate(date, parts))
 )
 
 /** @internal */
@@ -906,6 +950,25 @@ export const mutate: {
   return makeZonedFromAdjusted(newAdjustedDate.getTime(), self.zone, options?.disambiguation ?? "compatible")
 })
 
+// Keep the input offset when valid for the updated wall-clock time so repeated hours stay in the same occurrence.
+const mutateWithOffset = (
+  self: DateTime.DateTime,
+  f: (date: Date) => void,
+  disambiguation: DateTime.Disambiguation = "compatible"
+): DateTime.DateTime => {
+  if (self._tag === "Utc" || self.zone._tag === "Offset") {
+    return mutate(self, f, { disambiguation })
+  }
+  const date = toDate(self)
+  const offset = date.getTime() - Math.trunc(self.epochMilliseconds)
+  f(date)
+  const adjustedMillis = date.getTime()
+  const result = makeZonedProto(adjustedMillis - offset, self.zone)
+  return zonedOffset(result) === offset
+    ? result
+    : makeZonedFromAdjusted(adjustedMillis, self.zone, disambiguation)
+}
+
 /** @internal */
 export const mutateUtc: {
   (f: (date: Date) => void): <A extends DateTime.DateTime>(self: A) => A
@@ -1058,24 +1121,11 @@ const mutateRounding = (
   self: DateTime.DateTime,
   part: DateTime.DateTime.UnitSingular,
   f: (date: Date) => void,
-  disambiguation: DateTime.Disambiguation = "compatible"
-): DateTime.DateTime => {
-  if (
-    self._tag === "Utc" || self.zone._tag === "Offset" ||
-    part === "day" || part === "week" || part === "month" || part === "year"
-  ) {
-    return mutate(self, f, { disambiguation })
-  }
-  // keep the input's offset so rounding stays in the same occurrence of a repeated hour
-  const date = toDate(self)
-  const offset = date.getTime() - Math.trunc(self.epochMilliseconds)
-  f(date)
-  const adjustedMillis = date.getTime()
-  const result = makeZonedProto(adjustedMillis - offset, self.zone)
-  return zonedOffset(result) === offset
-    ? result
-    : makeZonedFromAdjusted(adjustedMillis, self.zone, disambiguation)
-}
+  disambiguation?: DateTime.Disambiguation
+): DateTime.DateTime =>
+  part === "day" || part === "week" || part === "month" || part === "year"
+    ? mutate(self, f, { disambiguation })
+    : mutateWithOffset(self, f, disambiguation)
 
 const startOfDate = (date: Date, part: DateTime.DateTime.UnitSingular, options?: {
   readonly weekStartsOn?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | undefined

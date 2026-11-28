@@ -88,6 +88,7 @@ import { AddProjectSourceRoute } from "./features/projects/AddProjectSourceRoute
 import {
   NewTaskBranchPickerRouteScreen,
   NewTaskEnvironmentPickerRouteScreen,
+  NewTaskRepositoriesPickerRouteScreen,
 } from "./features/threads/NewTaskContextPickerScreens";
 import {
   ExistingThreadSettingsRouteScreen,
@@ -138,6 +139,8 @@ import { SettingsProjectGroupingRouteScreen } from "./features/settings/Settings
 import { SettingsProjectOverviewRouteScreen } from "./features/settings/SettingsProjectOverviewRouteScreen";
 import { UsageLimitAccountScreen } from "./features/usage/UsageLimitsPooled";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
+import { WorkflowRunRouteScreen } from "./features/workflows/WorkflowRunRouteScreen";
+import { WorkflowStepSheet } from "./features/workflows/WorkflowStepSheet";
 import { SettingsAboutRouteScreen } from "./features/settings/SettingsAboutRouteScreen";
 import { SettingsNotificationsRouteScreen } from "./features/settings/SettingsNotificationsRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
@@ -206,8 +209,10 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   NewTaskProject: msg("Choose project"),
   NewTaskEnvironment: msg("Environment"),
   NewTaskBranch: msg("Branch"),
+  NewTaskRepositories: msg("Repositories"),
   AddProject: msg("Add project"),
   ThreadFiles: msg("Files"),
+  WorkflowRun: msg("Run", { $context: "noun, page title for one workflow run" }),
   SettingsLegal: msg("Legal"),
   ConnectOnboarding: msg("Set up {product}", { product: "T3 Connect" }),
   Connections: msg("Environments"),
@@ -669,6 +674,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: NewTaskBranchPickerRouteScreen,
       options: pageRoute(),
     }),
+    NewTaskRepositories: createNativeStackScreen({
+      linking: "new/draft/repositories",
+      screen: NewTaskRepositoriesPickerRouteScreen,
+      options: pageRoute(),
+    }),
     AddProject: createNativeStackScreen({
       linking: "new/add-project",
       screen: AddProjectSourceRoute,
@@ -776,6 +786,15 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadQueue: createNativeStackScreen({
       screen: ThreadQueueSheet,
       options: sheetRoute({ detent: 0.65, androidMaxDetent: 0.95 }),
+    }),
+    WorkflowRun: createNativeStackScreen({
+      screen: WorkflowRunRouteScreen,
+      linking: { path: "workflows/:environmentId/:runId" },
+      options: pageRoute(),
+    }),
+    WorkflowStep: createNativeStackScreen({
+      screen: WorkflowStepSheet,
+      options: sheetRoute({ detent: 0.6, androidMaxDetent: 0.95 }),
     }),
     ThreadBackgroundWork: createNativeStackScreen({
       screen: ThreadBackgroundWorkSheet,
@@ -907,7 +926,7 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
   return (
     <Navigator
       screenLayout={(props) => <GuardedScreenLayout {...props} />}
-      screenOptions={({ route, navigation }) => {
+      screenOptions={({ route, navigation, theme }) => {
         const title =
           route.name === "Home"
             ? getCompactBrandHeaderOptions(undefined, resolve).title
@@ -916,6 +935,9 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
               : resolve(ROUTE_TITLES[route.name]);
         return {
           ...(title === undefined ? {} : { title }),
+          // In release builds react-native-screens decides the iOS status bar style, and its
+          // "auto" style can follow the phone's appearance instead of the app's theme.
+          ...(Platform.OS === "ios" ? { statusBarStyle: theme.dark ? "light" : "dark" } : {}),
           ...(Platform.OS === "android"
             ? {
                 animation: androidWorkspaceDestinationAnimation(

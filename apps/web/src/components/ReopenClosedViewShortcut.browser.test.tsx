@@ -1,5 +1,13 @@
 import type { ResolvedKeybindingsConfig, ScopedThreadRef } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Outlet,
+  RouterProvider,
+} from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -75,8 +83,14 @@ vi.mock(import("./ui/toast"), async (original) => {
 });
 
 import { useClosedViewStore } from "../closedViewStore";
-import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
+import {
+  ISSUES_PANEL_REF,
+  PULL_REQUESTS_PANEL_REF,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { writePullRequestListPreferences } from "./pullRequest/pullRequestListPreferences";
 import { ReopenClosedViewShortcut } from "./ReopenClosedViewShortcut";
 
 const ref = { environmentId: "remote", threadId: "thread-1" } as ScopedThreadRef;
@@ -122,9 +136,10 @@ async function renderShortcut() {
   stack.defer(() => {
     delete window.desktopBridge;
   });
-  stack.use(await render(<ReopenClosedViewShortcut />));
+  const screen = stack.use(await render(<ReopenClosedViewShortcut />));
   const environment = stack.move();
   return {
+    router: screen.router!,
     /** Attaches an element to the document until the test ends. */
     append(element: HTMLElement) {
       document.body.append(element);
@@ -148,6 +163,43 @@ function press(target: Element = document.body) {
 }
 
 describe("root reopen shortcut", () => {
+  it.each([
+    { action: "switch routes", goBack: false, expectedPath: "/newer" },
+    { action: "leave and return", goBack: true, expectedPath: "/" },
+  ])(
+    "restores both queued views without navigating when you $action during the reopen",
+    async ({ goBack, expectedPath }) => {
+      setup();
+      const store = useClosedViewStore.getState();
+      store.remember({ kind: "panel-tab", threadRef: ref, surface: { kind: "diff", id: "diff" } });
+      store.remember({ kind: "browser", threadRef: ref, snapshot });
+      const result = Promise.withResolvers<ReturnType<typeof AsyncResult.success>>();
+      state.openPreview.mockReturnValue(result.promise);
+      await using view = await renderShortcut();
+      const { history } = view.router;
+      state.navigate.mockImplementation(async () => {
+        history.push("/restored-owner");
+      });
+
+      await act(() => {
+        press();
+        menuAction?.("view.reopenClosed");
+      });
+      await act(() => {
+        history.push("/newer");
+        if (goBack) history.back();
+      });
+      await act(() => result.resolve(AsyncResult.success({ tabId: "new-tab" })));
+
+      expect(useClosedViewStore.getState().entries).toEqual([]);
+      const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
+      expect(panel.surfaces.map((surface) => surface.id)).toEqual(
+        expect.arrayContaining(["browser:new-tab", "diff"]),
+      );
+      expect(history.location.pathname).toBe(expectedPath);
+    },
+  );
+
   it("serializes deliberate presses while a browser restore waits for RPC", async () => {
     setup();
     useClosedViewStore
@@ -172,6 +224,53 @@ describe("root reopen shortcut", () => {
     });
     expect(state.navigate).toHaveBeenCalledTimes(2);
     expect(useClosedViewStore.getState().entries).toEqual([]);
+  });
+
+  it("follows both queued restores from a page with an allowing navigation blocker", async () => {
+    setup();
+    const olderRef = { ...ref, threadId: "thread-2" } as ScopedThreadRef;
+    const store = useClosedViewStore.getState();
+    store.remember({
+      kind: "panel-tab",
+      threadRef: olderRef,
+      surface: { kind: "diff", id: "diff" },
+    });
+    store.remember({ kind: "browser", threadRef: ref, snapshot });
+    const opened = Promise.withResolvers<ReturnType<typeof AsyncResult.success>>();
+    state.openPreview.mockReturnValue(opened.promise);
+
+    const history = createMemoryHistory({ initialEntries: ["/welcome"] });
+    const root = createRootRoute({
+      component: () => (
+        <>
+          <ReopenClosedViewShortcut />
+          <Outlet />
+        </>
+      ),
+    });
+    const router = createRouter({
+      history,
+      routeTree: root.addChildren([
+        createRoute({ getParentRoute: () => root, path: "welcome" }),
+        createRoute({ getParentRoute: () => root, path: "$environmentId/$threadId" }),
+      ]),
+    });
+    state.navigate.mockImplementation(router.navigate);
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    // The test supplies its own routes and history.
+    await using _view = await render(<RouterProvider router={router} />, { router: false });
+    using _blocker = {
+      [Symbol.dispose]: history.block({ blockerFn: () => false, enableBeforeUnload: false }),
+    };
+
+    await act(() => {
+      press();
+      press();
+    });
+    await act(() => opened.resolve(AsyncResult.success({ tabId: "new-tab" })));
+
+    expect(useClosedViewStore.getState().entries).toEqual([]);
+    expect(history.location.pathname).toBe("/remote/thread-2");
   });
 
   it("does not create a second browser when navigation fails after restoring it", async () => {
@@ -265,6 +364,105 @@ describe("root reopen shortcut", () => {
       expect(useClosedViewStore.getState().entries).toEqual([]);
     },
   );
+  it("includes the reopened issue selection in the /issues URL", async () => {
+    setup();
+    const issueSurface = {
+      id: "issue:remote:project-1:github:github.com:pingdotgg/t3code:42" as const,
+      kind: "issue" as const,
+      environmentId: "remote",
+      projectId: "project-1",
+      tracker: "github",
+      host: "github.com",
+      scope: "pingdotgg/t3code",
+      key: "42",
+    };
+    useClosedViewStore.getState().remember({
+      kind: "panel-tab",
+      threadRef: ISSUES_PANEL_REF,
+      surface: issueSurface,
+    });
+    await using _view = await renderShortcut();
+
+    await act(() => {
+      press();
+    });
+
+    expect(state.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "/issues",
+        search: expect.objectContaining({
+          selectedEnvironmentId: "remote",
+          selectedProjectId: "project-1",
+          selectedHost: "github.com",
+          tracker: "github",
+          scope: "pingdotgg/t3code",
+          key: "42",
+        }),
+      }),
+    );
+  });
+
+  it("reopens a closed pull request tab from another route with saved list preferences and no foreign search params", async () => {
+    setup();
+    window.localStorage.removeItem("t3.pullRequests.preferences");
+    using _cleanup = {
+      [Symbol.dispose]: () => window.localStorage.removeItem("t3.pullRequests.preferences"),
+    };
+    writePullRequestListPreferences({ involvement: "reviewing", state: "merged" });
+    useClosedViewStore.getState().remember({
+      kind: "panel-tab",
+      threadRef: PULL_REQUESTS_PANEL_REF,
+      surface: {
+        id: "pull-request:remote:project-1:github.com:pingdotgg/t3code#42",
+        kind: "pull-request",
+        environmentId: "remote",
+        projectId: "project-1",
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 42,
+      },
+    });
+
+    const history = createMemoryHistory({
+      initialEntries: [
+        "/issues?who=assigned&status=closed&q=login&host=linear.app&tracker=linear&scope=ENG&key=ENG-12",
+      ],
+    });
+    const root = createRootRoute({
+      component: () => (
+        <>
+          <ReopenClosedViewShortcut />
+          <Outlet />
+        </>
+      ),
+    });
+    const router = createRouter({
+      history,
+      routeTree: root.addChildren([
+        createRoute({ getParentRoute: () => root, path: "issues" }),
+        createRoute({ getParentRoute: () => root, path: "pull-requests" }),
+      ]),
+    });
+    state.navigate.mockImplementation(router.navigate);
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    await using _view = await render(<RouterProvider router={router} />, { router: false });
+
+    await act(() => {
+      press();
+    });
+
+    expect(router.state.location.pathname).toBe("/pull-requests");
+    expect(router.state.location.search).toEqual({
+      involvement: "reviewing",
+      state: "merged",
+      repository: "pingdotgg/t3code",
+      number: 42,
+      selectedProjectId: "project-1",
+      selectedHost: "github.com",
+      selectedEnvironmentId: "remote",
+    });
+  });
+
   it("forwards address-bar focus, zoom, and panel new and close from a focused desktop page", async () => {
     setup();
     await using _shortcut = await renderShortcut();

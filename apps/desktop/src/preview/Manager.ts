@@ -479,7 +479,7 @@ const IN_PLACE_DENIED_PROTOCOLS = new Set([
   "view-source:",
 ]);
 
-/** Popups bypass will-attach-webview hardening and would inherit the picker's contextIsolation:false. */
+/** Popups bypass will-attach-webview hardening, so they are isolated and sandboxed here. */
 const POPUP_WINDOW_OPTIONS = {
   webPreferences: {
     contextIsolation: true,
@@ -1696,9 +1696,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             );
             return { action: "deny" };
           }
+          const { postBody } = details;
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>
-              wc.loadURL(details.url),
+              postBody
+                ? wc.loadURL(details.url, {
+                    postData: postBody.data,
+                    extraHeaders: postBody.boundary
+                      ? `content-type: ${postBody.contentType}; boundary=${postBody.boundary}`
+                      : `content-type: ${postBody.contentType}`,
+                  })
+                : wc.loadURL(details.url),
             ).pipe(Effect.ignore),
           );
           return { action: "deny" };
@@ -2040,6 +2048,51 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  // Clears a tab's dead guest so callers see "no webview" until the renderer registers a new one.
+  const detachDestroyedWebContents = Effect.fn("PreviewManager.detachDestroyedWebContents")(
+    function* (tabId: string, webContentsId: number) {
+      const expectedAttachment = (yield* Ref.get(attachedRef)).get(webContentsId);
+      yield* withTabLifecycleLock(
+        tabId,
+        Effect.gen(function* () {
+          const currentTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+          const currentAttachment = (yield* Ref.get(attachedRef)).get(webContentsId);
+          const currentWebContents = webContents.fromId(webContentsId);
+          if (
+            currentTab?.webContentsId !== webContentsId ||
+            currentAttachment !== expectedAttachment ||
+            (currentWebContents && !currentWebContents.isDestroyed())
+          ) {
+            return;
+          }
+          yield* Effect.all(
+            [
+              detachControlSession(webContentsId),
+              detachListeners(webContentsId),
+              cancelPickElement(tabId),
+            ],
+            { concurrency: 3, discard: true },
+          );
+          const detached = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+            const current = tabs.get(tabId);
+            if (current?.webContentsId !== webContentsId) {
+              return [Option.none<PreviewTabState>(), tabs] as const;
+            }
+            const { favicon: _favicon, ...currentWithoutFavicon } = current;
+            const next: PreviewTabState = { ...currentWithoutFavicon, webContentsId: null };
+            return [
+              Option.some(next),
+              replaceMap(tabs, (copy) => {
+                copy.set(tabId, next);
+              }),
+            ] as const;
+          });
+          if (Option.isSome(detached)) yield* emitIfCurrent(tabId, detached.value);
+        }),
+      );
+    },
+  );
+
   // URL tabs can paint before registerWebview; set the background at attach time.
   const prepareWebview = Effect.fn("PreviewManager.prepareWebview")(function* (
     wc: Electron.WebContents,
@@ -2059,7 +2112,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     wc.once("destroyed", () => {
       guestLoadFailures.delete(webContentsId);
-      runFork(hideDestroyedGuest(webContentsId));
+      runFork(
+        Effect.gen(function* () {
+          yield* hideDestroyedGuest(webContentsId);
+          const tabId = yield* tabIdForWebContents(webContentsId);
+          if (tabId) yield* detachDestroyedWebContents(tabId, webContentsId);
+        }),
+      );
       runFork(detachControlSession(webContentsId));
     });
     yield* ensureControlSession(wc).pipe(
@@ -2135,45 +2194,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const webContentsId = pending.webContentsId;
     const wc = webContents.fromId(webContentsId);
     if (!wc || wc.isDestroyed()) {
-      const expectedAttachment = (yield* Ref.get(attachedRef)).get(webContentsId);
-      yield* withTabLifecycleLock(
-        tabId,
-        Effect.gen(function* () {
-          const currentTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-          const currentAttachment = (yield* Ref.get(attachedRef)).get(webContentsId);
-          const currentWebContents = webContents.fromId(webContentsId);
-          if (
-            currentTab?.webContentsId !== webContentsId ||
-            currentAttachment !== expectedAttachment ||
-            (currentWebContents && !currentWebContents.isDestroyed())
-          ) {
-            return;
-          }
-          yield* Effect.all(
-            [
-              detachControlSession(webContentsId),
-              detachListeners(webContentsId),
-              cancelPickElement(tabId),
-            ],
-            { concurrency: 3, discard: true },
-          );
-          const detached = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
-            const current = tabs.get(tabId);
-            if (current?.webContentsId !== webContentsId) {
-              return [Option.none<PreviewTabState>(), tabs] as const;
-            }
-            const { favicon: _favicon, ...currentWithoutFavicon } = current;
-            const next: PreviewTabState = { ...currentWithoutFavicon, webContentsId: null };
-            return [
-              Option.some(next),
-              replaceMap(tabs, (copy) => {
-                copy.set(tabId, next);
-              }),
-            ] as const;
-          });
-          if (Option.isSome(detached)) yield* emitIfCurrent(tabId, detached.value);
-        }),
-      );
+      yield* detachDestroyedWebContents(tabId, webContentsId);
       return;
     }
     yield* leaveBusyPage(wc);
@@ -2248,6 +2269,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       Effect.catchTags({
         PreviewTabNotFoundError: () => Effect.void,
         PreviewWebContentsNotFoundError: () => Effect.void,
+        PreviewWebviewNotInitializedError: () => Effect.void,
       }),
     );
 
@@ -2565,6 +2587,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           webContents: wc,
           debugger: control.debugger,
           cookiesCleared: () => runPromise(browserSession.cookiesCleared(wc.session)),
+          annotating: () => Ref.getUnsafe(pickSessionsRef).has(tabId),
         });
         // CDP cannot recover a failure that happened before it attached.
         const { navStatus } = afterAttach;

@@ -52,10 +52,10 @@ export function ControlPill(props: {
     variant === "circle" || variant === "danger" || (variant === "primary" && !props.label);
   const containerClassName = cn(
     isCircle
-      ? "h-11 w-11 items-center justify-center rounded-full"
+      ? "h-[44px] w-[44px] items-center justify-center rounded-full android:h-[48px] android:w-[48px]"
       : variant === "primary"
-        ? "h-11 flex-row items-center justify-center gap-2 rounded-full px-5"
-        : "h-11 flex-row items-center justify-center gap-2 rounded-full px-3.5",
+        ? "h-[44px] flex-row items-center justify-center gap-2 rounded-full px-5 android:h-[48px]"
+        : "h-[44px] flex-row items-center justify-center gap-2 rounded-full px-3.5 android:h-[48px]",
     variant === "primary"
       ? props.disabled
         ? "bg-subtle-strong"

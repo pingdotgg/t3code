@@ -1,15 +1,20 @@
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
   linkableMachines,
   linkedEnvironmentNames,
   offersLinkedEnvironments,
 } from "@t3tools/client-runtime/link-request";
 import { linkBackOffer, type LinkBackOffer } from "@t3tools/client-runtime/link-batch";
-import { createPeerLinkEnvironmentAtoms } from "@t3tools/client-runtime/state/peerLinks";
+import {
+  createPeerLinkEnvironmentAtoms,
+  linkThroughRoutes,
+} from "@t3tools/client-runtime/state/peerLinks";
 import { AuthAccessReadScope, AuthAccessWriteScope, type EnvironmentId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { Atom } from "effect/reactivity";
-import { useEffect, useEffectEvent } from "react";
+import { useContext, useEffect, useEffectEvent } from "react";
 
+import { useNowMinute } from "../hooks/useNowMinute";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentAtomList, environmentIdsKey } from "./environmentAtomList";
 import { useEnvironmentIdentities, useEnvironments } from "./environments";
@@ -38,9 +43,11 @@ const offersNoLinksAtom = Atom.make(false).pipe(Atom.withLabel("peer-links:offer
 /**
  * The machines `environmentId` links to, by name, while it offers links, and none otherwise.
  * Its agents can read threads there, and so can a client allowed to read threads on it.
+ * A `wanted` machine the names lack makes them reread.
  */
 export function useLinkedEnvironments(
   environmentId: EnvironmentId | null,
+  wanted?: EnvironmentId,
 ): ReadonlyMap<EnvironmentId, string> {
   const offered = useAtomValue(
     environmentId === null ? offersNoLinksAtom : offersLinkedEnvironmentsAtom(environmentId),
@@ -51,6 +58,13 @@ export function useLinkedEnvironments(
       ? peerLinkEnvironment.names({ environmentId, input: {} })
       : null,
   );
+  const registry = useContext(RegistryContext);
+  const queried = offered ? environmentId : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- links made outside this client are not pushed, so meeting an unknown machine asks the server again
+  useEffect(() => {
+    if (queried === null || wanted === undefined) return;
+    peerLinkEnvironment.refreshNamesLacking(registry, queried, [wanted]);
+  }, [registry, queried, wanted]);
   return linkedEnvironmentNames({
     links: offered ? (links.data?.links ?? []) : [],
     environments: identities,
@@ -96,6 +110,36 @@ export function useLinkableMachines(environmentId: EnvironmentId, enabled: boole
     threadEnvironmentId: environmentId,
     links: links.data?.links ?? [],
     connect: discovery.environments,
+  });
+}
+
+/**
+ * The machines `sourceId` can link to through another environment's full-access link, by
+ * environment id. Reads those environments' links only while `enabled`: listing them asks every
+ * linked machine whether it answers.
+ */
+export function useLinkThroughRoutes(sourceId: EnvironmentId, enabled: boolean) {
+  const { environments } = useEnvironments();
+  const writable = useEnvironmentsWithScope(environments, AuthAccessWriteScope);
+  const nowMinute = useNowMinute();
+  const hosts = environments
+    .filter(
+      (environment) =>
+        enabled &&
+        environment.environmentId !== sourceId &&
+        environment.connection.phase === "connected" &&
+        offersLinkedEnvironments(environment.serverConfig) &&
+        writable.has(environment.environmentId),
+    )
+    .map((environment) => environment.environmentId);
+  const lists = useAtomValue(peerLinkListsAtom(environmentIdsKey(hosts)));
+  return linkThroughRoutes({
+    sourceEnvironmentId: sourceId,
+    hosts: hosts.map((environmentId, index) => {
+      const list = lists[index];
+      return { environmentId, links: list?._tag === "Success" ? list.value.links : [] };
+    }),
+    now: DateTime.makeUnsafe(nowMinute),
   });
 }
 

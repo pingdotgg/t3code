@@ -16,7 +16,7 @@ import { getStackTraceLimit, setStackTraceLimit } from "./internal/stackTraceLim
 import * as Layer from "./Layer.ts"
 import * as RcRef from "./RcRef.ts"
 import type * as Schedule from "./Schedule.ts"
-import * as Scope from "./Scope.ts"
+import type * as Scope from "./Scope.ts"
 import type { Mutable } from "./Types.ts"
 
 const TypeId = "~effect/LayerRef"
@@ -134,7 +134,7 @@ export interface LayerRef<in out I, in out E = never> {
  * @since 4.0.0
  */
 export const make = Effect.fnUntraced(
-  function*<I, E, R, X, const Preload extends boolean = never, SE = never, SR = never>(
+  function*<I, E, R, X, const Preload extends boolean = false, SE = never, SR = never>(
     layer: Layer.Layer<I, E, R>,
     options?: {
       /**
@@ -157,11 +157,13 @@ export const make = Effect.fnUntraced(
     Scope.Scope | R | SR
   > {
     const context = yield* Effect.context<never>()
-    const memoMap = Layer.CurrentMemoMap.forkOrCreate(context)
 
     const rcRef = yield* RcRef.make({
-      acquire: Effect.contextWith((_: Context.Context<Scope.Scope>) =>
-        Layer.buildWithMemoMap(layer, memoMap, Context.get(_, Scope.Scope))
+      // Fork the creation-time memo map per acquisition so rebuilds don't reuse
+      // a live borrow (`Layer.build` would inherit the borrower's memo map).
+      acquire: Effect.flatMap(
+        Effect.scope,
+        (scope) => Layer.buildWithMemoMap(layer, Layer.CurrentMemoMap.forkOrCreate(context), scope)
       ),
       idleTimeToLive: options?.idleTimeToLive
     })
@@ -317,7 +319,7 @@ export const Service = <Self>() =>
   R,
   X,
   const Deps extends ReadonlyArray<Layer.Layer<any, any, any>> = [],
-  const Preload extends boolean = never,
+  const Preload extends boolean = false,
   SE = never,
   SR = never
 >(
