@@ -7210,11 +7210,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     overrides?: Partial<
       Pick<
         ClaudeAdapterV2.ClaudeAgentSdkQuerySession,
-        "mcpServerStatus" | "readMcpResource" | "listPermissionRules"
+        "mcpServerStatus" | "readMcpResource" | "callMcpTool" | "listPermissionRules"
       >
     >,
     toolName = "mcp__probe_server__show_weather",
     toolUseResult: unknown = { content: '{"tempC":21}', structuredContent: { tempC: 21 } },
+    runtimePolicy = CLAUDE_TEST_RUNTIME_POLICY,
   ) {
     const mcpRequests: Array<unknown> = [];
     const harness = yield* makeWakeHarnessWithOptions({
@@ -7252,6 +7253,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         attemptId: RunAttemptId.make("mcp-app"),
         text: "Show the weather",
         attachments: [],
+        runtimePolicy,
       }),
     );
     const id = "weather-app-call";
@@ -7568,28 +7570,120 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       called: false,
       readOnly: false,
     },
+    {
+      case: "Claude's own check and rules for other tools",
+      rules: [
+        { behavior: "ask", rule: "mcp__atlassian__createJiraIssue" },
+        { behavior: "ask", rule: "mcp__probe_server__delete_*" },
+        { behavior: "deny", rule: "mcp__buildkite__create_build" },
+        { behavior: "deny", rule: "mcp__probe_server__delete_*" },
+      ],
+      checks: "full-access",
+      called: true,
+      readOnly: true,
+    },
+    {
+      case: "Claude's own check and an ask rule naming the tool",
+      rules: [{ behavior: "ask", rule: "mcp__probe_server__refresh_*" }],
+      checks: "full-access",
+      claudeAsks: true,
+      called: true,
+      readOnly: false,
+    },
+    {
+      case: "Claude's own check and an ask wildcard that repeats a segment and misses its last one",
+      rules: [{ behavior: "ask", rule: "mcp__probe_server__*a*a*a*a*a*a*a*ab" }],
+      tool: "a".repeat(256),
+      checks: "full-access",
+      called: true,
+      readOnly: true,
+    },
+    {
+      case: "Claude's own check and an ask rule for a server alias T3 can't list",
+      rules: [{ behavior: "ask", rule: "mcp__probe_alias" }],
+      checks: "full-access",
+      claudeAsks: true,
+      called: true,
+      readOnly: false,
+    },
+    {
+      case: "Claude's own check and an ask T3 did not prompt for",
+      rules: [{ behavior: "ask", rule: "mcp__atlassian" }],
+      checks: "full-access",
+      claudeAsks: true,
+      called: false,
+      readOnly: true,
+    },
+    {
+      case: "Claude's own check and permission rules that cannot be read",
+      rules: "unreadable",
+      checks: "full-access",
+      called: true,
+      readOnly: true,
+    },
+    {
+      case: "Claude's own check outside Full Access",
+      rules: [{ behavior: "deny", rule: "mcp__buildkite__create_build" }],
+      checks: "approval-required",
+      called: false,
+      readOnly: false,
+    },
   ] as const)("applies Claude's permission rules to MCP app calls with $case", (testCase) =>
     Effect.gen(function* () {
       const server = "server" in testCase ? testCase.server : PROBE_SERVER_STATUS.name;
       const tool = "tool" in testCase ? testCase.tool : "refresh_weather";
-      const { harness, mcpRequests } = yield* runClaudeMcpAppToolTurn(MCP_APP_CAPABILITIES, {
-        mcpServerStatus: Effect.succeed([
-          {
-            ...PROBE_SERVER_STATUS,
-            name: server,
-            tools: [{ ...PROBE_SERVER_STATUS.tools[1], name: tool }],
-          },
-        ]),
-        listPermissionRules:
-          testCase.rules === "unreadable"
-            ? Effect.fail(
-                new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-                  method: "listPermissionRules",
-                  cause: new Error("Unsupported control request subtype"),
+      const calls: Array<{ readonly checkPermissions?: boolean }> = [];
+      const opened: { canUseTool?: ClaudeSdk.CanUseTool | undefined } = {};
+      const { harness } = yield* runClaudeMcpAppToolTurn(
+        "checks" in testCase
+          ? [...MCP_APP_CAPABILITIES, "mcp_call_check_permissions_v1"]
+          : MCP_APP_CAPABILITIES,
+        {
+          mcpServerStatus: Effect.succeed([
+            {
+              ...PROBE_SERVER_STATUS,
+              name: server,
+              tools: [{ ...PROBE_SERVER_STATUS.tools[1], name: tool }],
+            },
+            { name: "atlassian", status: "connected", tools: [] },
+          ]),
+          listPermissionRules:
+            testCase.rules === "unreadable"
+              ? Effect.fail(
+                  new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                    method: "listPermissionRules",
+                    cause: new Error("Unsupported control request subtype"),
+                  }),
+                )
+              : Effect.succeed(testCase.rules),
+          // Shape recorded from Claude Code 2.1.330: a checked call's ask goes to canUseTool, and a refusal fails the call.
+          callMcpTool: Effect.fnUntraced(function* (call) {
+            if ("claudeAsks" in testCase && call.checkPermissions === true) {
+              const answer = yield* Effect.promise(() =>
+                opened.canUseTool!(call.tool, call.arguments, {
+                  signal: new AbortController().signal,
+                  toolUseID: "toolu_mcp_call_a53e26e8c8a9483c8466271c506fcdcb",
+                  requestId: "request-mcp-call",
                 }),
-              )
-            : Effect.succeed(testCase.rules),
-      });
+              );
+              if (answer?.behavior !== "allow") {
+                return yield* new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                  method: "callMcpTool",
+                  cause: new Error("The tool did not run"),
+                });
+              }
+            }
+            calls.push(call);
+            return { content: [{ type: "text", text: "refreshed" }] };
+          }),
+        },
+        undefined,
+        undefined,
+        "checks" in testCase
+          ? { ...CLAUDE_TEST_RUNTIME_POLICY, runtimeMode: testCase.checks }
+          : CLAUDE_TEST_RUNTIME_POLICY,
+      );
+      opened.canUseTool = harness.getOpenedOptions()?.canUseTool;
       const mcpApps = harness.runtime.mcpApps!;
       const target = { providerThread: harness.providerThread, server };
       const [listed] = yield* mcpApps.listTools(target);
@@ -7601,12 +7695,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       const exit = yield* Effect.exit(mcpApps.callTool({ ...target, tool, arguments: {} }));
       assert.equal(Exit.isSuccess(exit), testCase.called);
-      assert.equal(
-        mcpRequests.some(
-          (request) => typeof request === "object" && request !== null && "arguments" in request,
-        ),
-        testCase.called,
+      assert.deepEqual(
+        calls.map((call) => call.checkPermissions === true),
+        testCase.called ? ["checks" in testCase && testCase.checks === "full-access"] : [],
       );
+      if ("claudeAsks" in testCase && !testCase.called) {
+        // Nobody was prompted for the refused call, so it cannot make a later unprompted one pass.
+        const retry = yield* Effect.exit(mcpApps.callTool({ ...target, tool, arguments: {} }));
+        assert.isTrue(Exit.isFailure(retry));
+      }
     }).pipe(
       Effect.scoped,
       Effect.provide(
