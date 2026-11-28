@@ -61,6 +61,11 @@ describe("semver helpers", () => {
   it("supports comparison comparators", () => {
     expect(satisfiesSemverRange("24.9.0", ">=24.0 <24.10")).toBe(true);
     expect(satisfiesSemverRange("24.10.0", ">=24.0 <24.10")).toBe(false);
+    expect(satisfiesSemverRange("22.16.1", "22.16")).toBe(true);
+    expect(satisfiesSemverRange("22.17.0", "=22.16")).toBe(false);
+    expect(satisfiesSemverRange("22.16.1", "<=22")).toBe(true);
+    expect(satisfiesSemverRange("22.16.1", ">22.16")).toBe(false);
+    expect(satisfiesSemverRange("22.17.0", ">22.16")).toBe(true);
     for (const gap of [" ", "\t", "\n"]) {
       const range = `>=${gap}24.0 <${gap}24.10`;
       expect(satisfiesSemverRange("24.9.0", range)).toBe(true);

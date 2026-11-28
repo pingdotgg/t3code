@@ -185,19 +185,9 @@ export const satisfiesSemverRange: (rawVersion: string, range: string) => boolea
           patch: Number(targetMatch[3] || 0),
         };
         const compared =
-          version.major !== target.major
-            ? version.major > target.major
-              ? 1
-              : -1
-            : version.minor !== target.minor
-              ? version.minor > target.minor
-                ? 1
-                : -1
-              : version.patch !== target.patch
-                ? version.patch > target.patch
-                  ? 1
-                  : -1
-                : 0;
+          version.major - target.major ||
+          (targetMatch[2] === undefined ? 0 : version.minor - target.minor) ||
+          (targetMatch[3] === undefined ? 0 : version.patch - target.patch);
         const operator = match[1] || "=";
         switch (operator) {
           case "^":
