@@ -238,6 +238,7 @@ const startLocalBackend = Effect.gen(function* () {
   // A backend started while another server holds this home's lock can only exit with code 78.
   if (
     !(settings.wslOnly && settings.wslBackendEnabled) &&
+    !(yield* DesktopHomeOwner.reclaimHomeFromSshServer()) &&
     !(yield* DesktopHomeOwner.awaitHomeOwnershipRelease())
   ) {
     const owner = yield* DesktopHomeOwner.readLiveHomeOwner();

@@ -608,6 +608,7 @@ const REMOTE_ENSURE_T3_HOME_SCRIPT = `if [ -L "$HOME/.t3" ] && [ ! -e "$HOME/.t3
   (cd "$HOME" && mkdir -p "$(readlink .t3)")
 fi`;
 
+// The desktop app on the host also takes .launch.lock while it takes the home back from a managed server (DesktopHomeOwner.ts).
 const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
