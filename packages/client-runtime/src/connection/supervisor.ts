@@ -814,9 +814,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       ),
     );
     // Ticks always run: the check skips the preferred route itself, and the
-    // route list can grow while connected (learned routes).
+    // route list can grow while connected (learned routes). The first tick is
+    // immediate, so a LAN that missed its head start by a moment wins it back.
     yield* Stream.tick(Duration.millis(BETTER_ROUTE_CHECK_INTERVAL_MS)).pipe(
-      Stream.drop(1),
       Stream.runForEach(() => requestBetterRouteCheck(lease)),
       Effect.forkScoped,
     );
