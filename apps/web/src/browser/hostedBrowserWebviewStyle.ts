@@ -24,21 +24,12 @@ const PARKED_BROWSER_WEBVIEW_OPACITY = 0.01;
 export function resolveHostedBrowserWebviewWrapperStyle(input: {
   readonly active: boolean;
   readonly renderingActive: boolean;
-  readonly keepPaintableWhenInactive?: boolean;
   readonly cornerRadius?: number;
   readonly zIndex?: number;
   readonly rect: BrowserSurfaceRect | null;
   readonly hiddenSize: HostedBrowserWebviewSize;
 }): HostedBrowserWebviewWrapperStyle {
-  const {
-    active,
-    cornerRadius = 0,
-    hiddenSize,
-    keepPaintableWhenInactive = false,
-    rect,
-    renderingActive,
-    zIndex = 30,
-  } = input;
+  const { active, cornerRadius = 0, hiddenSize, rect, renderingActive, zIndex = 30 } = input;
   if (active && rect) {
     return {
       left: rect.x,
@@ -72,6 +63,6 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
     height: hiddenSize.height,
     zIndex: -1,
     pointerEvents: "none",
-    visibility: keepPaintableWhenInactive ? "visible" : "hidden",
+    visibility: "hidden",
   };
 }

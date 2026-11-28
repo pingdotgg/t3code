@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Stands in for an Electron debugger.
 import { describe, expect, it, vi } from "@effect/vitest";
-import { DesktopBrowserEvent } from "@t3tools/contracts";
+import { DesktopBrowserEvent, PREVIEW_TITLE_WATCH_OBJECT_GROUP } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
@@ -41,12 +41,13 @@ const command = (
   host: DesktopBrowserHost.DesktopBrowserHost["Service"],
   id: number,
   method: string,
+  params: Record<string, unknown> = {},
 ) =>
   host.handleCommandLine(
     encodeJson({
       type: "cdp",
       ...key,
-      message: encodeJson({ id, method, params: { id }, sessionId: "t3-preview-page" }),
+      message: encodeJson({ id, method, params: { ...params, id }, sessionId: "t3-preview-page" }),
     }),
   );
 
@@ -441,9 +442,9 @@ describe("DesktopBrowserHost", () => {
 
       // A command that outlasts its first prod is painted like a capture, which also unthrottles it.
       // A wait the agent's turn gave up on is no longer prodded.
+      painting.length = 0;
       yield* command(host, 5, "Runtime.evaluate");
       yield* settle;
-      painting.length = 0;
       yield* TestClock.adjust("250 millis");
       expect(debuggee.nativeCaptures()).toBe(7);
       expect(painting).toEqual([true]);
@@ -551,6 +552,24 @@ describe("DesktopBrowserHost", () => {
       expect(debuggee.focusEmulation).toEqual([true, false, true]);
       expect(debuggee.sent).toEqual([1, 2, 3]);
     }),
+  );
+
+  it.effect("neither focuses nor paints a guest for the server's pending title watch", () =>
+    Effect.gen(function* () {
+      const host = yield* makeDrawnHost;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const painting = yield* watchPainting(host);
+
+      yield* command(host, 1, "Runtime.evaluate", {
+        objectGroup: PREVIEW_TITLE_WATCH_OBJECT_GROUP,
+      });
+      yield* settle;
+      yield* TestClock.adjust("1 minute");
+      expect(debuggee.sent).toEqual([1]);
+      expect(debuggee.focusEmulation).toEqual([]);
+      expect(painting).toEqual([]);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("keeps a guest focused while a command it is running is still pending", () =>
@@ -891,6 +910,36 @@ describe("DesktopBrowserHost", () => {
       yield* settle;
       expect(painting).toEqual([true, false]);
     }),
+  );
+
+  it.effect("keeps painting while the agent's turn is using the tab", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const painting = yield* watchPainting(host);
+      const turn = (active: boolean) =>
+        host.handleCommandLine(encodeJson({ type: "turn", threadId: key.threadId, active }));
+
+      yield* turn(true);
+      // Playwright's actionability check waits for the page's next frame.
+      yield* command(host, 1, "Runtime.callFunctionOn");
+      yield* settle;
+      expect(painting).toEqual([true]);
+
+      yield* turn(false);
+      yield* settle;
+      expect(painting).toEqual([true, false]);
+
+      // Outside a turn the guest paints until the agent goes idle.
+      yield* command(host, 2, "Input.dispatchMouseEvent");
+      yield* settle;
+      expect(painting).toEqual([true, false, true]);
+      debuggee.release();
+      yield* settle;
+      yield* TestClock.adjust("1 minute");
+      expect(painting).toEqual([true, false, true, false]);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("lets a guest throttle when Chromium refuses a viewer's screencast", () =>

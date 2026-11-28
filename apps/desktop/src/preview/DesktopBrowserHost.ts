@@ -4,6 +4,7 @@ import {
   DesktopBrowserCommand,
   DesktopBrowserEvent,
   type DesktopBrowserEvent as DesktopBrowserEventType,
+  PREVIEW_TITLE_WATCH_OBJECT_GROUP,
   type PreviewAutomationLoadError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -311,20 +312,22 @@ export const make = Effect.gen(function* () {
         // The agent pauses to think between steps; its tab stays focused until the turn ends.
         if (tab.agentUsed && agentTurns.has(tab.key.threadId)) return;
         tab.agentUsed = false;
+        syncPainting(tab);
         if (tabs.get(keyOf(tab.key)) === tab) setFocusEmulation(tab, false);
       }),
     );
   };
 
   /**
-   * Electron composites no offscreen guest, so a screenshot, screencast or stalled command waits for a frame
-   * that never comes. The client paints the guest behind the app while one is pending; the
-   * capture then finishes on its own, and the guest goes back offscreen once none is.
+   * Electron composites no offscreen guest, so a capture, or agent input that waits on the
+   * next frame, waits forever. The client paints the guest behind the app while one is pending
+   * or the agent drives it, and the guest goes back offscreen once neither holds.
    */
   const syncPainting = (tab: AttachedTab) => {
     const active =
       tabs.get(keyOf(tab.key)) === tab &&
-      (tab.screencasts.size > 0 ||
+      (tab.agentUsed ||
+        tab.screencasts.size > 0 ||
         tab.capturing.size > 0 ||
         tab.frameStalled ||
         tab.waitingScreenshots.some((waiting) => waiting.live()));
@@ -550,11 +553,20 @@ export const make = Effect.gen(function* () {
             if (tab.screencasts.size > 0) return Promise.resolve({});
           }
           if (annotated(method)) return Promise.reject(new Error(ANNOTATING_MESSAGE));
+          // Pending until the title changes, it would hold focus and painting for as long as the page lives.
+          if (
+            method === "Runtime.evaluate" &&
+            params["objectGroup"] === PREVIEW_TITLE_WATCH_OBJECT_GROUP
+          ) {
+            return send(method, params, sessionId);
+          }
           // A person's input through a viewer, or Playwright's own housekeeping, is not the agent's.
           if (AGENT_INPUT_METHOD.test(method)) {
             if (owner === undefined || !streamingOwners.has(owner)) {
               tab.agentUsed = true;
               tab.agentLedAt = performance.now();
+              // Painted before the command's own frame, which a hidden guest never draws.
+              syncPainting(tab);
             } else if (method.startsWith("Input.") && !POINTER_TRAVEL.has(params["type"])) {
               tab.agentLedAt = Number.NEGATIVE_INFINITY;
             }

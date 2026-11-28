@@ -28,6 +28,12 @@ export const DesktopBrowserEvent = Schema.Union([
 ]);
 export type DesktopBrowserEvent = typeof DesktopBrowserEvent.Type;
 
+/**
+ * The `objectGroup` of the server's title watch, a `Runtime.evaluate` that stays pending until
+ * the page's title changes. It only waits, so the desktop host neither focuses nor paints for it.
+ */
+export const PREVIEW_TITLE_WATCH_OBJECT_GROUP = "t3-preview-title-watch";
+
 export const DesktopBrowserCommand = Schema.Union([
   Schema.Struct({ type: Schema.Literal("cdp"), ...TabKey, message: Schema.String }),
   Schema.Struct({ type: Schema.Literal("release"), ...TabKey }),
