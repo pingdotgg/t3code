@@ -103,6 +103,67 @@ describe("orderDiffFilesForReview", () => {
     ).toEqual(["src/lib/index.ts", "src/a.ts"]);
   });
 
+  it("resolves relative directory specifiers targeting the repository root index", () => {
+    expect(order([file("a/app.ts", ['import { x } from "..";']), file("index.ts")])).toEqual([
+      "index.ts",
+      "a/app.ts",
+    ]);
+    expect(order([file("a/app.ts", ['import { x } from "../";']), file("index.ts")])).toEqual([
+      "index.ts",
+      "a/app.ts",
+    ]);
+    expect(order([file("app.ts", ['import { x } from ".";']), file("index.ts")])).toEqual([
+      "index.ts",
+      "app.ts",
+    ]);
+    expect(order([file("app.ts", ['import { x } from "./";']), file("index.ts")])).toEqual([
+      "index.ts",
+      "app.ts",
+    ]);
+    expect(order([file("a/b/app.ts", ['import { x } from "../..";']), file("index.ts")])).toEqual([
+      "index.ts",
+      "a/b/app.ts",
+    ]);
+    expect(
+      order([file(".ts"), file("app.ts", ['import { x } from ".";']), file("index.ts")]),
+    ).toEqual([".ts", "index.ts", "app.ts"]);
+    expect(order([file("index.ts", ['import ".";']), file("a.ts")])).toEqual(["a.ts", "index.ts"]);
+  });
+
+  it("ignores above-root and non-directory specifiers instead of matching root files", () => {
+    expect(order([file("a.ts", ['import { z } from "../z";']), file("z.ts")])).toEqual([
+      "a.ts",
+      "z.ts",
+    ]);
+    expect(order([file("src/a.ts", ['import { z } from "../../z";']), file("z.ts")])).toEqual([
+      "src/a.ts",
+      "z.ts",
+    ]);
+    expect(order([file("a.ts", ['import { z } from "../b/z";']), file("b/z.ts")])).toEqual([
+      "a.ts",
+      "b/z.ts",
+    ]);
+    expect(order([file("a.ts", ['import { x } from "..";']), file("index.ts")])).toEqual([
+      "a.ts",
+      "index.ts",
+    ]);
+    expect(order([file("a/a.ts", ['import { x } from "../..";']), file("index.ts")])).toEqual([
+      "a/a.ts",
+      "index.ts",
+    ]);
+    expect(order([file("app.ts", ['import "?worker";']), file("index.ts")])).toEqual([
+      "app.ts",
+      "index.ts",
+    ]);
+    expect(order([file("app.ts", ['import "./.ts";']), file("index.ts")])).toEqual([
+      "app.ts",
+      "index.ts",
+    ]);
+    expect(
+      order([file("a.ts", ['import "../z"; import "./y";']), file("y.ts"), file("z.ts")]),
+    ).toEqual(["y.ts", "a.ts", "z.ts"]);
+  });
+
   it("resolves .mts and .cts modules from NodeNext and extensionless specifiers", () => {
     expect(order([file("a.mts", ['import { z } from "./z.mjs";']), file("z.mts")])).toEqual([
       "z.mts",
