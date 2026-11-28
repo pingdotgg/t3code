@@ -16,6 +16,7 @@ import {
 } from "../threads/thread-list-v2-row-appearance";
 import {
   PullRequestAvatar,
+  PullRequestProjectMedia,
   PullRequestConflictBadge,
   PullRequestDiffStats,
 } from "./PullRequestPresentation";
@@ -173,7 +174,12 @@ export const PullRequestListRow = memo(
               )}
             >
               <View className="flex-row items-center gap-1.5">
-                <PullRequestAvatar actor={item.author} size={16} />
+                <PullRequestProjectMedia
+                  environmentId={item.environmentId}
+                  projectId={item.projectId}
+                >
+                  <PullRequestAvatar actor={item.author} size={16} />
+                </PullRequestProjectMedia>
                 <Text className={cn("min-w-0 flex-1 text-xs", mutedForeground)} numberOfLines={1}>
                   {item.repository} <Text className={tertiaryForeground}>#{item.number}</Text>
                 </Text>

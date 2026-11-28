@@ -26,7 +26,11 @@ import {
   PullRequestRowLines,
 } from "./PullRequestListRow";
 import { PullRequestPrivateMark } from "./PullRequestDetailLayout";
-import { PullRequestLabelChip, PullRequestReviewDecisionGlyph } from "./pullRequestPresentation";
+import {
+  PullRequestLabelChip,
+  PullRequestProjectAvatarSource,
+  PullRequestReviewDecisionGlyph,
+} from "./pullRequestPresentation";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const LABEL_SLOTS = [
@@ -244,11 +248,15 @@ function PullRequestRowImpl({
                   <Icon aria-label={providerName} className="size-3" />
                 </SharedTooltipTrigger>
               ) : null}
-              <PullRequestRowAuthor
-                actor={entry.author}
-                className="min-w-3.5 max-w-40"
-                labelClassName="sr-only @xs/pr-row-meta:not-sr-only @xs/pr-row-meta:truncate"
-              />
+              <PullRequestProjectAvatarSource
+                project={{ environmentId: entry.environmentId, projectId: entry.projectId }}
+              >
+                <PullRequestRowAuthor
+                  actor={entry.author}
+                  className="min-w-3.5 max-w-40"
+                  labelClassName="sr-only @xs/pr-row-meta:not-sr-only @xs/pr-row-meta:truncate"
+                />
+              </PullRequestProjectAvatarSource>
               {showProjectTitle ? <span className="truncate">{entry.repository}</span> : null}
               {environmentLabel ? (
                 <span className="min-w-0 max-w-32 truncate">{environmentLabel}</span>

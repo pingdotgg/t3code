@@ -19,6 +19,7 @@ import type {
 } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import type { TrackerIssueSummary } from "@t3tools/source-control-core/server/IssueTracker";
+import { azureDevOpsAvatarUrl } from "../shared/azureDevOpsAvatar.ts";
 
 /** Lowercased names of the states a project treats as finished, read by `closedStateNames`. */
 export type ClosedStates = ReadonlySet<string>;
@@ -145,7 +146,11 @@ function toActor(value: typeof IdentityValue.Type | undefined): IssueActor | nul
   const login = trimmed(value.uniqueName) ?? trimmed(value.displayName);
   return login === null
     ? null
-    : { login, name: trimmed(value.displayName), avatarUrl: trimmed(value.imageUrl) };
+    : {
+        login,
+        name: trimmed(value.displayName),
+        avatarUrl: azureDevOpsAvatarUrl(trimmed(value.imageUrl)),
+      };
 }
 
 function toIssueState(name: string | null | undefined, closed: ClosedStates): IssueState {
