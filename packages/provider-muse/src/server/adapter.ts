@@ -6,6 +6,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderRetry,
   type OrchestrationV2ProviderSession,
@@ -34,6 +35,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -53,6 +55,7 @@ import {
   MuseItemEvent,
   MuseSessionResult,
   MuseSubscriptionUsage,
+  MuseTaskList,
   MuseTokenUsageEvent,
   MuseTodoList,
   MuseRetryScheduled,
@@ -276,6 +279,34 @@ const nativeRef = (nativeId: string) => ({
 /** The roster lists a child under its turn item's native id, so readers can pair the two. */
 const backgroundTaskId = (item: MuseItem) =>
   item.kind === "subagent" ? item.childSessionId || item.subagentId || item.itemId : item.itemId;
+
+/** One live row of `task/list`, kept until a later listing or Stop clears it. */
+interface LiveBackgroundTask {
+  readonly kind: "monitor" | "command";
+  readonly description?: string;
+  readonly awaited: true;
+}
+const isMonitorTask = (task: { readonly kind: string; readonly tool?: string | undefined }) =>
+  task.tool?.toLowerCase() === "monitor" || task.kind.toLowerCase().includes("monitor");
+const liveBackgroundTask = (
+  task: {
+    readonly kind: string;
+    readonly tool?: string | undefined;
+  },
+  label?: string,
+): LiveBackgroundTask => {
+  const monitor = isMonitorTask(task);
+  // Registry-only rows carry a `tool.<name>` kind instead of a tool name.
+  const description =
+    label ?? task.tool ?? (monitor ? "monitor" : task.kind.replace(/^tool\./, ""));
+  return {
+    kind: monitor ? "monitor" : "command",
+    ...(description ? { description } : {}),
+    // Muse hands a backgrounded task's result back as runtime context and wakes the session,
+    // so the thread waits on it like a subagent.
+    awaited: true,
+  };
+};
 const recordSchema = Schema.Record(Schema.String, Schema.Unknown);
 const INFORMATIONAL_NOTIFICATIONS = new Set([
   "session/contextUsage",
@@ -370,6 +401,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const pending = new Map<RuntimeRequestId, PendingRequest>();
       const seenTerminals = new Set<string>();
       const observedChildren = new Map<string, ActiveTurn>();
+      const liveTasks = new Map<string, LiveBackgroundTask>();
+      // Stop invalidates a `task/list` read already in flight; its rows predate the stop.
+      let taskListGeneration = 0;
       const childrenByItemId = new Map<string, ChildContext>();
       const agentTitles = new Map<string, string>();
       const finishedBackground: Array<BackgroundWorkReport> = [];
@@ -770,20 +804,45 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }
       });
       const syncBackground = Effect.fnUntraced(function* () {
-        yield* updateThread({
-          pendingBackgroundTasks: [...observedChildren].flatMap(([itemId, owner]) => {
-            const item = owner.items.get(itemId);
-            const description = item?.objective ?? item?.entryId ?? item?.fallbackText;
-            return [
-              {
-                taskId: item ? backgroundTaskId(item) : itemId,
-                kind:
-                  item?.kind === "subagent" ? ("subagent" as const) : ("background_task" as const),
-                ...(description ? { description } : {}),
-              },
-            ];
-          }),
-        });
+        const tasks: OrchestrationV2PendingBackgroundTask[] = [];
+        const listed = new Set<string>();
+        for (const [itemId, owner] of observedChildren) {
+          const item = owner.items.get(itemId);
+          const taskId = item ? backgroundTaskId(item) : itemId;
+          if (listed.has(taskId)) continue;
+          listed.add(taskId);
+          const description = item?.objective ?? item?.entryId ?? item?.fallbackText;
+          tasks.push({
+            taskId,
+            kind: item?.kind === "subagent" ? "subagent" : "background_task",
+            ...(description ? { description } : {}),
+          });
+        }
+        // A monitor has no running turn item, so `task/list` is the only place it shows up.
+        for (const [taskId, task] of liveTasks) {
+          if (listed.has(taskId)) continue;
+          listed.add(taskId);
+          tasks.push({ taskId, ...task });
+        }
+        yield* updateThread({ pendingBackgroundTasks: tasks });
+      });
+      // The item stream says a tool was backgrounded; only `task/list` says whether it still runs.
+      const refreshBackgroundTasks = Effect.fnUntraced(function* () {
+        const generation = taskListGeneration;
+        const listed = yield* request("task/list", {}, false).pipe(
+          Effect.flatMap((value) => decode(MuseTaskList, value)),
+          // Never hold the event stream long on a host that will not answer.
+          Effect.timeoutOption(5_000),
+          Effect.option,
+        );
+        // Stop cleared the work while this read was in flight; the rows are already stale.
+        if (generation !== taskListGeneration) return;
+        // A host that cannot list tasks keeps what the items told us.
+        if (Option.isNone(listed) || Option.isNone(listed.value)) return;
+        liveTasks.clear();
+        for (const task of listed.value.value.tasks)
+          if (task.status === "inProgress") liveTasks.set(task.taskId, liveBackgroundTask(task));
+        yield* syncBackground();
       });
       const publishItem = Effect.fnUntraced(function* (
         turn: ActiveTurn,
@@ -824,6 +883,17 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           if (wasRunning !== running || (running && !listed)) yield* syncBackground();
         }
         const streaming = status === "running";
+        // A backgrounded tool call completes as a call but keeps running as work.
+        if (item.kind === "toolCall" && item.background === true) {
+          const task = liveBackgroundTask(
+            { kind: item.kind, tool: item.tool },
+            item.tool ?? item.entryId,
+          );
+          if (liveTasks.get(item.itemId)?.description !== task.description) {
+            liveTasks.set(item.itemId, task);
+            yield* syncBackground();
+          }
+        }
         const base = {
           ...baseItem(turn, item.itemId, time),
           status,
@@ -1002,6 +1072,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           if (item) yield* publishItem(owner, item, status);
         }
         observedChildren.clear();
+        // The process owns its background work, so stopping or losing the turn ends it too.
+        if (liveTasks.size > 0) {
+          // Discard a `task/list` read that started before these rows were dropped.
+          taskListGeneration++;
+          liveTasks.clear();
+        }
         if (thread?.pendingBackgroundTasks?.length) yield* syncBackground();
         for (const entry of pending.values()) yield* resolvePending(entry, "cancelled");
       });
@@ -1593,6 +1669,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               "reusable",
               result.error?.quota,
             );
+            // Background work outlives the turn that started it; re-read what Muse still runs.
+            // Stop already cleared the listing, and a read now can predate `task/stopAll`.
+            if (status !== "interrupted") yield* refreshBackgroundTasks();
             break;
           }
           case "approval/requested":
@@ -2043,6 +2122,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             driver: MUSE_PROVIDER,
             providerThread: thread,
           });
+          // A monitor started before this client attached still keeps the thread waiting.
+          yield* refreshBackgroundTasks();
           return thread;
         }).pipe(
           Effect.onError((cause) =>
@@ -2300,9 +2381,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         providerSession: session,
         events: Stream.fromQueue(events),
         backgroundTasksEndWithProcess: true,
-        // A running workflow or a held Muse turn keeps the host: idle release must wait.
+        // A running workflow, a live monitor, or a held Muse turn keeps the host: idle release must wait.
         hasPendingBackgroundWork: Effect.sync(
-          () => observedChildren.size > 0 || wake !== undefined,
+          () => observedChildren.size > 0 || liveTasks.size > 0 || wake !== undefined,
         ),
         ensureThread: (args) =>
           register(args).pipe(
@@ -2384,14 +2465,24 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         interruptTurn: Effect.fn("MuseAdapter.interruptTurn")(
           function* (args) {
             const turn = active;
-            // Recovering an ended turn is done unless Muse still runs work Stop cannot end.
-            if (
-              !turn &&
-              args.requestRuntimeRestart === true &&
-              observedChildren.size === 0 &&
-              wake === undefined
-            )
-              return;
+            // Recovering an ended turn is done unless Muse still runs work Stop can end.
+            if (!turn && args.requestRuntimeRestart === true) {
+              if (liveTasks.size === 0) {
+                // A child or a held wake is not this call's to end; an idle turn is done.
+                if (observedChildren.size === 0 && wake === undefined) return;
+              } else {
+                // A monitor outlives its turn, so Stop must reach Muse's own task registry.
+                // Without a live turn this is the only stop attempt, so a failed stop surfaces
+                // and keeps the listing for the caller to retry.
+                yield* request("task/stopAll", {});
+                // A monitor that already woke the session left a turn this call must end too.
+                // Keep the wake and the listing if that fails, so a retry can finish the job.
+                if (wake) yield* request("turn/interrupt", { turnId: wake.nativeId });
+                yield* settleObservedChildren("interrupted");
+                wake = undefined;
+                return;
+              }
+            }
             if (
               !turn ||
               turn.providerTurn.id !== args.providerTurnId ||
@@ -2422,6 +2513,18 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             for (const joined of turn.joined)
               yield* request("turn/interrupt", { turnId: joined }).pipe(Effect.ignore);
             yield* request("turn/interrupt", { turnId: turn.nativeId });
+            // Monitors and backgrounded tools are Muse-side work; the turn ending does not stop them.
+            // Keep the rows if the stop fails: those tasks can still be running.
+            const stopped = yield* request("task/stopAll", {}).pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            );
+            if (stopped) {
+              // A `task/list` read started before this stop must not put the rows back.
+              taskListGeneration++;
+              liveTasks.clear();
+              yield* syncBackground();
+            }
             yield* Deferred.await(turn.done).pipe(
               Effect.timeout(options.requestTimeoutMs ?? 30_000),
               Effect.mapError((cause) => protocolError("Muse did not confirm interruption", cause)),
