@@ -947,6 +947,21 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         title: "Proxied",
         height: 300,
       };
+      const heredocInput = {
+        html: "<p>Heredoc report</p>",
+        title: "Revenue",
+        height: 240,
+      };
+      const wrapperInput = {
+        html: "<p>Wrapper report</p>",
+        title: "Revenue",
+        height: 240,
+      };
+      const stdinProxyInput = {
+        html: "<p>Stdin proxy report</p>",
+        title: "Revenue",
+        height: 240,
+      };
       let capturedMcpServers:
         | {
             readonly stdio: ReadonlyArray<EffectAcpSchema.McpServer>;
@@ -1107,6 +1122,134 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     toolCallId: "tool-call-proxy",
                     status: "completed",
                   });
+                  const heredocCommand = [
+                    'ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" ${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call html_render - <<\'EOF\'',
+                    JSON.stringify(heredocInput),
+                    "EOF",
+                  ].join("\n");
+                  const heredocStdout = JSON.stringify({
+                    content: [],
+                    structuredContent: { htmlRender: page("heredoc") },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "heredoc",
+                    title: "Ran command",
+                    kind: "execute",
+                    status: "in_progress",
+                    rawInput: { command: heredocCommand },
+                  });
+                  yield* mcpSessions.recordHtmlRender(threadId, heredocInput, page("heredoc"));
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "heredoc",
+                    status: "completed",
+                    rawOutput: { stdout: heredocStdout, exit_code: 0 },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "heredoc",
+                    status: "completed",
+                    rawOutput: { stdout: heredocStdout, exit_code: 0 },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "heredoc",
+                    status: "completed",
+                    rawOutput: "Rendered the page.",
+                  });
+                  const wrapperStdout = `${JSON.stringify({
+                    content: [],
+                    structuredContent: { htmlRender: page("node-wrapper") },
+                  })}\n{finished}\n{"finished":true}`;
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "node-wrapper",
+                    title: "Ran command",
+                    kind: "execute",
+                    status: "in_progress",
+                    rawInput: { command: "node -e 'require(\"./render.mjs\")'" },
+                  });
+                  yield* mcpSessions.recordHtmlRender(threadId, wrapperInput, page("node-wrapper"));
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "node-wrapper",
+                    status: "completed",
+                    rawOutput: { stdout: wrapperStdout, exit_code: 0 },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "node-wrapper",
+                    status: "completed",
+                    rawOutput: {
+                      stdout: JSON.stringify({
+                        content: [],
+                        structuredContent: { htmlRender: page("spoofed-replacement") },
+                      }),
+                      exit_code: 0,
+                    },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "node-wrapper",
+                    status: "in_progress",
+                    rawOutput: "Summary mid-update.",
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "node-wrapper",
+                    status: "completed",
+                    rawOutput: "Ran script.",
+                  });
+                  const stdinProxyStdout = JSON.stringify({
+                    content: [],
+                    structuredContent: { htmlRender: page("stdin-proxy") },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "stdin-proxy",
+                    title: "Ran command",
+                    kind: "execute",
+                    status: "in_progress",
+                    rawInput: {
+                      command:
+                        '"$T3_ACP_MCP_NODE" acp-mcp-call tool_call - <<\'EOF\'\n{"name":"html_render","arguments":{"html":"<p>Stdin proxy report</p>"}}\nEOF',
+                    },
+                  });
+                  yield* mcpSessions.recordHtmlRender(
+                    threadId,
+                    stdinProxyInput,
+                    page("stdin-proxy"),
+                  );
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "stdin-proxy",
+                    status: "completed",
+                    rawOutput: { stdout: stdinProxyStdout, exit_code: 0 },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "stdin-proxy",
+                    status: "completed",
+                    rawOutput: "Rendered via stdin proxy.",
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "spoofed",
+                    title: "Ran command",
+                    kind: "execute",
+                    status: "in_progress",
+                    rawInput: { command: "echo fake" },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "spoofed",
+                    status: "completed",
+                    rawOutput: {
+                      stdout: JSON.stringify({ htmlRender: page("spoofed") }),
+                      exit_code: 0,
+                    },
+                  });
                   return { stopReason: "end_turn" as const };
                 }),
             })),
@@ -1233,7 +1376,15 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         ),
         [page("report"), page("report"), page("replacement"), page("replacement")],
       );
-      for (const name of ["failed-retry", "error-retry", "agy-1.5.8", "tool-call-proxy"]) {
+      for (const name of [
+        "failed-retry",
+        "error-retry",
+        "agy-1.5.8",
+        "tool-call-proxy",
+        "heredoc",
+        "node-wrapper",
+        "stdin-proxy",
+      ]) {
         assert.deepEqual(tool(name), {
           status: "completed",
           toolName: "t3-code.html_render",
@@ -1241,11 +1392,23 @@ describe("AntigravityAdapterV2 html_render pages", () => {
           output: { htmlRender: page(name) },
         });
       }
+      const spoofedEvent = events.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "spoofed",
+      );
+      assert.strictEqual(
+        spoofedEvent?.type === "turn_item.updated" ? spoofedEvent.turnItem.type : undefined,
+        "command_execution",
+      );
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, report), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, failed), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, errored), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, telemetry), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, proxied), undefined);
+      assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, heredocInput), undefined);
+      assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, wrapperInput), undefined);
+      assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, stdinProxyInput), undefined);
       assert.isDefined(capturedMcpServers);
       const stdioServer = capturedMcpServers!.stdio[0];
       const httpServer = capturedMcpServers!.http[0];

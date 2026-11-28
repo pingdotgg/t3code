@@ -1109,7 +1109,290 @@ export interface AcpMcpToolCallIdentity {
   readonly input?: Record<string, unknown>;
 }
 
-const ACP_MCP_FALLBACK_CALL = /(?:^|[\s"'=])acp-mcp-call[\s"']+([A-Za-z0-9_.-]+)(?:\s+(.+?))?\s*$/u;
+const ACP_MCP_SHELL_EXECUTABLE = /(?:^|\/)(?:ba|z|da|k)?sh$/;
+const ACP_MCP_SHELL_COMMAND_FLAG = /^-[a-z]*c[a-z]*$/;
+const ACP_MCP_SHELL_COMMAND_SEPARATOR = /[;&|()\r\n]/;
+const ACP_MCP_SHELL_WORD_SEPARATOR = /[\s<>]/;
+const ACP_MCP_ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const ACP_MCP_LAUNCHER_EXECUTABLE =
+  /(?:^|[\\/])(?:node|nodejs|electron|bun|deno|t3(?:-?code)?|t3 code[^\\/]*)(?:\.exe)?$/i;
+const ACP_MCP_LAUNCHER_ENV_REF = /(?:\$|\$\{)T3_ACP_MCP_NODE\b/;
+
+interface ShellWord {
+  readonly text: string;
+  readonly start: number;
+}
+
+function shellCommands(command: string): ReadonlyArray<ReadonlyArray<ShellWord>> {
+  const commands: Array<Array<ShellWord>> = [];
+  let words: Array<ShellWord> = [];
+  const pendingHeredocs: Array<{ readonly delimiter: string; readonly stripTabs: boolean }> = [];
+  let index = 0;
+
+  const pushCommand = () => {
+    if (words.length === 0) return;
+    commands.push(words);
+    words = [];
+  };
+
+  const readWord = (): ShellWord | undefined => {
+    while (index < command.length && (command[index] === " " || command[index] === "\t")) {
+      index += 1;
+    }
+    let word = "";
+    let hasWord = false;
+    let start = -1;
+    while (index < command.length) {
+      const ch = command[index]!;
+      if (ch === "'") {
+        if (!hasWord) {
+          hasWord = true;
+          start = index;
+        }
+        index += 1;
+        while (index < command.length && command[index] !== "'") {
+          word += command[index]!;
+          index += 1;
+        }
+        if (index < command.length) index += 1;
+        continue;
+      }
+      if (ch === '"') {
+        if (!hasWord) {
+          hasWord = true;
+          start = index;
+        }
+        index += 1;
+        while (index < command.length && command[index] !== '"') {
+          if (command[index] === "\\") {
+            const next = command[index + 1];
+            if (next === "\n") {
+              index += 2;
+              continue;
+            }
+            if (next === "\r" && command[index + 2] === "\n") {
+              index += 3;
+              continue;
+            }
+            if (next === '"' || next === "\\" || next === "$" || next === "`") {
+              word += next;
+              index += 2;
+              continue;
+            }
+          }
+          word += command[index]!;
+          index += 1;
+        }
+        if (index < command.length) index += 1;
+        continue;
+      }
+      if (ch === "\\") {
+        const next = command[index + 1];
+        if (next === "\n") {
+          index += 2;
+          continue;
+        }
+        if (next === "\r" && command[index + 2] === "\n") {
+          index += 3;
+          continue;
+        }
+        if (!hasWord) {
+          hasWord = true;
+          start = index;
+        }
+        if (next !== undefined) {
+          word += next;
+          index += 2;
+        } else {
+          word += "\\";
+          index += 1;
+        }
+        continue;
+      }
+      if (ch === "#" && !hasWord) break;
+      if (ACP_MCP_SHELL_COMMAND_SEPARATOR.test(ch) || ACP_MCP_SHELL_WORD_SEPARATOR.test(ch)) {
+        break;
+      }
+      if (!hasWord) {
+        hasWord = true;
+        start = index;
+      }
+      word += ch;
+      index += 1;
+    }
+    return hasWord ? { text: word, start } : undefined;
+  };
+
+  const skipPendingHeredocs = () => {
+    while (pendingHeredocs.length > 0 && index < command.length) {
+      const heredoc = pendingHeredocs.shift()!;
+      while (index < command.length) {
+        const lineEnd = command.indexOf("\n", index);
+        const rawLine = lineEnd === -1 ? command.slice(index) : command.slice(index, lineEnd);
+        index = lineEnd === -1 ? command.length : lineEnd + 1;
+        const normalized = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+        const candidate = heredoc.stripTabs ? normalized.replace(/^\t+/, "") : normalized;
+        if (candidate === heredoc.delimiter) break;
+      }
+    }
+    pendingHeredocs.length = 0;
+  };
+
+  while (index < command.length) {
+    while (index < command.length && (command[index] === " " || command[index] === "\t")) {
+      index += 1;
+    }
+    if (index >= command.length) break;
+    const char = command[index]!;
+    if (char === "#") {
+      const lineEnd = command.indexOf("\n", index);
+      index = lineEnd === -1 ? command.length : lineEnd;
+      continue;
+    }
+    if (
+      char === "\\" &&
+      (command[index + 1] === "\n" || (command[index + 1] === "\r" && command[index + 2] === "\n"))
+    ) {
+      index += command[index + 1] === "\r" ? 3 : 2;
+      continue;
+    }
+    if (char === "&" && command[index + 1] === ">") {
+      index += command[index + 2] === ">" ? 3 : 2;
+      readWord();
+      continue;
+    }
+    if (ACP_MCP_SHELL_COMMAND_SEPARATOR.test(char)) {
+      pushCommand();
+      index += char === "\r" && command[index + 1] === "\n" ? 2 : 1;
+      if ((char === "\n" || char === "\r") && pendingHeredocs.length > 0) {
+        skipPendingHeredocs();
+      }
+      continue;
+    }
+    if (char === "<" && command[index + 1] === "<") {
+      if (command[index + 2] === "<") {
+        index += 3;
+        readWord();
+        continue;
+      }
+      index += 2;
+      const stripTabs = command[index] === "-";
+      if (stripTabs) index += 1;
+      const delimiter = readWord();
+      if (delimiter !== undefined) {
+        pendingHeredocs.push({ delimiter: delimiter.text, stripTabs });
+      }
+      continue;
+    }
+    if (char === "<" || char === ">") {
+      const next = command[index + 1];
+      index += next === ">" || next === "<" || next === "&" || next === "|" ? 2 : 1;
+      readWord();
+      continue;
+    }
+    const word = readWord();
+    if (word === undefined) {
+      index += 1;
+      continue;
+    }
+    // Numeric fd prefix directly attached to a redirection (e.g. `2>err.log`).
+    if (/^\d+$/.test(word.text) && (command[index] === ">" || command[index] === "<")) {
+      continue;
+    }
+    words.push(word);
+  }
+  pushCommand();
+  return commands;
+}
+
+function commandExecutableIndex(words: ReadonlyArray<ShellWord>, limit = words.length): number {
+  let commandStart = 0;
+  while (commandStart < limit && ACP_MCP_ENV_ASSIGNMENT.test(words[commandStart]!.text)) {
+    commandStart += 1;
+  }
+  if (commandStart < limit && /(?:^|\/)env$/.test(words[commandStart]!.text)) {
+    commandStart += 1;
+    while (commandStart < limit) {
+      const current = words[commandStart]!.text;
+      if (ACP_MCP_ENV_ASSIGNMENT.test(current) || current === "-i" || current === "--") {
+        commandStart += 1;
+        continue;
+      }
+      if (current === "-u" && commandStart + 1 < limit) {
+        commandStart += 2;
+        continue;
+      }
+      break;
+    }
+  }
+  return commandStart;
+}
+
+function isAcpMcpCallInvocation(
+  words: ReadonlyArray<ShellWord>,
+  commandStart: number,
+  callIndex: number,
+): boolean {
+  if (callIndex < commandStart) return false;
+  const prefix = words.slice(commandStart, callIndex);
+  if (prefix.length === 0) return true;
+  if (prefix.length > 2) return false;
+  if (prefix.some((word) => word.text.length === 0 || word.text.startsWith("-"))) return false;
+  const launcher = prefix[0]!.text;
+  return ACP_MCP_LAUNCHER_EXECUTABLE.test(launcher) || ACP_MCP_LAUNCHER_ENV_REF.test(launcher);
+}
+
+function acpMcpFallbackCall(
+  command: string | ReadonlyArray<string>,
+  nested = false,
+): AcpMcpToolCallIdentity | undefined {
+  const commandList: ReadonlyArray<ReadonlyArray<ShellWord>> =
+    typeof command === "string"
+      ? shellCommands(command)
+      : [command.map((text) => ({ text, start: -1 }))];
+  const rawSource = typeof command === "string" ? command : undefined;
+  for (const words of commandList) {
+    const commandStart = commandExecutableIndex(words);
+    for (let index = commandStart; index < words.length; index++) {
+      const word = words[index]!;
+      const tool = words[index + 1]?.text;
+      if (
+        word.text === "acp-mcp-call" &&
+        tool !== undefined &&
+        isAcpMcpCallInvocation(words, commandStart, index) &&
+        (T3_MCP_TOOL_NAMES.has(tool) || tool === T3_MCP_TOOL_CALL_PROXY || tool === "tool_search")
+      ) {
+        const arg = words[index + 2];
+        const input =
+          arg === undefined
+            ? undefined
+            : (acpMcpFallbackInput(arg.text) ??
+              (rawSource !== undefined && arg.start >= 0
+                ? acpMcpFallbackInput(rawSource.slice(arg.start))
+                : undefined));
+        return unwrapT3ToolCallProxy(
+          { server: "t3-code", tool, ...(input === undefined ? {} : { input }) },
+          input,
+        );
+      }
+    }
+    if (!nested && ACP_MCP_SHELL_EXECUTABLE.test(words[commandStart]?.text ?? "")) {
+      for (let index = commandStart + 1; index < words.length; index++) {
+        const flag = words[index]!.text;
+        if (!flag.startsWith("-") || flag === "--") break;
+        if (ACP_MCP_SHELL_COMMAND_FLAG.test(flag)) {
+          const script = words[index + 1]?.text;
+          if (script !== undefined) {
+            const found = acpMcpFallbackCall(script, true);
+            if (found !== undefined) return found;
+          }
+          break;
+        }
+      }
+    }
+  }
+  return undefined;
+}
 
 function acpMcpFallbackInput(value: string | undefined): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
@@ -1183,7 +1466,7 @@ function unwrapT3ToolCallProxy(
 export function extractMcpToolCallIdentity(
   toolCall: AcpToolCallState,
   options?: {
-    readonly embeddedTerminalCommands?: ReadonlyArray<string>;
+    readonly embeddedTerminalCommands?: ReadonlyArray<string | ReadonlyArray<string>>;
   },
 ): AcpMcpToolCallIdentity | undefined {
   const rawInput = isRecord(toolCall.data.rawInput) ? toolCall.data.rawInput : undefined;
@@ -1306,14 +1589,8 @@ export function extractMcpToolCallIdentity(
     ...(options?.embeddedTerminalCommands ?? []),
   ];
   for (const command of commands) {
-    const match = ACP_MCP_FALLBACK_CALL.exec(command);
-    if (match?.[1] !== undefined) {
-      const input = acpMcpFallbackInput(match[2]);
-      return unwrapT3ToolCallProxy(
-        { server: "t3-code", tool: match[1], ...(input === undefined ? {} : { input }) },
-        input,
-      );
-    }
+    const found = acpMcpFallbackCall(command);
+    if (found !== undefined) return found;
   }
   return undefined;
 }
