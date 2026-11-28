@@ -433,8 +433,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // within the ceiling it was approved with.
         const projectDefaults = caller === undefined ? projectSettings : undefined;
         const modelSelection =
-          validatedModelSelection ??
           launchedModel ??
+          validatedModelSelection ??
           caller?.modelSelection ??
           (projectDefaults
             ? resolveNewThreadModelSelection({

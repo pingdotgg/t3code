@@ -750,6 +750,38 @@ it.effect("a retried launch replays after the project loses its default model", 
   }),
 );
 
+it.effect("a retried launch keeps the launched thread's modelSelection", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, modelSelection, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const launchWith = (selection: typeof modelSelection) =>
+      toolkit
+        .handle("t3_thread_launch", {
+          title: "Fix",
+          projectId,
+          clientRequestId: "fix-replay-model",
+          modelSelection: selection,
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    yield* launchWith(modelSelection);
+    yield* launchWith({
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "unadvertised-retry-model",
+    });
+
+    expect(launched.map((input) => input.modelSelection)).toEqual([modelSelection, modelSelection]);
+  }),
+);
+
 it.effect("a launch binds only an existing checkout that is one of the project's worktrees", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
