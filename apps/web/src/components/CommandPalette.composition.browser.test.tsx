@@ -380,10 +380,10 @@ it.each(["/", "/?panel=files"])(
   },
 );
 
-const draftEnvironmentId = EnvironmentId.make("local");
+const environmentId = EnvironmentId.make("local");
 const project = (name: string): EnvironmentProject => ({
   id: ProjectId.make(name),
-  environmentId: draftEnvironmentId,
+  environmentId,
   title: name,
   workspaceRoot: `/workspace/${name}`,
   repositoryIdentity: null,
@@ -399,7 +399,6 @@ it.each([
   { selection: ["other", "original"], expected: "original" },
 ])("keeps the draft's project selection after switching threads (%j)", async (row) => {
   setup();
-  const environmentId = draftEnvironmentId;
   const draftId = DraftId.make("draft-adding-project");
   const store = useComposerDraftStore.getState();
   store.setProjectDraftThreadId(
@@ -440,7 +439,7 @@ it.each([
   const draftId = DraftId.make("draft-adding-two-projects");
   const store = useComposerDraftStore.getState();
   store.setProjectDraftThreadId(
-    scopeProjectRef(draftEnvironmentId, ProjectId.make("original")),
+    scopeProjectRef(environmentId, ProjectId.make("original")),
     draftId,
   );
   store.setPrompt(draftId, "Keep this draft");
