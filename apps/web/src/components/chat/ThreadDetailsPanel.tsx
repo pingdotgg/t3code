@@ -135,13 +135,13 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     serverConfig !== undefined &&
     project !== null &&
     !isScratchProject(project, serverConfig.scratchWorkspaceRoot);
-  const gitRepositories = useThreadGitRepositories({
+  const { repositories: gitRepositories } = useThreadGitRepositories({
     threadRef: activeThreadRef,
     isServerThread: props.isServerThread,
     projectId: props.projectId,
     worktreePath: props.worktreePath,
     threadCwd: props.gitCwd,
-    enabled: offersGit && tracksFolders,
+    enabled: offersGit && (tracksFolders || props.worktreePath !== null),
   });
   // The repository the branch, Git actions, and Changes rows act in; null is the thread's folder.
   const chosenGitRepositoryPath = useThreadGitRepositoryPath(activeThreadRef);

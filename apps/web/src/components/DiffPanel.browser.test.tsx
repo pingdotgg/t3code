@@ -44,6 +44,10 @@ const state = vi.hoisted(() => ({
     trackedFolders?: ReadonlyArray<unknown>;
   },
   gitRepositories: [] as ReadonlyArray<{ repositoryPath: string; name: string; cwd: string }>,
+  taskFolder: null as { projectIsWorktree: boolean } | null,
+  gitRepositoriesLoading: false,
+  diffPreviewCwds: [] as string[],
+  branchCommitsCwds: [] as string[],
   toolCallItem: null as unknown,
   config: null as unknown as Atom.Atom<null>,
   status: null as unknown as ResultAtom<VcsStatusResult>,
@@ -59,9 +63,14 @@ vi.mock("~/state/server", () => ({
 }));
 vi.mock("~/state/review", () => ({
   reviewEnvironment: {
-    diffPreview: ({ input }: { input: { baseRef?: string } }) =>
-      state.previews.get(input.baseRef ?? null)!,
-    branchCommits: () => state.commits,
+    diffPreview: ({ input }: { input: { cwd: string; baseRef?: string } }) => {
+      state.diffPreviewCwds.push(input.cwd);
+      return state.previews.get(input.baseRef ?? null)!;
+    },
+    branchCommits: ({ input }: { input: { cwd: string } }) => {
+      state.branchCommitsCwds.push(input.cwd);
+      return state.commits;
+    },
     diffFilePatch: () => state.patch,
     diffFileContents: {},
   },
@@ -85,7 +94,11 @@ vi.mock("~/state/filesystem", () => ({
   filesystemEnvironment: {},
 }));
 vi.mock("~/hooks/useThreadGitRepositories", () => ({
-  useThreadGitRepositories: () => state.gitRepositories,
+  useThreadGitRepositories: () => ({
+    repositories: state.gitRepositories,
+    taskFolder: state.taskFolder,
+    settled: !state.gitRepositoriesLoading,
+  }),
 }));
 vi.mock("~/hooks/useThreadRouteTarget", () => ({ useThreadRouteRef: () => state.threadRef }));
 vi.mock("~/hooks/useSettings", () => ({
@@ -160,17 +173,19 @@ function setup(failedBaseRef: string | null) {
     useDiffPanelStore.setState({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
-    });
-    useDiffPanelSessionStore.setState({
-      collapsedFileKeysByScopeKey: {},
       gitRepositoryPathByThreadKey: {},
     });
+    useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
     useRightPanelStore.setState({ byThreadKey: {}, threadPanelVisibilityByThreadKey: {} });
   };
   reset();
   state.diffFilesCollapsed = false;
   state.project = { workspaceRoot: "/project", repositoryIdentity: null };
   state.gitRepositories = [];
+  state.taskFolder = null;
+  state.gitRepositoriesLoading = false;
+  state.diffPreviewCwds = [];
+  state.branchCommitsCwds = [];
   state.toolCallItem = null;
   state.checkpoints = [];
   state.checkpointDiff = null;
@@ -570,6 +585,112 @@ it.each([
     const headerRow = picker.element().parentElement!;
     expect(headerRow.scrollWidth).toBeLessThanOrEqual(headerRow.clientWidth);
   });
+});
+
+it("starts on the task folder's first repository when its project folder is no repository", async () => {
+  using context = setup("origin/orphan");
+  // The plain project folder sits inside an enclosing checkout, so Git calls it a repository.
+  state.taskFolder = { projectIsWorktree: false };
+  state.project = { ...state.project, trackedFolders: [{ path: "web" }] };
+  state.gitRepositories = ["web", "server"].map((path) => ({
+    repositoryPath: `/project/${path}`,
+    name: path,
+    cwd: `/task/${path}`,
+  }));
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, width: 600, display: "flex", flexDirection: "column" }}>
+        <DiffPanel
+          mode="embedded"
+          composerDraftTarget={context.threadRef}
+          workspaceMutationId={null}
+          visible
+        />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  // The same default the thread details panel resolves.
+  const picker = screen.getByRole("button", { name: "Repository: web" });
+  await expect.element(picker).toBeVisible();
+  await userEvent.click(picker);
+  await expect.element(page.getByRole("menuitemradio", { name: "plain" })).not.toBeInTheDocument();
+});
+
+it.each([
+  { panel: "hidden", visible: false },
+  { panel: "shown", visible: true },
+])(
+  "waits for a chosen repository before reading anything of it while the panel is $panel",
+  async ({ visible }) => {
+    using context = setup("origin/orphan");
+    state.project = { ...state.project, trackedFolders: [{ path: "web" }] };
+    // After a reload the chosen repository is known, but the repositories are still being read.
+    chooseThreadGitRepository(context.threadRef, "/project/web");
+    useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
+    state.gitRepositoriesLoading = true;
+    const panel = () => (
+      <RegistryContext.Provider value={context.registry}>
+        <div style={{ height: 600, width: 600, display: "flex", flexDirection: "column" }}>
+          <DiffPanel
+            mode="embedded"
+            composerDraftTarget={context.threadRef}
+            workspaceMutationId={null}
+            visible={visible}
+          />
+        </div>
+      </RegistryContext.Provider>
+    );
+    await using screen = await render(panel());
+    // Nothing of the web repository is read in the thread's own folder: no diff, no commits.
+    expect(state.diffPreviewCwds).not.toContain(cwd);
+    expect(state.branchCommitsCwds).not.toContain(cwd);
+
+    state.gitRepositoriesLoading = false;
+    state.gitRepositories = [{ repositoryPath: "/project/web", name: "web", cwd: "/project/web" }];
+    await screen.rerender(panel());
+    await vi.waitFor(() => expect(state.diffPreviewCwds).toContain("/project/web"));
+    expect(state.diffPreviewCwds).not.toContain(cwd);
+    // A shown panel lists the chosen repository's commits, and never the thread folder's.
+    if (visible) {
+      await vi.waitFor(() => expect(state.branchCommitsCwds).toContain("/project/web"));
+    }
+    expect(state.branchCommitsCwds).not.toContain(cwd);
+  },
+);
+
+it("goes back to the thread's folder once the folders are read without the chosen repository", async () => {
+  using context = setup("origin/orphan");
+  state.project = { ...state.project, trackedFolders: [{ path: "web" }] };
+  chooseThreadGitRepository(context.threadRef, "/project/web");
+  useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "origin/orphan");
+  // The folders were read (or failed to be) and the web repository is not among them.
+  state.gitRepositories = [{ repositoryPath: "/project/api", name: "api", cwd: "/project/api" }];
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, width: 600, display: "flex", flexDirection: "column" }}>
+        <DiffPanel
+          mode="embedded"
+          composerDraftTarget={context.threadRef}
+          workspaceMutationId={null}
+          visible
+        />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  // The thread's folder is compared on its own terms: the web repository's base ref, which
+  // fails there, is set aside rather than sent.
+  await vi.waitFor(() => expect(state.diffPreviewCwds).toContain(cwd));
+  await expect.element(screen.getByText("No net changes in this selection.")).toBeVisible();
+  await expect.element(screen.getByText(errorMessage, { exact: true })).not.toBeInTheDocument();
+
+  // Picking the folder it stands in for replaces the lost choice, so the panel stays there when
+  // the web repository is found again.
+  const key = scopedThreadKey(context.threadRef);
+  await userEvent.click(screen.getByRole("button", { name: "Repository: Project folder" }));
+  await userEvent.click(page.getByRole("menuitemradio", { name: "Project folder" }));
+  await vi.waitFor(() =>
+    expect(useDiffPanelStore.getState().gitRepositoryPathByThreadKey[key]).toBeNull(),
+  );
 });
 
 // Paths as git's numstat reports them; the parsed patch keeps their edge whitespace.

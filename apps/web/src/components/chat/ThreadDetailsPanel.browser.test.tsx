@@ -18,6 +18,10 @@ const state = vi.hoisted(() => ({
   configLoaded: true,
   /** Repositories the project covers besides its own folder, all on `main`. */
   repositories: [] as string[],
+  /** Whether the project tracks `repositories`; false once tracking stopped. */
+  tracked: true,
+  /** A worktree thread's task folder: each repository's path, keyed to its worktree. */
+  taskFolder: null as null | { readonly repositories: ReadonlyArray<[string, string]> },
 }));
 
 // The read of t3.json is a cache: a re-read is the only way to see what is on disk now.
@@ -72,7 +76,7 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
           title: state.workspaceRoot === SCRATCH_ROOT ? "No project" : "plain",
           workspaceRoot: state.workspaceRoot,
           scripts: [],
-          trackedFolders: state.repositories.map((path) => ({
+          trackedFolders: (state.tracked ? state.repositories : []).map((path) => ({
             path,
             name: path.split("/").at(-1)!,
             discovered: true,
@@ -142,6 +146,29 @@ vi.mock(import("~/state/filesystem"), async (importOriginal) => {
     ...actual,
     filesystemEnvironment: {
       ...actual.filesystemEnvironment,
+      taskFolder: (() =>
+        Atom.make(
+          AsyncResult.success({
+            taskFolder:
+              state.taskFolder === null
+                ? null
+                : {
+                    root: "/task",
+                    projectId: "project",
+                    projectRoot: state.workspaceRoot,
+                    anchor: state.workspaceRoot,
+                    projectPath: state.folder,
+                    projectIsWorktree: false,
+                    repositories: state.taskFolder.repositories.map(
+                      ([repositoryPath, worktreePath]) => ({
+                        repositoryPath,
+                        worktreePath,
+                        name: repositoryPath.split("/").at(-1)!,
+                      }),
+                    ),
+                  },
+          }),
+        )) as never,
       listFolders: (() =>
         Atom.make(
           AsyncResult.success({
@@ -158,7 +185,7 @@ vi.mock(import("~/state/filesystem"), async (importOriginal) => {
 });
 
 import { render } from "../../../test/render";
-import { useDiffPanelSessionStore } from "../../diffPanelStore";
+import { useDiffPanelStore } from "../../diffPanelStore";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { PopoverCreateHandle } from "../ui/popover";
 import { ChatCanvasContext } from "./ChatCanvasContext";
@@ -191,7 +218,9 @@ function setup(input: {
 }) {
   state.configLoaded = input.configLoaded ?? true;
   state.repositories = input.repositories ?? [];
-  useDiffPanelSessionStore.setState({ gitRepositoryPathByThreadKey: {} });
+  state.tracked = true;
+  state.taskFolder = null;
+  useDiffPanelStore.setState({ gitRepositoryPathByThreadKey: {} });
   state.workspaceRoot = input.workspaceRoot;
   state.folder = input.folder;
   state.pullRequests = input.pullRequests ?? [];
@@ -378,6 +407,23 @@ it("acts in a project's nested repository when its folder is none, and names the
   await expect.element(page.getByRole("menuitemradio", { name: "plain" })).not.toBeInTheDocument();
   await page.getByRole("menuitemradio", { name: "web" }).click();
   await expect.element(page.getByRole("button", { name: "Repository: web" })).toBeVisible();
+});
+
+it("keeps a worktree thread's repositories after the project stops tracking folders", async () => {
+  using fixture = setup({ workspaceRoot: "/work", folder: "/task/work" });
+  state.tracked = false;
+  state.taskFolder = {
+    repositories: [
+      ["/work/web", "/task/web"],
+      ["/work/server", "/task/server"],
+    ],
+  };
+  await using _screen = await render(<Panel fixture={fixture} />);
+  // The task folder still holds both worktrees; its plain project folder is no repository.
+  const picker = page.getByRole("button", { name: "Repository: web" });
+  await expect.element(picker).toBeVisible();
+  await picker.click();
+  await expect.element(page.getByRole("menuitemradio", { name: "server" })).toBeVisible();
 });
 
 it("hides the repository picker when the project covers no other repository", async () => {
