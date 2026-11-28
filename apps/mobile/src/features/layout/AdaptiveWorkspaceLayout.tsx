@@ -41,6 +41,7 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import Animated, {
   runOnJS,
   useAnimatedStyle,
@@ -866,6 +867,23 @@ function AdaptiveWorkspaceLayoutContent(
   // Showing or hiding the sidebar clips a fixed-width list. A hinge resize instead tracks the
   // animated edge, so the header actions slide with it rather than jumping or being covered.
   const listPaneGap = layout.listPaneGap ?? 0;
+  // The composer sticks to the IME on its own. This column does not, so the list kept
+  // running under the keyboard and the tab pill stayed at the screen bottom.
+  const { height: keyboardTranslation } = useReanimatedKeyboardAnimation();
+  const insetAndroidKeyboard = Platform.OS === "android";
+  const keyboardSafeBottom = safeAreaInsets.bottom;
+  const androidKeyboardOverlap = useDerivedValue(() => {
+    if (!insetAndroidKeyboard) return 0;
+    const keyboardHeight = Math.max(0, -keyboardTranslation.value);
+    return Math.max(0, keyboardHeight - Math.max(0, keyboardSafeBottom));
+  });
+  const androidListKeyboardStyle = useAnimatedStyle(() => ({
+    // Margin, not padding: the floating tabs are absolute and padding would leave them behind.
+    marginBottom: androidKeyboardOverlap.value,
+  }));
+  const androidRailKeyboardStyle = useAnimatedStyle(() => ({
+    bottom: androidKeyboardOverlap.value,
+  }));
   const listPaneAnimatedStyle = useAnimatedStyle(() => ({
     width: Math.min(
       listPaneCeiling,
@@ -1043,7 +1061,10 @@ function AdaptiveWorkspaceLayoutContent(
             sidebarAnimatedStyle,
           ]}
         >
-          <Animated.View className="flex-1" style={listPaneAnimatedStyle}>
+          <Animated.View
+            className="flex-1"
+            style={[listPaneAnimatedStyle, androidListKeyboardStyle]}
+          >
             <PaneContext value="sidebar">
               <RenderErrorBoundary
                 renderFallback={(fallback) => (
@@ -1064,6 +1085,7 @@ function AdaptiveWorkspaceLayoutContent(
                 paneWidth={layout.listPaneWidth}
                 onNewThread={handleStartNewTask}
                 onSelect={revealPrimarySidebar}
+                visibleWithKeyboard
               />
             ) : null}
           </Animated.View>
@@ -1167,13 +1189,15 @@ function AdaptiveWorkspaceLayoutContent(
       {inspectorSheet}
       {shouldRenderNavigationRail && navigationRailWidth > 0 ? (
         // Its trailing inset clips the old rail as soon as Android fits the workspace to a cover display.
-        <View
-          className="absolute inset-y-0 left-0 overflow-hidden"
+        <Animated.View
+          className="absolute left-0 overflow-hidden"
           style={[
+            { top: 0 },
             railOverlay
               ? { right: 0 }
               : { right: viewportWidth - navigationRailWidth, maxWidth: navigationRailWidth },
             sidebarFloats ? { zIndex: 3, elevation: 8 } : null,
+            androidRailKeyboardStyle,
           ]}
         >
           <AndroidWorkspaceNavigation
@@ -1182,7 +1206,7 @@ function AdaptiveWorkspaceLayoutContent(
             onSelect={revealPrimarySidebar}
             onOverlayChange={setRailOverlay}
           />
-        </View>
+        </Animated.View>
       ) : null}
     </View>
   );
