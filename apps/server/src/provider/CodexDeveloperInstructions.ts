@@ -14,7 +14,6 @@ export const CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES = 4_000;
 export interface T3CodeToolAvailability {
   readonly browser: boolean;
   readonly device: boolean;
-  readonly linkedEnvironments?: boolean;
   readonly nativeSubagents?: boolean;
 }
 
@@ -49,10 +48,7 @@ export function buildCodexAdditionalContext(
   // Split values to fit per-entry caps; number keys because Codex emits them in key order.
   return {
     ...Object.fromEntries(
-      t3CodeOrchestrationSections({
-        linkedEnvironments: availability.linkedEnvironments === true,
-        nativeSubagents: availability.nativeSubagents !== false,
-      }).map((section, index) => [
+      t3CodeOrchestrationSections(availability.nativeSubagents).map((section, index) => [
         `t3_code_orchestration_${String(index + 1).padStart(2, "0")}`,
         { kind: "application" as const, value: section },
       ]),

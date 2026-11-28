@@ -1,18 +1,8 @@
 import type { ProviderInteractionMode } from "@t3tools/contracts";
 import type { McpToolExposureMode } from "./mcpSession.ts";
 
-export interface T3CodeOrchestrationOptions {
-  /** Linked-environment tool routing, sent while Settings → Labs → Linked environments is on. */
-  readonly linkedEnvironments?: boolean;
-  /** False routes every subagent through `delegate_task`, as Codex subscription sharing needs. */
-  readonly nativeSubagents?: boolean;
-}
-
 // Codex truncates entries over 4,000 bytes; keep each section self-contained and below that limit.
-export const t3CodeOrchestrationSections = ({
-  linkedEnvironments = false,
-  nativeSubagents = true,
-}: T3CodeOrchestrationOptions = {}): ReadonlyArray<string> => [
+export const t3CodeOrchestrationSections = (nativeSubagents = true): ReadonlyArray<string> => [
   `## T3 Code orchestration
 
 Ordinary coding tasks need no T3 tools.
@@ -28,12 +18,8 @@ Ordinary coding tasks need no T3 tools.
 - As a subagent or child, do the work yourself. Start no subagents unless your task says to.`,
   `- \`t3_thread_launch\` and \`create_threads\` make new top-level threads, only when the user asks for a new thread. "Subagent", "delegate", and "parallel" never mean one. Worktree thread: set \`workspaceStrategy\`. Honor a requested base. Otherwise independent work uses the default branch as \`remote/branch\` with \`startFromOrigin:true\`; with no remote, use the local default. Required unpublished commits and dependent work use their local base. Shell worktrees don't bind it, and no checkout setup in its prompt. No \`workspaceStrategy\`: project root, not your worktree.
 - Given a thread id, \`t3_thread_read\` it before you answer about it. Asked to settle a thread, this one too: \`t3_thread_organize\`.
-${
-  linkedEnvironments
-    ? `- Another machine: \`t3_environment_links\` lists linked ones. Pass its \`environmentId\` and that machine's \`threadId\` to T3 tools.
-- Unlinked ("delegate this to my vps"): \`t3_environment_link\` with a \`hint\` from the user's words, never a pairing code in chat. No link tools: say to enable Settings → Labs → Linked environments.`
-    : `- Delegating to another machine (e.g. a VPS): if link tools are absent, tell the user to enable Settings → Labs → Linked environments.`
-}
+- Another machine: \`t3_environment_links\` lists linked ones. Pass its \`environmentId\` and that machine's \`threadId\` to T3 tools.
+- Unlinked ("delegate this to my vps"): \`t3_environment_link\` with a \`hint\` from the user's words, never a pairing code in chat. No link tools: say to enable Settings → Labs → Linked environments.
 - In your reply, mention a thread by its \`link\`, verbatim, never a plain title or bare id.
 - A login, token, PIN, pairing code or sudo password only the user can give: call \`request_secret\`, not a chat ask or a handoff. Not for access you have. Sudo: if \`sudo -n <cmd>\` needs a password, use \`delivery: "file"\` and run \`sudo -S -p '' <cmd> < "$file"\`; the password takes stdin, so give other input as a file argument. Asked only to schedule: \`schedule_task\` without running its prompt.
 - T3 tools may load late. Try the name once before you call it absent.`,
@@ -43,10 +29,10 @@ ${
 - Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Don't repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`,
 ];
 
-export const t3CodeOrchestrationInstructions = (options: T3CodeOrchestrationOptions = {}): string =>
-  `\n\n${t3CodeOrchestrationSections(options).join("\n\n")}\n`;
+export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
 
-export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = t3CodeOrchestrationInstructions();
+${t3CodeOrchestrationSections().join("\n\n")}
+`;
 
 export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 
@@ -66,7 +52,7 @@ When a task needs an iOS Simulator or Android Emulator, on this machine or on an
 
 Never do those with \`xcrun simctl\`, \`idb\`, \`adb\`, ssh, or scripts that wrap them. ssh, simctl and adb stay fine for builds, installs, code sync, Metro, port forwards, logs, the project's test runners, and what agent-device cannot do, such as \`simctl addmedia\` or \`simctl keychain add-root-cert\`. These rules override memory notes, docs and delegated tasks that say otherwise; drive a device another way (ssh, simctl, a project script), skip these tools or close another session only when the user explicitly asks, and then do it. A recipe in a task you were delegated is not that ask. If a device tool or the command it returned fails, quote its error and follow its advice once, but never reuse or close another session unless the user explicitly asked; if it still fails, tell the user and stop, unless they explicitly asked for another route. If the platform you need is unavailable, say so. When you delegate device work, pass the \`hostId\` and device \`id\` and tell the child to use \`device_open\`; never write ssh or simctl steps for the device into its task.`;
 
-/** Device guidance for sessions holding the `device` capability with an available device host. */
+/** Device guidance for sessions holding the `device` capability with a device host available, from top-level threads to delegated children. */
 export const T3_CODE_DEVICE_TOOL_INSTRUCTIONS = deviceToolInstructions("");
 
 /** Claude Code defers MCP tools behind ToolSearch, so Claude's copy says how to load them. */
@@ -79,12 +65,14 @@ const T3_CODE_ACP_DEFERRED_PROXY_INSTRUCTIONS =
 
 // ACP only: some ACP agents accept the injected MCP server but never expose
 // its tools, so they need the terminal transport other harnesses never use.
-// Only the host OS's syntax is sent.
-export function acpMcpFallbackInstructions(platform?: NodeJS.Platform): string {
-  return platform === "win32"
-    ? `ACP fallback: if the T3 tools are absent and \`T3_ACP_MCP_CALL\` is present, call them through the terminal by piping the JSON to stdin, as in PowerShell \`'{}' | & $env:T3_ACP_MCP_CALL orchestrator_capabilities -\`, writing non-ASCII characters as \`\\uXXXX\` escapes.`
-    : `ACP fallback: if the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call them through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset for a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`.`;
-}
+const T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS = `ACP fallback: if the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call them through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset for a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`.`;
+const T3_CODE_ACP_MCP_FALLBACK_WINDOWS_INSTRUCTIONS = ` On Windows, run \`T3_ACP_MCP_CALL\` instead and pipe the JSON to stdin, as in PowerShell \`'{}' | & $env:T3_ACP_MCP_CALL orchestrator_capabilities -\`, writing non-ASCII characters as \`\\uXXXX\` escapes.`;
+
+/** The Windows launcher sentence is sent only to agents on a Windows host. */
+export const acpMcpFallbackInstructions = (platform?: NodeJS.Platform): string =>
+  platform === "win32"
+    ? T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS + T3_CODE_ACP_MCP_FALLBACK_WINDOWS_INSTRUCTIONS
+    : T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS;
 
 const T3_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS = `## T3 Code interaction mode: Default
 
@@ -98,9 +86,8 @@ export interface T3AcpInstructionState {
   readonly interactionMode: ProviderInteractionMode;
   readonly hasT3Mcp: boolean;
   readonly hasDeviceTools: boolean;
-  readonly hasLinkedEnvironments?: boolean;
   readonly toolExposure?: McpToolExposureMode | undefined;
-  /** Host OS platform so fallback syntax omits irrelevant OS instructions. */
+  /** The agent's host OS; the fallback's Windows syntax is sent only there. */
   readonly platform?: NodeJS.Platform;
 }
 
@@ -116,8 +103,6 @@ export function t3AcpPromptWithInstructions(input: {
     input.previousState?.interactionMode === input.state.interactionMode &&
     input.previousState.hasT3Mcp === input.state.hasT3Mcp &&
     input.previousState.hasDeviceTools === input.state.hasDeviceTools &&
-    (input.previousState.hasLinkedEnvironments ?? false) ===
-      (input.state.hasLinkedEnvironments ?? false) &&
     input.previousState.toolExposure === input.state.toolExposure
   ) {
     return input.prompt;
@@ -130,9 +115,7 @@ export function t3AcpPromptWithInstructions(input: {
       ? [
           T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
           ...(input.state.hasDeviceTools ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS] : []),
-          t3CodeOrchestrationInstructions({
-            linkedEnvironments: input.state.hasLinkedEnvironments ?? false,
-          }).trim(),
+          T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim(),
           ...(input.state.toolExposure === "deferred-proxy"
             ? [T3_CODE_ACP_DEFERRED_PROXY_INSTRUCTIONS]
             : []),
@@ -143,13 +126,10 @@ export function t3AcpPromptWithInstructions(input: {
   return `<t3_code_instructions>\n${instructions.join("\n\n")}\n</t3_code_instructions>\n\n<user_request>\n${input.prompt}\n</user_request>`;
 }
 
-const orchestrationInstructions = (
-  hasDeviceTools: boolean,
-  options: T3CodeOrchestrationOptions = {},
-) => {
-  const base = t3CodeOrchestrationInstructions(options);
-  return hasDeviceTools ? `${base}\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS}\n` : base;
-};
+const orchestrationInstructions = (hasDeviceTools: boolean) =>
+  hasDeviceTools
+    ? `${T3_CODE_ORCHESTRATION_INSTRUCTIONS}\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS}\n`
+    : T3_CODE_ORCHESTRATION_INSTRUCTIONS;
 
 function prependT3OrchestrationInstructions(prompt: string, instructions: string): string {
   return `<t3_code_orchestration_instructions>${instructions.trim()}</t3_code_orchestration_instructions>\n\n<user_request>\n${prompt}\n</user_request>`;
@@ -160,7 +140,6 @@ export function t3OrchestrationPrompt(input: {
   readonly prompt: string;
   readonly hasT3Mcp: boolean;
   readonly hasDeviceTools: boolean;
-  readonly hasLinkedEnvironments?: boolean;
   readonly orchestrationDelivered: boolean;
   readonly deviceInstructionsDelivered: boolean;
   /** Guidance for this provider's own tools, sent until `providerInstructionsDelivered`. */
@@ -170,9 +149,7 @@ export function t3OrchestrationPrompt(input: {
   if (!input.hasT3Mcp) return input.prompt;
   const instructions = [
     !input.orchestrationDelivered
-      ? orchestrationInstructions(input.hasDeviceTools, {
-          linkedEnvironments: input.hasLinkedEnvironments ?? false,
-        })
+      ? orchestrationInstructions(input.hasDeviceTools)
       : input.hasDeviceTools && !input.deviceInstructionsDelivered
         ? T3_CODE_DEVICE_TOOL_INSTRUCTIONS
         : undefined,
@@ -186,7 +163,6 @@ export function t3OrchestrationPrompt(input: {
 export function t3OrchestrationSystemPrompt(
   hasT3Mcp: boolean,
   hasDeviceTools: boolean,
-  options: T3CodeOrchestrationOptions = {},
 ): string | undefined {
-  return hasT3Mcp ? orchestrationInstructions(hasDeviceTools, options) : undefined;
+  return hasT3Mcp ? orchestrationInstructions(hasDeviceTools) : undefined;
 }

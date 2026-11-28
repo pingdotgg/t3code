@@ -228,8 +228,8 @@ import {
 } from "../../provider/claudeUsageLimits.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import {
-  t3CodeOrchestrationInstructions,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
+  T3_CODE_ORCHESTRATION_INSTRUCTIONS,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
@@ -2596,8 +2596,6 @@ export function makeClaudeQueryOptions(input: {
   readonly agentFeedback?: AgentFeedbackMode;
   /** The thread's T3 MCP session holds the `device` capability with an available device host. */
   readonly deviceToolsAvailable?: boolean;
-  /** Settings → Labs → Linked environments is enabled. */
-  readonly linkedEnvironmentsAvailable?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -2762,9 +2760,7 @@ export function makeClaudeQueryOptions(input: {
         }) +
           (input.mcpServers === undefined
             ? ""
-            : t3CodeOrchestrationInstructions({
-                linkedEnvironments: input.linkedEnvironmentsAvailable ?? false,
-              }) +
+            : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
               CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
               CLAUDE_SEND_TO_USER_INSTRUCTIONS +
               (deviceInstructions
@@ -4129,15 +4125,12 @@ export function claudeEffectiveQueryPolicyKey(
   },
   // Folders are fixed when a query starts, so a changed list needs a new one.
   workspace?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["workspace"],
-  // The system prompt append depends on tool-host availability; rotate if it changes.
-  instructionFlags?: {
-    readonly deviceToolsAvailable?: boolean;
-    readonly linkedEnvironmentsAvailable?: boolean;
-  },
+  // The system prompt carries device guidance only with a device host, so a change needs a new query.
+  deviceToolsAvailable?: boolean,
 ): string {
   return JSON.stringify({
     workspace,
-    ...(instructionFlags === undefined ? {} : { instructionFlags }),
+    ...(deviceToolsAvailable === undefined ? {} : { deviceToolsAvailable }),
     runtimePolicy: claudeRuntimeQueryPolicyKey({
       ...queryPolicy,
       ...(mcpOverrides.allowedTools === undefined
@@ -14089,12 +14082,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             queryPolicy,
             mcpOverrides,
             turnInput.runtimePolicy.workspace,
-            {
-              deviceToolsAvailable:
-                mcpSession?.capabilities?.has("device") === true &&
-                mcpSession.deviceHostsAvailable !== false,
-              linkedEnvironmentsAvailable: mcpSession?.linkedEnvironmentsAvailable === true,
-            },
+            mcpSession?.capabilities?.has("device") === true &&
+              mcpSession.deviceHostsAvailable !== false,
           );
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
@@ -14303,7 +14292,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             deviceToolsAvailable:
               mcpSession?.capabilities?.has("device") === true &&
               mcpSession.deviceHostsAvailable !== false,
-            linkedEnvironmentsAvailable: mcpSession?.linkedEnvironmentsAvailable === true,
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined
               ? {}

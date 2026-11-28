@@ -12,7 +12,7 @@ describe("buildCodexAdditionalContext", () => {
   describe.each([
     { model: "custom-model", modelName: "Custom 🦊 Model", reasoningEffort: "xhigh" },
   ])("with runtime $model", (runtime) => {
-    it.each([undefined, { browser: true, device: true, linkedEnvironments: true }])(
+    it.each([undefined, { browser: true, device: true }])(
       "keeps every entry within Codex's per-entry cap with tools %j",
       (availability) => {
         const context = buildCodexAdditionalContext(runtime, availability);
@@ -64,27 +64,6 @@ describe("Codex orchestration context", () => {
     NodeAssert.ok(!orchestration.includes("Prefer native"));
     // The ACP terminal fallback is ACP-only; Codex agents never need it.
     NodeAssert.ok(!orchestration.includes("acp-mcp-call"));
-  });
-
-  it("sends linked-environment routing only while the feature is on", () => {
-    const orchestration = (linkedEnvironments: boolean) =>
-      Object.entries(
-        buildCodexAdditionalContext(
-          { model: "gpt-6.1-sol" },
-          { browser: true, device: false, linkedEnvironments },
-        ),
-      )
-        .filter(([key]) => key.startsWith("t3_code_orchestration_"))
-        .map(([, entry]) => entry.value)
-        .join("\n");
-
-    const off = orchestration(false);
-    NodeAssert.ok(!off.includes("`t3_environment_link`"));
-    NodeAssert.ok(off.includes("Delegating to another machine"));
-
-    const on = orchestration(true);
-    NodeAssert.ok(on.includes("`t3_environment_link`"));
-    NodeAssert.ok(!on.includes("Delegating to another machine"));
   });
 });
 

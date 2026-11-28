@@ -2949,7 +2949,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           mcpServers: Record<string, McpServerConfig> | undefined,
           hasDeviceTools: boolean,
-          hasLinkedEnvironments: boolean,
           delivered: {
             readonly orchestration: boolean;
             readonly device: boolean;
@@ -2974,7 +2973,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             }),
             hasT3Mcp: mcpServers !== undefined,
             hasDeviceTools,
-            hasLinkedEnvironments,
             orchestrationDelivered: delivered.orchestration,
             deviceInstructionsDelivered: delivered.device,
             providerInstructions: CURSOR_BACKGROUND_WAIT_INSTRUCTIONS,
@@ -3130,7 +3128,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                         turnInput,
                         mcpServers,
                         hasDeviceTools,
-                        mcpSession?.linkedEnvironmentsAvailable === true,
                         delivered,
                         dropped?.text,
                       );

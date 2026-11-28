@@ -611,13 +611,11 @@ const claudeQueryOptions = (
   device = true,
   browser = true,
   agentFeedback: Contracts.AgentFeedbackMode = "off",
-  links = false,
 ) => {
   // Refs whose text follows a capability read its flag; older ones ignore it.
   const input: Parameters<typeof makeClaudeQueryOptions>[0] & {
     readonly deviceToolsAvailable?: boolean;
     readonly browserToolsAvailable?: boolean;
-    readonly linkedEnvironmentsAvailable?: boolean;
   } = {
     modelSelection: { instanceId: ProviderInstanceId.make(CLAUDE_PROVIDER), model },
     nativeThreadId: "mcp-tool-use-eval",
@@ -627,7 +625,6 @@ const claudeQueryOptions = (
     agentFeedback,
     deviceToolsAvailable: device,
     browserToolsAvailable: browser,
-    linkedEnvironmentsAvailable: links,
   };
   return makeClaudeQueryOptions(input);
 };
@@ -638,9 +635,8 @@ export const t3SystemAppend = (
   device = true,
   browser = true,
   agentFeedback: Contracts.AgentFeedbackMode = "off",
-  links = false,
 ) => {
-  const { systemPrompt } = claudeQueryOptions(model, device, browser, agentFeedback, links);
+  const { systemPrompt } = claudeQueryOptions(model, device, browser, agentFeedback);
   if (isRecord(systemPrompt) && systemPrompt.type === "preset" && systemPrompt.append) {
     return systemPrompt.append;
   }
@@ -759,13 +755,7 @@ export const buildBase = (
   const append = options.nativeSubagent
     ? ""
     : forArm(
-        t3SystemAppend(
-          model,
-          options.deviceAccess,
-          options.browserAccess,
-          options.agentFeedback,
-          options.links === true,
-        ),
+        t3SystemAppend(model, options.deviceAccess, options.browserAccess, options.agentFeedback),
         options.arm,
       );
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
@@ -879,11 +869,7 @@ const buildCodexBase = (
       reasoningEffort: effort,
       agentFeedback: options.agentFeedback ?? "off",
     },
-    {
-      browser: options.browserAccess ?? true,
-      device: options.deviceAccess ?? true,
-      linkedEnvironments: options.links === true,
-    },
+    { browser: options.browserAccess ?? true, device: options.deviceAccess ?? true },
   );
   input.push(
     ...Object.entries(context).map(([key, entry]) =>

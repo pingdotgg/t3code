@@ -1099,9 +1099,6 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           hasT3Mcp,
           mcpSession?.capabilities?.has("device") === true &&
             mcpSession.deviceHostsAvailable !== false,
-          {
-            linkedEnvironments: mcpSession?.linkedEnvironmentsAvailable === true,
-          },
         );
         if (hasT3Mcp) {
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>

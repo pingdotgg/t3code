@@ -2,7 +2,6 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   acpMcpFallbackInstructions,
-  t3CodeOrchestrationSections,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
@@ -11,24 +10,8 @@ import {
   t3OrchestrationSystemPrompt,
 } from "./orchestrationInstructions.ts";
 
-describe("T3 orchestration gating", () => {
-  it("sends linked-environment routing only while the feature is on", () => {
-    const defaultText = t3CodeOrchestrationSections().join("\n");
-    assert.include(defaultText, "Delegating to another machine");
-    assert.notInclude(defaultText, "`t3_environment_links`");
-    assert.notInclude(defaultText, "`t3_environment_link`");
-
-    const withLinks = t3CodeOrchestrationSections({ linkedEnvironments: true }).join("\n");
-    assert.include(withLinks, "`t3_environment_links`");
-    assert.include(withLinks, "`t3_environment_link`");
-    assert.notInclude(withLinks, "Delegating to another machine");
-
-    const noNativeSubagents = t3CodeOrchestrationSections({ nativeSubagents: false }).join("\n");
-    assert.include(noNativeSubagents, "Use `delegate_task` for subagents");
-    assert.notInclude(noNativeSubagents, "spawn_agent");
-  });
-
-  it("emits only the current OS syntax for ACP fallback when MCP is attached", () => {
+describe("ACP terminal fallback", () => {
+  it("sends the Windows launcher sentence only to a Windows host", () => {
     const noMcp = t3AcpPromptWithInstructions({
       prompt: "Hello.",
       state: {
@@ -65,7 +48,7 @@ describe("T3 orchestration gating", () => {
     });
     assert.include(winFallback, acpMcpFallbackInstructions("win32"));
     assert.include(winFallback, "T3_ACP_MCP_CALL");
-    assert.notInclude(winFallback, "T3_ACP_MCP_NODE");
+    assert.include(winFallback, acpMcpFallbackInstructions("linux"));
   });
 });
 

@@ -927,7 +927,6 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly agentFeedback?: AgentFeedbackMode;
     readonly browserToolsAvailable?: boolean;
     readonly deviceToolsAvailable?: boolean;
-    readonly linkedEnvironmentsAvailable?: boolean;
     readonly subscriptionSharing?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
     /** Set only for a model that offers Cyber Access; custom models never do. */
@@ -990,7 +989,6 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
             {
               browser: input.browserToolsAvailable ?? true,
               device: input.deviceToolsAvailable ?? false,
-              linkedEnvironments: input.linkedEnvironmentsAvailable ?? false,
               nativeSubagents: input.subscriptionSharing !== true,
             },
           )
@@ -8188,7 +8186,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               deviceToolsAvailable:
                 mcpSession?.capabilities?.has("device") === true &&
                 mcpSession.deviceHostsAvailable !== false,
-              linkedEnvironmentsAvailable: mcpSession?.linkedEnvironmentsAvailable === true,
               subscriptionSharing: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
               ...(configuredReasoningSummary === undefined ? {} : { configuredReasoningSummary }),

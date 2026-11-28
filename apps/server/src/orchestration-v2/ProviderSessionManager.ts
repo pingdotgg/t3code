@@ -563,7 +563,6 @@ export const layerWithOptions = (
                   host.kind !== "local" || host.platforms.some((platform) => platform.available),
               ),
             ),
-            Effect.orElseSucceed(() => false),
           );
       const layerScope = yield* Effect.scope;
       // Group signals stop providers before restart capture; drop post-signal events so recovery owns that state.
@@ -642,7 +641,6 @@ export const layerWithOptions = (
                   yield* agentAccessSettings(threadId);
                 const deviceHostsAvailable =
                   deviceToolsAvailable && (yield* hasAvailableDeviceHost);
-                const linkedEnvironmentsAvailable = (yield* readLinkedEnvironments) === true;
                 const capabilities = new Set<
                   import("../mcp/McpInvocationContext.ts").McpCapability
                 >(["orchestration", "worktree", "pull-requests", "issues"]);
@@ -687,15 +685,8 @@ export const layerWithOptions = (
                     // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent
                   ) {
-                    if (
-                      existing.deviceHostsAvailable !== deviceHostsAvailable ||
-                      existing.linkedEnvironmentsAvailable !== linkedEnvironmentsAvailable
-                    ) {
-                      yield* mcpSessions.set({
-                        ...existing,
-                        deviceHostsAvailable,
-                        linkedEnvironmentsAvailable,
-                      });
+                    if (existing.deviceHostsAvailable !== deviceHostsAvailable) {
+                      yield* mcpSessions.set({ ...existing, deviceHostsAvailable });
                     }
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
@@ -712,7 +703,6 @@ export const layerWithOptions = (
                 yield* mcpSessions.set({
                   ...credential.config,
                   deviceHostsAvailable,
-                  linkedEnvironmentsAvailable,
                   hasPendingWake: projectionStore
                     .getThreadRecords(threadId, ["runs", "subagents"])
                     .pipe(
@@ -734,19 +724,11 @@ export const layerWithOptions = (
                 if (existing === undefined) return;
                 const deviceHostsAvailable =
                   existing.capabilities?.has("device") === true && (yield* hasAvailableDeviceHost);
-                const linkedEnvironmentsAvailable = (yield* readLinkedEnvironments) === true;
-                if (
-                  existing.deviceHostsAvailable !== deviceHostsAvailable ||
-                  existing.linkedEnvironmentsAvailable !== linkedEnvironmentsAvailable
-                ) {
+                if (existing.deviceHostsAvailable !== deviceHostsAvailable) {
                   // Re-check after async reads so a concurrent detach cannot be overwritten with a revoked session.
                   const current = yield* mcpSessions.read(threadId);
                   if (current?.providerSessionId !== existing.providerSessionId) return;
-                  yield* mcpSessions.set({
-                    ...current,
-                    deviceHostsAvailable,
-                    linkedEnvironmentsAvailable,
-                  });
+                  yield* mcpSessions.set({ ...current, deviceHostsAvailable });
                 }
               }),
             );

@@ -10093,7 +10093,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             hasDeviceTools:
               mcpSession?.capabilities?.has("device") === true &&
               mcpSession.deviceHostsAvailable !== false,
-            hasLinkedEnvironments: mcpSession?.linkedEnvironmentsAvailable === true,
             ...(toolExposure === undefined ? {} : { toolExposure }),
             platform,
           } satisfies T3AcpInstructionState;

@@ -30,8 +30,6 @@ export interface McpProviderSessionConfig {
   readonly capabilities?: ReadonlySet<string>;
   /** True when at least one device host is configured or locally available. */
   readonly deviceHostsAvailable?: boolean;
-  /** True while Settings → Labs → Linked environments is enabled. */
-  readonly linkedEnvironmentsAvailable?: boolean;
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
   /** True while a delegated task this thread started will wake it with its result. */
   readonly hasPendingWake?: Effect.Effect<boolean>;
