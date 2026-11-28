@@ -37,6 +37,7 @@ import {
 } from "../../persistence/imperative";
 import type { AgentActivityProps } from "../../widgets/AgentActivity";
 import {
+  agentActivityProps,
   agentActivityText,
   type AgentActivityWidgetSource,
 } from "../../widgets/agentActivityWidgetTimeline";
@@ -157,6 +158,8 @@ let pendingDeviceRegistration: {
 
 interface DeviceRegistrationInput {
   readonly observedPushToken?: string;
+  // A registration already in flight may have read the previous language.
+  readonly locale?: string;
 }
 
 interface RegisterDeviceInput extends DeviceRegistrationInput {
@@ -630,7 +633,8 @@ function mergeDeviceRegistrationInput(
   next: DeviceRegistrationInput,
 ): DeviceRegistrationInput {
   const observedPushToken = next.observedPushToken ?? current.observedPushToken;
-  return observedPushToken ? { observedPushToken } : {};
+  const locale = next.locale ?? current.locale;
+  return { ...(observedPushToken ? { observedPushToken } : {}), ...(locale ? { locale } : {}) };
 }
 
 function registrationAddsInformation(
@@ -638,7 +642,9 @@ function registrationAddsInformation(
   next: DeviceRegistrationInput,
 ): boolean {
   return (
-    next.observedPushToken !== undefined && next.observedPushToken !== current.observedPushToken
+    (next.observedPushToken !== undefined &&
+      next.observedPushToken !== current.observedPushToken) ||
+    (next.locale !== undefined && next.locale !== current.locale)
   );
 }
 
@@ -805,7 +811,10 @@ function ensureAppStateListener(): void {
   });
   // The relay writes pushes in the registered language, so a switch must reach it right away.
   const unsubscribeLocale = subscribeActiveLocale(() =>
-    enqueueDeviceRegistration({}, "device registration after language change failed"),
+    enqueueDeviceRegistration(
+      { locale: getActiveLocale() },
+      "device registration after language change failed",
+    ),
   );
   appStateSubscription = {
     remove: () => {
@@ -1136,20 +1145,7 @@ export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
         const aggregate = snapshot.aggregate;
         const primed = yield* Effect.try({
           try: () =>
-            startAgentLiveActivity(
-              {
-                text: agentActivityText(
-                  Math.max(aggregate.activeCount, aggregate.activities.length),
-                  m,
-                ),
-                title: aggregate.title,
-                subtitle: aggregate.subtitle,
-                activeCount: aggregate.activeCount,
-                updatedAt: aggregate.updatedAt,
-                activities: aggregate.activities,
-              },
-              liveActivityStaleDate(),
-            ),
+            startAgentLiveActivity(agentActivityProps(aggregate, m), liveActivityStaleDate()),
           catch: (cause) =>
             new AgentAwarenessOperationError({
               operation: "prime-live-activity",

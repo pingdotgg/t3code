@@ -342,6 +342,7 @@ const make = Effect.gen(function* () {
           // Retain terminal rows as the baseline so finished-card replays cannot alert again.
           aggregate: preferences.value.liveActivitiesEnabled ? aggregate : null,
           deliveredAt: DateTime.formatIso(now),
+          locale: target.locale,
         });
       }
     }),

@@ -55,6 +55,7 @@ export const relayLiveActivities = pgTable(
     endedAt: varchar("ended_at", { length: 64 }),
     lastAggregateJson: jsonb("last_aggregate_json").$type<RelayAgentActivityAggregateState>(),
     lastLiveActivityDeliveryAt: varchar("last_live_activity_delivery_at", { length: 64 }),
+    lastDeliveredLocale: varchar("last_delivered_locale", { length: 16 }),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
     updatedAt: varchar("updated_at", { length: 64 }).notNull(),
   },

@@ -141,6 +141,7 @@ const target: LiveActivities.TargetRow = {
   ended_at: null,
   last_aggregate_json: null,
   last_live_activity_delivery_at: null,
+  last_delivered_locale: null,
 };
 
 function layerFor(input: {
@@ -1404,6 +1405,34 @@ describe("fast completion delivery", () => {
       ).toBe(true);
     }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs, currentTargets: [device] })));
   });
+  it.effect("repaints an unchanged card once after the device switches language", () => {
+    const queuedJobs: SignedApnsDeliveryJob[] = [];
+    const painted = {
+      ...target,
+      last_aggregate_json: JSON.stringify(aggregate),
+      last_live_activity_delivery_at: "1970-01-01T00:00:00.000Z",
+      last_delivered_locale: "en",
+    };
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.sendForTarget({
+        target: { ...painted, locale: "en" },
+        aggregate,
+        nowMs: 0,
+        replay: true,
+      });
+      expect(queuedJobs).toHaveLength(0);
+      yield* deliveries.sendForTarget({
+        target: { ...painted, locale: "zh" },
+        aggregate,
+        nowMs: 0,
+        replay: true,
+      });
+      expect(queuedJobs).toHaveLength(1);
+      expect(queuedJobs[0]?.payload.alert).toBeUndefined();
+    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+  });
+
   it.effect("replays a newly visible completion without alerting", () => {
     const queuedJobs: SignedApnsDeliveryJob[] = [];
     const done = {

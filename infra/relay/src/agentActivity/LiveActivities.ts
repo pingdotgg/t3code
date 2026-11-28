@@ -91,6 +91,7 @@ export interface LiveActivityRow {
   readonly ended_at: string | null;
   readonly last_aggregate_json: string | null;
   readonly last_live_activity_delivery_at: string | null;
+  readonly last_delivered_locale: string | null;
 }
 
 export type TargetRow = DeviceRow & LiveActivityRow;
@@ -117,6 +118,7 @@ export class LiveActivities extends Context.Service<
       readonly kind: Exclude<RelayDeliveryKind, "live_activity_start">;
       readonly aggregate: RelayAgentActivityAggregateState | null;
       readonly deliveredAt: string;
+      readonly locale: string | null;
     }) => Effect.Effect<void, LiveActivityDeliveryMarkPersistenceError>;
     readonly invalidateDeliveryToken: (input: {
       readonly userId: string;
@@ -232,6 +234,7 @@ const make = Effect.gen(function* () {
           ended_at: relayLiveActivities.endedAt,
           last_aggregate_json: relayLiveActivities.lastAggregateJson,
           last_live_activity_delivery_at: relayLiveActivities.lastLiveActivityDeliveryAt,
+          last_delivered_locale: relayLiveActivities.lastDeliveredLocale,
         })
         .from(relayMobileDevices)
         .leftJoin(
@@ -323,6 +326,7 @@ const make = Effect.gen(function* () {
             endedAt: input.kind === "live_activity_end" ? input.deliveredAt : null,
             lastAggregateJson: aggregateJson,
             lastLiveActivityDeliveryAt: input.deliveredAt,
+            lastDeliveredLocale: input.locale,
             createdAt: input.deliveredAt,
             updatedAt: input.deliveredAt,
           })
@@ -344,6 +348,7 @@ const make = Effect.gen(function* () {
                   : relayLiveActivities.endedAt,
               lastAggregateJson: aggregateJson,
               lastLiveActivityDeliveryAt: input.deliveredAt,
+              lastDeliveredLocale: input.locale,
               updatedAt: input.deliveredAt,
             },
           });

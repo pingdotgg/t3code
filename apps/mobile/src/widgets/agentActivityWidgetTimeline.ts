@@ -84,6 +84,29 @@ function agentActivityStatus(phase: AgentActivityPhase, resolve: MessageResolver
   }
 }
 
+/** Card and widget props for a relay snapshot, in the app's language. */
+export function agentActivityProps(
+  aggregate: RelayAgentActivityAggregateState,
+  resolve: MessageResolver = m,
+): AgentActivityProps {
+  return {
+    text: agentActivityText(Math.max(aggregate.activeCount, aggregate.activities.length), resolve),
+    title: aggregate.title,
+    subtitle:
+      aggregate.activeCount > 0
+        ? resolve(msg("Agent work in progress"))
+        : aggregate.activities[0]?.phase === "failed"
+          ? resolve(msg("Agent work failed"))
+          : resolve(msg("Agent work completed")),
+    activeCount: aggregate.activeCount,
+    updatedAt: aggregate.updatedAt,
+    activities: aggregate.activities.map((row) => ({
+      ...row,
+      status: agentActivityStatus(row.phase, resolve),
+    })),
+  };
+}
+
 export function agentActivityWidgetTimeline(
   source: AgentActivityWidgetSource,
   now: number,
@@ -109,23 +132,7 @@ export function agentActivityWidgetTimeline(
     return [{ date: new Date(now), props }];
   }
 
-  const { aggregate } = source;
-  const props: AgentActivityProps = {
-    text: agentActivityText(Math.max(aggregate.activeCount, aggregate.activities.length), resolve),
-    title: aggregate.title,
-    subtitle:
-      aggregate.activeCount > 0
-        ? resolve(msg("Agent work in progress"))
-        : aggregate.activities[0]?.phase === "failed"
-          ? resolve(msg("Agent work failed"))
-          : resolve(msg("Agent work completed")),
-    activeCount: aggregate.activeCount,
-    updatedAt: aggregate.updatedAt,
-    activities: aggregate.activities.map((row) => ({
-      ...row,
-      status: agentActivityStatus(row.phase, resolve),
-    })),
-  };
+  const props = agentActivityProps(source.aggregate, resolve);
   const hasInFlightRows = props.activities.some(
     (row) => row.phase !== "completed" && row.phase !== "failed",
   );

@@ -159,8 +159,10 @@ function shouldUpdateLiveActivity(input: {
   readonly nextAggregate: RelayAgentActivityAggregateState;
   readonly lastDeliveryAt: string | null;
   readonly nowMs: number;
+  readonly localeChanged: boolean;
 }): boolean {
-  if (!input.previousAggregate) {
+  // The card's text is in the language it was last painted in; repaint after a switch.
+  if (!input.previousAggregate || input.localeChanged) {
     return true;
   }
   if (JSON.stringify(input.previousAggregate) === JSON.stringify(input.nextAggregate)) {
@@ -252,6 +254,7 @@ function chooseLiveActivityDelivery(input: {
     nextAggregate,
     lastDeliveryAt: input.target.last_live_activity_delivery_at,
     nowMs: input.nowMs,
+    localeChanged: input.target.locale !== input.target.last_delivered_locale,
   })
     ? {
         kind: "live_activity_update",
@@ -767,6 +770,7 @@ const make = Effect.gen(function* () {
         kind: input.kind,
         aggregate,
         deliveredAt: iso,
+        locale: currentTarget.locale,
       });
     } else if (isPermanentApnsTokenFailure(result)) {
       yield* liveActivities.invalidateDeliveryToken({

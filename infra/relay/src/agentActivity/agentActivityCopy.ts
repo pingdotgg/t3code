@@ -376,8 +376,9 @@ function makeCopy(locale: AgentActivityLocale): AgentActivityCopy {
     Object.fromEntries(values.map((count) => [String(count), plural(forms, count)]));
   return {
     status: (phase) => table.status[phase],
+    // Replacer functions keep `$` sequences in titles literal.
     statusLine: (status, project) =>
-      table.statusLine.replace("{status}", status).replace("{project}", project),
+      table.statusLine.replace("{status}", () => status).replace("{project}", () => project),
     agentsNeedAttention: (count) => plural(table.agentsNeedAttention, count),
     agentsFinished: (count) => plural(table.agentsFinished, count),
     subtitle: (aggregate) =>

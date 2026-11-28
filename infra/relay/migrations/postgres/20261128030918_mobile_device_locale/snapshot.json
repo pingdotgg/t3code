@@ -2,9 +2,19 @@
   "type": "diff",
   "version": "9",
   "dialect": "postgres",
-  "id": "74eeeb39-fd22-4fca-be86-ca7b8241926d",
+  "id": "b8b262d1-9d68-420b-9d83-ef4762be37d0",
   "prevIds": ["0a77840f-76b7-46b8-9df4-14f4a48beeec"],
   "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": ["column", "public", "relay_live_activities", "last_delivered_locale"],
+      "writes": [
+        "s|col|public.relay_live_activities.last_delivered_locale",
+        "n|col|public.relay_live_activities.last_delivered_locale",
+        "e|col|public.relay_live_activities.last_delivered_locale"
+      ],
+      "reads": ["n|tbl|public.relay_live_activities", "n|sch|public"]
+    },
     {
       "statementType": "add_column",
       "statementTarget": ["column", "public", "relay_mobile_devices", "locale"],
@@ -17,6 +27,22 @@
     }
   ],
   "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_live_activities",
+        "name": "last_delivered_locale",
+        "type": "varchar(16)",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
     {
       "op": "create",
       "row": {

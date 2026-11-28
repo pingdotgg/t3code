@@ -640,7 +640,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     }).pipe(Effect.provide(layerRelayTest));
   });
 
-  it.effect("re-registers in the new language when the app language changes", () => {
+  it.effect("re-registers in a language switched while a registration is in flight", () => {
     const fetchMock = stubRelayFetch();
     Constants.expoConfig!.extra = {
       relay: {
@@ -669,9 +669,26 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         ),
       );
 
+    const isDeviceRequest = (request: RequestInfo | URL) =>
+      (request instanceof Request ? request.url : String(request)).endsWith("/v1/mobile/devices");
+    const stubbed = fetchMock.getMockImplementation()!;
+    let releaseFirst: (() => void) | undefined;
+    const firstStarted = Promise.withResolvers<void>();
+    fetchMock.mockImplementation((request: RequestInfo | URL) => {
+      if (!isDeviceRequest(request) || releaseFirst) return stubbed(request);
+      const held = Promise.withResolvers<void>();
+      releaseFirst = held.resolve;
+      firstStarted.resolve();
+      return held.promise.then(() => stubbed(request));
+    });
+
     return Effect.gen(function* () {
-      yield* runBackgroundOperations();
+      const background = yield* Effect.forkChild(runBackgroundOperations());
+      yield* Effect.promise(() => firstStarted.promise);
+      // The switch lands while the English registration is still in flight.
       setActiveLocale("zh");
+      releaseFirst!();
+      yield* Fiber.join(background);
       yield* runBackgroundOperations();
       expect(yield* registeredLocales()).toEqual(["en", "zh"]);
     }).pipe(

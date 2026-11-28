@@ -47,6 +47,13 @@ describe("agentActivityCopy", () => {
     expect(alertForActivityRows([row, row], copy)?.title).toBe("2 agents need attention");
   });
 
+  it("keeps dollar sequences in project titles literal", () => {
+    expect(
+      alertForActivityRows([{ ...row, projectTitle: "Budget $$ $&" }], agentActivityCopy("en"))
+        ?.body,
+    ).toBe("Approval: Budget $$ $&");
+  });
+
   it("translates alerts with the locale's plural rules", () => {
     expect(alertForActivityRows([row], agentActivityCopy("zh"))?.body).toBe("待批准：Project");
     expect(alertForActivityRows([row, row], agentActivityCopy("ru"))?.title).toBe(
