@@ -3343,11 +3343,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ? notePromptProgress()
               : Effect.void,
           );
+        // Released commands die with their agent; nothing else ends their rows.
+        const failReleasedTools = Effect.fnUntraced(function* () {
+          const active = yield* Ref.get(activeTurn);
+          const owners = new Map(yield* Ref.getAndSet(detachedUnawaitedTools, new Map()));
+          if (active !== null) {
+            for (const toolCallId of active.unawaitedToolCallIds) owners.set(toolCallId, active);
+          }
+          for (const [toolCallId, owner] of owners) {
+            const tool = owner.tools.get(toolCallId);
+            const status = tool === undefined ? undefined : toolStatus(tool.status);
+            if (tool !== undefined && (status === "pending" || status === "running"))
+              yield* emitTool(owner, tool, "failed");
+          }
+        });
         const handleRuntimeTerminationAtGeneration = (runtimeGeneration: number) =>
           runRuntimeCallbackAtGeneration(
             runtimeGeneration,
             Effect.gen(function* () {
               yield* requireRuntimeRestart;
+              yield* failReleasedTools();
               if (!followsAgentWorkState) {
                 // An open prompt fails with its transport. A turn held open for a running tool
                 // has no prompt, so nothing else ends it.
@@ -9030,6 +9045,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.set(compactionMarkers, new Map());
             yield* Ref.set(completedCompactionIds, new Set());
             yield* Ref.set(snapshot, emptySnapshotState());
+            yield* failReleasedTools();
             yield* continuationPermit.withPermit(
               Effect.gen(function* () {
                 yield* Ref.update(continuationGeneration, (value) => value + 1);

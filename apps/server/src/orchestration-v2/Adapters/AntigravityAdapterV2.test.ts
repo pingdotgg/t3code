@@ -2527,6 +2527,29 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
+  it.effect("fails a released command's row when its agent exits", () =>
+    Effect.gen(function* () {
+      const { session, providerThread, command, startTurn, ...run } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+      yield* startTurn(1, false);
+      yield* run.throughPromptSettled;
+      yield* session.awaitBackgroundTasks!({
+        providerThread,
+        taskIds: ["mock-session-1/task-2"],
+        awaited: false,
+      });
+      yield* TestClock.adjust("5 seconds");
+      yield* run.throughTerminal;
+      yield* run.runtimeDies;
+      yield* run.until(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === command.toolCallId &&
+          event.turnItem.status === "failed",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   // agy 1.5.11 reads a prompt sent mid-turn as a steer: it answers the running prompt end_turn
   // and goes on under the new one. session/cancel would end its running commands and subagents.
   it.effect("steers a running prompt with the next one and leaves its work running", () =>
