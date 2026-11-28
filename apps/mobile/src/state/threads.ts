@@ -18,6 +18,7 @@ import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { appAtomRegistry } from "./atom-registry";
+import { withoutForgottenThreads } from "./forgotten-threads";
 import {
   pendingThreadCreationOutcomesAtom,
   selectThreadCreationDetail,
@@ -65,7 +66,10 @@ export const steadyShellsHoldingAtom = steadyShells.holdingAtom;
 export const steadyNavigationThreadShellsAtom = createEnvironmentThreadShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   connectionPhaseAtom: environmentPresentations.connectionPhaseAtom,
-  snapshotAtom: steadyShells.snapshotAtom,
+  // Only lists drop threads removed from the list: the outbox reads environmentThreadShells and
+  // deletes queued messages for a thread it is missing. Filtered after the hold, which can keep
+  // showing an older snapshot that still has the row.
+  snapshotAtom: withoutForgottenThreads(steadyShells.snapshotAtom),
   hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
 }).navigationThreadShellsAtom;
 export const childThreadApprovalsAtom = createChildThreadApprovalsAtom({
