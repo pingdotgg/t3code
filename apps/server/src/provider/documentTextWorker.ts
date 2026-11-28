@@ -96,6 +96,7 @@ interface XmlNode {
   pptxHidden?: boolean;
   spaceCount?: number;
   wordOutlineHeadingLevel?: number;
+  wordMergeCovered?: boolean;
   hasText?: boolean;
   hasTextChoice?: boolean;
   markupCompatibility?: boolean;
@@ -287,6 +288,7 @@ function xml(
   const odf = [".odt", ".ods", ".odp"].includes(extension);
   const root: XmlNode = { name: "root", attrs: {}, children: [] };
   const stack = [root];
+  const wordMergeTables = new WeakSet<XmlNode>();
   let rootTagName: string | undefined;
   let nodes = 0;
   const parser = new SaxesParser();
@@ -373,6 +375,11 @@ function xml(
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    if (extension === ".docx" && node.name === "vMerge" && parent.name === "tcPr") {
+      const table = stack.findLast((ancestor) => ancestor.name === "tbl");
+      if (table) wordMergeTables.add(table);
+    }
+    if (wordMergeTables.has(node)) markWordMergeContinuations(node);
     if (
       odfTextStyles &&
       node.name === "style" &&
@@ -866,7 +873,39 @@ function odfValue(cell: XmlNode): string {
       return attr("value");
   }
 }
-const covered = (cell: XmlNode) => cell.name === "covered-table-cell";
+function wordSkippedColumns(row: XmlNode) {
+  const before = childNamed(childNamed(row, "trPr"), "gridBefore")?.attrs.val;
+  return before ? Math.max(0, Number.parseInt(before, 10) || 0) : 0;
+}
+
+function wordColumnSpan(properties: XmlNode | undefined) {
+  const span = childNamed(properties, "gridSpan")?.attrs.val;
+  return span ? Math.max(1, Number.parseInt(span, 10) || 1) : 1;
+}
+
+function markWordMergeContinuations(table: XmlNode) {
+  let previous = new Map<number, number>();
+  let current = new Map<number, number>();
+  // Empty cells and rows still participate in the Word table grid.
+  for (const row of all(table, "tr")) {
+    let column = wordSkippedColumns(row);
+    for (const cell of all(row, "tc")) {
+      const properties = childNamed(cell, "tcPr");
+      const span = wordColumnSpan(properties);
+      const merge = childNamed(properties, "vMerge");
+      if (merge) {
+        const value = merge.attrs.val?.trim() ?? "continue";
+        if (value === "continue" && previous.get(column) === span) cell.wordMergeCovered = true;
+        if (value === "restart" || cell.wordMergeCovered) current.set(column, span);
+      }
+      column += span;
+    }
+    previous.clear();
+    [previous, current] = [current, previous];
+  }
+}
+
+const covered = (cell: XmlNode) => cell.name === "covered-table-cell" || cell.wordMergeCovered;
 function hasCellText(cell: XmlNode): boolean {
   if (covered(cell)) return false;
   if (cell.imageDescription !== undefined || odfValue(cell).trim() || cell.name === "noBreakHyphen")
@@ -968,9 +1007,7 @@ function* table(node: XmlNode): Generator<TextPart, void> {
     if (!cells.length) continue;
     const repeat = repeatCount(row.attrs["number-rows-repeated"]);
     // Word emits no cells for the grid columns w:gridBefore skips at the start of a row.
-    const trPr = row.name === "tr" ? children(row).find((c) => c.name === "trPr") : undefined;
-    const before = trPr && children(trPr).find((c) => c.name === "gridBefore")?.attrs.val;
-    const skipped = before ? Math.max(0, Number.parseInt(before, 10) || 0) : 0;
+    const skipped = row.name === "tr" ? wordSkippedColumns(row) : 0;
     for (let index = 0; index < repeat; index++) {
       if (++rowCount > 10_000) throw new Truncation("Row limit");
       let column = skipped;
@@ -978,15 +1015,13 @@ function* table(node: XmlNode): Generator<TextPart, void> {
       for (const cell of cells) {
         const count = repeatCount(cell.attrs["number-columns-repeated"]);
         // Word emits no cell for columns covered by w:gridSpan; pad before the next cell.
-        const tcPr = cell.name === "tc" ? children(cell).find((c) => c.name === "tcPr") : undefined;
-        const val = tcPr && children(tcPr).find((c) => c.name === "gridSpan")?.attrs.val;
-        const span = val ? Math.max(1, Number.parseInt(val, 10) || 1) : 1;
+        const span = cell.name === "tc" ? wordColumnSpan(childNamed(cell, "tcPr")) : 1;
         for (let i = 0; i < count; i++) {
           column += span;
           if (column > 512) throw new Truncation("Column limit");
           if (gap) yield { columnGap: gap };
           gap = span;
-          // LibreOffice hides the contents a merge covers; the cell still holds its column.
+          // A merge hides the covered contents while preserving grid columns.
           if (covered(cell)) continue;
           yield CELL_START;
           yield* paragraphs(cell);
@@ -1384,6 +1419,9 @@ function* rtfParts(
             "pict",
             "object",
             "fldinst",
+            // Shape properties, and the drawing that repeats a shape for older readers.
+            "sp",
+            "shprslt",
             "header",
             "headerf",
             "headerl",
@@ -1443,7 +1481,8 @@ function* rtfParts(
           yield* emitByte(rest[0]!.charCodeAt(0));
         else {
           yield* flushBytes();
-          if (rest[0] === "*") state.skip = true;
+          // Shape instructions are an optional destination, but a text box keeps its text there.
+          if (rest[0] === "*" && !/^\*[\r\n]*\\shpinst(?![a-z])/i.test(rest)) state.skip = true;
           // A backslash before a line break is \par; TextEdit ends paragraphs this way.
           else if (!hidden() && (rest[0] === "\n" || rest[0] === "\r")) yield "\n";
           else if (!hidden() && symbols.has(rest[0]!)) yield symbols.get(rest[0]!)!;

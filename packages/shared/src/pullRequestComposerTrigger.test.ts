@@ -23,6 +23,8 @@ describe("detectPullRequestComposerTrigger", () => {
     ["see #12", 4, "#", "12"],
     ["after !5", 6, "!", "5"],
     ["#crash", 0, "#", "crash"],
+    ["#किताब", 0, "#", "किताब"],
+    ["#cafe\u0301", 0, "#", "cafe\u0301"],
   ])("finds the trigger in %j", (text, rangeStart, sigil, query) => {
     const cursor = rangeStart + 1 + query.length;
     expect(detectPullRequestComposerTrigger(text, cursor, GITLAB)).toEqual({
@@ -43,6 +45,7 @@ describe("detectPullRequestComposerTrigger", () => {
     ["C#", 2],
     ["![image", "![image".length],
     ["## Heading", 2],
+    ["#\u0301", "#\u0301".length],
   ])("ignores %j", (text, cursor) => {
     expect(detectPullRequestComposerTrigger(text, cursor, GITLAB)).toBeNull();
   });
