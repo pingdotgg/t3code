@@ -28,6 +28,8 @@ const API_ERROR =
   /Error (\d{3}), Message: ((?:(?!, Status: |Error \d{3}, Message: ).)+), Status: ([A-Z_]+|\d{3}[^,\n]*)/s;
 // Antigravity 1.5 with a Google account writes "STATUS (code NNN): message".
 const STATUS_ERROR = /(?<![A-Z_])([A-Z_]+) \(code (\d{3})\): (\P{Cc}+)/u;
+// The Go genai SSE reader can reject a comment such as ": keep-alive" as an invalid chunk.
+const INVALID_STREAM_CHUNK = /\biterateResponseStream: invalid stream chunk:/;
 // Newer Antigravity builds attach the HTTP JSON body (pretty-printed or compact) to the error step.
 const ERROR_JSON_START = /\{\s*"error"\s*:/g;
 const decodeVerificationError = Schema.decodeUnknownOption(
@@ -261,6 +263,17 @@ function turnFailure(
     );
   }
   if (apiError === null) {
+    if (INVALID_STREAM_CHUNK.test(text)) {
+      return reusable(
+        makeProviderFailure({
+          class: "provider_error",
+          // The rejected chunk is arbitrary model output, so it stays out of the message.
+          message: "Antigravity's response stream ended on an invalid stream chunk.",
+          code: "INVALID_STREAM_CHUNK",
+          retryable: true,
+        }),
+      );
+    }
     return reusable(
       makeProviderFailure({
         class: "provider_error",

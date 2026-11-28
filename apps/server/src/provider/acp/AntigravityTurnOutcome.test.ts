@@ -213,6 +213,32 @@ describe("watchAntigravityPromptOutcome", () => {
           retryable: true,
         },
       );
+      const streamError = "iterateResponseStream: invalid stream chunk:";
+      const keepAlive = `generating and executing: ${streamError} : keep-alive`;
+      for (const payload of [
+        errorPayload(keepAlive),
+        errorPayload(`${streamError} private customer record 12345`),
+      ] as const) {
+        assert.deepEqual(
+          yield* turn([[ERROR_MESSAGE, payload]]),
+          reusable({
+            class: "provider_error",
+            message: "Antigravity's response stream ended on an invalid stream chunk.",
+            code: "INVALID_STREAM_CHUNK",
+            retryable: true,
+          }),
+        );
+      }
+      assert.isUndefined(yield* turn([[PLANNER_RESPONSE, Buffer.from(keepAlive)]]));
+      assert.deepEqual(
+        yield* turn([[ERROR_MESSAGE, errorPayload("unexpected internal failure")]]),
+        reusable({
+          class: "provider_error",
+          message: "Antigravity stopped this turn because of an error.",
+          code: null,
+          retryable: null,
+        }),
+      );
       // A prompt the watchdog retired keeps an absolute reset time but drops a relative one.
       assert.deepEqual(
         (yield* turn(
