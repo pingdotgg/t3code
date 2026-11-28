@@ -1219,6 +1219,8 @@ it("a subagent tab shows its read-only bar under no header of its own", async ()
 });
 
 it("/feedback with a pending reply runs as feedback and keeps the reply when the upload fails", async () => {
+  // The redesign folds the composer at phone widths, which hides its editor.
+  await page.viewport(1400, 900);
   const history = threadWithHistory("feedback-reply", 1);
   const at = DateTime.makeUnsafe("2026-03-17T19:12:28.000Z");
   // Without an active provider thread, `/feedback` asks for a first message instead.
@@ -1285,6 +1287,8 @@ it("/feedback with a pending reply runs as feedback and keeps the reply when the
   await expect
     .element(page.getByText("Could not send feedback to OpenAI", { exact: false }).first())
     .toBeVisible();
+  // The redesign shows the error notice first and keeps the reply behind the "+1" notices button.
+  await page.getByRole("button", { name: "1 other notice" }).click();
   await expect.element(replyBar).toBeVisible();
   expect(editor.element().textContent).toBe("");
 });
