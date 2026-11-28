@@ -21,6 +21,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Result from "effect/Result";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -60,6 +61,8 @@ const DAEMON_READY_TIMEOUT_MS = 30_000;
 const DAEMON_POLL_MS = 100;
 const HUB_RESTART_STABLE_UPTIME_MS = 60_000;
 const HUB_RESTART_MAX_DELAY_MS = 30_000;
+const ADB_SERVER_PORT = 5037;
+const ADB_SERVER_READY_TIMEOUT_MS = 2_000;
 
 // Persist hub state so restarts without finalizers can clean up orphaned loopback listeners.
 const HubStateFile = Schema.Struct({
@@ -273,6 +276,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const startLock = yield* Semaphore.make(1);
   const runningRef = yield* Ref.make<RunningHost | null>(null);
   const restartDelayRef = yield* Ref.make(0);
+  const adbServerScopeRef = yield* Ref.make<Scope.Closeable | null>(null);
   const hostId = LOCAL_DEVICE_HOST_ID;
 
   const platformAvailability = Effect.fn("LocalDeviceHost.platformAvailability")(function* (
@@ -741,6 +745,80 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     Effect.ignore,
   );
 
+  // adb's connect-then-fork probe hangs on an unbound loopback port under WSL mirrored
+  // networking, so on Linux start the server before the hub. Bind-probe the port:
+  // mirrored loopback accepts connects nothing is listening on. A gone server falls
+  // back to adb's own auto-start, as before.
+  const prewarmAdbServer = Effect.fn("LocalDeviceHost.prewarmAdbServer")(function* () {
+    if (hostPlatform !== "linux") return;
+    const environment = yield* currentHostEnvironment;
+    if (
+      environment.ADB_SERVER_SOCKET ||
+      environment.ANDROID_ADB_SERVER_PORT ||
+      environment.ANDROID_ADB_SERVER_ADDRESS
+    )
+      return;
+    const sdk = yield* currentSdk;
+    if (!sdk.root || !sdk.adb) return;
+    const adb = path.join(sdk.root, "platform-tools", "adb");
+    if (!(yield* net.canListenOnHost(ADB_SERVER_PORT, "127.0.0.1"))) return;
+    const scope = yield* Scope.make("sequential");
+    const listening = yield* Effect.gen(function* () {
+      const child = yield* spawner
+        .spawn(
+          ChildProcess.make(adb, ["nodaemon", "server"], {
+            cwd: workingDirectory,
+            detached: false,
+            shell: false,
+            stdout: "pipe",
+            stderr: "pipe",
+            env: environment,
+            forceKillAfter: "1 second",
+          }),
+        )
+        .pipe(
+          Effect.provideService(Scope.Scope, scope),
+          Effect.timeout(Duration.millis(ADB_SERVER_READY_TIMEOUT_MS)),
+        );
+      // Drain the server's output so a full pipe cannot block it; its lines are not
+      // logged.
+      yield* Effect.forkIn(
+        child.all.pipe(Stream.decodeText(), Stream.runDrain, Effect.ignoreCause),
+        scope,
+      );
+      const portTaken = Effect.map(
+        net.canListenOnHost(ADB_SERVER_PORT, "127.0.0.1"),
+        (canListen) => !canListen,
+      );
+      const deadline = (yield* Clock.currentTimeMillis) + ADB_SERVER_READY_TIMEOUT_MS;
+      while (!(yield* portTaken)) {
+        if ((yield* Clock.currentTimeMillis) > deadline) return false;
+        yield* Effect.sleep(Duration.millis(DAEMON_POLL_MS));
+      }
+      return true;
+    }).pipe(
+      Effect.onError(() => Scope.close(scope, Exit.void).pipe(Effect.ignore)),
+      Effect.result,
+    );
+    if (Result.isSuccess(listening) && listening.success) {
+      yield* Ref.set(adbServerScopeRef, scope);
+      yield* Effect.logInfo("Started the adb server ahead of the device hub", {
+        port: ADB_SERVER_PORT,
+      });
+      return;
+    }
+    yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
+    if (Result.isFailure(listening)) {
+      yield* Effect.logWarning("Starting the adb server ahead of the device hub failed", {
+        cause: listening.failure,
+      });
+      return;
+    }
+    yield* Effect.logWarning("The adb server did not start listening ahead of the device hub", {
+      port: ADB_SERVER_PORT,
+    });
+  });
+
   const ensureHubReady = Effect.fn("LocalDeviceHost.ensureHubReady")(function* (
     onPhase: (phase: "installing" | "starting", detail?: string) => Effect.Effect<void>,
   ): Effect.fn.Return<RunningHost, DeviceHost.DeviceHostError | NodeRuntimeUnavailableError> {
@@ -793,6 +871,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       ),
     );
     yield* onPhase("starting");
+    yield* prewarmAdbServer();
     const hub = yield* spawnHub(hubTool, nodePath, env ?? (yield* currentHubEnvironment));
     const next = yield* Effect.gen(function* () {
       yield* pruneLocalDeviceTools(config.baseDir, nodePath, "hub").pipe(
@@ -967,13 +1046,16 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const stop: DeviceHost.DeviceHost["Service"]["stop"] = startLock.withPermits(1)(
     Effect.gen(function* () {
       const running = yield* Ref.getAndSet(runningRef, null);
-      // Hub cleanup waits for its exit unbounded; it must not strand the detached agent daemon.
+      const adbServerScope = yield* Ref.getAndSet(adbServerScopeRef, null);
+      // Hub cleanup waits for its exit unbounded; it must not strand the detached agent
+      // daemon, and the adb server closes beside it, not after the wait.
       yield* Effect.all(
         [
           stopHub(running?.hub).pipe(
             Effect.andThen(fs.remove(hubStatePath(), { force: true }).pipe(Effect.ignore)),
           ),
           stopAgentDeviceDaemon,
+          adbServerScope ? Scope.close(adbServerScope, Exit.void).pipe(Effect.ignore) : Effect.void,
         ],
         { concurrency: "unbounded", discard: true },
       );

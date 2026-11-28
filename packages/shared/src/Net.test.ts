@@ -99,6 +99,7 @@ it.layer(NetService.layer)("NetService", (it) => {
             const net = yield* NetService.NetService;
             const port = getPort(server);
 
+            assert.equal(yield* net.canListenOnHost(port, "127.0.0.1"), false);
             const available = yield* net.isPortAvailableOnLoopback(port);
             assert.equal(available, false);
           }),
