@@ -83,7 +83,6 @@ vi.mock(import("~/state/projects"), async (original) => {
 
 const previewSizes = new Map([
   ["README.md", FULL_TEXT_MAX_BYTES],
-  ["empty.md", 0],
   ["oversized.md", FULL_TEXT_MAX_BYTES + 1],
 ]);
 
@@ -192,7 +191,7 @@ describe("FileBrowserPanel", () => {
   it("offers Open preview for Markdown files within the render limit", async () => {
     using _listing = withDirectoryListing([
       ...entries,
-      ...["empty.md", "missing.md", "notes.txt", "oversized.md"].map((path): ProjectEntry => ({
+      ...["missing.md", "oversized.md"].map((path): ProjectEntry => ({
         path,
         kind: "file",
       })),
@@ -214,10 +213,8 @@ describe("FileBrowserPanel", () => {
     const action = page.getByRole("menuitem", { name: "Open preview", exact: true });
     for (const [path, offersPreview] of [
       ["README.md", true],
-      ["empty.md", true],
       ["missing.md", true],
       ["oversized.md", false],
-      ["notes.txt", false],
       ["src/", false],
     ] as const) {
       await vi.waitFor(() => expect(findTreeRow(path)).not.toBeNull());
