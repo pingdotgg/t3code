@@ -1858,6 +1858,61 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
+  it.effect("resumes past a stale offline report when the app returns while parked", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("application-suspended");
+      yield* awaitState(supervisor.state, (state) => state.phase === "offline");
+      yield* harness.setNetworkStatus("offline");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "offline" && state.network === "offline",
+      );
+
+      yield* harness.wake("application-active-probe");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+    }),
+  );
+
+  it.effect("resumes past a stale offline report when the app returns during session cleanup", () =>
+    Effect.gen(function* () {
+      const releaseStarted = yield* Deferred.make<void>();
+      const releaseGate = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        release: (attempt) =>
+          attempt === 1
+            ? Deferred.succeed(releaseStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseGate)),
+              )
+            : Effect.void,
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("application-suspended");
+      yield* Deferred.await(releaseStarted);
+      yield* harness.setNetworkStatus("offline");
+      yield* harness.wake("application-active-probe");
+      yield* Deferred.succeed(releaseGate, undefined);
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+    }),
+  );
+
   it.effect("abandons connection setup on suspension and reconnects on resume", () =>
     Effect.gen(function* () {
       const setupStarted = yield* Deferred.make<void>();

@@ -27,10 +27,11 @@ const SECTIONS = [
       { id: "SettingsEnvironmentSourceControl", label: "Source control & issues" },
     ],
   },
+  { title: "Advanced", rows: [{ id: "SettingsLabs", label: "Labs" }] },
 ];
 
-function visible(query: string) {
-  return filterSettingsSections(SECTIONS, query).map((section) => [
+function visible(query: string, platform = "ios") {
+  return filterSettingsSections(SECTIONS, query, platform).map((section) => [
     section.title ?? null,
     section.rows.map((row) => row.label),
   ]);
@@ -68,7 +69,17 @@ describe("filterSettingsSections", () => {
     expect(visible(query)).toEqual(expected);
   });
 
+  it.each([
+    { platform: "android", expected: [["Advanced", ["Labs"]]] },
+    // Labs renders the battery saver setting only on Android.
+    { platform: "ios", expected: [] },
+  ])("finds battery saver on $platform", ({ platform, expected }) => {
+    expect(visible("battery saver", platform)).toEqual(expected);
+  });
+
   it("drops sections that start empty", () => {
-    expect(filterSettingsSections([{ rows: [] }, ...SECTIONS], "").length).toBe(SECTIONS.length);
+    expect(filterSettingsSections([{ rows: [] }, ...SECTIONS], "", "ios").length).toBe(
+      SECTIONS.length,
+    );
   });
 });

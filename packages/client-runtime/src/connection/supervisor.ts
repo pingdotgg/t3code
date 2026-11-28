@@ -321,6 +321,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const intent = yield* Ref.make(initialIntent);
   const signals = yield* Queue.unbounded<SupervisorSignal>();
   const resetRetryState = yield* Ref.make(false);
+  // Set when a suspension clears, whichever loop branch takes the activation signal.
+  const resumeRequested = yield* Ref.make(false);
   const probeUnanswered = yield* Ref.make(false);
   const state = yield* SubscriptionRef.make<SupervisorConnectionState>(
     !initialIntent.desired
@@ -1244,12 +1246,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         resetRetryLadder();
         yield* clearLease;
         yield* setState(offlineState(currentIntent, generation, 0, latestFailure));
-        if (yield* waitForSignal) replacing = true;
+        yield* waitForSignal;
         continue;
       }
       // The platform's offline report can stay wrong after the network is back,
-      // so an explicit retry still tries instead of waiting for it to change.
-      const ignoreOffline = replacing || retryRequested;
+      // so an explicit retry or a resume still tries instead of waiting for it to change.
+      const resumed = yield* Ref.getAndSet(resumeRequested, false);
+      const ignoreOffline = replacing || retryRequested || resumed;
       if (currentIntent.network === "offline" && !ignoreOffline) {
         yield* clearLease;
         yield* setState(offlineState(currentIntent, generation, failureCount + 1, latestFailure));
@@ -1415,10 +1418,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   const applySuspension = (reason: ConnectionWakeups.ConnectionWakeup) =>
     reason === "application-suspended" || ConnectionWakeups.isApplicationActiveWakeup(reason)
-      ? Ref.update(intent, (current) => ({
-          ...current,
-          suspended: reason === "application-suspended",
-        }))
+      ? Ref.modify(intent, (current) => [
+          current.suspended && reason !== "application-suspended",
+          { ...current, suspended: reason === "application-suspended" },
+        ]).pipe(
+          Effect.flatMap((resumed) => (resumed ? Ref.set(resumeRequested, true) : Effect.void)),
+        )
       : Effect.void;
   // A restarted listener may have missed changes while it was down.
   yield* keepRunning(

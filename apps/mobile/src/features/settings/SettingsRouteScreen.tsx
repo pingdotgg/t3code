@@ -186,6 +186,7 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
       ...indexSections,
     ],
     query,
+    Platform.OS,
     m,
   );
 
