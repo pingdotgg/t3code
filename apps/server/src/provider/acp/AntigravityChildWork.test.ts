@@ -543,6 +543,56 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
     }),
   );
 
+  it.effect("counts a detached child the runtime reported idle as no longer at work", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-idle-" });
+      const writeJson = (segments: ReadonlyArray<string>, value: unknown) => {
+        const file = path.join(profile, "antigravity-acp", "brain", ...segments);
+        return fs
+          .makeDirectory(path.dirname(file), { recursive: true })
+          .pipe(Effect.andThen(fs.writeFileString(file, JSON.stringify(value))));
+      };
+
+      // Shapes as agy 1.5.19 writes them when a `self` child ends its turn without send_message:
+      // the record stays ALIVE and the parent's inbox gets a `system` notice naming the child.
+      yield* writeJson([ROOT, ".system_generated", "subagents", `${CHILD}.json`], {
+        conversationId: CHILD,
+        subagentDescriptor: { typeName: "self", role: "self" },
+        state: "SUBAGENT_STATE_ALIVE",
+      });
+      yield* writeJson([CHILD, ".system_generated", "messages", "launch.json"], {
+        sender: ROOT,
+        content: "Reply directly with PONG. Do not call send_message.",
+        sourceMetadata: {
+          tool: { conversationId: ROOT, toolCall: { id: "call_idle", name: "invoke_subagent" } },
+        },
+      });
+      yield* writeJson([ROOT, ".system_generated", "messages", "idle.json"], {
+        id: "idle",
+        recipient: ROOT,
+        sender: "system",
+        priority: "MESSAGE_PRIORITY_HIGH",
+        content: `Subagent ${CHILD} has gone idle. This was the subagent's most recent response: PONG`,
+        sourceMetadata: {
+          conversationId: CHILD,
+          stepIndex: 1,
+          rootConversationId: ROOT,
+          contentKind: "CONTENT_KIND_CONVERSATION",
+        },
+      });
+
+      expect(
+        yield* readAntigravityChildrenAtWork({
+          profileDirectory: profile,
+          rootSessionId: ROOT,
+          toolCallIds: ["call_idle"],
+        }),
+      ).toEqual([]);
+    }),
+  );
+
   it.effect(
     "reads legacy disk-backed swarm worker transcripts and tracks working vs parked or killed members",
     () =>
