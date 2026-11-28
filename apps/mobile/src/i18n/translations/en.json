@@ -4956,6 +4956,8 @@
   "dffd2e20f7ff5aa1": "Mark unread",
   "1385e2d8bd696370": "Turn into project",
   "a1fcc064a5cece14": "Copy thread",
+  "787f759cce79d5cc": "Copy thread as Markdown",
+  "292759bc63d72b78": "Failed to copy thread as Markdown",
   "7b24be8e29a2efc5": "Copy thread ID",
   "4205928193aec525": "Snooze",
   "618aa0a6bf093a70": "Try copying this thread again.",

@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { COMPOSER_CONTEXT_CLIPBOARD_MIME } from "@t3tools/shared/composerContextClipboard";
 
-import { writePngToClipboard, writeTextToClipboard } from "./useCopyToClipboard";
+import {
+  writeAsyncTextToClipboard,
+  writePngToClipboard,
+  writeTextToClipboard,
+} from "./useCopyToClipboard";
 
 describe("writeTextToClipboard", () => {
   it("reserves plain text even when an extra flavor attempts to replace it", async () => {
@@ -50,6 +54,27 @@ describe("writeTextToClipboard", () => {
   });
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("starts an asynchronous text write inside the click before the transcript arrives", async () => {
+    const write = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { write } });
+    vi.stubGlobal(
+      "ClipboardItem",
+      class {
+        constructor(readonly data: Record<string, Promise<Blob>>) {}
+      },
+    );
+    let finish!: (text: string) => void;
+    const text = new Promise<string>((resolve) => {
+      finish = resolve;
+    });
+    const copied = writeAsyncTextToClipboard(() => text);
+    expect(write).toHaveBeenCalledTimes(1);
+    const items = write.mock.calls[0]![0] as Array<{ data: Record<string, Promise<Blob>> }>;
+    finish("# Thread\n\n## User\n\nHello");
+    expect(await (await items[0]!.data["text/plain"]!).text()).toBe("# Thread\n\n## User\n\nHello");
+    await expect(copied).resolves.toBe(true);
   });
 
   it("keeps caller-built rich HTML when attaching a context fragment", async () => {

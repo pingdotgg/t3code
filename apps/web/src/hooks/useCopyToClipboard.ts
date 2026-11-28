@@ -217,6 +217,28 @@ export async function writeTextToClipboard(
   }
 }
 
+/** Safari needs the clipboard write to start inside the click, before loading remote text. */
+export async function writeAsyncTextToClipboard(
+  text: () => Promise<string>,
+  target?: ClipboardTarget,
+): Promise<boolean> {
+  if (
+    typeof navigator === "undefined" ||
+    !navigator.clipboard?.write ||
+    typeof ClipboardItem === "undefined"
+  ) {
+    return writeTextToClipboard(await text(), target);
+  }
+  try {
+    const value = text().then((value) => new Blob([value], { type: "text/plain" }));
+    void value.catch(() => undefined);
+    await navigator.clipboard.write([new ClipboardItem({ "text/plain": value })]);
+    return true;
+  } catch (cause) {
+    throw new ClipboardWriteError({ ...clipboardTargetFields(target, "failure"), cause });
+  }
+}
+
 /** Takes a factory so the write starts inside the click while the PNG is still being made. */
 export async function writePngToClipboard(
   png: () => Promise<Blob>,
