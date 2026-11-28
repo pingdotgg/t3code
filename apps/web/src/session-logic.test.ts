@@ -206,6 +206,42 @@ describe("V2 session presentation", () => {
     ).toMatchObject({ label: "Provider error after 10/10 retries" });
   });
 
+  it("does not call an exhausted Codex HTTP 429 retry an exhausted usage allowance", () => {
+    const now = DateTime.makeUnsafe("2026-10-25T13:38:35.000Z");
+    const item = {
+      id: TurnItemId.make("item-codex-429"),
+      threadId: ThreadId.make("thread-codex-429"),
+      runId: RunId.make("run-codex-429"),
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "failed" as const,
+      title: "Usage limit reached",
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "error" as const,
+      failure: {
+        class: "usage_limit" as const,
+        message: "exceeded retry limit, last status: 429 Too Many Requests",
+        code: "responseTooManyFailedAttempts",
+        retryable: null,
+        resetAt: null,
+      },
+    } satisfies Extract<OrchestrationV2TurnItem, { readonly type: "error" }>;
+
+    expect(
+      providerErrorPresentation({
+        ...item,
+        failure: { ...item.failure, code: "usageLimitExceeded" },
+      }).label,
+    ).toBe("Usage limit reached");
+    expect(providerErrorPresentation(item).label).not.toBe("Usage limit reached");
+  });
+
   it("assigns run rollback to the turn-start message instead of a later steer", () => {
     const runId = RunId.make("run-steered");
     const turnStartMessageId = MessageId.make("message-turn-start");
