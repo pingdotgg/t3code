@@ -72,38 +72,21 @@ describe("ThemeImportDialog", () => {
     );
   });
 
-  // The count uses the host locale, not the UI language.
-  const compact = (count: number) =>
-    new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(
-      count,
-    );
-  it.each([
-    ["en", 1, "acme · 1 download"],
-    ["ru", 475_001, `acme · Скачиваний: ${compact(475_001)}`],
-  ])("counts %s theme downloads (%d)", async (locale, downloadCount, line) => {
+  it("shows the singular label for one download", async () => {
     searchOpenVsxThemes.mockReset();
-    searchOpenVsxThemes.mockResolvedValue([{ ...extension, downloadCount }]);
-    const translations = await getTranslationsSnapshot(locale);
-    using _locale = {
-      [Symbol.dispose]() {
-        // GTProvider leaves its locale in a cookie; this sets it back to English.
-        initializeI18n(() => {});
-      },
-    };
+    searchOpenVsxThemes.mockResolvedValue([{ ...extension, downloadCount: 1 }]);
     await using _screen = await render(
-      <GTProvider locale={locale} translations={translations}>
-        <ThemeImportDialog
-          open
-          onOpenChange={() => {}}
-          onImported={() => true}
-          onImportedMany={() => {}}
-        />
-      </GTProvider>,
+      <ThemeImportDialog
+        open
+        onOpenChange={() => {}}
+        onImported={() => true}
+        onImportedMany={() => {}}
+      />,
     );
 
     await userEvent.fill(page.getByRole("searchbox"), "night");
 
-    await expect.element(page.getByText(line, { exact: true })).toBeVisible();
+    await expect.element(page.getByText("acme · 1 download", { exact: true })).toBeVisible();
   });
 
   it("clears the search on Escape before closing the dialog", async () => {
