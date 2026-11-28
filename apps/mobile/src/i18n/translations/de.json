@@ -604,7 +604,7 @@
   "e56b0fb1b1550445": "Das Relay hat den Nachweis für die Umgebungsverknüpfung abgelehnt ({reason}).",
   "4145793647e296fe": "Das Relay hat keine aktive Verknüpfung für diese Umgebung. Falls sie bei T3 Connect abgemeldet wurde, verknüpfe sie auf diesem Rechner erneut.",
   "10c07be640be8c23": "Der T3-Connect-Tunnel der Umgebung wird noch eingerichtet.",
-  "08c3ae49e073cdc8": "Diese Umgebung ist nur zum Veröffentlichen von Agentenaktivität verknüpft und kann daher keine Verbindungen annehmen. Öffne auf diesem Computer Einstellungen > Freigabe & Zugriff und aktiviere T3 Connect.",
+  "08c3ae49e073cdc8": "Diese Umgebung ist nur zum Veröffentlichen von Agentenaktivität verknüpft und kann daher keine Verbindungen annehmen. Öffne dort Einstellungen > Freigabe & Zugriff und aktiviere T3 Connect.",
   "a4429a85fbe329d7": "Das Relay hat die Verbindungsanfrage der Umgebung abgelehnt ({reason}).",
   "745e4a36c4216140": "Das Relay hat die Verbindungsanfrage der Umgebung abgelehnt.",
   "c406def16dbd8691": "Das Relay konnte den Endpunkt der Umgebung nicht erreichen ({reason}).",
@@ -612,8 +612,8 @@
   "95415031a0ab40f5": "Das Relay konnte die Umgebung nicht verknüpfen ({reason}).",
   "cf6c0a128ca2424d": "Das Relay kann den verwalteten Endpunkt nicht bereitstellen ({reason}). Fehlgeschlagener Schritt: {stage}.",
   "b3ba3316beb56b56": "Das Relay kann den verwalteten Endpunkt nicht bereitstellen ({reason}).",
-  "87f09c0263932b08": "Das Relay hat die Verknüpfung abgelehnt: Dieses Konto hat bereits das Maximum von {maxTunnels} verwalteten Tunneln. Löse eine Umgebung oder verknüpfe ein kostenpflichtiges T3-Chat-Konto in deinen T3-Connect-Kontoeinstellungen im Web oder auf dem Desktop. Pro hebt das Standardlimit auf {pro} an, Premier auf {premier}.",
-  "3fa8dd65853cde4a": "Das Relay hat die Verknüpfung abgelehnt: Dieses Konto hat bereits das Maximum von {maxTunnels} verwalteten Tunneln. Löse eine Umgebung, um einen freizugeben.",
+  "87f09c0263932b08": "Das Relay hat die Verknüpfung abgelehnt: Dieses Konto hat bereits das Maximum von {maxTunnels} verwalteten Tunneln. Hebe die Verknüpfung einer Umgebung auf oder verknüpfe ein kostenpflichtiges T3-Chat-Konto in deinen T3-Connect-Kontoeinstellungen im Web oder auf dem Desktop. Pro hebt das Standardlimit auf {pro} an, Premier auf {premier}.",
+  "3fa8dd65853cde4a": "Das Relay hat die Verknüpfung abgelehnt: Dieses Konto hat bereits das Maximum von {maxTunnels} verwalteten Tunneln. Hebe die Verknüpfung einer Umgebung auf, um einen freizugeben.",
   "5860595dfbdb353d": "Das Relay hat einen abgelaufenen Nachweis zum Veröffentlichen von Agentenaktivität abgelehnt.",
   "a9c2a00bd53a7ad6": "Das Relay hat den Nachweis zum Veröffentlichen von Agentenaktivität abgelehnt ({reason}).",
   "d4258d4b87cf0ab1": "Im Relay ist ein interner Fehler aufgetreten ({reason}).",
@@ -3834,7 +3834,7 @@
     " ändern."
   ],
   "5448de595ebea865": "Kabelgebunden",
-  "1f58f0873b408e92": "Sonstige kabelgebundene",
+  "1f58f0873b408e92": "Sonstige kabelgebundene Geräte",
   "bdd42ef9e7d1e404": "Headsets und USB-Mikrofone, die hier nicht aufgeführt sind",
   "23fbc551faa10aac": "Bluetooth",
   "06e9e02fed4f887d": "Sonstige Bluetooth-Geräte",
@@ -3870,7 +3870,7 @@
   "2595c662f9daa600": "{title} vergessen",
   "a71ffae963a09dca": "Einstellung auswählen",
   "f0e853acd2006d53": "Verknüpfte Umgebungen",
-  "0b83813eb16a9bc0": "Lass Agenten auf einem Rechner auf deinen anderen Rechnern arbeiten und deren Agenten auf ihm. Schalte es für jeden Rechner ein. Solange es aus ist, startet nichts Neues über eine Verknüpfung; laufende Aufgaben werden beendet.",
+  "0b83813eb16a9bc0": "Lass Agenten auf einem Rechner auf deinen anderen Rechnern arbeiten und deren Agenten auf ihm. Schalte es für jeden Rechner ein. Solange es aus ist, startet nichts Neues über eine Verknüpfung; laufende Aufgaben werden abgeschlossen.",
   "f9904f78d3003f58": "Schneller Worktree-Checkout",
   "67937aa49179285e": "Auf einem Mac neue Worktrees aus einem im T3-Home-Ordner zwischengespeicherten Checkout klonen, statt jede Datei zu schreiben. Verwendet den normalen Git-Checkout, wenn das nicht geht. Beim Ausschalten wird der Cache gelöscht.",
   "d6ada5ec242e37ff": "Nutzungslimits",
@@ -5047,7 +5047,7 @@
   "1ed642782ae61c57": "Verknüpfen",
   "be61723be45aacfd": "{term, select, mr {Verwende eine Merge-Request-URL, 123 oder #123.} cr {Verwende eine Änderungsanfrage-URL, 123 oder #123.} other {Verwende eine Pull-Request-URL, 123 oder #123.}}",
   "ed09d936d8ba9792": "Beobachtung beenden",
-  "af6adbd67cef13b1": "Auf Änderungen beobachten",
+  "af6adbd67cef13b1": "Änderungen beobachten",
   "13eb3e529a3e9bff": "Aus dem Thread entfernen",
   "986951276ab5723d": "Verknüpfung mit Thread lösen",
   "a9c188a91c93fdb4": "Beobachten konnte nicht geändert werden",
@@ -5085,7 +5085,7 @@
   "b90e87f4b7125237": "Details",
   "6f4b0e797341e214": "Einrichtung im Hintergrund",
   "7dfdfa116c6a9d86": "Einordnung konnte nicht gestartet werden",
-  "ad249f336902fb71": "{message} Führe stattdessen {command} in einem Terminal auf diesem Rechner aus.",
+  "ad249f336902fb71": "{message} Führe stattdessen {command} dort in einem Terminal aus.",
   "61bc68e834fb83af": "Befehl kopieren",
   "818846ef47733bb9": "Gib stattdessen {command} ein.",
   "eb9ecb0cb72121a0": "Dieser Rechner kann keine Threads ohne Projekt starten.",
@@ -5158,13 +5158,13 @@
     " % übrig"
   ],
   "82d204e1a9e7da17": [
-    "Zurückgesetzt",
-    " ",
+    "Wird am ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
-    }
+    },
+    " zurückgesetzt"
   ],
   "23d0be01844d163c": [
     "Gleichmäßiges Tempo: ",
