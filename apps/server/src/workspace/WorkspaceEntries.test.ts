@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { FileFinder } from "@ff-labs/fff-node";
 import { it, afterEach, describe, expect } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -724,6 +725,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-idle-refresh-" });
         yield* writeTextFile(cwd, "src/index.ts");
+        const clock = yield* Clock.Clock;
+        let scanSubmissionDelayMillis = 0;
         let rescans = 0;
         let destroyed = 0;
         const createFinder = FileFinder.create.bind(FileFinder);
@@ -734,6 +737,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             const scanFilesAsync = finder.scanFilesAsync.bind(finder);
             finder.scanFilesAsync = () => {
               rescans += 1;
+              if (rescans === 2) {
+                // Submitting the scan can wait on the native picker lock for the whole cooldown.
+                scanSubmissionDelayMillis += 60_000;
+              }
               return scanFilesAsync();
             };
             const destroy = finder.destroy.bind(finder);
@@ -745,13 +752,27 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           return created;
         });
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const refresh = () =>
+          workspaceEntries.refresh(cwd, "passive").pipe(
+            Effect.provideService(Clock.Clock, {
+              ...clock,
+              currentTimeMillis: Effect.map(
+                clock.currentTimeMillis,
+                (now) => now + scanSubmissionDelayMillis,
+              ),
+            }),
+          );
         yield* TestClock.adjust("1 hour");
         yield* searchWorkspaceEntries({ cwd, query: "index", limit: 10 });
 
-        for (let run = 0; run < 3; run++) {
+        yield* TestClock.adjust("6 minutes");
+        yield* refresh();
+        yield* refresh();
+
+        for (let run = 1; run < 3; run++) {
           yield* TestClock.adjust("6 minutes");
-          yield* workspaceEntries.refresh(cwd, "passive");
-          yield* workspaceEntries.refresh(cwd, "passive");
+          yield* refresh();
+          yield* refresh();
         }
 
         expect({ rescans, destroyed }).toEqual({ rescans: 2, destroyed: 1 });

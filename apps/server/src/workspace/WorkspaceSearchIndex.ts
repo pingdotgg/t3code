@@ -1219,8 +1219,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     "WorkspaceSearchIndex.refresh",
   )(
     function* (mode) {
-      const now = yield* Clock.currentTimeMillis;
       if (mode === "passive") {
+        const now = yield* Clock.currentTimeMillis;
         if (
           lastRefreshStartedAt !== undefined &&
           now - lastRefreshStartedAt < PASSIVE_REFRESH_INTERVAL_MS
@@ -1246,7 +1246,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           reason: result.error,
         });
       }
-      lastRefreshStartedAt = now;
+      lastRefreshStartedAt = yield* Clock.currentTimeMillis;
       // A rescan that outlasts the wait keeps running, and the finder answers
       // from its previous index until it finishes, so the index stays usable.
       yield* waitForIndexReady(
