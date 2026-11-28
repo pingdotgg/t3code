@@ -122,6 +122,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     if (target?.isConnected) target.focus({ preventScroll: true, focusVisible });
   };
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  // Only a press that starts and ends on the empty area closes; a drag across it does not.
+  const emptyAreaPressRef = useRef(false);
   const imageCount = preview.images.length;
   const index =
     imageCount > 0 ? (((preview.index + imageOffset) % imageCount) + imageCount) % imageCount : 0;
@@ -245,8 +247,17 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         onKeyDown={onKeyDown}
         initialFocus={closeButtonRef}
         finalFocus={() => returnFocus.target}
+        onPointerDown={(event) => {
+          emptyAreaPressRef.current = event.target === event.currentTarget;
+        }}
+        // A press released on the image still clicks the popup, their common ancestor.
+        onPointerUp={(event) => {
+          if (event.target !== event.currentTarget) emptyAreaPressRef.current = false;
+        }}
         onClick={(event) => {
-          if (event.target === event.currentTarget && !editing) close();
+          if (emptyAreaPressRef.current && event.target === event.currentTarget && !editing)
+            close();
+          emptyAreaPressRef.current = false;
         }}
       >
         <DialogTitle className="sr-only">
