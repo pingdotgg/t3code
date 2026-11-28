@@ -153,6 +153,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Pressable,
+  Share,
   StyleSheet,
   type ColorValue,
   useWindowDimensions,
@@ -552,6 +553,42 @@ function AssistantForkButton(props: {
           type="monochrome"
         />
       )}
+    </Pressable>
+  );
+}
+
+function AssistantShareButton(props: {
+  readonly text: string;
+  readonly iconColor: ColorValue;
+  readonly buttonSize: number;
+  readonly iconSize: number;
+}) {
+  const gt = useGT();
+  if (props.text.trim().length === 0) return null;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={gt("Share response")}
+      onPress={() => {
+        void Haptics.selectionAsync();
+        Share.share({ message: props.text }).catch((cause: unknown) =>
+          console.error("Failed to share response.", cause),
+        );
+      }}
+      className="h-7 w-7 items-center justify-center"
+      style={
+        Platform.OS === "android"
+          ? { width: props.buttonSize, height: props.buttonSize }
+          : undefined
+      }
+    >
+      <SymbolView
+        name="square.and.arrow.up"
+        size={props.iconSize}
+        tintColor={props.iconColor}
+        type="monochrome"
+      />
     </Pressable>
   );
 }
@@ -2714,6 +2751,12 @@ function renderFeedEntry(
               buttonSize={props.replyActionSize.button}
               iconSize={props.replyActionSize.icon}
             />
+            <AssistantShareButton
+              text={renderedText}
+              iconColor={iconSubtleColor}
+              buttonSize={props.replyActionSize.button}
+              iconSize={props.replyActionSize.icon}
+            />
             {message.projectedItem ? (
               <AssistantForkButton
                 environmentId={props.environmentId}
@@ -2876,7 +2919,7 @@ function UserMessageContent(props: UserMessageContentProps) {
           },
           linkCustomization: (href) =>
             withChipIcon(
-              enrichedContextLinkCustomization(href, props.context?.records ?? []) ??
+              enrichedContextLinkCustomization(href, props.context?.records ?? [], messages) ??
                 props.linkHandlers.linkCustomization?.(href),
               threadIcons.get(href),
             ),

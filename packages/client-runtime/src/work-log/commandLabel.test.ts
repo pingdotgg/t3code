@@ -88,6 +88,10 @@ describe("commandProgramName", () => {
     ["source ~/.nvm/nvm.sh && nvm use", "nvm"],
     ["unset DEBUG; node app.js", "node"],
     ["/bin/zsh -lc 'source ~/.nvm/nvm.sh && nvm use'", "nvm"],
+    ["sudo [ -f /etc/hosts ] && git status", "git"],
+    ["sudo -n [ -d /opt ] && pytest", "pytest"],
+    ["sudo [[ -f /etc/hosts ]] && git status", "git"],
+    ["true && git --version", "git"],
   ])("skips shell setup commands and uses the next useful program: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
@@ -99,6 +103,10 @@ describe("commandProgramName", () => {
     ["timeout -s KILL 30 npm test", "npm"],
     ["timeout --signal=TERM -v 60 cargo test", "cargo"],
     ["gtimeout -fk5 -- 30 node app.js", "node"],
+    ['env -S"FOO=1 git status"', "git"],
+    ['env -vS "FOO=1 git status"', "git"],
+    ['env -S"FOO=1" git status', "git"],
+    ["env - git status", "git"],
   ])("unwraps process-launch wrappers: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
@@ -117,6 +125,11 @@ describe("commandProgramName", () => {
     "$PY scripts/check.py",
     "& { Get-Process }",
     "coproc npm test",
+    "true || git --version",
+    "builtin true || git --version",
+    ": || git --version",
+    "builtin : || git --version",
+    "command : || git --version",
   ])("does not treat shell lookup and commandless wrapper forms as executions: %s", (command) => {
     expect(commandProgramName(command)).toBeNull();
   });
@@ -152,6 +165,8 @@ describe("commandProgramName", () => {
     ["cd /tmp <<EOF && pnpm test\nnot-a-command\nEOF\nbun test", "pnpm"],
     ["cd . <<''\npretend\n\nprintf ok", "printf"],
     ['cd . <<""\npretend\n\nprintf ok', "printf"],
+    [": <<< hi\nprintf '%s' visible", "printf"],
+    [": <<<-hi && printf '%s' visible", "printf"],
   ])("skips heredoc bodies before finding the next command: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });

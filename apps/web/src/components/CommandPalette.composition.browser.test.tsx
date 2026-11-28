@@ -2,10 +2,19 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  EnvironmentId,
+  ProjectId,
+} from "@t3tools/contracts";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { act, render, stubGlobal } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
+import { moveDraftToProject } from "../lib/moveDraftToProject";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { projectEnvironment } from "../state/projects";
 import { sourceControlEnvironment } from "../state/sourceControl";
@@ -24,6 +33,7 @@ const scopes = vi.hoisted(() => ({
   createNewProject: vi.fn<() => Promise<typeof createdProject>>(),
   openDraft: vi.fn<() => Promise<void>>(),
   addProject: vi.fn<() => Promise<{ _tag: "Success"; value: { projectId: string } }>>(),
+  waitForProject: vi.fn<() => Promise<EnvironmentProject | undefined>>(),
 }));
 const setup = (deniedScope?: string, sourceControl?: unknown, isBrowsePending = false) => {
   scopes.denied = deniedScope;
@@ -35,6 +45,7 @@ const setup = (deniedScope?: string, sourceControl?: unknown, isBrowsePending = 
     value: { projectId: "project-cloned" },
   });
   scopes.isBrowsePending = isBrowsePending;
+  scopes.waitForProject.mockReset().mockResolvedValue(undefined);
 };
 const githubAvailable = {
   versionControlSystems: [],
@@ -131,7 +142,7 @@ vi.mock("../state/entities", async (original) => ({
   useAnyEnvironmentHiding: () => false,
   useEnvironmentThreadRefs: () => [],
   useServerConfigs: () => new Map(),
-  waitForProject: async () => undefined,
+  waitForProject: scopes.waitForProject,
 }));
 vi.mock("../state/queries", async (original) => ({
   ...(await original<typeof import("../state/queries")>()),
@@ -298,7 +309,14 @@ it("tells screen readers whether a new project will be published", async () => {
   await expect.element(option).toHaveAttribute("aria-checked", "true");
 });
 
-async function startLateProjectAdd(source: string, input: string) {
+async function submitProjectAdd(source: string, input: string, draftId?: DraftId) {
+  await act(() => openCommandPalette({ open: "add-project", ...(draftId && { draftId }) }));
+  await page.getByText(source, { exact: true }).click();
+  await page.getByRole("combobox").fill(input);
+  await userEvent.keyboard("{Enter}");
+}
+
+async function startLateProjectAdd(source: string, input: string, draftId?: DraftId) {
   const finished = Promise.withResolvers<void>();
   const created = Promise.withResolvers<typeof createdProject>();
   scopes.createNewProject.mockReturnValue(created.promise);
@@ -307,11 +325,7 @@ async function startLateProjectAdd(source: string, input: string) {
     await finished.promise;
     return { _tag: "Success", value: { projectId: "project-added" } };
   });
-  await act(() => openCommandPalette({ open: "add-project" }));
-  await page.getByText(source, { exact: true }).click();
-  const search = page.getByRole("combobox");
-  await search.fill(input);
-  await userEvent.keyboard("{Enter}");
+  await submitProjectAdd(source, input, draftId);
   return async () => {
     await act(async () => {
       created.resolve(createdProject);
@@ -350,6 +364,110 @@ it("keeps the view the user went back to when a folder add finishes late", async
   await finish();
   expect(page.getByTestId("command-palette").element()).toHaveAttribute("data-open");
   expect(page.getByText("Git URL", { exact: true }).element()).toBeVisible();
+});
+
+it.each(["/", "/?panel=files"])(
+  "opens the added folder after navigation to the same page (%s)",
+  async (to) => {
+    setup();
+    await using screen = await render(<CommandPalette>{null}</CommandPalette>);
+    const finish = await startLateProjectAdd("Local folder", "/workspace/next");
+
+    await act(() => screen.router!.navigate({ to }));
+    await finish();
+
+    expect(scopes.openDraft).toHaveBeenCalledOnce();
+  },
+);
+
+const environmentId = EnvironmentId.make("local");
+const project = (name: string): EnvironmentProject => ({
+  id: ProjectId.make(name),
+  environmentId,
+  title: name,
+  workspaceRoot: `/workspace/${name}`,
+  repositoryIdentity: null,
+  defaultModelSelection: null,
+  createdAt: "2026-03-01T00:00:00.000Z",
+  updatedAt: "2026-03-01T00:00:00.000Z",
+  scripts: [],
+});
+
+it.each([
+  { selection: [], expected: "added" },
+  { selection: ["other"], expected: "other" },
+  { selection: ["other", "original"], expected: "original" },
+])("keeps the draft's project selection after switching threads (%j)", async (row) => {
+  setup();
+  const draftId = DraftId.make("draft-adding-project");
+  const store = useComposerDraftStore.getState();
+  store.setProjectDraftThreadId(
+    scopeProjectRef(environmentId, ProjectId.make("original")),
+    draftId,
+  );
+  store.setPrompt(draftId, "Keep this draft");
+  scopes.waitForProject.mockResolvedValue(project("added"));
+  try {
+    await using screen = await render(<CommandPalette>{null}</CommandPalette>);
+    const finish = await startLateProjectAdd("Local folder", "/workspace/added", draftId);
+    await userEvent.keyboard("{Escape}");
+    await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+    await act(() => {
+      for (const name of row.selection) moveDraftToProject(draftId, project(name));
+    });
+    await act(() =>
+      screen.router!.navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId, threadId: "another-thread" },
+      }),
+    );
+    await finish();
+
+    expect(screen.router!.state.location.pathname).toBe("/local/another-thread");
+    expect(scopes.openDraft).not.toHaveBeenCalled();
+    expect(store.getDraftSession(draftId)?.projectId).toBe(row.expected);
+  } finally {
+    store.clearDraftThread(draftId);
+  }
+});
+
+it.each([
+  { replyOrder: ["older", "newer"], assignments: ["original", "newer"] },
+  { replyOrder: ["newer", "older"], assignments: ["newer", "newer"] },
+] as const)("uses the newer folder selection when replies arrive %j", async (row) => {
+  setup();
+  const draftId = DraftId.make("draft-adding-two-projects");
+  const store = useComposerDraftStore.getState();
+  store.setProjectDraftThreadId(
+    scopeProjectRef(environmentId, ProjectId.make("original")),
+    draftId,
+  );
+  store.setPrompt(draftId, "Keep this draft");
+  const pending = {
+    older: Promise.withResolvers<{ _tag: "Success"; value: { projectId: string } }>(),
+    newer: Promise.withResolvers<{ _tag: "Success"; value: { projectId: string } }>(),
+  };
+  scopes.addProject
+    .mockReturnValueOnce(pending.older.promise)
+    .mockReturnValueOnce(pending.newer.promise);
+  try {
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    for (const name of ["older", "newer"]) {
+      await submitProjectAdd("Local folder", `/workspace/${name}`, draftId);
+      await userEvent.keyboard("{Escape}");
+      await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+    }
+    for (const [index, name] of row.replyOrder.entries()) {
+      scopes.waitForProject.mockResolvedValue(project(name));
+      await act(async () => {
+        pending[name].resolve({ _tag: "Success", value: { projectId: name } });
+        await pending[name].promise;
+      });
+      expect(store.getDraftSession(draftId)?.projectId).toBe(row.assignments[index]);
+    }
+  } finally {
+    store.clearDraftThread(draftId);
+  }
 });
 
 it("keeps a reopened palette open after a late folder pick", async () => {
@@ -410,4 +528,37 @@ it("keeps the source list visible after a dismissed repository lookup succeeds",
     await lookup.promise;
   });
   expect(sources.element()).toBeVisible();
+});
+
+it("looks up a corrected repository name after the pending reply for the old one", async () => {
+  setup(undefined, githubAvailable);
+  const repository = AsyncResult.success({
+    provider: "github",
+    nameWithOwner: "example/slow",
+    url: "https://github.com/example/slow",
+    sshUrl: "git@github.com:example/slow.git",
+  });
+  const lookup = Promise.withResolvers<typeof repository>();
+  scopes.lookupRepository
+    .mockReset()
+    .mockReturnValueOnce(lookup.promise)
+    .mockReturnValueOnce(Promise.withResolvers<typeof repository>().promise);
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByRole("option", { name: /^GitHub repository/ }).click();
+  const input = page.getByRole("combobox");
+  await input.fill("example/slow");
+  await userEvent.keyboard("{Enter}");
+  expect(scopes.lookupRepository).toHaveBeenCalledOnce();
+  await input.fill("example/corrected");
+
+  await act(async () => {
+    lookup.resolve(repository);
+    await lookup.promise;
+  });
+  expect(input.element()).toHaveValue("example/corrected");
+  await userEvent.keyboard("{Enter}");
+  expect(scopes.lookupRepository).toHaveBeenLastCalledWith(
+    expect.objectContaining({ input: { provider: "github", repository: "example/corrected" } }),
+  );
 });

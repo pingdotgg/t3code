@@ -6,7 +6,7 @@ import * as Path from "effect/Path";
 import * as ProcessRunner from "../processRunner.ts";
 import { explicitBareRepositoryEnv, unsetInheritedRepositoryEnv } from "../vcs/VcsProcess.ts";
 
-const parseGitfileTarget = (contents: string): string | undefined => {
+export const parseGitfileTarget = (contents: string): string | undefined => {
   const prefix = "gitdir: ";
   if (!contents.startsWith(prefix)) return undefined;
   const target = contents.slice(prefix.length).replace(/[\r\n]+$/u, "");

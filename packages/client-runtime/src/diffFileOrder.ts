@@ -9,11 +9,23 @@ const GENERATED_FILE_NAMES = new Set([
   "pnpm-lock.yaml",
   "yarn.lock",
   "package-lock.json",
+  "npm-shrinkwrap.json",
+  "bun.lock",
   "bun.lockb",
+  "deno.lock",
   "Cargo.lock",
   "go.sum",
+  "gradle.lockfile",
   "composer.lock",
   "Gemfile.lock",
+  "packages.lock.json",
+  "Pipfile.lock",
+  "poetry.lock",
+  "uv.lock",
+  "flake.lock",
+  "Podfile.lock",
+  "pubspec.lock",
+  "mix.lock",
 ]);
 const GENERATED_DIRECTORIES = new Set([
   "__snapshots__",
@@ -69,12 +81,16 @@ function moduleName(path: string): string {
   return stripModuleExtension(path.split("/").at(-1) ?? "");
 }
 
-function resolveRelative(fromPath: string, specifier: string): string {
+function resolveRelative(fromPath: string, specifier: string): string | null {
   const segments = fromPath.split("/").slice(0, -1);
   for (const part of specifier.split("/")) {
     if (part === "." || part === "") continue;
-    if (part === "..") segments.pop();
-    else segments.push(part);
+    if (part === "..") {
+      if (segments.length === 0) return null;
+      segments.pop();
+    } else {
+      segments.push(part);
+    }
   }
   return segments.join("/");
 }
@@ -90,20 +106,22 @@ function importedPaths(
 ): ReadonlySet<string> {
   const imported = new Set<string>();
   for (const line of lines) {
-    IMPORT_SPECIFIER.lastIndex = 0;
-    let match = IMPORT_SPECIFIER.exec(line);
-    while (match !== null) {
+    for (const match of line.matchAll(IMPORT_SPECIFIER)) {
       // Bundler queries such as `?worker` or `?url` name the same file.
       const specifier = (match[1] ?? "").replace(/\?.*$/, "");
-      const resolvedPath = specifier.startsWith(".") ? resolveRelative(path, specifier) : specifier;
+      const isRelative = specifier.startsWith(".");
+      const resolvedPath = isRelative ? resolveRelative(path, specifier) : specifier;
+      if (specifier === "" || resolvedPath === null) continue;
       const resolved = stripModuleExtension(resolvedPath);
+      // `.` or `..` that lands on the repository root can only mean its index file.
       const target =
-        (exactPaths.has(resolvedPath) ? resolvedPath : undefined) ??
-        byModulePath.get(resolved) ??
-        byModulePath.get(`${resolved}/index`) ??
-        byModuleName.get(moduleName(resolved));
+        resolvedPath === ""
+          ? byModulePath.get("index")
+          : ((exactPaths.has(resolvedPath) ? resolvedPath : undefined) ??
+            byModulePath.get(resolved) ??
+            byModulePath.get(`${resolved}/index`) ??
+            (isRelative ? undefined : byModuleName.get(moduleName(resolved))));
       if (target !== undefined && target !== path) imported.add(target);
-      match = IMPORT_SPECIFIER.exec(line);
     }
   }
   return imported;

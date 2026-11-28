@@ -89,8 +89,11 @@ const ICON_REL_VALUE = String.raw`(?:"(?:[^"]*[\t\n\f\r ])?icon(?=[\t\n\f\r "])|
 // HTML attribute syntax: a name, then an optional double-quoted, single-quoted, or unquoted value.
 const HTML_ATTRIBUTE_RE =
   /([^\t\n\f\r "'<>/=]+)(?:[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"|'([^']*)'|([^\t\n\f\r >]+)))?/g;
-const ICON_REL_RE = new RegExp(String.raw`\brel\s*:\s*${ICON_REL_VALUE}`, "i");
-const ICON_HREF_RE = /\bhref\s*:\s*["']([^"'?#]+)/i;
+const ICON_REL_RE = new RegExp(
+  String.raw`(?:^|[\s,{]|\*\/)(?:"rel"|'rel'|rel)\s*:\s*${ICON_REL_VALUE}`,
+  "i",
+);
+const ICON_HREF_RE = /(?:^|[\s,{]|\*\/)(?:"href"|'href'|href)\s*:\s*(?:"([^"?#]+)|'([^'?#]+))/i;
 // https://html.spec.whatwg.org/multipage/parsing.html#numeric-character-reference-end-state
 const HTML_C1_REPLACEMENTS: Readonly<Partial<Record<number, number>>> = {
   0x80: 0x20ac,
@@ -210,7 +213,8 @@ function* extractIconHrefs(source: string, html: boolean): Generator<string> {
   for (const run of source.split("}")) {
     if (!ICON_REL_RE.test(run)) continue;
     const hrefMatch = run.match(ICON_HREF_RE);
-    if (hrefMatch?.[1]) yield hrefMatch[1];
+    const href = hrefMatch?.[1] ?? hrefMatch?.[2];
+    if (href) yield href;
   }
 }
 

@@ -3766,8 +3766,26 @@ export const layerWithOptions = (
                     ) {
                       return;
                     }
-                    yield* unloadThread({ providerThread }).pipe(
-                      Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+                    // Detaching cancels the idle unload, so archive a delivered child here instead.
+                    const archive = (yield* delegatedChildArchive(ownerThreadId)) === "ready";
+                    const unload = (archiveThread: boolean) =>
+                      unloadThread({ providerThread, archive: archiveThread }).pipe(
+                        Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+                      );
+                    yield* unload(archive).pipe(
+                      Effect.catch((cause) =>
+                        archive
+                          ? Effect.logWarning(
+                              "orchestration-v2.driver-session.detach-archive-failed",
+                              {
+                                providerSessionId: input.providerSessionId,
+                                threadId: ownerThreadId,
+                                providerThreadId: providerThread.id,
+                                cause,
+                              },
+                            ).pipe(Effect.andThen(unload(false)))
+                          : Effect.fail(cause),
+                      ),
                       Effect.catchCause((cause) =>
                         Effect.logWarning("orchestration-v2.driver-session.detach-unload-failed", {
                           providerSessionId: input.providerSessionId,

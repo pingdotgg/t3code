@@ -50,6 +50,21 @@ describe("orderDiffFilesForReview", () => {
     ]);
   });
 
+  it.each([
+    "bun.lock",
+    "deno.lock",
+    "npm-shrinkwrap.json",
+    "poetry.lock",
+    "Pipfile.lock",
+    "flake.lock",
+  ])("places the %s lockfile after source like other lockfiles", (lockfile) => {
+    expect(order([file(lockfile), file("package.json"), file("src/index.ts")])).toEqual([
+      "package.json",
+      "src/index.ts",
+      lockfile,
+    ]);
+  });
+
   it("keeps both entries of a path that changed type, such as a file replaced by a symlink", () => {
     const deleted = { ...file("AGENTS.md"), additionLines: [], deletionLines: ["# Agents"] };
     const added = file("AGENTS.md", ["CLAUDE.md"]);
@@ -80,12 +95,24 @@ describe("orderDiffFilesForReview", () => {
     expect(
       order([file("src/ui/a.ts", ['import { b } from "../lib/b";']), file("src/lib/b.ts")]),
     ).toEqual(["src/lib/b.ts", "src/ui/a.ts"]);
+    expect(order([file("a.ts", ['import { z } from "../z";']), file("z.ts")])).toEqual([
+      "a.ts",
+      "z.ts",
+    ]);
   });
 
   it("resolves a directory specifier to that directory's index file", () => {
     expect(
       order([file("src/a.ts", ['import { b } from "./lib";']), file("src/lib/index.ts")]),
     ).toEqual(["src/lib/index.ts", "src/a.ts"]);
+    expect(order([file("a/app.ts", ['import { x } from "..";']), file("index.ts")])).toEqual([
+      "index.ts",
+      "a/app.ts",
+    ]);
+    expect(order([file("app.ts", ['import { x } from ".";']), file("index.ts")])).toEqual([
+      "index.ts",
+      "app.ts",
+    ]);
   });
 
   it("resolves .mts and .cts modules from NodeNext and extensionless specifiers", () => {
@@ -103,6 +130,17 @@ describe("orderDiffFilesForReview", () => {
     expect(order([file("src/a.ts", ['import { b } from "~/lib/b";']), file("lib/b.ts")])).toEqual([
       "lib/b.ts",
       "src/a.ts",
+    ]);
+  });
+
+  it("does not fall back to the basename for a relative specifier outside the diff", () => {
+    expect(order([file("src/a.ts", ['import "./z";']), file("zzz/z.ts")])).toEqual([
+      "src/a.ts",
+      "zzz/z.ts",
+    ]);
+    expect(order([file("src/sub/a.ts", ['import "../z";']), file("zzz/z.ts")])).toEqual([
+      "src/sub/a.ts",
+      "zzz/z.ts",
     ]);
   });
 

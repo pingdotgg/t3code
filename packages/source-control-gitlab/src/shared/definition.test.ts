@@ -90,6 +90,27 @@ describe("GitLab change request URLs", () => {
     ).toBe("https://gitlab.com/group/sub/project/-/merge_requests/4");
   });
 
+  it.each([
+    [
+      "altssh.gitlab.com",
+      "https://gitlab.com",
+      "ssh://git@altssh.gitlab.com:443/group/sub/project.git",
+    ],
+    [
+      "altssh.gitlab.example.com",
+      "https://altssh.gitlab.example.com",
+      "ssh://git@altssh.gitlab.example.com:443/group/sub/project.git",
+    ],
+  ])("builds merge request and commit URLs for %s on %s", (host, origin, remoteUrl) => {
+    const sha = "a".repeat(40);
+    expect(
+      definition.changeRequestUrl({ host, repository: "group/sub/project", number: 4, remoteUrl }),
+    ).toBe(`${origin}/group/sub/project/-/merge_requests/4`);
+    expect(definition.commitUrl({ host, repository: "group/sub/project", sha, remoteUrl })).toBe(
+      `${origin}/group/sub/project/-/commit/${sha}`,
+    );
+  });
+
   it("links authors, bots included, to their profile on the repository's host", () => {
     expect(definition.authorProfileUrl("TonybynMp4", "https://gitlab.com/group/sub/project")).toBe(
       "https://gitlab.com/TonybynMp4",

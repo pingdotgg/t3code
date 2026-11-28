@@ -139,6 +139,9 @@ function ThemeLibraryCard({
       selected: options.find(({ option }) => option.activeModes.includes(mode)) ?? options[0],
     };
   });
+  const hasOpenRadialPicker = radialModeGroups.some(
+    (group) => group.mode === radialModeOpen && group.options.length > 1,
+  );
   return (
     <SharedTooltipTrigger
       render={
@@ -164,7 +167,15 @@ function ThemeLibraryCard({
                   }
                 }}
                 onKeyDown={(event) => {
-                  if (event.key === "Escape") setRadialModeOpen(null);
+                  if (event.key !== "Escape" || !hasOpenRadialPicker) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const trigger = event.currentTarget.querySelector<HTMLButtonElement>(
+                    `[data-radial-trigger="${radialModeOpen}"]`,
+                  );
+                  // Focus first: the trigger's onFocus reopen is batched before this close.
+                  if (event.target !== trigger) trigger?.focus();
+                  setRadialModeOpen(null);
                 }}
                 onMouseLeave={() => setRadialModeOpen(null)}
               >
@@ -199,6 +210,7 @@ function ThemeLibraryCard({
                           }
                           aria-pressed={isActive}
                           className="absolute left-1/2 top-2 z-20 flex size-14 items-center justify-center rounded-full outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-5 focus-visible:outline-foreground/60"
+                          data-radial-trigger={mode}
                           style={{
                             transform: `translateX(calc(-50% + ${rootOffsetX}px))`,
                           }}
