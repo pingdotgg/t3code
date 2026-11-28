@@ -11,6 +11,7 @@ vi.mock(import("../components/issue/IssuesPage"), () => ({
 
 import { render } from "../../test/render";
 import { createLayoutLauncherContent, findLayoutTab } from "./layoutModel";
+import { LayoutPaneContext } from "./layoutPaneContext";
 import { useLayoutStore } from "./layoutStore";
 import { useOpenLayoutPage } from "./pageNavigation";
 import { LayoutPageBody } from "./PageSurface";
@@ -44,7 +45,7 @@ it("opening Settings from a launcher tab does not leave the empty tab behind", a
     .toBeNull();
 });
 
-it("isolates a failing page pane without unmounting sibling panes", async () => {
+it("isolates a failing page pane and keeps its tab strip", async () => {
   pageMock.failIssues = true;
   using _restoreError = vi.spyOn(console, "error").mockImplementation(() => {});
   using _resetFlag = {
@@ -52,15 +53,41 @@ it("isolates a failing page pane without unmounting sibling panes", async () => 
       pageMock.failIssues = false;
     },
   };
+  const store = useLayoutStore.getState();
+  store.reset();
+  store.openTab({ kind: "pull-requests" });
+  store.openTab({ kind: "issues" });
+  const issues = findLayoutTab(
+    useLayoutStore.getState().layout,
+    (tab) => tab.content.kind === "issues",
+  );
+  expect(issues?.pane.tabs.map((tab) => tab.content.kind)).toEqual(["pull-requests", "issues"]);
   await using _screen = await render(
     <div>
       <div>Sibling chat pane</div>
-      <LayoutPageBody content={{ kind: "issues" }} />
+      <LayoutPaneContext
+        value={{
+          tabId: issues?.tab.id ?? null,
+          paneId: issues?.pane.id ?? null,
+          split: true,
+          narrow: false,
+          leadingEdge: false,
+          trailingEdge: false,
+          focused: true,
+          related: false,
+          visible: true,
+        }}
+      >
+        <LayoutPageBody content={{ kind: "issues" }} />
+      </LayoutPaneContext>
     </div>,
   );
 
-  await expect.element(page.getByText("Couldn’t load this page.")).toBeVisible();
+  await expect.element(page.getByText("Could not load this page")).toBeVisible();
   await expect.element(page.getByText("Sibling chat pane")).toBeVisible();
+  await expect.element(page.getByRole("heading", { name: "Issues" })).toBeVisible();
+  await expect.element(page.getByText("Pull requests")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "New tab" })).toBeVisible();
 
   pageMock.failIssues = false;
   await userEvent.click(page.getByRole("button", { name: "Retry" }));

@@ -3248,6 +3248,7 @@
   "e1c99915f0166c75": "Nueva pestaña ({shortcut})",
   "9d2fc1003e82feb1": "Uso",
   "8e9626aa27cb188a": "Issues",
+  "20997d23d6c0b2be": "No se pudo cargar esta página",
   "d95fdf3259707d2b": "Superficie",
   "6ae127cb4162f3c6": "Fijados",
   "1d774ad4756f9260": "Recientes",
@@ -13752,6 +13753,5 @@
   "faa3bb26abb39c93": "Falló la guía de revisión",
   "b7df38b7d8792d78": "Abrir guía",
   "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión",
-  "0a49f81b1b933f49": "No se pudo cargar esta página.",
   "83734945bbc83594": "Error al configurar el worktree"
 }

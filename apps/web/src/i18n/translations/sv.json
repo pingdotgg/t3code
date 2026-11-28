@@ -3248,6 +3248,7 @@
   "e1c99915f0166c75": "Ny flik ({shortcut})",
   "9d2fc1003e82feb1": "Användning",
   "8e9626aa27cb188a": "Ärenden",
+  "20997d23d6c0b2be": "Det gick inte att läsa in den här sidan",
   "d95fdf3259707d2b": "Yta",
   "6ae127cb4162f3c6": "Fästa",
   "1d774ad4756f9260": "Senaste",
@@ -13764,6 +13765,5 @@
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
   "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
-  "0a49f81b1b933f49": "Det gick inte att läsa in den här sidan.",
   "83734945bbc83594": "Worktree-konfigurationen misslyckades"
 }

@@ -90,6 +90,7 @@ import {
   isLayoutGhostTabShown,
   isLayoutPageContent,
   THREAD_TERMINAL_SURFACE_ID,
+  type LayoutPageContent,
   type LayoutState,
   type LayoutTab,
   canCloseLayoutTab,
@@ -1848,6 +1849,31 @@ function LayoutPaneTabButton({
   );
 }
 
+/** A page tab's name and glyph, shared by its tab and its page's own notch. */
+export function layoutPageTabLabel(kind: LayoutPageContent["kind"], gt: ReturnType<typeof useGT>) {
+  const title =
+    kind === "settings"
+      ? gt("Settings")
+      : kind === "usage"
+        ? gt("Usage")
+        : kind === "issues"
+          ? gt("Issues", { $context: "sidebar link to the list of issues" })
+          : kind === "workflows"
+            ? gt("Workflows")
+            : gt("Pull requests");
+  const Icon =
+    kind === "settings"
+      ? SettingsIcon
+      : kind === "usage"
+        ? ChartNoAxesColumnIcon
+        : kind === "issues"
+          ? IssueGlyph.issue
+          : kind === "workflows"
+            ? WorkflowIcon
+            : PullRequestGlyph.pullRequest;
+  return { title, Icon };
+}
+
 export function useLayoutTabLabel(tab: LayoutTab): {
   icon: React.ReactNode;
   title: string;
@@ -1922,26 +1948,7 @@ export function useLayoutTabLabel(tab: LayoutTab): {
   })();
   const project = useProject(projectRef);
   if (isLayoutPageContent(tab.content)) {
-    const title =
-      tab.content.kind === "settings"
-        ? gt("Settings")
-        : tab.content.kind === "usage"
-          ? gt("Usage")
-          : tab.content.kind === "issues"
-            ? gt("Issues", { $context: "sidebar link to the list of issues" })
-            : tab.content.kind === "workflows"
-              ? gt("Workflows")
-              : gt("Pull requests");
-    const Icon =
-      tab.content.kind === "settings"
-        ? SettingsIcon
-        : tab.content.kind === "usage"
-          ? ChartNoAxesColumnIcon
-          : tab.content.kind === "issues"
-            ? IssueGlyph.issue
-            : tab.content.kind === "workflows"
-              ? WorkflowIcon
-              : PullRequestGlyph.pullRequest;
+    const { title, Icon } = layoutPageTabLabel(tab.content.kind, gt);
     return {
       icon: <Icon aria-hidden className="size-3.5 shrink-0" />,
       title,

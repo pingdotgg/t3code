@@ -3248,6 +3248,7 @@
   "e1c99915f0166c75": "Nova aba ({shortcut})",
   "9d2fc1003e82feb1": "Uso",
   "8e9626aa27cb188a": "Issues",
+  "20997d23d6c0b2be": "Não foi possível carregar esta página",
   "d95fdf3259707d2b": "Superfície",
   "6ae127cb4162f3c6": "Fixados",
   "1d774ad4756f9260": "Recentes",
@@ -13757,6 +13758,5 @@
   "faa3bb26abb39c93": "O guia de revisão falhou",
   "b7df38b7d8792d78": "Abrir guia",
   "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão",
-  "0a49f81b1b933f49": "Não foi possível carregar esta página.",
   "83734945bbc83594": "Falha na configuração do worktree"
 }

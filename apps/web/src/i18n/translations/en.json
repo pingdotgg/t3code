@@ -3248,6 +3248,7 @@
   "e1c99915f0166c75": "New tab ({shortcut})",
   "9d2fc1003e82feb1": "Usage",
   "8e9626aa27cb188a": "Issues",
+  "20997d23d6c0b2be": "Could not load this page",
   "d95fdf3259707d2b": "Surface",
   "6ae127cb4162f3c6": "Pinned",
   "1d774ad4756f9260": "Recent",
@@ -13765,6 +13766,5 @@
   "faa3bb26abb39c93": "Review guide failed",
   "b7df38b7d8792d78": "Open guide",
   "9e91e9a77b664e4e": "Could not start a review guide",
-  "0a49f81b1b933f49": "Couldn’t load this page.",
   "83734945bbc83594": "Worktree setup failed"
 }
