@@ -2741,9 +2741,12 @@ export default function ChatView(props: ChatViewProps) {
       return next;
     });
   };
-  // While a question or approval owns the composer, its text answers that, not the agent.
+  // While a question, approval or queued edit owns the composer, its text belongs to that, not the next send.
   const freshSessionCommandAvailable =
-    freshSessionAvailable && activePendingApproval === null && pendingUserInputs.length === 0;
+    freshSessionAvailable &&
+    activePendingApproval === null &&
+    pendingUserInputs.length === 0 &&
+    !queuedRunEdit.isEditing;
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
   const composerSendHeld = useComposerSendHeld(composerDraftTargetKey);
   const cancelHeldSendStable = useStableCallback(() => {
@@ -4050,6 +4053,10 @@ export default function ChatView(props: ChatViewProps) {
                                 onRestoreEditingQueuedAttachment={
                                   queuedRunEdit.restoreEditingAttachment
                                 }
+                                canMoveEditingQueuedMessageToStash={
+                                  queuedRunEdit.canMoveEditToStash
+                                }
+                                onMoveEditingQueuedMessageToStash={queuedRunEdit.removeEditedRun}
                               />
                             )}
                           </div>

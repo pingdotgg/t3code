@@ -980,6 +980,14 @@ export function AddProjectRepositoryScreen(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the repository lookup when its screen unmounts
   useEffect(() => () => pendingLookup.current?.abort(), []);
 
+  const changeRepositoryInput = (nextInput: string) => {
+    setRepositoryInput(nextInput);
+    if (nextInput === repositoryInput) return;
+    pendingLookup.current?.abort();
+    pendingLookup.current = null;
+    setIsSubmitting(false);
+  };
+
   const lookupRepository = async () => {
     if (!environment || repositoryInput.trim().length === 0 || pendingLookup.current) return;
     if (!isActiveRoute(navigation, originRoute)) return;
@@ -1052,7 +1060,7 @@ export function AddProjectRepositoryScreen(props: {
           <TextInput
             className="h-12 min-h-12 rounded-[24px] px-4 py-0 text-base leading-snug"
             value={repositoryInput}
-            onChangeText={setRepositoryInput}
+            onChangeText={changeRepositoryInput}
             autoCapitalize="none"
             autoCorrect={false}
             placeholder={
