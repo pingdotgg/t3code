@@ -1,4 +1,5 @@
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import * as NodeReadline from "node:readline";
 
 const sessionId = "grok-text-session";
@@ -45,6 +46,18 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
       };
       break;
     case "session/new":
+      // Real Grok keeps a session folder per cwd under GROK_HOME.
+      if (process.env.GROK_HOME) {
+        const sessionDir = NodePath.join(
+          process.env.GROK_HOME,
+          "sessions",
+          encodeURIComponent(request.params.cwd),
+        );
+        NodeFS.mkdirSync(sessionDir, { recursive: true });
+        if (process.env.T3_GROK_SESSION_DIR_LOG_PATH) {
+          NodeFS.appendFileSync(process.env.T3_GROK_SESSION_DIR_LOG_PATH, `${sessionDir}\n`);
+        }
+      }
       result = {
         sessionId,
         models: {

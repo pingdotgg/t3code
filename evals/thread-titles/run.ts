@@ -14,6 +14,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as CodexTextGeneration from "../../apps/server/src/textGeneration/CodexTextGeneration.ts";
+import { GrokSettings } from "../../packages/provider-grok/src/settings.ts";
+import { makeGrokTextGeneration } from "../../packages/provider-grok/src/server/textGeneration.ts";
 import { threadTitleEvaluationCases } from "./cases.ts";
 import {
   formatThreadTitleContext,
@@ -32,6 +34,7 @@ import * as ServerConfig from "../../apps/server/src/config.ts";
 
 const { values } = NodeUtil.parseArgs({
   options: {
+    provider: { type: "string", default: "codex" },
     model: { type: "string" },
     case: { type: "string", multiple: true },
     out: { type: "string" },
@@ -41,11 +44,14 @@ const { values } = NodeUtil.parseArgs({
 });
 if (!values.model || !values.out)
   throw new Error("Use --model <configured-model> --out <directory>.");
+if (values.provider !== "codex" && values.provider !== "grok")
+  throw new Error("Use --provider codex or --provider grok.");
 for (const id of values.case ?? []) {
   if (!threadTitleEvaluationCases.some((fixture) => fixture.id === id)) {
     throw new Error(`Unknown case id: ${id}.`);
   }
 }
+const provider = values.provider;
 const model = values.model;
 const outputDirectory = values.out;
 const Results = Schema.fromJsonString(
@@ -60,6 +66,7 @@ const Results = Schema.fromJsonString(
 );
 const decodeResults = Schema.decodeUnknownEffect(Results);
 const decodeSettings = Schema.decodeUnknownEffect(CodexSettings);
+const decodeGrokSettings = Schema.decodeUnknownEffect(GrokSettings);
 const encodeReport = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 await Effect.runPromise(
@@ -67,9 +74,10 @@ await Effect.runPromise(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-title-evaluation-" });
-    const generation = yield* CodexTextGeneration.makeCodexTextGeneration(
-      yield* decodeSettings({}),
-    );
+    const generation =
+      provider === "grok"
+        ? yield* makeGrokTextGeneration(yield* decodeGrokSettings({}))
+        : yield* CodexTextGeneration.makeCodexTextGeneration(yield* decodeSettings({}));
     const baseline = values.baseline
       ? yield* fs.readFileString(values.baseline).pipe(Effect.flatMap(decodeResults))
       : [];
@@ -108,7 +116,7 @@ await Effect.runPromise(
           previousTitle: values.initial ? undefined : fixture.previousTitle,
           attachments,
           linkedContext,
-          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model },
+          modelSelection: { instanceId: ProviderInstanceId.make(provider), model },
         });
         return { generated, linkedContextDigest };
       }).pipe(Effect.timed);

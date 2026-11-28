@@ -42,7 +42,11 @@ function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
 
 function withFakeAcpGrok<A, E, R>(
   env: Record<string, string>,
-  effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
+  effectFn: (
+    textGeneration: TextGeneration.TextGeneration["Service"],
+    grokHome: string,
+    projectDir: string,
+  ) => Effect.Effect<A, E, R>,
 ) {
   return Effect.gen(function* () {
     const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-acp-"));
@@ -51,10 +55,16 @@ function withFakeAcpGrok<A, E, R>(
         NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }),
     );
-    const binaryPath = makeAcpGrokWrapper(tempDir, env);
-    const config = decodeGrokSettings({ binaryPath });
-    const textGeneration = yield* makeGrokTextGeneration(config);
-    return yield* effectFn(textGeneration);
+    makeAcpGrokWrapper(tempDir, env);
+    // Relative to the request cwd, which Grok no longer runs in.
+    const config = decodeGrokSettings({ binaryPath: "./bin/grok" });
+    const grokHome = NodePath.join(tempDir, "grok-home");
+    const textGeneration = yield* makeGrokTextGeneration(config, {
+      ...process.env,
+      // Relative, so Grok running in a temporary cwd must still get this folder.
+      GROK_HOME: NodePath.relative(process.cwd(), grokHome),
+    });
+    return yield* effectFn(textGeneration, grokHome, tempDir);
   }).pipe(Effect.scoped);
 }
 
@@ -79,20 +89,22 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
       NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-log-"),
     );
     const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+    const sessionDirLogPath = NodePath.join(requestLogDir, "session-dirs.log");
 
     return withFakeAcpGrok(
       {
         T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        T3_GROK_SESSION_DIR_LOG_PATH: sessionDirLogPath,
         T3_ACP_REQUEST_PERMISSION: "1",
         T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
           subject: "Add Grok provider",
           body: "Wire up the ACP runtime and headless text generation path.",
         }),
       },
-      (textGeneration) =>
+      (textGeneration, grokHome, projectDir) =>
         Effect.gen(function* () {
           const generated = yield* textGeneration.generateCommitMessage({
-            cwd: process.cwd(),
+            cwd: projectDir,
             branch: "feature/grok",
             stagedSummary: "M apps/server/src/provider/Drivers/GrokDriver.ts",
             stagedPatch: "diff --git a/.../GrokDriver.ts b/.../GrokDriver.ts",
@@ -119,6 +131,22 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
           expect(requests.find((request) => request.id === 9001)).toMatchObject({
             result: { outcome: { outcome: "cancelled" } },
           });
+
+          const sessionCwd = String(
+            requests.find((request) => request.method === "session/new")?.params?.cwd ?? "",
+          );
+          expect(NodePath.isAbsolute(sessionCwd)).toBe(true);
+          expect(sessionCwd).not.toBe(projectDir);
+          expect(NodeFS.existsSync(sessionCwd)).toBe(false);
+          const sessionDir = NodePath.join(grokHome, "sessions", encodeURIComponent(sessionCwd));
+          expect(NodeFS.readFileSync(sessionDirLogPath, "utf8")).toBe(`${sessionDir}\n`);
+          expect(NodeFS.existsSync(sessionDir)).toBe(false);
+          const promptText = (
+            requests.find((request) => request.method === "session/prompt")?.params?.prompt as
+              | ReadonlyArray<{ text?: string }>
+              | undefined
+          )?.[0]?.text;
+          expect(promptText).toMatch(/^Use only the input below\. Do not use tools/);
         }),
     );
   });
@@ -131,10 +159,10 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
           JSON.stringify({ title: "Investigate failing CI" }) +
           "\n\nLet me know if you need anything else.",
       },
-      (textGeneration) =>
+      (textGeneration, _grokHome, projectDir) =>
         Effect.gen(function* () {
           const generated = yield* textGeneration.generateThreadTitle({
-            cwd: process.cwd(),
+            cwd: projectDir,
             message: "the lint job is red",
             modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-mock-alt"),
           });
