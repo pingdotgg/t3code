@@ -1,8 +1,10 @@
 import { T, useGT } from "gt-react";
+import { type ReactNode } from "react";
 
 import { type ClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 
+import { MiddleTruncate } from "../ui/middle-truncate";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export function PullRequestCopyableCode({
@@ -12,6 +14,7 @@ export function PullRequestCopyableCode({
   copiedLabel,
   className,
   tooltipSide = "top",
+  tooltipDetail,
   onError,
 }: {
   readonly value: string;
@@ -20,6 +23,8 @@ export function PullRequestCopyableCode({
   readonly copiedLabel: string;
   readonly className?: string;
   readonly tooltipSide?: "top" | "bottom";
+  /** A second tooltip line, for what the chip's neighbours show until they give way. */
+  readonly tooltipDetail?: ReactNode;
   readonly onError?: (error: Error) => void;
 }) {
   const gt = useGT();
@@ -45,11 +50,11 @@ export function PullRequestCopyableCode({
       >
         <code
           className={cn(
-            "col-start-1 row-start-1 min-w-0 truncate transition-opacity duration-150 motion-reduce:transition-none",
+            "col-start-1 row-start-1 flex min-w-0 transition-opacity duration-150 motion-reduce:transition-none",
             isCopied ? "opacity-0" : "opacity-100",
           )}
         >
-          {value}
+          <MiddleTruncate value={value} showTitle={false} />
         </code>
         <span
           aria-hidden="true"
@@ -63,6 +68,7 @@ export function PullRequestCopyableCode({
       </TooltipTrigger>
       <TooltipPopup variant="code" side={tooltipSide}>
         {`${isCopied ? gt("Copied") : copyLabel}: ${value}`}
+        {tooltipDetail}
       </TooltipPopup>
     </Tooltip>
   );

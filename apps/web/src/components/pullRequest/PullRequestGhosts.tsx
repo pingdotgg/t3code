@@ -259,21 +259,25 @@ export function PullRequestDetailGhost({
               </span>
             )}
             <span aria-hidden className="h-3 w-px shrink-0 bg-border/70" />
-            <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-caption font-normal text-dim-foreground">
+            {/* Gives way as the real header does: the head branch, placed first, keeps its readable
+                minimum and the base wraps onto a clipped second line when it no longer fits. */}
+            <span className="flex h-4.5 min-w-0 flex-1 flex-row-reverse flex-wrap items-center justify-end gap-y-1 overflow-clip font-mono text-caption font-normal text-dim-foreground">
               {seed ? (
                 <>
-                  <code className="flex min-w-0 max-w-[40%] shrink-0 @max-sm/pr-header:hidden">
-                    <MiddleTruncate value={seed.baseBranch} />
-                  </code>
-                  <ArrowLeftIcon
-                    aria-label={gt("receives changes from", {
-                      $context:
-                        "screen reader label for an arrow between the base branch, read before it, and the head branch, read after it",
-                    })}
-                    className="size-3 shrink-0 @max-sm/pr-header:hidden"
-                  />
-                  <code className="min-w-0 truncate rounded-kbd bg-secondary px-1.5 py-px text-muted-foreground">
-                    {seed.headBranch}
+                  <span className="me-1.5 flex shrink-0 items-center gap-1.5">
+                    <code className="flex">
+                      <MiddleTruncate value={seed.baseBranch} />
+                    </code>
+                    <ArrowLeftIcon
+                      aria-label={gt("receives changes from", {
+                        $context:
+                          "screen reader label for an arrow between the base branch, read before it, and the head branch, read after it",
+                      })}
+                      className="size-3 shrink-0"
+                    />
+                  </span>
+                  <code className="order-first flex min-w-0 max-w-max grow basis-[calc(18ch+--spacing(3))] rounded-kbd bg-secondary px-1.5 py-px text-muted-foreground">
+                    <MiddleTruncate value={seed.headBranch} />
                   </code>
                 </>
               ) : (

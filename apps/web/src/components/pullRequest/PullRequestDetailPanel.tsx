@@ -12,7 +12,7 @@ import {
 } from "./usePullRequestDetail";
 import { PullRequestDetailCrumbs } from "./PullRequestDetailCrumbs";
 import { PullRequestTitleEditor } from "./PullRequestTitleEditor";
-import { PullRequestBaseBranch } from "./PullRequestBaseBranch";
+import { PullRequestBaseBranch, PullRequestBaseFreshnessWarning } from "./PullRequestBaseBranch";
 import {
   PullRequestCheckoutMenuItems,
   PullRequestFinishedMenuItems,
@@ -1760,38 +1760,56 @@ export function PullRequestDetailPanel({
       </TooltipProvider>
     );
 
+  const receivesChangesFrom = gt("receives changes from", {
+    $context:
+      "screen reader label for an arrow between the base branch, read before it, and the head branch, read after it",
+  });
+  // One line at every width. The head branch is placed first, from the right, at its readable
+  // minimum; the base and its arrow follow only if they still fit beside it, otherwise they wrap
+  // onto a clipped second line and the head branch takes their room.
   const headerBranches = detail ? (
-    <span className="flex min-w-0 flex-1 basis-full items-center gap-1.5 font-mono text-caption text-dim-foreground @md/pr-header:ml-auto @md/pr-header:basis-0 @md/pr-header:justify-end">
-      <PullRequestBaseBranch
-        baseBranch={detail.baseBranch}
-        freshness={freshness}
-        stacked={isStackedPullRequest}
-        pending={actionPending}
-        onUpdate={(method) => void perform("update-branch", undefined, method)}
-        iconClassName="size-3"
-      />
-      <ArrowLeftIcon
-        aria-label={gt("receives changes from", {
-          $context:
-            "screen reader label for an arrow between the base branch, read before it, and the head branch, read after it",
-        })}
-        className="size-3 shrink-0"
-      />
-      <PullRequestCopyableCode
-        key={detail.headBranch}
-        className="min-w-12 rounded-kbd bg-secondary px-1.5 py-px text-muted-foreground"
-        value={detail.headBranch}
-        target={{
-          target: "branch name",
-          unavailableMessage: msg("Clipboard API is unavailable while copying branch name."),
-          failureMessage: msg("Failed to copy branch name to the clipboard."),
-        }}
-        copyLabel={gt(
-          "Copy {term, select, mr {merge request} cr {change request} other {pull request}} branch",
-          { term: changeRequestTermKind(terminology) },
-        )}
-        copiedLabel={gt("Branch name copied")}
-      />
+    <span className="ml-auto flex h-4.5 min-w-0 max-w-max grow basis-[calc(18ch+--spacing(5))] flex-row-reverse flex-wrap items-center gap-y-1 overflow-clip ps-0.5 font-mono text-caption text-dim-foreground">
+      <span className="ms-1.5 flex shrink-0 items-center gap-1.5">
+        <PullRequestBaseBranch
+          baseBranch={detail.baseBranch}
+          stacked={isStackedPullRequest}
+          behind={freshness !== null}
+        />
+        <ArrowLeftIcon aria-label={receivesChangesFrom} className="size-3 shrink-0" />
+      </span>
+      <span className="order-first ms-1.5 flex min-w-0 max-w-max grow basis-[calc(18ch+--spacing(3))] items-center gap-1.5">
+        {freshness ? (
+          <PullRequestBaseFreshnessWarning
+            baseBranch={detail.baseBranch}
+            freshness={freshness}
+            pending={actionPending}
+            onUpdate={(method) => void perform("update-branch", undefined, method)}
+            iconClassName="size-3"
+          />
+        ) : null}
+        <PullRequestCopyableCode
+          key={detail.headBranch}
+          className="rounded-kbd bg-secondary px-1.5 py-px text-muted-foreground"
+          value={detail.headBranch}
+          target={{
+            target: "branch name",
+            unavailableMessage: msg("Clipboard API is unavailable while copying branch name."),
+            failureMessage: msg("Failed to copy branch name to the clipboard."),
+          }}
+          copyLabel={gt(
+            "Copy {term, select, mr {merge request} cr {change request} other {pull request}} branch",
+            { term: changeRequestTermKind(terminology) },
+          )}
+          copiedLabel={gt("Branch name copied")}
+          tooltipDetail={
+            <span className="flex items-center gap-1">
+              {detail.baseBranch}
+              <ArrowLeftIcon aria-label={receivesChangesFrom} className="size-3 shrink-0" />
+              {detail.headBranch}
+            </span>
+          }
+        />
+      </span>
     </span>
   ) : null;
 
@@ -2025,7 +2043,9 @@ export function PullRequestDetailPanel({
                 <span className="shrink-0">
                   <RelativeTime timestamp={detail.updatedAt} />
                 </span>
-                <span className="hidden min-w-0 flex-1 @2xl/pr-header:flex">{headerBranches}</span>
+                <span className="hidden min-w-0 flex-1 items-center @2xl/pr-header:flex">
+                  {headerBranches}
+                </span>
               </div>
             ) : null}
           </div>
@@ -2062,14 +2082,21 @@ export function PullRequestDetailPanel({
                     setTitleScope(text === null ? null : { pullRequestKey, text })
                   }
                 />
-                <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-meta text-muted-foreground">
+                {/* One line at every width. Room goes first to the author, then the age, then the
+                    branches, by grow factor; the age wraps onto a clipped line when it no longer fits. */}
+                <div className="flex min-h-5 min-w-0 items-center text-meta text-muted-foreground">
                   <PullRequestActorLabel
                     actor={detail.author}
                     profileUrl={authorProfileUrl}
                     threadRef={threadRef}
+                    className="min-w-4 max-w-max shrink-0 basis-0 grow-[1000000]"
+                    tooltipDetail={<RelativeTime timestamp={detail.updatedAt} />}
                   />
-                  <span className="shrink-0">
-                    <RelativeTime timestamp={detail.updatedAt} />
+                  <span className="flex h-5 min-w-0 max-w-max basis-0 grow-[1000] flex-wrap items-center overflow-clip">
+                    <span aria-hidden className="h-full" />
+                    <span className="ms-2 shrink-0">
+                      <RelativeTime timestamp={detail.updatedAt} />
+                    </span>
                   </span>
                   {headerBranches}
                 </div>

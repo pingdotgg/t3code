@@ -539,6 +539,7 @@ export function PullRequestActorLabel({
   tooltip = true,
   profileUrl,
   threadRef = null,
+  tooltipDetail,
 }: {
   actor: PullRequestActor | null;
   className?: string;
@@ -546,6 +547,8 @@ export function PullRequestActorLabel({
   tooltip?: boolean;
   profileUrl?: string | null;
   threadRef?: ScopedThreadRef | null;
+  /** A second tooltip line, for what sits beside the label until it gives way. */
+  tooltipDetail?: ReactNode;
 }) {
   const gt = useGT();
   const openLink = useOpenLink(threadRef);
@@ -559,6 +562,7 @@ export function PullRequestActorLabel({
     </span>
   );
   const placement = cn("flex min-w-0 shrink", className);
+  const name = actor?.name && actor.name !== login ? `${actor.name} (@${login})` : login;
   if (!tooltip) return <span className={placement}>{label}</span>;
   return (
     <SharedTooltipTrigger
@@ -583,7 +587,16 @@ export function PullRequestActorLabel({
           <span className={placement} />
         )
       }
-      label={actor?.name && actor.name !== login ? `${actor.name} (@${login})` : login}
+      label={
+        tooltipDetail === undefined ? (
+          name
+        ) : (
+          <span className="flex flex-col gap-0.5">
+            <span>{name}</span>
+            <span>{tooltipDetail}</span>
+          </span>
+        )
+      }
     >
       {label}
     </SharedTooltipTrigger>
