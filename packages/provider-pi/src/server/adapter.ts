@@ -1958,6 +1958,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           method === "select" && turn !== null
             ? piAskUserSingleSelectQuestion(nativeRequestId, title, event, turn.toolArgs)
             : undefined;
+        const askUserMultiSelect =
+          method === "input" && turn !== null
+            ? piAskUserMultiSelectQuestion(nativeRequestId, title, event, turn.toolArgs)
+            : undefined;
         const turnItem: OrchestrationV2TurnItem =
           method === "confirm"
             ? {
@@ -1971,7 +1975,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 ...itemBase,
                 type: "user_input_request",
                 requestId,
-                questions: [askUser?.question ?? piQuestion(nativeRequestId, method, title, event)],
+                questions: [
+                  askUser?.question ??
+                    askUserMultiSelect ??
+                    piQuestion(nativeRequestId, method, title, event),
+                ],
               };
         const pending: PendingPiPrompt = {
           nativeRequestId,
@@ -4919,6 +4927,53 @@ function piAskUserSingleSelectQuestion(
   return undefined;
 }
 
+const RPIV_MULTI_SELECT_PLACEHOLDER = "1,3; custom answer";
+
+/**
+ * @juicesharp/rpiv-ask-user-question asks a multi-select question over RPC as a text input that
+ * takes option numbers. Rebuild the options from the tool call's arguments so they render as one;
+ * each option answers with its 1-based number, which `piUiResponse` joins as the extension expects.
+ */
+function piAskUserMultiSelectQuestion(
+  questionId: string,
+  title: string,
+  event: PiRpcRecord,
+  toolArgs: ReadonlyMap<string, unknown>,
+): OrchestrationV2UserInputQuestion | undefined {
+  if (recordString(event, "placeholder") !== RPIV_MULTI_SELECT_PLACEHOLDER) return undefined;
+  for (const args of toolArgs.values()) {
+    const questions = rpivDecoded(recordField(args, "questions"), Array.isArray);
+    if (!Array.isArray(questions)) continue;
+    for (const entry of questions) {
+      const question = rpivDecoded(entry, Predicate.isObject);
+      const text = rpivField(question, "question");
+      const header = rpivField(question, "header");
+      if (recordField(question, "multiSelect") !== true || !text?.trim()) continue;
+      const encodedOptions = rpivDecoded(recordField(question, "options"), Array.isArray);
+      if (!Array.isArray(encodedOptions) || encodedOptions.length === 0) continue;
+      const options = encodedOptions.map((option) => rpivDecoded(option, Predicate.isObject));
+      // The title lists the options, so it only matches the call whose options the user sees.
+      const list = options.map(rpivOptionLine).join("\n");
+      if (!title.startsWith(`${header ? `[${header}] ` : ""}${text}\n\n${list}\n\n`)) continue;
+      return {
+        id: questionId,
+        header: header?.trim() || "Question",
+        question: text.trim(),
+        multiSelect: true,
+        options: options.map((option, index) => {
+          const label = rpivField(option, "label")?.trim() || `Option ${index + 1}`;
+          return {
+            label,
+            description: rpivField(option, "description")?.trim() || label,
+            value: String(index + 1),
+          };
+        }),
+      };
+    }
+  }
+  return undefined;
+}
+
 function piUiResponse(
   pending: PendingPiPrompt,
   decision: ProviderApprovalDecision | undefined,
@@ -4930,6 +4985,21 @@ function piUiResponse(
     return { cancelled: true };
   }
   const answer = answers?.[pending.questionId];
+  if (
+    pending.turnItem.type === "user_input_request" &&
+    pending.turnItem.questions[0]?.multiSelect
+  ) {
+    // Option values are 1-based numbers. A leading ";" marks the whole reply as custom text.
+    if (typeof answer === "string") return { value: `; ${answer}` };
+    if (Array.isArray(answer)) {
+      return {
+        value: answer
+          .map(Number)
+          .sort((a, b) => a - b)
+          .join(","),
+      };
+    }
+  }
   // RPC distinguishes empty dialog values from cancellation (undefined).
   if (typeof answer === "string") return { value: answer };
   return { cancelled: true };
