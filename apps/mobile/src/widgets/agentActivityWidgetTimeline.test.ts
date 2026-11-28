@@ -60,6 +60,19 @@ describe("agentActivityWidgetTimeline", () => {
     ]);
   });
 
+  it("shows statuses in the app's language instead of the relay's", () => {
+    const timeline = agentActivityWidgetTimeline(
+      {
+        kind: "snapshot",
+        aggregate: { ...aggregate([row("completed", "Fertig")]), activeCount: 0 },
+      },
+      now,
+    );
+
+    expect(timeline[0]?.props.activities[0]?.status).toBe("Done");
+    expect(timeline[0]?.props.subtitle).toBe("Agent work completed");
+  });
+
   it("keeps finished outcomes on a single entry", () => {
     const timeline = agentActivityWidgetTimeline(
       { kind: "snapshot", aggregate: aggregate([row("failed", "Failed")]) },

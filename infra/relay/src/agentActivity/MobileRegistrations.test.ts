@@ -269,6 +269,7 @@ describe("MobileRegistrations", () => {
               push_token: "apns-device-token",
               push_to_start_token: "push-to-start-token",
               preferences_json: JSON.stringify(device.preferences),
+              locale: null,
               activity_push_token: null,
               remote_start_queued_at: null,
               remote_started_at: null,

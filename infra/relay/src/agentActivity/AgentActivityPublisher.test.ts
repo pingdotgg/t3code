@@ -54,6 +54,7 @@ function target(deviceId: string): LiveActivities.TargetRow {
     push_token: null,
     push_to_start_token: "start-token",
     preferences_json: "{}",
+    locale: null,
     activity_push_token: null,
     remote_start_queued_at: null,
     remote_started_at: null,

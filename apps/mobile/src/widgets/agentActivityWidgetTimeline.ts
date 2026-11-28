@@ -3,7 +3,7 @@ import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../i18n/messages";
 
-import type { AgentActivityProps, AgentActivityText } from "./AgentActivity";
+import type { AgentActivityPhase, AgentActivityProps, AgentActivityText } from "./AgentActivity";
 
 // The widget only refreshes while the app is open, so after this long it stops
 // claiming an agent is still working. Matches the Live Activity's stale date.
@@ -64,6 +64,26 @@ export function agentActivityText(
   };
 }
 
+/** The relay's snapshot statuses are English; the widget shows the app's language instead. */
+function agentActivityStatus(phase: AgentActivityPhase, resolve: MessageResolver): string {
+  switch (phase) {
+    case "starting":
+      return resolve(msg("Connecting", { $context: "agent status" }));
+    case "running":
+      return resolve(msg("Working", { $context: "agent status" }));
+    case "waiting_for_approval":
+      return resolve(msg("Approval", { $context: "agent waits for an approval" }));
+    case "waiting_for_input":
+      return resolve(msg("Input", { $context: "agent waits for user input" }));
+    case "completed":
+      return resolve(msg("Done", { $context: "agent work status" }));
+    case "failed":
+      return resolve(msg("Failed", { $context: "agent work status" }));
+    case "stale":
+      return resolve(msg("Waiting", { $context: "agent status" }));
+  }
+}
+
 export function agentActivityWidgetTimeline(
   source: AgentActivityWidgetSource,
   now: number,
@@ -93,10 +113,18 @@ export function agentActivityWidgetTimeline(
   const props: AgentActivityProps = {
     text: agentActivityText(Math.max(aggregate.activeCount, aggregate.activities.length), resolve),
     title: aggregate.title,
-    subtitle: aggregate.subtitle,
+    subtitle:
+      aggregate.activeCount > 0
+        ? resolve(msg("Agent work in progress"))
+        : aggregate.activities[0]?.phase === "failed"
+          ? resolve(msg("Agent work failed"))
+          : resolve(msg("Agent work completed")),
     activeCount: aggregate.activeCount,
     updatedAt: aggregate.updatedAt,
-    activities: aggregate.activities,
+    activities: aggregate.activities.map((row) => ({
+      ...row,
+      status: agentActivityStatus(row.phase, resolve),
+    })),
   };
   const hasInFlightRows = props.activities.some(
     (row) => row.phase !== "completed" && row.phase !== "failed",

@@ -1,0 +1,37 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "74eeeb39-fd22-4fca-be86-ca7b8241926d",
+  "prevIds": ["0a77840f-76b7-46b8-9df4-14f4a48beeec"],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": ["column", "public", "relay_mobile_devices", "locale"],
+      "writes": [
+        "s|col|public.relay_mobile_devices.locale",
+        "n|col|public.relay_mobile_devices.locale",
+        "e|col|public.relay_mobile_devices.locale"
+      ],
+      "reads": ["n|tbl|public.relay_mobile_devices", "n|sch|public"]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_mobile_devices",
+        "name": "locale",
+        "type": "varchar(16)",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

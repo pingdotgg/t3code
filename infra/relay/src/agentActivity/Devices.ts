@@ -12,6 +12,7 @@ import { sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayLiveActivities, relayMobileDevices } from "../persistence/schema.ts";
+import { resolveAgentActivityLocale } from "./agentActivityCopy.ts";
 
 export class DeviceRegistrationPersistenceError extends Schema.TaggedError<DeviceRegistrationPersistenceError>()(
   "DeviceRegistrationPersistenceError",
@@ -132,6 +133,7 @@ const make = Effect.gen(function* () {
           pushToken: registration.pushToken ?? null,
           pushToStartToken: registration.pushToStartToken ?? null,
           preferencesJson: registration.preferences,
+          locale: resolveAgentActivityLocale(registration.locale),
           createdAt: updatedAt,
           updatedAt,
         })
@@ -155,6 +157,7 @@ const make = Effect.gen(function* () {
                 ${relayMobileDevices.pushToStartToken}
               )`,
             preferencesJson: registration.preferences,
+            locale: resolveAgentActivityLocale(registration.locale),
             updatedAt,
           },
         })

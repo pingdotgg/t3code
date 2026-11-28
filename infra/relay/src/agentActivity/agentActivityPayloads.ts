@@ -6,6 +6,7 @@ import type {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
+import { type AgentActivityCopy, ENGLISH_AGENT_ACTIVITY_COPY } from "./agentActivityCopy.ts";
 import type { ApnsNotificationPayload } from "./apnsDeliveryJobs.ts";
 
 export function isTerminalPhase(state: RelayAgentActivityState): boolean {
@@ -106,12 +107,13 @@ export function sanitizeApnsNotificationPayload(
 }
 
 export function notificationForActivity(
-  row: RelayAgentActivityAggregateRow,
+  row: Omit<RelayAgentActivityAggregateRow, "status">,
+  copy: AgentActivityCopy = ENGLISH_AGENT_ACTIVITY_COPY,
 ): ApnsNotificationPayload {
-  const activity = sanitizeAgentActivityAggregateRow(row);
+  const activity = sanitizeAgentActivityAggregateRow({ ...row, status: copy.status(row.phase) });
   return sanitizeApnsNotificationPayload({
     title: activity.threadTitle,
-    body: `${activity.status}: ${activity.projectTitle}`,
+    body: copy.statusLine(activity.status, activity.projectTitle),
     environmentId: activity.environmentId,
     threadId: activity.threadId,
     deepLink: activity.deepLink,

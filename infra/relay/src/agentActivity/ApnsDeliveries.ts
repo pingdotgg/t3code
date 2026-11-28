@@ -27,7 +27,8 @@ import {
   sanitizeAgentActivityAggregateState,
   sanitizeApnsNotificationPayload,
 } from "./agentActivityPayloads.ts";
-import { makeAggregateState, statusForPhase } from "./agentActivityAggregate.ts";
+import { makeAggregateState } from "./agentActivityAggregate.ts";
+import { type AgentActivityCopy, agentActivityCopy } from "./agentActivityCopy.ts";
 import * as Apns from "./ApnsClient.ts";
 import {
   ApnsDeliveryJobLiveActivityAggregateMissing,
@@ -202,7 +203,7 @@ function notificationForState(input: {
   }
   const preferences = parsePreferences(input.target.preferences_json);
   if (!shouldAlertForActivity({ ...state, preferences, nowMs: input.nowMs })) return null;
-  return notificationForActivity({ ...state, status: statusForPhase(state.phase) });
+  return notificationForActivity(state, agentActivityCopy(input.target.locale));
 }
 
 // Suppressed Live Activity updates must not fall back to alert pushes or unchanged replays would ring.
@@ -262,6 +263,7 @@ function chooseLiveActivityDelivery(input: {
               previousAggregate,
               nextAggregate,
               preferences,
+              copy: agentActivityCopy(input.target.locale),
             }) ??
             alertForNewlyTerminal({
               previousAggregate,
@@ -269,6 +271,7 @@ function chooseLiveActivityDelivery(input: {
               preferences,
               nowMs: input.nowMs,
               includeUnobserved: true,
+              copy: agentActivityCopy(input.target.locale),
             })),
       }
     : "suppressed";
@@ -444,12 +447,14 @@ function makeLiveActivityDeliveryRequest(
   apns: Apns.ApnsClient["Service"],
   input: SendLiveActivityDeliveryInput,
   now: DateTime.DateTime,
+  copy: AgentActivityCopy,
 ) {
   const epochSeconds = Math.floor(now.epochMilliseconds / 1_000);
   const base = {
     token: input.token,
     nowEpochSeconds: epochSeconds,
     nowIso: DateTime.formatIso(now),
+    copy,
   };
   switch (input.kind) {
     case "live_activity_update":
@@ -698,6 +703,7 @@ const make = Effect.gen(function* () {
               previousAggregate,
               nextAggregate: aggregate,
               preferences,
+              copy: agentActivityCopy(currentTarget.locale),
             }) ??
             alertForNewlyTerminal({
               previousAggregate,
@@ -705,6 +711,7 @@ const make = Effect.gen(function* () {
               preferences,
               nowMs: now.epochMilliseconds,
               includeUnobserved: true,
+              copy: agentActivityCopy(currentTarget.locale),
             }));
     }
     if (
@@ -738,6 +745,7 @@ const make = Effect.gen(function* () {
       apns,
       { ...input, aggregate, alert } as SendLiveActivityDeliveryInput,
       now,
+      agentActivityCopy(currentTarget.locale),
     );
     const result = yield* apns
       .sendLiveActivityRequest({
@@ -1069,6 +1077,7 @@ const make = Effect.gen(function* () {
             : alertForTerminalAggregate({
                 aggregate: delivery.aggregate,
                 preferences: parsePreferences(input.target.preferences_json),
+                copy: agentActivityCopy(input.target.locale),
               })
           : delivery.alert;
       const result = yield* deliveryQueue.enqueueLiveActivity({

@@ -1,0 +1,1 @@
+ALTER TABLE "relay_mobile_devices" ADD COLUMN "locale" varchar(16);

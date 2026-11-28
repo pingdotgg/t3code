@@ -81,6 +81,7 @@ export interface DeviceRow {
   readonly push_token: string | null;
   readonly push_to_start_token: string | null;
   readonly preferences_json: string;
+  readonly locale: string | null;
 }
 
 export interface LiveActivityRow {
@@ -224,6 +225,7 @@ const make = Effect.gen(function* () {
           push_token: relayMobileDevices.pushToken,
           push_to_start_token: relayMobileDevices.pushToStartToken,
           preferences_json: relayMobileDevices.preferencesJson,
+          locale: relayMobileDevices.locale,
           activity_push_token: relayLiveActivities.activityPushToken,
           remote_start_queued_at: relayLiveActivities.remoteStartQueuedAt,
           remote_started_at: relayLiveActivities.remoteStartedAt,

@@ -19,6 +19,7 @@ export function makeRelayDeviceRegistrationRequest(
     readonly pushToStartToken?: string;
     readonly notificationsEnabled: boolean;
     readonly preferences: Preferences;
+    readonly locale?: string;
   } & (
     | { readonly platform?: "ios"; readonly iosMajorVersion: number }
     | {
@@ -54,5 +55,6 @@ export function makeRelayDeviceRegistrationRequest(
       notifyOnCompletion: true,
       notifyOnFailure: true,
     },
+    ...(input.locale ? { locale: input.locale } : {}),
   };
 }

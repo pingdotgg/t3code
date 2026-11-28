@@ -56,6 +56,8 @@ export const RelayDeviceRegistrationRequest = Schema.Struct({
   pushToken: Schema.optional(TrimmedNonEmptyString),
   pushToStartToken: Schema.optional(TrimmedNonEmptyString),
   preferences: RelayAgentAwarenessPreferences,
+  // The app's UI language, so relay-written notification and Live Activity text can match it.
+  locale: Schema.optional(TrimmedNonEmptyString),
 }).check(
   Schema.makeFilter((device) =>
     device.platform === "ios"
@@ -151,6 +153,29 @@ export const RelayAgentActivityAggregateState = Schema.Struct({
   activities: Schema.Array(RelayAgentActivityAggregateRow),
 });
 export type RelayAgentActivityAggregateState = typeof RelayAgentActivityAggregateState.Type;
+
+const RelayAgentActivityCountText = Schema.Record(Schema.String, Schema.String);
+
+/**
+ * Translated Live Activity and widget copy. Pushed content replaces the activity's props, so the
+ * relay sends this alongside the aggregate. Count tables are keyed by the count they describe.
+ */
+export const RelayAgentActivityText = Schema.Struct({
+  outOfDate: Schema.String,
+  failed: Schema.String,
+  done: Schema.String,
+  workFailed: Schema.String,
+  workCompleted: Schema.String,
+  statusOutOfDate: Schema.String,
+  approval: Schema.String,
+  input: Schema.String,
+  noActiveAgents: Schema.String,
+  activeAgents: RelayAgentActivityCountText,
+  active: RelayAgentActivityCountText,
+  needAttention: RelayAgentActivityCountText,
+  needYou: RelayAgentActivityCountText,
+});
+export type RelayAgentActivityText = typeof RelayAgentActivityText.Type;
 
 export const RelayManagedEndpointProviderKind = Schema.Literals([
   "manual",
