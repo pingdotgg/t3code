@@ -455,6 +455,11 @@ describe("question answer paths", () => {
       String.raw`{\rtf1\ansi{\fonttbl{\f0\fcharset178 A;}{\f0\fcharset0 B;}{\f1\fcharset0 C;}{\f2\fcharset178 D;}{\f2 E;}}{\stylesheet{\s0\f1\fcharset178 N;}}\f0 \'e3\f1\'e3\f2\'e3}`,
       "ããã",
     ],
+    [
+      "text box shapes",
+      String.raw`{\rtf1\ansi Shipping update.\par {\shp{\*\shpinst\shpleft4724\shptop0{\sp{\sn shapeType}{\sv 202}}{\sp{\sn wzName}{\sv Text Box 1}}{\shptxt \pard\plain Call the dock manager\par before noon\par}}{\shprslt{\*\do\dobxcolumn{\*\dptxbxtext\pard Call the dock manager\par before noon\par}}}}Trucks leave at six.\par}`,
+      "Shipping update.\nCall the dock manager\nbefore noon\nTrucks leave at six.",
+    ],
     ["destination symbol", String.raw`{\rtf1\ansi\u945\*Z}`, "αZ"],
     ["multiple units", String.raw`{\rtf1\ansi\uc4\u945?\tab\'3f\~Z}`, "αZ"],
     ["binary unit", String.raw`{\rtf1\ansi\u945\bin3 abcZ}`, "αZ"],
@@ -1149,18 +1154,17 @@ describe("question answer paths", () => {
           expected: ["Encoded question mark chapter text."],
           absent: ["[Skipped document part", "[Extracted text truncated"],
         },
-        {
+        ...["My%20Book/book%201.opf", "./My%20Book/draft/../book%201.opf"].map((packagePath) => ({
           ext: "epub",
           parts: {
-            "META-INF/container.xml":
-              '<container><rootfile full-path="My%20Book/book%201.opf"/></container>',
+            "META-INF/container.xml": `<container><rootfile full-path="${packagePath}"/></container>`,
             "My Book/book 1.opf":
               '<package><item id="ch1" href="ch1.xhtml"/><itemref idref="ch1"/></package>',
             "My Book/ch1.xhtml": "<html><p>Percent-encoded rootfile chapter text.</p></html>",
           },
           expected: ["Percent-encoded rootfile chapter text."],
           absent: ["[Skipped document part", "[Extracted text truncated"],
-        },
+        })),
         {
           ext: "epub",
           parts: {
@@ -1416,6 +1420,27 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "word/document.xml":
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl>' +
+              '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>Current route</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Status</w:t></w:r></w:p></w:tc></w:tr>' +
+              '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vMerge/></w:tcPr><w:p><w:r><w:t>Old west route</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Open</w:t></w:r></w:p></w:tc></w:tr>' +
+              '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vMerge w:val="continue"/></w:tcPr><w:p><w:r><w:t>Old east route</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Confirmed</w:t></w:r></w:p></w:tc></w:tr>' +
+              "<w:tr><w:tc><w:p><w:r><w:t>Next route</w:t></w:r></w:p></w:tc></w:tr>" +
+              "<w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p><w:r><w:t>Orphan route</w:t></w:r></w:p></w:tc></w:tr>" +
+              '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vMerge w:val="restart"/></w:tcPr><w:p/></w:tc></w:tr>' +
+              '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vMerge/></w:tcPr><w:p/></w:tc></w:tr>' +
+              '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vMerge/></w:tcPr><w:p><w:r><w:t>Old central route</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>After blank rows</w:t></w:r></w:p></w:tc></w:tr>' +
+              "<w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p><w:r><w:t>Width changes</w:t></w:r></w:p></w:tc></w:tr>" +
+              "</w:tbl></w:body></w:document>",
+          },
+          expected: [],
+          exact:
+            "Current route\t\tStatus\n\t\tOpen\n\t\tConfirmed\nNext route\nOrphan route\n\t\tAfter blank rows\nWidth changes",
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
               '<w:document xmlns:w="urn:w"><w:body><w:tbl>' +
               "<w:tr><w:tc><w:p><w:r><w:t>Kept</w:t></w:r></w:p></w:tc></w:tr>" +
               '<w:tr><w:trPr><w:gridBefore w:val="512"/></w:trPr><w:tc><w:p><w:r><w:t>Far</w:t></w:r></w:p></w:tc></w:tr>' +
@@ -1528,6 +1553,31 @@ describe("question answer paths", () => {
           },
           expected: [],
           exact: "Default style combination",
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml": [
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:x="urn:extension" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x"><w:body>',
+              '<w:p><w:pPr><w:pStyle w:val="Retired"/></w:pPr><w:r><w:t>Old routing</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="RetiredChild"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Emphasis"/></w:rPr><w:t>Old badge rules</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="Retired"/></w:pPr><w:r><w:rPr><w:vanish w:val="0"/></w:rPr><w:t>Visible run override</w:t></w:r></w:p>',
+              '<w:p><w:pPr><w:pStyle w:val="Current"/></w:pPr><w:r><w:t>Current instructions</w:t></w:r></w:p>',
+              '<w:p><w:pPr><x:pStyle x:val="Retired"/></w:pPr><w:r><w:t>Extension style reference</w:t></w:r></w:p>',
+              "</w:body></w:document>",
+            ].join(""),
+            "word/styles.xml": [
+              '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:x="urn:extension" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x">',
+              '<w:style w:type="paragraph" w:styleId="Retired"><w:rPr><w:vanish/></w:rPr></w:style>',
+              '<w:style w:type="paragraph" w:styleId="RetiredChild"><w:basedOn w:val="Retired"/></w:style>',
+              '<w:style w:type="paragraph" w:styleId="Current"><w:rPr><x:vanish/></w:rPr></w:style>',
+              '<w:style w:type="character" w:styleId="Emphasis"><w:rPr><w:i/></w:rPr></w:style>',
+              "</w:styles>",
+            ].join(""),
+          },
+          expected: ["Visible run override\nCurrent instructions\nExtension style reference"],
+          absent: ["Old routing", "Old badge rules"],
         },
         {
           ext: "docx",
@@ -2046,6 +2096,21 @@ describe("question answer paths", () => {
           expected: [
             "Inspection route\nNorth loading dock\nSouth loading dock\nMeeting point: Gate 4 at noon\nEnd of route.",
           ],
+        },
+        {
+          ext: "odt",
+          parts: {
+            "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0">' +
+              "<office:body><office:text><text:p>Shipping update.</text:p>" +
+              '<text:p><draw:frame draw:name="Frame1" text:anchor-type="paragraph"><draw:text-box><text:p>Call the dock manager</text:p><text:p>before noon</text:p></draw:text-box></draw:frame>Trucks leave at six.</text:p>' +
+              '<text:p><draw:custom-shape text:anchor-type="char" draw:name="Text Box 1"><text:p>Gate 4</text:p><text:p>North side</text:p><draw:enhanced-geometry draw:type="ooxml-rect"/></draw:custom-shape>Drivers sign in.</text:p>' +
+              '<text:p>Badge <draw:custom-shape text:anchor-type="as-char"><text:p>A</text:p><text:p>B</text:p></draw:custom-shape> required.</text:p>' +
+              "</office:text></office:body></office:document-content>",
+          },
+          exact:
+            "Shipping update.\nCall the dock manager\nbefore noon\nTrucks leave at six.\nGate 4\nNorth side\nDrivers sign in.\nBadge A\nB required.",
+          expected: [],
         },
         {
           ext: "ods",
