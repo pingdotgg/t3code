@@ -113,23 +113,35 @@ const TAG_STYLE =
 const SCRIPT_STYLE =
   /<!--[\s\S]*?(?:-->|$)|<style(?=[\s/>])[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|\sstyle\s*=\s*(?:"([^"]*)(?:"|$)|'([^']*)(?:'|$)|([^\s>]+))/gi;
 // vb and vmax follow the frame height too; vmin stays, as the frame width caps it.
-// Skip CSS comments and complete quoted strings so generated text like `content:"100vh"` passes.
 // The lookbehind skips base64 runs, such as an inlined image that happens to contain "1vh",
 // and identifiers such as `.h-100vmax` or `.h\+100vh`, while signed and scientific-notation lengths still count.
 const VIEWPORT_HEIGHT_UNIT =
-  /\/\*[\s\S]*?(?:\*\/|$)|"(?:\\(?:\r\n|[\s\S])|[^"\\\r\n\f])*"|'(?:\\(?:\r\n|[\s\S])|[^'\\\r\n\f])*'|((?<![\w.+/\\-])[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?[sld]?v(?:h|b|max)(?![\w-]))/gi;
+  /(?<![\w.+/\\-])[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?[sld]?v(?:h|b|max)(?![\w-])/i;
+// In CSS, skip comments and strings so generated text like `content:"100vh"` passes.
+// An unclosed string ends at a newline, as CSS ends it there.
+const CSS_VIEWPORT_HEIGHT_UNIT = new RegExp(
+  String.raw`\/\*[\s\S]*?(?:\*\/|$)|"(?:\\(?:\r\n|[\s\S])|[^"\\\r\n\f])*"?|'(?:\\(?:\r\n|[\s\S])|[^'\\\r\n\f])*'?|(${VIEWPORT_HEIGHT_UNIT.source})`,
+  "gi",
+);
 
-const findViewportHeightInCss = (css: string) => {
-  for (const [, found] of css.matchAll(VIEWPORT_HEIGHT_UNIT)) {
+const findInCss = (css: string) => {
+  for (const [, found] of css.matchAll(CSS_VIEWPORT_HEIGHT_UNIT)) {
     if (found !== undefined) return found;
   }
   return undefined;
 };
 
-const findViewportHeight = (source: string, pattern: RegExp) => {
+// Quotes in script text belong to the script, not to the CSS it spells out.
+const findInScriptText = (css: string) => VIEWPORT_HEIGHT_UNIT.exec(css)?.[0];
+
+const findViewportHeight = (
+  source: string,
+  pattern: RegExp,
+  find: (css: string) => string | undefined,
+) => {
   for (const [, ...captures] of source.matchAll(pattern)) {
     for (const css of captures) {
-      const found = css === undefined ? undefined : findViewportHeightInCss(css);
+      const found = css === undefined ? undefined : find(css);
       if (found !== undefined) return found;
     }
   }
@@ -140,11 +152,11 @@ const rejectViewportHeight = (html: string) => {
   for (const [, scriptTag, script, sheet, tag] of html.matchAll(HTML_CSS_SOURCE)) {
     const found =
       script !== undefined
-        ? (findViewportHeight(scriptTag ?? "", TAG_STYLE) ??
-          findViewportHeight(script, SCRIPT_STYLE))
+        ? (findViewportHeight(scriptTag ?? "", TAG_STYLE, findInCss) ??
+          findViewportHeight(script, SCRIPT_STYLE, findInScriptText))
         : tag !== undefined
-          ? findViewportHeight(tag, TAG_STYLE)
-          : findViewportHeightInCss(sheet ?? "");
+          ? findViewportHeight(tag, TAG_STYLE, findInCss)
+          : findInCss(sheet ?? "");
     if (found !== undefined) return Effect.fail(new HtmlRenderViewportHeightError({ found }));
   }
   return Effect.void;
