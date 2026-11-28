@@ -16,6 +16,7 @@ import {
   type ComposerTrigger,
   collapseExpandedComposerCursor,
   composerSubmissionIntentForKey,
+  isAcceptPromptSuggestionKey,
 } from "../../composer-logic";
 import { type PendingUserInput } from "../../session-logic";
 import { promptSuggestionToAccept } from "./usePromptSuggestion";
@@ -36,7 +37,7 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 
 /**
  * The composer's key handling inside the editor: send shortcuts, the slash/mention menu,
- * prompt history on ArrowUp/ArrowDown, plan-mode toggle, prompt suggestions on Tab, and list continuation.
+ * prompt history on ArrowUp/ArrowDown, plan-mode toggle, accepting prompt suggestions, and list continuation.
  * Returns the editor's key handler; it reads the inputs captured by the render that built it.
  */
 export function composerCommandKeyHandler(input: {
@@ -96,7 +97,7 @@ export function composerCommandKeyHandler(input: {
     dispatchMode: ComposerDispatchMode,
     submissionIntent: ComposerSubmissionIntent,
   ) => void;
-  /** Predicted next prompt that Tab fills into an empty composer; Escape dismisses it. */
+  /** Predicted next prompt that its keybinding fills into an empty composer; Escape, if unbound, dismisses it. */
   readonly promptSuggestion: string | null;
   readonly dismissPromptSuggestion: () => void;
 }) {
@@ -231,11 +232,22 @@ export function composerCommandKeyHandler(input: {
       sendShortcut,
       prompt: promptRef.current,
     });
-    if (key === "Tab" && event.shiftKey && submissionIntent === null) {
-      return applyListEdit(event, listOutdentForTab);
-    }
     const { trigger } = resolveActiveComposerTrigger();
     const menuIsActive = !isLiteralPendingAnswer && trigger !== null;
+    // Ahead of the fixed Escape and Shift+Tab handling, so either can be bound to accept.
+    const acceptedSuggestion = promptSuggestionToAccept(promptSuggestion, promptRef.current);
+    if (
+      acceptedSuggestion !== null &&
+      !menuIsActive &&
+      isAcceptPromptSuggestionKey({
+        event,
+        keybindings,
+        context: getShortcutContext(event.target),
+      })
+    ) {
+      // The typing guard must see this draft, so an approval that lands next is not answered with it.
+      return applyPromptReplacement(0, 0, acceptedSuggestion);
+    }
     if (key === "Escape") {
       if (event.isComposing || event.keyCode === 229) return false;
       if (!menuIsActive && promptSuggestion !== null && promptRef.current.length === 0) {
@@ -266,20 +278,8 @@ export function composerCommandKeyHandler(input: {
         return true;
       }
     }
-    const acceptedSuggestion = promptSuggestionToAccept(promptSuggestion, promptRef.current);
-    if (
-      key === "Tab" &&
-      acceptedSuggestion !== null &&
-      !menuIsActive &&
-      !event.shiftKey &&
-      !event.altKey &&
-      !event.metaKey &&
-      !event.ctrlKey &&
-      !event.isComposing &&
-      event.keyCode !== 229
-    ) {
-      // The typing guard must see this draft, so an approval that lands next is not answered with it.
-      return applyPromptReplacement(0, 0, acceptedSuggestion);
+    if (key === "Tab" && event.shiftKey && submissionIntent === null) {
+      return applyListEdit(event, listOutdentForTab);
     }
     if ((key === "ArrowUp" || key === "ArrowDown") && submissionIntent === null) {
       return navigatePromptHistory(key === "ArrowUp" ? "backward" : "forward", event);

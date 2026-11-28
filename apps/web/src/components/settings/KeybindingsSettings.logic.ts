@@ -470,6 +470,7 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "composer.sendAlternate": msg("Composer: Opposite Queue or Steer Action"),
   "composer.sendBackground": msg("Composer: Start in Background"),
   "composer.sendAndNewThread": msg("Composer: Send and Start New Thread"),
+  "composer.acceptPromptSuggestion": msg("Composer: Use Suggested Prompt"),
   "composer.dictation": msg("Composer: Start or Finish Dictation"),
   "thread.steerQueuedMessage": msg("Queue: Send First Queued Message"),
   "thread.editQueuedMessage": msg("Queue: Edit Last Queued Message"),
