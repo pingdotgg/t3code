@@ -95,7 +95,8 @@ describe("ThemeImportDialog", () => {
     await userEvent.fill(page.getByRole("searchbox"), "night");
 
     // The download count is in the publisher's tooltip.
-    const tooltipText = () => document.querySelector("[data-slot=tooltip-popup]")?.textContent ?? "";
+    const tooltipText = () =>
+      document.querySelector("[data-slot=tooltip-popup]")?.textContent ?? "";
     await userEvent.hover(page.getByRole("searchbox"));
     await userEvent.hover(page.getByText("acme", { exact: true }));
     await vi.waitFor(() => expect(tooltipText()).toBe("1 download"));
@@ -122,7 +123,8 @@ describe("ThemeImportDialog", () => {
       });
     };
     // The download count is in the publisher's tooltip.
-    const tooltipText = () => document.querySelector("[data-slot=tooltip-popup]")?.textContent ?? "";
+    const tooltipText = () =>
+      document.querySelector("[data-slot=tooltip-popup]")?.textContent ?? "";
     const hoverPublisher = async () => {
       await userEvent.hover(page.getByRole("searchbox"));
       await userEvent.hover(page.getByText("acme", { exact: true }));
