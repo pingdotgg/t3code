@@ -1,6 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
-import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
+import { applyUsageLimitsUpdate } from "@t3tools/provider-core/server/usageLimits";
+import { exhaustedUsageWindow, paceRemainingPercent } from "@t3tools/shared/usageLimits";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -42,6 +43,59 @@ describe("codexRateLimitsToLimits", () => {
       }),
     ).toEqual({ checkedAt, windows });
     expect(codexRateLimitsToUpdate(snapshot)).toEqual({ windows });
+  });
+
+  it.each([
+    { reset: "2026-12-01T00:00:00Z", days: 30, pace: 18 },
+    { reset: "2028-03-01T00:00:00Z", days: 29, pace: 19 },
+    { reset: "2026-12-15T00:00:00Z", days: undefined, pace: null },
+    { reset: "2026-12-01T12:00:00Z", days: undefined, pace: null },
+  ])(
+    "paces a monthly credit cap that resets at $reset when it ends a calendar month",
+    ({ reset, days, pace }) => {
+      const resetAt = DateTime.makeUnsafe(reset);
+      const observedAt = DateTime.subtract(resetAt, { hours: 131 });
+      const snapshot = {
+        individualLimit: {
+          remainingPercent: 39,
+          resetsAt: DateTime.toEpochMillis(resetAt) / 1_000,
+        },
+      };
+      const [window] = codexRateLimitsToLimits({
+        snapshot,
+        checkedAt: DateTime.formatIso(observedAt),
+      }).windows;
+      expect(window).toMatchObject({ usedPercent: 61, resetsAt: DateTime.formatIso(resetAt) });
+      expect(window!.windowDurationMins).toBe(days === undefined ? undefined : days * 24 * 60);
+      expect(paceRemainingPercent(window!, DateTime.toEpochMillis(observedAt))).toBe(pace);
+    },
+  );
+
+  it("keeps credit-cap notifications that omit the plan from republishing or losing pace", () => {
+    const cached = {
+      planType: "business",
+      individualLimit: { remainingPercent: 39, resetsAt: Date.parse("2026-12-01") / 1_000 },
+    };
+    expect(
+      codexRateLimitsToUpdate({ individualLimit: cached.individualLimit }, cached),
+    ).toBeUndefined();
+    const rollover = { remainingPercent: 100, resetsAt: Date.parse("2027-01-01") / 1_000 };
+    expect(
+      codexRateLimitsToUpdate({ individualLimit: rollover }, cached)?.windows[0],
+    ).toMatchObject({ resetsAt: "2027-01-01T00:00:00.000Z", windowDurationMins: 31 * 24 * 60 });
+  });
+
+  it("drops the inferred month when a notification moves the credit reset off the calendar boundary", () => {
+    const cached = {
+      individualLimit: { remainingPercent: 39, resetsAt: Date.parse("2026-12-01") / 1_000 },
+    };
+    const moved = { remainingPercent: 39, resetsAt: Date.parse("2026-12-15") / 1_000 };
+    const previous = codexRateLimitsToLimits({ snapshot: cached, checkedAt });
+    const update = codexRateLimitsToUpdate({ individualLimit: moved }, cached);
+    const updated = applyUsageLimitsUpdate({ previous, update: update!, checkedAt });
+    const fresh = codexRateLimitsToLimits({ snapshot: { individualLimit: moved }, checkedAt });
+    expect(previous.windows[0]?.windowDurationMins).toBe(30 * 24 * 60);
+    expect(updated?.windows).toEqual(fresh.windows);
   });
 
   it("keeps a seat-based workspace with a zero credit cap usable while its plan windows have room", () => {

@@ -46,6 +46,15 @@ function isoFromEpochSeconds(value: number | null | undefined): string | undefin
   return Option.isSome(dt) ? DateTime.formatIso(dt.value) : undefined;
 }
 
+/** Codex reports only a credit cap's reset; one at a UTC month start ends that calendar month. */
+function calendarMonthMins(resetsAt: string | undefined): number | undefined {
+  if (!resetsAt) return undefined;
+  const end = DateTime.makeUnsafe(resetsAt);
+  if (!DateTime.Equivalence(end, DateTime.startOf(end, "month"))) return undefined;
+  const start = DateTime.subtract(end, { months: 1 });
+  return (DateTime.toEpochMillis(end) - DateTime.toEpochMillis(start)) / 60_000;
+}
+
 function kindForDuration(mins: number): ServerProviderUsageWindow["kind"] {
   if (mins >= MONTH_MINS) return "monthly";
   if (mins >= WEEK_MINS) return "weekly";
@@ -86,12 +95,14 @@ function codexRateLimitsToWindows(
   const individualLimit = snapshot.individualLimit;
   if (individualLimit && Number.isFinite(individualLimit.remainingPercent)) {
     const resetsAt = isoFromEpochSeconds(individualLimit.resetsAt);
+    const windowDurationMins = calendarMonthMins(resetsAt);
     windows.push({
       id: "individual",
       kind: "monthly",
       label: "Monthly credit limit",
       usedPercent: clampPercent(100 - individualLimit.remainingPercent),
       ...(resetsAt ? { resetsAt } : {}),
+      ...(windowDurationMins === undefined ? {} : { windowDurationMins }),
     });
   }
   return windows;

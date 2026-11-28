@@ -63,13 +63,20 @@ export function applyUsageLimitsUpdate(input: {
   let changed = false;
   for (const window of update.windows) {
     const existing = merged.get(window.id);
+    // Months differ in length, so a new monthly period never inherits the last one's duration.
+    const newMonthlyPeriod =
+      window.kind === "monthly" &&
+      window.resetsAt !== undefined &&
+      window.resetsAt !== existing?.resetsAt;
     const next: ServerProviderUsageWindow = {
       ...window,
       usedPercent: clampPercent(window.usedPercent),
       ...(window.resetsAt === undefined && existing?.resetsAt !== undefined
         ? { resetsAt: existing.resetsAt }
         : {}),
-      ...(window.windowDurationMins === undefined && existing?.windowDurationMins !== undefined
+      ...(window.windowDurationMins === undefined &&
+      existing?.windowDurationMins !== undefined &&
+      !newMonthlyPeriod
         ? { windowDurationMins: existing.windowDurationMins }
         : {}),
     };
