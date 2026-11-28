@@ -9951,6 +9951,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       expected:
         "Claude stopped: the prompt exceeds the model's context window. Run /compact or start a new thread.",
     },
+    {
+      name: "a flagged result whose terminal reason is not a failure",
+      isError: true,
+      result: "API Error: 400 Request rejected by a safeguard.",
+      terminalReason: "completed" as const,
+      expected: "API Error: 400 Request rejected by a safeguard.",
+    },
     ...[
       {
         name: "a model version error rewritten by a custom endpoint",
@@ -14284,15 +14291,34 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 },
               },
               parent_tool_use_id: null,
+              error: "server_error",
               uuid: "retry-notice",
               session_id: WAKE_NATIVE_SESSION,
             }),
           );
-          yield* harness.until(() =>
-            harness.events.some(
-              (event) =>
-                event.type === "turn_item.updated" && event.turnItem.type === "assistant_message",
-            ),
+          // The frame emits nothing, so a later retry frame marks that it was processed.
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "system",
+              subtype: "api_retry",
+              attempt: 1,
+              max_retries: 10,
+              retry_delay_ms: 600,
+              error_status: 503,
+              error: "server_error",
+              uuid: "00000000-0000-4000-8000-000000000212",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* harness.until(
+            () =>
+              harness.events.filter(
+                (event) =>
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "error" &&
+                  event.turnItem.status === "running",
+              ).length >= 2,
           );
         }
         yield* TestClock.adjust("9 minutes");
@@ -14487,6 +14513,76 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("fails an API-error turn without also showing the error as a reply", () =>
+    Effect.gen(function* () {
+      const refusal =
+        "API Error: Opus 5.5's safeguards flagged this session (https://www.anthropic.com/legal/aup).";
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-synthetic-api-error"),
+          text: "Hello.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offerAll(harness.sdkMessages, [
+        claudeSdkFrame({
+          type: "assistant",
+          message: {
+            model: "<synthetic>",
+            id: "msg_synthetic_api_error",
+            type: "message",
+            role: "assistant",
+            content: [{ type: "text", text: refusal }],
+            stop_reason: "stop_sequence",
+            stop_sequence: "",
+            usage: {
+              input_tokens: 0,
+              output_tokens: 0,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+            },
+          },
+          parent_tool_use_id: null,
+          error: "invalid_request",
+          isApiErrorMessage: true,
+          uuid: "00000000-0000-4000-8000-000000000671",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000672",
+          result: refusal,
+          isError: true,
+          terminalReason: "api_error",
+        }),
+      ]);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.include(terminal.failure.message, "safeguards flagged this session");
+      assert.isFalse(
+        harness.events.some(
+          (event) =>
+            (event.type === "message.updated" && event.message.role === "assistant") ||
+            (event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"),
+        ),
+        "the API error is the turn's failure, not an assistant reply",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   const providerThreadRosterEvents = (

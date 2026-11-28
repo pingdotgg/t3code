@@ -3051,6 +3051,16 @@ function isClaudeGoalAcknowledgement(message: SDKMessage): boolean {
   return text.startsWith(CLAUDE_GOAL_SET_PREFIX) || text.startsWith("Goal cleared: ");
 }
 
+/** The CLI repeats an API error as a synthetic reply; the turn's failure already carries it. */
+function isClaudeApiErrorNotice(message: SDKMessage): boolean {
+  return (
+    message.type === "assistant" &&
+    message.parent_tool_use_id === null &&
+    message.message.model === "<synthetic>" &&
+    message.error !== undefined
+  );
+}
+
 const providerGoalsEqual = Schema.toEquivalence(Schema.NullOr(OrchestrationV2ProviderGoal));
 
 function normalizeClaudeResultText(text: string): string {
@@ -5186,7 +5196,7 @@ function terminalStatusFromResult(
     return isOverloadedResult(message) ||
       message.api_error_status === 429 ||
       terminalResultError(message.terminal_reason, failureHint) !== undefined ||
-      (message.is_error && failureHint !== undefined)
+      message.is_error
       ? "failed"
       : "completed";
   }
@@ -12948,6 +12958,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             return;
           }
+          if (isClaudeApiErrorNotice(message)) return;
           if (isClaudeGoalAcknowledgement(message)) {
             // The CLI repeats a local command's output as the turn's result text.
             if (assistantText !== null) {
