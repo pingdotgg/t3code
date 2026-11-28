@@ -9,16 +9,17 @@ import { ScrollArea } from "../ui/scroll-area";
 
 export type ComposerBannerVariant = "default" | "error" | "info" | "success" | "warning";
 
+// The muted text token, not raw --muted-foreground: surface styles lift the detail's dim token.
 const variantColors: Record<ComposerBannerVariant, string> = {
-  default: "[--surface-tint:var(--muted-foreground)]",
-  error: "[--surface-tint:var(--error-foreground)]",
-  info: "[--surface-tint:var(--update-foreground)]",
-  success: "[--surface-tint:var(--success-foreground)]",
-  warning: "[--surface-tint:var(--warning-foreground)]",
+  default: "[--composer-banner-tint:var(--contrast-muted-foreground)]",
+  error: "[--composer-banner-tint:var(--error-foreground)]",
+  info: "[--composer-banner-tint:var(--update-foreground)]",
+  success: "[--composer-banner-tint:var(--success-foreground)]",
+  warning: "[--composer-banner-tint:var(--warning-foreground)]",
 };
 
 /** A row's title: the row's tint tells it apart from the detail, never size or weight. */
-export const composerBannerTitleClassName = "min-w-0 truncate text-(--surface-tint)";
+export const composerBannerTitleClassName = "min-w-0 truncate text-(--composer-banner-tint)";
 export const composerBannerDetailClassName =
   "w-0 min-w-0 grow truncate text-dim-foreground [&_[data-slot=inline-button]]:inline-block [&_[data-slot=inline-button]]:max-w-full [&_[data-slot=inline-button]]:truncate [&_[data-slot=inline-button]]:align-bottom [&_[data-slot=inline-button]:not(:hover)]:text-inherit";
 
@@ -99,7 +100,7 @@ function Icon({ className, ...props }: ComponentProps<"span">) {
       aria-hidden
       data-slot="composer-banner-icon"
       className={cn(
-        "flex w-3.5 flex-none items-center justify-center text-(--surface-tint) [&>svg]:size-3.5 max-sm:w-4 max-sm:[&>svg]:size-4",
+        "flex w-3.5 flex-none items-center justify-center text-(--composer-banner-tint) [&>svg]:size-3.5 max-sm:w-4 max-sm:[&>svg]:size-4",
         className,
       )}
       {...props}
