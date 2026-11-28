@@ -279,12 +279,13 @@ export function followLayoutCompanions(open: () => void): void {
     const from = chatThreadRef(swap.from);
     const to = chatThreadRef(swap.to);
     if (from && to && scopedThreadKey(from) === scopedThreadKey(to)) continue;
-    if (from) hideCompanionsOf(from, before.focusedWorkspaceId);
+    if (from) hideCompanionsOf(from, before);
     if (to) showCompanionsOf(to);
   }
 }
 
-function hideCompanionsOf(threadRef: ScopedThreadRef, workspaceId: string) {
+function hideCompanionsOf(threadRef: ScopedThreadRef, before: LayoutState) {
+  const workspaceId = before.focusedWorkspaceId;
   const layout = useLayoutStore.getState().layout;
   const tabs = findLayoutSurfaceTabs(layout, threadRef);
   const panelTabs = tabs.filter(
@@ -307,7 +308,8 @@ function hideCompanionsOf(threadRef: ScopedThreadRef, workspaceId: string) {
       threadRef,
     ).terminalOpen && terminalTab?.workspace.id === workspaceId;
   if (!panel && !terminal) return;
-  const chat = findThreadChat(layout, threadRef);
+  // An open that replaced the chat's ghost tab leaves its column only in the layout before it.
+  const chat = findThreadChat(layout, threadRef) ?? findThreadChat(before, threadRef);
   const locations = [...(chat ? [chat] : []), ...tabs];
   const columns = new Map(
     locations.map(({ column, tab, workspace }) => [
