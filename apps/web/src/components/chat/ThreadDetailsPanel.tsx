@@ -234,10 +234,10 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
         setMenuPosition({ x: event.clientX, y: event.clientY });
       }}
     >
-      {(density) => {
+      {({ cut, reveal }) => {
         const show = {
-          environment: density === "full" && visible.environment,
-          openIn: density !== "essential" && visible.openIn && props.showOpenInPicker,
+          environment: visible.environment,
+          openIn: visible.openIn && props.showOpenInPicker,
           scripts: visible.scripts && props.activeProjectScripts !== undefined,
           branch: offersGit && folderIsRepo && visible.branch,
           // Without a branch selector, linked pull requests still need somewhere to show.
@@ -249,12 +249,14 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
             (folderIsRepo || (!tracksFolders && taskFolder === null)) &&
             (visible.gitActions || (visible.changes && folderIsRepo)),
           // Also for a project that tracks nothing: a thread can change a submodule.
-          repositories: offersGit && density !== "essential" && visible.gitActions,
+          repositories: offersGit && visible.gitActions,
         };
+        const workspaceShown =
+          Object.values(show).some(Boolean) || visible.usage || visible.context;
         return (
           <>
             <div className="group/details-items thread-details-stack flex flex-col gap-1">
-              {Object.values(show).some(Boolean) || visible.usage || visible.context ? (
+              {workspaceShown ? (
                 <section
                   aria-label={gt("Workspace")}
                   data-thread-details-card
@@ -334,48 +336,62 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                         ) : null}
                       </div>
                     ) : null}
-                    <div ref={setPrRowsContainer} />
+                    <div
+                      ref={setPrRowsContainer}
+                      data-thread-details-unit="pullRequests"
+                      hidden={cut.has("pullRequests")}
+                    />
                     {show.pullRequests ? (
-                      <ThreadDetailsThreadPrRows
-                        threadRef={activeThreadRef}
-                        project={project}
-                        composerTarget={props.composerDraftTarget}
-                      />
+                      <div data-thread-details-unit="pullRequests" hidden={cut.has("pullRequests")}>
+                        <ThreadDetailsThreadPrRows
+                          threadRef={activeThreadRef}
+                          project={project}
+                          composerTarget={props.composerDraftTarget}
+                        />
+                      </div>
                     ) : null}
                     {show.repositories ? (
-                      <ThreadRepositorySections
-                        environmentId={props.environmentId}
-                        threadId={props.threadId}
-                        projectId={props.projectId}
-                        isServerThread={props.isServerThread}
-                        threadCwd={props.gitCwd}
-                        taskFolder={taskFolder}
-                        reachesTracked={
-                          props.worktreePath === null ? tracksFolders : taskFolder !== null
-                        }
-                        onTaskFolderChange={taskFolderQuery.refresh}
-                        explainsEmpty={!folderIsRepo}
-                        showActions={visible.gitActions}
-                      />
+                      <div data-thread-details-unit="repositories" hidden={cut.has("repositories")}>
+                        <ThreadRepositorySections
+                          environmentId={props.environmentId}
+                          threadId={props.threadId}
+                          projectId={props.projectId}
+                          isServerThread={props.isServerThread}
+                          threadCwd={props.gitCwd}
+                          taskFolder={taskFolder}
+                          reachesTracked={
+                            props.worktreePath === null ? tracksFolders : taskFolder !== null
+                          }
+                          onTaskFolderChange={taskFolderQuery.refresh}
+                          explainsEmpty={!folderIsRepo}
+                          showActions={visible.gitActions}
+                        />
+                      </div>
                     ) : null}
                     {show.scripts && props.activeProjectScripts ? (
-                      <ProjectScriptsControl
-                        environmentId={props.environmentId}
-                        displayMode="panel"
-                        scripts={props.activeProjectScripts}
-                        fileScripts={t3File.scripts}
-                        onActionsMenuOpen={t3File.refresh}
-                        preferredScriptId={props.preferredScriptId}
-                        threadId={props.threadId}
-                        onRunScript={props.onRunProjectScript}
-                        onAddScript={props.onAddProjectScript}
-                        onUpdateScript={props.onUpdateProjectScript}
-                        onDeleteScript={props.onDeleteProjectScript}
-                      />
+                      <div data-thread-details-unit="scripts" hidden={cut.has("scripts")}>
+                        <ProjectScriptsControl
+                          environmentId={props.environmentId}
+                          displayMode="panel"
+                          scripts={props.activeProjectScripts}
+                          fileScripts={t3File.scripts}
+                          onActionsMenuOpen={t3File.refresh}
+                          preferredScriptId={props.preferredScriptId}
+                          threadId={props.threadId}
+                          onRunScript={props.onRunProjectScript}
+                          onAddScript={props.onAddProjectScript}
+                          onUpdateScript={props.onUpdateProjectScript}
+                          onDeleteScript={props.onDeleteProjectScript}
+                        />
+                      </div>
                     ) : null}
                   </div>
                   {visible.usage || visible.context ? (
-                    <div className="flex flex-col gap-1.5 px-0.5 pt-1.5 pb-0.5">
+                    <div
+                      className="flex flex-col gap-1.5 px-0.5 pt-1.5 pb-0.5"
+                      data-thread-details-unit="usage"
+                      hidden={cut.has("usage")}
+                    >
                       {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
                       {visible.context ? (
                         <div
@@ -390,27 +406,38 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                       ) : null}
                     </div>
                   ) : null}
+                  {reveal}
                 </section>
               ) : null}
 
-              {density === "full" && !props.draftId && visible.servers ? (
-                <ThreadServersPanel environmentId={props.environmentId} threadId={props.threadId} />
-              ) : null}
-              {density === "full" && !props.draftId && visible.automations ? (
-                <ThreadAutomationsPanel
-                  environmentId={props.environmentId}
-                  threadId={props.threadId}
-                />
-              ) : null}
+              {/* Cut as one: the reveal row lives in the workspace tray, so no card may outlast a cut. */}
+              <div
+                className="contents"
+                data-thread-details-unit={workspaceShown ? "cards" : undefined}
+                hidden={workspaceShown && cut.has("cards")}
+              >
+                {!props.draftId && visible.servers ? (
+                  <ThreadServersPanel
+                    environmentId={props.environmentId}
+                    threadId={props.threadId}
+                  />
+                ) : null}
+                {!props.draftId && visible.automations ? (
+                  <ThreadAutomationsPanel
+                    environmentId={props.environmentId}
+                    threadId={props.threadId}
+                  />
+                ) : null}
 
-              {density === "full" && !props.draftId && (visible.lineage || visible.sideChats) ? (
-                <ThreadRelationshipsPanel
-                  environmentId={props.environmentId}
-                  threadId={props.threadId}
-                  showLineage={visible.lineage}
-                  showSideChats={visible.sideChats}
-                />
-              ) : null}
+                {!props.draftId && (visible.lineage || visible.sideChats) ? (
+                  <ThreadRelationshipsPanel
+                    environmentId={props.environmentId}
+                    threadId={props.threadId}
+                    showLineage={visible.lineage}
+                    showSideChats={visible.sideChats}
+                  />
+                ) : null}
+              </div>
 
               {/* Shown only when no section above has content, so an emptied card can be refilled. */}
               <div className="p-1 group-has-[section]/details-items:hidden">

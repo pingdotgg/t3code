@@ -1451,7 +1451,10 @@ function CheckoutGitActionsControl({
               </span>
               {changesBaseLabel ? (
                 <SharedTooltipTrigger
-                  render={<span className="min-w-0 truncate text-muted-foreground" />}
+                  // A squeezed details card drops the base to keep its rows short.
+                  render={
+                    <span className="min-w-0 truncate text-muted-foreground in-data-thread-details-squeezed:hidden" />
+                  }
                   label={changesBaseLabel}
                   className="max-w-96 break-words"
                 >

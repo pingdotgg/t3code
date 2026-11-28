@@ -15,6 +15,37 @@ export function resolveThreadDetailsCardDensity(
   return "essential";
 }
 
+/** Sections a squeezed inline card drops whole, the first to go first. */
+export const THREAD_DETAILS_CUT_ORDER = [
+  "cards",
+  "usage",
+  "scripts",
+  "repositories",
+  "pullRequests",
+] as const;
+export type ThreadDetailsCutUnit = (typeof THREAD_DETAILS_CUT_ORDER)[number];
+
+/**
+ * How many sections of THREAD_DETAILS_CUT_ORDER to drop so the rest and the reveal row fit.
+ * Every height is the section's full one, cut or not, so the answer never feeds back into its input.
+ */
+export function resolveThreadDetailsCut(
+  height: number,
+  content: {
+    readonly full: number;
+    readonly slots: Partial<Record<ThreadDetailsCutUnit, number>>;
+    readonly reveal: number;
+  },
+) {
+  if (content.full <= height) return 0;
+  let total = content.full + content.reveal;
+  for (const [index, unit] of THREAD_DETAILS_CUT_ORDER.entries()) {
+    if (total <= height) return index;
+    total -= content.slots[unit] ?? 0;
+  }
+  return THREAD_DETAILS_CUT_ORDER.length;
+}
+
 export function resolveThreadDetailsCardLayout({
   container,
   narrowestWidth = container.width,
