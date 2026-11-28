@@ -907,8 +907,10 @@ function* inCell(parts: Iterable<TextPart>): Generator<TextPart, void> {
 }
 function repeatCount(value: string | undefined): number {
   if (value === undefined) return 1;
-  if (!/^[0-9]+$/.test(value) || Number(value) < 1) throw new Error("Invalid repeat count");
-  return Number(value);
+  const count = Number(value);
+  if (!/^[ \t\r\n]*\+?[0-9]+[ \t\r\n]*$/.test(value) || count < 1)
+    throw new Error("Invalid repeat count");
+  return count;
 }
 function odfValue(cell: XmlNode): string {
   const type = cell.attrs["office:value-type"] ?? cell.attrs["value-type"];
