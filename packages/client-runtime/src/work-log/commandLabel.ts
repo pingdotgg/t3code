@@ -15,19 +15,55 @@ const WINDOWS_SHELL_PROGRAMS = new Set([
 const SHELL_OPTIONS_WITH_VALUE = new Set(["-o", "-O", "--rcfile", "--init-file"]);
 // `-euo pipefail` and `+o history`: a short-option bundle ending in o or O takes the next word.
 const SHELL_OPTION_BUNDLE_WITH_VALUE = /^[-+][a-zA-Z]*[oO]$/;
+const TIMEOUT_OPTION =
+  /^(?:-(?:[fpv]+|[fpv]*[ks].+)|--(?:foreground|preserve-status|verbose)|--(?:kill-after|signal)=.+)$/u;
 const SHELL_COMMAND_WRAPPERS = new Set(["builtin", "command", "exec"]);
 const SHELL_PRECOMMAND_MODIFIERS = new Set(["nocorrect", "noglob", "time"]);
 const POWERSHELL_SETUP_PROGRAMS = new Set(["pop-location", "push-location", "set-location"]);
-const POWERSHELL_FLAGS = new Set(["-mta", "-nologo", "-noninteractive", "-noprofile", "-sta"]);
+// powershell.exe and pwsh accept any prefix of a parameter name that is at least
+// as long as its shortest unambiguous form, plus a few extra aliases.
+const POWERSHELL_PARAMETERS: ReadonlyArray<readonly [string, string, ...string[]]> = [
+  ["command", "c"],
+  ["configurationname", "config"],
+  ["encodedcommand", "e", "ec"],
+  ["executionpolicy", "ex", "ep"],
+  ["file", "f"],
+  ["inputformat", "inp", "if"],
+  ["mta", "mta"],
+  ["nologo", "nol"],
+  ["noninteractive", "noni"],
+  ["noprofile", "nop"],
+  ["outputformat", "o", "of"],
+  ["sta", "sta"],
+  ["version", "v"],
+  ["windowstyle", "w"],
+  ["workingdirectory", "wo", "wd"],
+];
+const POWERSHELL_FLAGS = new Set(["mta", "nologo", "noninteractive", "noprofile", "sta"]);
 const POWERSHELL_OPTIONS_WITH_VALUE = new Set([
-  "-configurationname",
-  "-executionpolicy",
-  "-inputformat",
-  "-outputformat",
-  "-version",
-  "-windowstyle",
-  "-workingdirectory",
+  "configurationname",
+  "executionpolicy",
+  "inputformat",
+  "outputformat",
+  "version",
+  "windowstyle",
+  "workingdirectory",
 ]);
+
+// pwsh prints its version and exits at -Version; Windows PowerShell reads a version value and runs.
+function isPwshVersion(shell: string, parameter: string | null): boolean {
+  return parameter === "version" && shell.startsWith("pwsh");
+}
+
+function powerShellParameter(token: string): string | null {
+  if (!token.startsWith("-")) return null;
+  const key = token.slice(1).toLowerCase();
+  for (const [name, shortest, ...aliases] of POWERSHELL_PARAMETERS) {
+    if (aliases.includes(key)) return name;
+    if (key.length >= shortest.length && name.startsWith(key)) return name;
+  }
+  return null;
+}
 const START_PROCESS_FLAGS = new Set([
   "-confirm",
   "-debug",
@@ -243,6 +279,8 @@ const ANSI_C_ESCAPES: Record<string, string> = {
 
 type ShellQuote = '"' | "'" | "$'";
 
+const REDIRECTION_TOKEN_PREFIX = /^(?:(?:\d+|\*|\{[A-Za-z_][A-Za-z0-9_]*\})?[<>]*|&>?)$/u;
+
 function tokenizeShellCommand(command: string): string[] | null {
   const input = command.trim();
   const tokens: string[] = [];
@@ -253,6 +291,7 @@ function tokenizeShellCommand(command: string): string[] | null {
   let substitutionDepth = 0;
   let parameterExpansionDepth = 0;
   let tokenStarted = false;
+  let tokenHasQuotes = false;
 
   for (let index = 0; index < input.length; index += 1) {
     const character = input[index]!;
@@ -260,6 +299,7 @@ function tokenizeShellCommand(command: string): string[] | null {
       current += character;
       escaping = false;
       tokenStarted = true;
+      tokenHasQuotes = true;
       continue;
     }
     if (character === "\\" && quote === "$'") {
@@ -365,13 +405,27 @@ function tokenizeShellCommand(command: string): string[] | null {
     if (character === "$" && (input[index + 1] === "'" || input[index + 1] === '"')) {
       quote = input[index + 1] === "'" ? "$'" : '"';
       tokenStarted = true;
+      tokenHasQuotes = true;
       index += 1;
       continue;
     }
     if (character === '"' || character === "'") {
       quote = character;
       tokenStarted = true;
+      tokenHasQuotes = true;
       continue;
+    }
+    if (
+      substitutionDepth === 0 &&
+      parameterExpansionDepth === 0 &&
+      tokenStarted &&
+      (((character === "<" || character === ">") &&
+        (tokenHasQuotes || !REDIRECTION_TOKEN_PREFIX.test(current))) ||
+        (character === "&" && input[index + 1] === ">"))
+    ) {
+      tokens.push(current);
+      current = "";
+      tokenHasQuotes = false;
     }
     if (/\s/u.test(character)) {
       if (substitutionDepth > 0 || parameterExpansionDepth > 0) {
@@ -383,6 +437,7 @@ function tokenizeShellCommand(command: string): string[] | null {
         tokens.push(current);
         current = "";
         tokenStarted = false;
+        tokenHasQuotes = false;
       }
       continue;
     }
@@ -447,6 +502,7 @@ function readHeredocDelimiter(
   let index = start;
   while (command[index] === " " || command[index] === "\t") index += 1;
 
+  const wordStart = index;
   let delimiter = "";
   let quote: '"' | "'" | null = null;
   let escaping = false;
@@ -474,7 +530,7 @@ function readHeredocDelimiter(
     delimiter += character;
   }
 
-  if (!delimiter || quote !== null || escaping) return null;
+  if (index === wordStart || quote !== null || escaping) return null;
   return { heredoc: { delimiter, stripTabs }, end: index };
 }
 
@@ -604,7 +660,11 @@ function splitFirstShellCommand(command: string): ShellCommandSplit {
     }
     if (substitutionDepth > 0 || parameterExpansionDepth > 0) continue;
 
-    if (character === "<" && command[index + 1] === "<" && command[index + 2] !== "<") {
+    if (character === "<" && command[index + 1] === "<") {
+      if (command[index + 2] === "<") {
+        index += 2;
+        continue;
+      }
       const stripTabs = command[index + 2] === "-";
       const delimiter = readHeredocDelimiter(command, index + (stripTabs ? 3 : 2), stripTabs);
       if (delimiter === null) {
@@ -683,7 +743,9 @@ function commandWithoutLeadingShellComments(command: string): string | null {
   return remainingCommand || null;
 }
 
-function withoutShellLineContinuations(command: string): string {
+// Bash keeps a backslash before CR, so only labels, not the displayed script,
+// treat backslash-CRLF as a continuation.
+function withoutShellLineContinuations(command: string, joinCrlf = true): string {
   let normalizedCommand = "";
   let quote: ShellQuote | null = null;
   let escaping = false;
@@ -700,7 +762,12 @@ function withoutShellLineContinuations(command: string): string {
         index += 1;
         continue;
       }
-      if (quote !== "$'" && command[index + 1] === "\r" && command[index + 2] === "\n") {
+      if (
+        joinCrlf &&
+        quote !== "$'" &&
+        command[index + 1] === "\r" &&
+        command[index + 2] === "\n"
+      ) {
         index += 2;
         continue;
       }
@@ -771,9 +838,21 @@ function transparentWrapperCommandIndex(
   }
 
   if (wrapper === "timeout" || wrapper === "gtimeout") {
-    return /^(?:\d+(?:\.\d*)?|\.\d+)[smhd]?$/u.test(tokens[index + 1] ?? "") &&
-      tokens[index + 2] !== undefined
-      ? index + 2
+    let targetIndex = index + 1;
+    while (true) {
+      const option = tokens[targetIndex];
+      if (option === "--") {
+        targetIndex += 1;
+        break;
+      }
+      if (!option?.startsWith("-")) break;
+      if (/^(?:-[fpv]*[ks]|--(?:kill-after|signal))$/u.test(option)) targetIndex += 2;
+      else if (TIMEOUT_OPTION.test(option)) targetIndex += 1;
+      else return null;
+    }
+    return /^(?:\d+(?:\.\d*)?|\.\d+)[smhd]?$/u.test(tokens[targetIndex] ?? "") &&
+      tokens[targetIndex + 1] !== undefined
+      ? targetIndex + 1
       : null;
   }
 
@@ -909,25 +988,26 @@ function windowsShellPayloadProgramName(
   }
 
   for (let index = start; index < tokens.length; index += 1) {
-    const option = tokens[index]!.toLowerCase();
-    if (option === "-command" || option === "-c") {
+    const option = tokens[index]!;
+    const parameter = powerShellParameter(option);
+    if (parameter === "command") {
       const payload = tokens[index + 1];
       return {
         matched: true,
         program: parsePayload(payload),
       };
     }
-    if (option === "-file" || option === "-f") {
+    if (parameter === "file") {
       return { matched: true, program: staticProgramName(tokens[index + 1] ?? "") };
     }
-    if (option === "-encodedcommand" || option === "-enc" || option === "-e") {
+    if (parameter === "encodedcommand" || isPwshVersion(shell, parameter)) {
       return { matched: true, program: null };
     }
-    if (POWERSHELL_OPTIONS_WITH_VALUE.has(option)) {
+    if (parameter && POWERSHELL_OPTIONS_WITH_VALUE.has(parameter)) {
       index += 1;
       continue;
     }
-    if (POWERSHELL_FLAGS.has(option)) continue;
+    if (parameter && POWERSHELL_FLAGS.has(parameter)) continue;
     if (!option.startsWith("-")) {
       return { matched: true, program: staticProgramName(tokens[index]!) };
     }
@@ -1443,10 +1523,15 @@ function withoutShellWrapper(command: string): string {
   const trimmed = command.trim();
   const split = splitFirstShellCommand(trimmed);
   if (split.remainingCommand !== null) return trimmed;
-  const tokens = tokenizeShellCommand(trimmed);
+  const joined = trimmed.includes("\\\n") ? withoutShellLineContinuations(trimmed, false) : trimmed;
+  let tokens = tokenizeShellCommand(joined);
   const executable = tokens?.[0]?.split(/[\\/]/u).at(-1)?.toLowerCase();
   const program = executable?.replace(/\.exe$/u, "");
   if (!tokens || !executable || !program) return trimmed;
+  if (joined !== trimmed && WINDOWS_SHELL_PROGRAMS.has(executable)) {
+    tokens = tokenizeShellCommand(trimmed);
+    if (!tokens || tokens[0]?.split(/[\\/]/u).at(-1)?.toLowerCase() !== executable) return trimmed;
+  }
   const scriptIndex = SHELL_PROGRAMS.has(program)
     ? shellCommandArgumentIndex(program, tokens, 1)
     : WINDOWS_SHELL_PROGRAMS.has(executable)
@@ -1465,12 +1550,14 @@ function windowsShellScriptIndex(shell: string, tokens: ReadonlyArray<string>): 
       if (!option.startsWith("/")) return null;
       continue;
     }
-    if (option === "-command" || option === "-c") return index + 1;
-    if (POWERSHELL_OPTIONS_WITH_VALUE.has(option)) {
+    const parameter = powerShellParameter(option);
+    if (parameter === "command") return index + 1;
+    if (isPwshVersion(shell, parameter)) return null;
+    if (parameter && POWERSHELL_OPTIONS_WITH_VALUE.has(parameter)) {
       index += 1;
       continue;
     }
-    if (!POWERSHELL_FLAGS.has(option)) return null;
+    if (!parameter || !POWERSHELL_FLAGS.has(parameter)) return null;
   }
   return null;
 }

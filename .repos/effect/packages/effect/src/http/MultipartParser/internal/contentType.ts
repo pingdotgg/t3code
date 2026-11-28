@@ -116,7 +116,7 @@ const pctEncodedRE = /%([0-9a-f]{2})/gi
  * ISO-8859-1 is decoded byte by byte because `TextDecoder` treats it as
  * windows-1252.
  */
-function decodeExtValue(value: string): string | undefined {
+export function decodeExtValue(value: string): string | undefined {
   const match = extValueRE.exec(value)
   if (match === null) {
     return undefined

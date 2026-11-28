@@ -2,7 +2,7 @@ import { isWindowsDrivePath } from "./path.ts";
 
 export type CloneProtocol = "ssh" | "https";
 
-const SCP_LIKE_URL = /^(?:[^@/\s]+@)?(\[[^\]@/\s]+\]|[^:/\s[\]]+):(?!\/)(.+)$/;
+const SCP_LIKE_URL = /^(?:[^@/\s]+@)?(\[[^\]@/\s]+\]|[^:/\s[\]]+):(?!\/\/)(.+)$/;
 // Userinfo may contain `@`; the last one before the first slash separates the host.
 const SSH_URL = /^ssh:\/\/(?:[^/\s]*@)?(\[[^\]@/\s]+\]|[^@:/\s]+)(:\d+)?\/(.+)$/;
 const HTTPS_URL = /^https?:\/\/(?:[^/\s]*@)?(\[[^\]@/\s]+\]|[^@:/\s]+)(:\d+)?\/(.+)$/;
@@ -15,6 +15,7 @@ function parseCloneUrl(url: string): {
   scp: boolean;
 } | null {
   const trimmed = url.trim();
+  if (isWindowsDrivePath(trimmed)) return null;
   const ssh = SSH_URL.exec(trimmed);
   if (ssh)
     return { protocol: "ssh", host: ssh[1]!, path: ssh[3]!, customPort: !!ssh[2], scp: false };
@@ -42,7 +43,8 @@ export function withoutRemoteUrlCredentials(url: string): string {
 }
 
 export function isScpLikeCloneUrl(url: string): boolean {
-  return SCP_LIKE_URL.test(url);
+  const trimmed = url.trim();
+  return !isWindowsDrivePath(trimmed) && SCP_LIKE_URL.test(trimmed);
 }
 
 export function cloneUrlProtocol(url: string): CloneProtocol | null {
@@ -58,7 +60,7 @@ export function cloneUrlForProtocol(url: string, protocol: CloneProtocol): strin
   const parsed = parseCloneUrl(url);
   if (!parsed) return null;
   if (parsed.protocol === protocol) return url.trim();
-  if (parsed.customPort) return null;
+  if (parsed.customPort || (parsed.scp && parsed.path.startsWith("/"))) return null;
   // Azure's transports use different hosts and put the repository marker in
   // different positions; changing only the scheme produces an invalid clone URL.
   if (parsed.protocol === "ssh" && parsed.host.toLowerCase() === "ssh.dev.azure.com") {
@@ -96,7 +98,6 @@ const WINDOWS_DEVICE_NAME =
  * anything with a folder that could leave the root.
  */
 export function cloneUrlRepositoryPath(url: string): string | null {
-  if (isWindowsDrivePath(url.trim())) return null;
   const parsed = parseCloneUrl(url);
   if (!parsed) return null;
   let repositoryPath = parsed.path.split(parsed.scp ? "?" : /[?#]/, 1)[0]!;

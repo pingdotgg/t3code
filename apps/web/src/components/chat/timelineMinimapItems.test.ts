@@ -97,6 +97,16 @@ describe("resolveTimelineMinimapPreview", () => {
     expect(nested?.assistantText).toBe("One two three four");
   });
 
+  it("leaves footnote markers and the footnote list out of the preview", () => {
+    const preview = resolveTimelineMinimapPreview({
+      id: "turn-1",
+      rowIndex: 0,
+      userText: null,
+      assistantText: "Checked the cache first[^1] and it was stale.\n\n[^1]: Redis TTL is 60s.",
+    });
+    expect(preview?.assistantText).toBe("Checked the cache first and it was stale.");
+  });
+
   it("does not split a surrogate pair at the preview slice boundary", () => {
     const linkStart = "[Build log](https://example.com/builds/1042/log?sig=";
     const linkEnd = ") ";
