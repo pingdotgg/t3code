@@ -244,7 +244,9 @@ function transformCodexDirectives(node: MarkdownAstNode, source: string, insideL
     return;
   }
   if (node.type === "textDirective" && node.name === CODEX_FOLLOW_UP_NAME) {
+    for (const child of node.children ?? []) transformCodexDirectives(child, source, insideLink);
     renderFollowUp(node, source);
+    return;
   }
   if (node.type === "leafDirective" && node.name === CODEX_ARTIFACT_TEMPLATE_NAME) {
     renderArtifactTemplate(node, source);
@@ -303,7 +305,6 @@ function collectDirectiveMatches(node: MarkdownAstNode, matches: DirectiveMatch[
     const labelEnd = node.children?.at(-1)?.position?.end.offset;
     if (node.data?.codexFollowUp && labelStart !== undefined && labelEnd !== undefined) {
       matches.push({ start, end, labelRange: [labelStart, labelEnd] });
-      return;
     }
   }
   for (const child of node.children ?? []) collectDirectiveMatches(child, matches);
@@ -316,12 +317,18 @@ function renderDirectiveMatches(
   const matches: DirectiveMatch[] = [];
   collectDirectiveMatches(parseCodexMarkdown(markdown), matches);
   let rendered = markdown;
+  const changes: Array<{ start: number; delta: number }> = [];
   for (const match of matches.sort((left, right) => right.start - left.start)) {
+    let delta = 0;
+    while (changes.length && changes.at(-1)!.start < match.end) {
+      delta += changes.pop()!.delta;
+    }
     const replacement = match.labelRange
-      ? markdown.slice(...match.labelRange)
+      ? rendered.slice(match.labelRange[0], match.labelRange[1] + delta)
       : replacementFor(match);
     if (replacement !== undefined) {
-      rendered = rendered.slice(0, match.start) + replacement + rendered.slice(match.end);
+      rendered = rendered.slice(0, match.start) + replacement + rendered.slice(match.end + delta);
+      changes.push({ start: match.start, delta: replacement.length - (match.end - match.start) });
     }
   }
   return rendered;

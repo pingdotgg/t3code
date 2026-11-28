@@ -141,6 +141,10 @@ const CASES: ReadonlyArray<readonly [markdown: string, html: string]> = [
     '<p dir="ltr">Read <a href="src/a.ts#L3">a.ts</a> and <span class="has-[[data-slot=context-chip-label]]:whitespace-nowrap"><a href="u">x :codex-file-citation[b]{path="b.ts"}</a>.</span></p>',
   ],
   [
+    ':codex-followup[:codex-file-citation{path="src/app.ts"}]{prompt="Review app.ts"}',
+    '<p dir="ltr"><span><a href="src/app.ts">app.ts</a></span></p>',
+  ],
+  [
     ':codex-followup[Ask]{prompt="go"} and :codex-followup[No prompt]{label="x"} stay apart.',
     '<p dir="ltr"><span>Ask</span> and :codex-followup[No prompt]{label="x"} stay apart.</p>',
   ],
@@ -389,6 +393,12 @@ describe("wordsHast", () => {
     expect(html.match(/<svg /g)).toHaveLength(2);
     expect(html).toContain('aria-label="x^2 \\text{ for } n"');
     expect(html).toContain('style="white-space:pre"> for </text>');
+    const followUp = wordsHtml(':codex-followup[$\\text{Explain}$]{prompt="go"}', {
+      math: true,
+    });
+    expect(followUp).toMatch(/^<p dir="ltr"><span><span[^>]* data-markdown-math="inline"/);
+    expect(followUp).toContain('aria-label="\\text{Explain}"');
+    expect(followUp).not.toContain(":codex-followup");
   });
 
   it("keeps control bytes, blank lines, unclosed blocks, shell vars, and table dollars intact in math", () => {

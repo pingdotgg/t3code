@@ -57,6 +57,16 @@ describe("remarkCodexDirectives", () => {
     });
   });
 
+  it("renders a follow-up whose entire label is a file citation", () => {
+    expect(
+      parse(':codex-followup[:codex-file-citation{path="src/app.ts"}]{prompt="Review app.ts"}')
+        .children?.[0]?.children?.[0],
+    ).toMatchObject({
+      data: { hName: "span" },
+      children: [{ type: "link", url: "src/app.ts", children: [{ value: "app.ts" }] }],
+    });
+  });
+
   it("renders an artifact template as semantic block metadata", () => {
     expect(parse(ARTIFACT_TEMPLATE).children?.[0]).toMatchObject({
       type: "paragraph",
@@ -109,6 +119,19 @@ describe.each([
 
     expect(link?.type).toBe("link");
     expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path: linkPath, line: 7 });
+  });
+
+  it.each([
+    ['Review :codex-file-citation{path="src/app.ts"}', "Review [app.ts](<src/app.ts>)"],
+    [':codex-file-citation{path="src/app.ts"}', "[app.ts](<src/app.ts>)"],
+    [
+      ':codex-followup[Review :codex-file-citation{path="src/app.ts"}]{prompt="Review"}',
+      "Review [app.ts](<src/app.ts>)",
+    ],
+  ])("renders nested follow-up citations in their original context: %s", (label, expected) => {
+    expect(render(`Before :codex-followup[${label}]{prompt="Review app.ts"} end`)).toBe(
+      `Before ${expected} end`,
+    );
   });
 
   it("keeps an entity-like ampersand in the path literal", () => {
