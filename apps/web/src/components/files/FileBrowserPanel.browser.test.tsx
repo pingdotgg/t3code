@@ -67,8 +67,9 @@ const statAnswer = (cwd: string, relativePath: string) => {
   const key = `${cwd}|${relativePath}`;
   const known = statAnswers.get(key);
   if (known) return known;
-  const waiting: AsyncResult.AsyncResult<ProjectStatFileResult, string> = AsyncResult.initial(true);
-  const answer = Atom.make(waiting).pipe(Atom.keepAlive);
+  const answer = Atom.make<AsyncResult.AsyncResult<ProjectStatFileResult, string>>(
+    AsyncResult.initial(true),
+  ).pipe(Atom.keepAlive);
   statAnswers.set(key, answer);
   return answer;
 };
