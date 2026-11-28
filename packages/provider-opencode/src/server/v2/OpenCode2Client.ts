@@ -91,6 +91,9 @@ const NativeImageJob = Schema.Struct({
 const decodeJobs = Schema.decodeUnknownEffect(
   Schema.Struct({ data: Schema.Array(Schema.Unknown) }),
 );
+const JobStatuses = Schema.Struct({
+  data: Schema.Array(Schema.Struct({ kind: Schema.String, status: Schema.String })),
+});
 const decodeImageJob = Schema.decodeUnknownOption(NativeImageJob);
 
 /** events resolves on subscription acceptance; subscribe before work because the stream is volatile. */
@@ -102,6 +105,10 @@ export interface OpenCode2Api {
   readonly shellJobs?: (
     sessionID: string,
   ) => Effect.Effect<typeof ShellJobs.Type, HttpClientError.HttpClientError | Schema.SchemaError>;
+  /** Running background jobs other than subagents owned by a session or the subagent sessions below it. */
+  readonly runningJobs?: (
+    sessionID: string,
+  ) => Effect.Effect<number, HttpClientError.HttpClientError | Schema.SchemaError>;
   readonly imageJobs: (
     sessionID: string,
   ) => Effect.Effect<ReadonlyArray<typeof NativeImageJob.Type>, OpenCode2ImageError>;
@@ -289,6 +296,21 @@ export const make = Effect.gen(function* () {
               .pipe(
                 Effect.flatMap(HttpClientResponse.filterStatusOk),
                 Effect.flatMap(HttpClientResponse.schemaBodyJson(ShellJobs)),
+              );
+          }),
+          runningJobs: Effect.fn("OpenCode2Client.runningJobs")(function (sessionID: string) {
+            return authenticated
+              .get(`${baseUrl}/api/experimental/job`, {
+                urlParams: { sessionID, descendants: "true" },
+              })
+              .pipe(
+                Effect.flatMap(HttpClientResponse.filterStatusOk),
+                Effect.flatMap(HttpClientResponse.schemaBodyJson(JobStatuses)),
+                Effect.map(
+                  (page) =>
+                    page.data.filter((job) => job.kind !== "subagent" && job.status === "running")
+                      .length,
+                ),
               );
           }),
           imageJobs: (sessionID: string) =>

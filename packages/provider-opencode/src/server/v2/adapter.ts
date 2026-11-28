@@ -306,6 +306,8 @@ interface SubagentCall {
   run: number | undefined;
   /** That turn's last text once it ended, which OpenCode sends as the run's report. */
   answer: string | undefined;
+  /** The output of a report sent while the child's own background work still ran; a later report settles the call. */
+  reported: string | undefined;
   child: ThreadState | undefined;
   status: OrchestrationV2Subagent["status"];
   result: string | null;
@@ -618,6 +620,20 @@ const reportOutcome = (state: string | undefined) =>
 const subagentOutput = (text: string) =>
   /^<subagent\b[^>]*>\n?([\s\S]*?)\n?<\/subagent>$/.exec(text.trim())?.[1] ?? text;
 
+// When the child goes idle with its own background work still running, OpenCode keeps "completed"
+// in the report's metadata, says "running" only in the tag's state attribute (the description
+// attribute after it is not escaped) and appends the list of that work to the body.
+const reportsRunningWork = (text: string) =>
+  /^<subagent\s[^>]*?\sstate="([^"]*)"/.exec(text.trimStart())?.[1] === "running";
+
+const STILL_RUNNING = "\n\nBackground work still running:\n";
+// OpenCode's report body for a run that ended without text.
+const NO_TEXT = "Subagent completed without a text response.";
+const withoutRunningWork = (output: string) => {
+  const at = output.lastIndexOf(STILL_RUNNING);
+  return at === -1 ? output : output.slice(0, at);
+};
+
 const isContinuation = (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
   turnInput.message.createdBy === "agent" && turnInput.message.creationSource === "provider";
 
@@ -703,6 +719,7 @@ const LOST_BACKGROUND =
   "T3 Code lost its connection to OpenCode while this subagent ran, so its result is not shown.";
 const INVENTORY_TIMEOUT = "5 seconds";
 const MCP_TOOL_RELOAD_SETTLE = "250 millis";
+const FAILED_CHILD_GRACE = "30 seconds";
 const ACTIVE_CHECK_TIMEOUT = "5 seconds";
 // Other failures may still have admitted the prompt.
 const CLEAR_PROMPT_REJECTIONS: ReadonlySet<string> = new Set([
@@ -1073,9 +1090,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     };
     let replaying: Wake | undefined;
 
-    const owesWork = (state: ThreadState) =>
+    const runsJobs = (state: ThreadState) =>
       [...shells.values()].some((shell) => shell.state === state && shell.running) ||
-      [...state.imageJobs.values()].some((job) => job.status === "running") ||
+      [...state.imageJobs.values()].some((job) => job.status === "running");
+
+    const owesWork = (state: ThreadState) =>
+      runsJobs(state) ||
       state.wakes.length > 0 ||
       state.reports.size > 0 ||
       (state.subagent !== undefined && busy.has(state.sessionId)) ||
@@ -2306,6 +2326,25 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* emitSubagent(call);
     });
 
+    // OpenCode reports a busy period only when it wrote a new answer. A child whose work ended in a
+    // quiet one never reports again, nor do the idle subagents above it that were waiting on it.
+    // During a reconnect, reconcile settles kept calls itself once it has read OpenCode's jobs.
+    let reconciling = false;
+    const releaseQuiet = Effect.fnUntraced(function* (state: ThreadState) {
+      if (reconciling) return;
+      for (
+        let current: ThreadState = state;
+        current.subagent !== undefined;
+        current = current.subagent.call.state
+      ) {
+        if (current.active !== undefined || busy.has(current.sessionId) || hasBackground(current))
+          return;
+        for (const call of callsAttachedTo(current)) {
+          if (call.reported !== undefined) yield* settleCall(call, "completed", call.reported);
+        }
+      }
+    });
+
     const startChildTurn = Effect.fnUntraced(function* (child: ThreadState) {
       const subagent = child.subagent;
       if (subagent === undefined || child.active !== undefined) return;
@@ -2516,6 +2555,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           for (const attached of callsAttachedTo(state)) {
             yield* settleCall(attached, terminal.status, terminal.failure.message);
           }
+          // OpenCode reports the failure to the caller, which usually reacts at once (a retry, a
+          // "continue"); idle kept subagents above are released only if it stays idle.
+          const caller = state.subagent?.call.state;
+          if (caller !== undefined) {
+            yield* Effect.forkIn(
+              Effect.sleep(FAILED_CHILD_GRACE).pipe(
+                Effect.andThen(lock.withPermit(releaseQuiet(caller))),
+              ),
+              sessionScope,
+            );
+          }
+        } else if (
+          terminal.status === "completed" &&
+          turn.answer === undefined &&
+          // A turn that missed events may have written unseen; when unsure, release.
+          (turn.startedSteps === 0 || turn.missedEvents)
+        ) {
+          yield* releaseQuiet(state);
         }
         return;
       }
@@ -2898,6 +2955,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         background: false,
         run: undefined,
         answer: undefined,
+        reported: undefined,
         child: undefined,
         status: "running",
         result: null,
@@ -3301,10 +3359,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const childId = stringField(payload.metadata, "childID");
       if (stringField(payload.metadata, "source") !== "subagent" || childId === undefined) return;
       strays.delete(childId);
-      const open = [...state.calls.values()].filter(
+      const outcome = reportOutcome(stringField(payload.metadata, "state"));
+      const stopped = state.stoppedChildren.has(childId);
+      const running = outcome === "completed" && !stopped && reportsRunningWork(payload.text);
+      const output = subagentOutput(payload.text);
+      const answer = running ? withoutRunningWork(output) : output;
+      const reporting = [...state.calls.values()].filter(
         (candidate) => candidate.child?.sessionId === childId,
       );
-      const output = subagentOutput(payload.text);
+      // Calls an earlier running report kept wait for the child's work, not for one of its runs.
+      const kept = reporting.filter((candidate) => candidate.reported !== undefined);
+      const open = reporting.filter((candidate) => candidate.reported === undefined);
+      const answered = (candidate: SubagentCall) =>
+        candidate.answer === answer || (candidate.answer === undefined && answer === NO_TEXT);
       const started = open
         .flatMap((candidate) =>
           candidate.run === undefined ? [] : [{ call: candidate, run: candidate.run }],
@@ -3313,9 +3380,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // The report names only the child, and reports arrive in order. So it belongs to the oldest
       // open run, unless that run ended with a different text: then its own report is lost.
       const next = started.find(
-        (candidate) => candidate.call.answer === undefined || candidate.call.answer === output,
+        (candidate) => candidate.call.answer === undefined || answered(candidate.call),
       );
-      const written = next?.call.answer === output ? next.run : undefined;
+      const written = next !== undefined && answered(next.call) ? next.run : undefined;
       const call = written === undefined ? open[0] : next?.call;
       const calls =
         call?.run === undefined
@@ -3324,19 +3391,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const lost = started.flatMap((candidate) =>
         written !== undefined && candidate.run < written ? [candidate.call] : [],
       );
-      const outcome = reportOutcome(stringField(payload.metadata, "state"));
+      const named = call ?? kept[0];
       state.reports.set(inboxId, {
         inboxId,
         childId,
         text: payload.text,
         report: {
           kind: "subagent",
-          label: call?.title ?? stringField(payload.metadata, "description"),
-          childThreadId: call?.child?.subagent?.appThread.id,
-          outcome,
+          label: named?.title ?? stringField(payload.metadata, "description"),
+          childThreadId: named?.child?.subagent?.appThread.id,
+          outcome: running ? "updated" : outcome,
         },
       });
-      const status = state.stoppedChildren.has(childId)
+      const status = stopped
         ? "interrupted"
         : outcome === "failed"
           ? "failed"
@@ -3344,7 +3411,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ? "cancelled"
             : "completed";
       for (const each of lost) yield* settleCall(each, "completed", each.answer);
-      for (const each of calls) yield* settleCall(each, status, output);
+      for (const each of calls) {
+        if (running && each.background) each.reported = answer;
+        else yield* settleCall(each, status, output);
+      }
+      // Calls kept earlier take the child's latest text; a report not tagged running means the
+      // child went idle with nothing left running.
+      for (const each of kept) {
+        if (running) each.reported = answer;
+        else yield* settleCall(each, status, output);
+      }
     });
 
     const holderOf = (sessionId: string) => {
@@ -3648,6 +3724,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const turn = state.active;
       if (turn === undefined) {
         if (started && state.subagent === undefined) return yield* onWake(state);
+        // A subagent busy period that began while the stream was down ends without a turn here.
+        if (
+          state.subagent !== undefined &&
+          (event.type === "session.execution.succeeded" ||
+            event.type === "session.execution.failed")
+        ) {
+          return yield* releaseQuiet(state);
+        }
         return;
       }
       if (turn.awaitingStart) {
@@ -3884,12 +3968,46 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           .withPermit(recoverImages(state).pipe(Effect.timeout(INVENTORY_TIMEOUT)))
           .pipe(Effect.ignore({ log: true }));
       }
+      // OpenCode's running jobs below a kept call other than subagents (shells, Code Mode scripts,
+      // images): it also lists stored subagent jobs it never closed, and subagents count by their
+      // sessions. A read that fails or misses the shared deadline counts as none.
+      const jobsBelow = new Map<string, number>();
+      if (
+        compareSemverVersions(connection.version, "2.2.6") >= 0 &&
+        connection.runningJobs !== undefined
+      ) {
+        const runningJobs = connection.runningJobs;
+        const children = new Set(
+          background.flatMap((state) =>
+            runningCalls(state).flatMap((call) =>
+              call.reported === undefined || call.child === undefined ? [] : [call.child.sessionId],
+            ),
+          ),
+        );
+        yield* Effect.forEach(
+          children,
+          (child) =>
+            runningJobs(child).pipe(
+              Effect.tap((jobs) => Effect.sync(() => jobsBelow.set(child, jobs))),
+              Effect.ignore,
+            ),
+          { concurrency: 4, discard: true },
+        ).pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.ignore);
+      }
       yield* lock.withPermit(
         Effect.gen(function* () {
           for (const state of background) {
             for (const call of runningCalls(state)) {
               const child = call.child?.sessionId;
-              if (child === undefined || !(child in active)) {
+              if (call.reported !== undefined && call.child !== undefined) {
+                // Its child already reported; only a session or job still running below it keeps it.
+                const working =
+                  (jobsBelow.get(call.child.sessionId) ?? 0) > 0 ||
+                  sessionsOf(call.child).some(
+                    (session) => session.sessionId in active || runsJobs(session),
+                  );
+                if (!working) yield* settleCall(call, "completed", call.reported);
+              } else if (child === undefined || !(child in active)) {
                 yield* settleCall(call, "interrupted", LOST_BACKGROUND);
               }
             }
@@ -3987,9 +4105,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       // An owned process's exit, rather than a read deadline, bounds recovery; the bounded retry
       // below then borrows a restarted server. HTTP waits stay outside the event lock so Stop can still settle.
+      reconciling = true;
+      const recovery = reconcile().pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            reconciling = false;
+          }),
+        ),
+      );
       yield* next.processExit === undefined
-        ? reconcile().pipe(Effect.timeout(RECONCILE_TIMEOUT))
-        : whileAlive(next.processExit, reconcile());
+        ? recovery.pipe(Effect.timeout(RECONCILE_TIMEOUT))
+        : whileAlive(next.processExit, recovery);
       return stream;
     }).pipe(
       // Borrows and process exits stay bounded; only a live owned process is waited on above.
