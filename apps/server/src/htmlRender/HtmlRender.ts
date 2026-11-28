@@ -118,9 +118,10 @@ const SCRIPT_STYLE =
 const VIEWPORT_HEIGHT_UNIT =
   /(?<![\w.+/\\-])[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?[sld]?v(?:h|b|max)(?![\w-])/i;
 // In CSS, skip comments and strings so generated text like `content:"100vh"` passes.
+// Escapes and unquoted url() bodies go first: there a quote or `/*` is plain text.
 // An unclosed string ends at a newline, as CSS ends it there.
 const CSS_VIEWPORT_HEIGHT_UNIT = new RegExp(
-  String.raw`\/\*[\s\S]*?(?:\*\/|$)|"(?:\\(?:\r\n|[\s\S])|[^"\\\r\n\f])*"?|'(?:\\(?:\r\n|[\s\S])|[^'\\\r\n\f])*'?|(${VIEWPORT_HEIGHT_UNIT.source})`,
+  String.raw`\\[\s\S]|url\((?!\s*["'])[^)]*\)?|\/\*[\s\S]*?(?:\*\/|$)|"(?:\\(?:\r\n|[\s\S])|[^"\\\r\n\f])*"?|'(?:\\(?:\r\n|[\s\S])|[^'\\\r\n\f])*'?|(${VIEWPORT_HEIGHT_UNIT.source})`,
   "gi",
 );
 
