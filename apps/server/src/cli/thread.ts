@@ -407,7 +407,8 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
       );
   };
 
-  const containing = containingRoots(target, requestedPath)[0]?.project;
+  const containingMatch = containingRoots(target, requestedPath)[0];
+  const containing = containingMatch?.project;
   if (resolvedTarget !== undefined && containing !== undefined) return containing;
   const projectNotFound = () => new ThreadProjectNotFoundError({ identifier });
   const statIfExists = (value: string) =>
@@ -431,8 +432,16 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
     if (info.type !== "Directory") return yield* projectNotFound();
     gitDirectory = yield* realPath(existing);
     checkoutTarget = path.join(gitDirectory, path.relative(existing, target));
-    const canonicalProject = containingRoots(checkoutTarget, requestedPath)[0]?.project;
-    if (canonicalProject !== undefined) return canonicalProject;
+    const canonical = containingRoots(checkoutTarget, requestedPath)[0];
+    if (canonical !== undefined) {
+      // A registration whose own root is absent only matches by spelling; keep it when closer.
+      const depth = (root: string, candidate: string) =>
+        path.relative(root, candidate).split(path.sep).length;
+      return containingMatch !== undefined &&
+        depth(containingMatch.root, target) < depth(canonical.root, checkoutTarget)
+        ? containingMatch.project
+        : canonical.project;
+    }
   }
   if (containing !== undefined) return containing;
   const listed = yield* listGitCheckouts(gitDirectory).pipe(
