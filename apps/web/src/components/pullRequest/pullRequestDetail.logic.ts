@@ -205,9 +205,9 @@ export function pullRequestPanelContext(
   },
 ): "page" | "thread" {
   if (thread.projectId !== surface.projectId) return "page";
+  const repository = surface.repository.toLowerCase();
   const links = visibleThreadPullRequests(thread.pullRequests ?? []);
   if (links.length > 0) {
-    const repository = surface.repository.toLowerCase();
     const target =
       surface.host === undefined
         ? null
@@ -222,7 +222,7 @@ export function pullRequestPanelContext(
   }
   const legacy = thread.linkedPullRequest ?? thread.branchPullRequest ?? null;
   return legacy !== null &&
-    legacy.repository === surface.repository &&
+    legacy.repository.toLowerCase() === repository &&
     legacy.number === surface.number
     ? "thread"
     : "page";
@@ -770,8 +770,8 @@ export function pullRequestLinkSubject(
   url: string,
   activity: Pick<PullRequestActivity, "comments" | "reviewThreads" | "commits">,
 ): PullRequestLinkSubject | null {
-  const oid = pullRequestLinkCommit(url)?.toLowerCase();
-  if (oid !== undefined) {
+  const oid = pullRequestLinkCommit(url);
+  if (oid !== null) {
     const commit = activity.commits.find((candidate) => candidate.oid.toLowerCase() === oid);
     return commit === undefined ? null : { kind: "commit", commit };
   }

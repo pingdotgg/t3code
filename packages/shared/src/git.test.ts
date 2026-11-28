@@ -239,15 +239,18 @@ describe("parseOriginUrlFromGitConfig", () => {
     ).toBe("git@github.com:a/b.git");
   });
 
-  it("falls back to the first remote when there is no origin", () => {
-    const config = [
-      '[remote "upstream"]',
-      "\turl = https://github.com/acme/repo.git",
-      '[remote "fork"]',
-      "\turl = https://github.com/me/repo.git",
-    ].join("\n");
-    expect(parseOriginUrlFromGitConfig(config)).toBe("https://github.com/acme/repo.git");
-  });
+  it.each(["upstream", String.raw`team\"mirror`])(
+    "falls back to the first remote when there is no origin: %s",
+    (remoteName) => {
+      const config = [
+        `[remote "${remoteName}"]`,
+        "\turl = https://github.com/acme/repo.git",
+        '[remote "fork"]',
+        "\turl = https://github.com/me/repo.git",
+      ].join("\n");
+      expect(parseOriginUrlFromGitConfig(config)).toBe("https://github.com/acme/repo.git");
+    },
+  );
 });
 
 describe("isTemporaryWorktreeBranch", () => {

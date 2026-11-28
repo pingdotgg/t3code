@@ -159,8 +159,8 @@ export class ProjectFaviconResolver extends Context.Service<
   }
 >()("t3/project/ProjectFaviconResolver") {}
 
-function decodeHtmlHref(href: string, html: boolean): string {
-  return href.replace(
+function decodeHtmlAttribute(value: string, html: boolean): string {
+  return value.replace(
     /&(?:([a-z][a-z\d]*)([;=]?)|#(?:(\d+)|x([a-f\d]+));?)/gi,
     (reference, name?: string, terminator?: string, decimal?: string, hex?: string) => {
       if (name !== undefined) {
@@ -195,15 +195,16 @@ function* extractIconHrefs(source: string, html: boolean): Generator<string> {
         quoted: quotedValue !== undefined,
       });
     }
-    const rel = attributes
-      .get("rel")
-      ?.value.toLowerCase()
+    const rawRel = attributes.get("rel")?.value;
+    if (rawRel === undefined) continue;
+    const rel = (html ? decodeHtmlAttribute(rawRel, true) : rawRel)
+      .toLowerCase()
       .split(/[\t\n\f\r ]+/);
-    if (!rel?.includes("icon")) continue;
+    if (!rel.includes("icon")) continue;
     const href = attributes.get("href");
     // An unquoted `{...}` is a JSX expression, not a path.
     if (!href || (!href.quoted && href.value.startsWith("{"))) continue;
-    const path = decodeHtmlHref(href.value, html).split(/[?#]/, 1)[0];
+    const path = decodeHtmlAttribute(href.value, html).split(/[?#]/, 1)[0];
     if (path) yield path;
   }
   for (const run of source.split("}")) {

@@ -1,4 +1,4 @@
-import { T, useGT, Var } from "gt-react-native";
+import { T, useGT, useMessages, Var } from "gt-react-native";
 
 import { Button } from "./ui/Button";
 import * as Dialog from "./ui/Dialog";
@@ -19,6 +19,7 @@ import { videoMimeType } from "@t3tools/shared/video";
 import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ReviewCommentCard, useReviewCommentColors } from "../features/review/ReviewCommentCard";
+import { reviewCommentRangeText } from "../features/review/reviewCommentSelection";
 import {
   composerAttachmentInlineUri,
   isFileBackedComposerAttachment,
@@ -104,6 +105,7 @@ export function ComposerContextSheet(props: {
         : undefined,
   });
   const gt = useGT();
+  const messages = useMessages();
   const reviewColors = useReviewCommentColors();
   const insets = useSafeAreaInsets();
   const { themeId, themeAppearance } = useAppearancePreferences();
@@ -277,7 +279,11 @@ export function ComposerContextSheet(props: {
                 {!record.sectionId.startsWith("pull-request:") ? (
                   <>
                     <ReviewCommentCard
-                      comment={{ ...record, id: record.contextId }}
+                      comment={{
+                        ...record,
+                        id: record.contextId,
+                        rangeLabel: reviewCommentRangeText(record.rangeLabel, messages),
+                      }}
                       colors={reviewColors}
                     />
                   </>
