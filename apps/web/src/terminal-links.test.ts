@@ -188,6 +188,7 @@ describe("extractTerminalLinks", () => {
       "/var/lib/bluetooth/AA:BB:CC:11:22",
     ],
     ["./notes.txt:3:App.java:[27,49]", "./notes.txt:3:App.java:[27,49]", "./notes.txt:3"],
+    ["./notes.txt:3:/app/ok.py(3)f()", "./notes.txt:3:/app/ok.py(3)f()", "./notes.txt:3"],
   ])("keeps %s whole and offers its location as the fallback", (line, text, fallback) => {
     expect(extractTerminalLinks(line)).toEqual([
       {
@@ -226,11 +227,52 @@ describe("extractTerminalLinks", () => {
       "/app/src/main/java/App.java:[99]",
       "/app/src/main/java/App.java:99",
     ],
+    [
+      "   at Demo.Program.Main(String[] args) in /home/dev/app/Program.cs:line 29",
+      "/home/dev/app/Program.cs:line",
+      "/home/dev/app/Program.cs:29",
+    ],
+    [
+      String.raw`   at Demo.Program.Main(String[] args) in C:\app\Program.cs:line 29`,
+      String.raw`C:\app\Program.cs:line`,
+      String.raw`C:\app\Program.cs:29`,
+    ],
   ])("offers the closing location in %s as the fallback", (line, text, fallback) => {
     const start = line.indexOf(text);
     const end = start + text.length;
     expect(extractTerminalLinks(line)).toEqual([
       { kind: "path", text, start, end, fallback: { text: fallback, end } },
+    ]);
+  });
+
+  it.each([
+    ["> /home/dev/app/ok.py(3)f()", "/home/dev/app/ok.py(3)f()", "/home/dev/app/ok.py:3"],
+    ["> /home/dev/app/ok.py(3)f()->42", "/home/dev/app/ok.py(3)f()-", "/home/dev/app/ok.py:3"],
+    [String.raw`> c:\app\ok.py(3)f()`, String.raw`c:\app\ok.py(3)f()`, String.raw`c:\app\ok.py:3`],
+  ])(
+    "offers the location before the function name in %s as the fallback",
+    (line, text, fallback) => {
+      const start = line.indexOf(text);
+      expect(extractTerminalLinks(line)).toEqual([
+        {
+          kind: "path",
+          text,
+          start,
+          end: start + text.length,
+          fallback: { text: fallback, end: start + text.indexOf(")") + 1 },
+        },
+      ]);
+    },
+  );
+
+  it.each([
+    ["see /home/dev/app/notes:line for details", "/home/dev/app/notes:line"],
+    ["see /home/dev/app/notes:line 0x1d", "/home/dev/app/notes:line"],
+    ["see /home/dev/app/ok.py(3)f(x) for details", "/home/dev/app/ok.py(3)f(x)"],
+  ])("offers no line number as the fallback in %s", (line, text) => {
+    const start = line.indexOf(text);
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text, start, end: start + text.length },
     ]);
   });
 
@@ -404,6 +446,8 @@ describe("resolvePathLinkTarget", () => {
     [String.raw`PS C:\dev\folder (42,7)> `, String.raw`C:\dev\folder (42,7)`],
     ["/tmp/report(42,7)", "/tmp/report(42,7)"],
     ["/tmp/report:[42,7]", "/tmp/report:[42,7]"],
+    ["/tmp/notes:line 29", "/tmp/notes:line"],
+    ["/tmp/ok.py(3)f()", "/tmp/ok.py(3)f()"],
     ["src/Program.cs(3,10): error CS1002: x", "/repo/src/Program.cs"],
   ])("preserves existing path targets in %s", (line, target) => {
     const [link] = extractTerminalLinks(line);

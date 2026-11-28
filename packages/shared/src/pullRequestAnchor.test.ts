@@ -10,6 +10,8 @@ import {
 
 const gitlab = "https://gitlab.com/group/repo/-/merge_requests/7";
 const forgejo = "https://codeberg.org/owner/repo/pulls/7";
+const bitbucket = "https://bitbucket.org/workspace/repo/pull-requests/7";
+const azure = "https://dev.azure.com/org/project/_git/repo/pullrequest/7";
 
 const url = "https://github.com/owner/repo/pull/7";
 it.each(["discussion_r123", "r123", "discussion-diff-123R5-L9", "discussion-diff-123"])(
@@ -118,6 +120,10 @@ it("handles encoded hashes and rejects invalid line numbers and URLs", () => {
   expect(parsePullRequestAnchor(`${url}/files-not-a-tab`)).toBeNull();
   expect(parsePullRequestAnchor(`${url}/commits/main`)).toBeNull();
   expect(parsePullRequestAnchor(`${url}/checks/extra`)).toBeNull();
+  for (const query of ["_a=overview", "_a=commits", "_a=unknown", "discussionId=123"]) {
+    expect(parsePullRequestAnchor(`${azure}?${query}`)).toBeNull();
+  }
+  expect(parsePullRequestAnchor(`${url}?_a=files`)).toBeNull();
 });
 
 it("keeps the commit scope of a PR diff permalink", () => {
@@ -176,6 +182,11 @@ it.each([
   [`${url}/commits`, "commits"],
   [`${url}/checks?check_run_id=1`, "checks"],
   [`${forgejo}/files`, "code"],
+  [`${bitbucket}/diff`, "code"],
+  [`${bitbucket}/commits`, "commits"],
+  [`${azure}?_a=files`, "code"],
+  [`${azure}?path=%2Fsrc%2Fa.ts&discussionId=123&_a=files`, "code"],
+  [`${azure}?_a=Files`, "code"],
   [`${gitlab}/diffs`, "code"],
   [`${gitlab}/commits`, "commits"],
   [`${gitlab}/pipelines`, "checks"],

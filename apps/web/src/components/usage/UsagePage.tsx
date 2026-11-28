@@ -78,6 +78,7 @@ import {
   WorkspaceBreadcrumbText,
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
+import { UsageAccessQuestion, type UsageAccessPrompt } from "./UsageAccessDialog";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
@@ -232,6 +233,15 @@ export function UsagePage() {
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
+
+  const accessPrompts: UsageAccessPrompt[] = selectedEnvironments.flatMap((environment) =>
+    environment.accessRequests.map((request) => ({
+      environmentId: environment.environmentId,
+      environmentLabel: environment.label,
+      instanceId: request.instanceId,
+      driver: request.driver,
+    })),
+  );
 
   const canReadDiagnostics = selectedEnvironments.some(
     (environment) => environment.canReadDiagnostics,
@@ -529,7 +539,9 @@ export function UsagePage() {
 
         <ScrollArea className="min-h-0 flex-1" observeContent>
           <WorkspacePageContainer width="wide">
-            {selectedEnvironments.length === 0 ? (
+            {accessPrompts.length > 0 ? (
+              <UsageAccessQuestion prompts={accessPrompts} />
+            ) : selectedEnvironments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {environments.length === 0
                   ? showingLimits

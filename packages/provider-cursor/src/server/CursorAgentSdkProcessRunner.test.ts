@@ -322,6 +322,7 @@ describe("CursorAgentSdkProcessRunner", () => {
                   stoppedUnits.push(unit);
                 }),
               kill: () => Effect.succeed(false),
+              controlGroups: Effect.undefined,
               clear: () => Effect.void,
             }),
           );
@@ -336,6 +337,7 @@ describe("CursorAgentSdkProcessRunner", () => {
           });
           yield* otherSession.close;
           assert.isFalse(otherSession.isAlive?.());
+          yield* otherSession.ended!;
           assert.isTrue(session.isAlive?.());
           assert.lengthOf(registeredPids, 1);
           assert.deepEqual(unregisteredPids, []);
@@ -457,6 +459,8 @@ describe("CursorAgentSdkProcessRunner", () => {
         // Dead worker scope tears down immediately instead of waiting for sessions to close.
         yield* Deferred.await(unregistered);
         assert.isFalse(session.isAlive?.());
+        // The session hears of its worker's death without being closed.
+        yield* session.ended!;
         yield* session.close;
       }),
     ).pipe(Effect.provide(NodeServices.layer)),

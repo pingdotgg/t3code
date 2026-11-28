@@ -53,10 +53,12 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
@@ -144,7 +146,9 @@ import {
   clipboardHtmlImageContent,
   imagesToAttachBesidePastedText,
   shouldHandleComposerAttachmentPaste,
+  readComposerImageBytes,
 } from "./composerAttachmentFiles";
+import { prepareImageForAttachment } from "../../lib/imageCompression";
 import {
   releaseAttachmentUpload,
   releaseDraftAttachment,
@@ -286,7 +290,11 @@ import { Kbd } from "../ui/kbd";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { usePanelAnimationSettings } from "../../panelAnimations";
-import { readEnvironmentScope, readPreparedConnection } from "../../state/session";
+import {
+  readEnvironmentScope,
+  readPreparedConnection,
+  usePreparedConnection,
+} from "../../state/session";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { useComposerRestingTransition } from "./useComposerRestingTransition";
 import {
@@ -791,7 +799,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectId: activeProjectId ?? undefined,
     expandImage: (imageId: string) => {
       const preview =
-        buildExpandedImagePreview(composerImages, imageId, copyComposerSnapshotStable) ??
+        buildExpandedImagePreview(
+          composerImages,
+          imageId,
+          copyComposerSnapshotStable,
+          saveComposerImageEditStable,
+        ) ??
         buildExpandedImagePreview(
           (activeEditingQueuedAttachments ?? []).flatMap(({ attachment, url }) =>
             isQueuedImageAttachment(attachment) && url ? [{ ...attachment, previewUrl: url }] : [],
@@ -900,6 +913,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const removeComposerDraftImage = useComposerDraftStore((store) => store.removeImage);
+  const replaceComposerDraftImageFile = useComposerDraftStore((store) => store.replaceImageFile);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
   const removeComposerDraftFile = useComposerDraftStore((store) => store.removeFile);
   const insertComposerDraftTerminalContext = useComposerDraftStore(
@@ -1500,6 +1514,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
   };
   const copyComposerSnapshotStable = useStableCallback(copyComposerSnapshot);
+  const saveComposerImageEdit = async (imageId: string, file: File) => {
+    if (questionAttachmentTarget && activePendingIsResponding) return null;
+    const prepared = await prepareImageForAttachment(
+      file,
+      PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+    ).catch(() => null);
+    if (!prepared?.ok) return null;
+    await readComposerImageBytes(prepared.file);
+    // The edited bytes replace the old ones under the same id, so its finished upload is stale.
+    releaseAttachmentUpload(imageId);
+    if (!replaceComposerDraftImageFile(attachmentDraftTarget, imageId, prepared.file)) return null;
+    const stored = getComposerDraft(attachmentDraftTarget)?.images.find(
+      (image) => image.id === imageId,
+    );
+    return stored ? { src: stored.previewUrl, file: stored.file } : null;
+  };
+  const saveComposerImageEditStable = useStableCallback(saveComposerImageEdit);
   const buildContextClipboardFragmentStable = useStableCallback(buildContextClipboardFragment);
   const {
     loadThreadTranscript,
@@ -2687,6 +2718,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         resolvedTheme={resolvedTheme}
         onExpandImage={onExpandImage}
         onCopySnapshot={copyComposerSnapshotStable}
+        onSaveImageEdit={saveComposerImageEditStable}
         onShowMore={expandMobileComposer}
       />
     ) : null;
@@ -2977,37 +3009,39 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const insertComposerTextAtEndStable = useStableCallback(insertComposerTextAtEnd);
 
   /**
-   * Inserts an `@path` link for each dropped item on a server that shares this computer's
-   * filesystem. Send waits until every link lands, or a slow WSL conversion would miss the message.
+   * Inserts an `@path` link for each item on a server that shares this computer's filesystem.
+   * Send waits until every link lands, or a slow WSL conversion would miss the message.
    */
-  const insertComposerPathLinks = (
-    items: File[],
+  const insertComposerPathLinks = <T,>(
+    items: readonly T[],
+    localPathOf: (item: T) => string | null,
     target: Exclude<FolderDropTarget, "remote">,
     busyTitle: string,
-  ): Promise<{ linked: File[]; missing: File[] }> => {
-    const draftKey = attachmentTargetKeyRef.current;
+    draftKey: string = attachmentTargetKeyRef.current,
+  ): Promise<{ linked: T[]; missing: T[] }> => {
     pendingDraftWork.begin(draftKey);
-    return linkComposerPaths(items, target, busyTitle, draftKey).finally(() =>
+    return linkComposerPaths(items, localPathOf, target, busyTitle, draftKey).finally(() =>
       pendingDraftWork.end(draftKey),
     );
   };
 
-  const linkComposerPaths = async (
-    items: File[],
+  const linkComposerPaths = async <T,>(
+    items: readonly T[],
+    localPathOf: (item: T) => string | null,
     target: Exclude<FolderDropTarget, "remote">,
     busyTitle: string,
     draftKey: string,
-  ): Promise<{ linked: File[]; missing: File[] }> => {
-    const linked: File[] = [];
-    const missing: File[] = [];
+  ): Promise<{ linked: T[]; missing: T[] }> => {
+    const linked: T[] = [];
+    const missing: T[] = [];
     const bridge = window.desktopBridge;
     for (const item of items) {
-      const droppedPath = resolveDroppedFolderPath(item, bridge?.getPathForFile);
+      const localPath = localPathOf(item);
       const path =
-        droppedPath === null || typeof target === "string"
-          ? droppedPath
+        localPath === null || typeof target === "string"
+          ? localPath
           : ((await bridge
-              ?.toLocalBackendPath(target.wslBackendId, droppedPath)
+              ?.toLocalBackendPath(target.wslBackendId, localPath)
               .catch(() => null)) ?? null);
       // ChatView is reused across threads, so a slow conversion must not land in the next draft.
       if (!composerMountedRef.current || attachmentTargetKeyRef.current !== draftKey) {
@@ -3055,6 +3089,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           ) === true,
     });
 
+  const addFolderPaths = (
+    folders: readonly { readonly name: string; readonly path: string | null }[],
+    target: Exclude<FolderDropTarget, "remote">,
+    draftKey: string,
+  ) => {
+    void insertComposerPathLinks(
+      folders,
+      (folder) => folder.path,
+      target,
+      gt("Unable to add folder"),
+      draftKey,
+    ).then(({ missing }) => {
+      for (const folder of missing) {
+        toastManager.add({
+          type: "error",
+          title: gt('Couldn\'t get the path of "{name}"', { name: folder.name }),
+          description: gt("Type the folder path with @ instead."),
+        });
+      }
+    });
+  };
+
   const addComposerFolders = (folders: File[]) => {
     const target = resolveComposerDropTarget();
     if (target === "remote") {
@@ -3064,25 +3120,63 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       return;
     }
-    void insertComposerPathLinks(folders, target, gt("Unable to add folder")).then(
-      ({ missing }) => {
-        for (const folder of missing) {
-          toastManager.add({
-            type: "error",
-            title: gt('Couldn\'t get the path of "{name}"', { name: folder.name }),
-            description: gt("Type the folder path with @ instead."),
-          });
-        }
-      },
+    const getPathForFile = window.desktopBridge?.getPathForFile;
+    addFolderPaths(
+      folders.map((folder) => ({
+        name: folder.name,
+        path: resolveDroppedFolderPath(folder, getPathForFile),
+      })),
+      target,
+      attachmentTargetKeyRef.current,
     );
   };
   const addComposerFoldersStable = useStableCallback(addComposerFolders);
   const resolveLocalFileLinker = (): LocalFileLinker | null => {
     const target = resolveComposerDropTarget();
     if (target === "remote") return null;
-    return (files) => insertComposerPathLinks(files, target, gt("Unable to add file"));
+    const getPathForFile = window.desktopBridge?.getPathForFile;
+    return (files) =>
+      insertComposerPathLinks(
+        files,
+        (file) => resolveDroppedFolderPath(file, getPathForFile),
+        target,
+        gt("Unable to add file"),
+      );
   };
   const resolveLocalFileLinkerStable = useStableCallback(resolveLocalFileLinker);
+
+  // A synchronous IPC read on desktop; the setting only changes with a restart, so read it once.
+  const [localEnvironmentDisabledAtMount] = useState(isLocalEnvironmentDisabled);
+  const preparedConnection = usePreparedConnection(environmentId);
+  const pickFolder = window.desktopBridge?.pickFolder;
+  // The picker returns a path on this computer, so it is offered under the same rule as dropped
+  // folders. It refuses to open while the local environment is off, even for a loopback server.
+  const canPickLocalFolder =
+    pickFolder !== undefined &&
+    !localEnvironmentDisabledAtMount &&
+    folderDropTarget({
+      localEnvironmentDisabled: localEnvironmentDisabledAtMount,
+      environmentId,
+      primaryEnvironmentId,
+      connection: Option.getOrNull(preparedConnection),
+      isDesktopRenderer: true,
+      // Only "remote" or not matters here; WSL conversion is decided when a folder is picked.
+      primaryRunsInWsl: false,
+    }) !== "remote";
+  const pickComposerFolder = async () => {
+    const target = resolveComposerDropTarget();
+    if (!pickFolder || target === "remote") return;
+    const draftKey = attachmentTargetKeyRef.current;
+    // gitCwd is a path on the backend; it only names a folder here when no WSL conversion applies.
+    const initialPath = target === "local" ? gitCwd : null;
+    const path = await pickFolder(initialPath ? { initialPath } : undefined).catch(() => {
+      toastManager.add({ type: "error", title: gt("Couldn't open the folder picker") });
+      return null;
+    });
+    if (path === null) return;
+    addFolderPaths([{ name: path, path }], target, draftKey);
+  };
+  const pickComposerFolderStable = useStableCallback(pickComposerFolder);
 
   const onComposerPaste = (
     event: React.ClipboardEvent<HTMLElement>,
@@ -3683,6 +3777,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         attachmentDraftTarget={attachmentDraftTarget}
         canOperateThread={canOperateThread}
         onCopySnapshot={copyComposerSnapshotStable}
+        onSaveImageEdit={saveComposerImageEditStable}
         onExpandImage={onExpandImage}
         onFileOpen={onFileOpen}
         onRemoveImage={removeComposerImage}
@@ -3705,7 +3800,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       />
     ) : null;
   const composerAttachButton = showComposerAttachAction ? (
-    <ComposerAttachButton onOpenPicker={() => composerAttachInputRef.current?.click()} />
+    <ComposerAttachButton
+      onOpenPicker={() => composerAttachInputRef.current?.click()}
+      onPickFolder={canPickLocalFolder ? pickComposerFolderStable : undefined}
+    />
   ) : null;
   return (
     <form

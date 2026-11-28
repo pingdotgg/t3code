@@ -7,6 +7,7 @@ import {
   EventId,
   MessageId,
   type ModelSelection,
+  NodeId,
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderCapabilities,
@@ -5526,6 +5527,347 @@ describe("orchestration v2 provider switching", () => {
           ProviderReplayHarness.layerWithRegistry(
             {
               name: "scheduled-fresh-user-chat",
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
+  );
+
+  // regression: #44614 a delegated task's completion woke the scheduled fresh run's session
+  it.live("wakes the thread's own session for a delegated task after a scheduled fresh run", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("scheduled-fresh-delegated-wake");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          driver: CLAUDE_DRIVER,
+          capabilities: ClaudeProviderCapabilitiesV2,
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          responseByRunOrdinal: {},
+          capturedTurns,
+          nativeThreadGeneration: yield* Ref.make(0),
+        }),
+      ]);
+      const threadId = ThreadId.make("thread:scheduled-fresh-delegated-wake");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const settle = Effect.gen(function* () {
+          yield* worker.drain();
+          yield* waitForIdle(threadId);
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:scheduled-fresh-delegated-wake:create"),
+          threadId,
+          projectId: ProjectId.make("project:scheduled-fresh-delegated-wake"),
+          title: "Delegating thread with a fresh-session schedule",
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:scheduled-fresh-delegated-wake:user"),
+          threadId,
+          messageId: MessageId.make("message:scheduled-fresh-delegated-wake:user"),
+          text: "user-first",
+          attachments: [],
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          dispatchMode: { type: "queue_after_active" },
+        });
+        yield* settle;
+        // The user's run dispatched a delegated task that is still running.
+        const parentRun = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+        const wakeMessageId = MessageId.make("message:scheduled-fresh-delegated-wake:wake");
+        const taskId = NodeId.make("task:scheduled-fresh-delegated-wake");
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("event:scheduled-fresh-delegated-wake:cohort"),
+              type: "run.updated",
+              threadId,
+              runId: parentRun.id,
+              occurredAt: now,
+              payload: {
+                ...parentRun,
+                delegatedCompletion: {
+                  disposition: "open",
+                  nextGeneration: 2,
+                  delivery: { generation: 1, messageId: wakeMessageId, taskIds: [taskId] },
+                },
+              },
+            },
+            {
+              id: EventId.make("event:scheduled-fresh-delegated-wake:task"),
+              type: "subagent.updated",
+              threadId,
+              runId: parentRun.id,
+              nodeId: taskId,
+              occurredAt: now,
+              payload: {
+                id: taskId,
+                threadId,
+                runId: parentRun.id,
+                parentNodeId: parentRun.rootNodeId!,
+                origin: "app_owned",
+                createdBy: "agent",
+                driver: CLAUDE_DRIVER,
+                providerInstanceId: CLAUDE_MODEL_SELECTION.instanceId,
+                providerThreadId: null,
+                childThreadId: null,
+                nativeTaskRef: null,
+                prompt: "Do background work",
+                title: "Background work",
+                model: null,
+                completionWake: "always",
+                completionDelivery: { state: "claimed", observedByRunId: null },
+                status: "completed",
+                result: "done",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+              },
+            },
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:scheduled-fresh-delegated-wake:scheduled"),
+          threadId,
+          messageId: MessageId.make("message:scheduled-fresh-delegated-wake:scheduled"),
+          text: "scheduled",
+          attachments: [],
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          dispatchMode: { type: "queue_after_active" },
+          scheduledTaskId: ScheduledTaskId.make("scheduled-fresh-delegated-wake"),
+          freshContext: true,
+        });
+        yield* settle;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "server",
+          commandId: CommandId.make("command:scheduled-fresh-delegated-wake:wake"),
+          threadId,
+          messageId: wakeMessageId,
+          text: "delegated-wake",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          delegatedCompletion: { parentRunId: parentRun.id, generation: 1, taskIds: [taskId] },
+        });
+        yield* settle;
+        const turns = yield* Ref.get(capturedTurns);
+        const turnFor = (name: string) => turns.find((turn) => turn.text.endsWith(name));
+        assert.notEqual(
+          turnFor("scheduled")!.nativeThreadId,
+          turnFor("user-first")!.nativeThreadId,
+        );
+        // The task belongs to the user's session; the scheduled side session never saw it.
+        const wake = turns.find((turn) => turn.text.startsWith(`Delegated task ${taskId}`));
+        assert.equal(wake?.nativeThreadId, turnFor("user-first")!.nativeThreadId);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "scheduled-fresh-delegated-wake",
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
+  );
+
+  it.live("keeps follow-up tasks a scheduled fresh run's session dispatched on that session", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("scheduled-fresh-follow-up-wake");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          driver: CLAUDE_DRIVER,
+          capabilities: ClaudeProviderCapabilitiesV2,
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          responseByRunOrdinal: {},
+          capturedTurns,
+          nativeThreadGeneration: yield* Ref.make(0),
+        }),
+      ]);
+      const threadId = ThreadId.make("thread:scheduled-fresh-follow-up-wake");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const settle = Effect.gen(function* () {
+          yield* worker.drain();
+          yield* waitForIdle(threadId);
+        });
+        // The latest run dispatched a delegated task that has since completed; its wake follows.
+        const completeTaskOfLatestRun = (name: string) =>
+          Effect.gen(function* () {
+            const parentRun = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+            const wakeMessageId = MessageId.make(`message:scheduled-fresh-follow-up-wake:${name}`);
+            const taskId = NodeId.make(`task:scheduled-fresh-follow-up-wake:${name}`);
+            const now = yield* DateTime.now;
+            yield* eventSink.write({
+              events: [
+                {
+                  id: EventId.make(`event:scheduled-fresh-follow-up-wake:${name}:cohort`),
+                  type: "run.updated",
+                  threadId,
+                  runId: parentRun.id,
+                  occurredAt: now,
+                  payload: {
+                    ...parentRun,
+                    delegatedCompletion: {
+                      disposition: "open",
+                      nextGeneration: 2,
+                      delivery: { generation: 1, messageId: wakeMessageId, taskIds: [taskId] },
+                    },
+                  },
+                },
+                {
+                  id: EventId.make(`event:scheduled-fresh-follow-up-wake:${name}:task`),
+                  type: "subagent.updated",
+                  threadId,
+                  runId: parentRun.id,
+                  nodeId: taskId,
+                  occurredAt: now,
+                  payload: {
+                    id: taskId,
+                    threadId,
+                    runId: parentRun.id,
+                    parentNodeId: parentRun.rootNodeId!,
+                    origin: "app_owned",
+                    createdBy: "agent",
+                    driver: CLAUDE_DRIVER,
+                    providerInstanceId: CLAUDE_MODEL_SELECTION.instanceId,
+                    providerThreadId: null,
+                    childThreadId: null,
+                    nativeTaskRef: null,
+                    prompt: "Do background work",
+                    title: "Background work",
+                    model: null,
+                    completionWake: "always",
+                    completionDelivery: { state: "claimed", observedByRunId: null },
+                    status: "completed",
+                    result: "done",
+                    startedAt: now,
+                    completedAt: now,
+                    updatedAt: now,
+                  },
+                },
+              ],
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "agent",
+              creationSource: "server",
+              commandId: CommandId.make(`command:scheduled-fresh-follow-up-wake:${name}`),
+              threadId,
+              messageId: wakeMessageId,
+              text: name,
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              delegatedCompletion: { parentRunId: parentRun.id, generation: 1, taskIds: [taskId] },
+            });
+            yield* settle;
+            return taskId;
+          });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:scheduled-fresh-follow-up-wake:create"),
+          threadId,
+          projectId: ProjectId.make("project:scheduled-fresh-follow-up-wake"),
+          title: "Fresh-session schedule that delegates follow-ups",
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:scheduled-fresh-follow-up-wake:user"),
+          threadId,
+          messageId: MessageId.make("message:scheduled-fresh-follow-up-wake:user"),
+          text: "user-first",
+          attachments: [],
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          dispatchMode: { type: "queue_after_active" },
+        });
+        yield* settle;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:scheduled-fresh-follow-up-wake:scheduled"),
+          threadId,
+          messageId: MessageId.make("message:scheduled-fresh-follow-up-wake:scheduled"),
+          text: "scheduled",
+          attachments: [],
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          dispatchMode: { type: "queue_after_active" },
+          scheduledTaskId: ScheduledTaskId.make("scheduled-fresh-follow-up-wake"),
+          freshContext: true,
+        });
+        yield* settle;
+        const firstTask = yield* completeTaskOfLatestRun("first");
+        // The first wake's run dispatched a follow-up task from the scheduled session.
+        const followUpTask = yield* completeTaskOfLatestRun("follow-up");
+        const turns = yield* Ref.get(capturedTurns);
+        const scheduledThread = turns.find((turn) =>
+          turn.text.endsWith("scheduled"),
+        )!.nativeThreadId;
+        assert.notEqual(
+          scheduledThread,
+          turns.find((turn) => turn.text.endsWith("user-first"))!.nativeThreadId,
+        );
+        const wakeFor = (taskId: string) =>
+          turns.find((turn) => turn.text.startsWith(`Delegated task ${taskId}`));
+        assert.equal(wakeFor(firstTask)?.nativeThreadId, scheduledThread);
+        assert.equal(wakeFor(followUpTask)?.nativeThreadId, scheduledThread);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "scheduled-fresh-follow-up-wake",
               runtimePolicyOverride: {
                 cwd,
                 approvalPolicy: "never",

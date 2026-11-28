@@ -127,9 +127,15 @@ export function stripSlashPrefixedWindowsDrive(path: string): string {
 }
 
 export function fileBasename(path: string): string {
-  const trimmed = path.replace(/[/\\]+$/, "");
+  const isPosix =
+    path.startsWith("/") &&
+    !isNetworkPath(path) &&
+    !SLASH_PREFIXED_WINDOWS_DRIVE_PATTERN.test(path);
+  const trimmed = path.replace(isPosix ? /\/+$/ : /[/\\]+$/, "");
   if (trimmed.length === 0) return path;
-  const separatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  const separatorIndex = isPosix
+    ? trimmed.lastIndexOf("/")
+    : Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
   return separatorIndex >= 0 ? trimmed.slice(separatorIndex + 1) : trimmed;
 }
 
