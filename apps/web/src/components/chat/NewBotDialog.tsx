@@ -1,12 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  AuthOrchestrationOperateScope,
   BOT_FILE_MAX_CHARS,
+  resolveEnvironmentMachineKind,
   type EnvironmentId,
   type ModelSelection,
   type ProviderInstanceId,
@@ -22,11 +25,13 @@ import { getCustomModelOptionsByInstance } from "~/modelSelection";
 import { providerInstanceEntriesFor } from "~/providerInstances";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { botFilesEnvironment } from "~/state/botFiles";
-import { useEnvironmentProviders } from "~/state/environments";
+import { useEnvironmentProviders, useEnvironments } from "~/state/environments";
+import { useEnvironmentsWithScope } from "~/state/session";
 import { EMPTY_SERVER_PROVIDERS } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { buildThreadRouteParams } from "~/threadRoutes";
 import { scheduledTaskDefaultModel } from "../settings/scheduledTasksSettings.logic";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME } from "../settings/settingsLayout";
 import { Button } from "../ui/button";
 import {
@@ -40,6 +45,7 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 
@@ -58,13 +64,34 @@ const close = () => appAtomRegistry.set(newBotEnvironmentAtom, null);
 export function NewBotDialogHost() {
   const environmentId = useAtomValue(newBotEnvironmentAtom);
   return environmentId === null ? null : (
-    <NewBotDialog key={environmentId} environmentId={environmentId} />
+    <NewBotDialog key={environmentId} initialEnvironmentId={environmentId} />
   );
 }
 
-function NewBotDialog({ environmentId }: { readonly environmentId: EnvironmentId }) {
+/** Connected machines that can host a Bot: it runs in a scratch folder there. */
+function useBotMachines() {
+  const { environments } = useEnvironments();
+  const canOperate = useEnvironmentsWithScope(environments, AuthOrchestrationOperateScope);
+  return environments
+    .filter(
+      (environment) =>
+        canOperate.has(environment.environmentId) &&
+        availableScratchWorkspaceRoot(environment.connection.phase, environment.serverConfig) !==
+          null,
+    )
+    .map((environment) => ({
+      environmentId: environment.environmentId,
+      label: environment.label,
+      machine: resolveEnvironmentMachineKind(environment.serverConfig),
+    }));
+}
+
+function NewBotDialog({ initialEnvironmentId }: { readonly initialEnvironmentId: EnvironmentId }) {
   const gt = useGT();
   const navigate = useNavigate();
+  const machines = useBotMachines();
+  const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
+  const machine = machines.find((entry) => entry.environmentId === environmentId);
   const settings = useEnvironmentSettings(environmentId);
   const providers = useEnvironmentProviders().get(environmentId) ?? EMPTY_SERVER_PROVIDERS;
   const canCreate = useAtomValue(botFilesEnvironment.create.permissionAtom(environmentId));
@@ -159,6 +186,48 @@ function NewBotDialog({ environmentId }: { readonly environmentId: EnvironmentId
                 placeholder={gt("What the Bot looks after and how you like it to work.")}
               />
             </div>
+            {machines.length > 1 ? (
+              <div className="flex flex-col gap-1.5">
+                <Label>
+                  <T>Machine</T>
+                </Label>
+                <Select
+                  value={environmentId}
+                  disabled={pending}
+                  onValueChange={(value) => {
+                    if (value === null || value === environmentId) return;
+                    setEnvironmentId(value);
+                    // Each machine has its own providers, so its default model applies.
+                    setPicked(null);
+                  }}
+                >
+                  <SelectTrigger aria-label={gt("Machine")} className="w-full" size="sm">
+                    <SelectValue>
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <EnvironmentMachineIcon
+                          kind={machine?.machine ?? "server"}
+                          className="size-3.5 shrink-0"
+                        />
+                        <span className="truncate">{machine?.label ?? environmentId}</span>
+                      </span>
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {machines.map((entry) => (
+                      <SelectItem key={entry.environmentId} value={entry.environmentId}>
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <EnvironmentMachineIcon
+                            kind={entry.machine}
+                            className="size-3.5 shrink-0"
+                          />
+                          <span className="truncate">{entry.label}</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </div>
+            ) : null}
             <div className="flex flex-col gap-1.5">
               <Label>
                 <T>Model</T>
