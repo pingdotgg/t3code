@@ -16,12 +16,14 @@ export interface CloudAccountSource {
 
 /**
  * Clerk's load status cannot prove its API answered: offline it emits an
- * id-less client, and a failed launch fetch emits a "client_init" placeholder
- * built from the session cookie. Only a real /v1/client response has an id.
+ * id-less client, a failed launch fetch emits a "client_init" placeholder
+ * built from the session cookie, and Expo's resource cache starts empty with a
+ * "client_DUMMY_ID" placeholder. Only a real /v1/client response has an id.
  */
+const PLACEHOLDER_CLIENT_IDS = new Set(["client_init", "client_DUMMY_ID"]);
 const isClientFromClerkApi = (
   client: { readonly id?: string | null | undefined } | null | undefined,
-) => Boolean(client?.id) && client?.id !== "client_init";
+) => Boolean(client?.id) && !PLACEHOLDER_CLIENT_IDS.has(client?.id ?? "");
 
 interface CloudAccountSignIn {
   readonly _tag: "SignIn";
