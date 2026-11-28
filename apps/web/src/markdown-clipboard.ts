@@ -576,8 +576,9 @@ export function serializeTableElementToCsv(table: Element): string {
 }
 
 // CJK, emoji, flags and keycaps count as two columns: close enough to East Asian Width for chat fonts.
+// The ranges skip nonspacing marks that would make a narrow base look wide.
 const WIDE_GRAPHEME =
-  /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3|[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/u;
+  /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3|[\u1100-\u115f\u2e80-\u3029\u302e-\u3098\u309b-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{16fe0}-\u{16fe3}\u{16ff0}-\u{191d2}\u{1aff0}-\u{1b2fb}\u{20000}-\u{2fffd}\u{30000}-\u{3fffd}]/u;
 let graphemes: Intl.Segmenter | undefined;
 
 function monospaceWidth(text: string): number {
@@ -941,11 +942,29 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
+const TABLE_CONTAINERS = new Set(["TABLE", "THEAD", "TBODY", "TFOOT", "TR"]);
+
 function isList(node: Node): node is HTMLOListElement | HTMLUListElement {
   return node instanceof Element && (node.tagName === "OL" || node.tagName === "UL");
 }
 
-// An endpoint can clone empty item wrappers at any nesting depth.
+function enclosingWrappers(node: Node): Element[] {
+  if (isList(node)) return [node];
+  if (!(node instanceof Element) || !TABLE_CONTAINERS.has(node.tagName)) return [];
+  const wrappers: Element[] = [];
+  for (let current: Element | null = node; current; current = current.parentElement) {
+    if (!TABLE_CONTAINERS.has(current.tagName)) return [];
+    wrappers.push(current);
+    if (current.tagName === "TABLE") return wrappers;
+  }
+  return [];
+}
+
+const hasTableContent = (element: Element): boolean =>
+  Boolean(element.textContent?.trim()) ||
+  element.querySelector("img, [data-markdown-copy], input") !== null;
+
+// An endpoint can clone empty item or table wrappers at any nesting depth.
 function emptyListBoundary(
   ancestor: Node,
   node: Node,
@@ -974,6 +993,13 @@ function emptyListBoundary(
       boundary = node;
     } else if (boundary && isList(node)) {
       boundary = node;
+    } else if (
+      node instanceof Element &&
+      ((node.tagName === "TD" || node.tagName === "TH") && node.parentElement?.tagName === "TR"
+        ? hasTableContent(node)
+        : TABLE_CONTAINERS.has(node.tagName) && (boundary !== null || hasTableContent(node)))
+    ) {
+      boundary = node;
     }
     remaining = next(node);
     node = node.parentNode;
@@ -981,7 +1007,7 @@ function emptyListBoundary(
   return boundary;
 }
 
-/** Clones the selection and restores the markers shown for its copied list items. */
+/** Clones the selection and restores enclosing list markers and table wrappers. */
 function cloneWithListMarkers(range: Range, container: Element): void {
   const originalAncestor = range.commonAncestorContainer;
   const start = emptyListBoundary(
@@ -997,16 +1023,16 @@ function cloneWithListMarkers(range: Range, container: Element): void {
     if (end) range.setEndBefore(end);
   }
   const ancestor = range.commonAncestorContainer;
-  const withinList = isList(ancestor);
+  const wrappers = enclosingWrappers(ancestor);
   container.appendChild(range.cloneContents());
-  if (withinList) {
-    // Items copied within one list clone without the list around them.
-    const list = ancestor.cloneNode(false) as Element;
-    list.append(...container.childNodes);
-    container.replaceChildren(list);
+  // Items or table rows copied within one container clone without their enclosing wrapper tags.
+  for (const wrapper of wrappers) {
+    const copy = wrapper.cloneNode(false) as Element;
+    copy.append(...container.childNodes);
+    container.replaceChildren(copy);
   }
   // The start's ancestors below the cloned top clone as the fragment's first-child chain.
-  const top = withinList ? ancestor.parentNode : ancestor;
+  const top = wrappers.at(-1)?.parentNode ?? ancestor;
   const chain: Node[] = [];
   for (let node: Node | null = range.startContainer; node && node !== top; node = node.parentNode) {
     chain.unshift(node);
@@ -1035,6 +1061,10 @@ function cloneWithListMarkers(range: Range, container: Element): void {
     if (shown && cloned && shown.number !== cloned.number) {
       clone.setAttribute("start", String(shown.number));
     }
+  }
+  if (wrappers.at(-1)?.tagName === "TABLE") {
+    const cells = container.querySelectorAll("th, td");
+    if (cells.length === 1) container.replaceChildren(...cells[0]!.childNodes);
   }
 }
 
