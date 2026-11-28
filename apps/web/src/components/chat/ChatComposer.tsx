@@ -492,6 +492,7 @@ export interface ChatComposerProps {
   removedEditingQueuedAttachments?: ReadonlyArray<QueuedAttachmentContextBinding> | undefined;
   onRemoveEditingQueuedAttachment: (attachmentId: string) => void;
   onRestoreEditingQueuedAttachment?: ((attachment: ContractChatAttachment) => void) | undefined;
+  canMoveEditingQueuedMessageToStash?: boolean | undefined;
   onMoveEditingQueuedMessageToStash?: (() => void) | undefined;
 
   onCompactContext: () => void;
@@ -636,6 +637,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     removedEditingQueuedAttachments,
     onRemoveEditingQueuedAttachment,
     onRestoreEditingQueuedAttachment,
+    canMoveEditingQueuedMessageToStash,
     onMoveEditingQueuedMessageToStash,
   } = props;
   const {
@@ -2704,7 +2706,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     editingQueuedMessage:
       activeEditingQueuedAttachments !== null && onMoveEditingQueuedMessageToStash
         ? {
-            hasAttachments: activeEditingQueuedAttachments.length > 0,
+            canMoveToStash: canMoveEditingQueuedMessageToStash === true,
             onMovedToStash: onMoveEditingQueuedMessageToStash,
           }
         : null,

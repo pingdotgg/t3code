@@ -211,7 +211,7 @@ it("moves an edited queued message to the stash and ends the edit", async () => 
   const onMovedToStash = vi.fn();
   await using _screen = await render(
     <Harness
-      input={queuedEditInput(target, promptRef, { hasAttachments: false, onMovedToStash })}
+      input={queuedEditInput(target, promptRef, { canMoveToStash: true, onMovedToStash })}
     />,
   );
 
@@ -226,7 +226,7 @@ it("moves an edited queued message to the stash and ends the edit", async () => 
   expect(promptRef.current).toBe("");
 });
 
-it("leaves an edited queued message alone when its attachments cannot be stashed", async () => {
+it("leaves an edited queued message alone when the stash cannot hold all of it", async () => {
   const target = DraftId.make("stash-queued-edit-attachments");
   using _draft = {
     [Symbol.dispose]: () => useComposerDraftStore.getState().clearComposerContent(target),
@@ -241,7 +241,7 @@ it("leaves an edited queued message alone when its attachments cannot be stashed
   const onMovedToStash = vi.fn();
   await using _screen = await render(
     <Harness
-      input={queuedEditInput(target, promptRef, { hasAttachments: true, onMovedToStash })}
+      input={queuedEditInput(target, promptRef, { canMoveToStash: false, onMovedToStash })}
     />,
   );
 

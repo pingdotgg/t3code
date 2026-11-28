@@ -106,8 +106,8 @@ export function useComposerStash(input: {
   readonly expandMobileComposer: () => void;
   /** Set while the composer edits a queued message: stashing moves that message to the stash. */
   readonly editingQueuedMessage?: {
-    /** The stash cannot hold a queued message's uploaded attachments, so moving it would lose them. */
-    readonly hasAttachments: boolean;
+    /** False when the queued message has attachments or context records the stash cannot hold. */
+    readonly canMoveToStash: boolean;
     /** Ends the edit and removes the queued message once its text is stashed. */
     readonly onMovedToStash: () => void;
   } | null;
@@ -783,7 +783,7 @@ export function useComposerStash(input: {
       return;
     }
     if (projectSelectionRequired || activePendingProgress !== null) return;
-    if (editingQueuedMessage?.hasAttachments) return;
+    if (editingQueuedMessage && !editingQueuedMessage.canMoveToStash) return;
     void stashCurrentPromptStable();
   });
   // Capture phase while the composer is mounted, so Mod+S never reaches the browser's save

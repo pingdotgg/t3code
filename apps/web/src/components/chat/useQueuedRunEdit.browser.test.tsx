@@ -25,6 +25,8 @@ import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "../../lib/terminalContext";
 import {
   environmentContextRecord,
   environmentContextReference,
+  terminalContextRecord,
+  terminalContextReference,
   threadContextReference,
 } from "../../lib/composerContextRecords";
 import { deriveComposerSendState } from "../ChatView.logic";
@@ -430,6 +432,51 @@ describe("useQueuedRunEdit", () => {
       environmentId: THREAD_A.environmentId,
       input: { threadId: THREAD_A.threadId, runId: RUN },
     });
+  });
+
+  it("lets an edit move to the stash only when the stash can hold all of the message", async () => {
+    const { hook } = setup();
+    const thread = threadContextRecord(THREAD_B, "Kept in the draft");
+    const terminalDraft = {
+      id: "terminal-1",
+      threadId: THREAD_A.threadId,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      terminalId: "term-1",
+      terminalLabel: "Terminal 1",
+      lineStart: 1,
+      lineEnd: 2,
+      text: "npm test",
+    };
+    const terminal = terminalContextRecord(terminalDraft);
+    const threadOnly = MessageId.make("message-thread");
+    const withTerminal = MessageId.make("message-terminal");
+    const threadText = `see ${formatInlineContextReference(threadContextReference(thread))}`;
+    const terminalText = `see ${formatInlineContextReference(terminalContextReference(terminalDraft))}`;
+    const messages = [
+      { id: threadOnly, text: threadText, context: { version: 1, records: [thread] } },
+      { id: withTerminal, text: terminalText, context: { version: 1, records: [terminal] } },
+    ];
+    await using _screen = await render(view(THREAD_A, "queued", hook, messages));
+
+    await act(() =>
+      requireHook(hook).beginEdit({
+        runId: RUN,
+        messageId: threadOnly,
+        text: threadText,
+        attachments: [],
+      }),
+    );
+    expect(requireHook(hook).canMoveEditToStash).toBe(true);
+
+    await act(() =>
+      requireHook(hook).beginEdit({
+        runId: RUN,
+        messageId: withTerminal,
+        text: terminalText,
+        attachments: [],
+      }),
+    );
+    expect(requireHook(hook).canMoveEditToStash).toBe(false);
   });
 
   it("saves an effort-only prompt without claiming removed attachments remain", async () => {
