@@ -10,6 +10,7 @@ const UPPERCASE = /\p{Lu}/u;
 const DIGIT = /\p{N}/u;
 const LETTER = /\p{L}/u;
 const COMBINING_MARKS = /\p{M}/gu;
+const DOT_FROM_LOWERCASED_I = /(?<=i)\u0307/g;
 // Emoji and other symbols can be searched for, so they start words too.
 const SYMBOL = /\p{So}/u;
 const APOSTROPHE = /['’]/;
@@ -832,34 +833,39 @@ function shortestSpan(places: ReadonlyArray<ReadonlyArray<number>>): {
  */
 export function findSearchTokenRanges(text: string, query: string): SearchRange[] {
   const { long, words, exact } = messageSearchTokens(query);
+  // Each word also without the dot lowercasing "İ" adds, which the text,
+  // folded in place, does not have. Other marks stay: dropping a Hindi vowel
+  // sign would leave a lone consonant lighting up word starts.
+  const undotted = (word: string) => word.replace(DOT_FROM_LOWERCASED_I, "");
   // An exact query lights up only where its words are written together.
-  const phrase = exact
-    ? wordsTogether(
-        words.map((word) => foldInPlace(word)),
-        true,
-      )
-    : null;
-  if (phrase) {
+  if (exact && words.length > 1) {
+    const folded = words.map((word) => foldInPlace(word));
+    const bare = folded.map(undotted);
     const searched = foldInPlace(text);
     const ranges: SearchRange[] = [];
-    for (
-      let found = findExactPhrase(text, searched, phrase);
-      found !== null;
-      found = findExactPhrase(text, searched, phrase, found.end)
-    ) {
-      ranges.push(found);
+    for (const phraseWords of bare.join(" ") === folded.join(" ") ? [folded] : [folded, bare]) {
+      const phrase = wordsTogether(phraseWords, true)!;
+      for (
+        let found = findExactPhrase(text, searched, phrase);
+        found !== null;
+        found = findExactPhrase(text, searched, phrase, found.end)
+      ) {
+        ranges.push(found);
+      }
     }
-    return ranges;
+    return separateExactRanges(ranges);
   }
-  const tokens = new Map(
-    long
-      .map(
-        (token) =>
-          [foldQueryWords(token), Array.from(token).length < MESSAGE_WORD_START_LENGTH] as const,
-      )
+  // Each folded token, and whether it must start a word; a spelling any token
+  // allows mid-word lights up mid-word.
+  const tokens = new Map<string, boolean>();
+  for (const token of long) {
+    const short = Array.from(token).length < MESSAGE_WORD_START_LENGTH;
+    const word = foldQueryWords(token);
+    for (const key of [word, undotted(word)]) {
       // Some tokens fold to nothing ("´´´"), which would match everywhere.
-      .filter(([token]) => token.length > 0),
-  );
+      if (key.length > 0) tokens.set(key, short && (tokens.get(key) ?? true));
+    }
+  }
   if (tokens.size === 0) return [];
   const field = foldSearchField(text);
   const ranges: SearchRange[] = [];
@@ -879,7 +885,19 @@ export function findSearchTokenRanges(text: string, query: string): SearchRange[
       index = field.text.indexOf(token, index + token.length);
     }
   }
-  return mergeRanges(ranges);
+  return exact ? separateExactRanges(ranges) : mergeRanges(ranges);
+}
+
+// Overlaps go, longest first; touching exact matches stay apart, so find opens
+// on the first one alone.
+function separateExactRanges(ranges: SearchRange[]): SearchRange[] {
+  const kept: SearchRange[] = [];
+  for (const range of ranges.sort(
+    (left, right) => left.start - right.start || right.end - left.end,
+  )) {
+    if (range.start >= (kept.at(-1)?.end ?? 0)) kept.push(range);
+  }
+  return kept;
 }
 
 export interface SearchTextPart {

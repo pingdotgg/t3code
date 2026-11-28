@@ -73,10 +73,11 @@ const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boole
 const withoutPresentation = ({
   displayName: _displayName,
   accentColor: _accentColor,
+  usageAccess: _usageAccess,
   ...runtime
 }: ProviderInstanceConfig) => runtime;
 
-// Display name and accent colour are only labels; changing them must not stop the instance's sessions.
+// Labels and the usage access grant must not stop the instance's sessions; drivers read the grant live.
 const runtimeEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
   Equal.equals(withoutPresentation(a), withoutPresentation(b));
 
@@ -372,6 +373,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   }
 
   const childScope = yield* Scope.fork(parentScope);
+  let usageAccess = entry.usageAccess === "allowed";
 
   const createResult = yield* driver
     .create({
@@ -380,6 +382,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
       accentColor: entry.accentColor,
       environment: secrets.environment,
       enabled,
+      usageAccess: Effect.sync(() => usageAccess),
       config:
         secrets.config.length === 0
           ? typedConfig
@@ -410,9 +413,13 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
     entry,
     driver.metadata.snapshotOmitsDisplayName ? undefined : driver.metadata.displayName,
   );
+  const setLiveEntry = (next: ProviderInstanceConfig) => {
+    setPresentation(next);
+    usageAccess = next.usageAccess === "allowed";
+  };
   return {
     kind: "live" as const,
-    live: { instance, scope: childScope, entry, secrets, setPresentation },
+    live: { instance, scope: childScope, entry, secrets, setPresentation: setLiveEntry },
   };
 });
 
@@ -511,6 +518,13 @@ const makeReconcile = <R>(input: {
             existing.setPresentation(entry);
             builtEntries.set(instanceId, { ...existing, entry });
             presentationChanged = true;
+            if (existing.entry.usageAccess !== entry.usageAccess) {
+              const { snapshot } = existing.instance;
+              yield* (snapshot.refreshUsage ?? snapshot.refresh).pipe(
+                Effect.ignore,
+                Effect.forkIn(existing.scope),
+              );
+            }
           }
           continue;
         }

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { COMPOSER_CONTEXT_CLIPBOARD_MIME } from "@t3tools/shared/composerContextClipboard";
 
-import { writeTextToClipboard } from "./useCopyToClipboard";
+import { writePngToClipboard, writeTextToClipboard } from "./useCopyToClipboard";
 
 describe("writeTextToClipboard", () => {
   it("reserves plain text even when an extra flavor attempts to replace it", async () => {
@@ -76,5 +76,63 @@ describe("writeTextToClipboard", () => {
     const html = await items[0]!.data["text/html"]!.text();
     expect(html).toContain(rich);
     expect(html).toContain("data-t3-context-fragment=");
+  });
+});
+
+describe("writePngToClipboard", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("starts the write before the image is ready, so the click still counts", async () => {
+    const write = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { write } });
+    vi.stubGlobal(
+      "ClipboardItem",
+      class {
+        constructor(readonly data: Record<string, Promise<Blob>>) {}
+      },
+    );
+    let finish: (png: Blob) => void = () => {};
+    const png = new Promise<Blob>((resolve) => {
+      finish = resolve;
+    });
+
+    const copied = writePngToClipboard(() => png);
+    expect(write).toHaveBeenCalledTimes(1);
+    const items = write.mock.calls[0]![0] as Array<{ data: Record<string, Promise<Blob>> }>;
+    expect(items[0]!.data["image/png"]).toBe(png);
+    finish(new Blob([], { type: "image/png" }));
+    await expect(copied).resolves.toBe(true);
+  });
+
+  it("leaves no unhandled rejection when the clipboard refuses before reading the image", async () => {
+    vi.stubGlobal("navigator", {
+      clipboard: { write: vi.fn().mockRejectedValue(new Error("denied")) },
+    });
+    vi.stubGlobal(
+      "ClipboardItem",
+      class {
+        constructor(readonly data: Record<string, Promise<Blob>>) {}
+      },
+    );
+    const png = Promise.reject(new Error("the render failed"));
+    const handled = vi.spyOn(png, "catch");
+
+    await expect(writePngToClipboard(() => png)).rejects.toMatchObject({
+      _tag: "ClipboardWriteError",
+    });
+    // The clipboard never read the image, so only the copy's own handler covers its rejection.
+    expect(handled).toHaveBeenCalled();
+  });
+
+  it("reports a clipboard without image support instead of drawing the image", async () => {
+    vi.stubGlobal("navigator", { clipboard: { writeText: vi.fn() } });
+    const draw = vi.fn(async () => new Blob());
+
+    await expect(writePngToClipboard(draw)).rejects.toMatchObject({
+      _tag: "ClipboardApiUnavailableError",
+    });
+    expect(draw).not.toHaveBeenCalled();
   });
 });

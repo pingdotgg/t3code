@@ -200,7 +200,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const isDevin = registryAgentId === "devin";
   const isAntigravityCli =
     options.settings.source === "local" &&
-    /^agy(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
+    /^(?:agy|antigravity)(?:\.(?:exe|cmd|bat))?$/i.test(
+      options.settings.commandPath.split(/[\\/]/).pop() ?? "",
+    );
   const isOmp =
     options.settings.source === "local" &&
     /^omp(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
@@ -274,7 +276,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       : AcpProviderCapabilitiesV2,
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
     compactViaAdvertisedCommand: true,
-    ...(isAntigravityCli ? { wakeOnDetachedRequest: true, replyEndsWithUsageUpdate: true } : {}),
+    ...(isAntigravityCli
+      ? { wakeOnDetachedRequest: true, replyEndsWithUsageUpdate: true, deferMcpTools: "proxy" }
+      : {}),
     promptFailure: (cause) =>
       acpRegistryPromptFailure(isVibe ? "mistral-vibe" : registryAgentId, cause),
     ...(isDroid

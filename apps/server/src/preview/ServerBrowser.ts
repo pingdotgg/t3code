@@ -76,7 +76,6 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type {
   BrowserContext,
   CDPSession,
-  Dialog,
   Download,
   FileChooser,
   Frame,
@@ -445,6 +444,23 @@ interface Recording {
   readonly framesInFlight: Set<Promise<void>>;
 }
 
+interface DialogResponse {
+  readonly accept: boolean;
+  readonly promptText?: string | undefined;
+  readonly authChallengeId?: string | undefined;
+  readonly username?: string;
+  readonly password?: string;
+}
+
+interface PendingDialog {
+  readonly authChallengeId?: string;
+  readonly type: string;
+  readonly message: string;
+  readonly defaultValue: string;
+  readonly accept: (input: DialogResponse) => Promise<void>;
+  readonly dismiss: () => Promise<void>;
+}
+
 interface ServerTab {
   readonly threadId: ThreadId;
   readonly tabId: string;
@@ -480,7 +496,9 @@ interface ServerTab {
     readonly accept: string;
     readonly offeredTo: string | null;
   } | null;
-  dialog: Dialog | null;
+  dialog: PendingDialog | null;
+  /** Released when an HTTP auth challenge holds a navigation until it is answered. */
+  readonly authWaiters: Set<() => void>;
   setting: PreviewViewportSetting;
   colorScheme: PreviewAppearancePreference;
   zoomFactor: number;
@@ -799,9 +817,10 @@ const make = Effect.gen(function* () {
   const dialogStatus = (tab: ServerTab) =>
     tab.dialog
       ? {
-          type: tab.dialog.type(),
-          message: tab.dialog.message().slice(0, 4000),
-          defaultValue: tab.dialog.defaultValue().slice(0, 4000),
+          type: tab.dialog.type,
+          message: tab.dialog.message.slice(0, 4000),
+          defaultValue: tab.dialog.defaultValue.slice(0, 4000),
+          ...(tab.dialog.authChallengeId ? { authChallengeId: tab.dialog.authChallengeId } : {}),
         }
       : null;
 
@@ -833,14 +852,73 @@ const make = Effect.gen(function* () {
       });
   };
 
-  const resolveDialog = async (tab: ServerTab, input: PreviewAutomationDialogInput) => {
+  const resolveDialog = async (tab: ServerTab, input: DialogResponse) => {
     const dialog = tab.dialog;
     if (!dialog) throw new Error("No dialog is pending.");
-    if (input.accept) await dialog.accept(input.promptText);
-    else await dialog.dismiss();
-    if (tab.dialog === dialog) tab.dialog = null;
-    ServerBrowserPage.invalidateRefs(tab.page);
+    if (dialog.authChallengeId !== input.authChallengeId) {
+      throw new Error("The browser dialog has changed. Read its current status before responding.");
+    }
+    // A wrong password is challenged again at once, and an abandoned request cannot be answered.
+    if (dialog.type === "auth") tab.dialog = null;
+    try {
+      if (input.accept) await dialog.accept(input);
+      else await dialog.dismiss();
+      if (tab.dialog === dialog) tab.dialog = null;
+    } finally {
+      if (tab.dialog !== dialog) {
+        ServerBrowserPage.invalidateRefs(tab.page);
+        broadcastControl(tab);
+      }
+    }
+  };
+
+  /** Credentials go straight to Chromium; they are never stored or reported in status. */
+  const requestAuth = (
+    tab: ServerTab,
+    requestId: string,
+    challenge: { readonly source?: string; readonly origin: string; readonly realm: string },
+  ) => {
+    const respond = (
+      authChallengeResponse:
+        | { response: "CancelAuth" }
+        | { response: "ProvideCredentials"; username: string; password: string },
+    ) =>
+      tab.cdp.send("Fetch.continueWithAuth", { requestId, authChallengeResponse }).then(constVoid);
+    // Only one dialog can be answered at a time.
+    if (tab.closing || tab.dialog) {
+      void respond({ response: "CancelAuth" }).catch(constVoid);
+      return;
+    }
+    tab.dialog = {
+      type: "auth",
+      authChallengeId: NodeCrypto.randomUUID(),
+      message: `${challenge.source === "Proxy" ? "The proxy " : ""}${challenge.origin} asks you to sign in.${challenge.realm ? ` It says: ${challenge.realm}` : ""}`,
+      defaultValue: "",
+      accept: (input) =>
+        respond({
+          response: "ProvideCredentials",
+          username: input.username ?? "",
+          password: input.password ?? "",
+        }),
+      dismiss: () => respond({ response: "CancelAuth" }),
+    };
     broadcastControl(tab);
+    for (const release of tab.authWaiters) release();
+  };
+
+  /** A sign-in prompt holds its navigation, so waiting for one ends when the prompt shows. */
+  const settleOnAuth = (tab: ServerTab, start: () => Promise<unknown>): Promise<void> => {
+    let release = constVoid;
+    const challenged = new Promise<void>((resolve) => {
+      release = resolve;
+      tab.authWaiters.add(resolve);
+    });
+    return Promise.race([
+      start()
+        .then(constVoid)
+        .finally(() => tab.authWaiters.delete(release)),
+      challenged,
+    ]);
   };
 
   const report = (tab: ServerTab, navStatus: PreviewNavStatus) => {
@@ -1251,11 +1329,6 @@ const make = Effect.gen(function* () {
     const page = adopted?.page ?? desktop?.page ?? (await context.newPage());
     if (!desktop) opened.push(() => page.close());
     const cdp = await context.newCDPSession(page);
-    await installPdfDocumentNavigation(cdp);
-    // The desktop's page is already a normal browser. A popup's first request
-    // precedes this override, so its Sec-CH-UA brands still name HeadlessChrome.
-    if (!desktop) await presentAsChrome(cdp, host);
-    if (!desktop) await recordCopies(cdp);
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     const control = new SessionControl(snapshot.automationOwner ?? null, () =>
@@ -1292,6 +1365,7 @@ const make = Effect.gen(function* () {
       downloads: [],
       fileChooser: null,
       dialog: null,
+      authWaiters: new Set(),
       setting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
       colorScheme: "system",
       zoomFactor: 1,
@@ -1327,6 +1401,16 @@ const make = Effect.gen(function* () {
       captureLock: Promise.resolve(),
       capturing: 0,
     };
+    if (!desktop)
+      cdp.on("Fetch.authRequired", (event) =>
+        requestAuth(tab, event.requestId, event.authChallenge),
+      );
+    // Desktop tabs keep the desktop shell's own handling of HTTP auth.
+    await installPdfDocumentNavigation(cdp, { handleAuthRequests: !desktop });
+    // The desktop's page is already a normal browser. A popup's first request
+    // precedes this override, so its Sec-CH-UA brands still name HeadlessChrome.
+    if (!desktop) await presentAsChrome(cdp, host);
+    if (!desktop) await recordCopies(cdp);
     if (!desktop) {
       await page.setViewportSize(fixedViewportSize(tab.setting) ?? UNATTACHED_FILL_VIEWPORT);
     }
@@ -1388,6 +1472,12 @@ const make = Effect.gen(function* () {
       tab.pendingInitialRequestUrl = null;
       navigationGenerations.set(request, ++tab.navigationGeneration);
       clearAbortedNavigation(tab);
+      // A new navigation abandons a pending sign-in; release its paused request.
+      if (tab.dialog?.type === "auth") {
+        void tab.dialog.dismiss().catch(constVoid);
+        tab.dialog = null;
+        broadcastControl(tab);
+      }
       tab.loading = true;
       tab.loadError = undefined;
       tab.crash = undefined;
@@ -1487,7 +1577,14 @@ const make = Effect.gen(function* () {
         void dialog.accept().catch(constVoid);
         return;
       }
-      tab.dialog = dialog;
+      if (tab.dialog?.type === "auth") void tab.dialog.dismiss().catch(constVoid);
+      tab.dialog = {
+        type: dialog.type(),
+        message: dialog.message(),
+        defaultValue: dialog.defaultValue(),
+        accept: (input) => dialog.accept(input.promptText),
+        dismiss: () => dialog.dismiss(),
+      };
       broadcastControl(tab);
     });
     page.on("download", (download) => void saveDownload(tab, download));
@@ -1519,13 +1616,15 @@ const make = Effect.gen(function* () {
       if (initialUrl) initialUrl.hash = "";
       tab.pendingInitialRequestUrl = initialUrl?.href ?? null;
       const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
-      tab.initialNavigation = (
-        (desktop || adopted) && page.url() === snapshot.navStatus.url
+      const url = snapshot.navStatus.url;
+      tab.initialNavigation = settleOnAuth(tab, () =>
+        ((desktop || adopted) && page.url() === url
           ? page.reload(options)
-          : page.goto(snapshot.navStatus.url, options)
-      ).then(constVoid, (cause: unknown) => {
-        throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
-      });
+          : page.goto(url, options)
+        ).catch((cause: unknown) => {
+          throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
+        }),
+      );
 
       if (tab.control.agentId !== null) tab.control.track(tab.initialNavigation);
       else void tab.initialNavigation.catch(constVoid);
@@ -2325,7 +2424,9 @@ const make = Effect.gen(function* () {
     const startedAt = performance.now();
     const remaining = () => Math.max(1, timeout - (performance.now() - startedAt));
     await leaveBusyPage(tab, tab.cdp, timeout / 2);
-    const navigation = tab.page.goto(url, { timeout: remaining(), waitUntil: "commit" });
+    const navigation = settleOnAuth(tab, () =>
+      tab.page.goto(url, { timeout: remaining(), waitUntil: "commit" }),
+    );
     if (readiness === "none") {
       tab.control.track(navigation);
       return;
@@ -2339,22 +2440,26 @@ const make = Effect.gen(function* () {
         .catch((cause: unknown) => {
           if (!(cause instanceof Error && cause.name === "TimeoutError")) throw cause;
         });
-    await navigation.then(ready).catch((cause: unknown) => {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      if (message.includes("Download is starting")) {
-        throw new ServerBrowserPage.ServerBrowserOperationError({
-          tag: "PreviewAutomationExecutionError",
-          message: `${url} is a file this browser cannot show, so it was downloaded instead. preview_status lists it under downloads.`,
-        });
-      }
-      if (/ERR_[A-Z_]+/.test(message)) {
-        throw new ServerBrowserPage.ServerBrowserOperationError({
-          tag: "PreviewAutomationExecutionError",
-          message: `Navigation to ${url} failed: ${ServerBrowserPage.parseNetError(message).description}`,
-        });
-      }
-      throw ServerBrowserPage.toOperationError(cause, timeout);
-    });
+    await navigation
+      .then(() => {
+        if (tab.dialog?.type !== "auth") return settleOnAuth(tab, ready);
+      })
+      .catch((cause: unknown) => {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        if (message.includes("Download is starting")) {
+          throw new ServerBrowserPage.ServerBrowserOperationError({
+            tag: "PreviewAutomationExecutionError",
+            message: `${url} is a file this browser cannot show, so it was downloaded instead. preview_status lists it under downloads.`,
+          });
+        }
+        if (/ERR_[A-Z_]+/.test(message)) {
+          throw new ServerBrowserPage.ServerBrowserOperationError({
+            tag: "PreviewAutomationExecutionError",
+            message: `Navigation to ${url} failed: ${ServerBrowserPage.parseNetError(message).description}`,
+          });
+        }
+        throw ServerBrowserPage.toOperationError(cause, timeout);
+      });
     assertNavigationSucceeded(tab);
   };
 
@@ -2758,7 +2863,8 @@ const make = Effect.gen(function* () {
         return tab.control.agent(
           request.agentSessionId,
           async () => {
-            if (tab.dialog)
+            // A new tab's first page may already be asking for sign-in; report it.
+            if (tab.dialog && (existing || tab.dialog.type !== "auth"))
               throw new BrowserControlInterrupted({
                 message:
                   "A browser dialog is pending. Read preview_status and use preview_dialog first.",
@@ -2770,10 +2876,10 @@ const make = Effect.gen(function* () {
               // A failed open returns no tabId; a leftover hidden tab would block later reuse.
               await Promise.resolve(tab.initialNavigation)
                 .then(async () => {
-                  if (url) {
-                    await tab.page
-                      .waitForLoadState("load", { timeout: navigationTimeout })
-                      .catch(constVoid);
+                  if (url && tab.dialog?.type !== "auth") {
+                    await settleOnAuth(tab, () =>
+                      tab.page.waitForLoadState("load", { timeout: navigationTimeout }),
+                    ).catch(constVoid);
                   }
                   assertNavigationSucceeded(tab);
                 })
@@ -2876,7 +2982,14 @@ const make = Effect.gen(function* () {
           message: "A human controls this tab.",
           reason: "humanControl",
         });
-      await resolveDialog(tab, input as PreviewAutomationDialogInput);
+      const response = input as PreviewAutomationDialogInput;
+      if (tab.dialog?.type === "auth" && response.accept)
+        throw new BrowserControlInterrupted({
+          message: "Enter HTTP sign-in credentials in the Browser panel.",
+          reason: "dialogPending",
+        });
+      const { accept, promptText, authChallengeId } = response;
+      await resolveDialog(tab, { accept, promptText, authChallengeId });
       return statusWithTitle(tab, request.agentSessionId);
     }
     const agentSessionId = request.agentSessionId!;
@@ -3379,16 +3492,20 @@ const make = Effect.gen(function* () {
           const url = normalizePreviewUrl(message.url);
           tab.pendingInitialRequestUrl = null;
           await leaveBusyPage(tab, session);
-          tab.control.trackUntilHandoff(tab.page.goto(url, VIEWER_NAVIGATION_OPTIONS));
+          tab.control.trackUntilHandoff(
+            settleOnAuth(tab, () => tab.page.goto(url, VIEWER_NAVIGATION_OPTIONS)),
+          );
         }
         return;
       case "history":
         tab.pendingInitialRequestUrl = null;
         await leaveBusyPage(tab, session);
         tab.control.trackUntilHandoff(
-          num(message.delta) < 0
-            ? tab.page.goBack(VIEWER_NAVIGATION_OPTIONS)
-            : tab.page.goForward(VIEWER_NAVIGATION_OPTIONS),
+          settleOnAuth(tab, () =>
+            num(message.delta) < 0
+              ? tab.page.goBack(VIEWER_NAVIGATION_OPTIONS)
+              : tab.page.goForward(VIEWER_NAVIGATION_OPTIONS),
+          ),
         );
         return;
       case "stopLoading": {
@@ -3412,7 +3529,9 @@ const make = Effect.gen(function* () {
           await session.send("Page.reload", { ignoreCache: true });
           return;
         }
-        tab.control.trackUntilHandoff(tab.page.reload(VIEWER_NAVIGATION_OPTIONS));
+        tab.control.trackUntilHandoff(
+          settleOnAuth(tab, () => tab.page.reload(VIEWER_NAVIGATION_OPTIONS)),
+        );
         return;
       case "selectMenu": {
         const offer = viewer.selectMenu;
@@ -3659,6 +3778,11 @@ const make = Effect.gen(function* () {
                 ...(typeof message.promptText === "string"
                   ? { promptText: message.promptText }
                   : {}),
+                ...(typeof message.authChallengeId === "string"
+                  ? { authChallengeId: message.authChallengeId }
+                  : {}),
+                ...(typeof message.username === "string" ? { username: message.username } : {}),
+                ...(typeof message.password === "string" ? { password: message.password } : {}),
               });
             } else {
               const dispatch = async (input: Record<string, unknown>) => {

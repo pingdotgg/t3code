@@ -1,8 +1,13 @@
 // A project bound to a standalone tracker (Linear) in settings lists it beside its git host's.
 // References outside the project's own repositories (upstream and fork) may be read on the host,
 // but every write must pass through requireWritable.
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
+import * as Exit from "effect/Exit";
+import * as Hash from "effect/Hash";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import {
@@ -12,12 +17,14 @@ import {
   type IssueTrackerAccountId,
   SourceControlProviderKind,
   type IssueCandidates,
+  type IssueCandidatesInput,
   type IssueCommentInput,
   type IssueCommentsPage,
   type IssueCommentsPageInput,
   type IssueCreateInput,
   type IssueCreateResult,
   type IssueDetail,
+  type IssueDetailInput,
   type IssueError,
   type IssueListEntry,
   type IssueListInput,
@@ -56,6 +63,32 @@ import * as IssueTrackerRegistry from "./IssueTrackerRegistry.ts";
 
 const DEFAULT_LIST_LIMIT = 50;
 const SCOPE_CONCURRENCY = 4;
+// Every client polls linked issues; one shared read per window keeps them off the tracker's quota.
+const DETAIL_CACHE_TTL = Duration.seconds(30);
+const DETAIL_CACHE_CAPACITY = 512;
+
+/** Equal by `key` alone, so the cache can run the read it carries on a miss. */
+class DetailRead implements Equal.Equal {
+  readonly key: string;
+  readonly lookup: Effect.Effect<TrackerIssueDetail, IssueError>;
+  constructor(key: string, lookup: Effect.Effect<TrackerIssueDetail, IssueError>) {
+    this.key = key;
+    this.lookup = lookup;
+  }
+  [Equal.symbol](that: unknown): boolean {
+    return that instanceof DetailRead && that.key === this.key;
+  }
+  [Hash.symbol](): number {
+    return Hash.string(this.key);
+  }
+}
+
+/** One issue as one tracker account sees it; the host's credential is the server's own. */
+function detailCacheKey(project: ProjectTrackerBinding, key: string): string {
+  return [project.tracker, project.host, project.accountId ?? "", project.scope, key]
+    .map((part) => part.toLowerCase())
+    .join(" ");
+}
 
 const interactive =
   <I, A>(call: (input: I) => Effect.Effect<A, IssueError>) =>
@@ -164,13 +197,15 @@ export class IssueService extends Context.Service<
   IssueService,
   {
     readonly list: (input: IssueListInput) => Effect.Effect<IssueListResult, IssueError>;
-    readonly detail: (input: IssueRef) => Effect.Effect<IssueDetail, IssueError>;
+    readonly detail: (input: IssueDetailInput) => Effect.Effect<IssueDetail, IssueError>;
     readonly linkMetadata: (input: IssueRef) => Effect.Effect<TrackerIssueLink, IssueError>;
     readonly comments: (
       input: IssueCommentsPageInput,
     ) => Effect.Effect<IssueCommentsPage, IssueError>;
     readonly templates: (input: IssueScopeRef) => Effect.Effect<IssueTemplateList, IssueError>;
-    readonly candidates: (input: IssueScopeRef) => Effect.Effect<IssueCandidates, IssueError>;
+    readonly candidates: (
+      input: IssueCandidatesInput,
+    ) => Effect.Effect<IssueCandidates, IssueError>;
     readonly create: (input: IssueCreateInput) => Effect.Effect<IssueCreateResult, IssueError>;
     readonly comment: (input: IssueCommentInput) => Effect.Effect<void, IssueError>;
     readonly update: (input: IssueUpdateInput) => Effect.Effect<void, IssueError>;
@@ -186,8 +221,9 @@ export class IssueService extends Context.Service<
     ) => Effect.Effect<IssueScopeRef & { readonly host: string }, IssueError>;
     /**
      * Resolve through a matching project, preferring `preferredProjectId`; other scopes are read-only.
-     * Standalone links must match the workspace in the issue's canonical URL from the connected
-     * tracker; that read comes back as `issue`, so callers need not read it again.
+     * A standalone link with no project bound to its tracker resolves through `preferredProjectId`,
+     * and must match the workspace in the issue's canonical URL from the connected tracker; that
+     * read comes back as `issue`, so callers need not read it again.
      */
     readonly resolveUrl: (
       url: string,
@@ -208,6 +244,13 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const bindings = yield* IssueTrackerBindings.IssueTrackerBindingsRepository;
+  const details = yield* Cache.makeWith((read: DetailRead) => read.lookup, {
+    capacity: DETAIL_CACHE_CAPACITY,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? DETAIL_CACHE_TTL : Duration.zero),
+  });
+  /** After a write, the next read must see it. */
+  const invalidateDetail = (project: ProjectTrackerBinding, key: string) =>
+    Cache.invalidate(details, new DetailRead(detailCacheKey(project, key), Effect.never));
 
   const resolveStandaloneBindings = (
     binding: IssueTrackerProjectBinding | undefined,
@@ -320,10 +363,50 @@ const make = Effect.gen(function* () {
     );
 
   /**
+   * A project with no binding for a standalone tracker, the No project included, serves its
+   * references with the environment's credential. The tracker decides what the account may change.
+   */
+  const requireStandaloneProject = (
+    ref: IssueScopeRef,
+    api: StandaloneIssueTrackerApi,
+  ): Effect.Effect<SupportedProject & { readonly writable: boolean }, IssueError> => {
+    const host = ref.host?.trim().toLowerCase();
+    if (host !== undefined && host !== api.standalone.host) {
+      return Effect.fail(new IssueUnavailableError({ reason: "tracker-unsupported" }));
+    }
+    return projects.getShell(ref.projectId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new IssueOperationError({
+            operation: "listProjects",
+            detail: "The project list could not be read.",
+            cause,
+          }),
+      ),
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.fail(new IssueUnavailableError({ reason: "tracker-unsupported" })),
+          onSome: (project) =>
+            Effect.succeed({
+              project,
+              api,
+              // No binding names an account, so the tracker's first one serves.
+              accountId: null,
+              tracker: ref.tracker,
+              host: api.standalone.host,
+              scope: ref.scope.trim(),
+              writable: true,
+            }),
+        }),
+      ),
+    );
+  };
+
+  /**
    * The project whose checkout and credentials serve a reference, and whether the reference is
    * one of the project's own scopes. A reference naming another scope on the same tracker and
    * host is served by the project but marked read-only. A project with two trackers serves the
-   * one the reference names.
+   * one the reference names, and one with no binding for a standalone tracker still serves it.
    */
   const requireProject = (
     ref: IssueScopeRef,
@@ -331,9 +414,13 @@ const make = Effect.gen(function* () {
     listProjects({ projectId: ref.projectId }).pipe(
       Effect.flatMap(({ supported }) => {
         const host = ref.host?.trim().toLowerCase();
-        const onHost = supported.filter(
-          (candidate) =>
-            candidate.tracker === ref.tracker && (host === undefined || candidate.host === host),
+        const onTracker = supported.filter((candidate) => candidate.tracker === ref.tracker);
+        const api = registry.get(ref.tracker);
+        if (onTracker.length === 0 && api !== null && isStandaloneIssueTracker(api)) {
+          return requireStandaloneProject(ref, api);
+        }
+        const onHost = onTracker.filter(
+          (candidate) => host === undefined || candidate.host === host,
         );
         const scope = ref.scope.trim();
         const own = onHost.find(
@@ -552,18 +639,24 @@ const make = Effect.gen(function* () {
 
   const detail: IssueService["Service"]["detail"] = (input) =>
     requireProject(input).pipe(
+      Effect.tap((project) =>
+        input.refresh === true ? invalidateDetail(project, input.key) : Effect.void,
+      ),
       Effect.flatMap((project) =>
-        project.api
-          .getIssue({
-            cwd: project.project.workspaceRoot,
-            host: project.host,
-            scope: project.scope,
-            key: input.key,
-          })
-          .pipe(
-            Effect.mapError(toIssueError("detail")),
-            Effect.map((issue) => toDetail(project, issue)),
+        Cache.get(
+          details,
+          new DetailRead(
+            detailCacheKey(project, input.key),
+            project.api
+              .getIssue({
+                cwd: project.project.workspaceRoot,
+                host: project.host,
+                scope: project.scope,
+                key: input.key,
+              })
+              .pipe(Effect.mapError(toIssueError("detail"))),
           ),
+        ).pipe(Effect.map((issue) => toDetail(project, issue))),
       ),
     );
 
@@ -624,6 +717,7 @@ const make = Effect.gen(function* () {
                 cwd: project.project.workspaceRoot,
                 host: project.host,
                 scope: project.scope,
+                ...(input.query?.trim() ? { query: input.query.trim() } : {}),
               })
               .pipe(Effect.mapError(toIssueError("candidates"))),
       ),
@@ -656,6 +750,9 @@ const make = Effect.gen(function* () {
             new IssueOperationError({ operation: "comment", detail: "A comment needs some text." }),
           );
         }
+        if (input.audience === "internal" && project.api.capabilities.internalComments !== true) {
+          return Effect.fail(unsupported("comment", "internal notes"));
+        }
         return project.api.comment === undefined || !project.api.capabilities.comment
           ? Effect.fail(unsupported("comment", "comments"))
           : project.api
@@ -665,8 +762,12 @@ const make = Effect.gen(function* () {
                 scope: project.scope,
                 key: input.key,
                 body: input.body,
+                audience: input.audience,
               })
-              .pipe(Effect.mapError(toIssueError("comment")));
+              .pipe(
+                Effect.mapError(toIssueError("comment")),
+                Effect.ensuring(invalidateDetail(project, input.key)),
+              );
       }),
     );
 
@@ -698,7 +799,10 @@ const make = Effect.gen(function* () {
             labels: input.labels,
             assignees: input.assignees,
           })
-          .pipe(Effect.mapError(toIssueError("update")));
+          .pipe(
+            Effect.mapError(toIssueError("update")),
+            Effect.ensuring(invalidateDetail(project, input.key)),
+          );
       }),
     );
 
@@ -715,7 +819,10 @@ const make = Effect.gen(function* () {
             key: input.key,
             state: input.state,
           })
-          .pipe(Effect.mapError(toIssueError("setState")));
+          .pipe(
+            Effect.mapError(toIssueError("setState")),
+            Effect.ensuring(invalidateDetail(project, input.key)),
+          );
       }),
     );
 
@@ -734,7 +841,10 @@ const make = Effect.gen(function* () {
                 content: input.content,
                 reacted: input.reacted,
               })
-              .pipe(Effect.mapError(toIssueError("react"))),
+              .pipe(
+                Effect.mapError(toIssueError("react")),
+                Effect.ensuring(invalidateDetail(project, input.key)),
+              ),
       ),
     );
 
@@ -853,7 +963,41 @@ const make = Effect.gen(function* () {
       const ordered = [...preferred(exact), ...preferred(onTracker)];
       const accounts = [...new Set(ordered.map((project) => project.accountId))];
       if (accounts.length === 0) {
-        return yield* new IssueUnavailableError({ reason: "tracker-unsupported" });
+        // No project is bound to the tracker: the caller's project, the No project included,
+        // reads the link with the environment's credential.
+        if (preferredProjectId === undefined) {
+          return yield* new IssueUnavailableError({ reason: "tracker-unsupported" });
+        }
+        const served = yield* requireStandaloneProject(
+          { projectId: preferredProjectId, tracker, scope: link.scope },
+          standalone.api,
+        );
+        const issue = yield* served.api
+          .getIssue({
+            cwd: served.project.workspaceRoot,
+            host: served.host,
+            scope: link.scope,
+            key: link.key,
+          })
+          .pipe(Effect.mapError(toIssueError("resolveUrl")));
+        const canonicalUrl = parseUrl(issue.url);
+        const canonical = canonicalUrl === null ? null : standalone.api.parseIssueUrl(canonicalUrl);
+        if (canonical === null || canonical.workspace !== standalone.link.workspace) {
+          return yield* new IssueOperationError({
+            operation: "resolveUrl",
+            reason: "not-found",
+            detail: "This issue URL does not belong to the connected workspace.",
+          });
+        }
+        return {
+          projectId: served.project.id,
+          tracker: served.tracker,
+          host: served.host,
+          scope: served.scope,
+          key: link.key,
+          writable: served.writable,
+          issue: toDetail(served, issue),
+        };
       }
       let failure: IssueError | null = null;
       for (const accountId of accounts) {

@@ -2059,7 +2059,7 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("a terminal commit clears a local-only subscriber's Changes totals", () =>
+  it.live("a terminal commit or soft reset refreshes local-only Changes totals", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -2090,8 +2090,10 @@ describe("VcsStatusBroadcaster", () => {
       yield* Effect.gen(function* () {
         const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
         const clean = yield* Deferred.make<void>();
+        const restored = yield* Deferred.make<void>();
         const subscribed = yield* Deferred.make<void>();
         let latest: VcsStatusResult | null = null;
+        let cleared = false;
         // The collapsed repository row in Thread Details subscribes like this.
         yield* Stream.runForEach(
           broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }),
@@ -2099,7 +2101,16 @@ describe("VcsStatusBroadcaster", () => {
             Effect.gen(function* () {
               latest = applyGitStatusStreamEvent(latest, event);
               yield* Deferred.succeed(subscribed, undefined);
-              if (latest.workingTree.files.length === 0) yield* Deferred.succeed(clean, undefined);
+              if (latest.workingTree.files.length === 0) {
+                cleared = true;
+                yield* Deferred.succeed(clean, undefined);
+              } else if (
+                cleared &&
+                latest.workingTree.insertions === 40 &&
+                latest.workingTree.files.length === 1
+              ) {
+                yield* Deferred.succeed(restored, undefined);
+              }
             }),
         ).pipe(Effect.forkScoped);
         yield* Deferred.await(subscribed);
@@ -2115,6 +2126,19 @@ describe("VcsStatusBroadcaster", () => {
 
         const result = yield* Deferred.await(clean).pipe(Effect.timeoutOption("3 seconds"));
         assert.isTrue(Option.isSome(result), "the row kept the committed change counts");
+
+        // What `git reset --soft` does: HEAD and index stay put; HEAD.lock unlinks after the ref moves.
+        state.currentLocalStatus = dirty;
+        const origHeadLock = path.join(gitDir, "ORIG_HEAD.lock");
+        yield* fs.writeFileString(origHeadLock, "88a38bfa\n");
+        yield* fs.rename(origHeadLock, path.join(gitDir, "ORIG_HEAD"));
+        const headLock = path.join(gitDir, "HEAD.lock");
+        yield* fs.writeFileString(headLock, "");
+        yield* fs.writeFileString(refLock, "4b825dc6\n");
+        yield* fs.rename(refLock, path.join(gitDir, "refs", "heads", "main"));
+        yield* fs.remove(headLock);
+
+        yield* Deferred.await(restored);
       }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
     }).pipe(Effect.provide(NodeServices.layer)),
   );

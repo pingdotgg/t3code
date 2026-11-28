@@ -28,6 +28,11 @@ Files upload to the environment's machine as soon as you attach them, and all up
 - **Web and desktop**: Drag, paste, or pick files. Reloading before an upload finishes requires re-attaching.
 - **Mobile**: Pick files, share into T3 Code via the system share sheet, or drag images in Android split screen.
 
+In the desktop app, when the thread's environment runs on this computer, drag a
+folder onto the composer or choose **Folder…** from the attach button to add its
+path. Nothing is uploaded, so there is no size limit; the agent reads the folder
+in place.
+
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
 ## Send while the agent is working
@@ -156,6 +161,8 @@ Attached context—files, terminal excerpts, diff/file review comments, preview 
 ## Attached files
 
 Select any file chip in a draft or sent message to preview it (syntax-highlighted code/JSON, rendered/raw Markdown/HTML/CSV/TSV, audio playback, and ZIP folder browsing up to 50 MB). Large text files show a truncated preview—save the file to read it in full.
+
+When a preview asks for a file password, enter it and select **Unlock**. T3 Code uses the password on your device. Web and desktop can unlock supported PDF, ZIP, Office, and OpenDocument files. The mobile app can unlock ZIP attachments, and Android can unlock PDFs. Ebooks protected by DRM need a compatible reader.
 
 ## Images and videos in messages
 

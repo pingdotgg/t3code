@@ -7,10 +7,12 @@ import {
   type WorkflowRunsSnapshot,
   type WorkflowStep,
 } from "@t3tools/contracts";
+import { getTranslationsSnapshot, GTProvider } from "gt-react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page as browserPage, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
+import { initializeI18n } from "~/i18n/initializeI18n";
 import { render } from "../../../test/render";
 import type { WorkflowPaneTab } from "./workflowPane.logic";
 import { WorkflowRunsView } from "./WorkflowRunsView";
@@ -701,6 +703,70 @@ describe("WorkflowRunsView", () => {
     await expect.element(runs).toMatchTextContent("Has not run yet.");
   });
 
+  it("counts the skipped runs of the workflow picked, not of every workflow", async () => {
+    setup({
+      workflows: [
+        { name: "release", version: 1, triggers: [] },
+        { name: "report", version: 1, triggers: ["webhook pings"] },
+      ],
+      runs: [
+        run({ runId: "rel", title: "Release 1.3", status: "completed", endedAt: at(3) }),
+        run({
+          runId: "s1",
+          workflow: "report",
+          title: "Ping 1",
+          status: "skipped",
+          endedAt: at(1),
+        }),
+        run({
+          runId: "s2",
+          workflow: "report",
+          title: "Ping 2",
+          status: "skipped",
+          endedAt: at(2),
+        }),
+      ],
+      questions: [],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    await screen.getByRole("button", { name: "All", exact: true }).click();
+    await expect.element(screen.getByRole("button", { name: "Show 2 skipped" })).toBeVisible();
+    await screen.getByRole("combobox", { name: "Workflow" }).click();
+    await screen.getByRole("option", { name: "release" }).click();
+    await expect
+      .element(screen.getByRole("navigation", { name: "Workflow runs" }))
+      .not.toMatchTextContent(/skipped/);
+  });
+
+  it("shows a run of the workflow picked, not one of another workflow", async () => {
+    setup({
+      workflows: [
+        { name: "release", version: 1, triggers: [] },
+        { name: "report", version: 1, triggers: ["daily at 09:00"] },
+      ],
+      runs: [
+        run({ runId: "rep", workflow: "report", title: "Nightly report" }),
+        run({ runId: "rel", title: "Release 1.3", status: "completed", endedAt: at(3) }),
+      ],
+      questions: [],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    await expect.element(screen.getByRole("article", { name: "Nightly report" })).toBeVisible();
+    await screen.getByRole("button", { name: "All", exact: true }).click();
+    await screen.getByRole("combobox", { name: "Workflow" }).click();
+    await screen.getByRole("option", { name: "release" }).click();
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect.element(runs.getByRole("button", { name: /Release 1\.3/ })).toBeVisible();
+    await expect
+      .element(screen.getByRole("article", { name: "Nightly report" }))
+      .not.toBeInTheDocument();
+    await expect.element(screen.getByRole("article", { name: "Release 1.3" })).toBeVisible();
+  });
+
   const KIND_KEY = "t3code:workflows:question-kind";
   const asked = (runId: string, kind?: string): WorkflowQuestion => ({
     ...question,
@@ -916,5 +982,27 @@ describe("WorkflowRunsView", () => {
       .element(screen.getByRole("combobox", { name: "Kind of question" }))
       .not.toBeInTheDocument();
     localStorage.removeItem(KIND_KEY);
+  });
+
+  it("says how long a finished run and its steps took in the UI language", async () => {
+    // GTProvider leaves its locale in a cookie; this sets it back to English.
+    initializeI18n(() => {});
+    setup(
+      {
+        runs: [run({ runId: "fix", title: "Fix", status: "completed", endedAt: at(2) })],
+        questions: [],
+      },
+      { fix: [step({ name: "build", kind: "step", endedAt: at(2) })] },
+    );
+    const translations = await getTranslationsSnapshot("ja");
+    await using screen = await render(
+      <GTProvider locale="ja" translations={translations}>
+        {page("fix")}
+      </GTProvider>,
+    );
+
+    await expect.element(screen.getByText("所要時間 2分0秒")).toBeVisible();
+    await expect.element(screen.getByText("2分0秒", { exact: true })).toBeVisible();
+    initializeI18n(() => {});
   });
 });

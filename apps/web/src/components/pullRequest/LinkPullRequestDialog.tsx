@@ -6,7 +6,7 @@ import {
 } from "@t3tools/client-runtime/pull-request-link-input";
 import { useAtomValue } from "@effect/atom-react";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { msg, T, useGT } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useRef, useState } from "react";
 import { m } from "~/i18n/messages";
 
@@ -67,6 +67,7 @@ function LinkPullRequestDialog({
   onOpenChange,
 }: LinkPullRequestDialogProps) {
   const gt = useGT();
+  const resolveMessage = useMessages();
   const inputRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
   const [reference, setReference] = useState("");
@@ -91,11 +92,14 @@ function LinkPullRequestDialog({
     }
   }
 
-  const resolved = resolveLinkPullRequestInput({
-    reference,
-    project: ownProject,
-    hasProject: (reference) => linking.canLink(reference.url),
-  });
+  const resolved = resolveLinkPullRequestInput(
+    {
+      reference,
+      project: ownProject,
+      hasProject: (reference) => linking.canLink(reference.url),
+    },
+    resolveMessage,
+  );
 
   const submit = async () => {
     if (submittingRef.current) return;

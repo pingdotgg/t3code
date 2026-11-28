@@ -564,6 +564,14 @@ describe("String", () => {
     it("handles empty string", () => {
       deepStrictEqual(Array.from(S.linesIterator("")), [])
     })
+
+    it("resumes iteration from the current position", () => {
+      const iterator = S.linesIterator("a\nb\nc")
+
+      deepStrictEqual(iterator.next(), { done: false, value: "a" })
+      deepStrictEqual(Array.from(iterator), ["b", "c"])
+      deepStrictEqual(Array.from(iterator), [])
+    })
   })
 
   describe("linesWithSeparators", () => {

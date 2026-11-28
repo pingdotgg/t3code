@@ -294,3 +294,56 @@ it("filters actions and allows additional shortcuts for assigned commands", asyn
     .element(screen.getByRole("combobox", { name: "Command", exact: true }))
     .toHaveTextContent("Composer: Cycle Host");
 });
+
+it.each([
+  {
+    name: "macOS",
+    platform: "MacIntel",
+    terminalPreviousMac: {
+      ariaLabel: "Edit shortcut for Terminal: Previous: ⇧⌘[",
+      keys: ["⇧", "⌘", "["],
+    },
+    terminalPreviousCtrl: {
+      ariaLabel: "Edit shortcut for Terminal: Previous: ⌃⌥[",
+      keys: ["⌃", "⌥", "["],
+    },
+    editQueued: {
+      ariaLabel: "Edit shortcut for Queue: Edit Last Queued Message: ⌥Up",
+      keys: ["⌥", "Up"],
+    },
+    focusNext: { ariaLabel: "Edit shortcut for Focus Next Workspace Area: F6", keys: ["F6"] },
+  },
+  {
+    name: "Linux",
+    platform: "Linux x86_64",
+    terminalPreviousMac: {
+      ariaLabel: "Edit shortcut for Terminal: Previous: Shift+Meta+[",
+      keys: ["Shift", "Meta", "["],
+    },
+    terminalPreviousCtrl: {
+      ariaLabel: "Edit shortcut for Terminal: Previous: Ctrl+Alt+[",
+      keys: ["Ctrl", "Alt", "["],
+    },
+    editQueued: {
+      ariaLabel: "Edit shortcut for Queue: Edit Last Queued Message: Alt+Up",
+      keys: ["Alt", "Up"],
+    },
+    focusNext: { ariaLabel: "Edit shortcut for Focus Next Workspace Area: F6", keys: ["F6"] },
+  },
+])(
+  "renders platform modifier symbols and formatted key labels in shortcut pills on $name",
+  async ({ platform, terminalPreviousMac, terminalPreviousCtrl, editQueued, focusNext }) => {
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+    await using screen = await render(<KeybindingsSettingsPanel />);
+
+    for (const expected of [terminalPreviousMac, terminalPreviousCtrl, editQueued, focusNext]) {
+      const button = screen.getByRole("button", { name: expected.ariaLabel, exact: true });
+      await expect.element(button).toBeVisible();
+      const kbdTexts = Array.from(
+        button.element().querySelectorAll('[data-slot="kbd"]'),
+        (el) => el.textContent,
+      );
+      expect(kbdTexts).toEqual(expected.keys);
+    }
+  },
+);

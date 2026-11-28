@@ -358,9 +358,13 @@ export function DevicePanel(props: {
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                           <Smartphone className="size-4 shrink-0" />
                           <h3 className="font-medium">
-                            {group.platform === "ios"
-                              ? gt("iOS Simulators")
-                              : gt("Android Emulators")}
+                            {group.devices.some((device) => device.physical)
+                              ? group.platform === "ios"
+                                ? gt("iOS Devices")
+                                : gt("Android Devices")
+                              : group.platform === "ios"
+                                ? gt("iOS Simulators")
+                                : gt("Android Emulators")}
                           </h3>
                         </div>
                         <DiscoveryList>
@@ -376,8 +380,13 @@ export function DevicePanel(props: {
                                 <span className="truncate text-sm font-medium text-foreground">
                                   {device.name}
                                 </span>
-                                <span className="truncate text-xs text-muted-foreground">
-                                  {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version} · ${device.booted ? gt("Running", { $context: "device state" }) : gt("Stopped", { $context: "device state" })}`}
+                                <span className="flex min-w-0 gap-1 text-xs text-muted-foreground">
+                                  <span className="truncate">
+                                    {state.hosts.find((host) => host.id === device.hostId)?.label}
+                                  </span>
+                                  <span className="shrink-0">
+                                    {`· ${device.version} ${device.physical ? `· ${gt("Physical", { $context: "physical device, not a simulator" })} ` : ""}· ${device.booted ? gt("Running", { $context: "device state" }) : gt("Stopped", { $context: "device state" })}`}
+                                  </span>
                                 </span>
                               </div>
                               {device.booted && !device.physical ? (

@@ -752,6 +752,38 @@ describe("findSearchTokenRanges", () => {
     expect(findSearchTokenRanges("models and the model", '"model"')).toEqual([
       { start: 15, end: 20 },
     ]);
+    expect(findSearchTokenRanges("日本日本", '"日本"')).toEqual([
+      { start: 0, end: 2 },
+      { start: 2, end: 4 },
+    ]);
+  });
+
+  it("highlights a dotted capital I as the message matches it", () => {
+    const text = "İ, then İstanbul guide";
+    expect(findSearchTokenRanges(text, "İstanbul")).toEqual([{ start: 8, end: 16 }]);
+    expect(findSearchTokenRanges(text, "İSTANBUL guide")).toEqual([
+      { start: 8, end: 16 },
+      { start: 17, end: 22 },
+    ]);
+    expect(findSearchTokenRanges(text, '"İstanbul guide"')).toEqual([{ start: 8, end: 22 }]);
+    // Other marks stay: a short word keeps its vowel sign rather than lighting up a lone consonant.
+    expect(findSearchTokenRanges("दिल्ली में मौसम मेरा", "में")).toEqual([{ start: 7, end: 10 }]);
+    // Touching exact matches stay apart; an overlap does not hide the next match.
+    expect(findSearchTokenRanges("Foo BarFoo Bar", '"foo bar"')).toEqual([
+      { start: 0, end: 7 },
+      { start: 7, end: 14 },
+    ]);
+    expect(findSearchTokenRanges("i i\u0307 i i", '"İ i"')).toEqual([
+      { start: 0, end: 3 },
+      { start: 5, end: 8 },
+    ]);
+    // Token order does not matter.
+    for (const query of ["ist İst", "İst ist"]) {
+      expect(findSearchTokenRanges("list and İst", query)).toEqual([
+        { start: 1, end: 4 },
+        { start: 9, end: 12 },
+      ]);
+    }
   });
 });
 
