@@ -38,7 +38,14 @@ import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { PaceIcon, ResetCreditDialog, ResetCreditExpiries, barColor, usePaceMark, useResetCredit } from "./UsageLimits";
+import {
+  PaceIcon,
+  ResetCreditDialog,
+  ResetCreditExpiries,
+  barColor,
+  usePaceMark,
+  useResetCredit,
+} from "./UsageLimits";
 import {
   collectExternalUsageLinks,
   collectLimitNotices,
@@ -220,18 +227,18 @@ function SegmentPopover({
           {choices.map((choice) => (
             <div key={choice.key} className="flex flex-col gap-1">
               <span className="flex items-center gap-3">
-              <span className="tabular-nums">{choice.summary}</span>
-              {choice.availableCount > 0 ? (
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={redeem.busy || !redeem.canManageProviders}
-                  className="ms-auto"
-                  onClick={() => onRedeem(choice)}
-                >
-                  {redeem.busy ? gt("Using…") : choice.actionLabel}
-                </Button>
-              ) : null}
+                <span className="tabular-nums">{choice.summary}</span>
+                {choice.availableCount > 0 ? (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={redeem.busy || !redeem.canManageProviders}
+                    className="ms-auto"
+                    onClick={() => onRedeem(choice)}
+                  >
+                    {redeem.busy ? gt("Using…") : choice.actionLabel}
+                  </Button>
+                ) : null}
               </span>
               <ResetCreditExpiries expiries={choice.expiries} now={now} />
             </div>

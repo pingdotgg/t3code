@@ -278,7 +278,9 @@ const CODEX_HUB: HubProvider = {
               resetCredits: {
                 availableCount: available.length,
                 expiries: resetCreditExpiries(
-                  available.map((credit) => DateTime.formatIso(DateTime.makeUnsafe(credit.expires_at))),
+                  available.map((credit) =>
+                    DateTime.formatIso(DateTime.makeUnsafe(credit.expires_at)),
+                  ),
                 ),
                 ...(next
                   ? {

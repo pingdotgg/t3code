@@ -18,7 +18,12 @@ import {
   remainingPercent,
   resetCountdown,
 } from "@t3tools/shared/usageLimits";
-import { formatDuration, limitsNotice, resetCreditChoices, resetCreditExpiryText } from "@t3tools/shared/usageLimitsCopy";
+import {
+  formatDuration,
+  limitsNotice,
+  resetCreditChoices,
+  resetCreditExpiryText,
+} from "@t3tools/shared/usageLimitsCopy";
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
 import { type ReactNode, useContext, useRef, useState } from "react";
 import { Atom } from "effect/reactivity";
@@ -319,7 +324,10 @@ export function ResetCredits(props: {
             <View className="w-full gap-0.5">
               {choice.expiries.map((at, index) => (
                 // oxlint-disable-next-line react/no-array-index-key -- Identical expiry timestamps have no individual identity; these rows contain only text.
-                <Text key={`${at}:${index}`} className="text-xs tabular-nums text-foreground-tertiary">
+                <Text
+                  key={`${at}:${index}`}
+                  className="text-xs tabular-nums text-foreground-tertiary"
+                >
                   {resetCreditExpiryText(at, now, (at) => formatTimestamp(at, now), m)}
                 </Text>
               ))}

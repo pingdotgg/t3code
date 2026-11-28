@@ -40,7 +40,11 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
-import { formatResetsIn, resetCreditChoices, resetCreditExpiryText } from "@t3tools/shared/usageLimitsCopy";
+import {
+  formatResetsIn,
+  resetCreditChoices,
+  resetCreditExpiryText,
+} from "@t3tools/shared/usageLimitsCopy";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
@@ -338,7 +342,10 @@ export function ResetCreditDialog({
   );
 }
 
-export function ResetCreditExpiries({ expiries, now }: {
+export function ResetCreditExpiries({
+  expiries,
+  now,
+}: {
   readonly expiries: ResetCreditChoice["expiries"];
   readonly now: number;
 }) {
@@ -349,7 +356,12 @@ export function ResetCreditExpiries({ expiries, now }: {
       {expiries.map((at, index) => (
         // oxlint-disable-next-line react/no-array-index-key -- Identical expiry timestamps have no individual identity; these rows contain only text.
         <li key={`${at}:${index}`}>
-          {resetCreditExpiryText(at, now, (at) => formatUpcomingTimestamp(at, timestampFormat, now, undefined, m), m)}
+          {resetCreditExpiryText(
+            at,
+            now,
+            (at) => formatUpcomingTimestamp(at, timestampFormat, now, undefined, m),
+            m,
+          )}
         </li>
       ))}
     </ul>
@@ -387,7 +399,11 @@ export function ResetCredits({
               {busy ? gt("Using…") : choice.actionLabel}
             </Button>
           ) : null}
-          {choice.expiries?.length ? <div className="w-full"><ResetCreditExpiries expiries={choice.expiries} now={now} /></div> : null}
+          {choice.expiries?.length ? (
+            <div className="w-full">
+              <ResetCreditExpiries expiries={choice.expiries} now={now} />
+            </div>
+          ) : null}
         </div>
       ))}
       {status ? <span className="text-foreground">{status}</span> : null}

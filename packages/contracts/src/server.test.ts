@@ -110,7 +110,8 @@ describe("server config forward compatibility", () => {
       { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
     ]);
     expect(parsed.usageLimits?.resetCredits?.expiries).toEqual([
-      "2026-12-01T12:00:00.000Z", "2026-12-02T13:00:00.000Z",
+      "2026-12-01T12:00:00.000Z",
+      "2026-12-02T13:00:00.000Z",
     ]);
   });
 });

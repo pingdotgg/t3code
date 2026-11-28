@@ -808,7 +808,10 @@ function paceOfShares(usedPercent: number, elapsed: number): LimitPace {
 
 /** Bound expiry details on the existing usage-poll payload. */
 export function resetCreditExpiries(expiries: readonly string[]): readonly string[] {
-  return expiries.filter((at) => Number.isFinite(Date.parse(at))).sort().slice(0, 20);
+  return expiries
+    .filter((at) => Number.isFinite(Date.parse(at)))
+    .sort()
+    .slice(0, 20);
 }
 
 /** One redeemable reset as clients offer it; `input` already names the chosen credit. */

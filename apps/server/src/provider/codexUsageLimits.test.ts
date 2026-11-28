@@ -35,13 +35,27 @@ describe("codexRateLimitsToLimits", () => {
       nextExpiresAt: "2026-07-14T03:33:20.000Z",
       expiries: ["2026-07-14T03:33:20.000Z", "2026-07-19T22:26:40.000Z"],
     });
-    expect(codexRateLimitsToLimits({ checkedAt, snapshot: {}, resetCredits: { availableCount: 2 } }).resetCredits)
-      .toEqual({ availableCount: 2 });
-    expect(codexRateLimitsToLimits({
-      checkedAt,
-      snapshot: {},
-      resetCredits: { availableCount: 30, credits: Array.from({ length: 30 }, (_, index) => ({ status: "available", expiresAt: 1_784_000_000 + (29 - index) * 3600 })) },
-    }).resetCredits?.expiries).toEqual(Array.from({ length: 20 }, (_, index) => new Date((1_784_000_000 + index * 3600) * 1000).toISOString()));
+    expect(
+      codexRateLimitsToLimits({ checkedAt, snapshot: {}, resetCredits: { availableCount: 2 } })
+        .resetCredits,
+    ).toEqual({ availableCount: 2 });
+    expect(
+      codexRateLimitsToLimits({
+        checkedAt,
+        snapshot: {},
+        resetCredits: {
+          availableCount: 30,
+          credits: Array.from({ length: 30 }, (_, index) => ({
+            status: "available",
+            expiresAt: 1_784_000_000 + (29 - index) * 3600,
+          })),
+        },
+      }).resetCredits?.expiries,
+    ).toEqual(
+      Array.from({ length: 20 }, (_, index) =>
+        new Date((1_784_000_000 + index * 3600) * 1000).toISOString(),
+      ),
+    );
   });
 
   it("shows an Enterprise monthly credit allowance in reads and notifications without a duration", () => {

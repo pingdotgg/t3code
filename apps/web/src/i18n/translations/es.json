@@ -13157,5 +13157,6 @@
   "236911500e5aff7c": "Los agentes esperan una y otra vez mientras el sistema libera memoria.",
   "81aafe06d7fede9a": "Donde T3 Code guarda sus datos y worktrees",
   "9429f8ff8866edac": "CPU",
-  "79a21371b8db96da": "El trabajo espera una CPU libre o el disco, así que los agentes van lentos."
+  "79a21371b8db96da": "El trabajo espera una CPU libre o el disco, así que los agentes van lentos.",
+  "0a8bfde2b6d6a379": "vence en {expires}"
 }
