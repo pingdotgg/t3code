@@ -35,13 +35,89 @@ const STANDALONE_IMAGE_BLOCKS = new Set([
   "blockquote",
 ]);
 
+const ROOT_BLOCK_ELEMENTS = new Set([
+  "blockquote",
+  "dd",
+  "details",
+  "div",
+  "dl",
+  "dt",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "hr",
+  "li",
+  "ol",
+  "p",
+  "pre",
+  "section",
+  "summary",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
+  "ul",
+]);
+
+function hasVisibleText(node: MarkdownImageHastNode): boolean {
+  if (node.type === "text") return Boolean(node.value?.trim());
+  if (node.type !== "element") return false;
+  return (node.children ?? []).some(hasVisibleText);
+}
+
+function isRootBlockElement(node: MarkdownImageHastNode): boolean {
+  return node.type === "element" && Boolean(node.tagName && ROOT_BLOCK_ELEMENTS.has(node.tagName));
+}
+
+function markRootStandalonePictures(children: readonly MarkdownImageHastNode[]) {
+  let runStart = 0;
+  while (runStart < children.length) {
+    let runEnd = runStart;
+    let hasPicture = false;
+    while (runEnd < children.length) {
+      const sibling = children[runEnd];
+      if (!sibling || isRootBlockElement(sibling)) break;
+      if (sibling.type === "element" && sibling.tagName === "picture") hasPicture = true;
+      runEnd += 1;
+    }
+    if (hasPicture) {
+      let runHasVisibleText = false;
+      for (let index = runStart; index < runEnd; index += 1) {
+        const sibling = children[index];
+        if (sibling && hasVisibleText(sibling)) {
+          runHasVisibleText = true;
+          break;
+        }
+      }
+      if (!runHasVisibleText) {
+        for (let index = runStart; index < runEnd; index += 1) {
+          const child = children[index];
+          if (child?.type !== "element" || child.tagName !== "picture") continue;
+          const image = soleImageDescendant(child);
+          if (image) image.properties = { ...image.properties, dataStandalone: true };
+        }
+      }
+    }
+    runStart = runEnd + 1;
+  }
+}
+
 function soleImageDescendant(node: MarkdownImageHastNode): MarkdownImageHastNode | undefined {
   const children = meaningfulHastChildren(node);
   if (children.length !== 1) return undefined;
   const only = children[0];
   if (only?.type !== "element") return undefined;
   if (only.tagName === "img") return only;
-  return only.tagName === "a" || only.tagName === "strong" || only.tagName === "em"
+  return only.tagName === "a" ||
+    only.tagName === "strong" ||
+    only.tagName === "em" ||
+    only.tagName === "picture"
     ? soleImageDescendant(only)
     : undefined;
 }
@@ -50,6 +126,10 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
   if (node.type === "root" || (node.tagName && STANDALONE_IMAGE_BLOCKS.has(node.tagName))) {
     const image = soleImageDescendant(node);
     if (image) image.properties = { ...image.properties, dataStandalone: true };
+  }
+  // A raw-HTML `<picture>` block sits directly under the root, beside the other blocks.
+  if (node.type === "root") {
+    markRootStandalonePictures(meaningfulHastChildren(node));
   }
   node.children?.forEach((child) => {
     if (child.type === "element") markStandaloneImages(child);

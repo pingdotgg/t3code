@@ -170,7 +170,7 @@ const CASES: ReadonlyArray<readonly [markdown: string, html: string]> = [
   ],
   [
     '<picture><source media="(prefers-color-scheme: dark)" srcset="d.png"><source media="(prefers-color-scheme: light)" srcset="l.png"><img src="l.png" alt="x"></picture>',
-    '<p><picture><img src="l.png" alt="x" data-dark-src="d.png" data-light-src="l.png"></picture></p>',
+    '<p><picture><img src="l.png" alt="x" data-dark-src="d.png" data-light-src="l.png" data-standalone></picture></p>',
   ],
   [
     "<details>\n<summary>⚠️ Outside diff (3)</summary><blockquote>\n\n**a**\n\n</blockquote></details>",
