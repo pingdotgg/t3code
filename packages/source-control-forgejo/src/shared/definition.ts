@@ -113,7 +113,14 @@ export const definition = defineSourceControl({
     // Elsewhere the same path is a GitLab project nested under groups named `src` and `branch`.
     return repositoryUrl === null || known ? repositoryUrl : url.href;
   },
-  changeRequestActions: new Set(["merge", "close", "reopen", "update-branch"] as const),
+  changeRequestActions: new Set([
+    "merge",
+    "close",
+    "reopen",
+    "update-branch",
+    "enable-auto-merge",
+    "disable-auto-merge",
+  ] as const),
   // `fj` does not check out by number, so the command is one any clone can run.
   checkoutCommand: ({ number, repositoryUrl }) =>
     repositoryUrl
