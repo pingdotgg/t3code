@@ -51,7 +51,14 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
       const filePath = path.join(root, "cache.json");
       yield* fs.writeFileString(filePath, "a much longer previous document");
-      const chunks = ["é".repeat(700_000), "🙂".repeat(400_000), "end"];
+      const emoji = "🙂";
+      const chunks = [
+        "é".repeat(700_000),
+        emoji.repeat(400_000),
+        "x".repeat((1 << 20) - 1) + emoji.slice(0, 1),
+        "",
+        emoji.slice(1) + "end",
+      ];
 
       yield* writeFileStringAtomically({ filePath, contents: chunks.values() });
 
