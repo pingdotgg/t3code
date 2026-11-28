@@ -1,14 +1,15 @@
 import { Spinner } from "~/components/ui/spinner";
-import type {
-  PullRequestActor,
-  PullRequestCheck,
-  PullRequestCheckStatus,
-  PullRequestChecksState,
-  PullRequestLabel,
-  PullRequestMergeability,
-  PullRequestReviewDecision,
-  PullRequestState,
-  ScopedThreadRef,
+import {
+  pullRequestActorLabel,
+  type PullRequestActor,
+  type PullRequestCheck,
+  type PullRequestCheckStatus,
+  type PullRequestChecksState,
+  type PullRequestLabel,
+  type PullRequestMergeability,
+  type PullRequestReviewDecision,
+  type PullRequestState,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import {
@@ -467,7 +468,7 @@ export function PullRequestActorAvatar({
   actor: PullRequestActor | null;
   className?: string;
 }) {
-  const login = actor?.login ?? "ghost";
+  const displayLabel = actor ? pullRequestActorLabel(actor) : "ghost";
   const avatarUrl = actor?.avatarUrl ?? null;
   const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
   return avatarUrl === null || failedAvatarUrl === avatarUrl ? (
@@ -478,7 +479,7 @@ export function PullRequestActorAvatar({
         className,
       )}
     >
-      {[...login][0]?.toUpperCase()}
+      {[...displayLabel][0]?.toUpperCase()}
     </span>
   ) : (
     <img
@@ -509,12 +510,12 @@ export function PullRequestActorLabel({
 }) {
   const gt = useGT();
   const openLink = useOpenLink(threadRef);
-  const login = actor?.login ?? "ghost";
+  const displayLabel = actor ? pullRequestActorLabel(actor) : "ghost";
   const label = (
     <span className={cn("flex min-w-0 items-baseline", variant === "label" && "gap-1.5")}>
       <PullRequestActorAvatar actor={actor} className="self-center" />
       <span className={variant === "label" ? "truncate font-medium text-foreground" : "sr-only"}>
-        {login}
+        {displayLabel}
       </span>
     </span>
   );
@@ -531,7 +532,7 @@ export function PullRequestActorLabel({
                 href={profileUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                aria-label={gt("Open {login}'s profile", { login })}
+                aria-label={gt("Open {login}'s profile", { login: displayLabel })}
               />
             }
             onClick={(event) => {
@@ -545,7 +546,9 @@ export function PullRequestActorLabel({
       }
       label={
         <>
-          {actor?.name && actor.name !== login ? `${actor.name} (@${login})` : login}
+          {actor?.name && actor.name !== displayLabel
+            ? `${actor.name} (@${displayLabel})`
+            : displayLabel}
           {profileUrl ? ` · ${gt("Open profile")}` : ""}
         </>
       }

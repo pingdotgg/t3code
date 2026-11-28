@@ -11,6 +11,7 @@ import {
   type PullRequestRef,
   type PullRequestConversationThread,
   type ScopedThreadRef,
+  pullRequestActorLabel,
   pullRequestConversationThreads,
 } from "@t3tools/contracts";
 import {
@@ -955,11 +956,11 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
               ) : (
                 <span className="flex items-center -space-x-1">
                   {reviewerEntries.map((entry) => {
-                    const login = entry.actor?.login ?? "ghost";
+                    const displayLabel = entry.actor ? pullRequestActorLabel(entry.actor) : "ghost";
                     const named =
-                      entry.actor?.name && entry.actor.name !== login
-                        ? `${entry.actor.name} (@${login})`
-                        : login;
+                      entry.actor?.name && entry.actor.name !== displayLabel
+                        ? `${entry.actor.name} (@${displayLabel})`
+                        : displayLabel;
                     return (
                       <SharedTooltipTrigger
                         key={entry.key}
