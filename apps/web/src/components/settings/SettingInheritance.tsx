@@ -9,8 +9,10 @@ import {
 import { CheckIcon, ChevronRightIcon, LayersIcon } from "lucide-react";
 import * as Equal from "effect/Equal";
 import { msg, T, useGT, useMessages } from "gt-react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 import { m, type MessageResolver } from "../../i18n/messages";
+import { observeResize } from "../../lib/observeResize";
 import { cn } from "../../lib/utils";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -341,7 +343,7 @@ export function SettingInheritance({
                             : "text-muted-foreground/60",
                       )}
                     >
-                      <span className="max-w-32 truncate">{layer.value}</span>
+                      <LayerValue key={layer.value} value={layer.value} />
                       {layer.effective ? (
                         <CheckIcon aria-hidden className="size-3.5 shrink-0 text-primary" />
                       ) : (
@@ -366,14 +368,20 @@ export function SettingInheritance({
                 ) : null}
                 {hasMultipleEnvironments && groups.length > 1 ? (
                   <Collapsible>
-                    <CollapsibleTrigger
+                    <SharedTooltipTrigger
                       render={
-                        <Button
-                          variant="ghost"
-                          size="sm-multiline"
-                          className="w-full justify-start text-left"
+                        <CollapsibleTrigger
+                          render={
+                            <Button
+                              variant="ghost"
+                              size="sm-multiline"
+                              className="w-full justify-start text-left"
+                            />
+                          }
                         />
                       }
+                      label={winningLayer?.value}
+                      disabled={!winningLayer}
                     >
                       <span className="flex w-full min-w-0 flex-col">
                         <span className="flex min-w-0 items-center gap-2">
@@ -406,7 +414,7 @@ export function SettingInheritance({
                           ))}
                         </span>
                       </span>
-                    </CollapsibleTrigger>
+                    </SharedTooltipTrigger>
                     <CollapsiblePanel>
                       <div className="pt-1.5">{chain}</div>
                     </CollapsiblePanel>
@@ -510,5 +518,34 @@ export function SettingInheritance({
         </div>
       </PopoverPopup>
     </Popover>
+  );
+}
+
+/** Only a cut-off value gets a tooltip and a tab stop, so short ones like "Empty" stay plain. */
+function LayerValue({ value }: { value: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [truncated, setTruncated] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the span's overflow, which changes when a collapsed group opens; keyed by value
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const measure = () => setTruncated(element.scrollWidth > element.clientWidth);
+    measure();
+    return observeResize(element, measure);
+  }, []);
+  return (
+    <SharedTooltipTrigger
+      render={
+        <span
+          ref={ref}
+          tabIndex={truncated ? 0 : undefined}
+          className="max-w-32 truncate rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        />
+      }
+      label={value}
+      disabled={!truncated}
+    >
+      {value}
+    </SharedTooltipTrigger>
   );
 }
