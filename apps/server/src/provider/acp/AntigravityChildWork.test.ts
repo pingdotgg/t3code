@@ -543,6 +543,64 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
     }),
   );
 
+  it.effect("counts a detached child the runtime reported idle as no longer at work", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-idle-" });
+      const idle = "5c92ff08-4eac-4371-b8e0-fe77c539144e";
+      const other = "f42cd96e-1d35-479e-bac5-422f2904c343";
+      const writeJson = (segments: ReadonlyArray<string>, value: unknown) => {
+        const file = path.join(profile, "antigravity-acp", "brain", ...segments);
+        return fs
+          .makeDirectory(path.dirname(file), { recursive: true })
+          .pipe(Effect.andThen(fs.writeFileString(file, JSON.stringify(value))));
+      };
+      const child = (conversationId: string, callId: string) =>
+        Effect.all([
+          writeJson([ROOT, ".system_generated", "subagents", `${conversationId}.json`], {
+            conversationId,
+            subagentDescriptor: { typeName: "research", role: LAUNCH.role },
+            state: "SUBAGENT_STATE_ALIVE",
+          }),
+          writeJson([conversationId, ".system_generated", "messages", "launch.json"], {
+            sender: ROOT,
+            content: LAUNCH.prompt,
+            sourceMetadata: {
+              tool: { conversationId: ROOT, toolCall: { id: callId, name: "invoke_subagent" } },
+            },
+          }),
+        ]);
+      const notice = (name: string, content: string) =>
+        writeJson([ROOT, ".system_generated", "messages", name], {
+          id: name,
+          recipient: ROOT,
+          sender: "system",
+          priority: "MESSAGE_PRIORITY_HIGH",
+          content,
+        });
+
+      // agy 1.5.16: a child that ends its turn without `send_message` never appears as a sender;
+      // the runtime writes this notice and the record stays SUBAGENT_STATE_ALIVE.
+      yield* child(idle, "call_idle");
+      yield* child(other, "call_other");
+      yield* child(CHILD, "call_alive");
+      yield* notice(
+        "idle.json",
+        `Subagent ${idle} has gone idle. This was the subagent's most recent response: .`,
+      );
+      // Only the runtime's own notice counts, and only for the child it names.
+      yield* notice("mention.json", `Is Subagent ${other} has gone idle. a real message?`);
+
+      const atWork = yield* readAntigravityChildrenAtWork({
+        profileDirectory: profile,
+        rootSessionId: ROOT,
+        toolCallIds: ["call_idle", "call_other", "call_alive"],
+      });
+      expect(atWork.toSorted()).toEqual(["call_alive", "call_other"]);
+    }),
+  );
+
   it.effect(
     "reads legacy disk-backed swarm worker transcripts and tracks working vs parked or killed members",
     () =>

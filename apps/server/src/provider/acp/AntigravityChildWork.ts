@@ -1584,11 +1584,19 @@ export const readAntigravityPendingReply = Effect.fn("readAntigravityPendingRepl
   },
 );
 
+// A child that ends its turn without `send_message` leaves only this runtime notice in the parent's inbox.
+const IDLE_NOTICE = /^Subagent ([A-Za-z0-9-]{1,64}) has gone idle\./;
+
+const reportingChildId = (message: ChildMessage) =>
+  message.sender === "system"
+    ? (IDLE_NOTICE.exec(message.content ?? "")?.[1] ?? message.sender)
+    : message.sender;
+
 /**
  * agy 1.5 children outlive their `invoke_subagent` call and the agent reports no end for them:
- * a child is done, or waits for guidance, once its message is in the parent's inbox or its record
- * says it was killed. Returns the launching tool call ids of children with neither; none when the
- * records prove nothing.
+ * a child is done, or waits for guidance, once its message or the runtime's idle notice for it is
+ * in the parent's inbox, or its record says it was killed. Returns the launching tool call ids of
+ * children with none of these; none when the records prove nothing.
  */
 export const readAntigravityChildrenAtWork = Effect.fn("readAntigravityChildrenAtWork")(
   function* (input: {
@@ -1605,7 +1613,7 @@ export const readAntigravityChildrenAtWork = Effect.fn("readAntigravityChildrenA
           : await listDetachedChildIds(profileRoot, input.rootSessionId);
       if (profileRoot === undefined || childIds === undefined) return [];
       const reported = new Set(
-        (await readInbox(profileRoot, input.rootSessionId)).map((message) => message.sender),
+        (await readInbox(profileRoot, input.rootSessionId)).map(reportingChildId),
       );
       const swarmMembers = await readDiskSwarmMembersByConversationId(
         profileRoot,
