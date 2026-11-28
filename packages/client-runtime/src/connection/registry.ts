@@ -605,11 +605,12 @@ export const make = Effect.gen(function* () {
               : { ...incoming, target: targetWithLabel(incoming.target, previous.target.label) };
           const existing = connectionRoutes(previous);
           const sameAddress = findRouteToSameAddress(existing, route);
-          const routes = existing.filter(
-            (existing) =>
-              existing !== sameAddress ||
-              connectionRouteId(existing.target) === connectionRouteId(route.target),
-          );
+          // An address saved under another id is replaced, along with the routes borrowing its login.
+          const routes =
+            sameAddress === undefined ||
+            connectionRouteId(sameAddress.target) === connectionRouteId(route.target)
+              ? existing
+              : routesAfterRemoving(existing, connectionRouteId(sameAddress.target));
           const next = withRoutes(previous, upsertRoute(routes, route));
           if (next.addressesChanged) {
             yield* forgetRoutingTrust(environmentId, "register-connection");
