@@ -145,11 +145,14 @@ credential never falls back to the reusable dev credential.
 ## The environment is the filesystem boundary
 
 Projects are organizational boundaries, not filesystem sandboxes. `filesystem:read` permits reading
-any file the server's OS user can read (for example, artifacts an agent writes in a temp directory);
-relative paths and writes remain constrained by
-[`WorkspaceFileSystem.ts`](../../apps/server/src/workspace/WorkspaceFileSystem.ts).
+any file the server's OS user can read (for example, artifacts an agent writes in a temp directory,
+or a folder a worktree links in from outside it). Writes stay inside the workspace root, symlinks
+included; see [`WorkspaceFileSystem.ts`](../../apps/server/src/workspace/WorkspaceFileSystem.ts).
 
 Signed asset URLs are bearer credentials for a single canonical file, rechecked by device/inode
 identity on serve ([`AssetAccess.ts`](../../apps/server/src/assets/AssetAccess.ts)). They never
-grant access to sibling files, and because `filesystem:read` is checked only at mint time, an issued
-URL remains valid until it expires even if the session or grant is revoked.
+grant access to sibling files, with one exception: the URL of an HTML page opened from a workspace
+also serves the files that page loads (styles, scripts, images, media, fonts and other pages) from
+the page's own folder and the folders below it. It serves no hidden file, and no file that a link
+in that folder points to outside it. Because `filesystem:read` is checked only at mint time, an
+issued URL remains valid until it expires even if the session or grant is revoked.

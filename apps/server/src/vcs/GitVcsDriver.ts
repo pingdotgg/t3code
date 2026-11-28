@@ -411,6 +411,7 @@ export class GitVcsDriver extends Context.Service<
   {
     readonly execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, GitCommandError>;
     readonly status: (input: VcsStatusInput) => Effect.Effect<VcsStatusResult, GitCommandError>;
+    readonly readCurrentBranch: (cwd: string) => Effect.Effect<string | null, GitCommandError>;
     readonly statusDetails: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
     readonly statusDetailsLocal: (
       cwd: string,
@@ -420,9 +421,18 @@ export class GitVcsDriver extends Context.Service<
       cwd: string,
       options?: GitRemoteStatusOptions,
     ) => Effect.Effect<GitRemoteStatusDetails, GitCommandError>;
-    /** Refs, HEAD and shallow boundaries. Null on read failure. */
-    readonly readLocalStatusRefSnapshot: (cwd: string) => Effect.Effect<string | null>;
-    /** Includes worktree paths. Accepts an existing local status ref snapshot to avoid re-reading refs. */
+    /** Refs used by an explicit refresh and its branch-picker digest. */
+    readonly readStatusRefreshRefs: (cwd: string) => Effect.Effect<string | null>;
+    readonly readStatusPoll: (
+      cwd: string,
+      branch: string | null,
+      refreshUpstream: boolean,
+    ) => Effect.Effect<{
+      readonly inputStamp: string;
+      readonly inputStampAfterLookup: Effect.Effect<string | null>;
+      readonly details: GitRemoteStatusDetails;
+    } | null>;
+    /** Branch-picker digest input, including worktree paths. */
     readonly readRefSnapshot: (cwd: string, refs?: string) => Effect.Effect<string | null>;
     readonly prepareCommitContext: (
       cwd: string,
@@ -2233,6 +2243,24 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       resolveCheckpointCommit(input.cwd, input.checkpointRef).pipe(
         Effect.map((commit) => commit !== null),
       ),
+
+    copyCheckpointRef: Effect.fn("GitVcsDriver.checkpoints.copyCheckpointRef")(function* (input) {
+      const commit = yield* resolveCheckpointCommit(input.cwd, input.fromCheckpointRef);
+      if (commit === null || (yield* listSubmodules(input.cwd)).length > 0) return false;
+      return yield* execute({
+        operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+        cwd: input.cwd,
+        // An empty old value creates the ref only if it is absent.
+        args: [...durableWrite, "update-ref", input.toCheckpointRef, commit, ""],
+      }).pipe(
+        Effect.as(true),
+        Effect.catch((error) =>
+          Effect.flatMap(resolveCheckpointCommit(input.cwd, input.toCheckpointRef), (existing) =>
+            existing === null ? Effect.fail(error) : Effect.succeed(true),
+          ),
+        ),
+      );
+    }),
 
     restoreCheckpoint: Effect.fn("GitVcsDriver.checkpoints.restoreCheckpoint")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.restoreCheckpoint";

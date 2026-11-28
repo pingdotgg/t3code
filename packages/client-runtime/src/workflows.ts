@@ -16,7 +16,8 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
+import { parseUrl } from "@t3tools/shared/url";
 
 export interface WorkflowQuestionChoice {
   readonly value: string;
@@ -48,7 +49,7 @@ const text = (value: unknown): string | null =>
   typeof value === "string" && value.trim() !== "" ? value : null;
 
 const isWebUrl = (url: string) => {
-  const protocol = URL.parse(url)?.protocol;
+  const protocol = parseUrl(url)?.protocol;
   return protocol === "https:" || protocol === "http:";
 };
 
@@ -930,8 +931,8 @@ export function workflowReferenceLabel(reference: WorkflowRunSubject): string {
   const issue = workflowReferenceIssue(reference);
   if (issue !== null) return /^\d+$/.test(issue.key) ? `#${issue.key}` : issue.key;
   if (reference.title !== "") return reference.title;
-  if (reference.url !== null && URL.canParse(reference.url)) return new URL(reference.url).host;
-  return reference.kind;
+  const url = reference.url === null ? null : parseUrl(reference.url);
+  return url?.host ?? reference.kind;
 }
 
 /** The references a step touched, in the order the run first touched them. */
@@ -943,28 +944,70 @@ export function workflowStepReferences(
 }
 
 /** A step's time in one shape down a column: 0.3s, 9.7s, 12s, then minutes. */
-export function workflowStepTime(ms: number): string {
-  if (ms < 9_950 && ms % 1000 !== 0) return `${(Math.max(ms, 100) / 1000).toFixed(1)}s`;
+export function workflowStepTime(ms: number, resolve: MFunctionType = mFallback): string {
+  if (ms < 9_950 && ms % 1000 !== 0) {
+    return resolve(msg("{seconds}s", { seconds: (Math.max(ms, 100) / 1000).toFixed(1) }));
+  }
   const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  return formatDuration(ms);
+  if (seconds < 60) return resolve(msg("{seconds}s", { seconds }));
+  return formatDuration(ms, resolve);
 }
 
 /**
- * The first sentence of a reply, as one line of plain text: a heading, list mark, inline code,
- * emphasis or link reads as its words.
+ * The first prose sentence of a reply, as one line of plain text: headings, tables, and fenced
+ * code blocks are skipped; indented text is a fallback. List marks, code, emphasis, and links read as words.
+ * Code keeps its text, and an underscore inside a word, as in snake_case, is not emphasis.
  */
 export function workflowOneLine(text: string): string {
+  let fence: string | null = null;
+  let fenceQuoteDepth = 0;
+  let indented: string | undefined;
   const line =
     text
       .split("\n")
-      .map((candidate) => candidate.trim())
-      .find((candidate) => candidate !== "" && !/^(#|```|\|)/.test(candidate))
-      ?.replace(/^([-*>]|\d+\.)\s+/, "") ?? "";
+      .find((candidate) => {
+        const quote = /^(?: {0,3}>[ \t]?)+/.exec(candidate)?.[0] ?? "";
+        const quoteDepth = quote.replace(/[^>]/g, "").length;
+        const content = candidate.slice(quote.length);
+        const [, marker, rest] = /^ {0,3}(`{3,}|~{3,})([^\n]*)$/.exec(content) ?? [];
+        if (quoteDepth < fenceQuoteDepth) fence = null;
+        if (fence !== null) {
+          if (
+            quoteDepth === fenceQuoteDepth &&
+            marker?.startsWith(fence) &&
+            /^[ \t]*\r?$/.test(rest ?? "")
+          ) {
+            fence = null;
+          }
+          return false;
+        }
+        if (marker !== undefined && !(marker[0] === "`" && rest?.includes("`"))) {
+          fence = marker;
+          fenceQuoteDepth = quoteDepth;
+          return false;
+        }
+        if (
+          /^\s*$/.test(content) ||
+          /^ {0,3}#{1,6}(?:[ \t]|\r?$)/.test(content) ||
+          /^[ \t]*\|/.test(candidate)
+        )
+          return false;
+        if (!/^(?: {4}| {0,3}\t)/.test(content)) return true;
+        indented ??= candidate;
+        return false;
+      })
+      ?.trim() ??
+    indented?.trim() ??
+    "";
+  const code: string[] = [];
   const plain = line
+    .replace(/^(?:>\s*)+/, "")
+    .replace(/^([-*]|\d+\.)\s+/, "")
+    .replace(/(`+)(.+?)\1(?!`)/g, (_, _ticks, inner: string) => `\0${code.push(inner) - 1}\0`)
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/`([^`]*)`/g, "$1")
-    .replace(/(\*\*|__|\*|_)(\S(?:.*?\S)?)\1/g, "$2");
+    .replace(/(?<![\p{L}\p{M}\p{N}_/])(__|_)(\S(?:.*?\S)?)\1(?![\p{L}\p{M}\p{N}_/])/gu, "$2")
+    .replace(/(\*\*|\*)(\S(?:.*?\S)?)\1/g, "$2")
+    .replace(/\0(\d+)\0/g, (match, index: string) => code[Number(index)] ?? match);
   const end = plain.search(/[.!?](\s|$)/);
   return end === -1 ? plain : plain.slice(0, end + 1);
 }

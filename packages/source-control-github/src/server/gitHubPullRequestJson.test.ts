@@ -1809,6 +1809,20 @@ describe("decodePullRequestFilesJson", () => {
     expect(result.truncated).toBe(true);
     expect(result.rawCount).toBe(2);
   });
+
+  it("treats a modified file sent with no patch and zero counts as withheld", () => {
+    // GitHub's larger pages can report a changed text file as 0/0 with its patch dropped.
+    const result = expectSuccess(
+      decodePullRequestFilesJson(
+        JSON.stringify([
+          { filename: "example.ts", status: "modified", additions: 0, deletions: 0 },
+        ]),
+      ),
+    );
+
+    expect(result.truncated).toBe(true);
+    expect(result.omittedFileStats).toEqual([{ path: "example.ts", additions: 0, deletions: 0 }]);
+  });
 });
 
 describe("decodePullRequestFilesViewedJson", () => {

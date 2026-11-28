@@ -61,6 +61,7 @@ function submitKeys(input: {
     }
     if (event.key === "Escape" && input.onCancel) {
       event.preventDefault();
+      event.stopPropagation();
       input.onCancel();
     }
     if (isCommentSubmitShortcut(event, input.value, input.pending, input.allowEmpty)) {
@@ -333,7 +334,11 @@ export function ReviewThreadCard({
             count: commentCount,
           })}
         </button>
-        {thread.isOutdated ? <span>outdated</span> : null}
+        {thread.isOutdated ? (
+          <span>
+            <T context="review thread state">Outdated</T>
+          </span>
+        ) : null}
         {onFix ? (
           <Button
             size="compact"

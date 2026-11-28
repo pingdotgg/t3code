@@ -412,6 +412,67 @@ describe("RelayClient", () => {
   );
 
   it.effect.skipIf(windowsHost)(
+    "removes a staged client whose rename lands after cancellation",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const scope = yield* Effect.scope;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-cloudflared-test-",
+        });
+        const directory = `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/linux-x64`;
+        const renamePending = yield* Deferred.make<void>();
+        const allowRename = yield* Deferred.make<void>();
+        const renameFinished = yield* Deferred.make<void, PlatformError.PlatformError>();
+        const manager = yield* RelayClient.makeCloudflaredRelayClient({
+          baseDir,
+          releaseAsset: testReleaseAsset,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            // Like Node's rename, the staging rename completes even if its caller is interrupted.
+            rename: (from, to) =>
+              to.endsWith(".tmp")
+                ? Effect.forkIn(
+                    Deferred.complete(
+                      renameFinished,
+                      Deferred.await(allowRename).pipe(Effect.andThen(fileSystem.rename(from, to))),
+                    ),
+                    scope,
+                  ).pipe(
+                    Effect.andThen(Deferred.succeed(renamePending, undefined)),
+                    Effect.andThen(Deferred.await(renameFinished)),
+                  )
+                : fileSystem.rename(from, to),
+            // Land the rename before the install temp directory is removed.
+            remove: (path, options) =>
+              path.endsWith(".tmp")
+                ? fileSystem
+                    .remove(path, options)
+                    .pipe(
+                      Effect.andThen(Deferred.succeed(allowRename, undefined)),
+                      Effect.andThen(Deferred.await(renameFinished)),
+                    )
+                : fileSystem.remove(path, options),
+          }),
+        );
+
+        const installing = yield* manager.install.pipe(Effect.forkChild);
+        yield* Deferred.await(renamePending);
+        yield* Effect.yieldNow;
+        const cancelling = yield* Fiber.interrupt(installing).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(allowRename, undefined);
+        yield* Fiber.join(cancelling);
+        yield* Deferred.await(renameFinished);
+
+        expect(yield* fileSystem.readDirectory(directory)).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(layerInstallRuntime("linux"))),
+  );
+
+  it.effect.skipIf(windowsHost)(
     "downloads, verifies, validates, and atomically installs the managed executable",
     () =>
       Effect.gen(function* () {
@@ -752,6 +813,45 @@ describe("RelayClient", () => {
             // A whitespace entry is not an empty one.
             expect(yield* resolveWith(` :${baseDir}/missing`)).toEqual(missing);
             expect(yield* resolveWith(`${baseDir}/missing: `)).toEqual(missing);
+          }),
+        ),
+    );
+
+    it.effect.skipIf(windowsHost)(
+      "preserves trailing whitespace and quotes in POSIX PATH entries",
+      () =>
+        run((baseDir) =>
+          Effect.gen(function* () {
+            const trailingSpaceDir = `${baseDir}/path entry `;
+            const trailingSpaceBin = `${trailingSpaceDir}/cloudflared`;
+            const trailingQuoteDir = `${baseDir}/quoted"`;
+            const trailingQuoteBin = `${trailingQuoteDir}/cloudflared`;
+            yield* writeExecutable(trailingSpaceBin);
+            yield* writeExecutable(trailingQuoteBin);
+            const manager = yield* RelayClient.makeCloudflaredRelayClient({ baseDir });
+            const resolveWith = (searchPath: string) => {
+              const env = { PATH: searchPath };
+              return manager.resolve.pipe(
+                Effect.provideService(
+                  ConfigProvider.ConfigProvider,
+                  ConfigProvider.fromEnv({ env }),
+                ),
+                Effect.provideService(HostProcess.Environment, env),
+              );
+            };
+
+            expect(yield* resolveWith(trailingSpaceDir)).toEqual({
+              status: "available",
+              executablePath: trailingSpaceBin,
+              source: "path",
+              version: RelayClient.CLOUDFLARED_VERSION,
+            });
+            expect(yield* resolveWith(trailingQuoteDir)).toEqual({
+              status: "available",
+              executablePath: trailingQuoteBin,
+              source: "path",
+              version: RelayClient.CLOUDFLARED_VERSION,
+            });
           }),
         ),
     );
