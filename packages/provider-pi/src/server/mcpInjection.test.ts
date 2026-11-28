@@ -4,6 +4,7 @@ import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts"
 import {
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
+  T3_PI_RESUMED_STARTUP_ENV,
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
 } from "./mcpExtensionSource.ts";
@@ -70,6 +71,7 @@ describe("pi T3 MCP injection", () => {
     assert.equal(launch.env[T3_MCP_BEARER_ENV], "secret-pi-token");
     assert.equal(launch.env[T3_PI_RUNTIME_MODE_ENV], "approval-required");
     assert.equal(launch.env[T3_PI_MCP_EXTENSION_PATH_ENV], "/tmp/cache/pi-t3-mcp-extension.ts");
+    assert.isUndefined(launch.env[T3_PI_RESUMED_STARTUP_ENV]);
 
     const permissionOnly = buildPiRpcLaunch({
       launchArgs: [],
@@ -80,17 +82,21 @@ describe("pi T3 MCP injection", () => {
       },
       mcpSession: undefined,
       extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+      sessionPath: "/fake/persisted.jsonl",
       runtimeMode: "auto-accept-edits",
     });
     assert.deepEqual(permissionOnly.args, [
       "--mode",
       "rpc",
+      "--session",
+      "/fake/persisted.jsonl",
       "--extension",
       "/tmp/cache/pi-t3-mcp-extension.ts",
     ]);
     assert.isUndefined(permissionOnly.env[T3_MCP_URL_ENV]);
     assert.isUndefined(permissionOnly.env[T3_MCP_BEARER_ENV]);
     assert.equal(permissionOnly.env[T3_PI_RUNTIME_MODE_ENV], "auto-accept-edits");
+    assert.equal(permissionOnly.env[T3_PI_RESUMED_STARTUP_ENV], "1");
     assert.equal(
       permissionOnly.env[T3_PI_MCP_EXTENSION_PATH_ENV],
       "/tmp/cache/pi-t3-mcp-extension.ts",

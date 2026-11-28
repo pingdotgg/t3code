@@ -67,6 +67,7 @@ import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/sel
 import {
   findReportedPiModel,
   makePiRpcConnection,
+  PiRpcTimeoutError,
   resolvePiModelSlug,
   piRecordField as recordField,
   piRecordNumber as recordNumber,
@@ -80,7 +81,11 @@ import {
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
-import { PI_FILE_CHANGE_TOOLS, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import {
+  PI_FILE_CHANGE_TOOLS,
+  PI_T3_ADMIT_COMMAND,
+  PI_T3_SERVICE_TIER_COMMAND,
+} from "./mcpExtensionSource.ts";
 import { PI_STANDARD_SERVICE_TIER } from "./modelCapabilities.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
@@ -628,6 +633,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ProviderAdapter.ProviderAdapterV2Error | Cause.Done
       >();
       const pendingPrompts = new Map<string, PendingPiPrompt>();
+      // Bumped when a dialog opens or settles; lifecycle deadlines restart from it.
+      let promptActivity = 0;
       // Custom answers waiting for their ask_user_question follow-up input, keyed by title prefix.
       // FIFO per prefix: the extension asks each follow-up right after its own select is answered.
       const customAnswerFollowUps = new Map<string, string[]>();
@@ -654,6 +661,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       // Turn failures can leave Pi alive; pump termination retires the runtime.
       let runtimeRetired = false;
       let pendingWake: PiWake | null = null;
+      // T3's extension holds runs a resumed session's hooks start until an owned turn admits them.
+      let resumeAdmissionPending = initialSessionPath !== undefined;
+      let lifecycleFailure: PiRpcError | PiRpcTimeoutError | null = null;
       let extensionStatusReset: {
         previous: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>;
         readonly touched: Set<string>;
@@ -965,6 +975,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       const lifecycleRequest = Effect.fn("PiAdapter.lifecycleRequest")(
         function* (record: PiRpcRecord) {
+          // Later lifecycle calls on the stopped transport report why it stopped.
+          if (lifecycleFailure !== null) return yield* lifecycleFailure;
           if (extensionStatusReset !== null)
             return yield* protocolError("A Pi session lifecycle request is already pending");
           const reset = {
@@ -980,7 +992,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             )
               return yield* protocolError("Pi transport closed during status reset");
             yield* Deferred.await(reset.ready);
-            const result = yield* request(record, PI_SESSION_TIMEOUT_MS);
+            // Session hooks can wait on the user: time out only after a full window with no dialog
+            // open and none opened or answered, so Pi keeps a whole window after the last answer.
+            const deadline = Effect.gen(function* () {
+              let activity: number;
+              do {
+                activity = promptActivity;
+                yield* Effect.sleep(Duration.millis(PI_SESSION_TIMEOUT_MS));
+              } while (pendingPrompts.size > 0 || promptActivity !== activity);
+              return yield* new PiRpcTimeoutError({
+                operation: String(record["type"]),
+                timeoutMs: PI_SESSION_TIMEOUT_MS,
+              });
+            });
+            const result = yield* Effect.raceFirst(request(record, Infinity), deadline);
             if (recordField(result, "cancelled") === true) {
               yield* sessionEventPermit.withPermits(1)(
                 Effect.gen(function* () {
@@ -1032,7 +1057,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             // A failed lifecycle RPC can leave Pi's previous native session disposed.
             Effect.tapError((error) =>
               error._tag === "PiRpcError" || error._tag === "PiRpcTimeoutError"
-                ? connection.terminate
+                ? Effect.suspend(() => {
+                    lifecycleFailure ??= error;
+                    return connection.terminate;
+                  })
                 : Effect.void,
             ),
             Effect.onInterrupt(() => connection.terminate),
@@ -1769,6 +1797,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       ) {
         const pending = Array.from(pendingPrompts.values());
         pendingPrompts.clear();
+        promptActivity++;
         customAnswerFollowUps.clear();
         yield* Effect.forEach(pending, (prompt) => cancelPrompt(prompt, resolvedAt), {
           discard: true,
@@ -1986,6 +2015,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           customAnswerRoute: askUser?.customAnswerRoute,
         };
         pendingPrompts.set(String(requestId), pending);
+        promptActivity++;
         yield* emit({
           type: "runtime_request.updated",
           driver: PI_PROVIDER,
@@ -2771,6 +2801,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             const pending = pendingPrompts.get(requestId);
             if (pending === undefined || pending !== event["pending"]) return;
             pendingPrompts.delete(requestId);
+            promptActivity++;
             yield* cancelPrompt(pending, yield* DateTime.now);
             return;
           }
@@ -3209,6 +3240,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (recordField(result, "cancelled") === true) {
               return yield* protocolError("A Pi extension cancelled the session switch");
             }
+            resumeAdmissionPending = resumeId != null;
             stateData = undefined;
           }
           stateData ??= yield* request({ type: "get_state" });
@@ -3307,7 +3339,15 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               registrationInProgress = true;
               return Effect.void;
             }),
-            () => effect,
+            // The guard stops Pi mid-registration; report why instead of the transport failure it causes.
+            () =>
+              effect.pipe(
+                Effect.mapError((error) =>
+                  unsolicitedActivityDetected
+                    ? protocolError(PI_UNSOLICITED_ACTIVITY_ERROR)
+                    : error,
+                ),
+              ),
             () =>
               Effect.sync(() => {
                 registrationInProgress = false;
@@ -3623,6 +3663,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 };
                 state.activeTurn = activeTurn;
                 activeTurn.adoptedWake = wake !== null && !continuation;
+                // Selection is applied and this turn owns the thread, so held resume work may run.
+                if (resumeAdmissionPending && !continuation) {
+                  yield* request({ type: "prompt", message: `/${PI_T3_ADMIT_COMMAND}` });
+                  resumeAdmissionPending = false;
+                }
                 if (compactCommand !== null) {
                   yield* connection.send(compactRpcRecord(compactCommand));
                   pendingCompactResponses.push({
@@ -3834,6 +3879,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               DateTime.toEpochMillis(answeredAt) >= pending.expiresAt
             ) {
               pendingPrompts.delete(String(requestInput.requestId));
+              promptActivity++;
               yield* cancelPrompt(pending, answeredAt);
               return yield* protocolError(
                 `Pi extension request ${requestInput.requestId} has expired`,
@@ -3859,6 +3905,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               ...response,
             });
             pendingPrompts.delete(String(requestInput.requestId));
+            promptActivity++;
             if (pending.expirationFiber !== null) yield* Fiber.interrupt(pending.expirationFiber);
             if (pending.method === "confirm" && requestInput.decision === "acceptForSession") {
               sessionApprovals.add(pending.approvalKey);

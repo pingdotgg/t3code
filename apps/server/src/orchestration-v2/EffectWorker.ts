@@ -816,13 +816,13 @@ type ClaimFilter = Omit<Parameters<EffectOutbox.EffectOutboxV2Shape["claimNext"]
 
 export interface OrchestrationEffectWorkerV2Shape {
   readonly awaitWork: Effect.Effect<void>;
-  readonly runOnce: (input?: {
-    readonly maxRunningTitleGenerations?: number;
-  }) => Effect.Effect<boolean, OrchestrationEffectWorkerError>;
+  /** Wakes on any notification without taking one from the shared workers. */
+  readonly awaitAnyWork: Effect.Effect<void>;
+  readonly runOnce: (input?: ClaimFilter) => Effect.Effect<boolean, OrchestrationEffectWorkerError>;
   readonly runRecoveryOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
-  readonly nextClaimableAt: (input?: {
-    readonly maxRunningTitleGenerations?: number;
-  }) => Effect.Effect<Option.Option<DateTime.Utc>, OrchestrationEffectWorkerError>;
+  readonly nextClaimableAt: (
+    input?: ClaimFilter,
+  ) => Effect.Effect<Option.Option<DateTime.Utc>, OrchestrationEffectWorkerError>;
   readonly drain: (maxEffects?: number) => Effect.Effect<number, OrchestrationEffectWorkerError>;
 }
 
@@ -1057,6 +1057,7 @@ export const layerWithOptions = (
 
       return OrchestrationEffectWorkerV2.of({
         awaitWork: outbox.awaitAvailable,
+        awaitAnyWork: outbox.awaitAnyAvailable,
         runOnce,
         runRecoveryOnce: runOnce({ excludeRestartContinuations: true }),
         // Idle workers poll this; a span per poll would bury useful traces.
@@ -1113,9 +1114,12 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
       // Title generation can run for minutes; leave at least one worker free for turn work.
       const claimLimits = concurrency > 1 ? { maxRunningTitleGenerations: concurrency - 1 } : {};
       // Notifications wake promptly; availableAt persists retry timing, and liveness polling recovers missed wakeups.
-      const runWorker = Effect.gen(function* () {
+      const runWorker = Effect.fnUntraced(function* (lane: {
+        readonly filter: ClaimFilter;
+        readonly awaitWork: Effect.Effect<void>;
+      }) {
         while (true) {
-          const attempt = yield* worker.runOnce(claimLimits).pipe(
+          const attempt = yield* worker.runOnce(lane.filter).pipe(
             Effect.map((worked) => (worked ? ("worked" as const) : ("idle" as const))),
             Effect.catchCause((cause) =>
               Effect.logWarning("Orchestration effect worker failed", cause).pipe(
@@ -1139,7 +1143,7 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
           }
 
           const nextClaimableAt = yield* worker
-            .nextClaimableAt(claimLimits)
+            .nextClaimableAt(lane.filter)
             .pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning(
@@ -1157,14 +1161,23 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
             },
           });
           yield* Effect.raceFirst(
-            worker.awaitWork.pipe(Effect.as("notified" as const)),
+            lane.awaitWork.pipe(Effect.as("notified" as const)),
             Effect.sleep(Duration.millis(sleepMs)).pipe(Effect.as("scheduled" as const)),
           );
         }
       });
 
+      // Turn starts can occupy every ordinary worker while they wait on the answers this lane delivers.
       return yield* Effect.all(
-        Array.from({ length: concurrency }, () => runWorker),
+        [
+          ...Array.from({ length: concurrency }, () =>
+            runWorker({ filter: claimLimits, awaitWork: worker.awaitWork }),
+          ),
+          runWorker({
+            filter: { effectType: "runtime-request.respond" },
+            awaitWork: worker.awaitAnyWork,
+          }),
+        ],
         {
           concurrency: "unbounded",
           discard: true,

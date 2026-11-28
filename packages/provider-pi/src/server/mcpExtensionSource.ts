@@ -7,8 +7,11 @@ export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
 export const T3_MCP_URL_ENV = "T3_MCP_URL";
 export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
+// Set when T3 spawns Pi on an existing session, whose startup hooks act as a resume.
+export const T3_PI_RESUMED_STARTUP_ENV = "T3_PI_RESUMED_STARTUP";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
 export const PI_T3_SERVICE_TIER_COMMAND = "t3-service-tier";
+export const PI_T3_ADMIT_COMMAND = "t3-admit";
 
 // These tools trigger file-change approvals, bypassed by Auto-accept edits.
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
@@ -23,10 +26,12 @@ import { Type } from "typebox";
 const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
+const RESUMED_STARTUP_ENV = ${JSON.stringify(T3_PI_RESUMED_STARTUP_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
 const PULL_REQUEST_LINKING_INSTRUCTIONS = ${JSON.stringify(PULL_REQUEST_LINKING_INSTRUCTIONS)};
 const SERVICE_TIER_COMMAND = ${JSON.stringify(PI_T3_SERVICE_TIER_COMMAND)};
+const ADMIT_COMMAND = ${JSON.stringify(PI_T3_ADMIT_COMMAND)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
@@ -253,6 +258,30 @@ function createMcpClient(endpoint: string, token: string) {
 }
 
 export default async function t3McpExtension(pi: ExtensionAPI) {
+  // A resumed session's hooks can start a run before T3 owns the thread or applies its model.
+  // Hold every run before its first model call until T3 admits it from an owned turn. CLI
+  // extensions load first, so this gate closes before other session_start hooks run.
+  let admission: { readonly opened: Promise<void>; readonly open: () => void } | undefined;
+  pi.on("session_start", (event) => {
+    // Pi can emit resume twice for one switch; a replaced gate would strand runs held on the first.
+    const resumed =
+      event.reason === "resume" || (event.reason === "startup" && env(RESUMED_STARTUP_ENV) === "1");
+    if (!resumed || admission !== undefined) return;
+    let open = () => {};
+    const opened = new Promise<void>((resolve) => (open = resolve));
+    admission = { opened, open };
+  });
+  pi.on("before_agent_start", async () => {
+    await admission?.opened;
+  });
+  pi.registerCommand(ADMIT_COMMAND, {
+    description: "Release runs T3 Code held until it owned the resumed session",
+    handler: async () => {
+      admission?.open();
+      admission = undefined;
+    },
+  });
+
   // RPC has no trust prompt, so Pi skips an untrusted folder's protected resources. Session
   // replacement reruns this factory without project_trust, and T3 drops notices outside a turn,
   // so check each session's first turn. An explicit --no-approve is deliberate and stays quiet.
