@@ -47,8 +47,8 @@ const TRACKER_ICONS: Partial<Record<string, TrackerIcon>> = {
 };
 
 const REQUIRED_FIELD_LABELS: ReadonlyMap<string, string> = new Map([
-  ["Site", msg("site", { $context: "issue tracker website in required field validation" })],
-  ["Account email", msg("account email", { $context: "issue tracker required field validation" })],
+  ["jira:site", msg("site", { $context: "issue tracker website in required field validation" })],
+  ["jira:email", msg("account email", { $context: "issue tracker required field validation" })],
 ]);
 
 /**
@@ -151,7 +151,7 @@ function TrackerRow({
   const submit = async (token: string | null, values = drafts, addAccount = false) => {
     const missing = fields.find((field) => !values[field.key]?.trim());
     if (token !== null && missing !== undefined) {
-      const label = REQUIRED_FIELD_LABELS.get(missing.label);
+      const label = REQUIRED_FIELD_LABELS.get(`${tracker.tracker}:${missing.key}`);
       setFailure({
         adding: addAccount,
         text: gt("Enter the {field} first.", {
