@@ -316,11 +316,8 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         return { runId: earlier.run_id };
       });
       const earlier = yield* store.runByKey(name, options.idempotencyKey);
-      // An ended run's journal may be pruned, so executing it again would start the work over.
-      if (
-        earlier !== undefined &&
-        (earlier.engine_tag !== engineTag(definition) || earlier.ended_at !== null)
-      ) {
+      // An ended run's journal may be pruned, and an unfinished run must execute its stored input.
+      if (earlier !== undefined) {
         return yield* other(earlier);
       }
       const payloadCodec = Schema.toCodecJson(definition.payload);
@@ -346,25 +343,23 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         input: payload.input,
         parent: options.parent,
       });
-      // The key is unique, so the row holding it is the run, even one another version started.
+      // The key is unique, so the row holding it is the run, even one another start inserted.
       const holder = yield* store.runByKey(name, options.idempotencyKey);
-      if (holder !== undefined && holder.run_id !== runId) return yield* other(holder);
-      if (earlier === undefined && options.subject !== undefined) {
+      if (
+        holder !== undefined &&
+        (holder.run_id !== runId ||
+          holder.ended_at !== null ||
+          holder.input_json !== WorkflowStore.jsonText(payload.input) ||
+          (options.parent !== undefined &&
+            (holder.parent_run_id !== options.parent.runId ||
+              holder.parent_wait !== options.parent.wait)))
+      ) {
+        return yield* other(holder);
+      }
+      if (options.subject !== undefined) {
         yield* subjectSet(store, runId, options.subject);
       }
       yield* withEngine(engine.execute(payload, { discard: true }));
-      if (options.parent !== undefined) {
-        // The key named a run that someone else started: it would never tell this parent.
-        const row = yield* store.run(runId);
-        if (
-          row?.parent_run_id !== options.parent.runId ||
-          row.parent_wait !== options.parent.wait
-        ) {
-          return yield* new WorkflowInputError({
-            problem: `Run ${runId} of ${name} was started by something else under this key, so it cannot be invoked. Give the invoke a key of its own.`,
-          });
-        }
-      }
       return { runId };
     },
   );

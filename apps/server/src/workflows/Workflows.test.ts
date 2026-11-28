@@ -1435,8 +1435,8 @@ it.effect("a wait past its timeout wakes with nothing, and a workflow may stop o
 
 it.effect("a cancelled run ends, and two steps with one name pause their run", () =>
   Effect.gen(function* () {
-    // The start of `v3` is cut off once its row is written, before the engine has it.
-    const cutOff = new Set(["v3"]);
+    // These starts are cut off once their row is written, before the engine has them.
+    const cutOff = new Set(["v3", "k1"]);
     const store = Layer.effect(
       WorkflowStore.WorkflowStore,
       Effect.map(WorkflowStore.make, (real) =>
@@ -1520,6 +1520,72 @@ it.effect("a cancelled run ends, and two steps with one name pause their run", (
         assert.isTrue(Exit.isFailure(cut));
         const again = yield* workflows.start("versioned", {}, { idempotencyKey: "v3" });
         assert.equal((yield* workflows.waitFor(again.runId, status("completed"))).result, 1);
+        // The next start of the same version executes the stored payload, not its own.
+        const stored = yield* Effect.exit(
+          workflows.start("kid", { mode: "stop" }, { idempotencyKey: "k1" }),
+        );
+        assert.isTrue(Exit.isFailure(stored));
+        const retried = yield* workflows.start("kid", { mode: "finish" }, { idempotencyKey: "k1" });
+        const ended = yield* workflows.waitFor(retried.runId, status("completed", "stopped"));
+        assert.equal(ended.status, "stopped");
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("two starts racing for one key execute the payload whose row was kept", () =>
+  Effect.gen(function* () {
+    const bothMissed = yield* Deferred.make<void>();
+    const winnerWrote = yield* Deferred.make<void>();
+    const loserWrote = yield* Deferred.make<void>();
+    const loserDone = yield* Deferred.make<void>();
+    let misses = 0;
+    // Both starts find no row, then `finish` writes only after `stop` has, so its row is not
+    // kept, and `stop` reaches the engine only after `finish` has had its chance to.
+    const store = Layer.effect(
+      WorkflowStore.WorkflowStore,
+      Effect.map(WorkflowStore.make, (real) =>
+        WorkflowStore.WorkflowStore.of({
+          ...real,
+          runByKey: (workflowName, key) =>
+            Effect.tap(real.runByKey(workflowName, key), (row) =>
+              row !== undefined
+                ? Effect.void
+                : ++misses === 2
+                  ? Deferred.succeed(bothMissed, undefined)
+                  : Deferred.await(bothMissed),
+            ),
+          runStarted: (run) =>
+            (run.input as { readonly mode: string }).mode === "finish"
+              ? Deferred.await(winnerWrote).pipe(
+                  Effect.andThen(real.runStarted(run)),
+                  Effect.andThen(Deferred.succeed(loserWrote, undefined)),
+                )
+              : real
+                  .runStarted(run)
+                  .pipe(
+                    Effect.andThen(Deferred.succeed(winnerWrote, undefined)),
+                    Effect.andThen(Deferred.await(loserDone)),
+                  ),
+        }),
+      ),
+    );
+    const { boot } = yield* harness(store);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const winner = yield* Effect.forkChild(
+          workflows.start("kid", { mode: "stop" }, { idempotencyKey: "race" }),
+        );
+        const loser = yield* Effect.forkChild(
+          workflows.start("kid", { mode: "finish" }, { idempotencyKey: "race" }),
+        );
+        yield* Deferred.await(loserWrote);
+        const { runId } = yield* Fiber.join(loser);
+        yield* Deferred.succeed(loserDone, undefined);
+        assert.equal((yield* Fiber.join(winner)).runId, runId);
+        const ended = yield* workflows.waitFor(runId, status("completed", "stopped"));
+        assert.equal(ended.status, "stopped");
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
