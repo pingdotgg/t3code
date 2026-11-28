@@ -653,6 +653,54 @@ it.effect("re-import brings a continued transcript into an import thread with no
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
+it.effect("re-import brings back a deleted import thread with its continued transcript", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const first = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "8b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
+      "claudeAgent",
+    );
+    const threadId = importId(first);
+    yield* (yield* makeImporter([first])).run;
+    const { thread } = yield* projections.getThreadRecords(threadId, []);
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(`${threadId}:deleted`),
+          type: "thread.deleted",
+          threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: { ...thread, deletedAt: now, updatedAt: now },
+        },
+      ],
+    });
+    const continued = candidate(
+      CLAUDE_MODEL_SELECTION,
+      first.source.providerSessionId,
+      "claudeAgent",
+    );
+    continued.source.size = 200;
+    continued.source.mtimeMs = 3;
+    continued.thread.messages.push(
+      { role: "user", text: "Continue in the terminal", createdAt: timestamp },
+      { role: "assistant", text: "Continued in the terminal", createdAt: timestamp },
+    );
+
+    yield* (yield* makeImporter([continued])).run;
+    const reimported = yield* projections.getThreadRecords(threadId, ["messages"]);
+    expect({
+      deletedAt: reimported.thread.deletedAt,
+      messages: reimported.messages.map((message) => message.text),
+    }).toEqual({
+      deletedAt: null,
+      messages: ["Fix it", "Fixed", "Continue in the terminal", "Continued in the terminal"],
+    });
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
 it.effect("re-import leaves an import thread that has runs at its stored messages", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
