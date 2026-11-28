@@ -19,7 +19,12 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { beforeEach } from "vite-plus/test";
 import { buildProviderOptionSelectionsFromDescriptors } from "@t3tools/shared/model";
-import { settingsSecretLiteral } from "@t3tools/contracts";
+import {
+  defaultInstanceIdForDriver,
+  ProviderDriverKind,
+  settingsSecretLiteral,
+} from "@t3tools/contracts";
+import { providerProbeTimedOut } from "@t3tools/provider-core/server/snapshotProbe";
 
 import { OpenCodeSettings } from "../settings.ts";
 import type { ProviderCompatibilityLookup } from "@t3tools/provider-core/server/compatibility";
@@ -35,6 +40,8 @@ import {
 } from "./status.ts";
 import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
 import { probeOpenCodeRuntime } from "./versionProbe.ts";
+import * as OpenCode2Client from "./v2/OpenCode2Client.ts";
+import * as OpenCode2Server from "./v2/OpenCode2Server.ts";
 import {
   OPENCODE_1_RESPONSES,
   OPENCODE_2_RESPONSES,
@@ -1085,6 +1092,51 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
       NodeAssert.deepEqual(
         snapshot.slashCommands.map((command) => command.name),
         ["compact"],
+      );
+    }),
+  );
+
+  it.effect("marks an OpenCode 2 server info deadline as a probe timeout", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode v2.0.18\n";
+      const loadModels = Effect.gen(function* () {
+        const opencode = yield* OpenCode2Client.OpenCode2Client;
+        const { client } = yield* opencode.connect({
+          baseUrl: "http://127.0.0.1:4096",
+          password: "test",
+        });
+        yield* OpenCode2Server.verifyServer(client, {});
+        return [];
+      }).pipe(
+        Effect.provide(
+          OpenCode2Client.layer.pipe(
+            Layer.provide(
+              Layer.succeed(
+                HttpClient.HttpClient,
+                HttpClient.make(() => Effect.never),
+              ),
+            ),
+          ),
+        ),
+      );
+      const check = yield* checkProvider(
+        makeOpenCodeSettings(),
+        process.cwd(),
+        undefined,
+        undefined,
+        loadModels,
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("5 seconds");
+      const snapshot = yield* Fiber.join(check);
+
+      const driver = ProviderDriverKind.make("opencode");
+      NodeAssert.equal(
+        providerProbeTimedOut({
+          ...snapshot,
+          driver,
+          instanceId: defaultInstanceIdForDriver(driver),
+        }),
+        true,
       );
     }),
   );
