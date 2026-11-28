@@ -252,6 +252,29 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
+  it("never lifts media out of an HTML comment, while lifting media after it", () => {
+    const visible = {
+      id: "attachment:1",
+      kind: "attachment",
+      url: "https://example.org/visible.mp4",
+      media: "video",
+    };
+    // A fence inside a comment is hidden too, so it must not open a code block.
+    const comment = [
+      "<!--",
+      "https://example.org/hidden.mp4",
+      '<video src="https://example.org/hidden-tag.mp4"></video>',
+      "```",
+      "-->",
+    ].join("\n");
+    for (const hidden of [comment, "<!-- template hint -->"]) {
+      expect(split(`${hidden}\n\nhttps://example.org/visible.mp4`)).toEqual([
+        { id: "markdown:0", kind: "markdown", text: hidden, sourceOffset: 0 },
+        visible,
+      ]);
+    }
+  });
+
   it("leaves an unclosed video tag as prose without eating the rest of the body", () => {
     const body = ['<video src="https://example.com/a.mp4">', "still prose", "more prose"].join(
       "\n",

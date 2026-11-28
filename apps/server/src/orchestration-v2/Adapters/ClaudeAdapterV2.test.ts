@@ -27343,7 +27343,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         uuid,
         session_id: WAKE_NATIVE_SESSION,
       });
-    const stopHookFeedback = (uuid: string, condition: string, reason: string) =>
+    const stopHookFeedback = (uuid: string | undefined, condition: string, reason: string) =>
       claudeSdkFrame({
         type: "user",
         message: {
@@ -27361,6 +27361,78 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ? [event.providerThread.goal]
           : [],
       );
+
+    // Keyed by item id, so two notices that share an id count once.
+    const stopHookEffects = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) => [
+      ...new Map(
+        events.flatMap((event) =>
+          event.type !== "turn_item.updated"
+            ? []
+            : event.turnItem.type === "notification"
+              ? [
+                  [
+                    event.turnItem.id,
+                    `${event.turnItem.summary}: ${event.turnItem.detail}`,
+                  ] as const,
+                ]
+              : event.turnItem.type === "assistant_message" &&
+                  event.turnItem.phase === "final_answer"
+                ? [[event.turnItem.id, `final answer: ${event.turnItem.text}`] as const]
+                : [],
+        ),
+      ).values(),
+    ];
+
+    it.effect.each([{ activeGoal: false }, { activeGoal: true }])(
+      "keeps the answer a Stop hook continued past, active goal=$activeGoal",
+      ({ activeGoal }) =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("stop-hook-attempt"),
+              text: "Check the changes.",
+              attachments: [],
+            }),
+          );
+          for (const frame of [
+            ...(activeGoal ? [syntheticFrame("goal-set", "Goal set: all tests pass")] : []),
+            makeAssistantTextFrame({ uuid: "answer", text: "Here is the answer." }),
+            stopHookFeedback("stop-hook", "./check.sh", "Run the formatter before finishing."),
+            makeAssistantTextFrame({ uuid: "reply", text: "The formatter has run." }),
+            // The SDK types a user frame's uuid as optional.
+            stopHookFeedback(undefined, "./check.sh", "Run the linter."),
+            makeAssistantTextFrame({ uuid: "reply-2", text: "The linter has run." }),
+            stopHookFeedback(undefined, "./check.sh", "Run the tests."),
+            makeAssistantTextFrame({ uuid: "reply-3", text: "The tests pass." }),
+            makeResultFrame({ uuid: "result", result: "The tests pass." }),
+          ]) {
+            yield* Queue.offer(harness.sdkMessages, frame);
+          }
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+          assert.deepEqual(stopHookEffects(harness.events), [
+            "final answer: Here is the answer.",
+            "Stop hook asked Claude to continue: [./check.sh]: Run the formatter before finishing.",
+            "final answer: The formatter has run.",
+            "Stop hook asked Claude to continue: [./check.sh]: Run the linter.",
+            "final answer: The linter has run.",
+            "Stop hook asked Claude to continue: [./check.sh]: Run the tests.",
+          ]);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+    );
 
     it.effect("tracks a /goal through unmet checks until Claude stops on its own", () =>
       Effect.gen(function* () {
@@ -27387,6 +27459,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }
         const terminal = yield* Queue.take(harness.terminalReceipts);
         assert.equal(terminal.status, "completed");
+        assert.deepEqual(stopHookEffects(harness.events), []);
         assert.deepEqual(goalStatuses(harness.events), [
           { objective: condition, status: "active", checks: 0 },
           {
