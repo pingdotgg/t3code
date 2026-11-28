@@ -21,7 +21,6 @@ export const layer = Layer.succeed(
       }),
     resolve: () => Effect.undefined,
     isConnected: () => Effect.succeed(false),
-    markConnected: () => Effect.void,
     touch: () => Effect.void,
     revokeProviderSession: () => Effect.void,
     revokeThread: () => Effect.void,

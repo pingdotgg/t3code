@@ -19,7 +19,7 @@ export function buildT3OrchestrationSections(
   const nativeSubagents = options.nativeSubagents !== false;
   const subagentLine = nativeSubagents
     ? `- Subagents: native tool (Claude \`Agent\` \`run_in_background:false\`; Codex \`spawn_agent\`) only for same provider/model with default settings. Use \`delegate_task\` for another provider/model (incl. native types on another model), \`target.options\`, \`isolation:"worktree"\`, or new review rounds (never \`t3_thread_send\`; fix small nits yourself). Background agent: \`delegate_task\`, never a background \`Agent\`. Check \`orchestrator_capabilities\` once; if unavailable, say so (no CLI/Workflow fallback). Stop delegates with \`task_cancel\`; never poll (follow \`next\`). Children don't delegate unless told.`
-    : `- Subagents: use \`delegate_task\` for all subagents (including your own provider/model), \`isolation:"worktree"\` for a separate checkout, and new review rounds (never \`t3_thread_send\`; fix small nits yourself). Check \`orchestrator_capabilities\` once; if unavailable, say so (no CLI/Workflow fallback). Stop delegates with \`task_cancel\`; never poll (follow \`next\`). Children don't delegate unless told.`;
+    : `- Subagents: Use \`delegate_task\` for subagents (including your own provider/model), \`isolation:"worktree"\` for a separate checkout, and new review rounds (never \`t3_thread_send\`; fix small nits yourself). Check \`orchestrator_capabilities\` once; if unavailable, say so (no CLI/Workflow fallback). Stop delegates with \`task_cancel\`; never poll (follow \`next\`). Children don't delegate unless told.`;
   const lines = [
     "Ordinary coding tasks need no T3 tools.",
     subagentLine,

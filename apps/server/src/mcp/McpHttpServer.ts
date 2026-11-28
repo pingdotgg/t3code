@@ -361,12 +361,8 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   ) {
     const authorization = request.headers.authorization;
     const token = parseBearerToken(request) ?? "";
-    const registryInvocation = yield* registry.resolve(token);
-    if (registryInvocation !== undefined) {
-      yield* registry.markConnected(registryInvocation.thread.providerSessionId);
-    }
     const invocation =
-      registryInvocation ??
+      (yield* registry.resolve(token, { markConnected: true })) ??
       (Option.isSome(clients) && token.length > 0
         ? yield* clients.value.authenticate(request)
         : undefined);

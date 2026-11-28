@@ -29,7 +29,7 @@ describe("T3 orchestration gating", () => {
     assert.notInclude(withLinks, "Settings → Labs → Linked environments");
 
     const noNativeSubagents = buildT3OrchestrationSections({ nativeSubagents: false }).join("\n");
-    assert.include(noNativeSubagents, "use `delegate_task` for all subagents");
+    assert.include(noNativeSubagents, "Use `delegate_task` for subagents");
     assert.notInclude(noNativeSubagents, "spawn_agent");
   });
 

@@ -31,11 +31,10 @@ export interface McpSessionRegistryShape {
   readonly issue: (request: McpCredentialRequest) => Effect.Effect<McpIssuedCredential>;
   readonly resolve: (
     rawToken: string,
+    options?: { readonly markConnected?: boolean },
   ) => Effect.Effect<McpInvocationContext.McpThreadInvocationScope | undefined>;
   /** True once `/mcp` has authenticated at least one request for this provider session. */
   readonly isConnected: (providerSessionId: string) => Effect.Effect<boolean>;
-  /** Record that `/mcp` authenticated a live client request for this provider session. */
-  readonly markConnected: (providerSessionId: string) => Effect.Effect<void>;
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
@@ -179,7 +178,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
 
   const resolve: McpSessionRegistryShape["resolve"] = Effect.fn("McpSessionRegistry.resolve", {
     attributes: routineSpan,
-  })(function* (rawToken) {
+  })(function* (rawToken, resolveOptions) {
     if (rawToken.length === 0) return undefined;
     const tokenHash = yield* hashToken(rawToken);
     const alive = yield* currentAliveMark;
@@ -192,23 +191,14 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         return [undefined, { records: next }] as const;
       }
       const next = new Map(records);
-      next.set(tokenHash, { ...record, lastAlive: alive });
+      next.set(tokenHash, {
+        ...record,
+        lastAlive: alive,
+        connected: record.connected || resolveOptions?.markConnected === true,
+      });
       return [record.scope, { records: next }] as const;
     });
   });
-
-  const markConnected: McpSessionRegistryShape["markConnected"] = (providerSessionId) =>
-    SynchronizedRef.update(state, ({ records }) => {
-      let changed = false;
-      const next = new Map(records);
-      for (const [tokenHash, record] of records) {
-        if (record.scope.thread.providerSessionId === providerSessionId && !record.connected) {
-          next.set(tokenHash, { ...record, connected: true });
-          changed = true;
-        }
-      }
-      return changed ? { records: next } : { records };
-    });
 
   const isConnected: McpSessionRegistryShape["isConnected"] = (providerSessionId) =>
     SynchronizedRef.get(state).pipe(
@@ -246,7 +236,6 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     issue,
     resolve,
     isConnected,
-    markConnected,
     touch,
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {

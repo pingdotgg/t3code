@@ -53,7 +53,7 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
 
     const resolved = yield* registry.resolve(token);
     expect(yield* registry.isConnected(issued.config.providerSessionId)).toBe(false);
-    yield* registry.markConnected(issued.config.providerSessionId);
+    expect(yield* registry.resolve(token, { markConnected: true })).toBeDefined();
     expect(yield* registry.isConnected(issued.config.providerSessionId)).toBe(true);
     expect(resolved?.thread.threadId).toBe(threadId);
     expect(resolved?.capabilities).toEqual(

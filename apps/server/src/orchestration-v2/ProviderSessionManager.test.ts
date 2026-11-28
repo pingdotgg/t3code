@@ -6466,7 +6466,7 @@ it.effect(
             state,
             projectServiceLayer: Layer.mock(ProjectService.ProjectService)({
               getById: (requestedProjectId) =>
-                Effect.succeed(Option.some(makeBrowserAccessProject(requestedProjectId))),
+                Effect.succeedSome(makeBrowserAccessProject(requestedProjectId)),
             }),
             serverSettingsLayer: ServerSettings.layerTest({
               enableDeviceSupport: true,
