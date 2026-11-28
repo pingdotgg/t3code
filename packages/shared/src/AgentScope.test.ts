@@ -11,7 +11,7 @@ import * as HostProcess from "./HostProcess.ts";
 
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("agentScopeCommand", () => {
   it("raises the OOM score and execs the command with its arguments in the same process", () => {
-    const launch = agentScopeCommand({
+    const input = {
       command: "/bin/sh",
       args: [
         "-c",
@@ -20,7 +20,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("agentScopeComm
         "a b",
         "$HOME",
       ],
-    });
+    };
+    const launch = agentScopeCommand(input);
     const child = NodeChildProcess.spawnSync(launch.command, [...launch.args], {
       encoding: "utf8",
     });
@@ -31,17 +32,45 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("agentScopeComm
 
     const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-agent-launcher-"));
     try {
-      const launcher = NodePath.join(directory, "launch's");
-      NodeFS.writeFileSync(launcher, agentScopeLauncherScript(launch), { mode: 0o700 });
-      const launched = NodeChildProcess.spawnSync(launcher, ["--flag", "it's"], {
-        encoding: "utf8",
-      });
-      const [launchedPid, launchedScore, ...launchedArgs] = launched.stdout.trimEnd().split("\n");
-      expect(Number(launchedPid)).toBe(launched.pid);
-      expect(Number(launchedScore)).toBe(AGENT_OOM_SCORE_ADJ);
-      expect(launchedArgs).toEqual(["a b", "$HOME", "--flag", "it's"]);
+      for (const name of ["sh", "custom shell"]) {
+        const shell = NodePath.join(directory, name);
+        NodeFS.symlinkSync("/bin/sh", shell);
+        const launcher = NodePath.join(directory, "launch's");
+        const script = agentScopeLauncherScript(agentScopeCommand({ ...input, shell }));
+        expect(script.split("\n")[0]).toBe(`#!${name === "sh" ? shell : "/bin/sh"}`);
+        NodeFS.writeFileSync(launcher, script, { mode: 0o700 });
+        const launched = NodeChildProcess.spawnSync(launcher, ["--flag", "it's"], {
+          encoding: "utf8",
+        });
+        expect(launched.error).toBeUndefined();
+        expect(launched.status).toBe(0);
+        const [launchedPid, launchedScore, ...launchedArgs] = launched.stdout.trimEnd().split("\n");
+        expect(Number(launchedPid)).toBe(launched.pid);
+        expect(Number(launchedScore)).toBe(AGENT_OOM_SCORE_ADJ);
+        expect(launchedArgs).toEqual(["a b", "$HOME", "--flag", "it's"]);
+      }
     } finally {
       NodeFS.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("agentScopeLauncherScript", () => {
+  it("runs under the shell the command resolved, not a hardcoded /bin/sh", () => {
+    const shell = "/data/data/com.termux/files/usr/bin/sh";
+    const command = "/data/data/com.termux/files/usr/bin/chromium";
+    const scope = {
+      systemdRun: "/usr/bin/systemd-run",
+      slice: "app.slice",
+      unit: "preview.scope",
+      runtimeDir: "/run/user/1000",
+      options: [],
+    };
+    for (const launch of [
+      agentScopeCommand({ command, args: [], shell }),
+      agentScopeCommand({ command, args: [], shell, scope }),
+    ]) {
+      expect(agentScopeLauncherScript(launch).split("\n")[0]).toBe(`#!${shell}`);
     }
   });
 });

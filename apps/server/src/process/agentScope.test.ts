@@ -70,6 +70,7 @@ const withFakeSystemd = <A, E>(
     liveOwner = false,
     noBinSh = false,
     noScopes = false,
+    relativePath = false,
   }: {
     readonly oomPolicy?: boolean;
     readonly stopFails?: boolean;
@@ -77,6 +78,7 @@ const withFakeSystemd = <A, E>(
     readonly liveOwner?: boolean;
     readonly noBinSh?: boolean;
     readonly noScopes?: boolean;
+    readonly relativePath?: boolean;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -85,6 +87,7 @@ const withFakeSystemd = <A, E>(
       NodeFS.writeFileSync(NodePath.join(bin, name), "", { mode: 0o755 });
     }
     const cgroupRoot = NodePath.join(bin, "cgroup");
+    const searchPath = relativePath ? NodePath.relative(process.cwd(), bin) : bin;
     const units = new Map<string, FakeUnit>();
     const calls: Array<ReadonlyArray<string>> = [];
     const failingVerbs = new Set<string>();
@@ -136,7 +139,7 @@ const withFakeSystemd = <A, E>(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(
         HostProcess.Environment,
-        noScopes ? { PATH: bin } : { PATH: bin, XDG_RUNTIME_DIR: "/run/user/1" },
+        noScopes ? { PATH: searchPath } : { PATH: searchPath, XDG_RUNTIME_DIR: "/run/user/1" },
       ),
       Effect.provideService(FileSystem.FileSystem, {
         ...fileSystem,
@@ -219,20 +222,20 @@ describe("AgentScope service", () => {
         scope.wrap({ command: "agent", args: [], name: "t" }),
       );
       expect(withScopes.command).toBe("/bin/sh");
-      const scoped = yield* withFakeSystemd(
-        ({ scope }) => scope.wrap({ command: "agent", args: [], name: "t" }),
-        { noBinSh: true },
-      );
-      const unscoped = yield* withFakeSystemd(
-        ({ scope }) => scope.wrap({ command: "agent", args: [], name: "t" }),
-        { noBinSh: true, noScopes: true },
-      );
-      for (const launch of [scoped, unscoped]) {
-        expect(NodePath.basename(launch.command)).toBe("sh");
-        expect(launch.command).not.toBe("/bin/sh");
-        expect(NodePath.basename(String(launch.args.at(-1)))).toBe("agent");
+      for (const noScopes of [false, true]) {
+        for (const relativePath of [false, true]) {
+          const launch = yield* withFakeSystemd(
+            ({ scope }) => scope.wrap({ command: "agent", args: [], name: "t" }),
+            { noBinSh: true, noScopes, relativePath },
+          );
+          expect(NodePath.basename(launch.command)).toBe("sh");
+          expect(launch.command).not.toBe("/bin/sh");
+          expect(NodePath.isAbsolute(launch.command)).toBe(true);
+          expect(launch.shell).toBe(launch.command);
+          expect(NodePath.basename(String(launch.args.at(-1)))).toBe("agent");
+          if (noScopes) expect(launch.args).not.toContain("--scope");
+        }
       }
-      expect(unscoped.args).not.toContain("--scope");
     }),
   );
 

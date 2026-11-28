@@ -58,6 +58,8 @@ export interface AgentScopeCommand {
   readonly args: ReadonlyArray<string>;
   /** The systemd scope the command runs in, for `stop`. */
   readonly unit?: string | undefined;
+  /** The POSIX shell that runs the launch script; hosts without /bin/sh resolve another. */
+  readonly shell?: string | undefined;
 }
 
 export const AgentScope = Context.Reference<AgentScopeShape>("@t3tools/shared/AgentScope", {
@@ -99,12 +101,16 @@ export interface AgentSystemdScope {
   readonly options: ReadonlyArray<string>;
 }
 
+const DEFAULT_SHELL = "/bin/sh";
+
 const quoteShell = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
 /** An executable file for launchers that take a path, not a command line, such as Playwright. */
 export function agentScopeLauncherScript(launch: AgentScopeCommand): string {
   const command = [launch.command, ...launch.args].map(quoteShell).join(" ");
-  return `#!/bin/sh\nexec ${command} "$@"\n`;
+  const shell = launch.shell ?? DEFAULT_SHELL;
+  const interpreter = shell.startsWith("/") && !/[\s\0]/.test(shell) ? shell : DEFAULT_SHELL;
+  return `#!${interpreter}\nexec ${command} "$@"\n`;
 }
 
 /** Exec at every step preserves the agent PID, stdio, and signals; systemd-run places it and descendants in the scope. */
@@ -114,9 +120,9 @@ export function agentScopeCommand(input: {
   readonly scope?: AgentSystemdScope | undefined;
   readonly shell?: string | undefined;
 }): AgentScopeCommand {
-  const { command, args, scope, shell = "/bin/sh" } = input;
+  const { command, args, scope, shell = DEFAULT_SHELL } = input;
   if (scope === undefined) {
-    return { command: shell, args: ["-c", LAUNCH_SCRIPT, "t3-agent", command, ...args] };
+    return { command: shell, args: ["-c", LAUNCH_SCRIPT, "t3-agent", command, ...args], shell };
   }
   return {
     command: shell,
@@ -136,5 +142,6 @@ export function agentScopeCommand(input: {
       command,
       ...args,
     ],
+    shell,
   };
 }

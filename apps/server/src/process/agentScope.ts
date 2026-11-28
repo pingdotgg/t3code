@@ -122,7 +122,7 @@ export const make = Effect.gen(function* () {
   // Termux and similar hosts have no /bin/sh, only an `sh` on PATH.
   const shell = (yield* fileSystem.exists("/bin/sh").pipe(Effect.orElseSucceed(() => false)))
     ? "/bin/sh"
-    : ((yield* resolve("sh", hostEnvironment)) ?? "/bin/sh");
+    : path.resolve((yield* resolve("sh", hostEnvironment)) ?? "/bin/sh");
 
   const run = (command: string, args: ReadonlyArray<string>) =>
     runner.run({ command, args, timeout: "5 seconds" }).pipe(Effect.option);
