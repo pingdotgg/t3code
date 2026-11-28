@@ -13154,6 +13154,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     "its thread is unloaded",
     "Codex completes it after the session's Stop deadline",
     "Codex completes it after a second Stop fails",
+    "a replacement turn ends it",
   ] as const)("keeps a turn open after an unconfirmed Stop until %s", (ending) =>
     Effect.gen(function* () {
       const nativeThreadId = "unconfirmed-stop-thread";
@@ -13166,6 +13167,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         reasoningOutputTokens: 1,
       };
       const pastDeadline = ending === "Codex completes it after the session's Stop deadline";
+      const replacement = ending === "a replacement turn ends it";
       const harness = yield* makeCodexReplayHarness(
         makeCodexReplayTranscript({
           scenario: `unconfirmed-stop-${ending.length}`,
@@ -13267,6 +13269,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             driver: CodexAdapterV2.CODEX_DRIVER_KIND,
             nativeTurnId,
           }),
+          ...(replacement ? { endOnTimeout: true } : {}),
         })
         .pipe(
           // The session manager bounds every Stop the same way.
@@ -13290,9 +13293,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const stopped = yield* Fiber.join(stopping);
       assert.equal(
         stopped._tag === "Failure" ? stopped.failure._tag : "confirmed",
-        pastDeadline ? "SessionStopDeadline" : "ProviderAdapterInterruptTimeoutError",
+        replacement
+          ? "confirmed"
+          : pastDeadline
+            ? "SessionStopDeadline"
+            : "ProviderAdapterInterruptTimeoutError",
       );
-      assert.deepEqual(harness.terminalEvents(), []);
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => event.status),
+        replacement ? ["interrupted"] : [],
+      );
 
       if (ending === "Codex completes it after a second Stop fails") {
         const second = yield* harness.runtime
