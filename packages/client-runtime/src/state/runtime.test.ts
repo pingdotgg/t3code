@@ -6,6 +6,9 @@ import {
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   EnvironmentId,
   type FilesystemBrowseEntry,
+  IssueTrackerKind,
+  type IssueCandidates,
+  type IssueScopeRef,
   type IssueListInput,
   type IssueListResult,
   ORCHESTRATION_V2_WS_METHODS,
@@ -263,6 +266,68 @@ it.effect("keeps complete review metadata visible while a refresh is held", () =
       expect(value?.sources[0]!.files).toHaveLength(2);
     }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
     expect((yield* readEnvironmentQuery(registry, atom)).sources[0]!.diffHash).toBe("2");
+  }),
+);
+
+it.effect("reuses issue picker candidates within the same repository and project", () =>
+  Effect.gen(function* () {
+    const reads: IssueScopeRef[] = [];
+    const answer: IssueCandidates = {
+      labels: [{ name: "bug", description: "Something went wrong", color: "f00" }],
+      assignees: [],
+      truncated: false,
+    };
+    const rpcSession = {
+      client: {
+        [WS_METHODS.issuesCandidates]: (input: IssueScopeRef) =>
+          Effect.sync(() => {
+            reads.push(input);
+            return answer;
+          }),
+      },
+    } as unknown as RpcSession.RpcSession;
+    const { runtime } = yield* makeEnvironmentQueryHarness(Effect.void, { rpcSession });
+    const { candidates } = createIssueEnvironmentAtoms(runtime);
+    const environmentId = QUERY_ENVIRONMENT.environmentId;
+    const input = {
+      projectId: ProjectId.make("app"),
+      tracker: IssueTrackerKind.make("github"),
+      host: "github.com",
+      scope: "acme/app",
+    };
+    const first = { ...input, key: "1" };
+    const second = { ...input, key: "2", url: "https://github.com/acme/app/issues/2" };
+    const listScope = {
+      scope: input.scope,
+      host: input.host,
+      tracker: input.tracker,
+      projectId: input.projectId,
+    };
+
+    const registry = yield* mountEnvironmentQuery(candidates({ environmentId, input: first }));
+    expect(
+      yield* readEnvironmentQuery(registry, candidates({ environmentId, input: first })),
+    ).toEqual(answer);
+    expect(
+      yield* readEnvironmentQuery(registry, candidates({ environmentId, input: second })),
+    ).toEqual(answer);
+    expect(
+      yield* readEnvironmentQuery(registry, candidates({ environmentId, input: listScope })),
+    ).toEqual(answer);
+    expect(reads).toEqual([input]);
+
+    const otherTargets = [
+      { environmentId, input: { ...input, projectId: ProjectId.make("another") } },
+      { environmentId, input: { ...input, host: "enterprise.example.test" } },
+      { environmentId, input: { ...input, scope: "acme/other" } },
+      { environmentId, input: { ...input, tracker: IssueTrackerKind.make("forgejo") } },
+      { environmentId: EnvironmentId.make("another-environment"), input },
+    ];
+    for (const target of otherTargets) {
+      const count = reads.length;
+      expect(yield* readEnvironmentQuery(registry, candidates(target))).toEqual(answer);
+      expect(reads).toHaveLength(count + 1);
+    }
   }),
 );
 
