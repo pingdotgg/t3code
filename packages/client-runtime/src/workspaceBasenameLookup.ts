@@ -188,7 +188,10 @@ export async function findAgentDirectoryMatch(
 }
 
 // A quoted string or a comment is one token, so `cd` inside either is not read as a command.
-const SHELL_TOKEN = /(?<![^\s;&|()])#[^\n]*|"[^"]*"|'[^']*'|[;&|()\n]|[ \t]+|[^\s;&|()"']+/g;
+// Windows drive paths are recognized only as cd operands; other words use shell escapes.
+const SHELL_TOKEN =
+  /(?<![^\s;&|()])#[^\n]*|"[^"]*"|'[^']*'|[;&|()\n]|[ \t]+|(?:\\[\s\S]?|[^\s;&|()"'\\])+/g;
+const WINDOWS_CD_OPERAND = /[a-zA-Z]:\\[^\s;&|()"']*/y;
 const SHELL_NAME = /(?:^|\/)(?:ba|z|da|k|mk|a)?sh$/;
 const CD_OPTION = /^-[LPe@]*$|^--$/;
 
@@ -212,7 +215,26 @@ function cdOperands(script: string): Array<string> {
     words = [];
     wordOpen = false;
   };
-  for (const [token] of script.matchAll(SHELL_TOKEN)) {
+  for (let index = 0; index < script.length;) {
+    if (script.startsWith("\\\n", index)) {
+      index += 2;
+      continue;
+    }
+    WINDOWS_CD_OPERAND.lastIndex = index;
+    SHELL_TOKEN.lastIndex = index;
+    const match =
+      (words[0] === "cd" && !wordOpen && words.slice(1).every((word) => CD_OPTION.test(word))
+        ? WINDOWS_CD_OPERAND.exec(script)
+        : null) ?? SHELL_TOKEN.exec(script);
+    if (match === null) break;
+    const [rawToken] = match;
+    index = match.index + rawToken.length;
+    const token = /^['#]/.test(rawToken)
+      ? rawToken
+      : rawToken.replace(/\\([\s\S])/g, (escape, character: string) =>
+          character === "\n" ? "" : escape,
+        );
+    if (token === "") continue;
     // A here-document's body is data, and where it ends is the shell's to say.
     if (!/^["'#]/.test(token) && token.includes("<<")) break;
     if (/^[;&|()\n]/.test(token)) endCommand();
