@@ -108,9 +108,34 @@ function webUrl(url: string): URL | null {
   }
 }
 
+/** Index just past the code span opened at `start`, or past the backtick run when none closes it. */
+function codeSpanEnd(text: string, start: number): number {
+  let open = start;
+  while (text[open] === "`") open += 1;
+  for (let index = open; index < text.length;) {
+    if (text[index] !== "`") {
+      index += 1;
+      continue;
+    }
+    let close = index;
+    while (text[close] === "`") close += 1;
+    if (close - index === open - start) return close;
+    index = close;
+  }
+  return open;
+}
+
 function standaloneMarkdownLink(trimmed: string): { label: string; url: string } | null {
   if (!trimmed.startsWith("[")) return null;
-  const closeBracket = trimmed.indexOf("]");
+  // A label may nest balanced brackets; an escaped `\]` or one inside a code span never closes it.
+  let closeBracket = -1;
+  for (let index = 1, depth = 0; index < trimmed.length && closeBracket < 0; index += 1) {
+    const character = trimmed[index];
+    if (character === "\\") index += 1;
+    else if (character === "`") index = codeSpanEnd(trimmed, index) - 1;
+    else if (character === "[") depth += 1;
+    else if (character === "]" && depth-- === 0) closeBracket = index;
+  }
   if (closeBracket < 0 || trimmed[closeBracket + 1] !== "(") return null;
   const destination = markdownLinkDestinationScanner(trimmed)(closeBracket + 1);
   if (destination === null || destination.end !== trimmed.length) return null;

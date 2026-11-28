@@ -759,6 +759,29 @@ Third}`;
     ]);
   });
 
+  it("counts a run of saved stream records as one notebook output", () => {
+    // nbclient (papermill, nbconvert --execute) saves each kernel flush as its own record.
+    const records = Array.from({ length: 150 }, (_, index) => ({
+      output_type: "stream",
+      name: "stdout",
+      text: `step ${index}\n`,
+    }));
+    const notebook = (outputs: unknown[]) =>
+      bytes(JSON.stringify({ nbformat: 4, cells: [{ cell_type: "code", source: "", outputs }] }));
+    const result = openNotebook(notebook(records));
+    if (result.type !== "notebook") throw new Error("Expected notebook");
+    expect(result.cells[0]!.outputs).toEqual([
+      { kind: "text", text: records.map((record) => record.text).join("") },
+    ]);
+    const results = Array.from({ length: 101 }, () => ({
+      output_type: "display_data",
+      data: { "text/plain": "x" },
+    }));
+    expect(() => openNotebook(notebook(results))).toThrow(
+      expect.objectContaining({ code: "notebook-too-many-outputs" }),
+    );
+  });
+
   it("bounds repeated OpenDocument spreadsheet cells and keeps sheet names and values", async () => {
     const archive = new JSZip().file(
       "content.xml",

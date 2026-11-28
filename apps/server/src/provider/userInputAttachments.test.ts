@@ -1667,6 +1667,26 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "word/document.xml": [
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>',
+              "<w:p><w:r><w:t>Retired body text</w:t></w:r></w:p>",
+              '<w:p><w:pPr><w:pStyle w:val="Plain"/></w:pPr><w:r><w:t>Current instructions</w:t></w:r></w:p>',
+              "</w:body></w:document>",
+            ].join(""),
+            "word/styles.xml": [
+              '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+              '<w:style w:type="paragraph" w:styleId="Body" w:default=" 1 "><w:rPr><w:vanish/></w:rPr></w:style>',
+              '<w:style w:type="paragraph" w:styleId="Plain"/>',
+              "</w:styles>",
+            ].join(""),
+          },
+          expected: [],
+          exact: "Current instructions",
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml": [
               '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:x="urn:extension" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x"><w:body>',
               '<w:p><w:pPr><w:pStyle w:val="Retired"/></w:pPr><w:r><w:t>Old routing</w:t></w:r></w:p>',
               '<w:p><w:pPr><w:pStyle w:val="RetiredChild"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Emphasis"/></w:rPr><w:t>Old badge rules</w:t></w:r></w:p>',
