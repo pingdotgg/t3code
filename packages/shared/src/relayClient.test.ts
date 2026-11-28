@@ -817,6 +817,45 @@ describe("RelayClient", () => {
         ),
     );
 
+    it.effect.skipIf(windowsHost)(
+      "preserves trailing whitespace and quotes in POSIX PATH entries",
+      () =>
+        run((baseDir) =>
+          Effect.gen(function* () {
+            const trailingSpaceDir = `${baseDir}/path entry `;
+            const trailingSpaceBin = `${trailingSpaceDir}/cloudflared`;
+            const trailingQuoteDir = `${baseDir}/quoted"`;
+            const trailingQuoteBin = `${trailingQuoteDir}/cloudflared`;
+            yield* writeExecutable(trailingSpaceBin);
+            yield* writeExecutable(trailingQuoteBin);
+            const manager = yield* RelayClient.makeCloudflaredRelayClient({ baseDir });
+            const resolveWith = (searchPath: string) => {
+              const env = { PATH: searchPath };
+              return manager.resolve.pipe(
+                Effect.provideService(
+                  ConfigProvider.ConfigProvider,
+                  ConfigProvider.fromEnv({ env }),
+                ),
+                Effect.provideService(HostProcess.Environment, env),
+              );
+            };
+
+            expect(yield* resolveWith(trailingSpaceDir)).toEqual({
+              status: "available",
+              executablePath: trailingSpaceBin,
+              source: "path",
+              version: RelayClient.CLOUDFLARED_VERSION,
+            });
+            expect(yield* resolveWith(trailingQuoteDir)).toEqual({
+              status: "available",
+              executablePath: trailingQuoteBin,
+              source: "path",
+              version: RelayClient.CLOUDFLARED_VERSION,
+            });
+          }),
+        ),
+    );
+
     it.effect.skipIf(windowsHost)("reports an outdated override as missing", () => {
       const versions: Record<string, string> = {};
       return run(
