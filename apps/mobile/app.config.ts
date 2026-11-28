@@ -449,7 +449,12 @@ const config: ExpoConfig = {
           // Android 12+ masks the central two thirds of the 288dp canvas; adaptive layers avoid clipped corners.
           image: variant.assets.androidSplashIcon,
           imageWidth: 288,
-          dark: { image: variant.assets.androidSplashIcon },
+          dark: {
+            image: variant.assets.androidSplashIcon,
+            ...(variant.assets.androidAdaptiveBackgroundImage
+              ? {}
+              : { backgroundColor: variant.assets.androidAdaptiveBackgroundColor }),
+          },
         },
       },
     ],
