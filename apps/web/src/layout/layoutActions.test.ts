@@ -31,8 +31,14 @@ import { useClosedViewStore } from "../closedViewStore";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import * as terminalCloseConfirm from "../lib/terminalCloseConfirm";
+import {
+  __testing as previewTesting,
+  previewStateAtom,
+  resetPreviewStateForTests,
+} from "../previewStateStore";
 import { planNextReopen, reopenClosedView } from "../reopenClosedView";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import * as sessionState from "../state/session";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import {
@@ -285,9 +291,7 @@ describe("closeLayoutTabByUser", () => {
         threadRef: parentRef,
         surfaceId: secondPanelTerminalId,
       };
-      useLayoutStore
-        .getState()
-        .openTab(other, { placement: "active-pane", position: "end" });
+      useLayoutStore.getState().openTab(other, { placement: "active-pane", position: "end" });
       useLayoutStore
         .getState()
         .openTab(secondTerminalContent, { placement: "active-pane", position: "end" });
@@ -307,6 +311,109 @@ describe("closeLayoutTabByUser", () => {
       __setClientSettingsForTests(previousSettings);
       useRightPanelStore.setState({ byThreadKey: previousPanels });
       useTerminalUiStateStore.setState({ terminalUiStateByThreadKey: previousTerminals });
+    }
+  });
+
+  it("confirms once across threads for agent-controlled browsers and closes nothing when declined", async () => {
+    const previousPanels = useRightPanelStore.getState().byThreadKey;
+    dialogsConfirmMock.mockReset();
+    useClosedViewStore.setState({ entries: [] });
+    resetPreviewStateForTests();
+
+    const parentKey = scopedThreadKey(parentRef);
+    const subagentKey = scopedThreadKey(subagentRef);
+    useRightPanelStore.getState().openBrowser(parentRef, "browser-a");
+    useRightPanelStore.getState().open(parentRef, "diff");
+    useRightPanelStore.getState().openBrowser(subagentRef, "browser-b");
+
+    const agentOverlay = {
+      hasWebContents: true,
+      navStatus: { _tag: "Idle" as const },
+      canGoBack: false,
+      canGoForward: false,
+      loading: false,
+      zoomFactor: 1,
+      pictureInPicture: false,
+      colorScheme: "system" as const,
+      audioMuted: false,
+      audible: false,
+      controller: "agent" as const,
+      favicon: null,
+    };
+    appAtomRegistry.set(previewStateAtom(parentKey), {
+      ...previewTesting.EMPTY_THREAD_PREVIEW_STATE,
+      desktopByTabId: { "browser-a": agentOverlay },
+    });
+    appAtomRegistry.set(previewStateAtom(subagentKey), {
+      ...previewTesting.EMPTY_THREAD_PREVIEW_STATE,
+      desktopByTabId: { "browser-b": agentOverlay },
+    });
+
+    const browserA: LayoutTabContent = {
+      kind: "surface",
+      threadRef: parentRef,
+      surfaceId: "browser:browser-a",
+    };
+    const diffSurface: LayoutTabContent = {
+      kind: "surface",
+      threadRef: parentRef,
+      surfaceId: "diff",
+    };
+    const browserB: LayoutTabContent = {
+      kind: "surface",
+      threadRef: subagentRef,
+      surfaceId: "browser:browser-b",
+    };
+
+    try {
+      using layout = setup([other, browserA, diffSurface, browserB]);
+      const otherTab = layout.tabOf(other)!;
+      const browserATab = layout.tabOf(browserA)!;
+      const diffTab = layout.tabOf(diffSurface)!;
+      const browserBTab = layout.tabOf(browserB)!;
+
+      // Declining closes nothing — not even the non-surface chat tab — and prompts only once.
+      dialogsConfirmMock.mockResolvedValueOnce(false);
+      closeLayoutTabsByUser([otherTab.id, browserATab.id, diffTab.id, browserBTab.id]);
+      await vi.waitFor(() => expect(dialogsConfirmMock).toHaveBeenCalledTimes(1));
+      expect(dialogsConfirmMock.mock.calls[0]![0]).toContain("2 browsers");
+      expect(layout.tabOf(other)).toBeDefined();
+      expect(useClosedViewStore.getState().entries).toEqual([]);
+      expect(
+        useRightPanelStore
+          .getState()
+          .byThreadKey[parentKey]?.surfaces.some((surface) => surface.id === "browser:browser-a"),
+      ).toBe(true);
+      expect(
+        useRightPanelStore
+          .getState()
+          .byThreadKey[subagentKey]?.surfaces.some((surface) => surface.id === "browser:browser-b"),
+      ).toBe(true);
+
+      // Accepting closes everything after a single prompt.
+      dialogsConfirmMock.mockResolvedValueOnce(true);
+      closeLayoutTabsByUser([otherTab.id, browserATab.id, diffTab.id, browserBTab.id]);
+      await vi.waitFor(() => {
+        expect(layout.tabOf(other)).toBeUndefined();
+        expect(
+          useRightPanelStore
+            .getState()
+            .byThreadKey[parentKey]?.surfaces.some(
+              (surface) => surface.id === "browser:browser-a",
+            ) ?? false,
+        ).toBe(false);
+        expect(
+          useRightPanelStore
+            .getState()
+            .byThreadKey[subagentKey]?.surfaces.some(
+              (surface) => surface.id === "browser:browser-b",
+            ) ?? false,
+        ).toBe(false);
+      });
+      expect(dialogsConfirmMock).toHaveBeenCalledTimes(2);
+    } finally {
+      resetPreviewStateForTests();
+      useRightPanelStore.setState({ byThreadKey: previousPanels });
     }
   });
 });

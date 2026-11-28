@@ -1199,11 +1199,45 @@ export function readThreadSurfaceTerminalTitles(
   return surfaceIds.flatMap((surfaceId) => terminalTitlesForThreadSurface(threadRef, surfaceId));
 }
 
+/** Combined agent-controlled browser confirmation across one or more threads' surface tabs. */
+export function agentControlledBrowserCloseConfirmationForThreads(
+  entries: readonly {
+    readonly threadRef: ScopedThreadRef;
+    readonly surfaceIds: readonly string[];
+  }[],
+): string | null {
+  const agentSurfaces: RightPanelSurface[] = [];
+  const agentDesktopByTabId: Record<string, { controller: "agent" }> = {};
+  for (const { threadRef, surfaceIds } of entries) {
+    if (surfaceIds.length === 0) continue;
+    const panelIds = new Set(surfaceIds.filter((id) => id !== THREAD_TERMINAL_SURFACE_ID));
+    if (panelIds.size === 0) continue;
+    const { desktopByTabId } = readThreadPreviewState(threadRef);
+    const { surfaces } = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      threadRef,
+    );
+    for (const surface of surfaces) {
+      if (
+        !panelIds.has(surface.id) ||
+        surface.kind !== "preview" ||
+        surface.resourceId === null ||
+        desktopByTabId[surface.resourceId]?.controller !== "agent"
+      ) {
+        continue;
+      }
+      agentSurfaces.push(surface);
+      agentDesktopByTabId[surface.resourceId] = { controller: "agent" };
+    }
+  }
+  return agentControlledBrowserCloseConfirmation(agentSurfaces, agentDesktopByTabId);
+}
+
 /** Close a batch of surfaces belonging to one thread atomically via `rightPanelStore.closeSurfaces`. */
 export async function closeThreadSurfaces(
   threadRef: ScopedThreadRef,
   surfaceIds: readonly string[],
-  options: { bulk?: boolean } = {},
+  options: { bulk?: boolean; skipConfirm?: boolean } = {},
 ): Promise<void> {
   if (surfaceIds.length === 0) return;
   if (surfaceIds.length === 1) {
@@ -1216,7 +1250,7 @@ export async function closeThreadSurfaces(
     useRightPanelStore.getState().byThreadKey,
     threadRef,
   ).surfaces.filter((candidate) => panelIds.has(candidate.id));
-  if (surfaces.length > 0) {
+  if (surfaces.length > 0 && !options.skipConfirm) {
     const message = agentControlledBrowserCloseConfirmation(
       surfaces,
       readThreadPreviewState(threadRef).desktopByTabId,
@@ -1228,7 +1262,7 @@ export async function closeThreadSurfaces(
       if (!confirmed) return;
     }
   }
-  if (!options.bulk) {
+  if (!options.bulk && !options.skipConfirm) {
     const [first, ...rest] = readThreadSurfaceTerminalTitles(threadRef, surfaceIds);
     if (first !== undefined && !(await confirmTerminalClose([first, ...rest]))) return;
   }
@@ -1240,7 +1274,11 @@ export async function closeThreadSurfaces(
     );
   }
   if (hasThreadTerminal) {
-    await closeThreadSurface(threadRef, THREAD_TERMINAL_SURFACE_ID, { ...options, bulk: true });
+    await closeThreadSurface(threadRef, THREAD_TERMINAL_SURFACE_ID, {
+      ...options,
+      bulk: true,
+      skipConfirm: true,
+    });
   }
 }
 
@@ -1248,7 +1286,7 @@ export async function closeThreadSurfaces(
 export async function closeThreadSurface(
   threadRef: ScopedThreadRef,
   surfaceId: string,
-  options: { bulk?: boolean } = {},
+  options: { bulk?: boolean; skipConfirm?: boolean } = {},
 ): Promise<void> {
   if (surfaceId === THREAD_TERMINAL_SURFACE_ID) {
     if (readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)) {
@@ -1258,7 +1296,13 @@ export async function closeThreadSurface(
       );
       const [first, ...rest] = readTerminalTabTitles(threadRef, terminalIds);
       if (first !== undefined) {
-        if (!options.bulk && !(await confirmTerminalClose([first, ...rest]))) return;
+        if (
+          !options.bulk &&
+          !options.skipConfirm &&
+          !(await confirmTerminalClose([first, ...rest]))
+        ) {
+          return;
+        }
         surfaceServices?.endTerminals(threadRef, terminalIds);
       }
     }
@@ -1274,7 +1318,7 @@ export async function closeThreadSurface(
     surfaceServices?.cleanup(threadRef, [surface]);
     useRightPanelStore.getState().closeSurface(threadRef, surface.id);
   };
-  if (surface.kind === "preview") {
+  if (surface.kind === "preview" && !options.skipConfirm) {
     const message = agentControlledBrowserCloseConfirmation(
       [surface],
       readThreadPreviewState(threadRef).desktopByTabId,
@@ -1291,6 +1335,7 @@ export async function closeThreadSurface(
   if (
     surface.kind === "terminal" &&
     !options.bulk &&
+    !options.skipConfirm &&
     readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)
   ) {
     const [first = m(msg("Terminal")), ...rest] = readTerminalTabTitles(

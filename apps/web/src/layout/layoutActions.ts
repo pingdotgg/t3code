@@ -2,6 +2,7 @@
  * Layout actions shared by the keyboard, the tab menu and the notch buttons.
  */
 import {
+  agentControlledBrowserCloseConfirmationForThreads,
   closeThreadSurface,
   closeThreadSurfaces,
   readThreadSurfaceTerminalTitles,
@@ -11,6 +12,7 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import { useClosedViewStore, WORKFLOWS_PAGE_REF } from "../closedViewStore";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
+import { readLocalApi } from "../localApi";
 import { getLayoutBehavior } from "./layoutBehavior";
 import {
   canCloseLayoutTab,
@@ -345,24 +347,41 @@ export function closeLayoutTabsByUser(tabIds: readonly string[]): void {
       }
     }
     for (const { threadRef, surfaceIds } of surfacesByThread.values()) {
-      void closeThreadSurfaces(threadRef, surfaceIds, { bulk: true });
+      void closeThreadSurfaces(threadRef, surfaceIds, { bulk: true, skipConfirm: true });
     }
     if (nonSurfaceLocations.length > 0) {
       store.closeTabsByUser(nonSurfaceLocations.map((location) => location.tab.id));
     }
   };
 
-  const terminalLabels = [...initialSurfacesByThread.values()].flatMap(
-    ({ threadRef, surfaceIds }) => readThreadSurfaceTerminalTitles(threadRef, surfaceIds),
-  );
-  const [firstTerminalLabel, ...restTerminalLabels] = terminalLabels;
-  if (firstTerminalLabel !== undefined) {
-    void confirmTerminalClose([firstTerminalLabel, ...restTerminalLabels]).then((confirmed) => {
-      if (confirmed) finish();
-    });
+  const initialThreadSurfaces = [...initialSurfacesByThread.values()];
+  const confirmTerminalsAndFinish = () => {
+    const terminalLabels = initialThreadSurfaces.flatMap(({ threadRef, surfaceIds }) =>
+      readThreadSurfaceTerminalTitles(threadRef, surfaceIds),
+    );
+    const [firstTerminalLabel, ...restTerminalLabels] = terminalLabels;
+    if (firstTerminalLabel !== undefined) {
+      void confirmTerminalClose([firstTerminalLabel, ...restTerminalLabels]).then((confirmed) => {
+        if (confirmed) finish();
+      });
+      return;
+    }
+    finish();
+  };
+
+  const browserMessage = agentControlledBrowserCloseConfirmationForThreads(initialThreadSurfaces);
+  if (browserMessage !== null) {
+    const localApi = readLocalApi();
+    if (!localApi) return;
+    void localApi.dialogs
+      .confirm(browserMessage, { variant: "destructive" })
+      .catch(() => false)
+      .then((confirmed) => {
+        if (confirmed) confirmTerminalsAndFinish();
+      });
     return;
   }
-  finish();
+  confirmTerminalsAndFinish();
 }
 
 /** Close all selected tabs in the tab's pane when `tabId` is selected, otherwise close `tabId`. */
