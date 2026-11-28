@@ -10,6 +10,10 @@ const { version } = JSON.parse(
   fs.readFileSync(path.join(import.meta.dirname, "../package.json"), "utf8"),
 );
 
+// Leave room above current releases while bounding the compressed download.
+// Extraction and other installer writes are separate costs.
+const MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024;
+
 const SUPPORTED = ["darwin-arm64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
 // Well inside launchd's 20 s ExitTimeOut, which SIGKILLs only the launcher and orphans the runtime.
 const TERMINATE_GRACE_MS = 5_000;
@@ -24,11 +28,11 @@ function t3Home() {
 
 const isTransient = (status) => status === 408 || status === 429 || status >= 500;
 
-async function get(url) {
+async function get(url, options) {
   let response;
   for (let attempt = 1; ; attempt++) {
     try {
-      response = await fetch(url);
+      response = await fetch(url, options);
       if (attempt === 4 || !isTransient(response.status)) break;
       await response.body?.cancel();
     } catch (error) {
@@ -46,18 +50,34 @@ async function get(url) {
 }
 
 async function download(url, file) {
-  const response = await get(url);
-  const total = Number(response.headers.get("content-length")) || 0;
-  const hash = crypto.createHash("sha256");
-  const out = fs.openSync(file, "w");
+  const controller = new AbortController();
   const tty = process.stderr.isTTY;
-  let received = 0;
-  let shown = -1;
+  let out;
+  let identity;
+  let complete = false;
   try {
+    const response = await get(url, { signal: controller.signal });
+    const total = Number(response.headers.get("content-length")) || 0;
+    if (total > MAX_DOWNLOAD_BYTES) {
+      throw new Error(`download exceeds ${MAX_DOWNLOAD_BYTES}-byte limit`);
+    }
+    const hash = crypto.createHash("sha256");
+    out = fs.openSync(file, "wx");
+    identity = fs.fstatSync(out, { bigint: true });
+    let received = 0;
+    let shown = -1;
     for await (const chunk of response.body) {
+      if (chunk.byteLength > MAX_DOWNLOAD_BYTES - received) {
+        throw new Error(`download exceeds ${MAX_DOWNLOAD_BYTES}-byte limit`);
+      }
+      let offset = 0;
+      while (offset < chunk.byteLength) {
+        const written = fs.writeSync(out, chunk, offset, chunk.byteLength - offset);
+        if (written === 0) throw new Error(`could not write ${file}`);
+        offset += written;
+        received += written;
+      }
       hash.update(chunk);
-      fs.writeSync(out, chunk);
-      received += chunk.byteLength;
       // Redraw once per percent (or per MB without a length), not per chunk.
       const step = total ? Math.floor((received * 100) / total) : Math.floor(received / 1048576);
       if (tty && step !== shown) {
@@ -68,11 +88,35 @@ async function download(url, file) {
         );
       }
     }
-  } finally {
+    const digest = hash.digest("hex");
     fs.closeSync(out);
-    if (tty) process.stderr.write("\r\x1b[2K");
+    out = undefined;
+    complete = true;
+    return digest;
+  } finally {
+    if (!complete) controller.abort();
+    try {
+      if (out !== undefined) fs.closeSync(out);
+    } finally {
+      if (identity && !complete) {
+        let current;
+        try {
+          current = fs.lstatSync(file, { bigint: true });
+        } catch {
+          // Leave an unidentifiable path to the private staging owner.
+        }
+        if (
+          current?.isFile() &&
+          identity.ino > 0n &&
+          current.dev === identity.dev &&
+          current.ino === identity.ino
+        ) {
+          fs.rmSync(file, { force: true });
+        }
+      }
+      if (tty) process.stderr.write("\r\x1b[2K");
+    }
   }
-  return hash.digest("hex");
 }
 
 async function install(dir, key) {
