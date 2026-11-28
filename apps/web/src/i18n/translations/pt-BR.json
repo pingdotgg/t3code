@@ -8684,6 +8684,8 @@
   "7ee376c7db73ab57": "Vinculado",
   "e9f7a62ecd609a46": "Último contato",
   "70bae47e93a2f207": "Mostrar erro completo",
+  "aaa3bf25fbece2c8": "Faltam letras latinas em \"{font}\"",
+  "1c239d85e067e785": "O texto do T3 Code precisa delas, então a fonte atual foi mantida.",
   "e4099af6d85770ff": "\"{font}\" não é monoespaçada",
   "a8448493d83279e2": "O código e o terminal precisam de uma fonte de largura fixa, então a fonte atual foi mantida.",
   "e8622c39abe68f9d": "padrão",

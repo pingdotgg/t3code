@@ -8685,6 +8685,8 @@
   "7ee376c7db73ab57": "Associé",
   "e9f7a62ecd609a46": "Dernier contact",
   "70bae47e93a2f207": "Afficher l’erreur complète",
+  "aaa3bf25fbece2c8": "Il manque des lettres latines à « {font} »",
+  "1c239d85e067e785": "Le texte de T3 Code en a besoin, la police actuelle a donc été conservée.",
   "e4099af6d85770ff": "« {font} » n’est pas à chasse fixe",
   "a8448493d83279e2": "Le code et le terminal nécessitent une police à chasse fixe, la police actuelle a donc été conservée.",
   "e8622c39abe68f9d": "par défaut",

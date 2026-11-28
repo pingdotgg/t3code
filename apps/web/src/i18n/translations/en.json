@@ -8693,6 +8693,8 @@
   "7ee376c7db73ab57": "Linked",
   "e9f7a62ecd609a46": "Last reached",
   "70bae47e93a2f207": "Show full error",
+  "aaa3bf25fbece2c8": "\"{font}\" is missing Latin letters",
+  "1c239d85e067e785": "T3 Code's text needs them, so the current font was kept.",
   "e4099af6d85770ff": "\"{font}\" isn't monospace",
   "a8448493d83279e2": "Code and terminal need a fixed-width font, so the current font was kept.",
   "e8622c39abe68f9d": "default",

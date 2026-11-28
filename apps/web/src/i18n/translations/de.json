@@ -8686,6 +8686,8 @@
   "7ee376c7db73ab57": "Verknüpft",
   "e9f7a62ecd609a46": "Zuletzt erreicht",
   "70bae47e93a2f207": "Vollständigen Fehler anzeigen",
+  "aaa3bf25fbece2c8": "„{font}“ fehlen lateinische Buchstaben",
+  "1c239d85e067e785": "T3 Code braucht sie für seinen Text, daher wurde die aktuelle Schrift beibehalten.",
   "e4099af6d85770ff": "„{font}“ ist keine Monospace-Schrift",
   "a8448493d83279e2": "Code und Terminal brauchen eine Schrift mit fester Breite, daher wurde die aktuelle Schrift beibehalten.",
   "e8622c39abe68f9d": "Standard",

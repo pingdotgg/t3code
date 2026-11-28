@@ -8692,6 +8692,8 @@
   "7ee376c7db73ab57": "Länkad",
   "e9f7a62ecd609a46": "Senast nådd",
   "70bae47e93a2f207": "Visa hela felet",
+  "aaa3bf25fbece2c8": "”{font}” saknar latinska bokstäver",
+  "1c239d85e067e785": "T3 Codes text behöver dem, så det nuvarande teckensnittet behölls.",
   "e4099af6d85770ff": "”{font}” är inte ett teckensnitt med fast bredd",
   "a8448493d83279e2": "Kod och terminal kräver ett teckensnitt med fast bredd, så det aktuella teckensnittet behölls.",
   "e8622c39abe68f9d": "standard",
