@@ -199,6 +199,7 @@ export type ProjectionRecoveryKind =
 export type ProjectionLimitRecoveryCandidate = Pick<
   OrchestrationV2ThreadShell,
   | "id"
+  | "projectId"
   | "status"
   | "lastErrorClass"
   | "latestRunId"
@@ -686,7 +687,10 @@ export interface ProjectionStoreV2Shape {
   ) => Effect.Effect<OrchestrationV2AppThread | null, ProjectionStoreV2Error>;
   readonly getLimitRecoveryCandidates: (options: {
     readonly now: DateTime.Utc;
+    /** Arms unarmed candidates by default; the project lists flip it, and the worker still decides per candidate. */
     readonly autoResume: boolean;
+    readonly autoResumeEnabledProjectIds?: ReadonlyArray<ProjectId>;
+    readonly autoResumeDisabledProjectIds?: ReadonlyArray<ProjectId>;
     readonly snooze: boolean;
   }) => Effect.Effect<ReadonlyArray<ProjectionLimitRecoveryCandidate>, ProjectionStoreV2Error>;
   /** Epoch ms of the next armed reset or snooze end after `now`, when a waiting thread becomes a candidate. */
@@ -5140,7 +5144,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
                   OR json_extract(t.payload_json, '$.limitRecovery.resetAt') IS NOT json_extract(item.payload_json, '$.failure.resetAt')
                 )
                 AND (
-                  ${booleanInt(options.autoResume)}
+                  CASE
+                    WHEN t.project_id IN (SELECT value FROM json_each(${encodeIdList(options.autoResumeDisabledProjectIds ?? [])})) THEN 0
+                    WHEN t.project_id IN (SELECT value FROM json_each(${encodeIdList(options.autoResumeEnabledProjectIds ?? [])})) THEN 1
+                    ELSE ${booleanInt(options.autoResume)}
+                  END
                   OR (${booleanInt(options.snooze)} AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)}))
                 )
                 -- A subagent of a settled, archived or deleted parent is abandoned work.
@@ -5173,6 +5181,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
           if (summary.lastErrorClass !== "usage_limit") continue;
           candidates.push({
             id: thread.id,
+            projectId: thread.projectId,
             status: "failed",
             lastErrorClass: summary.lastErrorClass,
             usageLimitResetAt: summary.usageLimitResetAt,
