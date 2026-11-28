@@ -2435,6 +2435,26 @@ function acpSubagentHasPendingBackgroundWork(subagent: ActiveAcpSubagent): boole
   );
 }
 
+/**
+ * Finds the tool a root-session permission request names, by its raw ACP toolCallId: on the
+ * root turn first, then on its subagents. Devin sends a subagent's tool and its permission
+ * request on the root session, but the tool is tracked on the subagent. Callers only pass
+ * root-session requests, since tool ids are unique per session, not per turn.
+ */
+function findTrackedTurnToolCall(
+  turn: ActiveAcpTurn,
+  toolCallId: string,
+): AcpToolCallState | undefined {
+  const rootTool = turn.tools.get(toolCallId);
+  if (rootTool !== undefined) return rootTool;
+  for (const subagent of turn.subagents.values()) {
+    for (const tool of subagent.toolState.tools.values()) {
+      if (tool.toolCallId === toolCallId) return tool;
+    }
+  }
+  return undefined;
+}
+
 type AcpCarryoverSubagents = {
   readonly sessionId: string;
   /** The root's subscriber keeps ingesting, so late child terminals can still project. */
@@ -8477,7 +8497,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 trackedTurn !== null && nativeParams.sessionId === (yield* Ref.get(activeSessionId))
                   ? withTrackedPermissionToolCall(
                       nativeParams,
-                      trackedTurn.tools.get(nativeParams.toolCall.toolCallId),
+                      findTrackedTurnToolCall(trackedTurn, nativeParams.toolCall.toolCallId),
                     )
                   : nativeParams;
               const transportRequestId = requestContext.requestId;
@@ -8524,7 +8544,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 );
               const arrivalTool =
                 trackedTurn !== null && params.sessionId === (yield* Ref.get(activeSessionId))
-                  ? trackedTurn.tools.get(params.toolCall.toolCallId)
+                  ? findTrackedTurnToolCall(trackedTurn, params.toolCall.toolCallId)
                   : undefined;
               if (
                 (followsAgentWorkState &&
@@ -8543,8 +8563,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const disposition = dispositionFor(
                     context?.input.runtimePolicy ?? latestRuntimePolicy,
                     policyRequest(
-                      params.sessionId === (yield* Ref.get(activeSessionId))
-                        ? context?.tools.get(params.toolCall.toolCallId)
+                      context !== null && params.sessionId === (yield* Ref.get(activeSessionId))
+                        ? findTrackedTurnToolCall(context, params.toolCall.toolCallId)
                         : undefined,
                     ),
                   );

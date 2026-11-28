@@ -7610,25 +7610,39 @@ describe("AcpAdapterV2", () => {
       requestKind: "other",
       granted: false,
     },
+    {
+      label: "grants an ID-only execute approval for a Devin subagent tool its tracked command",
+      kind: "execute",
+      subagent: true,
+      granted: true,
+    },
   ] as const)("$label", ({ kind, granted, ...testCase }) =>
     Effect.gen(function* () {
+      const isSubagent = "subagent" in testCase && testCase.subagent;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* bundledMockAgentPath;
       type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
       let requestPermission: Parameters<RuntimeService["handleRequestPermission"]>[0] | undefined;
+      let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
       let createTerminal: Parameters<RuntimeService["handleCreateTerminal"]>[0] | undefined;
       let runtimeInput: AcpAdapterV2RuntimeInput | undefined;
       const makeRuntime = makeMockRuntime({
         childProcessSpawner,
         mockAgentPath,
-        environment: { T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG: kind },
+        environment: isSubagent
+          ? { T3_ACP_HANG_PROMPT_FOREVER: "1" }
+          : { T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG: kind },
         wrapRuntime: (runtime) => ({
           ...runtime,
           handleRequestPermission: (handler) =>
             Effect.sync(() => {
               requestPermission = handler;
             }).pipe(Effect.andThen(runtime.handleRequestPermission(handler))),
+          handleSessionUpdate: (handler) =>
+            Effect.sync(() => {
+              sessionUpdate = handler;
+            }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
           handleCreateTerminal: (handler) =>
             Effect.sync(() => {
               createTerminal = handler;
@@ -7642,6 +7656,13 @@ describe("AcpAdapterV2", () => {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
           interruptPromptOnCancel: true,
+          ...(isSubagent
+            ? {
+                normalizeSessionUpdate: normalizeDevinSessionUpdate,
+                normalizeToolCall: normalizeDevinToolCall,
+                extractSubagentUpdate: extractDevinSubagentUpdate,
+              }
+            : {}),
           makeRuntime: (input) =>
             Effect.sync(() => {
               runtimeInput = input;
@@ -7679,14 +7700,59 @@ describe("AcpAdapterV2", () => {
           }),
         )
         .pipe(Effect.forkScoped);
-      if (requestPermission === undefined || createTerminal === undefined) {
-        return yield* Effect.die("ACP runtime must register permission and terminal handlers");
+      if (
+        requestPermission === undefined ||
+        sessionUpdate === undefined ||
+        createTerminal === undefined
+      ) {
+        return yield* Effect.die(
+          "ACP runtime must register permission, session update, and terminal handlers",
+        );
       }
+      if (isSubagent) {
+        // Devin sends the subagent's tool on the root session, tagged with its parent agent.
+        yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "provider_turn.updated"),
+          Stream.runHead,
+        );
+        yield* sessionUpdate({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "child-a",
+            status: "in_progress",
+            _meta: {
+              "cognition.ai/subagent_started": {
+                agentId: "child-a",
+                title: "Inspect repo",
+                task: "Run git status",
+              },
+            },
+          },
+        });
+        yield* sessionUpdate({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tracked-tool-call",
+            title: "git status",
+            kind,
+            status: "pending",
+            rawInput: { command: "git status" },
+            _meta: {
+              "cognition.ai/subagent_context": { parentAgentId: "child-a" },
+            },
+          },
+        });
+      }
+      const expectedNativeToolId = isSubagent
+        ? "child-a:tool:tracked-tool-call"
+        : "tracked-tool-call";
       yield* runtime.events.pipe(
         Stream.filter(
           (event) =>
             event.type === "turn_item.updated" &&
-            event.turnItem.nativeItemRef?.nativeId === "tracked-tool-call",
+            event.turnItem.nativeItemRef?.nativeId === expectedNativeToolId,
         ),
         Stream.runHead,
       );
@@ -7696,12 +7762,21 @@ describe("AcpAdapterV2", () => {
           sessionId: "mock-session-1",
           toolCall: {
             toolCallId: "tracked-tool-call",
+            ...(isSubagent
+              ? {
+                  _meta: {
+                    "cognition.ai/editableCommand": "git status",
+                    "cognition.ai/permissionRule": "Exec(git)",
+                  },
+                }
+              : {}),
             ...("requestKind" in testCase ? { kind: testCase.requestKind } : {}),
           },
           options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
         },
         { requestId: "id-only-permission-request", method: "session/request_permission" },
       ).pipe(Effect.forkScoped);
+
       const approvalEvent = Option.getOrThrow(
         yield* runtime.events.pipe(
           Stream.filter(
