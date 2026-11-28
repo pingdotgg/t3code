@@ -900,7 +900,11 @@ describe("save file", () => {
     using _settings = setup();
     state.file = { relativePath: "notes.txt", contents: "notes", byteLength: 5, truncated: false };
     await using screen = await render(filePreview("notes.txt"));
-    await expect.element(screen.getByRole("button", { name: "Save file" })).toBeVisible();
+    // The redesign keeps Save file in More file actions, beside the large-file Save.
+    await userEvent.click(screen.getByRole("button", { name: "More file actions" }));
+    await expect.element(page.getByRole("menuitem", { name: "Save file" })).toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(page.getByRole("menuitem", { name: "Save file" })).not.toBeInTheDocument();
 
     await screen.rerender(documentPreview("mutation-1", "revision-1"));
     await expect.element(screen.getByTestId("office-preview")).toBeVisible();
