@@ -2,6 +2,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -68,6 +69,25 @@ const layerTest = GitVcsDriver.layer.pipe(
   Layer.provideMerge(layerServerConfig),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
+// Status relaxes its stat check only on a WSL drive mount, so these pin the platform and mounts.
+const layerMountInfoTest = (mountInfo: string) =>
+  GitVcsDriver.layer.pipe(
+    Layer.provideMerge(layerServerConfig),
+    Layer.provideMerge(
+      Layer.effect(
+        FileSystem.FileSystem,
+        Effect.map(FileSystem.FileSystem, (fileSystem) => ({
+          ...fileSystem,
+          readFileString: (path: string, encoding?: string) =>
+            path === "/proc/self/mountinfo"
+              ? Effect.succeed(mountInfo)
+              : fileSystem.readFileString(path, encoding),
+        })),
+      ),
+    ),
+    Layer.provideMerge(Layer.succeed(HostProcess.Platform, "linux")),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
 
 const makeNonRepositoryHandle = () =>
   ChildProcessSpawner.makeHandle({
@@ -463,6 +483,85 @@ it.effect.each(["root", "nested", "worktree"] as const)(
       assert.isFalse(status.hasWorkingTreeChanges);
       assert.include(yield* fs.readFileString(runsPath), "clean");
     }).pipe(Effect.provide(layerTest)),
+);
+
+// Same size and mtime, new inode: what Linux Git sees in an index written by Git for Windows.
+const wslMountInfo = (driveMountPoint: string) =>
+  [
+    "1 0 8:32 / / rw,relatime - ext4 /dev/sdc rw",
+    `2 1 0:52 / ${driveMountPoint} rw,noatime - 9p C:\\134 rw,aname=drvfs;path=C:\\;uid=1000`,
+  ].join("\n");
+
+// Fixed before the layer reads mounts; real so macOS's symlinked tmpdir still sits under it.
+const wslDriveDir = NodePath.join(
+  NodeFS.realpathSync(NodeOS.tmpdir()),
+  `git-vcs-driver-wsl-drive-${process.pid}`,
+);
+
+const replaceKeepingStat = (filePath: string, contents: string) => {
+  NodeFS.writeFileSync(`${filePath}.copy`, contents);
+  NodeFS.utimesSync(`${filePath}.copy`, 1, 1);
+  NodeFS.renameSync(`${filePath}.copy`, filePath);
+};
+
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "does not re-read a file that only differs from the index by inode on a WSL drive mount",
+  () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(wslDriveDir, { recursive: true });
+      yield* Effect.addFinalizer(() =>
+        fs.remove(wslDriveDir, { recursive: true }).pipe(Effect.ignore),
+      );
+      const cwd = yield* fs.makeTempDirectoryScoped({ directory: wslDriveDir });
+      yield* initRepoWithCommit(cwd);
+      yield* git(cwd, ["config", "filter.probe.clean", "echo clean >> .filter-runs; cat"]);
+      yield* writeTextFile(cwd, ".gitattributes", "asset.bin filter=probe\n");
+      yield* writeTextFile(cwd, ".gitignore", ".filter-runs\n");
+      yield* writeTextFile(cwd, "asset.bin", "original\n");
+      const assetPath = path.join(cwd, "asset.bin");
+      // An mtime older than the index keeps Git's racy-entry check from reading the file anyway.
+      NodeFS.utimesSync(assetPath, 1, 1);
+      yield* git(cwd, ["add", "."]);
+      yield* git(cwd, ["commit", "-m", "filtered asset"]);
+      replaceKeepingStat(assetPath, "original\n");
+      const runsPath = path.join(cwd, ".filter-runs");
+      yield* fs.remove(runsPath, { force: true });
+
+      const alias = path.join(yield* makeTmpDir(), "alias");
+      NodeFS.symlinkSync(cwd, alias);
+
+      const status = yield* driver.statusDetailsLocal(alias, { includeBranchChanges: true });
+
+      assert.isFalse(status.hasWorkingTreeChanges);
+      assert.isFalse(yield* fs.exists(runsPath));
+    }).pipe(Effect.provide(layerMountInfoTest(wslMountInfo(wslDriveDir)))),
+);
+
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "reports a same-size replacement that kept its mtime in a WSL distro-local clone",
+  () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const path = yield* Path.Path;
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      yield* writeTextFile(cwd, "asset.txt", "original\n");
+      const assetPath = path.join(cwd, "asset.txt");
+      NodeFS.utimesSync(assetPath, 1, 1);
+      yield* git(cwd, ["add", "."]);
+      yield* git(cwd, ["commit", "-m", "asset"]);
+      replaceKeepingStat(assetPath, "modified\n");
+
+      const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+
+      assert.isTrue(status.hasWorkingTreeChanges);
+      assert.deepStrictEqual(status.workingTree.files, [
+        { path: "asset.txt", insertions: 1, deletions: 1 },
+      ]);
+    }).pipe(Effect.provide(layerMountInfoTest(wslMountInfo("/mnt/c")))),
 );
 
 it.effect.each(["origin", "github"] as const)(
