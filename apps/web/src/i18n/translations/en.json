@@ -9937,6 +9937,8 @@
   "71d8554090924454": "Checkout path is required",
   "a34b72de0ff1cbd0": "Enter the path of the checkout to run in.",
   "99a8c45121157edd": "Could not save scheduled task",
+  "e277eba20601ca41": "Could not delete scheduled task",
+  "fdf273ca647a967f": "Delete",
   "1b30548ce8e56b75": "Edit task",
   "40c503999bce960e": "New task",
   "adeba4f2153a83d7": "Runs on",

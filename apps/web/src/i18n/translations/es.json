@@ -9926,6 +9926,8 @@
   "71d8554090924454": "Se requiere la ruta del checkout",
   "a34b72de0ff1cbd0": "Introduce la ruta del checkout donde ejecutar.",
   "99a8c45121157edd": "No se pudo guardar la tarea programada",
+  "e277eba20601ca41": "No se pudo eliminar la tarea programada",
+  "fdf273ca647a967f": "Eliminar",
   "1b30548ce8e56b75": "Editar tarea",
   "40c503999bce960e": "Nueva tarea",
   "adeba4f2153a83d7": "Se ejecuta en",
