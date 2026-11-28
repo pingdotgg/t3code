@@ -1102,20 +1102,23 @@ const makePendingCodexProvider = Effect.fn("CodexProvider.makePendingCodexProvid
     });
   }
 
-  return buildServerProvider({
-    presentation: CODEX_PRESENTATION,
-    enabled: true,
-    checkedAt,
-    models,
-    skills: [],
-    probe: {
-      installed: false,
-      version: null,
-      status: "checking",
-      auth: { status: "unknown" },
-      message: "Codex provider status has not been checked in this session yet.",
-    },
-  });
+  return {
+    ...buildServerProvider({
+      presentation: CODEX_PRESENTATION,
+      enabled: true,
+      checkedAt,
+      models,
+      skills: [],
+      probe: {
+        installed: false,
+        version: null,
+        status: "warning",
+        auth: { status: "unknown" },
+        message: "Codex provider status has not been checked in this session yet.",
+      },
+    }),
+    checking: true,
+  };
 });
 
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));

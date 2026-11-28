@@ -27,12 +27,14 @@ describe("getProviderSummary", () => {
     const checking: ServerProvider = {
       ...provider,
       installed: false,
-      status: "checking",
+      status: "warning",
+      checking: true,
       auth: { status: "unknown" },
     };
+    const { checking: _checking, ...checked } = checking;
     expect(getProviderStatusKey(checking)).toBe("neutral");
     expect(getProviderSummary(checking).headline).toBe("Checking provider status");
-    expect(getProviderSummary({ ...checking, status: "error" }).headline).toBe("Not found");
+    expect(getProviderSummary(checked).headline).toBe("Not found");
     expect(getProviderSummary({ ...checking, enabled: false }).headline).toBe("Disabled");
   });
 

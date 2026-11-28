@@ -43,13 +43,14 @@ describe("provider status banners", () => {
       ...base,
       installed: false,
       version: null,
-      status: "checking",
+      status: "warning",
+      checking: true,
       auth: { status: "unknown" },
       message: "Codex provider status has not been checked in this session yet.",
     };
+    const { checking: _checking, ...checked } = checking;
     expect(shouldShowProviderStatusBanner(checking, false)).toBe(false);
-    expect(shouldShowProviderStatusBanner({ ...checking, status: "warning" }, false)).toBe(true);
-    expect(shouldShowProviderStatusBanner({ ...checking, status: "error" }, false)).toBe(true);
+    expect(shouldShowProviderStatusBanner(checked, false)).toBe(true);
     expect(
       shouldShowProviderStatusBanner(
         {

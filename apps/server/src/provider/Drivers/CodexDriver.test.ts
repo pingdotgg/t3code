@@ -297,7 +297,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
         yield* instance.auth!.logout(Effect.void);
         const after = Option.getOrThrow(yield* Fiber.join(disconnected));
         expect(after.auth.status).toBe("unauthenticated");
-        expect(after.status).toBe("warning");
+        expect(after.checking).toBeUndefined();
         expect(after.auth.email).toBeUndefined();
         expect(after.installed).toBe(true);
         expect(after.models).toEqual([]);

@@ -947,19 +947,22 @@ export const makePendingClaudeProvider = Effect.fn("ClaudeProvider.makePendingCl
       });
     }
 
-    return buildServerProvider({
-      presentation: CLAUDE_PRESENTATION,
-      enabled: true,
-      checkedAt,
-      models,
-      probe: {
-        installed: false,
-        version: null,
-        status: "checking",
-        auth: { status: "unknown" },
-        message: "Claude provider status has not been checked in this session yet.",
-      },
-    });
+    return {
+      ...buildServerProvider({
+        presentation: CLAUDE_PRESENTATION,
+        enabled: true,
+        checkedAt,
+        models,
+        probe: {
+          installed: false,
+          version: null,
+          status: "warning",
+          auth: { status: "unknown" },
+          message: "Claude provider status has not been checked in this session yet.",
+        },
+      }),
+      checking: true,
+    };
   },
 );
 

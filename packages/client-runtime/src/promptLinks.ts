@@ -88,7 +88,7 @@ export function pickPromptLinkPullRequestThread(
 const PROVIDER_ALIASES: Record<string, string> = { claude: "claudeagent" };
 
 /**
- * Ready instances are searched before warning or checking ones for the requested model. `exact` is
+ * Ready instances are searched before warning ones for the requested model. `exact` is
  * false when none offers it, so the first instance's default model stands in. Null when no
  * usable instance of that provider exists; the user's default applies then.
  */
@@ -111,7 +111,7 @@ export function resolvePromptLinkModelSelection(
   );
   const candidates = [
     ...usable.filter((provider) => provider.status === "ready"),
-    ...usable.filter((provider) => provider.status === "warning" || provider.status === "checking"),
+    ...usable.filter((provider) => provider.status === "warning"),
   ];
   const fallback = candidates[0];
   if (fallback === undefined) return null;

@@ -2052,7 +2052,7 @@ it.layer(
       } satisfies ServerProvider;
       const pendingProvider = {
         ...cachedProvider,
-        status: "checking",
+        status: "warning",
         installed: false,
         auth: { status: "unknown" },
         models: [customModel],
@@ -4541,9 +4541,7 @@ it.layer(
           assert.deepStrictEqual(spawnedCommands, [firstMissing]);
 
           const pendingRebuild = yield* Stream.toPull(
-            codexSnapshots.pipe(
-              Stream.filter((provider) => provider.status === "checking" && !provider.installed),
-            ),
+            codexSnapshots.pipe(Stream.filter((provider) => provider.checking === true)),
           );
           yield* serverSettings.updateSettings({
             providerInstances: {
@@ -4567,6 +4565,7 @@ it.layer(
           assert.deepStrictEqual(spawnedCommands, [firstMissing, secondMissing]);
           assert.strictEqual(reprobedCodex?.status, "error");
           assert.strictEqual(reprobedCodex?.installed, false);
+          assert.strictEqual(reprobedCodex?.checking, undefined);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

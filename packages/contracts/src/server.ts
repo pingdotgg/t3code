@@ -51,13 +51,7 @@ export type ServerConfigIssue = typeof ServerConfigIssue.Type;
 
 const ServerConfigIssues = ForwardCompatibleArray(ServerConfigIssue);
 
-export const ServerProviderState = Schema.Literals([
-  "checking",
-  "ready",
-  "warning",
-  "error",
-  "disabled",
-]);
+export const ServerProviderState = Schema.Literals(["ready", "warning", "error", "disabled"]);
 export type ServerProviderState = typeof ServerProviderState.Type;
 
 export const ServerProviderAuthStatus = Schema.Literals([
@@ -318,6 +312,9 @@ export const ServerProvider = Schema.Struct({
   modelsRetained: Schema.optionalKey(Schema.Boolean),
   // Set by a ready check whose `models` may lack some the provider still offers, so they are kept.
   modelsIncomplete: Schema.optionalKey(Schema.Boolean),
+  // Set while the first check of this session runs. `status` stays `warning` so clients that
+  // predate this field keep reading the provider.
+  checking: Schema.optionalKey(Schema.Boolean),
   // Kept apart from `models` so clients that predate it never offer them.
   updateRequiredModels: Schema.optionalKey(Schema.Array(ServerProviderUpdateRequiredModel)),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(

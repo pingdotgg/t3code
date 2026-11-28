@@ -377,7 +377,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                             </Text>
                           </View>
                           <Text className="text-sm text-foreground-muted">
-                            {provider.status === "checking"
+                            {provider.checking
                               ? gt("Checking provider status")
                               : provider.versionAdvisory?.latestVersion
                                 ? gt("{version} · Latest {latest}", {

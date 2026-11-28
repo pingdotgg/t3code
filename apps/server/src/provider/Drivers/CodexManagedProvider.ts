@@ -73,7 +73,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   const check = Effect.gen(function* () {
     const base = yield* pending;
     if (!enabled) return base;
-    const checkedBase = { ...base, status: "warning" as const };
+    const { checking: _checking, ...checkedBase } = base;
     const executable = yield* runtime.installation.resolve().pipe(Effect.option);
     if (Option.isNone(executable))
       return {

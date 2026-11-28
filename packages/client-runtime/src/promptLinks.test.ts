@@ -129,7 +129,7 @@ describe("resolvePromptLinkModelSelection", () => {
   const provider = (
     instanceId: string,
     driver: string,
-    status: "checking" | "ready" | "warning" | "error" | "disabled" = "ready",
+    status: "ready" | "warning" | "error" | "disabled" = "ready",
     models: ReadonlyArray<{
       readonly slug: string;
       readonly name: string;
@@ -174,20 +174,10 @@ describe("resolvePromptLinkModelSelection", () => {
     expect(
       resolvePromptLinkModelSelection(providers, { provider: "cursor", model: null }),
     ).toBeNull();
-    expect(
-      resolvePromptLinkModelSelection([provider("codex", "codex", "checking")], {
-        provider: "codex",
-        model: "small",
-      }),
-    ).toEqual({ selection: { instanceId: "codex", model: "small" }, exact: true });
   });
 
-  it("searches ready instances before warning or checking instances for the requested model", () => {
+  it("checks other usable instances in ready-before-warning order for the requested model", () => {
     const providers = [
-      provider("pending", "codex", "checking", [
-        { slug: "work-only", name: "Work Only" },
-        { slug: "pending-only", name: "Pending Only" },
-      ]),
       provider("warn", "codex", "warning", [
         { slug: "work-only", name: "Work Only", isDefault: true },
         { slug: "warn-only", name: "Warn Only" },
@@ -209,12 +199,6 @@ describe("resolvePromptLinkModelSelection", () => {
       resolvePromptLinkModelSelection(providers, { provider: "codex", model: "warn-only" }),
     ).toEqual({
       selection: { instanceId: "warn", model: "warn-only" },
-      exact: true,
-    });
-    expect(
-      resolvePromptLinkModelSelection(providers, { provider: "codex", model: "pending-only" }),
-    ).toEqual({
-      selection: { instanceId: "pending", model: "pending-only" },
       exact: true,
     });
     expect(

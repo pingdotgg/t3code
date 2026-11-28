@@ -265,7 +265,7 @@ function ProviderAccount({
       ? state.message
       : !provider.enabled
         ? gt("Turned off")
-        : provider.status === "checking"
+        : provider.checking
           ? gt("Checking provider status")
           : signedIn
             ? gt("Signed in")
