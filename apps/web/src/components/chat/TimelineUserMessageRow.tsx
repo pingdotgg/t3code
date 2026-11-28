@@ -303,10 +303,9 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   const [expanded, setExpanded] = useState(false);
   const revealRef = findRevealRef(() => setExpanded(true));
   const { text, scheduledTaskId } = resolveUserMessagePresentation(row.message);
-  const summary =
-    useScheduledTaskTitle(ctx.activeThreadEnvironmentId, scheduledTaskId) ??
-    text.trim().split(/\r?\n/, 1)[0] ??
-    "";
+  const taskTitle = useScheduledTaskTitle(ctx.activeThreadEnvironmentId, scheduledTaskId);
+  // Expanded, the prompt's first line is already the top of the body.
+  const summary = taskTitle ?? (expanded ? "" : (text.trim().split(/\r?\n/, 1)[0] ?? ""));
 
   const revertTurnCount = row.revertTurnCount;
   const promptLink = promptLinkFor(text);
@@ -421,14 +420,20 @@ export function FoldedMessageHeader(props: {
       <Icon className="size-4 shrink-0 stroke-2 text-muted-foreground" />
       <span
         className={cn(
-          "shrink-0 text-muted-foreground",
-          props.fitLabel !== true && "max-w-1/2 truncate",
+          "text-muted-foreground",
+          !props.summary
+            ? "min-w-0 flex-1 truncate"
+            : props.fitLabel === true
+              ? "shrink-0"
+              : "max-w-1/2 shrink-0 truncate",
         )}
       >
         {props.label}
       </span>
       {/* Mentioned macOS paths can be NFD; compose them like the chips in the body. */}
-      <span className="min-w-0 flex-1 truncate">{props.summary.normalize("NFC")}</span>
+      {props.summary ? (
+        <span className="min-w-0 flex-1 truncate">{props.summary.normalize("NFC")}</span>
+      ) : null}
       <ChevronDownIcon
         className={cn(
           "size-3.5 shrink-0 text-muted-foreground transition-transform",
@@ -963,7 +968,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             icon={MessagesSquareIcon}
             label={senderLabel}
             fitLabel={!senderTitle}
-            summary={foldSummary}
+            summary={expanded ? "" : foldSummary}
             expanded={expanded}
             onToggle={() => setExpanded((value) => !value)}
           />
