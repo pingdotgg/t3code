@@ -5737,5 +5737,6 @@
   "6b7765835778dc77": "Alle Dateien sind ausgeblendet",
   "bd2cfcb7be24cd38": "Angesehene Dateien sind in diesem Review ausgeblendet.",
   "6ae1484aa5bd2bc8": "Angesehene Dateien anzeigen",
-  "15db3431c35d4927": "{count, plural, one {{count} angesehene ausgeblendet} other {{count} angesehene ausgeblendet}}"
+  "15db3431c35d4927": "{count, plural, one {{count} angesehene ausgeblendet} other {{count} angesehene ausgeblendet}}",
+  "2461bdd8e58e0a72": "T3 Connect-Umgebungen können hier nicht umbenannt werden."
 }
