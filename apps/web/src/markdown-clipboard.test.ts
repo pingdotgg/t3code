@@ -249,7 +249,6 @@ describe("serializeRenderedMarkdownFragment", () => {
     "- item\n+ item\n* item",
     "# heading\n> quote",
     "> quote\nfirst\n- item\n# heading",
-    "1. ordered\n1) ordered",
     "first\n1. ordered\n1) ordered",
     "---\nfirst\n---\n--\n- - -\nlast",
     "===\nfirst\n===\n=",

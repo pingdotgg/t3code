@@ -74,12 +74,15 @@ export function serializeCodeBlockToMarkdown(source: string, language: string | 
 // Brackets copied code so tidyMarkdown leaves its whitespace alone. Code is
 // copied as shown, without fences; DOM text from rendered markdown carries no NUL.
 const CODE_BOUNDARY = "\u0000";
+// An empty code part before a marker the serializer writes keeps escapeBlockStarts off it.
 const BLOCK_GUARD = `${CODE_BOUNDARY}${CODE_BOUNDARY}`;
 // CommonMark/GFM block starts: headings, quotes, lists, rules, setext, fences, table delimiters.
 const BLOCK_START =
   /\u0000[\s\S]*?\u0000|^([ \t]*)(?![ \t])(?:((?:\*[ \t]*){3,}$|(?:_[ \t]*){3,}$|~{3,})|\d{1,9}(?=[.)](?:[ \t]|$))|(?=#{1,6}(?:[ \t]|$)|>|[-+*](?:[ \t]|$)|=+[ \t]*$|(?:-[ \t]*){2,}$|(?:\|[ \t]*)?:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*(?:\|[ \t]*)?$))/gm;
-const escapeBlockStart = (m: string, p?: string, r?: string) =>
-  p === undefined ? m : r ? `${p}${r.replace(/[*_~]/g, "\\$&")}` : `${m}\\`;
+const escapeBlockStart = (match: string, indent?: string, rule?: string) => {
+  if (indent === undefined) return match;
+  return rule ? `${indent}${rule.replace(/[*_~]/g, "\\$&")}` : `${match}\\`;
+};
 const escapeBlockStarts = (text: string) => text.replace(BLOCK_START, escapeBlockStart);
 const protectVerbatim = (text: string) =>
   text ? CODE_BOUNDARY + text.replace(/(?<!\n)\n*$/, `${CODE_BOUNDARY}$&`) : "";
