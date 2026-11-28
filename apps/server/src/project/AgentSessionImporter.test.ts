@@ -705,6 +705,60 @@ it.effect("re-import leaves an import thread that has runs at its stored message
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
+const deleteImportedThread = Effect.fn(function* (threadId: ThreadId) {
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const sink = yield* EventSink.EventSinkV2;
+  const { thread } = yield* projections.getThreadRecords(threadId, []);
+  yield* sink.write({
+    events: [
+      {
+        id: EventId.make(`${threadId}:deleted`),
+        type: "thread.deleted",
+        threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: { ...thread, deletedAt: now, updatedAt: now },
+      },
+    ],
+  });
+});
+
+it.effect.each(["unchanged", "continued"] as const)(
+  "re-import brings back a deleted imported thread whose transcript is %s",
+  (transcript) =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const first = candidate(
+        CLAUDE_MODEL_SELECTION,
+        "8b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
+        "claudeAgent",
+      );
+      const threadId = importId(first);
+      yield* (yield* makeImporter([first])).run;
+      yield* deleteImportedThread(threadId);
+      expect(yield* projections.countThreads()).toBe(0);
+
+      const again = candidate(
+        CLAUDE_MODEL_SELECTION,
+        first.source.providerSessionId,
+        "claudeAgent",
+      );
+      if (transcript === "continued") {
+        again.source.size = 200;
+        again.source.mtimeMs = 3;
+        again.thread.messages.push(
+          { role: "user", text: "Continue in the CLI", createdAt: timestamp },
+          { role: "assistant", text: "Continued in the CLI", createdAt: timestamp },
+        );
+      }
+      yield* (yield* makeImporter(
+        transcript === "unchanged" ? [{ _tag: "AlreadyImported", source: first.source }] : [again],
+      )).run;
+
+      expect(yield* projections.countThreads()).toBe(1);
+    }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
 it.effect(
   "copies native session history into the imported thread once, retrying a failed read",
   () =>
