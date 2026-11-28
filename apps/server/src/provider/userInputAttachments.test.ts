@@ -1416,6 +1416,27 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "word/document.xml":
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl>' +
+              '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>Current route</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Status</w:t></w:r></w:p></w:tc></w:tr>' +
+              '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vMerge/></w:tcPr><w:p><w:r><w:t>Old west route</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Open</w:t></w:r></w:p></w:tc></w:tr>' +
+              '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vMerge w:val="continue"/></w:tcPr><w:p><w:r><w:t>Old east route</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Confirmed</w:t></w:r></w:p></w:tc></w:tr>' +
+              "<w:tr><w:tc><w:p><w:r><w:t>Next route</w:t></w:r></w:p></w:tc></w:tr>" +
+              "<w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p><w:r><w:t>Orphan route</w:t></w:r></w:p></w:tc></w:tr>" +
+              '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vMerge w:val="restart"/></w:tcPr><w:p/></w:tc></w:tr>' +
+              '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vMerge/></w:tcPr><w:p/></w:tc></w:tr>' +
+              '<w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/><w:vMerge/></w:tcPr><w:p><w:r><w:t>Old central route</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>After blank rows</w:t></w:r></w:p></w:tc></w:tr>' +
+              "<w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p><w:r><w:t>Width changes</w:t></w:r></w:p></w:tc></w:tr>" +
+              "</w:tbl></w:body></w:document>",
+          },
+          expected: [],
+          exact:
+            "Current route\t\tStatus\n\t\tOpen\n\t\tConfirmed\nNext route\nOrphan route\n\t\tAfter blank rows\nWidth changes",
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
               '<w:document xmlns:w="urn:w"><w:body><w:tbl>' +
               "<w:tr><w:tc><w:p><w:r><w:t>Kept</w:t></w:r></w:p></w:tc></w:tr>" +
               '<w:tr><w:trPr><w:gridBefore w:val="512"/></w:trPr><w:tc><w:p><w:r><w:t>Far</w:t></w:r></w:p></w:tc></w:tr>' +
