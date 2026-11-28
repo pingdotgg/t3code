@@ -4,6 +4,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as AcpWireSchema from "effect-acp/schema-v1";
 
 import {
+  extractAntigravityElicitationForm,
   extractAntigravityUserInputQuestion,
   antigravityApprovalOptions,
   antigravitySubagentOutput,
@@ -334,6 +335,134 @@ describe("Antigravity permissions and questions", () => {
     expect(
       makeAntigravityUserInputResponse(request, { interaction_9960062f: label + "..." }),
     ).toEqual({ outcome: { outcome: "selected", optionId: "stable-choice" } });
+  });
+
+  // The ask_question form agy 1.5.14+ sends: 1-based `qN` choices, each with a `qN_other` field.
+  const singleChoiceField = {
+    type: "string",
+    title: "Which deploy target should we use?",
+    oneOf: [
+      { const: "1", title: "staging", description: "Shared test cluster" },
+      { const: "2", title: "production" },
+    ],
+  };
+  const multiChoiceField = {
+    type: "array",
+    title: "Which verification stages should run automatically?",
+    items: {
+      anyOf: [
+        { const: "1", title: "Type checking" },
+        { const: "2", title: "Unit tests" },
+        { const: "3", title: "Fuzzing" },
+      ],
+    },
+  };
+  const otherField = (question: string) => ({
+    type: "string",
+    title: "Other",
+    description: `Optional free-form answer to: ${question}`,
+  });
+  const askQuestion = (properties: Record<string, unknown>) =>
+    extractAntigravityElicitationForm({
+      sessionId: "session-1",
+      mode: "form",
+      message: "The agent has 3 questions.",
+      requestedSchema: { type: "object", properties },
+    } as EffectAcpSchema.CreateElicitationRequest);
+  const twoQuestions = () =>
+    askQuestion({
+      q1: singleChoiceField,
+      q1_other: otherField(singleChoiceField.title),
+      q2: multiChoiceField,
+      q2_other: otherField(multiChoiceField.title),
+    });
+
+  it("asks each ask_question question once, in numeric order, with typed replies to qN_other", () => {
+    const form = askQuestion({
+      q1: singleChoiceField,
+      q1_other: otherField(singleChoiceField.title),
+      q10: { type: "string", title: "Ship it?", oneOf: [{ const: "1", title: "Yes" }] },
+      q10_other: otherField("Ship it?"),
+      q2: multiChoiceField,
+      q2_other: otherField(multiChoiceField.title),
+    });
+
+    expect(form?.questions).toEqual([
+      {
+        id: "q1",
+        header: "Question 1",
+        question: singleChoiceField.title,
+        options: [
+          { label: "staging", value: "1", description: "Shared test cluster" },
+          { label: "production", value: "2", description: "production" },
+        ],
+        required: false,
+      },
+      {
+        id: "q2",
+        header: "Question 2",
+        question: multiChoiceField.title,
+        options: [
+          { label: "Type checking", value: "1", description: "Type checking" },
+          { label: "Unit tests", value: "2", description: "Unit tests" },
+          { label: "Fuzzing", value: "3", description: "Fuzzing" },
+        ],
+        allowCustomAnswer: true,
+        multiSelect: true,
+      },
+      {
+        id: "q10",
+        header: "Question 3",
+        question: "Ship it?",
+        options: [{ label: "Yes", value: "1", description: "Yes" }],
+        required: false,
+      },
+    ]);
+    expect(form?.respond({ q1: "2", q2: ["1", "3"], q10: "1" })).toEqual({
+      action: "accept",
+      content: { q1: "2", q2: ["1", "3"], q10: "1" },
+    });
+    // q10 is optional in agy's schema, so skipping it still sends the other answers.
+    expect(form?.respond({ q1: "Use canary", q2: "Only integration checks" })).toEqual({
+      action: "accept",
+      content: { q1_other: "Use canary", q2_other: "Only integration checks" },
+    });
+  });
+
+  it("keeps a chosen ask_question option on qN and sends its attachments as qN_other", () => {
+    const form = twoQuestions();
+    const imageRef = 'Attached image "shot.png": "/tmp/shot.png"';
+    const fileRef = 'Attached file "spec.txt": "/tmp/spec.txt"';
+
+    expect(form?.respond({ q1: `1\n\n${imageRef}`, q2: ["1", "3", fileRef] })).toEqual({
+      action: "accept",
+      content: { q1: "1", q1_other: imageRef, q2: ["1", "3"], q2_other: fileRef },
+    });
+    expect(form?.respond({ q1: imageRef, q2: fileRef })).toEqual({
+      action: "accept",
+      content: { q1_other: imageRef, q2_other: fileRef },
+    });
+  });
+
+  it("keeps a multi-select's qN_other as its own question unless it is agy's Other field", () => {
+    const form = askQuestion({
+      q1: multiChoiceField,
+      q1_other: { type: "string", title: "Which stage is flaky?" },
+    });
+    const followUp = askQuestion({
+      q1: multiChoiceField,
+      q1_other: otherField("Why are checks disabled in production?"),
+    });
+
+    expect(form?.questions.map((question) => question.id)).toEqual(["q1", "q1_other"]);
+    expect(followUp?.questions.map((question) => question.id)).toEqual(["q1", "q1_other"]);
+  });
+
+  it.each([
+    ["an array for a single choice", { q1: ["1"], q2: ["1"] }],
+    ["an unknown option in a multi-select", { q1: "1", q2: ["1", "unknown"] }],
+  ])("cancels an ask_question answer with %s", (_, answers) => {
+    expect(twoQuestions()?.respond(answers)).toEqual({ action: "cancel" });
   });
 });
 

@@ -178,13 +178,33 @@ export function extractAntigravityUserInputQuestion(
 }
 
 const isAskQuestionForm = Schema.is(
-  Schema.Struct({ properties: Schema.Record(Schema.String, Schema.Unknown) }),
+  Schema.Struct({
+    properties: Schema.Record(Schema.String, Schema.Unknown),
+    required: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+  }),
 );
 const isAskQuestionField = Schema.is(
   Schema.Struct({ title: Schema.String, description: Schema.optional(Schema.String) }),
 );
+const isOtherTextField = Schema.is(
+  Schema.Struct({
+    type: Schema.Literal("string"),
+    title: Schema.Literal("Other"),
+    description: Schema.String,
+    enum: Schema.optional(Schema.Null),
+    oneOf: Schema.optional(Schema.Null),
+  }),
+);
 
-/** agy's ask_question puts each question in its field's title and a count in the message. */
+const ASK_QUESTION_ID = /^q(\d+)$/;
+// The file references `appendUserInputAttachmentPaths` appends to an answer.
+const ATTACHMENT_REFERENCE = /^Attached (?:image|file) "(?:\\.|[^"\\\r\n])*": "/;
+
+/**
+ * agy's ask_question sends each question as choice `qN` with an optional `qN_other` text field,
+ * the question in the field's title, keys in lexical order (q1, q10, q2), and a count in the
+ * message. agy appends `qN_other` to the chosen options, so attachment notes go there.
+ */
 export const extractAntigravityElicitationForm: NonNullable<
   AcpAdapterV2Flavor["extractElicitationForm"]
 > = (request) => {
@@ -192,17 +212,88 @@ export const extractAntigravityElicitationForm: NonNullable<
   const form = parseElicitationForm(request.requestedSchema, request.message);
   if (form === undefined) return undefined;
   const { properties } = request.requestedSchema;
+  const required = new Set(request.requestedSchema.required ?? []);
+  const askedIds = new Set(form.questions.map((question) => question.id));
+
+  // The shared parser folds a single choice's companion; fold a multi-select's here too.
+  const companions = new Map<string, string>();
+  const foldedIds = new Set<string>();
+  for (const question of form.questions) {
+    const companionId = `${question.id}_other`;
+    if (question.options.length === 0 || !Object.hasOwn(properties, companionId)) continue;
+    const field = properties[question.id];
+    const companion = properties[companionId];
+    if (!question.multiSelect) {
+      if (!askedIds.has(companionId)) companions.set(question.id, companionId);
+    } else if (
+      !required.has(question.id) &&
+      !required.has(companionId) &&
+      isOtherTextField(companion) &&
+      isAskQuestionField(field) &&
+      companion.description === `Optional free-form answer to: ${field.title}`
+    ) {
+      companions.set(question.id, companionId);
+      foldedIds.add(companionId);
+    }
+  }
+
+  const visible = form.questions.filter((question) => !foldedIds.has(question.id));
+  const ordered = visible.every((question) => ASK_QUESTION_ID.test(question.id))
+    ? visible.toSorted((left, right) => Number(left.id.slice(1)) - Number(right.id.slice(1)))
+    : visible;
+  const questions = ordered.map((parsed, index) => {
+    const question =
+      parsed.multiSelect && companions.has(parsed.id)
+        ? { ...parsed, allowCustomAnswer: true }
+        : parsed;
+    const field = properties[question.id];
+    if (!isAskQuestionField(field) || field.description?.trim() || !field.title.trim()) {
+      return question;
+    }
+    return { ...question, header: `Question ${index + 1}`, question: field.title.trim() };
+  });
+
   return {
-    questions: form.questions.map((question, index) => {
-      const field = properties[question.id];
-      if (!isAskQuestionField(field) || field.description?.trim() || !field.title.trim()) {
-        return question;
-      }
-      return { ...question, header: `Question ${index + 1}`, question: field.title.trim() };
-    }),
+    questions,
     respond: (answers) => {
-      const content = form.content(answers);
-      return content === undefined ? { action: "cancel" } : { action: "accept", content };
+      const prepared: Record<string, unknown> = { ...answers };
+      const notes: Array<[string, string]> = [];
+      for (const question of questions) {
+        const companionId = companions.get(question.id);
+        if (companionId === undefined || !Object.hasOwn(answers, question.id)) continue;
+        const answer = answers[question.id];
+        const values = new Set(question.options.map((option) => option.value ?? option.label));
+        if (question.multiSelect && typeof answer === "string") {
+          prepared[question.id] = undefined;
+          prepared[companionId] = answer;
+        } else if (question.multiSelect && Array.isArray(answer)) {
+          const extra = answer.filter((item) => !values.has(item));
+          if (extra.length === 0) continue;
+          if (!extra.every((item) => typeof item === "string" && ATTACHMENT_REFERENCE.test(item))) {
+            return { action: "cancel" };
+          }
+          const selected = answer.filter((item) => values.has(item));
+          prepared[question.id] = selected.length > 0 ? selected : undefined;
+          prepared[companionId] = extra.join("\n");
+        } else if (typeof answer === "string") {
+          if (values.has(answer)) continue;
+          // A choice with attachments arrives as `<value>\n\n<references>`.
+          const value = [...values].find(
+            (candidate) =>
+              answer.startsWith(`${candidate}\n\n`) &&
+              ATTACHMENT_REFERENCE.test(answer.slice(candidate.length + 2)),
+          );
+          if (value === undefined) continue;
+          prepared[question.id] = value;
+          notes.push([companionId, answer.slice(value.length + 2)]);
+        } else {
+          return { action: "cancel" };
+        }
+      }
+      const content = form.content(prepared);
+      return content === undefined
+        ? { action: "cancel" }
+        : { action: "accept", content: { ...content, ...Object.fromEntries(notes) } };
     },
   };
 };
