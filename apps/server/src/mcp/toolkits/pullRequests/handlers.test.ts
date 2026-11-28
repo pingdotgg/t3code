@@ -55,14 +55,17 @@ const testCrypto = SecureRandom.make((size) => new Uint8Array(size).fill(7));
 
 const invocation = (
   capabilities: ReadonlyArray<McpInvocationContext.McpCapability>,
+  outsideThread = false,
 ): McpInvocationContext.McpInvocationScope => ({
   environmentId: EnvironmentId.make("environment-1"),
   requestNamespace: "provider-session-1",
-  thread: {
-    threadId: THREAD_ID,
-    providerSessionId: "provider-session-1",
-    providerInstanceId: ProviderInstanceId.make("codex"),
-  },
+  thread: outsideThread
+    ? undefined
+    : {
+        threadId: THREAD_ID,
+        providerSessionId: "provider-session-1",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      },
   client: undefined,
   capabilities: new Set(capabilities),
   issuedAt: 1,
@@ -160,6 +163,7 @@ interface HarnessOptions {
   readonly pullRequests?: Partial<PullRequestService.PullRequestService["Service"]>;
   readonly git?: Partial<GitManager.GitManager["Service"]>;
   readonly managedPolicy?: Parameters<typeof ServerSettings.layerTest>[1];
+  readonly outsideThread?: boolean;
 }
 
 const NO_GUIDE: PullRequestReviewGuideResult = { guide: null, run: null, currentHeadSha: "head-1" };
@@ -239,7 +243,10 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       Effect.map(
         (chunk) => chunk.at(-1)!.result as Tool.Success<(typeof PullRequestsToolkit.tools)[Name]>,
       ),
-      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
+      Effect.provideService(
+        McpInvocationContext.McpInvocationContext,
+        invocation(capabilities, options.outsideThread),
+      ),
       Effect.provide(layerDependencies),
     );
   return { commands, guideRequests, call };
@@ -951,6 +958,31 @@ describe("source control tools", () => {
       expect(commentsOnly.conversation?.truncated).toBe(false);
       const threadsOnly = yield* harness.call("pull_request_read", { include: ["threads"] });
       expect(threadsOnly.conversation?.truncated).toBe(true);
+    }),
+  );
+
+  it.effect("an outside client reads a configured repository's PR and its CI logs", () =>
+    Effect.gen(function* () {
+      const asked: Array<PullRequestRef> = [];
+      const harness = yield* makeHarness({
+        thread: null,
+        outsideThread: true,
+        pullRequests: {
+          detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+          activity: () => Effect.succeed(activity),
+          checkLogs: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as([])),
+        },
+      });
+      const read = yield* harness.call("pull_request_read", {
+        repository: "t3tools/t3code",
+        number: 42,
+      });
+      expect(read).toMatchObject({ repository: "t3tools/t3code", number: 42, headSha: "abc123" });
+      yield* harness.call("ci_logs", { repository: "t3tools/t3code", number: 42 });
+      expect(asked.map((ref) => [ref.projectId, ref.repository, ref.number])).toEqual([
+        [PROJECT_ID, "t3tools/t3code", 42],
+        [PROJECT_ID, "t3tools/t3code", 42],
+      ]);
     }),
   );
 
