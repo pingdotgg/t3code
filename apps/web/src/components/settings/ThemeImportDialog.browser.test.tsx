@@ -104,9 +104,7 @@ describe("ThemeImportDialog", () => {
     let savedSettings: ClientSettings | null = null;
     using _readSettings = vi
       .spyOn(persistence, "getClientSettings")
-      .mockImplementation(async () => {
-        return savedSettings;
-      });
+      .mockImplementation(async () => savedSettings);
     using _writeSettings = vi
       .spyOn(persistence, "setClientSettings")
       .mockImplementation(async (settings) => {
