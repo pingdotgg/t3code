@@ -120,9 +120,7 @@ it.layer(NetService.layer)("Automatic port selection", (it) => {
           });
           try {
             const selected = yield* net.findAvailablePort(0, "::1");
-            expect(offeredPorts[0]).toBe(address.port);
-            expect(offeredPorts.slice(1)).toContain(selected);
-            expect(selected).not.toBe(address.port);
+            expect(offeredPorts).toEqual([address.port, selected]);
           } finally {
             listen.mockRestore();
           }
