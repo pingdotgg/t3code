@@ -526,6 +526,7 @@ class Terminal {
         return;
       }
       text = text.slice(suffix.length);
+      line = [];
     }
     const length = lineWidth(line);
     const width = textWidth(text);
