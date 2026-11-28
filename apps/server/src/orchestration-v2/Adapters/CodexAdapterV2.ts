@@ -22,6 +22,7 @@ import {
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import type { CodexEffectiveRuntime } from "../../provider/CodexManagedRuntime.ts";
 import { classifyCodexManagedError } from "../../provider/CodexManagedErrors.ts";
+import type { Refusal } from "../../provider/CodexManagedTokenProtocol.ts";
 import {
   buildCodexInitializeParams,
   codexAppServerEnvironment,
@@ -1430,6 +1431,27 @@ function withCodexManagedFailure(
       };
 }
 
+/** Codex's report of a request it sent without credentials. A sent token that fails says otherwise. */
+const UNCREDENTIALED_REQUEST = /missing bearer or basic authentication/iu;
+
+/**
+ * Codex sends requests without credentials after T3 refuses its managed token
+ * request, so the 401 it reports hides the refusal that caused it.
+ */
+function withManagedTokenRefusal(
+  failure: OrchestrationV2ProviderFailure,
+  refusal: Refusal | undefined,
+  reported = failure.message,
+): OrchestrationV2ProviderFailure {
+  if (refusal === undefined) return failure;
+  return makeProviderFailure({
+    message: `Codex could not get a ChatGPT token from T3 Code: ${refusal.message} Check the connection in Settings → Providers. Codex reported: ${reported}`,
+    code: `managed_token_${refusal.kind}`,
+    class: failure.class,
+    retryable: failure.retryable,
+  });
+}
+
 function failureResetAt(
   failure: OrchestrationV2ProviderFailure,
   snapshot: CodexRateLimitSnapshot | undefined,
@@ -1454,6 +1476,8 @@ interface ActiveCodexTurnContext {
   /** Auto-review rationale by the command it denied; the declined item arrives after it. */
   autoReviewDenials?: Map<string, string>;
   recoveredProviderRetries?: number;
+  /** The managed token refusal that explained this turn's request sent without credentials. */
+  tokenRefusal?: Refusal;
   latestProviderFailure?: {
     readonly nativeMessage: string;
     readonly nativeCode: string | null;
@@ -2184,6 +2208,34 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           environment: resolvedRuntime?.environment ?? adapterOptions.environment,
         });
         const codexZone = codexTimeZone(resolvedRuntime?.environment ?? adapterOptions.environment);
+        // This session's refusal explains only a 401 Codex sent without credentials. The
+        // turn's later reports of that failure keep the reason, whatever code they carry.
+        const explainTokenRefusal = Effect.fnUntraced(function* (
+          context: ActiveCodexTurnContext,
+          failure: OrchestrationV2ProviderFailure,
+          errorInfo: CodexErrorInfo | null | undefined,
+          nativeMessage?: string | null,
+          nativeDetails?: string | null,
+        ) {
+          const recentTokenRefusal = resolvedRuntime?.recentTokenRefusal;
+          if (recentTokenRefusal === undefined) return failure;
+          const message = nativeMessage?.trim() ?? "";
+          const details = nativeDetails?.trim() ?? "";
+          const reported = UNCREDENTIALED_REQUEST.test(details)
+            ? details
+            : UNCREDENTIALED_REQUEST.test(message)
+              ? message
+              : undefined;
+          if (reported === undefined) return failure;
+          const status = codexErrorHttpStatus(errorInfo);
+          if (status !== null && status !== 401) return failure;
+          // Each 401 reads the session's latest refusal; a report without a status keeps the last one.
+          if (status === 401) {
+            const refusal = yield* recentTokenRefusal;
+            if (refusal !== undefined) context.tokenRefusal = refusal;
+          }
+          return withManagedTokenRefusal(failure, context.tokenRefusal, reported);
+        });
         const additionalContextByThread = yield* Ref.make(
           new Map<string, NonNullable<CodexTurnStartParams["additionalContext"]>>(),
         );
@@ -2780,6 +2832,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           context: ActiveCodexTurnContext,
           updatedAt: DateTime.Utc,
         ) {
+          if (context.tokenRefusal !== undefined) delete context.tokenRefusal;
           const providerRetry = yield* Ref.modify(providerRetries, (current) => {
             const retry = current.get(context.providerTurnId);
             if (retry === undefined) {
@@ -5297,6 +5350,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("item/agentMessage/delta", (payload) =>
           Effect.gen(function* () {
+            if (payload.delta.length === 0) return;
             const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
             if (context !== undefined) {
               yield* completeProviderRetry(context, yield* DateTime.now);
@@ -5669,16 +5723,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ...(payload.error.codexErrorInfo === undefined
                   ? {}
                   : { errorInfo: payload.error.codexErrorInfo }),
-                failure: withCodexManagedFailure(
-                  makeProviderFailure({
-                    message: payload.error.additionalDetails?.trim() || payload.error.message,
-                    code: notificationCode,
-                    class: codexTerminalFailureClass(
-                      payload.error.codexErrorInfo,
-                      notificationCode,
-                    ),
-                  }),
-                  payload.error,
+                failure: yield* explainTokenRefusal(
+                  context,
+                  withCodexManagedFailure(
+                    makeProviderFailure({
+                      message: payload.error.additionalDetails?.trim() || payload.error.message,
+                      code: notificationCode,
+                      class: codexTerminalFailureClass(
+                        payload.error.codexErrorInfo,
+                        notificationCode,
+                      ),
+                    }),
+                    payload.error,
+                  ),
+                  payload.error.codexErrorInfo,
+                  payload.error.message,
+                  payload.error.additionalDetails,
                 ),
               };
               return;
@@ -5694,21 +5754,28 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             };
             const code = codexErrorInfoCode(payload.error.codexErrorInfo);
             const additionalDetails = payload.error.additionalDetails?.trim();
-            const failure = withCodexManagedFailure(
-              makeProviderFailure({
-                message:
-                  additionalDetails === undefined || additionalDetails.length === 0
-                    ? payload.error.message
-                    : additionalDetails,
-                code,
-                class: codexUsageLimitError(code, payload.error.codexErrorInfo)
-                  ? "usage_limit"
-                  : code?.startsWith("http") === true || code?.startsWith("responseStream") === true
-                    ? "transport_error"
-                    : "provider_error",
-                retryable: true,
-              }),
-              payload.error,
+            const failure = yield* explainTokenRefusal(
+              context,
+              withCodexManagedFailure(
+                makeProviderFailure({
+                  message:
+                    additionalDetails === undefined || additionalDetails.length === 0
+                      ? payload.error.message
+                      : additionalDetails,
+                  code,
+                  class: codexUsageLimitError(code, payload.error.codexErrorInfo)
+                    ? "usage_limit"
+                    : code?.startsWith("http") === true ||
+                        code?.startsWith("responseStream") === true
+                      ? "transport_error"
+                      : "provider_error",
+                  retryable: true,
+                }),
+                payload.error,
+              ),
+              payload.error.codexErrorInfo,
+              payload.error.message,
+              payload.error.additionalDetails,
             );
             const itemOrdinal =
               previous?.itemOrdinal ??
@@ -6911,6 +6978,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly completedAt: DateTime.Utc;
             readonly promptDropped?: true;
             readonly failureMessage?: string;
+            readonly failureDetails?: string;
             readonly failureErrorInfo?: CodexErrorInfo;
             readonly providerRetry?: ActiveCodexProviderRetry;
           }): Effect.fn.Return<CodexRootTerminalEvent> {
@@ -6929,21 +6997,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const completionHasClass =
                 failureCode != null &&
                 !codexTerminalErrorNeedsEvidence(input.failureErrorInfo, failureCode);
-              let failure =
+              const reused =
                 previousFailure !== undefined &&
                 (input.failureMessage === undefined ||
                   input.failureMessage === previousFailure.nativeMessage) &&
                 (failureCode === undefined || failureCode === previousFailure.nativeCode) &&
-                (!completionHasClass || previousFailure.failure.class === failureClass)
-                  ? previousFailure.failure
-                  : withCodexManagedFailure(
-                      makeProviderFailure({
-                        message: input.failureMessage,
-                        code: failureCode,
-                        class: failureClass,
-                      }),
-                      input.failureMessage,
-                    );
+                (!completionHasClass || previousFailure.failure.class === failureClass);
+              let failure = reused
+                ? previousFailure.failure
+                : withCodexManagedFailure(
+                    makeProviderFailure({
+                      message: input.failureMessage,
+                      code: failureCode,
+                      class: failureClass,
+                    }),
+                    input.failureMessage,
+                  );
               const retry = input.providerRetry;
               const notification = input.context.latestProviderFailure;
               // Codex 0.164 reports an exhausted stream error as `other` with the same details.
@@ -6966,6 +7035,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ) {
                 failure = { ...failure, class: "transport_error" };
               }
+              // Keep an explanation already attached to a reused report, but still check
+              // when the completion adds 401 details the earlier notification lacked.
+              const alreadyExplained =
+                reused && previousFailure?.failure.code?.startsWith("managed_token_") === true;
+              if (!alreadyExplained)
+                failure = yield* explainTokenRefusal(
+                  input.context,
+                  failure,
+                  input.failureErrorInfo ?? (reused ? previousFailure?.errorInfo : undefined),
+                  input.failureMessage,
+                  input.failureDetails,
+                );
               const failureItemId = codexFailureItemId(input.context);
               return {
                 type: "turn.terminal",
@@ -7099,6 +7180,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly completedAt: DateTime.Utc;
             readonly promptDropped?: true;
             readonly failureMessage?: string;
+            readonly failureDetails?: string;
             readonly failureErrorInfo?: CodexErrorInfo;
             readonly providerRetry?: ActiveCodexProviderRetry;
             readonly goalHoldTurn?: OrchestrationV2ProviderTurn;
@@ -7322,6 +7404,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly completedAt: DateTime.Utc;
           readonly promptDropped?: true;
           readonly failureMessage?: string;
+          readonly failureDetails?: string;
           readonly failureErrorInfo?: CodexErrorInfo;
           readonly continueRun?: boolean;
           readonly stalledRetry?: {
@@ -7921,6 +8004,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ? {}
                 : {
                     failureMessage: payload.turn.error.message,
+                    ...(payload.turn.error.additionalDetails == null
+                      ? {}
+                      : { failureDetails: payload.turn.error.additionalDetails }),
                     ...(payload.turn.error.codexErrorInfo == null
                       ? {}
                       : { failureErrorInfo: payload.turn.error.codexErrorInfo }),

@@ -20,7 +20,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
-import { makeCodexManagedRuntime } from "./CodexManagedRuntime.ts";
+import { makeCodexManagedRuntime, type CodexEffectiveRuntime } from "./CodexManagedRuntime.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 import { codexAppServerArgs } from "./codexLaunchArgs.ts";
 
@@ -277,4 +277,146 @@ it.live.each(
         }).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
       ),
     ),
+);
+
+it.live("a refused token request explains only the Codex session that asked for it", () =>
+  Effect.gen(function* () {
+    const instanceId = ProviderInstanceId.make("codex");
+    const fs = yield* FileSystem.FileSystem;
+    const sharedHome = yield* fs.makeTempDirectoryScoped({ prefix: "codex-session-refusal-" });
+    const data = new Map<string, Uint8Array>();
+    let renewalStatus = 200;
+    const executable = {
+      executablePath: "/isolated/tools/codex/0.156.1/bin/codex",
+      managedVersionDirectory: "/isolated/tools/codex/0.156.1",
+      source: "managed" as const,
+      version: "0.156.1",
+    };
+    yield* Effect.gen(function* () {
+      const store = yield* ProviderCredentialStore.make("codex-chatgpt", instanceId);
+      const credentials = {
+        clientId: "oaiapp_test",
+        accessToken: "dummy-owned-access",
+        refreshToken: "dummy-refresh",
+        expiresAt: (yield* Clock.currentTimeMillis) + 3_600_000,
+        earliestRefreshAt: null,
+        scopes: ["chatgpt.tokens.use.direct"],
+        subject: "test-user",
+        email: null,
+      };
+      yield* store.set(new TextEncoder().encode(yield* encodeJson(credentials)));
+      const hostEnv = yield* HostProcess.Environment;
+      const runtime = yield* makeCodexManagedRuntime({
+        instanceId,
+        enabled: true,
+        config: decodeSettings({ setupMode: "managed", homePath: sharedHome }),
+        environment: { PATH: hostEnv.PATH, SystemRoot: hostEnv.SystemRoot },
+      });
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      // Runs the token command Codex was given, as Codex does before a request.
+      const askForToken = (effective: CodexEffectiveRuntime) =>
+        Effect.gen(function* () {
+          const provider = codexAppServerArgs(effective.config.launchArgs).find((arg) =>
+            arg.startsWith("model_providers.openai_token_sharing="),
+          )!;
+          const match = /auth=\{command=(.*),args=(\[.*\]),timeout_ms=/u.exec(provider)!;
+          const [command, args] = decodeCommand(`[${match[1]},${match[2]}]`);
+          const child = yield* spawner.spawn(
+            ChildProcess.make(command, args, { extendEnv: false, env: effective.environment }),
+          );
+          const [stdout, code] = yield* Effect.all(
+            [child.stdout.pipe(Stream.decodeText(), Stream.mkString), child.exitCode],
+            { concurrency: "unbounded" },
+          );
+          return { stdout, code: Number(code) };
+        }).pipe(Effect.scoped);
+      yield* Effect.gen(function* () {
+        const first = yield* runtime.resolve;
+        const second = yield* runtime.resolve;
+        assert.deepEqual(yield* askForToken(first), { stdout: "dummy-owned-access", code: 0 });
+
+        // The second session's renewal fails while the first already has its token.
+        yield* store.set(
+          new TextEncoder().encode(yield* encodeJson({ ...credentials, expiresAt: 0 })),
+        );
+        renewalStatus = 500;
+        assert.deepEqual(yield* askForToken(second), { stdout: "", code: 1 });
+        assert.equal((yield* second.recentTokenRefusal!)?.kind, "refresh");
+        assert.isUndefined(yield* first.recentTokenRefusal!);
+
+        // The first session renews; the second session's refusal is still its own reason.
+        renewalStatus = 200;
+        assert.deepEqual(yield* askForToken(first), { stdout: "renewed-access", code: 0 });
+        assert.isUndefined(yield* first.recentTokenRefusal!);
+        assert.equal((yield* second.recentTokenRefusal!)?.kind, "refresh");
+      }).pipe(Effect.scoped);
+    }).pipe(
+      Effect.provide(CodexManagedTokenBroker.layer),
+      Effect.provideService(HostProcess.Arguments, [
+        process.execPath,
+        NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url)),
+      ]),
+      Effect.provideService(
+        ServerSecretStore.ServerSecretStore,
+        ServerSecretStore.ServerSecretStore.of({
+          get: (key) => Effect.sync(() => Option.fromUndefinedOr(data.get(key))),
+          set: (key, value) =>
+            Effect.sync(() => {
+              data.set(key, value);
+            }),
+          remove: (key) =>
+            Effect.sync(() => {
+              data.delete(key);
+            }),
+          create: () => Effect.die("unused"),
+          getOrCreateRandom: () => Effect.die("unused"),
+        }),
+      ),
+      Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
+        getEnvironmentId: Effect.succeed(
+          EnvironmentId.make("00000000-0000-4000-8000-000000000001"),
+        ),
+      }),
+      Effect.provide(
+        Layer.mock(CodexInstallation.CodexInstallation)({
+          managedDirectory: "/isolated/tools/codex",
+          resolve: () => Effect.succeed(executable),
+          acquire: () => Effect.succeed(executable),
+        }),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() =>
+            HttpClientResponse.fromWeb(
+              request,
+              !request.url.endsWith("/token")
+                ? Response.json({
+                    issuer: "https://auth.openai.com",
+                    authorization_endpoint: "https://auth.openai.com/api/accounts/authorize",
+                    token_endpoint: "https://auth.openai.com/api/accounts/oauth/token",
+                    jwks_uri: "https://auth.openai.com/jwks",
+                  })
+                : renewalStatus === 200
+                  ? Response.json({
+                      access_token: "renewed-access",
+                      refresh_token: "renewed-refresh",
+                      token_type: "Bearer",
+                      expires_in: 3600,
+                      scope: "chatgpt.tokens.use.direct",
+                    })
+                  : Response.json({ error: "server_error" }, { status: renewalStatus }),
+            ),
+          ),
+        ),
+      ),
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3-managed-session-refusal-" }).pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
 );

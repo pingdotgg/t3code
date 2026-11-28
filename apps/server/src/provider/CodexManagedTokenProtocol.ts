@@ -8,8 +8,19 @@ export const Request = Schema.Struct({
   instanceId: Schema.NonEmptyString,
   environmentId: Schema.NonEmptyString,
   profileKey: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
+  // Ties a refusal to the Codex session that asked, never to another session's 401.
+  sessionKey: Schema.String.check(Schema.isPattern(/^[a-f0-9]{32}$/u)),
 });
-export const Response = Schema.Struct({ token: Schema.NonEmptyString });
+// Messages are safe setup text that Codex shows in its own diagnostics.
+export const Refusal = Schema.Struct({
+  kind: Schema.NonEmptyString.check(Schema.isMaxLength(64)),
+  message: Schema.NonEmptyString.check(Schema.isMaxLength(1024)),
+});
+export type Refusal = typeof Refusal.Type;
+export const Response = Schema.Union([
+  Schema.Struct({ token: Schema.NonEmptyString }),
+  Schema.Struct({ refusal: Refusal }),
+]);
 // Selectors are small; tokens can be larger JWTs. Never truncate either frame
 // into something that could be accepted.
 export const REQUEST_BYTES = 1024;
@@ -52,14 +63,30 @@ export const readFrame = (socket: NodeNet.Socket, maxBytes: number, timeoutMs: n
 
 export const writeFrame = (socket: NodeNet.Socket, frame: string, maxBytes: number) =>
   Effect.callback<void, ProtocolError>((resume) => {
-    if (socket.destroyed || Buffer.byteLength(frame) + 1 > maxBytes) {
+    if (
+      socket.destroyed ||
+      socket.writableEnded ||
+      !socket.writable ||
+      Buffer.byteLength(frame) + 1 > maxBytes
+    ) {
       resume(Effect.fail(new ProtocolError()));
       return;
     }
+    let writeFailed = false;
     const fail = () => resume(Effect.fail(new ProtocolError()));
     socket.once("error", fail);
     socket.once("close", fail);
-    socket.end(`${frame}\n`, () => resume(Effect.void));
+    socket.write(`${frame}\n`, (error) => {
+      if (error != null || socket.errored != null) {
+        writeFailed = true;
+        fail();
+      }
+    });
+    socket.end((error?: Error | null) => {
+      if (writeFailed || error != null || socket.errored != null || !socket.writableFinished)
+        fail();
+      else resume(Effect.void);
+    });
     return Effect.sync(() => {
       socket.off("error", fail);
       socket.off("close", fail);

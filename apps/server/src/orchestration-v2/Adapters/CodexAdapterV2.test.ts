@@ -1758,6 +1758,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
     onNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
     models?: CodexAdapterV2.CodexAdapterV2Options["models"],
+    resolveRuntime?: CodexAdapterV2.CodexAdapterV2Options["resolveRuntime"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1822,6 +1823,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         clientFactory,
         ...(onUsageLimits ? { onUsageLimits } : {}),
         ...(models ? { models } : {}),
+        ...(resolveRuntime ? { resolveRuntime } : {}),
         digest: yield* Digest.Digest,
         fileSystem,
         idAllocator,
@@ -10156,6 +10158,412 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ),
       ),
     ),
+  );
+
+  // Codex sends requests without credentials after T3 refuses its managed token request.
+  const uncredentialedStream =
+    "unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: wss://api.openai.com/v1/responses, cf-ray: 0000-SYD, request id: req_stream";
+  const uncredentialedRequest =
+    "unexpected status 401 Unauthorized: Missing bearer or basic authentication in header, url: https://api.openai.com/v1/responses, cf-ray: 0000-SYD, request id: req_http";
+  const revokedToken =
+    "unexpected status 401 Unauthorized: Your authentication token has been invalidated. Please try signing in again., url: https://api.openai.com/v1/responses, request id: req_revoked";
+  const serverError =
+    "unexpected status 500 Internal Server Error, url: https://api.openai.com/v1/responses, request id: req_500";
+  const tokenRefusalRetry = {
+    message: "Reconnecting... 1/5",
+    codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 401 } },
+    additionalDetails: uncredentialedStream,
+  };
+  const tokenRefusalFinal = {
+    message: uncredentialedRequest,
+    codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } },
+  };
+  it.effect.each([
+    {
+      name: "a retried and final uncredentialed 401",
+      retry: true,
+      final: tokenRefusalFinal,
+      completion: tokenRefusalFinal,
+      explained: true,
+    },
+    {
+      name: "a retried uncredentialed 401 that completes as other with details only",
+      retry: true,
+      completion: {
+        message: "Stream disconnected before completion.",
+        codexErrorInfo: "other",
+        additionalDetails: uncredentialedStream,
+      },
+      explained: true,
+    },
+    {
+      name: "an uncredentialed 401 message with generic additional details",
+      final: {
+        message: uncredentialedRequest,
+        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } },
+        additionalDetails: "Request failed after retries",
+      },
+      completion: {
+        message: uncredentialedRequest,
+        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } },
+        additionalDetails: "Request failed after retries",
+      },
+      explained: true,
+    },
+    {
+      name: "a generic 401 notice whose completion adds uncredentialed details",
+      final: {
+        message: "Request failed",
+        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } },
+      },
+      completion: {
+        message: "Request failed",
+        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } },
+        additionalDetails: uncredentialedRequest,
+      },
+      explained: true,
+    },
+    { name: "an uncredentialed 401 completion", completion: tokenRefusalFinal, explained: true },
+    {
+      name: "a revoked token 401",
+      final: {
+        message: revokedToken,
+        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } },
+      },
+      completion: {
+        message: revokedToken,
+        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } },
+      },
+      explained: false,
+    },
+    {
+      name: "a retried uncredentialed 401 that ends in another failure",
+      retry: true,
+      completion: { message: serverError, codexErrorInfo: "other" },
+      explained: false,
+      retryExplained: true,
+    },
+    {
+      name: "a retried uncredentialed 401 that ends in a 503 mentioning missing authentication",
+      retry: true,
+      completion: {
+        message: uncredentialedRequest.replace("401 Unauthorized", "503 Service Unavailable"),
+        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 503 } },
+      },
+      explained: false,
+      retryExplained: true,
+    },
+    {
+      name: "a local Codex 401",
+      final: tokenRefusalFinal,
+      completion: tokenRefusalFinal,
+      local: true,
+      explained: false,
+    },
+  ] as const)(
+    "explains $name with the managed token refusal only when it is the cause",
+    (scenario) =>
+      Effect.gen(function* () {
+        const nativeThreadId = `native-token-refusal-${scenario.name}`;
+        const nativeTurnId = `turn-token-refusal-${scenario.name}`;
+        const refusal = {
+          kind: "refresh",
+          message: "Your ChatGPT connection expired. Sign in again.",
+        };
+        const notice = (willRetry: boolean, error: object) => ({
+          type: "emit_inbound" as const,
+          label: willRetry ? "error/retry" : "error",
+          frame: {
+            method: "error",
+            params: { threadId: nativeThreadId, turnId: nativeTurnId, willRetry, error },
+          },
+        });
+        const transcript = makeCodexReplayTranscript({
+          scenario: `codex-token-refusal-${scenario.name}`,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+            ...("retry" in scenario ? [notice(true, tokenRefusalRetry)] : []),
+            ...("final" in scenario ? [notice(false, scenario.final)] : []),
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: {
+                    ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }),
+                    error: scenario.completion,
+                  },
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          "local" in scenario
+            ? undefined
+            : Effect.succeed({
+                config: DEFAULT_CODEX_SETTINGS,
+                environment: {},
+                revision: "managed-profile",
+                recentTokenRefusal: Effect.succeed(refusal),
+              }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            text: "Continue.",
+            attemptId: RunAttemptId.make(`attempt-token-refusal-${scenario.name}`),
+          }),
+        );
+        yield* harness.firstTerminal;
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        const explainedCode = `managed_token_${refusal.kind}`;
+        if (scenario.explained) {
+          assert.equal(terminal.failure.code, explainedCode);
+          assert.include(terminal.failure.message, refusal.message);
+          // Codex's own report stays visible.
+          assert.include(terminal.failure.message, "unexpected status 401 Unauthorized");
+        } else {
+          const info = scenario.completion.codexErrorInfo;
+          assert.equal(
+            terminal.failure.code,
+            typeof info === "string" ? info : Object.keys(info ?? {})[0],
+          );
+          assert.notInclude(terminal.failure.message, refusal.message);
+        }
+        // Every error row the turn shows for an explained 401 carries the same reason.
+        const errorItemCodes = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "error"
+            ? [event.turnItem.failure.code]
+            : [],
+        );
+        const retryExplained = "retryExplained" in scenario || scenario.explained;
+        for (const code of errorItemCodes) {
+          if (retryExplained) assert.equal(code, explainedCode);
+          else assert.notEqual(code, explainedCode);
+        }
+        if ("retry" in scenario) assert.isNotEmpty(errorItemCodes);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect(
+    "reads the current managed token refusal after model output confirms recovery within a turn",
+    () =>
+      Effect.gen(function* () {
+        const nativeThreadId = "native-token-refusal-recovered-turn";
+        const nativeTurnId = "turn-token-refusal-recovered-turn";
+        const refreshRefusal = {
+          kind: "refresh",
+          message: "Your ChatGPT connection expired. Sign in again.",
+        };
+        const timeoutRefusal = {
+          kind: "timeout",
+          message: "Timed out waiting for the managed ChatGPT connection. Try again.",
+        };
+        const refusals = [refreshRefusal, timeoutRefusal] as const;
+        let lookups = 0;
+        const transcript = makeCodexReplayTranscript({
+          scenario: "codex-token-refusal-recovered-turn",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+            {
+              type: "emit_inbound",
+              label: "error/retry-first",
+              frame: {
+                method: "error",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  willRetry: true,
+                  error: tokenRefusalRetry,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "item/agentMessage/delta/empty",
+              frame: {
+                method: "item/agentMessage/delta",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  itemId: "msg-recovered",
+                  delta: "",
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "error/retry-after-empty-delta",
+              frame: {
+                method: "error",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  willRetry: true,
+                  error: {
+                    message: "Reconnecting... 2/5",
+                    codexErrorInfo: "other",
+                    additionalDetails: uncredentialedStream,
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "error/retry-before-recovery",
+              frame: {
+                method: "error",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  willRetry: true,
+                  error: tokenRefusalRetry,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "item/agentMessage/delta/recovered",
+              frame: {
+                method: "item/agentMessage/delta",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  itemId: "msg-recovered",
+                  delta: "Working on it.",
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "error/retry-after-recovery",
+              frame: {
+                method: "error",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  willRetry: true,
+                  error: {
+                    message: "Reconnecting... 3/5",
+                    codexErrorInfo: "other",
+                    additionalDetails: uncredentialedStream,
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "error/retry-second",
+              frame: {
+                method: "error",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  willRetry: true,
+                  error: tokenRefusalRetry,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: {
+                    ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }),
+                    error: tokenRefusalFinal,
+                  },
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          Effect.succeed({
+            config: DEFAULT_CODEX_SETTINGS,
+            environment: {},
+            revision: "managed-profile",
+            recentTokenRefusal: Effect.sync(
+              () => refusals[Math.min(lookups++, refusals.length - 1)],
+            ),
+          }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            text: "Continue.",
+            attemptId: RunAttemptId.make("attempt-token-refusal-recovered-turn"),
+          }),
+        );
+        yield* harness.firstTerminal;
+        const terminal = harness.terminalEvents()[0];
+        assert.equal(terminal?.status, "failed");
+        if (terminal?.status !== "failed") return;
+        assert.equal(terminal.failure.code, "managed_token_timeout");
+        assert.include(terminal.failure.message, timeoutRefusal.message);
+        assert.notInclude(terminal.failure.message, refreshRefusal.message);
+        const errorItems = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "error"
+            ? [{ status: event.turnItem.status, code: event.turnItem.failure.code }]
+            : [],
+        );
+        assert.deepEqual(errorItems, [
+          { status: "running", code: "managed_token_refresh" },
+          { status: "running", code: "managed_token_refresh" },
+          { status: "running", code: "managed_token_timeout" },
+          { status: "completed", code: "managed_token_timeout" },
+          { status: "running", code: "other" },
+          { status: "running", code: "managed_token_timeout" },
+        ]);
+        assert.equal(lookups, 4);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
   );
 
   // regression: #17501 Codex 429 retry exhaustion classifies as a usage limit

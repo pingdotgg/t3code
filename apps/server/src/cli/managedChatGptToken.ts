@@ -11,6 +11,7 @@ const decodeArguments = Schema.decodeUnknownEffect(
     Protocol.Request.fields.instanceId,
     Protocol.Request.fields.environmentId,
     Protocol.Request.fields.profileKey,
+    Protocol.Request.fields.sessionKey,
   ]),
 );
 const encodeRequest = Schema.encodeSync(Schema.fromJsonString(Protocol.Request));
@@ -21,14 +22,17 @@ const decodeResponse = Schema.decodeUnknownEffect(Schema.fromJsonString(Protocol
 /** Codex's auth.command protocol is a bare token on stdout, never a CLI diagnostic. */
 export async function runManagedChatGptTokenCli(args: ReadonlyArray<string>): Promise<void> {
   const program = Effect.gen(function* () {
-    const [endpoint, instanceId, environmentId, profileKey] = yield* decodeArguments(args);
+    const [endpoint, instanceId, environmentId, profileKey, sessionKey] =
+      yield* decodeArguments(args);
     const socket = yield* Effect.acquireRelease(
       Effect.sync(() => NodeNet.createConnection(endpoint)),
       (socket) => Effect.sync(() => socket.destroy()),
     );
     socket.on("error", () => {});
     socket.once("connect", () =>
-      socket.write(encodeRequest({ version: 1, instanceId, environmentId, profileKey }) + "\n"),
+      socket.write(
+        encodeRequest({ version: 1, instanceId, environmentId, profileKey, sessionKey }) + "\n",
+      ),
     );
     return yield* Protocol.readFrame(
       socket,
@@ -37,12 +41,13 @@ export async function runManagedChatGptTokenCli(args: ReadonlyArray<string>): Pr
     ).pipe(Effect.flatMap(decodeResponse));
   }).pipe(Effect.scoped);
   const result = await Effect.runPromiseExit(program);
-  if (Exit.isFailure(result)) {
-    process.stderr.write(
-      "Could not access the managed ChatGPT connection. Reconnect in T3 Code.\n",
-    );
-    process.exitCode = 1;
+  const response = Exit.isSuccess(result) ? result.value : undefined;
+  if (response !== undefined && "token" in response) {
+    process.stdout.write(response.token);
     return;
   }
-  process.stdout.write(result.value.token);
+  process.stderr.write(
+    `${response?.refusal.message ?? "Could not access the managed ChatGPT connection. Reconnect in T3 Code."}\n`,
+  );
+  process.exitCode = 1;
 }
