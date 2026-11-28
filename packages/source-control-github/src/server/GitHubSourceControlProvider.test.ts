@@ -666,6 +666,34 @@ describe("GitHubSourceControlProvider writes", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("explains why GitHub rejected a new repository name", () =>
+    Effect.gen(function* () {
+      const gh = yield* makeProvider({
+        rest: (input) =>
+          input.path === "user"
+            ? Effect.succeed(restResponse({ login: "me" }))
+            : Effect.fail(
+                new GitHubRequestPolicy.GitHubApiResponseError({
+                  host: input.host,
+                  operation: input.operation,
+                  status: 422,
+                  githubErrors: [
+                    "Repository creation failed.",
+                    "name already exists on this account",
+                  ],
+                }),
+              ),
+      });
+      const error = yield* Effect.flip(
+        gh.createRepository({ cwd: "/repo", repository: "notes", visibility: "private" }),
+      );
+      assert.strictEqual(
+        userFacingSourceControlDetail(error.cause),
+        "GitHub could not create repository notes. The name may already be taken or not allowed. Choose a different name and try again.",
+      );
+    }),
+  );
+
   it.effect("looks up a bare repository name under the signed-in account on that host", () => {
     const requests: Array<string> = [];
     return Effect.gen(function* () {

@@ -379,6 +379,7 @@ const refineRepositoryIdentity: NonNullable<
 const PULL_REQUEST_NOT_FOUND = "Pull request not found. Check the PR number or URL and try again.";
 const REPOSITORY_NOT_FOUND = "Repository not found. Check the owner and name and try again.";
 const isGitHubApiNotFoundError = Schema.is(GitHubRequestPolicy.GitHubApiNotFoundError);
+const isGitHubApiResponseError = Schema.is(GitHubRequestPolicy.GitHubApiResponseError);
 
 function fromGitHubApiError(
   error: GitHubRequestPolicy.GitHubApiError,
@@ -1224,6 +1225,15 @@ export const make = Effect.gen(function* () {
             body: { name, private: input.visibility === "private" },
           },
           `No organization named ${owner ?? "that"} that this account can create repositories in.`,
+        ).pipe(
+          Effect.mapError((error) => {
+            if (!isGitHubApiResponseError(error.cause) || error.cause.status !== 422) return error;
+            const detail = `GitHub could not create repository ${SourceControlProvider.transportSafeSourceControlErrorValue(owner === null ? name : `${owner}/${name}`)}. The name may already be taken or not allowed. Choose a different name and try again.`;
+            return failure(
+              detail,
+              new GitHubRepositoryLookupError({ userFacingDetail: detail, cause: error.cause }),
+            );
+          }),
         );
         const decoded = decodeRawRepository(response.body);
         if (Result.isFailure(decoded)) {
