@@ -1,6 +1,7 @@
-import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { ClaudeSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import type * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -13,6 +14,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
+import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 
 import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGeneration.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
@@ -22,11 +24,12 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   createClaudeAdapterV2,
+  resolveClaudeModeAvailability,
   type ClaudeAdapterV2DriverEnv,
 } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { claudeUsageReader } from "./claudeUsage.ts";
-import { makeClaudeScopedLimitNames } from "../claudeUsageLimits.ts";
+import { makeClaudeScopedLimitNames, recordClaudeUsageResponse } from "../claudeUsageLimits.ts";
 import * as ClaudeResetCredits from "../claudeResetCredits.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
@@ -106,6 +109,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     accentColor,
     environment,
     enabled,
+    usageAccess = Effect.succeed(false),
     config,
   }) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -122,15 +126,20 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const modelCatalog = catalogService
       .current(DRIVER_KIND)
       .pipe(Effect.map(resolveClaudeModelCatalog));
-    const processEnv = yield* mergeClaudeProcessEnvironment(config, environment, process.env);
+    const processEnv = yield* mergeClaudeProcessEnvironment(
+      { ...config, enabled },
+      environment,
+      process.env,
+    );
     const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER_KIND,
       instanceId,
     });
+    const homeDirectory = yield* HostProcess.HomeDirectory;
     const effectiveConfig = {
       ...config,
       enabled,
-      binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
+      binaryPath: expandHomePath(config.binaryPath, homeDirectory),
     } satisfies ClaudeSettings;
     const resolveMaintenance = yield* makeClaudeMaintenanceResolution({
       binaryPath: effectiveConfig.binaryPath,
@@ -212,6 +221,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       modelRoutes.route,
     );
 
+    // The organization ID comes from Claude's sign-in file, which T3 reads only with usage access.
+    const readOrganizationId = usageAccess.pipe(
+      Effect.flatMap((allowed) =>
+        allowed ? ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath) : Effect.undefined,
+      ),
+    );
     // Per-instance capabilities cache: keyed on binary + resolved HOME so
     // account-specific probes never share auth metadata across instances.
     // A transient miss may reuse the last account once, but its usage windows keep their age.
@@ -220,7 +235,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       () =>
         probeClaudeCapabilities(effectiveConfig, processEnv, stateDir).pipe(
           Effect.flatMap((capabilities) =>
-            ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
+            readOrganizationId.pipe(
               Effect.map((workspaceId) => ({
                 _tag: "fresh" as const,
                 capabilities:
@@ -239,7 +254,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               Effect.flatMap((capabilities) =>
                 capabilities === undefined
                   ? Effect.fail(error)
-                  : ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
+                  : readOrganizationId.pipe(
                       Effect.flatMap((workspaceId) =>
                         workspaceId === capabilities.workspaceId
                           ? Effect.succeed({
@@ -271,7 +286,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       stateDir,
       processEnv,
     );
-    const resolveCapabilities = Cache.get(capabilitiesProbeCache, capabilitiesCacheKey).pipe(
+    // A probe holds the organization ID only if access was allowed, so a changed answer probes again.
+    const resolveCapabilities = usageAccess.pipe(
+      Effect.flatMap((allowed) =>
+        Cache.get(capabilitiesProbeCache, `${capabilitiesCacheKey}\0${allowed}`),
+      ),
       Effect.map((result) => result.capabilities),
     );
 
@@ -286,8 +305,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               stateDir,
               catalog,
               scopedLimitNames,
+              // Reset credits need Claude's sign-in token, which T3 reads only with usage access.
               (version) =>
-                ClaudeResetCredits.readClaudeResetCredits(configDir, version).pipe(
+                usageAccess.pipe(
+                  Effect.flatMap((allowed) =>
+                    allowed
+                      ? ClaudeResetCredits.readClaudeResetCredits(configDir, version)
+                      : Effect.undefined,
+                  ),
                   Effect.provideService(HttpClient.HttpClient, httpClient),
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
@@ -309,6 +334,70 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       Effect.provideService(Path.Path, path),
     );
 
+    let readCurrentSnapshot: Effect.Effect<ServerProvider | undefined> = Effect.undefined;
+    const checkUsageLimits = Effect.gen(function* () {
+      if (!effectiveConfig.enabled) return undefined;
+      const current = yield* readCurrentSnapshot;
+      const version = current?.version ?? undefined;
+      const checkedAt = DateTime.formatIso(yield* DateTime.now);
+      const probed = yield* probeClaudeCapabilities(
+        effectiveConfig,
+        processEnv,
+        stateDir,
+        "usageOnly",
+      ).pipe(Effect.result);
+      if (probed._tag === "Failure") {
+        return makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" });
+      }
+      const capabilities = probed.success;
+      const usesSavedOAuth =
+        Boolean(capabilities.subscriptionType) &&
+        !capabilities.apiKeySource &&
+        !processEnv.CLAUDE_CODE_OAUTH_TOKEN?.trim();
+      const workspaceId = usesSavedOAuth ? yield* readOrganizationId : undefined;
+      const auth =
+        capabilities.email || workspaceId
+          ? {
+              ...(capabilities.email ? { email: capabilities.email } : {}),
+              ...(workspaceId ? { workspaceId } : {}),
+            }
+          : undefined;
+      const switchedAccount =
+        (capabilities.email !== undefined &&
+          current?.auth.email !== undefined &&
+          capabilities.email.toLowerCase() !== current.auth.email.toLowerCase()) ||
+        (workspaceId !== undefined &&
+          current?.auth.workspaceId !== undefined &&
+          workspaceId !== current.auth.workspaceId);
+      if (switchedAccount) {
+        yield* Ref.set(lastGoodCapabilities, undefined);
+        yield* Cache.invalidateAll(capabilitiesProbeCache);
+      }
+      if (!capabilities.usage) {
+        return {
+          usageLimits: makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" }),
+          ...(auth ? { auth } : {}),
+        };
+      }
+      const usageLimits = yield* recordClaudeUsageResponse(scopedLimitNames, {
+        response: capabilities.usage,
+        checkedAt: capabilities.usageCheckedAt ?? checkedAt,
+      });
+      // Reset credits need Claude's sign-in token, which T3 reads only with usage access.
+      const resetCredits =
+        usesSavedOAuth && !usageLimits.unavailable && version && (yield* usageAccess)
+          ? yield* ClaudeResetCredits.readClaudeResetCredits(configDir, version)
+          : undefined;
+      return {
+        usageLimits: resetCredits ? { ...usageLimits, resetCredits } : usageLimits,
+        ...(auth ? { auth } : {}),
+      };
+    }).pipe(
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<ClaudeSettings>>({
       resolveMaintenance,
@@ -321,6 +410,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           Effect.map(stampIdentity),
         ),
       checkProvider,
+      checkUsageLimits,
       invalidateUsageCache: Cache.invalidateAll(capabilitiesProbeCache),
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
@@ -351,6 +441,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           }),
       ),
     );
+    readCurrentSnapshot = snapshot.getSnapshot;
 
     // Same rules as Codex: serialised on the config directory that holds the
     // login, one request id kept until Claude answers (a cooldown or rate
@@ -432,6 +523,24 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       snapshot,
       invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
       workspaceRescans: Stream.fromQueue(workspaceRescans),
+      // Unreadable settings report no limit; the thread's own notice covers a refused mode.
+      runtimeModeLimitsForCwd: (cwd: string) =>
+        resolveClaudeModeAvailability({
+          settings: effectiveConfig,
+          homePath: configDir,
+          customHome,
+          cwd,
+          fileSystem,
+          path,
+        }).pipe(
+          Effect.map((availability) =>
+            availability.autoDisabledBy === undefined
+              ? []
+              : [{ mode: "auto" as const, reason: availability.autoDisabledBy }],
+          ),
+          Effect.orElseSucceed(() => []),
+          Effect.provideService(HostProcess.HomeDirectory, homeDirectory),
+        ),
       snapshotForCwd: (cwd: string) =>
         snapshot.getSnapshot.pipe(
           Effect.flatMap((machineSnapshot) =>

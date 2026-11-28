@@ -7,6 +7,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/cli";
 
@@ -82,7 +83,7 @@ export function makeTraceSpanSummary(window?: { nowMs: number; duration: Duratio
     if (
       span.exit?._tag === "Interrupted" ||
       span.attributes?.["effect.fiber.interrupted"] === true ||
-      span.status?.message === "Interrupted"
+      (span.status?.code === "1" && span.status.message === "Interrupted")
     ) {
       stats.interrupted += 1;
     }
@@ -122,6 +123,9 @@ export function makeTraceSpanSummary(window?: { nowMs: number; duration: Duratio
   return { addLine, finish };
 }
 
+const formatSkippedLines = (count: number) =>
+  count === 1 ? "Skipped 1 line that is not a span." : `Skipped ${count} lines that are not spans.`;
+
 const formatMs = (ms: number) =>
   Math.round(ms) < 1_000 ? `${Math.round(ms)}ms` : `${Math.round(ms / 100) / 10}s`;
 
@@ -151,11 +155,10 @@ export function formatTraceSummary(
     table.reduce((max, row) => Math.max(max, row[column]!.length), 0),
   );
   const formatIso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
+  const hiddenCount = summary.spans.length - limit;
   return [
-    `${summary.spanCount} spans ended from ${formatIso(summary.firstEndMs)} to ${formatIso(summary.lastEndMs)} (${summary.minutes.toFixed(1).replace(/\.0+$/, "")} min).`,
-    ...(summary.skippedLineCount > 0
-      ? [`Skipped ${summary.skippedLineCount} lines that are not spans.`]
-      : []),
+    `${summary.spanCount} ${summary.spanCount === 1 ? "span" : "spans"} ended from ${formatIso(summary.firstEndMs)} to ${formatIso(summary.lastEndMs)} (${summary.minutes.toFixed(1).replace(/\.0+$/, "")} min).`,
+    ...(summary.skippedLineCount > 0 ? [formatSkippedLines(summary.skippedLineCount)] : []),
     "",
     ...table.map((row) =>
       row
@@ -164,8 +167,11 @@ export function formatTraceSummary(
         )
         .join("  "),
     ),
-    ...(summary.spans.length > limit
-      ? ["", `${summary.spans.length - limit} more span names. Use --limit to show more.`]
+    ...(hiddenCount > 0
+      ? [
+          "",
+          `${hiddenCount} more ${hiddenCount === 1 ? "span name" : "span names"}. Use --limit to show more.`,
+        ]
       : []),
   ].join("\n");
 }
@@ -198,16 +204,27 @@ const traceSummaryCommand = Command.make("summary", {
         ? { nowMs: yield* Clock.currentTimeMillis, duration: flags.since.value }
         : undefined;
       const summarizer = makeTraceSpanSummary(window);
-      yield* Effect.forEach(
+      const reads = yield* Effect.forEach(
         toRotatedTracePaths(traceFilePath, yield* traceMaxFilesConfig),
-        (path) => streamTraceFileLines(fs, path, summarizer.addLine),
-        { discard: true },
+        (path) => streamTraceFileLines(fs, path, summarizer.addLine).pipe(Effect.result),
       );
       const summary = summarizer.finish();
+      const failures = reads.filter(Result.isFailure);
+      const firstFailure = failures[0];
+      if (
+        firstFailure &&
+        summary.spanCount === 0 &&
+        !reads.some((read) => Result.isSuccess(read) && read.success)
+      ) {
+        return yield* firstFailure.failure;
+      }
+      for (const { failure } of failures) {
+        yield* Console.error(failure.message);
+      }
 
       yield* Console.log(
         summary.spanCount === 0
-          ? `No spans found in ${traceFilePath} or its rotated files${window === undefined ? "" : " in that window"}.${summary.skippedLineCount > 0 ? ` Skipped ${summary.skippedLineCount} lines that are not spans.` : ""}`
+          ? `No spans found in ${traceFilePath} or its rotated files${window === undefined ? "" : " in that window"}.${summary.skippedLineCount > 0 ? ` ${formatSkippedLines(summary.skippedLineCount)}` : ""}`
           : formatTraceSummary(summary, flags.limit),
       );
     }),

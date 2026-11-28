@@ -36,6 +36,10 @@ const streamRequest = () =>
   )
 
 describe("FetchHttpClient", { concurrent: false }, () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it.effect("sends bodies from Web requests", () =>
     Effect.gen(function*() {
       const request = HttpClientRequest.fromWeb(
@@ -90,11 +94,36 @@ describe("FetchHttpClient", { concurrent: false }, () => {
     )
   })
 
-  describe("streaming request bodies", () => {
-    afterEach(() => {
-      vi.unstubAllGlobals()
-    })
+  it.effect("uses the current globalThis.fetch on each request by default", () =>
+    Effect.gen(function*() {
+      const calls: Array<string> = []
+      const stubFetch = (label: string) => {
+        vi.stubGlobal(
+          "fetch",
+          makeFetch(async () => {
+            calls.push(label)
+            return new Response()
+          })
+        )
+      }
+      stubFetch("first")
+      const client = yield* HttpClient.HttpClient
+      yield* client.get("https://example.test/1")
+      stubFetch("second")
+      yield* client.get("https://example.test/2")
+      yield* client.get("https://example.test/3").pipe(
+        Effect.provideService(
+          FetchHttpClient.Fetch,
+          makeFetch(async () => {
+            calls.push("override")
+            return new Response()
+          })
+        )
+      )
+      assert.deepStrictEqual(calls, ["first", "second", "override"])
+    }).pipe(Effect.provide(FetchHttpClient.layer)))
 
+  describe("streaming request bodies", () => {
     it.effect("rejects unsupported streaming without sending the request", () =>
       Effect.gen(function*() {
         const FetchHttpClient = yield* loadUnsupportedRuntime()

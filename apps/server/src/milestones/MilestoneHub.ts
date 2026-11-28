@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { routineSpan } from "@t3tools/shared/observability";
 
 // Enough for a client that was away for a while to catch up; older news is in the stores.
 const KEPT = 1_000;
@@ -183,7 +184,7 @@ const make = Effect.gen(function* () {
   });
 
   return MilestoneHub.of({
-    publish: Effect.fn("MilestoneHub.publish")(function* (event) {
+    publish: Effect.fn("MilestoneHub.publish", { attributes: routineSpan })(function* (event) {
       const entry = remember(event);
       if (entry === undefined) return;
       yield* PubSub.publish(pubsub, entry);

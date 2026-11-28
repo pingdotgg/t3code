@@ -315,19 +315,37 @@ it("sizes a raw HTML image by width and height written with px units", async () 
   expect({ width, height }).toEqual({ width: 14, height: 7 });
 });
 
-it("reuses the parse of a streaming reply's finished blocks when it remounts", async () => {
+it("fades a streaming reply's blocks in once, not again when it remounts", async () => {
   setup();
+  const isFading = (element: Element) =>
+    element.getAnimations().some((animation) => animation instanceof CSSTransition);
   const message = (
-    <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\nStill growing"} isStreaming />
+    <ChatMarkdown
+      cwd="/tmp/project"
+      text={"Finished block\n\nStill growing"}
+      isStreaming
+      streamingId="remounted-reply"
+    />
   );
   {
     await using first = await render(
-      <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\n"} isStreaming />,
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={"Finished block\n\n"}
+        isStreaming
+        streamingId="remounted-reply"
+      />,
+    );
+    await vi.waitFor(() =>
+      expect(isFading(first.getByText("Finished block").element())).toBe(true),
     );
     await first.rerender(message);
+    await vi.waitFor(() => expect(isFading(first.getByText("Still growing").element())).toBe(true));
   }
   await using screen = await render(message);
-  await expect.element(screen.getByText("Still growing")).toBeVisible();
+  await expect
+    .element(screen.getByText("Still growing"))
+    .toHaveStyle({ opacity: "1", transitionDuration: "0s" });
   expect(parsedSources.filter((source) => source.includes("Finished block"))).toHaveLength(1);
 });
 
@@ -366,6 +384,53 @@ it("highlights a code block's own source when an earlier block of the same lengt
   }
   await using screen = await renderText(`\`\`\`ts\n${second}\n\`\`\``);
   await vi.waitFor(() => expect(highlightedText(screen.container)).toBe(second));
+});
+
+describe("Markdown fence previews", () => {
+  it.each(["markdown", "md"])(
+    "switches a %s fence between source and rendered Markdown",
+    async (language) => {
+      setup();
+      const source = "# Release notes\n\nThis is **ready**.";
+      const text = [`\`\`\`${language}`, source, "```"].join("\n");
+      const message = (isStreaming: boolean) => (
+        <ChatMarkdown
+          cwd="/tmp/project"
+          text={text}
+          isStreaming={isStreaming}
+          previewMarkdownFences
+        />
+      );
+
+      await using screen = await render(message(true));
+      const showPreview = screen.getByRole("button", { name: "Show rendered markdown" });
+      const heading = screen.getByRole("heading", { name: "Release notes" });
+      await expect.element(showPreview).not.toBeInTheDocument();
+
+      await screen.rerender(message(false));
+      await expect.element(heading).not.toBeInTheDocument();
+      await showPreview.click();
+      await expect.element(heading).toBeVisible();
+      expect(screen.container.querySelector("strong")?.textContent).toBe("ready");
+
+      using write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+      await screen.getByRole("button", { name: "Copy code" }).click();
+      expect(write).toHaveBeenCalledWith(source);
+
+      await screen.getByRole("button", { name: "Show markdown source" }).click();
+      await expect.element(heading).not.toBeInTheDocument();
+      await expect.element(showPreview).toBeVisible();
+    },
+  );
+
+  it("only offers previews for Markdown fences in enabled messages", async () => {
+    setup();
+    const text = "```md\n# Example\n```\n\n```text\n# Plain text\n```";
+    await using screen = await renderText(text);
+    expect(buttonsLabelled(screen.container, "Show rendered markdown")).toHaveLength(0);
+    await screen.rerender(<ChatMarkdown cwd="/tmp/project" text={text} previewMarkdownFences />);
+    expect(buttonsLabelled(screen.container, "Show rendered markdown")).toHaveLength(1);
+  });
 });
 
 describe("ChatMarkdown favicon privacy", () => {
@@ -730,6 +795,24 @@ describe("ChatMarkdown skill chips", () => {
 });
 
 describe("ChatMarkdown headings", () => {
+  it("keeps user-content in authored fragments distinct from the sanitizer prefix", async () => {
+    setup();
+    await using screen = await renderText(
+      "[Open deployment](#deployment)\n\n" +
+        "[Open user content deployment](#user-content-deployment)\n\n" +
+        "## Deployment\n\n## User Content Deployment",
+    );
+    const [deployment, userContentDeployment] = screen.container.querySelectorAll("h2");
+    using scrollDeployment = vi.spyOn(deployment!, "scrollIntoView");
+    using scrollUserContentDeployment = vi.spyOn(userContentDeployment!, "scrollIntoView");
+
+    await userEvent.click(screen.getByRole("link", { name: "Open deployment" }));
+    await userEvent.click(screen.getByRole("link", { name: "Open user content deployment" }));
+
+    expect(scrollDeployment).toHaveBeenCalledExactlyOnceWith({ block: "start" });
+    expect(scrollUserContentDeployment).toHaveBeenCalledExactlyOnceWith({ block: "start" });
+  });
+
   it("keeps insight streaming, reference links, and heading anchors in one message", async () => {
     setup();
     const rule = "─".repeat(20);
@@ -1245,5 +1328,33 @@ describe("ChatMarkdown host media", () => {
       expect(screen.container.textContent).toContain(MISSING_FILE_ACCESS_MESSAGE),
     );
     expect(screen.container.textContent).not.toContain("Retry video");
+  });
+});
+
+describe("ChatMarkdown copy of line breaks", () => {
+  it.each([
+    { text: "first line\nsecond line", user: true },
+    { text: "first line  \nsecond line", user: false },
+    { text: "first line\\\nsecond line", user: false },
+  ])("copies each line break once: $text", async ({ text, user }) => {
+    setup();
+    await using screen = await renderText(
+      text,
+      user
+        ? {
+            className: "user-message-markdown",
+            lineBreaks: true,
+            parseRawHtml: false,
+            extensions: { userMessage: true, leadingWhitespace: true },
+          }
+        : undefined,
+    );
+    const range = document.createRange();
+    range.selectNodeContents(screen.container);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    expect(chatMarkdownClipboardPayload(selection)?.text).toBe("first line\nsecond line");
   });
 });

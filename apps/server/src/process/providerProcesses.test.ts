@@ -13,8 +13,11 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ServerConfig from "../config.ts";
+import * as ProcessLauncher from "./ProcessLauncher.ts";
 import * as ProviderProcesses from "./providerProcesses.ts";
 
 // Real child processes stand in for servers and CLIs; only PIDs captured at spawn are signalled.
@@ -119,6 +122,55 @@ describe.runIf(HostProcess.Platform.defaultValue() === "linux")("ProviderProcess
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provide(
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-restart-ownership-" }).pipe(
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.live("registers providers spawned through the server's ProcessLauncher", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const directory = NodePath.join(config.stateDir, "provider-processes");
+      const recordedPids = () =>
+        NodeFS.readdirSync(directory)
+          .filter((file) => file.endsWith(".json"))
+          .flatMap(
+            (file) =>
+              (
+                JSON.parse(NodeFS.readFileSync(NodePath.join(directory, file), "utf8")) as {
+                  readonly processes: ReadonlyArray<{ readonly pid: number }>;
+                }
+              ).processes,
+          )
+          .map((entry) => entry.pid);
+
+      const context = yield* Layer.build(ProviderProcesses.layer);
+      const register = Context.get(context, ProviderProcesses.ProviderProcesses).register;
+      assert(register !== undefined);
+
+      const hosted = yield* spawner.spawn(
+        ChildProcess.make(process.execPath, ["-e", "process.stdin.resume()"], {
+          stdin: { stream: "pipe", endOnDone: false },
+        }),
+      );
+      const launcherPid = yield* (yield* ProcessLauncher.ProcessLauncher).currentPid;
+      expect(
+        AcpSessionRuntime.makePosixProcessTreeController("linux").identity(hosted.pid)?.ppid,
+      ).toBe(launcherPid);
+
+      const forget = register(hosted.pid);
+      expect(recordedPids()).toContain(hosted.pid);
+      forget();
+      expect(recordedPids()).not.toContain(hosted.pid);
+      expect(() => register(process.pid)).toThrow("Cannot identify spawned provider");
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-register-launcher-" }).pipe(
+          Layer.provideMerge(ProcessLauncher.layerServer),
           Layer.provideMerge(NodeServices.layer),
         ),
       ),

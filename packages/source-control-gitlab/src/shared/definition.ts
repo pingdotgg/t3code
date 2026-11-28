@@ -22,13 +22,38 @@ const CHANGE_REQUEST_REFERENCE =
 // Self-managed GitLab runs on any hostname and nests projects in groups.
 const CHANGE_REQUEST_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/merge_requests\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/commit\/([0-9a-f]+)\/?$/iu;
-// An incident is an issue that GitLab also serves at `/-/issues/incident/<iid>`.
+// An incident is an issue that GitLab also serves at `/-/issues/incident/<iid>`. No project is
+// below `/groups/`: a work item there is the group's own, such as an epic.
 const ISSUE_PATH =
-  /^\/([^/]+(?:\/[^/]+)+)\/-\/(?:issues(?:\/incident)?|work_items)\/(\d+)(?:\/|$)/u;
+  /^\/(?!groups\/)([^/]+(?:\/[^/]+)+)\/-\/(?:issues(?:\/incident)?|work_items)\/(\d+)(?:\/|$)/u;
 // Every GitLab page inside a project sits below its first `/-/`.
 const REPOSITORY_PAGE_PATH = /^\/([^/]+(?:\/[^/]+)+?)\/-\//u;
 
 const KIND = SourceControlProviderKind.make("gitlab");
+
+// GitLab.com also serves SSH on port 443 from this host but names every project on `gitlab.com`.
+const ALT_SSH_HOST_KEY = /^altssh\.gitlab\.com\/(.+)$/u;
+
+function canonicalRepositoryKey(key: string): string | null {
+  const repository = ALT_SSH_HOST_KEY.exec(key)?.[1];
+  return repository === undefined ? null : `gitlab.com/${repository}`;
+}
+
+function repositoryKeyFromRemote(key: string): string | null {
+  return canonicalRepositoryKey(key)?.replace(/\.git$/u, "") ?? null;
+}
+
+// Saved identities reach the predicates as written, so a key from before this mapping still matches.
+function withCanonicalKey<Identity extends { readonly canonicalKey: string }>(
+  identity: Identity,
+): Identity {
+  const canonicalKey = canonicalRepositoryKey(identity.canonicalKey);
+  return canonicalKey === null ? identity : { ...identity, canonicalKey };
+}
+
+function webHost(host: string): string {
+  return host === "altssh.gitlab.com" ? "gitlab.com" : host;
+}
 
 export const definition = defineSourceControl({
   kind: KIND,
@@ -50,10 +75,10 @@ export const definition = defineSourceControl({
   changeRequestUrl: ({ host, repository, number, remoteUrl, webUrl }) =>
     webUrl
       ? changeRequestUrlBelow(webUrl, `-/merge_requests/${number}`)
-      : `${remoteWebOrigin(host, remoteUrl)}/${repository}/-/merge_requests/${number}`,
+      : `${remoteWebOrigin(webHost(host), remoteUrl)}/${repository}/-/merge_requests/${number}`,
   parseChangeRequestUrl: (url) => parseChangeRequestPath(url, CHANGE_REQUEST_PATH),
   parseIssueUrl: (url) => parseIssuePath(url, ISSUE_PATH),
-  commitUrl: (input) => buildCommitUrl(input, "-/commit"),
+  commitUrl: (input) => buildCommitUrl({ ...input, host: webHost(input.host) }, "-/commit"),
   parseCommitUrl: (url) => parseCommitPath(url, COMMIT_PATH),
   repositoryUrlFromPage: (url) => repositoryUrlFromPagePath(url, REPOSITORY_PAGE_PATH),
   // `!12` already links the merge request itself; `#12` is always an issue.
@@ -86,15 +111,27 @@ export const definition = defineSourceControl({
   checkoutChangeRequestHost: () => null,
   changeRequestHeadRef: (number) => `refs/merge-requests/${number}/head`,
   recognizeRemote: ({ host, hostname }) =>
-    hostname === "gitlab.com" || hostname.split(".").includes("gitlab")
-      ? {
-          kind: KIND,
-          name: hostname === "gitlab.com" ? "GitLab" : "GitLab Self-Hosted",
-          baseUrl: `https://${host}`,
-        }
-      : null,
-  isChangeRequestInRepository: (identity, link) =>
-    isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
-  canReadChangeRequestOnHost: (identity, link) =>
-    isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
+    hostname === "altssh.gitlab.com"
+      ? { kind: KIND, name: "GitLab", baseUrl: "https://gitlab.com" }
+      : hostname === "gitlab.com" || hostname.split(".").includes("gitlab")
+        ? {
+            kind: KIND,
+            name: hostname === "gitlab.com" ? "GitLab" : "GitLab Self-Hosted",
+            baseUrl: `https://${host}`,
+          }
+        : null,
+  repositoryKeyFromRemote,
+  canonicalRepositoryKey,
+  isChangeRequestInRepository: (saved, link) => {
+    const identity = withCanonicalKey(saved);
+    return isChangeRequestInProjectRepository(
+      projectChangeRequestHost(identity, KIND),
+      identity,
+      link,
+    );
+  },
+  canReadChangeRequestOnHost: (saved, link) => {
+    const identity = withCanonicalKey(saved);
+    return isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link);
+  },
 });

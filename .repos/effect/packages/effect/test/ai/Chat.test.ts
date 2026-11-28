@@ -311,6 +311,49 @@ describe("Chat", () => {
     )
   })
 
+  it.effect("replays an approved tool result before the answer generated from it", () => {
+    const toolkit = Toolkit.make(Tool.make("Deploy", { success: Schema.String, needsApproval: true }))
+
+    return Effect.gen(function*() {
+      const chat = yield* Chat.empty
+      const initial = yield* chat.generateText({ prompt: "Deploy", toolkit }).pipe(
+        TestUtils.withLanguageModel({
+          generateText: [{ type: "tool-call", id: "deploy-call", name: "Deploy", params: {} }]
+        })
+      )
+      const approval = initial.content.find((part) => part.type === "tool-approval-request")
+      assert.isDefined(approval)
+
+      yield* chat.generateText({
+        toolkit,
+        prompt: [Prompt.toolMessage({
+          content: [Prompt.toolApprovalResponsePart({ approvalId: approval.approvalId, approved: true })]
+        })]
+      }).pipe(
+        TestUtils.withLanguageModel({ generateText: [{ type: "text", text: "Deployed" }] })
+      )
+
+      let prompt = Prompt.empty
+      yield* chat.generateText({ prompt: "Thanks", toolkit }).pipe(
+        TestUtils.withLanguageModel({
+          generateText: (options) => {
+            prompt = options.prompt
+            return [{ type: "text", text: "You're welcome" }]
+          }
+        })
+      )
+
+      assert.deepStrictEqual(
+        prompt.content.map((message) =>
+          `${message.role}(${
+            typeof message.content === "string" ? "" : message.content.map((part) => part.type).join(",")
+          })`
+        ),
+        ["user(text)", "assistant(tool-call)", "tool(tool-result)", "assistant(text)", "user(text)"]
+      )
+    }).pipe(Effect.provide(toolkit.toLayer({ Deploy: () => Effect.succeed("ok") })))
+  })
+
   it.effect("preserves approval results when streaming with tool call resolution disabled", () => {
     let executions = 0
     const toolkit = Toolkit.make(Tool.make("Counter", {
