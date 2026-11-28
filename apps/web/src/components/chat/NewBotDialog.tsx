@@ -8,7 +8,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
-  BOT_FILE_MAX_CHARS,
   resolveEnvironmentMachineKind,
   type EnvironmentId,
   type ModelSelection,
@@ -44,10 +43,8 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
-import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { Textarea } from "../ui/textarea";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { TraitsPicker } from "./TraitsPicker";
 
@@ -98,8 +95,6 @@ function NewBotDialog({ initialEnvironmentId }: { readonly initialEnvironmentId:
   const providers = useEnvironmentProviders().get(environmentId) ?? EMPTY_SERVER_PROVIDERS;
   const canCreate = useAtomValue(botFilesEnvironment.create.permissionAtom(environmentId));
   const create = useAtomCommand(botFilesEnvironment.create, { reportFailure: false });
-  const [title, setTitle] = useState("");
-  const [instructions, setInstructions] = useState("");
   const [picked, setPicked] = useState<ModelSelection | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -116,7 +111,7 @@ function NewBotDialog({ initialEnvironmentId }: { readonly initialEnvironmentId:
     shownInstanceId,
     shownModel,
   );
-  const ready = canCreate && !pending && title.trim().length > 0 && selection !== null;
+  const ready = canCreate && !pending && selection !== null;
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -125,7 +120,8 @@ function NewBotDialog({ initialEnvironmentId }: { readonly initialEnvironmentId:
     setError(null);
     const result = await create({
       environmentId,
-      input: { title: title.trim(), instructions, modelSelection: selection },
+      // The Bot names itself once it knows its job.
+      input: { title: gt("New Bot"), instructions: "", modelSelection: selection },
     });
     setPending(false);
     if (result._tag === "Success") {
@@ -150,8 +146,8 @@ function NewBotDialog({ initialEnvironmentId }: { readonly initialEnvironmentId:
           </DialogTitle>
           <DialogDescription>
             <T>
-              A Bot coordinates other threads for you. Tell it what to look after and how you like
-              it to work.
+              A Bot coordinates other threads for you. Pick where it runs and its model, then tell
+              it in the chat what to look after.
             </T>
           </DialogDescription>
         </DialogHeader>
@@ -161,34 +157,6 @@ function NewBotDialog({ initialEnvironmentId }: { readonly initialEnvironmentId:
             className="flex flex-col gap-3"
             onSubmit={(event) => void submit(event)}
           >
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="new-bot-name">
-                <T>Name</T>
-              </Label>
-              <Input
-                id="new-bot-name"
-                autoFocus
-                value={title}
-                readOnly={pending}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder={gt("e.g. Chief of staff")}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="new-bot-instructions">
-                <T>Instructions</T>
-              </Label>
-              <Textarea
-                id="new-bot-instructions"
-                rows={6}
-                size="sm"
-                maxLength={BOT_FILE_MAX_CHARS}
-                value={instructions}
-                readOnly={pending}
-                onChange={(event) => setInstructions(event.target.value)}
-                placeholder={gt("What the Bot looks after and how you like it to work.")}
-              />
-            </div>
             {machines.length > 1 ? (
               <div className="flex flex-col gap-1.5">
                 <Label>

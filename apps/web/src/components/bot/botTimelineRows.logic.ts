@@ -1,3 +1,5 @@
+import { MessageId } from "@t3tools/contracts";
+
 import type { TimelineEntry } from "../../session-logic";
 import {
   deriveTerminalAssistantMessageIds,
@@ -17,13 +19,22 @@ export type BotTimelineRowsInput = Pick<
  * what fails. Its progress, tools and wakes stay out; while it runs, one typing row shows its
  * latest progress line.
  */
-export function deriveBotTimelineRows(input: BotTimelineRowsInput): MessagesTimelineRow[] {
+/** The Bot's opening line, shown before the user's first message; no turn ever wrote it. */
+export interface BotGreeting {
+  readonly text: string;
+  readonly createdAt: string;
+}
+
+export function deriveBotTimelineRows(
+  input: BotTimelineRowsInput,
+  greeting: BotGreeting | null = null,
+): MessagesTimelineRow[] {
   const running = input.isWorking && input.latestRun?.turnEnded !== true;
   const activeRunId = running
     ? deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null)
     : null;
   const finalReplyIds = deriveTerminalAssistantMessageIds(input.timelineEntries);
-  const rows: MessagesTimelineRow[] = [];
+  const rows: MessagesTimelineRow[] = greeting === null ? [] : [greetingRow(greeting)];
   for (const entry of input.timelineEntries) {
     const row = botRow(entry, finalReplyIds, activeRunId, input.pendingApprovalRequestIds);
     if (row !== null) rows.push(row);
@@ -38,6 +49,28 @@ export function deriveBotTimelineRows(input: BotTimelineRowsInput): MessagesTime
     });
   }
   return groupOwnUserMessages(rows);
+}
+
+function greetingRow(greeting: BotGreeting): MessagesTimelineRow {
+  const id = MessageId.make("bot-greeting");
+  return {
+    kind: "message",
+    id,
+    createdAt: greeting.createdAt,
+    message: {
+      id,
+      role: "assistant",
+      text: greeting.text,
+      runId: null,
+      createdAt: greeting.createdAt,
+      updatedAt: greeting.createdAt,
+      streaming: false,
+    },
+    showAssistantMeta: false,
+    showAssistantCopyButton: false,
+    assistantCopyStreaming: false,
+    botAvatar: true,
+  };
 }
 
 function botRow(

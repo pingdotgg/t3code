@@ -13021,12 +13021,9 @@
   "e9dbf0e54b6ab352": "Iniciar un Bot desde este hilo",
   "b359236d6d45d8d5": "No se pudo iniciar el Bot",
   "51a2ca35024f4f26": "Nuevo Bot",
-  "fc0216ddb4ffd2ee": "p. ej., Jefe de gabinete",
-  "ceeb3a4462f86564": "De qué se ocupa el Bot y cómo prefieres que trabaje.",
   "676c482efd85e13d": "Iniciando Bot…",
   "6a79abf40690e3df": "Crear Bot",
   "35ba446b79347ddf": "Nuevo Bot",
-  "ef9945d356dd1c2b": "Un Bot coordina otros hilos por ti. Dile de qué ocuparse y cómo prefieres que trabaje.",
   "d4b3fe97dd0501a8": "Instrucciones",
   "1519a364f1312d30": "Instrucciones y notas",
   "085f3d64c434cafd": "Bots",
@@ -13085,5 +13082,7 @@
   "067e9781206ddcba": "Ocultar la aprobación",
   "c0f76279966bd260": "Trabajadores activos",
   "948b08d3848c400a": "Trabajadores terminados",
-  "7fc043db70cdbe3f": "Máquina"
+  "7fc043db70cdbe3f": "Máquina",
+  "4d1c5a04868decc5": "¡Hola! ¿De qué me encargo por ti? Cuéntame el trabajo y cómo te gusta que se haga, y me configuro a partir de ahí.",
+  "df297d70075ed0cc": "Un Bot coordina otros hilos por ti. Elige dónde se ejecuta y su modelo, y luego dile en el chat de qué debe encargarse."
 }

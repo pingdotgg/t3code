@@ -13033,12 +13033,9 @@
   "e9dbf0e54b6ab352": "Starta en Bot från den här tråden",
   "b359236d6d45d8d5": "Det gick inte att starta Boten",
   "51a2ca35024f4f26": "Ny Bot",
-  "fc0216ddb4ffd2ee": "t.ex. Stabschef",
-  "ceeb3a4462f86564": "Vad boten ska ta hand om och hur du vill att den arbetar.",
   "676c482efd85e13d": "Startar Bot…",
   "6a79abf40690e3df": "Skapa Bot",
   "35ba446b79347ddf": "Ny Bot",
-  "ef9945d356dd1c2b": "En Bot samordnar andra trådar åt dig. Berätta vad den ska ta hand om och hur du vill att den arbetar.",
   "d4b3fe97dd0501a8": "Instruktioner",
   "1519a364f1312d30": "Instruktioner och anteckningar",
   "085f3d64c434cafd": "Bots",
@@ -13097,5 +13094,7 @@
   "067e9781206ddcba": "Dölj godkännandet",
   "c0f76279966bd260": "Aktiva arbetare",
   "948b08d3848c400a": "Färdiga arbetare",
-  "7fc043db70cdbe3f": "Dator"
+  "7fc043db70cdbe3f": "Dator",
+  "4d1c5a04868decc5": "Hej! Vad ska jag ta hand om åt dig? Berätta vad jobbet är och hur du vill ha det gjort, så ställer jag in mig själv därifrån.",
+  "df297d70075ed0cc": "En Bot samordnar andra trådar åt dig. Välj var den körs och vilken modell den använder, och berätta sedan i chatten vad den ska ta hand om."
 }

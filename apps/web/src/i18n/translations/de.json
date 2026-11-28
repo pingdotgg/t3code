@@ -13026,12 +13026,9 @@
   "e9dbf0e54b6ab352": "Einen Bot aus diesem Thread starten",
   "b359236d6d45d8d5": "Bot konnte nicht gestartet werden",
   "51a2ca35024f4f26": "Neuer Bot",
-  "fc0216ddb4ffd2ee": "z. B. Stabschef",
-  "ceeb3a4462f86564": "Worum sich der Bot kümmert und wie er arbeiten soll.",
   "676c482efd85e13d": "Bot wird gestartet…",
   "6a79abf40690e3df": "Bot erstellen",
   "35ba446b79347ddf": "Neuer Bot",
-  "ef9945d356dd1c2b": "Ein Bot koordiniert andere Threads für dich. Sag ihm, worum er sich kümmern und wie er arbeiten soll.",
   "d4b3fe97dd0501a8": "Anweisungen",
   "1519a364f1312d30": "Anweisungen & Notizen",
   "085f3d64c434cafd": "Bots",
@@ -13090,5 +13087,7 @@
   "067e9781206ddcba": "Freigabe ausblenden",
   "c0f76279966bd260": "Aktive Worker",
   "948b08d3848c400a": "Abgeschlossene Worker",
-  "7fc043db70cdbe3f": "Rechner"
+  "7fc043db70cdbe3f": "Rechner",
+  "4d1c5a04868decc5": "Hallo! Worum soll ich mich für dich kümmern? Beschreib mir die Aufgabe und wie du es gern hättest, dann richte ich mich selbst ein.",
+  "df297d70075ed0cc": "Ein Bot koordiniert andere Threads für dich. Wähle, wo er läuft und welches Modell er nutzt, und sag ihm dann im Chat, worum er sich kümmern soll."
 }

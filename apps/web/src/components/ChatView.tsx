@@ -882,7 +882,21 @@ export default function ChatView(props: ChatViewProps) {
   const botThreadId = isBotThread ? serverThread.id : null;
   const botName = isBotThread ? serverThread.title : null;
   const timelineBot =
-    botThreadId === null || botName === null ? null : { threadId: botThreadId, name: botName };
+    botThreadId === null || botName === null
+      ? null
+      : {
+          threadId: botThreadId,
+          name: botName,
+          greeting:
+            serverThread?.botConfig?.greets === true
+              ? {
+                  text: gt(
+                    "Hi! What should I look after for you? Tell me the job and how you like things done, and I'll set myself up from there.",
+                  ),
+                  createdAt: serverThread.createdAt,
+                }
+              : null,
+        };
   const activeThread = isServerThread ? serverThread : localDraftThread;
   const serverLatestRun =
     serverProjection === null ? null : deriveLatestThreadRun(serverProjection);

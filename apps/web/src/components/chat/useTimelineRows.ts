@@ -9,7 +9,7 @@ import {
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
 } from "./MessagesTimeline.logic";
-import { deriveBotTimelineRows } from "../bot/botTimelineRows.logic";
+import { type BotGreeting, deriveBotTimelineRows } from "../bot/botTimelineRows.logic";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
 
 const EMPTY_TIMELINE_RUNS: ReadonlyArray<HandoffTimelineRun> = [];
@@ -45,14 +45,14 @@ export function useIncrementalTimelineRows(
   identity: string,
   input: MessagesTimelineRowsInput,
   /** A Bot's thread reads as a chat, from its own small set of rows. */
-  bot: boolean,
+  bot: { readonly greeting: BotGreeting | null } | null,
 ): MessagesTimelineRow[] {
   // Keyed on the locale: without a GTProvider, useMessages() returns a new function every render.
   const locale = useLocale();
   const resolve = useMessages();
   const derive = (previous: ReturnType<typeof deriveMessagesTimelineRowsWithState> | null) =>
-    bot
-      ? { input, rows: deriveBotTimelineRows(input) }
+    bot !== null
+      ? { input, rows: deriveBotTimelineRows(input, bot.greeting) }
       : deriveMessagesTimelineRowsWithState(input, previous, resolve);
   const [state, setState] = useState(() => ({
     identity,

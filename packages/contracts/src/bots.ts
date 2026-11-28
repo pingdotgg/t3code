@@ -12,6 +12,8 @@ export const ThreadBotConfig = Schema.Struct({
   enabled: Schema.Literal(true),
   /** Worker threads surface only when they need input; their other updates stay quiet. */
   muteChildren: Schema.Boolean,
+  /** Its chat opens with the Bot asking what to look after, and the user's reply is its first turn. */
+  greets: Schema.optional(Schema.Literal(true)),
 });
 export type ThreadBotConfig = typeof ThreadBotConfig.Type;
 

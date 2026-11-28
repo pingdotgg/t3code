@@ -7,9 +7,10 @@ workers stay out of the thread list.
 
 ## Starting a Bot
 
-- **From scratch:** open the command palette and choose **New Bot**. Give it a name and instructions
-  that describe its job, such as "Chief of staff: keep track of everything I have going on across my
-  projects and tell me what needs me." You can edit the instructions later on the Bot's page.
+- **From scratch:** choose **New Bot** in the sidebar or the command palette, and pick the machine it
+  runs on and its model. The Bot opens by asking what to look after. Tell it in the chat, such as
+  "Keep track of everything I have going on across my projects and tell me what needs me." It saves
+  that as its instructions and names itself; you can edit the instructions later on the Bot's page.
 - **From a thread:** in a thread's menu or the command palette, choose **Start a Bot from this
   thread**. The new Bot starts with a summary of the thread, and that thread becomes its first
   worker.

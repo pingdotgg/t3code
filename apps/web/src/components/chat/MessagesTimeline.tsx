@@ -767,7 +767,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     pendingApprovals.filter(isVisiblePendingApproval).map((approval) => approval.requestId),
   );
   const rawRows = useIncrementalTimelineRows(
-    `${listIdentityKey}\0${workspaceRoot ?? ""}\0${bot !== null}`,
+    `${listIdentityKey}\0${workspaceRoot ?? ""}\0${bot !== null}\0${bot?.greeting?.text ?? ""}`,
     {
       timelineEntries,
       pendingApprovalRequestIds,
@@ -788,7 +788,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       toolCallVisibility,
       revealedMessageId,
     },
-    bot !== null,
+    bot === null ? null : { greeting: bot.greeting },
   );
   const rows = useStableRows(rawRows, listIdentityKey);
   const matchedApprovalRequestIds = new Set<string>();

@@ -113,6 +113,8 @@ export interface TimelineRowSharedState {
 export interface TimelineBot {
   readonly threadId: ThreadId;
   readonly name: string;
+  /** Set for a Bot whose chat opens with it asking what to look after. */
+  readonly greeting: { readonly text: string; readonly createdAt: string } | null;
 }
 
 export interface TimelineRowActivityState {

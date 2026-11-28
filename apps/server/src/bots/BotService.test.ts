@@ -225,7 +225,7 @@ it.effect(
   },
 );
 
-it.effect("creates a Bot outside any project, its instructions saved as its preferences", () => {
+it.effect("creates a Bot outside any project, from instructions or with a greeting", () => {
   const orchestration = makeOrchestration();
   return Effect.gen(function* () {
     const bots = yield* BotService.BotService;
@@ -246,5 +246,14 @@ it.effect("creates a Bot outside any project, its instructions saved as its pref
       (yield* bots.readFiles({ threadId })).preferences,
       "Keep me posted on every project.\n",
     );
+
+    // Without instructions the Bot greets instead: no first turn runs until the user replies.
+    const greeter = yield* bots.create({
+      title: "New Bot",
+      instructions: "",
+      modelSelection: model,
+    });
+    assert.isUndefined(orchestration.launched[1]?.text);
+    assert.strictEqual(orchestration.threads.get(greeter.threadId)?.botConfig?.greets, true);
   }).pipe(provideBots(orchestration));
 });

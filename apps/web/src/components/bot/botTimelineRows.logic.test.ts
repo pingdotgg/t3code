@@ -66,6 +66,13 @@ describe("deriveBotTimelineRows", () => {
     });
     expect(rows.map((row) => row.id)).toEqual(["ask", "failed", "reply"]);
     expect(rows.at(-1)).toMatchObject({ botAvatar: true, showAssistantMeta: true });
+
+    // A greeting Bot opens the chat by asking, before the user's first message.
+    const greeted = deriveBotTimelineRows(
+      { timelineEntries: [message("ask", "user", 0)], isWorking: false },
+      { text: "What should I look after?", createdAt: at(0) },
+    );
+    expect(greeted.map((row) => row.id)).toEqual(["bot-greeting", "ask"]);
   });
 
   it("keeps a running turn's progress on the typing row, never in the chat", () => {

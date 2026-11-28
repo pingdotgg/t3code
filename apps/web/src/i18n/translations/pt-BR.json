@@ -13026,12 +13026,9 @@
   "e9dbf0e54b6ab352": "Iniciar um Bot a partir desta conversa",
   "b359236d6d45d8d5": "Não foi possível iniciar o Bot",
   "51a2ca35024f4f26": "Novo Bot",
-  "fc0216ddb4ffd2ee": "ex.: Chefe de gabinete",
-  "ceeb3a4462f86564": "Do que o Bot cuida e como você prefere que ele trabalhe.",
   "676c482efd85e13d": "Iniciando Bot…",
   "6a79abf40690e3df": "Criar Bot",
   "35ba446b79347ddf": "Novo Bot",
-  "ef9945d356dd1c2b": "Um Bot coordena outras threads por você. Diga do que ele deve cuidar e como você prefere que ele trabalhe.",
   "d4b3fe97dd0501a8": "Instruções",
   "1519a364f1312d30": "Instruções e notas",
   "085f3d64c434cafd": "Bots",
@@ -13090,5 +13087,7 @@
   "067e9781206ddcba": "Ocultar a aprovação",
   "c0f76279966bd260": "Trabalhadores ativos",
   "948b08d3848c400a": "Trabalhadores concluídos",
-  "7fc043db70cdbe3f": "Máquina"
+  "7fc043db70cdbe3f": "Máquina",
+  "4d1c5a04868decc5": "Oi! Do que eu devo cuidar para você? Conte qual é o trabalho e como você gosta que seja feito, e eu me configuro a partir daí.",
+  "df297d70075ed0cc": "Um Bot coordena outras threads para você. Escolha onde ele roda e o modelo, depois diga no chat do que ele deve cuidar."
 }

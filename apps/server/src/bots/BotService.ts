@@ -766,14 +766,11 @@ const make = Effect.gen(function* () {
       yield* store(botThreadId, preferencesPath(botThreadId), `${instructions}\n`);
     // A Bot belongs to no project: it runs in a scratch folder and sends workers anywhere.
     const { projectId } = yield* managedFolders.ensureScratchProject.pipe(Effect.mapError(failed));
-    const text = [
-      `You are a new Bot named "${input.title}".`,
+    // Without instructions the chat opens on the Bot's greeting, and the user's reply is the first turn.
+    const text =
       instructions === ""
-        ? "The user gave you no instructions yet. Introduce yourself in a few lines and ask what your job is, then save it with t3_bot_preferences_append."
-        : "Your instructions from the user, also in your preferences.md:\n\n" +
-          instructions +
-          "\n\nIntroduce yourself in a few lines: what you understand your job to be and how you will work.",
-    ].join("\n");
+        ? null
+        : `You are a new Bot named "${input.title}".\nYour instructions from the user, also in your preferences.md:\n\n${instructions}\n\nIntroduce yourself in a few lines: what you understand your job to be and how you will work.`;
     yield* launches
       .launch({
         commandId: CommandId.make(`bot-create:${id}`),
@@ -785,10 +782,13 @@ const make = Effect.gen(function* () {
         runtimeMode: "full-access",
         interactionMode: "default",
         workspaceStrategy: { type: "root" },
-        initialMessage: { text, attachments: [] },
+        ...(text === null ? {} : { initialMessage: { text, attachments: [] } }),
         createdBy: "user",
         creationSource: "server",
-        botConfig: { enabled: true, muteChildren: false },
+        botConfig:
+          text === null
+            ? { enabled: true, muteChildren: false, greets: true }
+            : { enabled: true, muteChildren: false },
       })
       .pipe(Effect.mapError(failed));
     return { threadId: botThreadId };
