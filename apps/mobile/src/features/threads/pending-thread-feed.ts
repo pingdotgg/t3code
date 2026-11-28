@@ -10,6 +10,7 @@ import { resolveUserMessageGrouping } from "@t3tools/client-runtime/user-message
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
+import type { BotTypingFeedEntry } from "../bots/botFeed.logic";
 import type {
   AcknowledgedThreadMessage,
   QueuedThreadMessage,
@@ -66,7 +67,11 @@ export interface PendingFoldFeedEntry {
 }
 
 /** A row of the thread feed's list. */
-export type ThreadFeedRow = PendingThreadFeedEntry | GuestPendingFeedEntry | PendingFoldFeedEntry;
+export type ThreadFeedRow =
+  | PendingThreadFeedEntry
+  | GuestPendingFeedEntry
+  | PendingFoldFeedEntry
+  | BotTypingFeedEntry;
 
 export type GroupedThreadFeedRow = ThreadFeedRow & {
   readonly userMessageGrouping: ReturnType<typeof resolveUserMessageGrouping>;
@@ -114,7 +119,7 @@ export function createThreadFeedGrouping() {
 
 /** Waiting guest messages go after the transcript, oldest first. */
 export function appendGuestPendingMessages(
-  presentedFeed: ReadonlyArray<PendingThreadFeedEntry | PendingFoldFeedEntry>,
+  presentedFeed: ReadonlyArray<PendingThreadFeedEntry | PendingFoldFeedEntry | BotTypingFeedEntry>,
   share: ThreadGuestShare | null,
   resolve: MessageResolver = m,
 ): ReadonlyArray<ThreadFeedRow> {

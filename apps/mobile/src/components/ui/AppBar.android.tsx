@@ -1,6 +1,6 @@
 import { useGT } from "gt-react-native";
 import { type RefObject, use, useRef, useState } from "react";
-import { Keyboard, type TextInputInstance, View } from "react-native";
+import { Keyboard, Pressable, type TextInputInstance, View } from "react-native";
 import { useHardwareBack } from "../../lib/backHandler";
 import { useToolbarLayout } from "./useToolbarLayout";
 import { BottomSheetContext } from "./BottomSheetContext";
@@ -184,6 +184,23 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
         optionsVersion={props.optionsVersion}
       />
     );
+  const leading =
+    (props.onClose ? (
+      <AndroidHeaderIconButton
+        accessibilityLabel={props.closeAccessibilityLabel ?? gt("Close")}
+        icon="xmark"
+        onPress={props.onClose}
+      />
+    ) : undefined) ??
+    props.leading ??
+    // Only a real button: any leading content takes the bar's navigation slot.
+    (sidebarToggle && !props.sheet ? (
+      <AndroidHeaderIconButton
+        accessibilityLabel={sidebarToggle.accessibilityLabel}
+        icon={sidebarToggle.icon}
+        onPress={sidebarToggle.onPress}
+      />
+    ) : undefined);
   const header = (
     <AndroidScreenHeader
       title={props.title}
@@ -191,22 +208,22 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
       subtitle={props.subtitle}
       onBack={props.onClose ? undefined : props.onBack}
       leading={
-        (props.onClose ? (
-          <AndroidHeaderIconButton
-            accessibilityLabel={props.closeAccessibilityLabel ?? gt("Close")}
-            icon="xmark"
-            onPress={props.onClose}
-          />
-        ) : undefined) ??
-        props.leading ??
-        // Only a real button: any leading content takes the bar's navigation slot.
-        (sidebarToggle && !props.sheet ? (
-          <AndroidHeaderIconButton
-            accessibilityLabel={sidebarToggle.accessibilityLabel}
-            icon={sidebarToggle.icon}
-            onPress={sidebarToggle.onPress}
-          />
-        ) : undefined)
+        props.titleAvatar ? (
+          <>
+            {leading}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={props.titleAvatar.accessibilityLabel}
+              hitSlop={4}
+              onPress={props.titleAvatar.onPress}
+              className="ml-1 size-10 items-center justify-center rounded-full active:opacity-70"
+            >
+              {props.titleAvatar.content}
+            </Pressable>
+          </>
+        ) : (
+          leading
+        )
       }
       embedded={props.sheet}
       hideBottomBorder={props.hideBottomBorder}

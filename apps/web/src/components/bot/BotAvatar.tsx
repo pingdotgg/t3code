@@ -1,21 +1,12 @@
 import {
   type BotAvatar as BotAvatarDefinition,
   botAvatarFor,
+  botAvatarStillSvg,
 } from "@t3tools/client-runtime/state/bot-avatar";
 import type { BotAvatarChoice } from "@t3tools/contracts";
-import { renderAvatarSvg, type AvatarMood, type AvatarState } from "open-bot-avatar";
+import type { AvatarMood, AvatarState } from "open-bot-avatar";
 import { mountAvatar, type MountedAvatar } from "open-bot-avatar/dom";
 import { useEffect, useRef } from "react";
-
-// Times at which each state's still pose reads clearly; working shows its ribbons at 2s.
-const STILL_TIME: Record<AvatarState, number> = {
-  idle: 1.2,
-  thinking: 1.2,
-  working: 2,
-  waiting: 1.2,
-  blocked: 1.2,
-  done: 1.2,
-};
 
 const stillFrames = new Map<string, string>();
 
@@ -23,13 +14,7 @@ function stillFrame(avatar: BotAvatarDefinition, state: AvatarState, mood: Avata
   const key = `${avatar.definition.id}:${avatar.color}:${state}:${mood}`;
   let frame = stillFrames.get(key);
   if (frame === undefined) {
-    const svg = renderAvatarSvg(avatar.definition, {
-      color: avatar.color,
-      state,
-      mood,
-      time: STILL_TIME[state],
-    });
-    frame = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    frame = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(botAvatarStillSvg(avatar, state, mood))}`;
     stillFrames.set(key, frame);
   }
   return frame;

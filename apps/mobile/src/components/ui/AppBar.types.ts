@@ -74,6 +74,12 @@ export interface AppBarSearch {
   readonly onClose?: () => void;
 }
 
+export interface AppBarTitleAvatar {
+  readonly content: ReactNode;
+  readonly accessibilityLabel: string;
+  readonly onPress: () => void;
+}
+
 export interface AppBarProps {
   readonly title: string;
   /** Android: replaces the title text, such as the brand title. iOS ignores it. */
@@ -111,6 +117,8 @@ export interface AppBarProps {
   readonly confirm?: AppBarConfirm;
   /** Android: replaces the sidebar button at the start of the bar. */
   readonly leading?: ReactNode;
+  /** A picture just before the title, such as a Bot's avatar, that opens what it stands for. */
+  readonly titleAvatar?: AppBarTitleAvatar;
   /**
    * Workspace shell only: a second bar inside a route whose own bar is drawn elsewhere, such as
    * a workspace tab pane. Leaves route options alone; iOS draws nothing. Screens never set it.

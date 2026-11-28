@@ -23,6 +23,8 @@ export interface PendingApprovalCardProps {
   readonly canOperateThread: boolean;
   readonly approval: PendingApproval;
   readonly respondingApprovalId: RuntimeRequestId | null;
+  /** Why it cannot be answered from here, in place of the missing-permission line. */
+  readonly unavailableNotice?: string;
   readonly onRespond: (
     requestId: RuntimeRequestId,
     decision: ProviderApprovalDecision,
@@ -141,7 +143,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
       </View>
       {!props.canOperateThread ? (
         <Text className="font-sans text-xs text-foreground-muted">
-          <T>This connection cannot respond to approvals.</T>
+          {props.unavailableNotice ?? <T>This connection cannot respond to approvals.</T>}
         </Text>
       ) : null}
     </View>

@@ -13,6 +13,7 @@ import { openSettings } from "../../settings/settings-navigation";
 import { ThreadNavigationSidebar } from "../../threads/ThreadNavigationSidebar";
 import { useOpenThreadPullRequests } from "../../threads/use-open-thread-pull-requests";
 import { useSelectWorkspaceDetail } from "./useSelectWorkspaceDetail";
+import { startNewBotDraft } from "../../bots/new-bot";
 
 type Route = { readonly name: string; readonly params?: object };
 
@@ -87,6 +88,10 @@ export function WorkspaceThreadSidebar() {
           threadId: String(thread.id),
         })
       }
+      onNewBot={(environmentId) => {
+        startNewBotDraft(environmentId);
+        navigation.navigate("NewBot");
+      }}
       onOpenThreadPullRequests={openThreadPullRequests}
       onSearchQueryChange={setPrimarySidebarSearchQuery}
       searchQuery={primarySidebarSearchQuery}

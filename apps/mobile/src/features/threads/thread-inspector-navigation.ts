@@ -5,7 +5,7 @@ import { resolveMobileSideThreadPresentation } from "@t3tools/client-runtime/sid
 
 import { useWorkspacePaneState } from "../layout/AdaptiveWorkspaceLayout";
 
-export type ThreadInspectorMode = "route" | "git" | "files" | "preview";
+export type ThreadInspectorMode = "route" | "git" | "files" | "preview" | "bot";
 
 export type ThreadInspectorTarget = {
   /** "linkedThread" is a thread on a linked environment, read through `linked.viaEnvironmentId`. */

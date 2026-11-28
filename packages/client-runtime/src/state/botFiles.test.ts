@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { noteSlugFromTitle } from "./BotNotes.logic";
+import { noteSlugFromTitle } from "./botFiles.ts";
 
 describe("noteSlugFromTitle", () => {
   it.each([

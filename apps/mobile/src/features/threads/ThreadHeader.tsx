@@ -1,7 +1,9 @@
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useGT, useMessages } from "gt-react-native";
 
 import { AppBar } from "../../components/ui/AppBar";
-import type { AppBarAction, AppBarMenu } from "../../components/ui/AppBar.types";
+import type { AppBarAction, AppBarMenu, AppBarTitleAvatar } from "../../components/ui/AppBar.types";
+import { BotHeaderAvatar, useOpenBotThread } from "../bots/BotHeaderAvatar";
 import {
   useAdaptiveWorkspaceLayout,
   useWorkspacePaneState,
@@ -23,6 +25,13 @@ export function ThreadHeader(props: {
   readonly hasThreadCwd: boolean;
   readonly inspectorMode: ThreadInspectorMode | null;
   readonly onOpenFilesInspector: () => void;
+  /** The thread's Bot: the thread itself, or the Bot it works for. */
+  readonly bot?: {
+    readonly ref: ScopedThreadRef;
+    readonly name: string;
+    readonly isWorker: boolean;
+  } | null;
+  readonly onOpenBotInspector?: () => void;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -32,6 +41,27 @@ export function ThreadHeader(props: {
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);
   const terminalMenu = threadTerminalMenu(props.gitControls, m);
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
+  const openBotThread = useOpenBotThread();
+  const { bot, onOpenBotInspector } = props;
+  const botPanelVisible = props.inspectorMode === "bot" && panes.auxiliaryPaneVisible;
+  const titleAvatar: AppBarTitleAvatar | undefined =
+    bot == null
+      ? undefined
+      : bot.isWorker
+        ? {
+            content: <BotHeaderAvatar botRef={bot.ref} />,
+            accessibilityLabel: gt("Open {name}", { name: bot.name }),
+            onPress: () => openBotThread(bot.ref),
+          }
+        : onOpenBotInspector === undefined
+          ? undefined
+          : {
+              content: <BotHeaderAvatar botRef={bot.ref} />,
+              accessibilityLabel: botPanelVisible
+                ? gt("Close Bot details")
+                : gt("Open Bot details"),
+              onPress: botPanelVisible ? toggleAuxiliaryPane : onOpenBotInspector,
+            };
   const actions: AppBarAction[] = props.hasThreadCwd
     ? [
         {
@@ -50,6 +80,7 @@ export function ThreadHeader(props: {
     <AppBar
       title={props.title}
       subtitle={props.subtitle}
+      titleAvatar={titleAvatar}
       onBackToList={goBack}
       onCompose={props.draft ? undefined : startNewTask}
       backInSplitView={

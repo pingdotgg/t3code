@@ -41,6 +41,9 @@ import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useThreadListV2 } from "./useThreadListV2";
+import { buildHomeBots } from "../bots/homeBots";
+import { HomeBotSection } from "../bots/HomeBotSection";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { useSidebarRowThreadKey } from "./useSidebarRowThreadKey";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { requestThreadMessageJump } from "./threadMessageJump";
@@ -102,6 +105,7 @@ interface ThreadNavigationSidebarProps {
   readonly onOpenPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
+  readonly onNewBot: (environmentId: EnvironmentId) => void;
   readonly onOpenThreadPullRequests: (
     thread: EnvironmentThreadShell,
     pr: ThreadPrPresentation,
@@ -164,6 +168,16 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   );
   const { options, setSelectedEnvironmentId, setSelectedProjectKey } =
     useHomeListOptions(availableEnvironmentIds);
+  const searchingThreads = props.searchQuery.trim().length > 0;
+  const homeBots = useMemo(
+    () =>
+      buildHomeBots({
+        threads: launchingThreads,
+        environmentId: options.selectedEnvironmentId,
+        searching: searchingThreads,
+      }),
+    [launchingThreads, options.selectedEnvironmentId, searchingThreads],
+  );
   const searchEnvironmentIds =
     options.selectedEnvironmentId === null
       ? workspaceEnvironments
@@ -277,7 +291,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     contentOnlyThreadKeys,
     olderSettledShelf,
   } = useThreadListV2({
-    threads: launchingThreads,
+    threads: homeBots.listedThreads,
     pendingTasks,
     environmentId: options.selectedEnvironmentId,
     projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
@@ -607,6 +621,18 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     </View>
   );
 
+  const botSection = (
+    <HomeBotSection
+      rows={homeBots.rows}
+      pane="sidebar"
+      selectedThreadKey={selectedThreadKey}
+      environmentId={options.selectedEnvironmentId}
+      hidden={searchingThreads}
+      onSelectBot={handleSelectThread}
+      onNewBot={props.onNewBot}
+    />
+  );
+
   if (Platform.OS === "ios") {
     return (
       <>
@@ -642,6 +668,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
+                ListHeaderComponent={botSection}
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>
@@ -666,7 +693,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           overflow: "hidden",
         }}
       >
-        {listItems.length === 0 ? (
+        {listItems.length === 0 && homeBots.rows.length === 0 ? (
           <View className="flex-1 items-center justify-center">{listEmpty}</View>
         ) : (
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
@@ -695,6 +722,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
+                ListHeaderComponent={botSection}
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>

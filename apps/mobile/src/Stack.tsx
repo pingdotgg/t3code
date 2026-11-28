@@ -69,6 +69,7 @@ import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
 import { ThreadPullRequestsSheet } from "./features/threads/ThreadPullRequestsSheet";
 import { ThreadAgentsSheet } from "./features/threads/ThreadAgentsSheet";
+import { NewBotModelRouteScreen, NewBotRouteScreen } from "./features/bots/NewBotSheet";
 import { LinkedThreadSheet } from "./features/threads/LinkedThreadSheet";
 import { ThreadGuestShareSheet } from "./features/threads/ThreadGuestShareSheet";
 import { ThreadBackgroundWorkSheet } from "./features/threads/ThreadBackgroundWorkSheet";
@@ -816,6 +817,14 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadGuestShare: createNativeStackScreen({
       screen: ThreadGuestShareSheet,
       options: sheetRoute({ detent: 0.5 }),
+    }),
+    NewBot: createNativeStackScreen({
+      screen: NewBotRouteScreen,
+      options: sheetRoute({ detent: 0.55, androidFit: true }),
+    }),
+    NewBotModel: createNativeStackScreen({
+      screen: NewBotModelRouteScreen,
+      options: THREAD_SETTINGS_ROUTE,
     }),
     GitOverview: createNativeStackScreen({
       screen: GitOverviewSheet,

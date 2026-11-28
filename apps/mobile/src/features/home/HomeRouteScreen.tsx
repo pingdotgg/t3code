@@ -41,6 +41,7 @@ import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspace
 import { WorkspaceListEmptyDetail } from "../layout/workspace/WorkspaceListEmptyDetail";
 import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
 import { buildHomeListFilterMenuItems, homeListFilterEnvironments } from "./home-list-filter-menu";
+import { startNewBotDraft } from "../bots/new-bot";
 
 export function HomeRouteScreen() {
   const gt = useGT();
@@ -223,6 +224,10 @@ export function HomeRouteScreen() {
             });
           }}
           onStartNewTask={startNewTask}
+          onNewBot={(environmentId) => {
+            startNewBotDraft(environmentId);
+            navigation.navigate("NewBot");
+          }}
           pendingTasks={pendingTasks}
           projectGroupingMode={listOptions.projectGroupingMode}
           projects={projects}

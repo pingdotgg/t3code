@@ -56,7 +56,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useDelayedStatus } from "../../lib/useDelayedStatus";
 import { connectionRetryLabel } from "./floating-working-status";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { useThreadShell } from "../../state/entities";
+import { useQuietThreadShell, useThreadShell } from "../../state/entities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
 import { runtimeConnectionErrorText } from "../connection/environmentStatusText";
@@ -134,6 +134,8 @@ import { useStartSideChat } from "./useStartSideChat";
 import { useThreadStatusAnnouncements } from "./useThreadStatusAnnouncements";
 import type { ThreadInspectorMode, ThreadInspectorTarget } from "./thread-inspector-navigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import { useOpenBotThread } from "../bots/BotHeaderAvatar";
+import { BotInspectorPane } from "../bots/BotInspectorPane";
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
   const first = Array.isArray(value) ? value[0] : value;
@@ -517,7 +519,8 @@ function ThreadRouteContent(
         : chosenInspectorMode === null || chosenInspectorMode === "route"
           ? "route"
           : chosenInspectorMode;
-    return mode === "files" && selectedThreadCwd === null ? null : mode;
+    if (mode === "files" && selectedThreadCwd === null) return null;
+    return mode === "bot" && selectedThread?.botConfig == null ? null : mode;
   })();
   const revealPreview = useEffectEvent(() => showInspector());
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the workspace navigator's inspector pane when route params bring a preview target
@@ -547,8 +550,27 @@ function ThreadRouteContent(
       : scopeThreadRef(delegatedFrom.environmentId, delegatedFrom.threadId);
   // The title it had at delegation, until this client sees the parent itself.
   const delegatedFromThread = useThreadShell(delegatedFromRef);
+  // A Bot's bar shows its avatar; a worker's shows its Bot where the project would be.
+  const botRef =
+    selectedThread === null
+      ? null
+      : selectedThread.botConfig != null
+        ? scopeThreadRef(selectedThread.environmentId, selectedThread.id)
+        : selectedThread.groupedUnderThreadId != null
+          ? scopeThreadRef(selectedThread.environmentId, selectedThread.groupedUnderThreadId)
+          : null;
+  const botShell = useQuietThreadShell(botRef);
+  const headerBot =
+    botRef !== null && botShell?.botConfig != null
+      ? { ref: botRef, name: botShell.title, isWorker: botShell.id !== selectedThread?.id }
+      : null;
+  const openBotThread = useOpenBotThread();
   const headerSubtitle = [
-    selectedThreadProject?.title ?? null,
+    headerBot === null
+      ? (selectedThreadProject?.title ?? null)
+      : headerBot.isWorker
+        ? headerBot.name
+        : null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
     // A linked environment's delegated task names its parent; other linked work its origin.
     delegatedFrom !== null
@@ -609,6 +631,11 @@ function ThreadRouteContent(
     setChosenInspectorMode(props.renderInspector === undefined ? "files" : "route");
     showInspector();
   };
+  const handleOpenBotInspector = () => {
+    navigation.setParams({ inspector: undefined });
+    setChosenInspectorMode("bot");
+    showInspector();
+  };
   const handleSelectInspectorFile = (path: string) => {
     if (selectedThread === null) {
       return;
@@ -639,6 +666,21 @@ function ThreadRouteContent(
               closeInspectorSheet
                 ? closeInspectorSheet(() => handleSelectInspectorFile(path))
                 : handleSelectInspectorFile(path)
+            }
+          />
+        )}
+      </InspectorSheetContext.Consumer>
+    ) : null;
+  const renderBotInspector = () =>
+    selectedThread?.botConfig != null ? (
+      <InspectorSheetContext.Consumer>
+        {(closeInspectorSheet) => (
+          <BotInspectorPane
+            threadRef={scopeThreadRef(selectedThread.environmentId, selectedThread.id)}
+            onOpenThread={(threadRef) =>
+              closeInspectorSheet
+                ? closeInspectorSheet(() => openBotThread(threadRef))
+                : openBotThread(threadRef)
             }
           />
         )}
@@ -680,6 +722,9 @@ function ThreadRouteContent(
               : []),
             { key: "files", render: renderFilesInspector, prewarm: true },
             { key: "git", render: renderGitInspector, prewarm: true },
+            ...(selectedThread?.botConfig != null
+              ? [{ key: "bot", render: renderBotInspector }]
+              : []),
             ...(props.renderInspector ? [{ key: "route", render: props.renderInspector }] : []),
           ],
         };
@@ -1058,6 +1103,8 @@ function ThreadRouteContent(
               hasThreadCwd={selectedThreadCwd !== null}
               inspectorMode={inspectorMode}
               onOpenFilesInspector={handleOpenFilesInspector}
+              bot={headerBot}
+              onOpenBotInspector={handleOpenBotInspector}
               onReturnToThread={props.onReturnToThread}
             />
           )

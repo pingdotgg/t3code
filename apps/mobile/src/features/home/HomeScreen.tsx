@@ -104,6 +104,8 @@ import { holdLaunchSplashForHomeRows, settleLaunchSplashHomeRows } from "./home-
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
 import { deriveHomeEmptyState } from "./home-empty-state";
+import { buildHomeBots } from "../bots/homeBots";
+import { HomeBotSection } from "../bots/HomeBotSection";
 
 interface HomeScreenProps {
   /** Whether this list is the one on screen; see `useHomeRouteVisible`. */
@@ -153,6 +155,7 @@ interface HomeScreenProps {
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
   readonly onNewThreadOnBranch: (thread: EnvironmentThreadShell) => void;
   readonly onNewThreadInProject: (project: EnvironmentProject) => void;
+  readonly onNewBot: (environmentId: EnvironmentId) => void;
 }
 
 const ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT = 72;
@@ -335,6 +338,12 @@ export function HomeScreen(props: HomeScreenProps) {
     [projects, selectedEnvironmentId, projectGroupingMode, m],
   );
   const hasSearchQuery = props.searchQuery.trim().length > 0;
+  const { threads } = props;
+  const homeBots = useMemo(
+    () =>
+      buildHomeBots({ threads, environmentId: selectedEnvironmentId, searching: hasSearchQuery }),
+    [threads, selectedEnvironmentId, hasSearchQuery],
+  );
   const projectByKey = (() => {
     const map = new Map<string, EnvironmentProject>();
     for (const project of props.projects) {
@@ -419,7 +428,7 @@ export function HomeScreen(props: HomeScreenProps) {
     contentOnlyThreadKeys,
     olderSettledShelf,
   } = useThreadListV2({
-    threads: props.threads,
+    threads: homeBots.listedThreads,
     pendingTasks: props.pendingTasks,
     environmentId: props.selectedEnvironmentId,
     projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
@@ -704,6 +713,15 @@ export function HomeScreen(props: HomeScreenProps) {
           onProjectChange={props.onProjectChange}
         />
       ) : null}
+      <HomeBotSection
+        rows={homeBots.rows}
+        pane={sidebarSurface ? "sidebar" : "screen"}
+        selectedThreadKey={selectedThreadKey}
+        environmentId={props.selectedEnvironmentId}
+        hidden={hasSearchQuery}
+        onSelectBot={onSelectThread}
+        onNewBot={props.onNewBot}
+      />
     </>
   );
 
@@ -748,7 +766,7 @@ export function HomeScreen(props: HomeScreenProps) {
       />
     );
 
-  if (Platform.OS === "android" && threadListV2Items.length === 0) {
+  if (Platform.OS === "android" && threadListV2Items.length === 0 && homeBots.rows.length === 0) {
     return (
       <ScreenContent surface="screen">
         <View

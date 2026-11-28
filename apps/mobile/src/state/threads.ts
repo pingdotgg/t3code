@@ -1,4 +1,7 @@
-import { createChildThreadApprovalsAtom } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  createBotWorkerRequestsAtom,
+  createChildThreadApprovalsAtom,
+} from "@t3tools/client-runtime/state/thread-requests";
 import { useAtomValue } from "@effect/atom-react";
 import {
   createEnvironmentThreadDetailAtoms,
@@ -67,6 +70,10 @@ export const steadyNavigationThreadShellsAtom = createEnvironmentThreadShellAtom
 }).navigationThreadShellsAtom;
 export const childThreadApprovalsAtom = createChildThreadApprovalsAtom({
   childThreadInputsAtom: environmentThreadShells.childThreadInputsAtom,
+  pendingRequestsAtom: environmentThreadDetails.pendingRequestsAtom,
+});
+export const botWorkerRequestsAtom = createBotWorkerRequestsAtom({
+  threadShellsAtom: environmentThreadShells.quietThreadShellsAtom,
   pendingRequestsAtom: environmentThreadDetails.pendingRequestsAtom,
 });
 

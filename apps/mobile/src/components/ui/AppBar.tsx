@@ -5,7 +5,7 @@ import { AppActivityIndicator } from "./AppActivityIndicator";
 import type { HeaderBarButtonMailSearchToolbarItem, SearchBarCommands } from "react-native-screens";
 import { NavigationContext, NavigationRouteContext } from "@react-navigation/native";
 import { use, useId, useLayoutEffect, useRef, useSyncExternalStore } from "react";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
 import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
 import { NativeStackScreenOptions, useScreenOptionsWriter } from "../../native/StackHeader";
@@ -224,7 +224,7 @@ export function AppBar(props: AppBarProps) {
             onPress={props.onClose}
           />
         </Toolbar>
-      ) : rootBack || splitBack || sidebarToggle || compose ? (
+      ) : rootBack || splitBack || sidebarToggle || compose || props.titleAvatar ? (
         <Toolbar placement="left">
           {rootBack ? (
             <ScreenHeaderButton
@@ -252,6 +252,19 @@ export function AppBar(props: AppBarProps) {
               onPress={compose}
               separateBackground
             />
+          ) : null}
+          {props.titleAvatar ? (
+            <Toolbar.Custom>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={props.titleAvatar.accessibilityLabel}
+                hitSlop={4}
+                onPress={props.titleAvatar.onPress}
+                className="size-9 items-center justify-center active:opacity-70"
+              >
+                {props.titleAvatar.content}
+              </Pressable>
+            </Toolbar.Custom>
           ) : null}
         </Toolbar>
       ) : null}

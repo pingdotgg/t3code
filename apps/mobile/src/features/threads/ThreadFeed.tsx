@@ -273,6 +273,9 @@ import {
   type GroupedThreadFeedRow,
   type ThreadFeedRow,
 } from "./pending-thread-feed";
+import { createBotFeedDeriver, type BotFeedInput } from "../bots/botFeed.logic";
+import { BotNameLine, BotTypingRow } from "../bots/BotFeedRows";
+import { type BotIdentity, useBotSenders } from "../bots/useBotSenders";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
 import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
@@ -2016,6 +2019,9 @@ function renderFeedEntry(
     readonly workflowOpening: WorkflowOpening | null;
     readonly userMessageGrouping: GroupedThreadFeedRow["userMessageGrouping"];
     readonly m: ReturnType<typeof useMessages>;
+    /** The open thread, when it is a Bot. */
+    readonly bot: BotIdentity | null;
+    readonly botSenders: ReadonlyMap<string, BotIdentity>;
   },
 ) {
   const entry = info.item;
@@ -2038,6 +2044,10 @@ function renderFeedEntry(
         )}
       />
     );
+  }
+
+  if (entry.type === "bot-typing") {
+    return props.bot === null ? null : <BotTypingRow bot={props.bot} detail={entry.detail} />;
   }
 
   if (entry.type === "pending-fold") {
@@ -2339,13 +2349,21 @@ function renderFeedEntry(
     }
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);
-      const foldRowId = presentation.attribution === "agent" ? `agent:${message.id}` : null;
       // A linked environment's agent sent it from a thread there.
       const senderRef =
         message.linkedSender ??
         (message.senderThreadId
           ? scopeThreadRef(props.environmentId, message.senderThreadId)
           : null);
+      // Another Bot talks like a person: its message shows in full under its name and avatar.
+      const senderBot =
+        presentation.attribution === "agent" && senderRef
+          ? props.botSenders.get(scopedThreadKey(senderRef.environmentId, senderRef.threadId))
+          : undefined;
+      const foldRowId =
+        presentation.attribution === "agent" && senderBot === undefined
+          ? `agent:${message.id}`
+          : null;
       const foldExpanded = foldRowId !== null && (props.expandedWorkRows[foldRowId] ?? false);
       const bubbleBodyVisible = foldRowId === null || foldExpanded;
       const intentBadge = props.userMessageGrouping.continuesSteer
@@ -2406,6 +2424,7 @@ function renderFeedEntry(
           {presentation.guestName !== undefined ? (
             <GuestMessageName name={presentation.guestName} />
           ) : null}
+          {senderBot !== undefined ? <BotNameLine bot={senderBot} alignEnd /> : null}
           {mediaAttachments.length + pendingMedia.length > 0 ? (
             <View
               className={hasBubble ? "mb-2" : undefined}
@@ -2587,7 +2606,7 @@ function renderFeedEntry(
           ) : null}
           {bubbleBodyVisible ? (
             <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
-              {foldRowId !== null && senderRef ? (
+              {(foldRowId !== null || senderBot !== undefined) && senderRef ? (
                 <OpenSenderThreadButton
                   environmentId={senderRef.environmentId}
                   senderThreadId={senderRef.threadId}
@@ -2679,6 +2698,7 @@ function renderFeedEntry(
         )}
         {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
+        {props.bot !== null ? <BotNameLine bot={props.bot} /> : null}
         {renderedText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
             <AssistantMarkdownContent
@@ -2982,11 +3002,18 @@ function useThreadFeedPresentation(
   expandedTurnIds: ReadonlySet<RunId>,
   expandedWorkGroups: Record<string, boolean>,
   revealedMessageId: MessageId | null,
+  bot: BotFeedInput | null,
 ) {
   const [feedCache] = useState(createThreadFeedCache);
+  const [deriveBotFeed] = useState(createBotFeedDeriver);
   const messages = useMessages();
   const locale = useLocale();
-  return appendPendingThreadMessages(
+  if (bot !== null) {
+    const { rows, typing } = deriveBotFeed(props.feed, bot);
+    const chat = appendPendingThreadMessages(rows, props.feed, props.queuedMessages);
+    return { bot: true as const, rows: typing === null ? chat : [...chat, typing] };
+  }
+  const rows = appendPendingThreadMessages(
     deriveThreadFeedPresentation(
       props.feed,
       props.latestRun,
@@ -3006,6 +3033,7 @@ function useThreadFeedPresentation(
     props.feed,
     props.queuedMessages,
   );
+  return { bot: false as const, rows };
 }
 
 type DisclosureLayout = {
@@ -3112,6 +3140,45 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const { listRef, onIsAtEndChange, onHeaderMaterialVisibilityChange } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);
   const guestShare = useThreadGuestShare(props.detailRef);
+  const threadShell = useQuietThreadShell(scopeThreadRef(props.environmentId, props.threadId));
+  const botConfig = threadShell?.botConfig ?? null;
+  const isBot = botConfig !== null;
+  const botName = threadShell?.title ?? "";
+  const avatarShape = botConfig?.avatar?.shape;
+  const avatarColor = botConfig?.avatar?.color;
+  // Built from values, so a rebuilt shell keeps the list's appearance data unchanged.
+  const bot = useMemo<BotIdentity | null>(
+    () =>
+      isBot
+        ? {
+            threadId: props.threadId,
+            name: botName,
+            avatar:
+              avatarShape === undefined || avatarColor === undefined
+                ? null
+                : { shape: avatarShape, color: avatarColor },
+          }
+        : null,
+    [isBot, props.threadId, botName, avatarShape, avatarColor],
+  );
+  const botFeedInput: BotFeedInput | null =
+    bot === null || threadShell === null
+      ? null
+      : {
+          latestRun: props.latestRun,
+          awaitingUser: threadShell.hasPendingApprovals || threadShell.hasPendingUserInput,
+          greeting:
+            botConfig?.greets === true
+              ? {
+                  threadId: props.threadId,
+                  text: gt(
+                    "Hi! What should I look after for you? Tell me the job and how you like things done, and I'll set myself up from there.",
+                  ),
+                  createdAt: threadShell.createdAt,
+                }
+              : null,
+        };
+  const botSenders = useBotSenders(props.environmentId, props.feed);
   const deviceType = useDeviceType();
   const duoColumns = useNativeWorkspaceColumnsSupported() && isDuoDevice(deviceType);
   const openPullRequest = useOpenPullRequest();
@@ -3771,6 +3838,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     contentWidth,
     skills: props.skills,
     workflowOpening,
+    bot,
+    botSenders,
   };
   const reportHeaderMaterialVisibility = (visible: boolean) => {
     if (headerMaterialVisibleRef.current === visible) {
@@ -3843,12 +3912,18 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     setInteractionState((current) => ({ ...current, revealedMessageId: jumpToMessageId }));
   }
   const [appendPendingTurn] = useState(createPendingTurnAppender);
+  const presentation = useThreadFeedPresentation(
+    props,
+    expandedTurnIds,
+    expandedWorkGroups,
+    revealedMessageId,
+    botFeedInput,
+  );
   const presentedFeed = appendGuestPendingMessages(
-    appendPendingTurn(
-      useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups, revealedMessageId),
-      { zen: props.toolCallVisibility === "zen" },
-      m,
-    ),
+    // A Bot's chat has its own typing row instead of the starting turn's rows.
+    presentation.bot
+      ? presentation.rows
+      : appendPendingTurn(presentation.rows, { zen: props.toolCallVisibility === "zen" }, m),
     guestShare,
     m,
   );
@@ -4227,6 +4302,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ) : null}
           {renderFeedEntry(info, {
             m,
+            bot,
+            botSenders,
             userMessageGrouping: info.item.userMessageGrouping,
             formatMessageTime,
             environmentId: props.environmentId,

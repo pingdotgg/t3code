@@ -1,5 +1,11 @@
 import type { BotAvatarChoice } from "@t3tools/contracts";
-import { examples, type AvatarDefinition } from "open-bot-avatar";
+import {
+  examples,
+  renderAvatarSvg,
+  type AvatarDefinition,
+  type AvatarMood,
+  type AvatarState,
+} from "open-bot-avatar";
 
 // Gallery shapes and colors from github.com/DominikScholz/open-bot-avatar (MIT, © 2026 Dominik Scholz).
 const GALLERY: ReadonlyArray<AvatarDefinition> = [
@@ -205,4 +211,73 @@ export function botAvatarFor(threadId: string, choice?: BotAvatarChoice | null):
     hash = Math.imul(hash ^ threadId.charCodeAt(index), 0x01000193);
   }
   return AVATARS[(hash >>> 0) % AVATARS.length]!;
+}
+
+export type { AvatarMood, AvatarState };
+
+export type BotAvatarState = Extract<
+  AvatarState,
+  "idle" | "thinking" | "working" | "waiting" | "blocked"
+>;
+
+export interface BotAvatarStatus {
+  readonly state: BotAvatarState;
+  /** Happy while it has a reply you have not seen. */
+  readonly mood: AvatarMood;
+  /** Workers waiting on the user, plus the Bot itself when it is. */
+  readonly needsYou: number;
+}
+
+/**
+ * What a Bot's avatar shows. Worker failures wake the Bot to handle them; only the Bot's own
+ * failure stops it. The Bot replying thinks (dots); only its workers running shows them at work.
+ */
+export function resolveBotAvatarStatus(input: {
+  readonly failed: boolean;
+  readonly botNeedsInput: boolean;
+  readonly botRunning: boolean;
+  readonly workersNeedingYou: number;
+  readonly workersWorking: number;
+  readonly hasUnseenReply: boolean;
+}): BotAvatarStatus {
+  const needsYou = input.workersNeedingYou + (input.botNeedsInput ? 1 : 0);
+  const state: BotAvatarState = input.failed
+    ? "blocked"
+    : needsYou > 0
+      ? "waiting"
+      : input.botRunning
+        ? "thinking"
+        : input.workersWorking > 0
+          ? "working"
+          : "idle";
+  const mood: AvatarMood = state === "idle" && input.hasUnseenReply ? "happy" : "neutral";
+  return { state, mood, needsYou };
+}
+
+// Times at which each state's still pose reads clearly; working shows its ribbons at 2s.
+const STILL_TIME: Record<AvatarState, number> = {
+  idle: 1.2,
+  thinking: 1.2,
+  working: 2,
+  waiting: 1.2,
+  blocked: 1.2,
+  done: 1.2,
+};
+
+const stillSvgs = new Map<string, string>();
+
+/** A Bot avatar's still pose as SVG markup, cached per look. */
+export function botAvatarStillSvg(avatar: BotAvatar, state: AvatarState, mood: AvatarMood): string {
+  const key = `${avatar.definition.id}:${avatar.color}:${state}:${mood}`;
+  let svg = stillSvgs.get(key);
+  if (svg === undefined) {
+    svg = renderAvatarSvg(avatar.definition, {
+      color: avatar.color,
+      state,
+      mood,
+      time: STILL_TIME[state],
+    });
+    stillSvgs.set(key, svg);
+  }
+  return svg;
 }

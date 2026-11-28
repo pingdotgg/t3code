@@ -1,4 +1,5 @@
 import { ChildThreadApprovals } from "./ChildThreadApprovals";
+import { BotWorkerRequests } from "../bots/BotWorkerRequests";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 import { useSidebarWorkspaceTabs } from "../layout/workspace/useSystemWorkspaceTabBar";
@@ -1740,6 +1741,15 @@ function ThreadDetailBody(
                     />
                     <ChildThreadApprovals
                       threadRef={props.selectedThreadDetailRef}
+                      maxHeight={pendingUserInputMaxHeight}
+                      hideWorkers={props.selectedThread.botConfig != null}
+                    />
+                    <BotWorkerRequests
+                      botRef={
+                        props.selectedThread.botConfig != null
+                          ? props.selectedThreadDetailRef
+                          : null
+                      }
                       maxHeight={pendingUserInputMaxHeight}
                     />
                     <ThreadGuestShareBar

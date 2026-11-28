@@ -5,6 +5,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { noteSlugFromTitle } from "@t3tools/client-runtime/state/bot-files";
 import {
   BOT_AVATAR_COLORS,
   BOT_AVATAR_GALLERY,
@@ -50,7 +51,7 @@ import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { noteSlugFromTitle } from "./BotNotes.logic";
+
 import { BotAvatar } from "./BotAvatar";
 
 type OpenNote = { readonly kind: "new" } | { readonly kind: "note"; readonly slug: string };
