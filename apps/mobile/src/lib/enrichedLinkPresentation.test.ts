@@ -22,6 +22,10 @@ describe("Enriched link presentation", () => {
       "app.tsx:12:3",
       "src/http.ts:42-64",
       "http.ts:42-64",
+      "app/(auth)/login/page.tsx",
+      "src/routes/[id]/+page.svelte",
+      "app/routes/posts.$id.tsx",
+      "node_modules/@scope/pkg/index.js",
     ]) {
       expect(ENRICHED_INLINE_FILE_LINK_REGEX.test(path), path).toBe(true);
     }

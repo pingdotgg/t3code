@@ -627,6 +627,21 @@ describe("resolveChatShortcutCommand", () => {
 });
 
 describe("resolveShortcutCommand", () => {
+  it.each(["constructor", "!constructor"])(
+    "treats inherited object properties in when-condition %s as unset",
+    (when) => {
+      const keybindings = compileResolvedKeybindingsConfig([
+        { key: "mod+j", command: "terminal.toggle", when },
+      ]);
+      assert.strictEqual(
+        resolveShortcutCommand(event({ code: "KeyJ", ctrlKey: true }), keybindings, {
+          platform: "Linux",
+        }),
+        when.startsWith("!") ? "terminal.toggle" : null,
+      );
+    },
+  );
+
   it("routes mod+w to the terminal while focused and to the right panel otherwise", () => {
     const closeEvent = event({ key: "w", metaKey: true });
     assert.strictEqual(
@@ -642,6 +657,20 @@ describe("resolveShortcutCommand", () => {
         context: { terminalFocus: false },
       }),
       "rightPanel.close",
+    );
+  });
+
+  it("maximizes the right panel with mod+alt+e by default", () => {
+    // macOS reports Option+E as the dead key "´", so the physical key decides.
+    const mac = event({ key: "´", code: "KeyE", metaKey: true, altKey: true });
+    const linux = event({ key: "e", code: "KeyE", ctrlKey: true, altKey: true });
+    assert.strictEqual(
+      resolveShortcutCommand(mac, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "MacIntel" }),
+      "rightPanel.toggleMaximized",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(linux, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "Linux" }),
+      "rightPanel.toggleMaximized",
     );
   });
 

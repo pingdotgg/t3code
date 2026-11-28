@@ -95,6 +95,7 @@ import { readEnvironmentScope } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
 import { useEnvironmentScope } from "../state/session";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
+import { useOpenInSystemBrowser } from "../browser/useOpenInSystemBrowser";
 import { terminalInputWriter } from "./terminal/terminalInputWriter";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
@@ -545,26 +546,37 @@ function TerminalSessionViewport({
   );
   const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canReadFilesystem = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
-  const [linkPath, setLinkPath] = useState<string | null>(null);
+  const [hoveredLink, setHoveredLink] = useState<{ text: string; fallback?: string } | null>(null);
   const metadataThreadRef = useContext(FileMetadataThreadContext);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const hostname = serverConfig?.hostname;
   const readHostname = useEffectEvent(() => hostname);
-  const linkMetadataQuery =
-    linkPath !== null && canOpenHostEditor && canReadFilesystem
+  const hoveredMetadataQuery = (text: string | undefined) =>
+    text !== undefined && canOpenHostEditor && canReadFilesystem
       ? getFileMetadataQueryAtom(
           environmentId,
-          resolveTerminalLinkTarget(linkPath, cwd, hostname),
+          resolveTerminalLinkTarget(text, cwd, hostname),
           cwd,
           metadataThreadRef,
         )
       : null;
+  const linkMetadataQuery = hoveredMetadataQuery(hoveredLink?.text);
+  const fallbackMetadataQuery = hoveredMetadataQuery(hoveredLink?.fallback);
   const canActivateTerminalLink = useEffectEvent((text: string) => {
     if (isTerminalUrl(text)) return true;
     if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
-    if (text !== linkPath || !linkMetadataQuery) return false;
-    const metadata = AsyncResult.getOrElse(appAtomRegistry.get(linkMetadataQuery), () => null);
-    return metadata?.kind === "file" || metadata?.kind === "directory";
+    const exists = (query: typeof linkMetadataQuery) => {
+      const metadata = query ? AsyncResult.getOrElse(appAtomRegistry.get(query), () => null) : null;
+      return metadata?.kind === "file" || metadata?.kind === "directory";
+    };
+    if (text === hoveredLink?.text) return exists(linkMetadataQuery);
+    // The shorter reading stands in only once the whole candidate is known to be no file.
+    return (
+      text === hoveredLink?.fallback &&
+      (!linkMetadataQuery || AsyncResult.isSuccess(appAtomRegistry.get(linkMetadataQuery))) &&
+      !exists(linkMetadataQuery) &&
+      exists(fallbackMetadataQuery)
+    );
   });
   const validateTerminalLink = useEffectEvent(async (text: string) => {
     if (isTerminalUrl(text)) return true;
@@ -688,6 +700,8 @@ function TerminalSessionViewport({
       if (version > 0) synchronizedStatusRef.current = status;
     },
   );
+  const openInSystemBrowser = useOpenInSystemBrowser(environmentId);
+  const openLinkInSystemBrowser = useEffectEvent((url: string) => openInSystemBrowser(url));
   const openLinkInPreview = useEffectEvent(
     (url: string, forceBrowser: boolean, fallbackToBrowser: () => void) =>
       openTerminalLinkInPreview({ url, threadRef, openPreview, fallbackToBrowser, forceBrowser }),
@@ -702,16 +716,15 @@ function TerminalSessionViewport({
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the imperative terminal's hovered link after filesystem metadata or editor permissions change
   useEffect(() => {
-    if (!linkMetadataQuery) {
-      terminalRef.current?.refreshLinkActivation();
-      return;
-    }
-    return appAtomRegistry.subscribe(
-      linkMetadataQuery,
-      () => terminalRef.current?.refreshLinkActivation(),
-      { immediate: true },
+    const refresh = () => terminalRef.current?.refreshLinkActivation();
+    const unsubscribes = [linkMetadataQuery, fallbackMetadataQuery].flatMap((query) =>
+      query ? [appAtomRegistry.subscribe(query, refresh, { immediate: true })] : [],
     );
-  }, [linkMetadataQuery]);
+    if (unsubscribes.length === 0) refresh();
+    return () => {
+      for (const unsubscribe of unsubscribes) unsubscribe();
+    };
+  }, [linkMetadataQuery, fallbackMetadataQuery]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes visibility into the terminal surface before paint and consumes focus requests made while hidden
   useLayoutEffect(() => {
@@ -754,7 +767,12 @@ function TerminalSessionViewport({
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
         canActivateLink: (text) => canActivateTerminalLink(text),
         validateLink: (text) => validateTerminalLink(text),
-        onLinkHover: (text) => setLinkPath(text !== null && !isTerminalUrl(text) ? text : null),
+        onLinkHover: (text, fallback) =>
+          setHoveredLink(
+            text !== null && !isTerminalUrl(text)
+              ? { text, ...(fallback === undefined ? {} : { fallback }) }
+              : null,
+          ),
         // Surface listeners start before WASM loading finishes and the terminal handler exists.
         onContextMenu: (event) => {
           if (terminalRef.current) void showTerminalContextMenu(event);
@@ -1145,7 +1163,7 @@ function TerminalSessionViewport({
             return;
           }
           const fallbackToBrowser = () => {
-            void localApi.shell.openExternal(text).catch((error: unknown) => {
+            void openLinkInSystemBrowser(text).catch((error: unknown) => {
               writeSystemMessage(
                 latestTerminal,
                 thrownErrorMessage(error, m) ?? m(msg("Unable to open link")),

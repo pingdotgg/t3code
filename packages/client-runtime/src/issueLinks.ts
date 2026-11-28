@@ -75,9 +75,14 @@ export function isStandaloneIssueLink(url: string): boolean {
   return parseStandaloneIssueLink(url) !== null;
 }
 
+const LINEAR_LINK_HINT_PATTERN = new RegExp(
+  `${LINEAR_HOST.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?::\\d*)?/`,
+  "i",
+);
+
 /** A cheap pre-check, so text without such a link never asks for the bindings. */
 export function mayContainStandaloneIssueLink(text: string): boolean {
-  return text.includes(`${LINEAR_HOST}/`);
+  return LINEAR_LINK_HINT_PATTERN.test(text);
 }
 
 /**

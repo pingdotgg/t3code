@@ -265,17 +265,19 @@ function statusArgs(state: PullRequestListState): ReadonlyArray<string> {
   }
 }
 
-function involvementArgs(input: {
+function involvementFilters(input: {
   readonly involvement: PullRequestInvolvement;
   readonly viewer: string;
-}): ReadonlyArray<string> {
+  readonly author?: string | undefined;
+}): ReadonlyArray<readonly [option: string, value: string]> {
+  const author = input.author === undefined ? [] : [["--creator", input.author] as const];
   switch (input.involvement) {
     case "authored":
-      return ["--creator", input.viewer];
+      return [["--creator", input.viewer]];
     case "reviewing":
-      return ["--reviewer", input.viewer];
+      return [["--reviewer", input.viewer], ...author];
     case "all":
-      return [];
+      return author;
   }
 }
 
@@ -329,12 +331,55 @@ export const make = Effect.gen(function* () {
     readonly cwd: string;
     readonly args: ReadonlyArray<string>;
     readonly maxOutputBytes?: number;
+    readonly stdin?: string | undefined;
   }) =>
     azure.execute({
       cwd: input.cwd,
       args: [...input.args, "--only-show-errors", "--output", "json"],
       ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+      ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
     });
+
+  /**
+   * `textOption`s for one command. az has one stdin, so each further value starting with `@`
+   * goes in a file of its own, which az reads in place of the `@path` it was handed.
+   */
+  const textOptions = Effect.fn("AzureDevOpsPullRequestCli.textOptions")(function* (
+    cwd: string,
+    operation: string,
+    values: ReadonlyArray<readonly [option: string, value: string]>,
+  ) {
+    const options = values.map(([option, value]) => ({
+      option,
+      ...AzureDevOpsCli.textOption(option, value),
+    }));
+    const piped = options.find((option) => option.stdin !== undefined);
+    const filed = options.filter((option) => option.stdin !== undefined && option !== piped);
+    const readFailure = (cause: unknown) =>
+      new AzureDevOpsPullRequestReadError({ command: "az", cwd, operation, cause });
+    const directory =
+      filed.length === 0
+        ? ""
+        : yield* fileSystem
+            .makeTempDirectoryScoped({ prefix: "t3-azure-values-" })
+            .pipe(Effect.mapError(readFailure));
+    const fileOf = (option: (typeof options)[number]) => {
+      const index = filed.indexOf(option);
+      return index === -1 ? null : `${directory}/${index}`;
+    };
+    for (const option of filed) {
+      yield* fileSystem
+        .writeFileString(`${fileOf(option)}`, option.stdin ?? "")
+        .pipe(Effect.mapError(readFailure));
+    }
+    return {
+      args: options.map((option) => {
+        const file = fileOf(option);
+        return file === null ? option.arg : `${option.option}=@${file}`;
+      }),
+      stdin: piped?.stdin,
+    };
+  });
 
   /** Use the extension's credentials; `az rest` uses the default tenant. */
   const invoke = <A>(input: {
@@ -419,27 +464,32 @@ export const make = Effect.gen(function* () {
   > => {
     const remaining = input.limit - input.items.length;
     const top = remaining + 1;
-    return executeJson({
-      cwd: input.cwd,
-      maxOutputBytes: PULL_REQUEST_LIST_MAX_OUTPUT_BYTES,
-      args: [
-        "repos",
-        "pr",
-        "list",
-        ...detectArgs,
-        "--repository",
-        input.repository,
-        ...statusArgs(input.state),
-        ...involvementArgs(input),
-        ...(input.author === undefined || input.involvement === "authored"
-          ? []
-          : ["--creator", input.author]),
-        "--include-links",
-        ...(input.skip === 0 ? [] : ["--skip", String(input.skip)]),
-        "--top",
-        String(top),
-      ],
-    }).pipe(
+    // The name, viewer and author filter come from a remote, Azure and the user.
+    return textOptions(input.cwd, "listPullRequests", [
+      ["--repository", input.repository],
+      ...involvementFilters(input),
+    ]).pipe(
+      Effect.flatMap((filters) =>
+        executeJson({
+          cwd: input.cwd,
+          maxOutputBytes: PULL_REQUEST_LIST_MAX_OUTPUT_BYTES,
+          stdin: filters.stdin,
+          args: [
+            "repos",
+            "pr",
+            "list",
+            ...detectArgs,
+            ...filters.args,
+            ...statusArgs(input.state),
+            "--include-links",
+            ...(input.skip === 0 ? [] : ["--skip", String(input.skip)]),
+            "--top",
+            String(top),
+          ],
+        }),
+      ),
+      // Scoped to the one az call that reads the files.
+      Effect.scoped,
       Effect.flatMap((result) => {
         const raw = result.stdout.trim();
         if (raw.length === 0) {

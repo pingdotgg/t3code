@@ -1,8 +1,9 @@
-import { useGT } from "gt-react";
+import { useGT, useMessages } from "gt-react";
 import { TerminalIcon } from "lucide-react";
 
 import type { ContextPresentationCapability } from "../contextPresentationRegistry";
 import { ContextChipPopover, ContextChipShell } from "../contextChipParts";
+import { terminalContextDisplayLabel } from "~/lib/terminalContext";
 
 interface TerminalContextInlineChipProps {
   terminalLabel: string;
@@ -16,10 +17,8 @@ interface TerminalContextInlineChipProps {
 export function TerminalContextInlineChip(props: TerminalContextInlineChipProps) {
   const { terminalLabel, lineStart, lineEnd, text, detailsMode, expired = false } = props;
   const gt = useGT();
-  const label =
-    lineStart === lineEnd
-      ? gt("{terminalLabel} line {lineStart}", { terminalLabel, lineStart })
-      : gt("{terminalLabel} lines {lineStart}-{lineEnd}", { terminalLabel, lineStart, lineEnd });
+  const resolve = useMessages();
+  const label = terminalContextDisplayLabel(props, resolve);
 
   if (!expired && text.length > 0 && detailsMode === "popover") {
     return (

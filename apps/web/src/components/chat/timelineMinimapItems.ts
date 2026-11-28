@@ -61,8 +61,10 @@ function resolveFinalAssistantTextForTurn(
 }
 
 // Elements whose children run together; every other element is separated by a space.
+// A tight list item holds its text bare, without the paragraph a loose one wraps it in.
 const INLINE_PARENTS = new Set([
   "p",
+  "li",
   "h1",
   "h2",
   "h3",
@@ -86,6 +88,12 @@ function markdownNodeText(node: Nodes): string {
   if (node.type === "element" && node.tagName === "br") return " ";
   if (node.type === "element" && node.tagName === "img") return String(node.properties.alt ?? "");
   if (node.type !== "element" && node.type !== "root") return "";
+  // Footnote markers and the footnote list are not part of the message's prose.
+  if (
+    node.type === "element" &&
+    (node.properties.dataFootnotes !== undefined || node.properties.dataFootnoteRef !== undefined)
+  )
+    return "";
   const separator = node.type === "element" && INLINE_PARENTS.has(node.tagName) ? "" : " ";
   const text = node.children.map(markdownNodeText).join(separator);
   // A thread autolink's only text is its URL.

@@ -130,15 +130,21 @@ describe("resolvePromptLinkModelSelection", () => {
     instanceId: string,
     driver: string,
     status: "checking" | "ready" | "warning" | "error" | "disabled" = "ready",
+    models: ReadonlyArray<{
+      readonly slug: string;
+      readonly name: string;
+      readonly aliases?: ReadonlyArray<string>;
+      readonly isDefault?: boolean;
+    }> = [
+      { slug: "small", name: "Small" },
+      { slug: "big", name: "Big", aliases: ["opus"], isDefault: true },
+    ],
   ) => ({
     instanceId: ProviderInstanceId.make(instanceId),
     driver: ProviderDriverKind.make(driver),
     enabled: true,
     status,
-    models: [
-      { slug: "small", name: "Small" },
-      { slug: "big", name: "Big", aliases: ["opus"], isDefault: true },
-    ],
+    models,
   });
 
   it("maps the requested provider and model onto a usable instance", () => {
@@ -174,5 +180,48 @@ describe("resolvePromptLinkModelSelection", () => {
         model: "small",
       }),
     ).toEqual({ selection: { instanceId: "codex", model: "small" }, exact: true });
+  });
+
+  it("searches ready instances before warning or checking instances for the requested model", () => {
+    const providers = [
+      provider("pending", "codex", "checking", [
+        { slug: "work-only", name: "Work Only" },
+        { slug: "pending-only", name: "Pending Only" },
+      ]),
+      provider("warn", "codex", "warning", [
+        { slug: "work-only", name: "Work Only", isDefault: true },
+        { slug: "warn-only", name: "Warn Only" },
+      ]),
+      provider("personal", "codex", "ready", [{ slug: "base", name: "Base", isDefault: true }]),
+      provider("work", "codex", "ready", [
+        { slug: "work-only", name: "Work Only", isDefault: true },
+      ]),
+      provider("broken", "codex", "error", [{ slug: "broken-only", name: "Broken Only" }]),
+    ];
+
+    expect(
+      resolvePromptLinkModelSelection(providers, { provider: "codex", model: "work-only" }),
+    ).toEqual({
+      selection: { instanceId: "work", model: "work-only" },
+      exact: true,
+    });
+    expect(
+      resolvePromptLinkModelSelection(providers, { provider: "codex", model: "warn-only" }),
+    ).toEqual({
+      selection: { instanceId: "warn", model: "warn-only" },
+      exact: true,
+    });
+    expect(
+      resolvePromptLinkModelSelection(providers, { provider: "codex", model: "pending-only" }),
+    ).toEqual({
+      selection: { instanceId: "pending", model: "pending-only" },
+      exact: true,
+    });
+    expect(
+      resolvePromptLinkModelSelection(providers, { provider: "codex", model: "broken-only" }),
+    ).toEqual({
+      selection: { instanceId: "personal", model: "base" },
+      exact: false,
+    });
   });
 });

@@ -204,6 +204,58 @@ it.effect(
     }),
 );
 
+it.effect.each([
+  { label: "a reused checkpoint", source: 2, copy: true, calls: ["copy"] },
+  { label: "a declined copy", source: 2, copy: false, calls: ["copy", "snapshot"] },
+  { label: "a copy slower than its budget", source: 2, calls: ["copy", "snapshot"] },
+])("baselines a turn after steered queued messages with $label", (row) =>
+  Effect.gen(function* () {
+    const scope: OrchestrationV2CheckpointScope = {
+      id: CheckpointScopeId.make("checkpoint-scope:queue-gap"),
+      threadId: ThreadId.make("thread:queue-gap"),
+      runId: RunId.make("run:queue-gap:1"),
+      nodeId: NodeId.make("node:queue-gap:1"),
+      parentScopeId: null,
+      providerThreadId: ProviderThreadId.make("provider-thread:queue-gap"),
+      kind: "root_run",
+      ordinalWithinParent: 0,
+      advancesAppRunCount: true,
+      cwd: "/repo/queue-gap",
+      createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
+    };
+    const calls = yield* Ref.make<ReadonlyArray<string>>([]);
+    const record = (call: string) => Ref.update(calls, (current) => [...current, call]);
+    const layerTest = CheckpointService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          layerNoTrackedFolders,
+          Layer.mock(CheckpointStore.CheckpointStore)({
+            isGitRepository: () => Effect.succeed(true),
+            hasCheckpointRef: () => Effect.succeed(false),
+            copyCheckpointRef: () =>
+              record("copy").pipe(
+                Effect.andThen(row.copy === undefined ? Effect.never : Effect.succeed(row.copy)),
+              ),
+            captureCheckpoint: () => record("snapshot").pipe(Effect.as(null)),
+          }),
+        ),
+      ),
+      Layer.provideMerge(NodeCrypto.layer),
+    );
+
+    yield* Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+      const baseline = yield* checkpoints
+        .captureBaseline({ scope, ordinalWithinScope: 4, sourceOrdinalWithinScope: row.source })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(baseline);
+      assert.deepEqual(yield* Ref.get(calls), row.calls);
+    }).pipe(Effect.provide(layerTest));
+  }),
+);
+
 it.effect(
   "asks Git about a tracked repository once a turn and snapshots it only when changed",
   () =>

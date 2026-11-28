@@ -17,7 +17,10 @@ import { moveDraftToProject } from "~/lib/moveDraftToProject";
 import { useProjectPin } from "~/hooks/useProjectGroupUpdate";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { isTriagePrompt } from "@t3tools/shared/triagePrompt";
-import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  groupIconFallbacks,
+  pickableProjectGroups,
+} from "@t3tools/client-runtime/state/project-grouping";
 import {
   buildSidebarProjectPickerEntries,
   projectGroupsSpanEnvironments,
@@ -39,6 +42,7 @@ import {
   useComboboxFilter,
 } from "../ui/combobox";
 import { Tooltip, TooltipPopup, TooltipScrollDismissArea, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { InlineButton } from "../ui/button";
 import { DraftProjectName } from "./DraftProjectName";
 import { DraftHeroProjectHeading } from "./DraftHeroProjectHeading";
@@ -270,14 +274,18 @@ export function DraftHeroHeadline({
                 {item.value === ADD_PROJECT_VALUE ? (
                   <FolderPlusIcon className="size-4 shrink-0" />
                 ) : entry ? (
-                  <ProjectFavicon project={entry.group} className="size-4 shrink-0" />
+                  <ProjectFavicon
+                    project={entry.group}
+                    fallbackProjects={groupIconFallbacks(entry.group.memberProjects, entry.group)}
+                    className="size-4 shrink-0"
+                  />
                 ) : null}
-                <Tooltip>
-                  <TooltipTrigger render={<span className="min-w-0 flex-1 text-sm" />}>
-                    <DraftProjectName value={item.label} />
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">{item.label}</TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger
+                  render={<span className="min-w-0 flex-1 text-sm" />}
+                  label={item.label}
+                >
+                  <DraftProjectName value={item.label} />
+                </SharedTooltipTrigger>
                 {entry && canPinProjectGroup(entry.group) ? (
                   <ProjectPinButton
                     name={entry.group.displayName}

@@ -21,11 +21,12 @@ import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
-import { classifyToolActivity } from "@t3tools/shared/toolActivity";
+import { classifyToolActivity, collectToolFilePaths } from "@t3tools/shared/toolActivity";
 import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
 
 import {
   summarizeT3ToolCalls,
+  t3ToolOutcomeLabel,
   t3ToolResultIndicatesFailure,
   type T3ToolSummaryCall,
 } from "@t3tools/client-runtime/t3ToolSummary";
@@ -304,13 +305,24 @@ export function resolveWorkEntryToolPresentation(
     workEntryToolName(entry),
     workEntryToolInput(entry),
   );
+  const output = workEntryToolOutput(entry);
+  const failed = definition !== null && t3ToolResultIndicatesFailure(output);
   const status = entry.toolLifecycleStatus ?? fallbackStatus;
-  return resolveT3McpToolPresentation(
+  const presentation = resolveT3McpToolPresentation(
     definition,
-    definition && t3ToolResultIndicatesFailure(workEntryToolOutput(entry)) ? "failed" : status,
+    failed ? "failed" : status,
     entry.toolData,
     resolve,
   );
+  if (definition === null || presentation === null || failed || status !== "completed") {
+    return presentation;
+  }
+  const outcomeLabel = t3ToolOutcomeLabel(
+    definition.summaryAction,
+    { input: workEntryToolInput(entry), output, outcome: "completed" },
+    resolve,
+  );
+  return outcomeLabel === undefined ? presentation : { ...presentation, displayName: outcomeLabel };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -557,21 +569,33 @@ export function resolveViewedImageAsset(
   return { resource: media.resource, alt: media.name, srcFragment: media.srcFragment };
 }
 
+function toolGroupEntryFiles(
+  action: "edit" | "read",
+  entry: WorkLogPresentationEntry,
+): ReadonlyArray<string> {
+  if (action === "edit") return entry.changedFiles ?? [];
+  const item = entry.structuredPayload;
+  return collectToolFilePaths(
+    item?.type === "dynamic_tool" ? { input: item.input } : entry.toolData,
+  );
+}
+
 function toolGroupActionCount(
   action: ToolGroupAction,
   entries: ReadonlyArray<WorkLogPresentationEntry>,
 ): number {
-  if (action !== "edit") return entries.length;
-  const changedFiles = new Set<string>();
-  let editsWithoutFileDetails = 0;
+  if (action !== "edit" && action !== "read") return entries.length;
+  const files = new Set<string>();
+  let entriesWithoutFiles = 0;
   for (const entry of entries) {
-    if (!entry.changedFiles || entry.changedFiles.length === 0) {
-      editsWithoutFileDetails += 1;
+    const entryFiles = toolGroupEntryFiles(action, entry);
+    if (entryFiles.length === 0) {
+      entriesWithoutFiles += 1;
     } else {
-      for (const file of entry.changedFiles) changedFiles.add(file);
+      for (const file of entryFiles) files.add(file);
     }
   }
-  return changedFiles.size + editsWithoutFileDetails;
+  return files.size + entriesWithoutFiles;
 }
 
 function toolGroupActionLabel(

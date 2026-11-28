@@ -40,7 +40,7 @@ export function managedTelemetryOffMessage(
 ): string | undefined {
   return policy?.limits?.telemetry === false
     ? resolve(
-        msg("{organization} turned off anonymous usage data.", {
+        msg("{organization} turned off product usage data.", {
           organization: policy.organization,
         }),
       )

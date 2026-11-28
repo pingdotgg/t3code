@@ -136,7 +136,12 @@ function CommentIdentity({
     : null;
   return (
     <h2 className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
-      <PullRequestActorLabel actor={actor} profileUrl={profileUrl} className="max-w-full" />
+      <PullRequestActorLabel
+        actor={actor}
+        profileUrl={profileUrl}
+        threadRef={threadRef}
+        className="max-w-full"
+      />
       <SharedTooltipTrigger
         render={
           url ? (
@@ -888,7 +893,9 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
         </div>
       ) : null;
     const moreReplies =
-      item.kind === "thread" && item.hasMoreReplies ? <PullRequestMoreReplies {...item} /> : null;
+      item.kind === "thread" && item.hasMoreReplies ? (
+        <PullRequestMoreReplies {...item} threadRef={threadRef} />
+      ) : null;
     if (isPullRequestCommentFinished(comment, thread)) {
       const chat = chatSubject(comment, thread);
       return (
