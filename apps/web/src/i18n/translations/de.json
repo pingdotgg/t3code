@@ -13086,5 +13086,9 @@
   "c63d942911808821": "Grün",
   "75f923f6e3e41def": "Weiß",
   "04cabf0f2aa08368": "Schwarz",
-  "a992afd4cdaa1317": "Zeichnen abbrechen"
+  "a992afd4cdaa1317": "Zeichnen abbrechen",
+  "a637015d35e538cd": "Commit",
+  "29ab327f7952a28d": "Vorheriger Commit",
+  "03dfdf379b9eeaf2": "{sha} beim Code-Host öffnen",
+  "54edfb5d4024cffe": "Nächster Commit"
 }

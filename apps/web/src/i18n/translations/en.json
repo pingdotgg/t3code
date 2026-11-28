@@ -13094,5 +13094,9 @@
   "c63d942911808821": "Green",
   "75f923f6e3e41def": "White",
   "04cabf0f2aa08368": "Black",
-  "a992afd4cdaa1317": "Cancel drawing"
+  "a992afd4cdaa1317": "Cancel drawing",
+  "a637015d35e538cd": "Commit",
+  "29ab327f7952a28d": "Previous commit",
+  "03dfdf379b9eeaf2": "Open {sha} on code host",
+  "54edfb5d4024cffe": "Next commit"
 }

@@ -13081,5 +13081,9 @@
   "c63d942911808821": "Verde",
   "75f923f6e3e41def": "Blanco",
   "04cabf0f2aa08368": "Negro",
-  "a992afd4cdaa1317": "Cancelar dibujo"
+  "a992afd4cdaa1317": "Cancelar dibujo",
+  "a637015d35e538cd": "Commit",
+  "29ab327f7952a28d": "Commit anterior",
+  "03dfdf379b9eeaf2": "Abrir {sha} en el alojamiento de código",
+  "54edfb5d4024cffe": "Commit siguiente"
 }

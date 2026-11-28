@@ -13093,5 +13093,9 @@
   "c63d942911808821": "Grön",
   "75f923f6e3e41def": "Vit",
   "04cabf0f2aa08368": "Svart",
-  "a992afd4cdaa1317": "Avbryt ritning"
+  "a992afd4cdaa1317": "Avbryt ritning",
+  "a637015d35e538cd": "Commit",
+  "29ab327f7952a28d": "Föregående commit",
+  "03dfdf379b9eeaf2": "Öppna {sha} hos kodvärden",
+  "54edfb5d4024cffe": "Nästa commit"
 }

@@ -13093,5 +13093,9 @@
   "c63d942911808821": "Zielony",
   "75f923f6e3e41def": "Biały",
   "04cabf0f2aa08368": "Czarny",
-  "a992afd4cdaa1317": "Anuluj rysowanie"
+  "a992afd4cdaa1317": "Anuluj rysowanie",
+  "a637015d35e538cd": "Commit",
+  "29ab327f7952a28d": "Poprzedni commit",
+  "03dfdf379b9eeaf2": "Otwórz {sha} na hostingu kodu",
+  "54edfb5d4024cffe": "Następny commit"
 }
