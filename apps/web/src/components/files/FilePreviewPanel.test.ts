@@ -1008,6 +1008,35 @@ Third}`;
     );
   });
 
+  it("omits ODT text hidden by paragraph styles", async () => {
+    const xml = [
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">',
+      '<office:automatic-styles><style:style style:name="P1" style:family="paragraph"><style:text-properties text:display="none"/></style:style>',
+      '<style:style style:name="P2" style:family="paragraph" style:parent-style-name="Retired"/>',
+      '<style:style style:name="Shown" style:family="text"><style:text-properties text:display="true"/></style:style></office:automatic-styles>',
+      "<office:body><office:text>",
+      '<text:p text:style-name="P1">Use the obsolete west entrance.</text:p>',
+      '<text:h text:outline-level="2" text:style-name="Retired">Retired section</text:h>',
+      '<text:p text:style-name="P2">Draft <text:span text:style-name="Shown">North entrance</text:span> only.</text:p>',
+      '<text:p text:style-name="TextOnly">Paragraph ignores text family.</text:p>',
+      "<text:p>Keep this.</text:p>",
+      "</office:text></office:body></office:document-content>",
+    ].join("");
+    const styles =
+      '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:styles>' +
+      '<style:style style:name="Retired" style:family="paragraph"><style:text-properties text:display="none"/></style:style>' +
+      '<style:style style:name="TextOnly" style:family="text"><style:text-properties text:display="none"/></style:style>' +
+      "</office:styles></office:document-styles>";
+    const result = await openDocument(
+      new JSZip().file("content.xml", xml).file("styles.xml", styles),
+      "odt",
+    );
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      "<p><span>North entrance</span></p><p>Paragraph ignores text family.</p><p>Keep this.</p>",
+    );
+  });
+
   it("maps ODT heading outline levels to HTML heading tags", async () => {
     const xml =
       '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:h text:outline-level="1">1</text:h><text:h text:outline-level="2">2</text:h><text:h text:outline-level="3">3</text:h><text:h text:outline-level="6">6</text:h><text:h text:outline-level="10">10</text:h><text:h text:outline-level="0">0</text:h><text:h text:outline-level="1.5">1.5</text:h><text:h text:outline-level="abc">abc</text:h><text:h>none</text:h></office:text></office:body></office:document-content>';
