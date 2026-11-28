@@ -2089,8 +2089,9 @@ describe("PullRequestSyncReactor", () => {
           commandRan(ThreadId.make("unread"), "git push", undefined, "unread-push"),
           commandRan(agent, "cd app && git -C . push --force-with-lease", undefined, "push"),
           commandRan(agent, '/bin/zsh -lc "gh stack submit --auto"', undefined, "stack"),
+          commandRan(agent, "for ((i=0;i<1;i++)) do git push; done", undefined, "loop"),
         ]);
-        for (const item of ["push", "stack"]) {
+        for (const item of ["push", "stack", "loop"]) {
           const command = yield* Queue.take(fixture.reopenCommands);
           assert.deepStrictEqual(
             [command.threadId, command.commandId],
@@ -2382,6 +2383,12 @@ describe("PullRequestSyncReactor", () => {
     {
       name: "a create after a conditional then",
       input: "if true; then gh pr create --fill; fi",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [31],
+    },
+    {
+      name: "a create in an arithmetic for loop",
+      input: "for ((i=0;i<1;i++)) do gh pr create --fill; done",
       output: "https://github.com/owner/repository/pull/31",
       linked: [31],
     },

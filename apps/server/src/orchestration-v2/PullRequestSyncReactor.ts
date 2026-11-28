@@ -58,7 +58,7 @@ const FAILED_READ_BACKOFF_MS = 60 * 1_000;
 // Where a shell starts a command, past `NAME=value` assignments and wrappers like `timeout 60`.
 // A create command anywhere else, as in `echo "gh pr create"`, is text, not a command that runs.
 const COMMAND_START =
-  "(?:^|[;&|({`\\n])\\s*(?:(?:do|then|else)\\s+)?(?:(?:\\w+=\\S*|env|time|nohup|timeout\\s+\\S+)\\s+)*";
+  "(?:(?:^|[;&|({`\\n])\\s*(?:(?:do|then|else)\\s+)?|\\)\\)\\s*do\\s+)(?:(?:\\w+=\\S*|env|time|nohup|timeout\\s+\\S+)\\s+)*";
 const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap(
   ({ kind, changeRequestCreateCommand: command }) =>
     command === undefined
