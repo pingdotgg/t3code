@@ -13102,5 +13102,37 @@
   "c63d942911808821": "Zielony",
   "75f923f6e3e41def": "Biały",
   "04cabf0f2aa08368": "Czarny",
-  "a992afd4cdaa1317": "Anuluj rysowanie"
+  "a992afd4cdaa1317": "Anuluj rysowanie",
+  "175fd48b1f788f46": "Zezwól na dostęp do użycia, aby zobaczyć limity tego agenta.",
+  "e69560805f86c879": "Skonfiguruj",
+  "ffbe05f2f405850a": "Dostęp do użycia",
+  "40b7d767de71d529": "Dostęp do użycia dla {provider}",
+  "b1407315384f1c1b": "Nie udało się zapisać dostępu do użycia",
+  "d0eb90f0a42166b7": "Nie zezwalaj",
+  "c23c1f8ee3808edb": "Zezwól",
+  "53d6f3510e1d2505": "Zaimportuj swoje projekty",
+  "f38cfff76578bff1": "Znajdź moje projekty",
+  "845c5d64893a2cd1": "Odczytuje historię sesji oraz dane logowania, aby zapytać xAI o Twoje kredyty.",
+  "693a46777fff9c2c": "Odczytuje bazę danych użycia oraz klucz Go, aby zapytać OpenCode o Twoje limity Go.",
+  "53e3445f40979e50": "Odczytuje historię konwersacji.",
+  "a7990527035b13c7": "Pyta Cursor o użycie Twojego konta przy użyciu klucza API podanego w T3 Code.",
+  "dd05e52097323d6a": "Odczytuje historię sesji.",
+  "1c90379ba4454864": "Pokaż też moje statystyki użycia z tych agentów, co może odczytać ich dane logowania w celu sprawdzenia limitów",
+  "16d657e5243b12c1": [
+    "T3 Code może odczytać historię sesji ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", aby znaleźć foldery, w których pracowano, oraz ich zdalne repozytoria git."
+  ],
+  "bdce0ad68690fdc1": "Odczytuje historię sesji oraz dane logowania, aby przypisać limity do Twojego konta i zapytać Anthropic o Twoje kredyty resetu.",
+  "8d802467f2a7f93b": "Pokazać użycie agentów?",
+  "7722abfa18e471c0": "T3 Code odczytuje te dane z każdego agenta w całym systemie. Wybierz, którym agentom na to pozwolić.",
+  "0ef08693f1224444": "Historia sesji i dane logowania",
+  "bb9866823586b67a": "Baza danych użycia i klucz Go",
+  "8380d6f1828fe191": "Historia konwersacji",
+  "1f2036cf25caaf16": "Użycie konta z Cursor",
+  "51aa7700c1f967d2": "Historia sesji"
 }
