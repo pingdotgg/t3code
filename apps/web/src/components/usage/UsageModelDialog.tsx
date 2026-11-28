@@ -1,6 +1,6 @@
 import { T, useGT, useLocale, Var } from "gt-react";
 import { formatPercent, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
-import { isModelCostUnknown, type ModelTotals } from "@t3tools/shared/usageMerge";
+import { cacheHitRate, isModelCostUnknown, type ModelTotals } from "@t3tools/shared/usageMerge";
 
 import { mergeAnsweredUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -17,7 +17,6 @@ import {
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { UsageShareBar } from "./UsageShareBar";
 import {
-  cacheHitRate,
   costPerMillionTokens,
   costTypeSegments,
   speedCostSegments,
@@ -58,7 +57,7 @@ export function UsageModelDialog({
   const providers = [model.provider];
   const presentation = PROVIDER_PRESENTATION[model.provider];
   const costUnknown = isModelCostUnknown(model);
-  const hitRate = cacheHitRate(model);
+  const hitRate = cacheHitRate(model.tokens);
   const perMillion = costPerMillionTokens(model);
   const stats = [
     { label: gt("Cost"), value: costUnknown ? gt("Unpriced") : formatUsd(model.costUsd, locale) },

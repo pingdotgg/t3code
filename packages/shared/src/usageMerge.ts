@@ -43,6 +43,17 @@ export function isModelCostUnknown(model: ModelTotals): boolean {
   return model.records > 0 && model.unpricedRecords >= model.records;
 }
 
+/** Cache writes count as misses because the input was fully processed. */
+export function cacheHitRate(
+  tokens: Pick<
+    UsageTokenTotals,
+    "uncachedInputTokens" | "cachedInputTokens" | "cacheCreationTokens"
+  >,
+): number | null {
+  const input = tokens.uncachedInputTokens + tokens.cachedInputTokens + tokens.cacheCreationTokens;
+  return input === 0 ? null : tokens.cachedInputTokens / input;
+}
+
 export interface DailyTotals {
   readonly day: string;
   readonly costUsd: number;

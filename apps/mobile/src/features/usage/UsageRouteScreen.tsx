@@ -9,6 +9,7 @@ import {
   usageProgress,
 } from "@t3tools/client-runtime/state/usage-progress";
 import {
+  cacheHitRate,
   isCompatibleUsageContractVersion,
   isModelCostUnknown,
   type DailyTotals,
@@ -662,8 +663,7 @@ function TotalsSection(props: {
     (period) => period.totalTokens > 0,
   ).length;
   const periodAverage = activePeriods === 0 ? 0 : merged.totalTokens / activePeriods;
-  const observedInput = merged.uncachedInputTokens + merged.cachedInputTokens;
-  const cachedShare = observedInput === 0 ? 0 : merged.cachedInputTokens / observedInput;
+  const cachedShare = cacheHitRate(merged);
 
   return (
     <SettingsSection title={gt("Totals")}>
@@ -697,7 +697,11 @@ function TotalsSection(props: {
           columns={props.columns}
           label={gt("Cached input")}
           value={formatTokens(merged.cachedInputTokens)}
-          detail={gt("{share} of observed input", { share: formatPercent(cachedShare) })}
+          detail={
+            cachedShare === null
+              ? null
+              : gt("{share} of observed input", { share: formatPercent(cachedShare) })
+          }
         />
         <MetricCell
           columns={props.columns}
@@ -835,14 +839,16 @@ function ShareBar(props: {
 function MetricCell(props: {
   readonly label: string;
   readonly value: string;
-  readonly detail: string;
+  readonly detail: string | null;
   readonly columns: number;
 }) {
   return (
     <View className="gap-0.5 p-4" style={{ width: `${100 / props.columns}%` }}>
       <Text className="text-sm text-foreground-muted">{props.label}</Text>
       <Text className="text-xl font-t3-medium tabular-nums text-foreground">{props.value}</Text>
-      <Text className="text-xs text-foreground-tertiary">{props.detail}</Text>
+      {props.detail !== null && (
+        <Text className="text-xs text-foreground-tertiary">{props.detail}</Text>
+      )}
     </View>
   );
 }

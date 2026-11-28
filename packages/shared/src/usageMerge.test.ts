@@ -10,7 +10,12 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { isModelCostUnknown, mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
+import {
+  cacheHitRate,
+  isModelCostUnknown,
+  mergeUsage,
+  type EnvironmentUsage,
+} from "./usageMerge.ts";
 
 const decodeSummary = Schema.decodeUnknownSync(UsageSummary);
 
@@ -80,6 +85,24 @@ function summary(
 function environment(id: string, usageSummary: UsageSummary): EnvironmentUsage {
   return { environmentId: id as EnvironmentId, label: id, summary: usageSummary };
 }
+
+describe("cacheHitRate", () => {
+  it.each([
+    [1, 1, 2, 0.25],
+    [0, 0, 0, null],
+  ] as const)(
+    "with %i uncached, %i cached and %i cache writes",
+    (uncached, cached, writes, rate) => {
+      expect(
+        cacheHitRate({
+          uncachedInputTokens: uncached,
+          cachedInputTokens: cached,
+          cacheCreationTokens: writes,
+        }),
+      ).toBe(rate);
+    },
+  );
+});
 
 describe("mergeUsage", () => {
   it("counts a Cursor account once across servers while retaining each server's other providers", () => {
