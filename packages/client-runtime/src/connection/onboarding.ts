@@ -34,7 +34,7 @@ import {
   SshConnectionRegistration,
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
-import { mapRemoteEnvironmentError } from "./errors.ts";
+import { mapRemoteDpopEnvironmentError, mapRemoteEnvironmentError } from "./errors.ts";
 import {
   BearerConnectionTarget,
   ConnectionBlockedError,
@@ -180,7 +180,7 @@ export const preparePairingRegistration = Effect.fn(
       credential: target.credential,
       clientMetadata: presentation.metadata,
       dpopProof: dpopProof.value,
-    }).pipe(Effect.mapError(mapRemoteEnvironmentError));
+    }).pipe(Effect.mapError((error) => mapRemoteDpopEnvironmentError(error, "direct")));
     return new BearerConnectionRegistration({
       ...route,
       credential: new DpopConnectionCredential({

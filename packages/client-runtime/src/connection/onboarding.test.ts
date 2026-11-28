@@ -2,6 +2,7 @@ import {
   AuthStandardClientScopes,
   EnvironmentId,
   type AuthEnvironmentScope,
+  type DpopFailureReason,
   ORCHESTRATION_PROTOCOL_VERSION,
 } from "@t3tools/contracts";
 import { assert, describe, expect, it } from "@effect/vitest";
@@ -58,6 +59,7 @@ function layerPairingHttp(
   options?: {
     readonly failDescriptor?: boolean;
     readonly failExchange?: boolean;
+    readonly failExchangeDpopReason?: DpopFailureReason;
     readonly protocolVersion?: number;
     readonly selfUpdate?: boolean;
     readonly grantScopes?: ReadonlyArray<AuthEnvironmentScope>;
@@ -104,6 +106,9 @@ function layerPairingHttp(
               _tag: "EnvironmentAuthInvalidError",
               code: "auth_invalid",
               reason: "invalid_credential",
+              ...(options.failExchangeDpopReason !== undefined
+                ? { dpopFailureReason: options.failExchangeDpopReason }
+                : {}),
               traceId: "trace-pairing-test",
             },
             { status: 401 },
@@ -624,6 +629,44 @@ describe("connection onboarding", () => {
                 }),
               )
             : Layer.empty,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("preserves DPoP clock-skew diagnostics during direct pairing", () =>
+    Effect.gen(function* () {
+      const error = yield* preparePairingRegistration({
+        host: "remote.example.test",
+        pairingCode: "pairing-token",
+      }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "ConnectionBlockedError",
+        reason: "authentication",
+        failureCause: "clock_skew",
+        hop: "server",
+        via: "direct",
+        traceId: "trace-pairing-test",
+      });
+      expect(error.message).toContain(
+        "Hint: Check that automatic date and time is enabled on both devices, then try again.",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          layerPairingOnboarding({
+            accessTokenRenewal: true,
+            failExchange: true,
+            failExchangeDpopReason: "time_window",
+          }),
+          Layer.succeed(
+            ManagedRelay.ManagedRelayDpopSigner,
+            ManagedRelay.ManagedRelayDpopSigner.of({
+              thumbprint: Effect.succeed("device-key"),
+              createProof: (proof) => Effect.succeed(`proof:${proof.url}`),
+            }),
+          ),
         ),
       ),
     ),
