@@ -147,6 +147,13 @@ function withoutProviders(
             sources: environment.summary.sources.filter(
               (source) => !hiddenProviders.has(source.fingerprint.provider),
             ),
+            ...(environment.summary.projectTotals === undefined
+              ? {}
+              : {
+                  projectTotals: environment.summary.projectTotals.filter(
+                    (row) => !hiddenProviders.has(row.provider),
+                  ),
+                }),
           },
         },
   );
