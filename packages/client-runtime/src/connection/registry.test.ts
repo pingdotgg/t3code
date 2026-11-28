@@ -429,6 +429,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
           ready: Effect.void,
           probe: Effect.void,
           inboundFrames: Effect.succeed(0),
+          awaitingReply: Effect.succeed(false),
           closed: Deferred.await(closed),
         } satisfies RpcSession.RpcSession),
         () => Ref.update(releasedSessions, (count) => count + 1),

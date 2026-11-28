@@ -1,6 +1,7 @@
 import type { ThreadId } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
 import { isNetworkPath } from "@t3tools/shared/path";
 import {
   clampHtmlRenderHeight,
@@ -117,7 +118,23 @@ const SCRIPT_STYLE =
 // and identifiers such as `.h-100vmax` or `.h\+100vh`, while signed and scientific-notation lengths still count.
 const VIEWPORT_HEIGHT_UNIT =
   /(?<![\w.+/\\-])[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?[sld]?v(?:h|b|max)(?![\w-])/i;
+// In CSS, skip comments and strings so generated text like `content:"100vh"` passes.
+// Escapes and unquoted url() bodies go first: there a quote or `/*` is plain text.
+// An unclosed string ends at a newline, as CSS ends it there.
+const CSS_VIEWPORT_HEIGHT_UNIT = new RegExp(
+  String.raw`\\[\s\S]|url\((?!\s*["'])[^)]*\)?|\/\*[\s\S]*?(?:\*\/|$)|"(?:\\(?:\r\n|[\s\S])|[^"\\\r\n\f])*"?|'(?:\\(?:\r\n|[\s\S])|[^'\\\r\n\f])*'?|(${VIEWPORT_HEIGHT_UNIT.source})`,
+  "gi",
+);
 
+const findInCss = (css: string) => {
+  for (const [, found] of css.matchAll(CSS_VIEWPORT_HEIGHT_UNIT)) {
+    if (found !== undefined) return found;
+  }
+  return undefined;
+};
+
+// Generated text (`content`) only lives in stylesheets. Attribute values hold HTML character
+// references and scripts hold their own quotes, so neither is parsed as CSS strings.
 const findViewportHeight = (source: string, pattern: RegExp) => {
   for (const [, ...captures] of source.matchAll(pattern)) {
     for (const css of captures) {
@@ -136,7 +153,7 @@ const rejectViewportHeight = (html: string) => {
           findViewportHeight(script, SCRIPT_STYLE))
         : tag !== undefined
           ? findViewportHeight(tag, TAG_STYLE)
-          : VIEWPORT_HEIGHT_UNIT.exec(sheet ?? "")?.[0];
+          : findInCss(sheet ?? "");
     if (found !== undefined) return Effect.fail(new HtmlRenderViewportHeightError({ found }));
   }
   return Effect.void;
@@ -247,6 +264,15 @@ const findLocalImages = (html: string) =>
 const filePathFor = (reference: string) =>
   /^[a-z]:/i.test(reference) ? reference.replaceAll("\\\\", "\\") : reference;
 
+// Try the literal path first so raw filesystem strings keep working, then percent-decode URL paths.
+const filePathCandidatesFor = (reference: string) => {
+  const literal = filePathFor(reference);
+  const decoded = safeDecodeURIComponent(literal);
+  return decoded !== literal && !decoded.includes("\0") && !isNetworkPath(decoded)
+    ? [literal, decoded]
+    : [literal];
+};
+
 const dataUriPrefix = (path: string) =>
   `data:${IMAGE_MIME_TYPES[path.slice(path.lastIndexOf(".") + 1).toLowerCase()] ?? "application/octet-stream"};base64,`;
 
@@ -312,13 +338,15 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
   const files = yield* Effect.forEach(
     [...new Set(references.map((reference) => reference.path))],
     (path) =>
-      fileSystem.stat(filePathFor(path)).pipe(
-        Effect.map((info) => ({
-          path,
-          size: info.type === "File" ? Number(info.size) : undefined,
-        })),
-        Effect.orElseSucceed(() => ({ path, size: undefined })),
-      ),
+      Effect.gen(function* () {
+        for (const candidate of filePathCandidatesFor(path)) {
+          const info = yield* fileSystem.stat(candidate).pipe(Effect.option);
+          if (Option.isSome(info) && info.value.type === "File") {
+            return { path, filePath: candidate, size: Number(info.value.size) };
+          }
+        }
+        return { path, filePath: undefined, size: undefined };
+      }),
     { concurrency: 8 },
   );
   const oversized = files.find((file) => file.size !== undefined && file.size > MAX_IMAGE_BYTES);
@@ -347,8 +375,9 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
     files.filter((file) => file.size !== undefined),
     (file) =>
       Effect.gen(function* () {
+        if (file.filePath === undefined) return [];
         const read = yield* fileSystem
-          .stream(filePathFor(file.path), { bytesToRead: MAX_IMAGE_BYTES + 1 })
+          .stream(file.filePath, { bytesToRead: MAX_IMAGE_BYTES + 1 })
           .pipe(Stream.mkUint8Array, Effect.option);
         if (Option.isNone(read) || !isImageBytes(read.value)) return [];
         const bytes = read.value;
