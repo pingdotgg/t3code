@@ -11737,7 +11737,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   yield* restore(runtimeTransitionPermit.take(1));
                   // Stop's caller times out on this call. The transition runs in its own fiber so
                   // a stalled hard teardown keeps its state and permit without holding the caller.
-                  const transitionFiber = yield* Effect.gen(function* () {
+                  let transitionStarted = false;
+                  const runTransitionOnce = Effect.gen(function* () {
+                    transitionStarted = true;
                     const transition = yield* Effect.gen(function* () {
                       const interruptContext = yield* Ref.get(activeTurn);
                       if (
@@ -12030,14 +12032,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         }),
                       ),
                     );
-                  }).pipe(
-                    Effect.ensuring(runtimeTransitionPermit.release(1)),
-                    Effect.forkIn(sessionScope, { startImmediately: true, uninterruptible: true }),
+                  }).pipe(Effect.ensuring(runtimeTransitionPermit.release(1)));
+                  const forkOptions = { startImmediately: true, uninterruptible: true } as const;
+                  const joinTransition = <A, E>(fiber: Fiber.Fiber<A, E>) =>
+                    restore(Fiber.join(fiber)).pipe(
+                      Effect.onInterrupt(() =>
+                        Fiber.interrupt(fiber).pipe(Effect.forkDetach, Effect.asVoid),
+                      ),
+                    );
+                  const scopedExit = yield* runTransitionOnce.pipe(
+                    Effect.forkIn(sessionScope, forkOptions),
+                    Effect.flatMap(joinTransition),
+                    Effect.exit,
                   );
-                  return yield* restore(Fiber.join(transitionFiber)).pipe(
-                    Effect.onInterrupt(() =>
-                      Fiber.interrupt(transitionFiber).pipe(Effect.forkDetach, Effect.asVoid),
-                    ),
+                  if (transitionStarted) {
+                    return yield* scopedExit;
+                  }
+                  // forkIn on a scope that closed before the fork never starts the fiber, which would leak the permit.
+                  return yield* runTransitionOnce.pipe(
+                    Effect.forkDetach(forkOptions),
+                    Effect.flatMap(joinTransition),
                   );
                 }),
               );
