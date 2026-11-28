@@ -16,6 +16,7 @@ import {
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as TestClock from "effect/testing/TestClock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -1638,4 +1639,237 @@ it.effect("wakes the agent when Claude empties its roster before stopping awaite
 
 it.effect("records but does not wake for an unawaited shell lost when Claude's process exits", () =>
   exitWhileIdle({ awaited: false, signal: "SIGKILL" }),
+);
+
+// The 429 Claude Code 2.1.326 reported for a spent account, recorded in fixtures/usage_limit.
+const usageLimitSessionId = "b8eed9d2-ed85-48fb-a4f2-316f6a0b1117";
+
+it.effect("skips a recurring occurrence while the bound thread's provider is usage-limited", () =>
+  Effect.gen(function* () {
+    const cwd = yield* checkpointWorkspace("claude-scheduled-usage-limit");
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const usageLimitFrames = (yield* fileSystem.readFileString(
+      yield* path.fromFileUrl(
+        new URL("./testkit/fixtures/usage_limit/claude_transcript.ndjson", import.meta.url),
+      ),
+    ))
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as { type: string; frame?: Record<string, unknown> })
+      .filter((entry) => entry.type === "emit_inbound")
+      .map((entry) => entry.frame!);
+    const offers: SDKUserMessage[] = [];
+    const sweeps = new Map<string, Effect.Effect<void>>();
+    const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+      instanceId: modelSelection.instanceId,
+      settings,
+      environment: {},
+      attachmentsDir: cwd,
+      fileSystem,
+      path,
+      random: yield* SecureRandom.SecureRandom,
+      idAllocator: yield* IdAllocator.IdAllocatorV2,
+      queryRunner: {
+        allocateSessionId: Effect.succeed(usageLimitSessionId),
+        open: () =>
+          Effect.gen(function* () {
+            const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+            return {
+              messages: Stream.fromQueue(sdkMessages),
+              // Every turn on the spent account answers with the recorded 429.
+              offer: (message: SDKUserMessage) =>
+                Effect.gen(function* () {
+                  offers.push(message);
+                  const turn = offers.length;
+                  for (const recorded of usageLimitFrames) {
+                    yield* Queue.offer(
+                      sdkMessages,
+                      frame(
+                        JSON.parse(
+                          JSON.stringify(recorded)
+                            .replaceAll("301cffa7-d83e-49db-bbd8-1312e0e79c4e", message.uuid!)
+                            .replace(/"uuid":"([^"]+)"/g, (_, uuid: string) =>
+                              uuid === message.uuid
+                                ? `"uuid":"${uuid}"`
+                                : `"uuid":"${uuid}-${turn}"`,
+                            ),
+                        ),
+                      ),
+                    );
+                  }
+                }),
+              setModel: () => Effect.void,
+              applyFlagSettings: () => Effect.void,
+              setPermissionMode: () => Effect.void,
+              renameSession: () => Effect.void,
+              backgroundTasks: () => Effect.succeed(false),
+              mcpServerStatus: Effect.succeed([]),
+              readMcpResource: () => Effect.die("unexpected MCP resource read"),
+              callMcpTool: () => Effect.die("unexpected MCP tool call"),
+              mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+              mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+              reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
+              listPermissionRules: Effect.die("unexpected permission rules read"),
+              stopTask: () => Effect.void,
+              interrupt: Effect.void,
+              close: Effect.void,
+            };
+          }),
+        forkSession: () => Effect.die("unused"),
+        subagentLaunchToolUseId: () => Effect.succeed(null),
+        subagentModel: () => Effect.succeed(null),
+        assertComplete: Effect.void,
+      },
+    });
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadId = ThreadId.make("thread:scheduled-usage-limit");
+      const projectId = ProjectId.make("project:scheduled-usage-limit");
+      const failed = (messageId: (id: string) => boolean) =>
+        orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "run.updated" &&
+              messageId(event.payload.userMessageId) &&
+              event.payload.status === "failed",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create"),
+        threadId,
+        projectId,
+        title: "Scheduled usage limit",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: cwd,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const firstFailed = yield* failed((id) => id === "first");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("first"),
+        threadId,
+        messageId: MessageId.make("first"),
+        text: "Respond with the following text: fixture simple ok",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* worker.drain();
+      yield* Fiber.join(firstFailed);
+      yield* worker.drain();
+      const limited = yield* orchestrator.getThreadProjection(threadId);
+      const limitError = limited.turnItems.find((item) => item.type === "error");
+      assert.equal(limitError?.type === "error" ? limitError.failure.class : null, "usage_limit");
+      assert.lengthOf(offers, 1);
+
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        yield* service.upsert(
+          yield* decodeScheduledTask({
+            title: "Every 30 minutes",
+            prompt: "Check the build.",
+            enabled: true,
+            schedule: { type: "interval", everyMs: 30 * 60_000 },
+            projectId,
+            threadId,
+            workspaceStrategy: { type: "root" },
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          }),
+        );
+        for (let occurrence = 1; occurrence <= 2; occurrence++) {
+          const occurrenceFailed = yield* failed((id) =>
+            id.endsWith(`:${occurrence * 1_800_000}:scheduled`),
+          );
+          yield* TestClock.adjust("30 minutes");
+          yield* sweeps.get("scheduled-tasks")!;
+          yield* worker.drain();
+          if (offers.length > occurrence) yield* Fiber.join(occurrenceFailed);
+          else yield* Fiber.interrupt(occurrenceFailed);
+          yield* worker.drain();
+        }
+        yield* worker.drain();
+      }).pipe(
+        Effect.provide(
+          ScheduledTaskService.layer.pipe(
+            Layer.provide(ThreadManagementService.layer),
+            Layer.provide(ServerSettings.layerTest()),
+            Layer.provide(
+              Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({
+                ensureTranscript: () =>
+                  Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
+              }),
+            ),
+            Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+            Layer.provide(ManagedPolicy.layerTest()),
+            Layer.provide(
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                namedProjectsRoot: "/projects",
+                isScratchProject: () => Effect.succeed(false),
+              }),
+            ),
+            Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+            Layer.provide(
+              CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+            ),
+            Layer.provide(
+              Layer.mergeAll(
+                NodeCrypto.layer,
+                Layer.succeed(Scheduler.Scheduler, {
+                  register: <E, R>(name: string, work: Effect.Effect<void, E, R>) =>
+                    Effect.gen(function* () {
+                      const context = yield* Effect.context<R>();
+                      sweeps.set(name, work.pipe(Effect.provideContext(context), Effect.orDie));
+                    }),
+                }),
+                SqlitePersistence.layerMemory,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const scheduledRuns = after.runs.filter((run) =>
+        after.messages.some(
+          (message) => message.id === run.userMessageId && message.scheduledTaskId !== undefined,
+        ),
+      );
+      // regression: #44755 each occurrence started a turn on the spent account and failed.
+      assert.deepEqual(
+        scheduledRuns.map((run) => run.status).filter((status) => status !== "queued"),
+        [],
+      );
+      assert.lengthOf(offers, 1);
+    }).pipe(
+      Effect.provide(
+        ProviderReplayHarness.layerWithRegistry(
+          { name: "claude-scheduled-usage-limit" },
+          ProviderAdapterRegistry.layerSingle(adapter),
+          { runEffectWorker: false },
+        ),
+      ),
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        IdAllocator.layer,
+        McpProviderSessions.layer,
+        NodeServices.layer,
+        NodeCrypto.layer,
+      ),
+    ),
+  ),
 );
