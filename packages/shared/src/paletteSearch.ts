@@ -893,6 +893,15 @@ export function findSearchTokenRanges(text: string, query: string): SearchRange[
       index = field.text.indexOf(token, index + token.length);
     }
   }
+  if (exact) {
+    const kept: SearchRange[] = [];
+    for (const range of ranges.sort(
+      (left, right) => left.start - right.start || right.end - left.end,
+    )) {
+      if (range.start >= (kept.at(-1)?.end ?? 0)) kept.push(range);
+    }
+    return kept;
+  }
   return mergeRanges(ranges);
 }
 
