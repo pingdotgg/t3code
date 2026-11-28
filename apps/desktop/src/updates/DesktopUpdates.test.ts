@@ -566,6 +566,8 @@ describe("DesktopUpdates", () => {
         yield* flushCallbacks;
         assert.equal((yield* updates.getState).downloadedVersion, "1.2.4");
 
+        // Long enough that install no longer trusts the feed's last answer.
+        yield* TestClock.adjust("6 minutes");
         published = "1.2.5";
         const checksBefore = harness.checkCount();
         const result = yield* updates.installPrepared("1.2.4");
@@ -574,6 +576,30 @@ describe("DesktopUpdates", () => {
         assert.equal(harness.checkCount(), checksBefore + 1);
         assert.equal(harness.quitAndInstalls(), 1);
         assert.equal(installedVersion, "1.2.5");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("installs a download the feed just confirmed without asking it again", () => {
+    const harness = makeHarness({
+      checkForUpdates: Effect.sync(() => harness.emit("update-available", { version: "1.2.4" })),
+      downloadUpdate: Effect.sync(() => harness.emit("update-downloaded", { version: "1.2.4" })),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.check("poll");
+        yield* flushCallbacks;
+        yield* updates.download;
+        yield* flushCallbacks;
+
+        const checksBefore = harness.checkCount();
+        const result = yield* updates.installPrepared("1.2.4");
+        assert.isTrue(result.accepted);
+        assert.equal(harness.checkCount(), checksBefore);
+        assert.equal(harness.quitAndInstalls(), 1);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
