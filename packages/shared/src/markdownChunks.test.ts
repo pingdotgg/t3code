@@ -579,6 +579,24 @@ describe("withMarkdownDefinitions", () => {
 });
 
 describe("chunked Markdown footnotes", () => {
+  it.each([{ renderedChunkSize: LARGE_MARKDOWN_CHUNK_MAX_CHARS }, { renderedChunkSize: 0 }])(
+    "counts only rendered references with a $renderedChunkSize-character sibling",
+    ({ renderedChunkSize }) => {
+      const ref = "[^note]";
+      const rendered = renderedChunkSize
+        ? `${"a".repeat(renderedChunkSize - ref.length - 1)}${ref}\n\n`
+        : "";
+      const oversized = `${"b".repeat(LARGE_MARKDOWN_CHUNK_MAX_CHARS - ref.length)}${ref}\n\n`;
+      const definition = "[^note]: Shared explanation.";
+      const { definitions, footnotes } = splitMarkdown(
+        `${rendered}${oversized}# Appendix\n\n${definition}`,
+        1,
+      );
+      const section = buildMarkdownFootnotesSection(definitions, footnotes);
+      expect(section?.text ?? null).toBe(renderedChunkSize ? `${ref}\n\n${definition}` : null);
+    },
+  );
+
   it("keeps footnotes undefined for single-chunk files and unreferenced definitions", () => {
     const small = "A footnote reference.[^1]\n\n[^1]: The footnote text.\n";
     expect(splitMarkdown(small).footnotes).toBeUndefined();
@@ -717,7 +735,7 @@ describe("chunked Markdown footnotes", () => {
       "",
       `[^a] ${"$x ".repeat(20000)}`,
       "",
-      `[^c] ${"<!-- ](<".repeat(20000)}`,
+      `[^c] ${"<!-- ](<".repeat(16_000)}`,
       "",
       "Literal ](see[^b]) but [link](x[^a]) is a destination.",
       "",
