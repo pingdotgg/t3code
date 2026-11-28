@@ -1222,7 +1222,14 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
     }),
   );
 
-  it.effect.each(["default", "acceptEdits", "auto", "bypassPermissions"] as const)(
+  it.effect.each([
+    "default",
+    "acceptEdits",
+    "auto",
+    "plan",
+    "dontAsk",
+    "bypassPermissions",
+  ] as const)(
     "starts the CLI in %s with the folder trusted only at Full access",
     (permissionMode) =>
       Effect.gen(function* () {
@@ -1243,7 +1250,9 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
         const session = yield* openFakeCli(cli, permissionMode);
         assert.equal(
           yield* Effect.promise(() => trustRead),
-          permissionMode === "bypassPermissions" ? "unset" : "1",
+          permissionMode === "bypassPermissions"
+            ? ((yield* HostProcess.Environment).CLAUDE_CODE_IGNORE_PERSISTED_TRUST ?? "unset")
+            : "1",
         );
         yield* session.close;
       }).pipe(Effect.provide(realQueryRunner)),
