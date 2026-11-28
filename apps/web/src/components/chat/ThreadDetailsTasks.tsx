@@ -43,17 +43,11 @@ export function ThreadDetailsTasks({
 
   if (compact) {
     return (
-      <ThreadDetailsSection
-        headingId="thread-details-tasks-heading"
-        title={gt("Tasks")}
-        showHeading={false}
-      >
+      <ThreadDetailsSection title={gt("Tasks")} summary={count}>
         <div className="flex h-6 min-w-0 items-center gap-2 px-2.5 text-xs">
-          <span className="shrink-0 text-muted-foreground">{gt("Tasks")}</span>
           <span className="min-w-0 flex-1 truncate text-foreground/80">
             {current?.text ?? gt("All done")}
           </span>
-          {count}
         </div>
       </ThreadDetailsSection>
     );
@@ -61,9 +55,8 @@ export function ThreadDetailsTasks({
 
   return (
     <ThreadDetailsSection
-      headingId="thread-details-tasks-heading"
       title={gt("Tasks")}
-      actions={
+      action={
         <Button
           variant="ghost-muted"
           size="micro"
