@@ -8,6 +8,7 @@ import {
   resolveViewedImageAsset,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
+  toolGroupSummaryKind,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
@@ -355,5 +356,35 @@ describe("summarizeToolGroup read counts", () => {
         read("b", "/repo/src/b.ts"),
       ]).summary,
     ).toBe("Read 2 files");
+  });
+});
+
+describe("summarizeToolGroup approvals", () => {
+  const command: WorkLogPresentationEntry = {
+    id: "command",
+    createdAt: "2026-11-27T00:00:00.000Z",
+    label: "pwd",
+    tone: "tool",
+    itemType: "command_execution",
+    command: "pwd",
+    toolLifecycleStatus: "completed",
+  };
+  const approval: WorkLogPresentationEntry = {
+    id: "approval",
+    createdAt: "2026-11-27T00:00:00.000Z",
+    label: "Approval requested",
+    tone: "tool",
+    itemType: "approval_request",
+    requestKind: "command",
+    toolLifecycleStatus: "completed",
+  };
+
+  it("does not count the approval for a step as a tool of its own", () => {
+    expect(summarizeToolGroup([command, approval]).summary).toBe("Ran 1 command");
+    expect(toolGroupSummaryKind([command, approval])).toBe("command");
+  });
+
+  it("still summarizes a group that only holds an approval", () => {
+    expect(summarizeToolGroup([approval]).summary).toBe("Used 1 tool");
   });
 });

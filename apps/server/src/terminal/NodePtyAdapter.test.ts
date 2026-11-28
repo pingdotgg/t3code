@@ -241,3 +241,72 @@ it.effect("retries the spawn-helper repair after a stalled check times out", () 
     assert.strictEqual(chmod.mock.calls.length, 1);
   }),
 );
+
+it.effect.each([
+  {
+    name: "rewrites ConPTY initial clear once and preserves later clears",
+    platform: "win32" as const,
+    chunks: ["\u001b[?25l\u001b[2J\u001b[m\u001b[Hprompt", "\u001b[2Jclear"],
+    expected: ["\u001b[?25l\u001b[22J\u001b[m\u001b[Hprompt", "\u001b[2Jclear"],
+  },
+  {
+    name: "preserves leading mode chunks and rewrites split initial clear",
+    platform: "win32" as const,
+    chunks: ["\u001b[?2004h", "\u001b[?25l\u001b[", "2", "J\u001b[2;1H$"],
+    expected: ["\u001b[?2004h", "\u001b[?25l", "\u001b[22J\u001b[2;1H$"],
+  },
+  {
+    name: "skips leading OSC title before rewriting initial clear",
+    platform: "win32" as const,
+    chunks: ["\u001b]0;bash\u0007\u001b[2J$"],
+    expected: ["\u001b]0;bash\u0007\u001b[22J$"],
+  },
+  {
+    name: "leaves clear untouched after printable output",
+    platform: "win32" as const,
+    chunks: ["hello", "\u001b[2J"],
+    expected: ["hello", "\u001b[2J"],
+  },
+  {
+    name: "leaves clear untouched after entering alternate screen",
+    platform: "win32" as const,
+    chunks: ["\u001b[?1049h\u001b[2J"],
+    expected: ["\u001b[?1049h\u001b[2J"],
+  },
+  {
+    name: "flushes a trailing incomplete escape sequence before exit",
+    platform: "win32" as const,
+    chunks: ["\u001b[?25l\u001b[2"],
+    exit: true,
+    expected: ["\u001b[?25l", "\u001b[2"],
+  },
+  {
+    name: "does not rewrite initial clear on POSIX",
+    platform: "linux" as const,
+    chunks: ["\u001b[?25l\u001b[2J$"],
+    expected: ["\u001b[?25l\u001b[2J$"],
+  },
+])("Windows ConPTY initial clear: $name", ({ platform, chunks, exit, expected }) =>
+  Effect.gen(function* () {
+    const adapter = yield* PtyAdapter.PtyAdapter;
+    const process = yield* adapter.spawn(spawnInput);
+    const nativeProcess = spawn.mock.results.at(-1)!.value;
+    const output: string[] = [];
+    const order: string[] = [];
+    const stopData = process.onData((data) => {
+      output.push(data);
+      order.push("data");
+    });
+    const stopExit = process.onExit(() => {
+      order.push("exit");
+    });
+    for (const chunk of chunks) nativeProcess.events.emit("data", chunk);
+    if (exit) {
+      nativeProcess.events.emit("exit", { exitCode: 0 });
+      assert.equal(order.at(-1), "exit");
+    }
+    assert.deepEqual(output, expected);
+    stopData();
+    stopExit();
+  }).pipe(Effect.provide(layerTestFor(platform))),
+);
