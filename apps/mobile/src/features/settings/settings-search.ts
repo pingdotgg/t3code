@@ -85,6 +85,8 @@ const SETTINGS_SEARCH_TERMS = {
     msg("overview", { $context: "settings search keyword" }),
     msg("checkouts", { $context: "settings search keyword" }),
     msg("delete project", { $context: "settings search keyword" }),
+    msg("pin", { $context: "settings search keyword" }),
+    msg("pinned projects", { $context: "settings search keyword" }),
   ],
   SettingsExtensions: [
     msg("extensions", { $context: "settings search keyword" }),

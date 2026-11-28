@@ -853,15 +853,7 @@ export function findSearchTokenRanges(text: string, query: string): SearchRange[
         ranges.push(found);
       }
     }
-    // Overlaps go, longest first; touching matches stay apart, so find opens
-    // on the first one alone.
-    const kept: SearchRange[] = [];
-    for (const range of ranges.sort(
-      (left, right) => left.start - right.start || right.end - left.end,
-    )) {
-      if (range.start >= (kept.at(-1)?.end ?? 0)) kept.push(range);
-    }
-    return kept;
+    return separateExactRanges(ranges);
   }
   // Each folded token, and whether it must start a word; a spelling any token
   // allows mid-word lights up mid-word.
@@ -893,7 +885,19 @@ export function findSearchTokenRanges(text: string, query: string): SearchRange[
       index = field.text.indexOf(token, index + token.length);
     }
   }
-  return mergeRanges(ranges);
+  return exact ? separateExactRanges(ranges) : mergeRanges(ranges);
+}
+
+// Overlaps go, longest first; touching exact matches stay apart, so find opens
+// on the first one alone.
+function separateExactRanges(ranges: SearchRange[]): SearchRange[] {
+  const kept: SearchRange[] = [];
+  for (const range of ranges.sort(
+    (left, right) => left.start - right.start || right.end - left.end,
+  )) {
+    if (range.start >= (kept.at(-1)?.end ?? 0)) kept.push(range);
+  }
+  return kept;
 }
 
 export interface SearchTextPart {

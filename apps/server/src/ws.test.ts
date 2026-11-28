@@ -1830,10 +1830,17 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
         })),
       );
     const responses = yield* Queue.unbounded<unknown>();
+    const sourcesStarted = yield* Deferred.make<void>();
+    const providersStarted = yield* Deferred.make<void>();
+    const releaseLimits = yield* Deferred.make<void>();
     const services = Layer.mergeAll(
       layerUnusedConfigRpcServices,
       Layer.mock(ProviderRegistry.ProviderRegistry)({
         getProviders: Effect.succeed([provider]),
+        refreshUsageLimits: () =>
+          Deferred.succeed(providersStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseLimits)),
+          ),
         refreshWorkspaceSnapshot: (input) =>
           Effect.map(scan(input.scanCwd ?? input.cwd), (snapshot) => [
             { ...provider, workspaceSnapshots: [{ ...snapshot, cwd: input.cwd }] },
@@ -1873,7 +1880,12 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
           ),
         ),
       ),
-      Layer.mock(UsageLimitSources.UsageLimitSources)({ current: Effect.succeed([]) }),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({
+        current: Effect.succeed([]),
+        refresh: Deferred.succeed(sourcesStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseLimits)),
+        ),
+      }),
       Layer.mock(ExternalLauncher.ExternalLauncher)({}),
       Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
       Layer.mock(DirectEndpoints.DirectEndpoints)({}),
@@ -1931,6 +1943,18 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
       ["finalize"],
       "the thread's removed worktree should list the project's skills",
     );
+
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("limits-only"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: { limitsOnly: true },
+      headers: Headers.empty,
+    });
+    yield* Deferred.await(sourcesStarted);
+    yield* Deferred.await(providersStarted);
+    yield* Deferred.succeed(releaseLimits, undefined);
+    assert.deepEqual(yield* Queue.take(responses), { providers: [] });
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -2631,9 +2655,10 @@ const acpSessionRpcs = WsRpcGroup.omit(
     > => !(acpSessionTags as ReadonlyArray<string>).includes(tag),
   ),
 );
-const acpStores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
-  Layer.provideMerge(SqlitePersistence.layerMemory),
-);
+const acpStores = Layer.mergeAll(
+  EventStore.layer,
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layer)),
+).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
 const seedAcpThread = Effect.fn(function* (
   sessionId: string,

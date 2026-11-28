@@ -648,6 +648,9 @@ export const make = Effect.gen(function* () {
       webPreferences.nodeIntegrationInSubFrames = false;
       webPreferences.contextIsolation = true;
       webPreferences.disableHtmlFullscreenWindowResize = true;
+      // Default mode keys zoom by host across the partition and resets it to app zoom on every
+      // cross-document commit; isolated keeps each tab's zoom on its own frame across navigations.
+      webPreferences.zoomMode = "isolated";
       if (previewPasskeys.bridgeEnabled) {
         webPreferences.additionalArguments = [
           ...(webPreferences.additionalArguments ?? []),

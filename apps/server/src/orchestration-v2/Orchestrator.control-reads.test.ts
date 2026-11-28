@@ -28,6 +28,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
@@ -70,16 +71,26 @@ const adapter = {
   openSession: () => Effect.die("No provider process needed for metadata controls"),
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 const layerDatabase = SqlitePersistence.layerMemory;
-const layerTest = Layer.mergeAll(
-  layerDatabase,
-  ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
-  EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
-  ProviderReplayHarness.layerWithRegistry(
-    { name: "control-reads" },
-    ProviderAdapterRegistry.layerFromAdapters([adapter]),
-    { databaseLayer: layerDatabase, runEffectWorker: false },
-  ),
-);
+const makeTestLayer = (
+  wrapProjectionStore?: (
+    store: ProjectionStore.ProjectionStoreV2Shape,
+  ) => ProjectionStore.ProjectionStoreV2Shape,
+) =>
+  Layer.mergeAll(
+    layerDatabase,
+    ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest), Layer.provide(layerDatabase)),
+    EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
+    ProviderReplayHarness.layerWithRegistry(
+      { name: "control-reads" },
+      ProviderAdapterRegistry.layerFromAdapters([adapter]),
+      {
+        databaseLayer: layerDatabase,
+        runEffectWorker: false,
+        ...(wrapProjectionStore ? { wrapProjectionStore } : {}),
+      },
+    ),
+  );
+const layerTest = makeTestLayer();
 
 it.effect.each(
   (["provider.switch", "thread.model-selection.set"] as const).flatMap((type) =>
@@ -246,7 +257,10 @@ it.effect.each(
     Effect.provide(
       Layer.mergeAll(
         layerDatabase,
-        ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+        ProjectionStore.layer.pipe(
+          Layer.provide(NodeCrypto.layerDigest),
+          Layer.provide(layerDatabase),
+        ),
         EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
         ProviderReplayHarness.layerWithRegistry(
           { name: "instance-switch" },
@@ -1877,6 +1891,94 @@ it.effect.each([false, true])(
         "starting",
       );
     }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
+);
+
+it.effect.each(["after deletion", "concurrently"] as const)(
+  "preserves distinct provider-thread records when importing the same native session %s",
+  (scenario) =>
+    Effect.gen(function* () {
+      const firstRead = yield* Deferred.make<void>();
+      const releaseFirst = yield* Deferred.make<void>();
+      const original = ThreadId.make("thread:native-import-original");
+      const testLayer =
+        scenario === "after deletion"
+          ? layerTest
+          : makeTestLayer((store) => ({
+              ...store,
+              hasProviderThread: (threadId, providerThreadId) =>
+                store
+                  .hasProviderThread(threadId, providerThreadId)
+                  .pipe(
+                    Effect.tap(() =>
+                      threadId === original
+                        ? Deferred.succeed(firstRead, undefined).pipe(
+                            Effect.andThen(Deferred.await(releaseFirst)),
+                          )
+                        : Effect.void,
+                    ),
+                  ),
+            }));
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const replacement = ThreadId.make("thread:native-import-replacement");
+        const ref = {
+          driver: adapter.driver,
+          nativeId: "native-reimport",
+          strength: "strong",
+        } as const;
+        const create = (threadId: ThreadId) =>
+          orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`create:${threadId}`),
+            threadId,
+            projectId: ProjectId.make("project:native-reimport"),
+            title: "Imported session",
+            modelSelection,
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdBy: "user",
+            creationSource: "web",
+            importedNativeThread: { ref },
+          });
+
+        let originalProviderThreadId: ProviderThreadId | undefined;
+        if (scenario === "after deletion") {
+          yield* create(original);
+          const beforeDeletion = yield* projections.getThreadRecords(original, ["providerThreads"]);
+          originalProviderThreadId = beforeDeletion.providerThreads[0]?.id;
+          yield* orchestrator.dispatch({
+            type: "thread.delete",
+            commandId: CommandId.make("delete:native-import-original"),
+            threadId: original,
+          });
+          yield* create(replacement);
+        } else {
+          const first = yield* create(original).pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(firstRead);
+          const second = yield* create(replacement).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Deferred.succeed(releaseFirst, undefined);
+          yield* Fiber.join(first);
+          yield* Fiber.join(second);
+        }
+
+        const retained = yield* projections.getThreadRecords(original, ["providerThreads"]);
+        const imported = yield* projections.getThreadRecords(replacement, ["providerThreads"]);
+        assert.lengthOf(retained.providerThreads, 1);
+        assert.lengthOf(imported.providerThreads, 1);
+        if (scenario === "after deletion") {
+          assert.equal(retained.providerThreads[0]?.id, originalProviderThreadId);
+        }
+        assert.equal(retained.thread.activeProviderThreadId, retained.providerThreads[0]?.id);
+        assert.notEqual(imported.providerThreads[0]?.id, retained.providerThreads[0]?.id);
+        assert.equal(imported.thread.activeProviderThreadId, imported.providerThreads[0]?.id);
+        assert.deepEqual(imported.providerThreads[0]?.nativeThreadRef, ref);
+      }).pipe(Effect.provide(testLayer));
+    }),
 );
 
 it.effect.each([false, true])("rejects thread.create for an existing id (deleted: %s)", (deleted) =>

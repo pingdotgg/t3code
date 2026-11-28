@@ -18,6 +18,7 @@ import {
 } from "@t3tools/shared/terminalOutput";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -31,9 +32,10 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
-const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
-  Layer.provide(layerTestDatabase),
-);
+const layerTestStores = Layer.merge(
+  EventStore.layer,
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
+).pipe(Layer.provide(layerTestDatabase));
 const layerTestEventSink = EventSink.layer.pipe(
   Layer.provide(Layer.mergeAll(layerTestStores, layerTestDatabase)),
 );
@@ -280,21 +282,20 @@ layer("CommandOutputHub", (it) => {
     }),
   );
 
-  it.effect("a finished command whose output is one huge line still shows its tail", () =>
+  it.effect("a finished command keeps the tail of a huge line before a short footer", () =>
     Effect.gen(function* () {
       const threadId = yield* seedThread;
-      const line = "x".repeat(TERMINAL_OUTPUT_TAIL_CHARS * 8);
-      yield* writeCommandItem(threadId, {
-        status: "completed",
-        exitCode: 0,
-        output: `${line}\n`,
-      });
+      const output = `${"x".repeat(TERMINAL_OUTPUT_TAIL_CHARS * 8)}\nOK`;
+      yield* writeCommandItem(threadId, { status: "completed", exitCode: 0, output });
       const frames = yield* subscribeFrames(threadId);
       const final = yield* takeFrame(frames);
-      assert.equal(final.kind, "replace");
-      assert.isTrue(final.truncated);
-      assert.isTrue(final.text.includes("xxxx"));
-      assert.isAtMost(final.text.length, TERMINAL_OUTPUT_TAIL_CHARS);
+      const normalized = normalizeTerminalOutput(output);
+      assert.deepEqual(final, {
+        kind: "replace",
+        text: normalized.text,
+        truncated: normalized.truncated,
+        running: false,
+      });
     }),
   );
 

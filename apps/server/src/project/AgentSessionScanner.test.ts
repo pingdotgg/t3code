@@ -1237,27 +1237,31 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
     it.effect("imports a checkout's sessions from the linked worktrees the scan counts", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
-        const fileSystem = yield* FileSystem.FileSystem;
         const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
         yield* TestClock.setTime(nowMs);
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
         const repo = yield* makeTempDir("t3code-workspace-repo-");
-        yield* fileSystem.makeDirectory(path.join(repo, ".git"));
-        yield* fileSystem.writeFileString(path.join(repo, ".git", "config"), "[core]\n");
-        const worktreeGitDir = path.join(repo, ".git", "worktrees", "feature");
-        yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
-        yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
-        yield* fileSystem.writeFileString(
-          path.join(worktreeGitDir, "HEAD"),
-          "ref: refs/heads/feature\n",
-        );
-        const worktree = path.join(repo, ".claude", "worktrees", "feature");
-        yield* fileSystem.makeDirectory(worktree, { recursive: true });
-        yield* fileSystem.writeFileString(
-          path.join(worktree, ".git"),
-          `gitdir: ${worktreeGitDir}\n`,
-        );
+        const branch = "feat\u00a0";
+        const worktree = path.join(repo, ".claude", "worktrees", "feature\u2028tools");
+        yield* Effect.sync(() => {
+          const git = (...args: string[]) =>
+            NodeChildProcess.execFileSync("git", ["-C", repo, ...args], { stdio: "ignore" });
+          git("init");
+          git(
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Initial commit",
+          );
+          git("worktree", "add", "-b", branch, worktree);
+        });
 
         for (const [index, [cwd, sessionId]] of [
           [repo, "at-root"],
@@ -1293,7 +1297,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           ),
         ).toEqual([
           { sessionId: "at-root", worktree: null },
-          { sessionId: "in-worktree", worktree: { path: worktree, branch: "feature" } },
+          { sessionId: "in-worktree", worktree: { path: worktree, branch } },
         ]);
       }),
     );

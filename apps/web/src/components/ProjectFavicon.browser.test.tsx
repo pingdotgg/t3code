@@ -8,10 +8,13 @@ import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
 
 const state = vi.hoisted(() => ({
   favicon: undefined as Atom.Atom<string | null> | undefined,
+  faviconByCwd: new Map<string, Atom.Atom<string | null>>(),
   refresh: (() => {}) as () => void,
 }));
 vi.mock(import("../state/assets"), () => ({
-  projectFaviconUrlAtom: () => {
+  projectFaviconUrlAtom: (target: { readonly cwd: string }) => {
+    const byCwd = state.faviconByCwd.get(target.cwd);
+    if (byCwd) return byCwd;
     if (!state.favicon) throw new Error("Favicon resource not configured");
     return state.favicon;
   },
@@ -120,6 +123,47 @@ it("asks for a new URL only once when the new URL fails too", async () => {
     });
     expect(refreshes).toBe(1);
   } finally {
+    registry.dispose();
+  }
+});
+
+it("shows the next project's icon when a group's own project has none", async () => {
+  const registry = AtomRegistry.make();
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1"/></svg>';
+  const appIcon = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+  state.faviconByCwd = new Map([
+    ["/repo", Atom.make<string | null>(null)],
+    ["/repo/apps/web", Atom.make<string | null>(appIcon)],
+    ["/repo/apps/docs", Atom.make<string | null>(null)],
+  ]);
+  const project = (workspaceRoot: string, title: string): ProjectFaviconProject => ({
+    environmentId: EnvironmentId.make("test"),
+    workspaceRoot,
+    title,
+    faviconPath: null,
+    projectIcon: null,
+  });
+  const root = project("/repo", "Sample Mono");
+  try {
+    await using screen = await render(
+      <RegistryContext value={registry}>
+        <ProjectFavicon project={root} fallbackProjects={[project("/repo/apps/web", "web")]} />
+      </RegistryContext>,
+    );
+    await expect
+      .poll(() => screen.container.querySelector("img:not(.hidden)")?.getAttribute("src"))
+      .toBe(appIcon);
+
+    await screen.rerender(
+      <RegistryContext value={registry}>
+        <ProjectFavicon project={root} fallbackProjects={[project("/repo/apps/docs", "docs")]} />
+      </RegistryContext>,
+    );
+    expect(screen.container.querySelector("img")).toBeNull();
+    expect(screen.container.textContent).toBe("SM");
+  } finally {
+    state.faviconByCwd = new Map();
     registry.dispose();
   }
 });

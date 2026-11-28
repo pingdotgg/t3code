@@ -373,7 +373,7 @@ export function primaryRemoteUrl(output: string) {
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;
     // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
-    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]]+\])?$/u.exec(trimmed);
+    const match = /^(\S+)\t(\S+(?: +\S+)*?) \((fetch|push)\)(?: \[[^[\]]+\])?$/u.exec(trimmed);
     if (!match?.[1] || !match[2]) return null;
     if (match[3] === "fetch" && !remotes.has(match[1])) remotes.set(match[1], match[2]);
   }
@@ -408,6 +408,7 @@ function scopeFromRemoteUrl(remote: string) {
         if (!organization) return null;
         if (parts[0]?.toLowerCase() === "defaultcollection") parts.shift();
       }
+      if (parts.length === 2 && parts[0] === "_git" && parts[1]) parts.unshift(parts[1]);
       if (parts.length !== 3 || parts[1] !== "_git") return null;
       parts.splice(1, 1);
     } else return null;
