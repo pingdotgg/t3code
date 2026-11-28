@@ -578,6 +578,81 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("discovers the current account's synced skills as anthropic-skills", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const configDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const organization = "11111111-2222-4333-8444-555555555555";
+      const account = "66666666-7777-4888-9999-aaaaaaaaaaaa";
+      const bucket = path.join(configDir, "skills", "synced", `${organization}_${account}`);
+      yield* writeSkill(bucket, "deep-research", "---\ndescription: Research.\n---\n");
+      yield* fs.writeFileString(
+        path.join(configDir, ".claude.json"),
+        JSON.stringify({ oauthAccount: { organizationUuid: organization, accountUuid: account } }),
+      );
+
+      assert.deepEqual(
+        (yield* discoverClaudeSkills({ homePath: configDir }, undefined, {})).map((skill) => [
+          skill.name,
+          skill.path,
+        ]),
+        [["anthropic-skills:deep-research", path.join(bucket, "deep-research", "SKILL.md")]],
+      );
+    }),
+  );
+
+  it.effect("reads a directory marketplace's plugin from its live folder, not the cache", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const marketplace = path.join(tempDir, "marketplace");
+      const live = path.join(marketplace, "plugins", "demo");
+      const snapshot = path.join(configDir, "plugins", "cache", "local", "demo", "0.0.1");
+      yield* fs.makeDirectory(path.join(marketplace, ".claude-plugin"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(marketplace, ".claude-plugin", "marketplace.json"),
+        JSON.stringify({ name: "local", plugins: [{ name: "demo", source: "./plugins/demo" }] }),
+      );
+      yield* writeSkill(path.join(snapshot, "skills"), "first-skill", "# First");
+      yield* writeSkill(path.join(live, "skills"), "first-skill", "# First");
+      yield* writeSkill(path.join(live, "skills"), "added-later", "# Added later");
+      yield* fs.writeFileString(
+        path.join(configDir, "plugins", "known_marketplaces.json"),
+        JSON.stringify({
+          local: {
+            source: { source: "directory", path: marketplace },
+            installLocation: marketplace,
+          },
+        }),
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, "plugins", "installed_plugins.json"),
+        JSON.stringify({
+          version: 2,
+          plugins: { "demo@local": [{ scope: "user", installPath: snapshot }] },
+        }),
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        '{"enabledPlugins":{"demo@local":true}}',
+      );
+
+      assert.deepEqual(
+        (yield* discoverClaudeSkills({ homePath: configDir }, undefined, {})).map((skill) => [
+          skill.name,
+          skill.path,
+        ]),
+        [
+          ["demo:added-later", path.join(live, "skills", "added-later", "SKILL.md")],
+          ["demo:first-skill", path.join(live, "skills", "first-skill", "SKILL.md")],
+        ],
+      );
+    }),
+  );
+
   it.effect("gives a synced namespace to an installed plugin, then the first synced row", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
