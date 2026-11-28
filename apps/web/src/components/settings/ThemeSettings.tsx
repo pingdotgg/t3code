@@ -9,7 +9,7 @@ import {
   Trash2Icon,
   UploadIcon,
 } from "lucide-react";
-import { useState, type ReactElement } from "react";
+import { useRef, useState, type ReactElement } from "react";
 import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme";
 import { readThemeHalvesRaw } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
@@ -127,6 +127,7 @@ function ThemeLibraryCard({
   const gt = useGT();
   const cardModes = theme.previews.map((preview) => preview.mode);
   const [radialModeOpen, setRadialModeOpen] = useState<ThemeAppearance | null>(null);
+  const suppressFocusOpenRef = useRef(false);
   const radialModeGroups = (["light", "dark"] as const).map((mode) => {
     const options =
       variantNavigation?.options.flatMap((option) => {
@@ -139,6 +140,9 @@ function ThemeLibraryCard({
       selected: options.find(({ option }) => option.activeModes.includes(mode)) ?? options[0],
     };
   });
+  const hasOpenRadialPicker = radialModeGroups.some(
+    (group) => group.mode === radialModeOpen && group.options.length > 1,
+  );
   return (
     <SharedTooltipTrigger
       render={
@@ -164,7 +168,21 @@ function ThemeLibraryCard({
                   }
                 }}
                 onKeyDown={(event) => {
-                  if (event.key === "Escape") setRadialModeOpen(null);
+                  if (event.key !== "Escape" || !hasOpenRadialPicker) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const trigger = event.currentTarget.querySelector<HTMLButtonElement>(
+                    `[data-radial-trigger="${radialModeOpen}"]`,
+                  );
+                  setRadialModeOpen(null);
+                  if (
+                    trigger &&
+                    !(event.target instanceof Node && trigger.contains(event.target))
+                  ) {
+                    suppressFocusOpenRef.current = true;
+                    trigger.focus();
+                    suppressFocusOpenRef.current = false;
+                  }
                 }}
                 onMouseLeave={() => setRadialModeOpen(null)}
               >
@@ -199,6 +217,7 @@ function ThemeLibraryCard({
                           }
                           aria-pressed={isActive}
                           className="absolute left-1/2 top-2 z-20 flex size-14 items-center justify-center rounded-full outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-5 focus-visible:outline-foreground/60"
+                          data-radial-trigger={mode}
                           style={{
                             transform: `translateX(calc(-50% + ${rootOffsetX}px))`,
                           }}
@@ -207,7 +226,9 @@ function ThemeLibraryCard({
                             event.stopPropagation();
                             variantNavigation.onSelectAndUse(selected.option.themeIndex, mode);
                           }}
-                          onFocus={() => setRadialModeOpen(mode)}
+                          onFocus={() => {
+                            if (!suppressFocusOpenRef.current) setRadialModeOpen(mode);
+                          }}
                           onMouseEnter={() => setRadialModeOpen(mode)}
                         >
                           <ThemePreviewCircle
