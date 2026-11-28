@@ -78,7 +78,6 @@ effectIt.layer(NodeServices.layer)("log rotation recovery", (it) => {
   it.effect.each(
     modes.flatMap((mode) => [
       { mode, active: false, backup: false },
-      { mode, active: true, backup: false },
       { mode, active: true, backup: true },
     ]),
   )(

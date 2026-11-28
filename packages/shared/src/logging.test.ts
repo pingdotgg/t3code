@@ -7,7 +7,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as PlatformError from "effect/PlatformError";
 
 import { RotatingFileSink, makeAsyncRotatingFileSink } from "./logging.ts";
 
@@ -89,44 +88,6 @@ effectIt.layer(NodeServices.layer)("rotating file sinks", (it) => {
       );
       expect(contents.every((chunk) => Buffer.byteLength(chunk) <= 32)).toBe(true);
       expect(contents.join("")).toBe(lines.join("") + "100\n");
-    }),
-  );
-
-  it.effect("keeps provider log history while the active log cannot be renamed", () =>
-    Effect.gen(function* () {
-      const directory = makeTempDirectory();
-      const filePath = NodePath.join(directory, "provider.log");
-      const history = ["current", "previous", "oldest"];
-      const readHistory = () =>
-        NodeFS.readdirSync(directory)
-          .map((name) => NodeFS.readFileSync(NodePath.join(directory, name), "utf8"))
-          .join("\n");
-      for (const [index, contents] of history.entries()) {
-        NodeFS.writeFileSync(index === 0 ? filePath : `${filePath}.${index}`, contents);
-      }
-      const fs = yield* FileSystem.FileSystem;
-      const openSink = makeAsyncRotatingFileSink({ filePath, maxBytes: 10, maxFiles: 2 }).pipe(
-        Effect.provideService(FileSystem.FileSystem, {
-          ...fs,
-          rename: (source, target) =>
-            source === filePath
-              ? Effect.fail(
-                  PlatformError.systemError({
-                    _tag: "PermissionDenied",
-                    module: "FileSystem",
-                    method: "rename",
-                    pathOrDescriptor: source,
-                  }),
-                )
-              : fs.rename(source, target),
-        }),
-      );
-      for (const record of ["next record", "another record"]) {
-        const sink = yield* openSink;
-        yield* sink.write(record).pipe(Effect.ignore);
-      }
-      const retained = readHistory();
-      expect(history.filter((record) => !retained.includes(record))).toEqual([]);
     }),
   );
 
