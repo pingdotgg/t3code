@@ -10888,6 +10888,7 @@
   "d6845667c3278af2": "No autenticado",
   "7813f10f3f534004": "Estado desconocido",
   "4f3c3b40b25cac07": "Alternar visibilidad de la cuenta de control de versiones",
+  "fc3bfdc366686e4b": "Alternar visibilidad de la cuenta de control de versiones: {account}",
   "16ffdd2f02752973": "Alternar detalles de {label}",
   "b98fef2c26258e7b": "Ofrecer {label} al añadir o publicar un proyecto",
   "516da46e1bc929e2": "Entorno del servidor",

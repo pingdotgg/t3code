@@ -134,6 +134,11 @@ describe("orderDiffFilesForReview", () => {
       "src/b.ts",
       "src/a.ts",
     ]);
+    expect(order([file("a.js", ['import "./z.mjs";']), file("z.mjs"), file("z.js")])).toEqual([
+      "z.js",
+      "z.mjs",
+      "a.js",
+    ]);
   });
 
   it("strips a bundler query such as ?worker but keeps a # subpath import", () => {
