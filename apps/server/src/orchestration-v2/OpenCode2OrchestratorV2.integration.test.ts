@@ -442,7 +442,7 @@ describe("OpenCode 2 through the orchestrator", () => {
     }),
   );
 
-  it.effect("forks from an earlier turn before the next turn's user message", () =>
+  it.effect.each(["prompt", "slash command"])("forks before the next %s", (nextTurn) =>
     Effect.gen(function* () {
       const name = "opencode2-fork";
       const cwd = yield* checkpointWorkspace(name);
@@ -450,16 +450,37 @@ describe("OpenCode 2 through the orchestrator", () => {
         new URL("./testkit/fixtures/opencode2_fork/opencode_transcript.ndjson", import.meta.url),
       );
 
+      const sessionID = recorded.metadata?.["nativeSessionId"];
+      const entries = recorded.entries.flatMap((entry): ReadonlyArray<ProviderReplayEntry> => {
+        if (nextTurn === "prompt" || entry.type === "runtime_exit") return [entry];
+        if (entry.label === "session.prompt.2") {
+          return [
+            out("command.list", "<any>"),
+            reply("command.list", { location: { directory: cwd }, data: [{ name: "hello" }] }),
+            out("message.list", { sessionID, order: "desc", limit: "1" }),
+            reply("message.list", {
+              data: [
+                { id: "msg_idle_one", type: "idle", time: { created: 1 }, outcome: "succeeded" },
+              ],
+              cursor: {},
+            }),
+            out("session.command", { sessionID, name: "hello", text: "TWO" }),
+            reply("session.command", null),
+            out("session.active"),
+            reply("session.active", { data: { [String(sessionID)]: { type: "running" } } }),
+          ];
+        }
+        return entry.label === "session.prompt.response.2" ? [] : [entry];
+      });
       const transcript = yield* OpenCode2OrchestratorReplayHarness.decodeTranscript(
-        withDirectory(recorded, cwd),
+        withDirectory({ ...recorded, entries }, cwd),
       );
       const source = threadCommands({ name, worktreePath: cwd });
       const target = ThreadId.make(`thread:${name}:target`);
-      const [one, two] = [source.message("one"), source.message("two")];
       const commands: ReadonlyArray<OrchestrationV2Command> = [
         source.create,
-        one,
-        two,
+        source.message("one"),
+        source.message("two", bigPickle, nextTurn === "slash command" ? "/hello TWO" : undefined),
         {
           type: "thread.fork",
           createdBy: "user",
