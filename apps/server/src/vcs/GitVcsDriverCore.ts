@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - the index swap holds Git's lock, so it runs synchronously
+import * as NodeFS from "node:fs";
+
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -6532,30 +6535,39 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // take the lock only to swap it in, unless Git holds it or the index changed since the copy.
     const copyPath = `${indexPath}.t3-refresh`;
     const lockPath = `${indexPath}.lock`;
-    const stamp = (info: FileSystem.File.Info) =>
-      `${info.size}:${Option.getOrUndefined(info.ino)}:${Option.getOrUndefined(info.mtime)?.getTime()}`;
+    const stamp = () => {
+      const info = NodeFS.statSync(indexPath);
+      return `${info.size}:${info.ino}:${info.mtimeMs}`;
+    };
+    const swapFailed = (cause: unknown) =>
+      new GitCommandError({
+        operation: "GitVcsDriver.createWorktree.swapRefreshedIndex",
+        command: "swap refreshed index",
+        cwd: worktreePath,
+        detail: String(cause),
+      });
     yield* Effect.gen(function* () {
       yield* Effect.sleep(Duration.millis(delay));
-      const copied = stamp(yield* fileSystem.stat(indexPath));
+      const copied = yield* Effect.try({ try: stamp, catch: swapFailed });
       yield* fileSystem.copyFile(indexPath, copyPath);
       // Keep the checkout's timestamp so this refresh still re-reads the files stamped in it.
       yield* fileSystem.utimes(copyPath, checkoutTime, checkoutTime);
       yield* refresh({ GIT_INDEX_FILE: copyPath });
-      yield* Effect.uninterruptible(
-        // link fails when the lock exists; once it is ours, release it on any failure.
-        fileSystem.link(copyPath, lockPath).pipe(
-          Effect.andThen(
-            fileSystem.stat(indexPath).pipe(
-              Effect.flatMap((current) =>
-                stamp(current) === copied
-                  ? fileSystem.rename(lockPath, indexPath)
-                  : fileSystem.remove(lockPath),
-              ),
-              Effect.tapError(() => fileSystem.remove(lockPath).pipe(Effect.ignore)),
-            ),
-          ),
-        ),
-      );
+      // Synchronous, so a busy event loop cannot stretch the time a Git command finds the lock.
+      // link fails when the lock exists; once it is ours, release it on any failure.
+      yield* Effect.try({
+        try: () => {
+          NodeFS.linkSync(copyPath, lockPath);
+          try {
+            if (stamp() === copied) NodeFS.renameSync(lockPath, indexPath);
+            else NodeFS.rmSync(lockPath);
+          } catch (cause) {
+            NodeFS.rmSync(lockPath, { force: true });
+            throw cause;
+          }
+        },
+        catch: swapFailed,
+      });
     }).pipe(
       Effect.ensuring(fileSystem.remove(copyPath).pipe(Effect.ignore)),
       Effect.ignore({ log: "Debug" }),
