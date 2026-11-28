@@ -385,16 +385,6 @@ export function scopeThreadShell(
   return presentThreadShell(environmentId, thread);
 }
 
-const THREAD_PROVIDER_STACK_LIMIT = 3;
-
-export function resolveThreadProviderStack(
-  thread: Pick<EnvironmentThreadShell, "providerInstanceHistory" | "modelSelection" | "runtime">,
-): ReadonlyArray<ProviderInstanceId> {
-  const current = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
-  const previous = thread.providerInstanceHistory.filter((instanceId) => instanceId !== current);
-  return [...previous.slice(-(THREAD_PROVIDER_STACK_LIMIT - 1)), current];
-}
-
 /**
  * Both shell and detail timers count from the activity-owning run's work
  * start, never last activity. A wake keeps the start of the work it continues.

@@ -1237,27 +1237,31 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
     it.effect("imports a checkout's sessions from the linked worktrees the scan counts", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
-        const fileSystem = yield* FileSystem.FileSystem;
         const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
         yield* TestClock.setTime(nowMs);
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
         const repo = yield* makeTempDir("t3code-workspace-repo-");
-        yield* fileSystem.makeDirectory(path.join(repo, ".git"));
-        yield* fileSystem.writeFileString(path.join(repo, ".git", "config"), "[core]\n");
-        const worktreeGitDir = path.join(repo, ".git", "worktrees", "feature");
-        yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
-        yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
-        yield* fileSystem.writeFileString(
-          path.join(worktreeGitDir, "HEAD"),
-          "ref: refs/heads/feature\n",
-        );
-        const worktree = path.join(repo, ".claude", "worktrees", "feature");
-        yield* fileSystem.makeDirectory(worktree, { recursive: true });
-        yield* fileSystem.writeFileString(
-          path.join(worktree, ".git"),
-          `gitdir: ${worktreeGitDir}\n`,
-        );
+        const branch = "feat\u00a0";
+        const worktree = path.join(repo, ".claude", "worktrees", "feature\u2028tools");
+        yield* Effect.sync(() => {
+          const git = (...args: string[]) =>
+            NodeChildProcess.execFileSync("git", ["-C", repo, ...args], { stdio: "ignore" });
+          git("init");
+          git(
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Initial commit",
+          );
+          git("worktree", "add", "-b", branch, worktree);
+        });
 
         for (const [index, [cwd, sessionId]] of [
           [repo, "at-root"],
@@ -1293,7 +1297,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           ),
         ).toEqual([
           { sessionId: "at-root", worktree: null },
-          { sessionId: "in-worktree", worktree: { path: worktree, branch: "feature" } },
+          { sessionId: "in-worktree", worktree: { path: worktree, branch } },
         ]);
       }),
     );
@@ -1416,6 +1420,55 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const result = yield* runScan({ claudeHomePath, codexHomePath });
 
         expect(result.candidates.map((candidate) => candidate.path)).toEqual([workspace]);
+      }),
+    );
+
+    it.effect("attributes a Pi session only to its complete header workspace", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-01-01T00:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const piAgentDir = yield* makeTempDir("t3code-pi-agent-");
+        const projects = yield* makeTempDir("t3code-projects-");
+        const workspace = path.join(projects, "session-workspace");
+        const otherWorkspace = path.join(projects, "other-workspace");
+        yield* fileSystem.makeDirectory(workspace);
+        yield* fileSystem.makeDirectory(otherWorkspace);
+        const header = { type: "session", version: 3, id: "pi-session" };
+
+        yield* writeTranscript({
+          filePath: path.join(piAgentDir, "sessions", "--workspace--", "pi-session.jsonl"),
+          contents: [
+            encodeTranscriptRecord({ ...header, cwd: otherWorkspace }).slice(0, -1),
+            encodeTranscriptRecord({
+              type: "message",
+              id: "prompt",
+              parentId: null,
+              cwd: otherWorkspace,
+              timestamp: "2026-01-01T00:00:00.000Z",
+              message: { role: "user", content: "Review this project" },
+            }),
+            // An invalid timestamp fails record decoding but must not hide the workspace.
+            encodeTranscriptRecord({ ...header, cwd: workspace, timestamp: null }),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath, piAgentDir });
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          piAgentDir,
+          workspaceRoot: workspace,
+        });
+
+        expect(
+          result.candidates.map((candidate) => path.relative(projects, candidate.path)),
+        ).toEqual(["session-workspace"]);
+        expect(threads).toMatchObject([{ providerSessionId: "pi-session" }]);
       }),
     );
 
@@ -1766,6 +1819,63 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("imports older history behind 100 unreadable sessions", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const sessions = path.join(claudeHomePath, "pi-agent", "sessions", "--workspace--");
+        // Nesting past the JSON reader's depth limit makes a transcript unreadable.
+        const tooDeep = "[".repeat(130) + "]".repeat(130);
+        for (let index = 0; index < 100; index++) {
+          const header = encodeTranscriptRecord({
+            type: "session",
+            version: 3,
+            id: `unreadable-${index}`,
+            cwd: workspace,
+          });
+          yield* writeTranscript({
+            filePath: path.join(sessions, `unreadable-${index}.jsonl`),
+            contents: `${header}\n${tooDeep}\n`,
+            mtimeMs: nowMs - (index + 1) * 1_000,
+          });
+        }
+        yield* writeTranscript({
+          filePath: path.join(sessions, "older.jsonl"),
+          contents:
+            [
+              { type: "session", version: 3, id: "older", cwd: workspace },
+              {
+                type: "message",
+                id: "a1",
+                parentId: null,
+                message: { role: "user", content: "Review this change" },
+              },
+              {
+                type: "message",
+                id: "a2",
+                parentId: "a1",
+                message: { role: "assistant", content: [{ type: "text", text: "Looks good" }] },
+              },
+            ]
+              .map((record) => encodeTranscriptRecord(record))
+              .join("\n") + "\n",
+          mtimeMs: nowMs - 200_000,
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(threads.map((thread) => thread.providerSessionId)).toEqual(["older"]);
+      }),
+    );
+
     it.effect("keeps the provider instance that owns a custom session home", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -1854,6 +1964,29 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         });
 
         expect(threads.map((thread) => thread.title)).toEqual(["Renamed chat"]);
+
+        const tailRename = `${encodeTranscriptRecord({
+          id: "named-session",
+          thread_name: "Tail rename",
+          updated_at: "unknown",
+        })}\n`;
+        const tailPadding = `${"x".repeat(1024 * 1024 - Buffer.byteLength(tailRename) - 1)}\n`;
+        yield* fileSystem.writeFileString(
+          path.join(codexHomePath, "session_index.jsonl"),
+          `${encodeTranscriptRecord({
+            id: "named-session",
+            thread_name: "Older name",
+            updated_at: "unknown",
+          })}\n${tailRename}${tailPadding}`,
+        );
+
+        const tailBoundaryThreads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(tailBoundaryThreads.map((thread) => thread.title)).toEqual(["Tail rename"]);
       }),
     );
 
@@ -3581,6 +3714,53 @@ describe("parseAgentSessionTranscript", () => {
     });
   });
 
+  const parseClaudeUserTurns = (userTurns: ReadonlyArray<string>) =>
+    AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        ...userTurns.map((content) => ({ type: "user", message: { role: "user", content } })),
+        { type: "assistant", message: { role: "assistant", content: "Here is what happened." } },
+      ]
+        .map((record) => encodeTranscriptRecord(record))
+        .join("\n"),
+      source: "claudeAgent",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      fallbackSessionId: "62c057bb-b316-4b29-be2c-140090d71254",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+  it.each([
+    "<local-command-stdout>Enabled plan mode</local-command-stdout>",
+    "<command-name>/review</command-name>\n<command-message>review</command-message>",
+  ])("keeps a Claude question after quoted %s and names the thread after it", (quote) => {
+    const prompt = `${quote}\nWhy did this change?`;
+
+    expect(parseClaudeUserTurns([prompt])).toMatchObject({
+      title: "Why did this change?",
+      messages: [{ role: "user", text: prompt }, { role: "assistant" }],
+    });
+  });
+
+  it("keeps a Claude question after quoted output full of shell closing tags", () => {
+    const prompt = `<bash-stdout>${"</bash-stdout><bash-stderr>".repeat(16_000)}</bash-stdout><bash-stderr></bash-stderr>\nWhy did this change?`;
+
+    expect(parseClaudeUserTurns([prompt])).toMatchObject({
+      title: "Why did this change?",
+      messages: [{ role: "user", text: prompt }, { role: "assistant" }],
+    });
+  });
+
+  it.each([
+    "<bash-stdout></bash-stdout>\nfinished\n</bash-stdout><bash-stderr></bash-stderr>",
+    "<bash-stderr></bash-stderr>\nfinished\n</bash-stderr>",
+    "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>\n<tools-used-before-summary>Bash, Read</tools-used-before-summary>",
+  ])("hides Claude output with trailing markup of its own (%s)", (output) => {
+    expect(
+      parseClaudeUserTurns([output, "What happened?"])
+        ?.messages.filter((message) => message.role === "user")
+        .map((message) => message.text),
+    ).toEqual(["What happened?"]);
+  });
+
   it.each([
     { customTitles: ["Refactor auth module"], expected: "Refactor auth module" },
     // Claude writes an empty customTitle when the user clears a rename.
@@ -4176,5 +4356,157 @@ describe("parseAgentSessionTranscript", () => {
         ? null
         : { title: thread.title, texts: thread.messages.map((message) => message.text) },
     ).toEqual(expected);
+  });
+
+  it.each([
+    {
+      source: "claudeAgent" as const,
+      records: (first: string, blank: string, code: string) => [
+        { type: "user", sessionId: "claude-session", message: { role: "user", content: first } },
+        { type: "user", sessionId: "claude-session", message: { role: "user", content: blank } },
+        {
+          type: "user",
+          sessionId: "claude-session",
+          message: {
+            role: "user",
+            content: [
+              { type: "text", text: blank },
+              { type: "text", text: code },
+            ],
+          },
+        },
+        {
+          type: "assistant",
+          sessionId: "claude-session",
+          message: { role: "assistant", content: [{ type: "text", text: code }] },
+        },
+      ],
+    },
+    {
+      source: "codex" as const,
+      records: (first: string, blank: string, code: string) => [
+        { type: "session_meta", payload: { id: "codex-session" } },
+        {
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: first }],
+          },
+        },
+        {
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: blank }],
+          },
+        },
+        {
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [
+              { type: "input_text", text: blank },
+              { type: "input_text", text: code },
+            ],
+          },
+        },
+        {
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: code }],
+          },
+        },
+      ],
+    },
+    {
+      source: "pi" as const,
+      records: (first: string, blank: string, code: string) => [
+        { type: "session", id: "pi-session" },
+        { type: "message", message: { role: "user", content: first } },
+        { type: "message", message: { role: "user", content: blank } },
+        {
+          type: "message",
+          message: {
+            role: "user",
+            content: [
+              { type: "text", text: blank },
+              { type: "text", text: code },
+            ],
+          },
+        },
+        {
+          type: "message",
+          message: { role: "assistant", content: [{ type: "text", text: code }] },
+        },
+      ],
+    },
+  ])(
+    "preserves leading indentation while dropping blank lines and empty blocks for $source",
+    ({ source, records }) => {
+      const first = "\n  - fix the importer\n    - nested\n";
+      const code = "\n    const x = 1;\n    return x;\n";
+      const thread = AgentSessionScanner.parseAgentSessionTranscript({
+        contents: records(first, "  \n\t ", code)
+          .map((record) => encodeTranscriptRecord(record))
+          .join("\n"),
+        source,
+        providerInstanceId: ProviderInstanceId.make(source),
+        fallbackSessionId: `${source}-session`,
+        lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+      });
+
+      expect(thread?.title).toBe("- fix the importer");
+      expect(thread?.messages.map(({ role, text }) => ({ role, text }))).toEqual([
+        { role: "user", text: "  - fix the importer\n    - nested" },
+        { role: "user", text: "    const x = 1;\n    return x;" },
+        { role: "assistant", text: "    const x = 1;\n    return x;" },
+      ]);
+    },
+  );
+
+  it("hides generated response context in a turn whose Codex prompt is indented", () => {
+    const prompt = "    indented prompt";
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
+            content: [
+              { type: "input_text", text: "<environment_context>\n</environment_context>" },
+            ],
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          payload: { type: "user_message", message: prompt },
+        }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
+            content: [{ type: "input_text", text: prompt }],
+          },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.messages.map(({ role, text }) => ({ role, text }))).toEqual([
+      { role: "user", text: prompt },
+    ]);
   });
 });

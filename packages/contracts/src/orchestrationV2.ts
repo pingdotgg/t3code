@@ -77,6 +77,7 @@ import {
 import {
   ProviderApprovalDecision,
   ProviderApprovalFullAccessOverride,
+  ProviderApprovalPushHooks,
   ProviderApprovalOption,
   ProviderInteractionMode,
   ProviderRequestKind,
@@ -756,6 +757,8 @@ export type OrchestrationV2DelegatedCompletionDelivery =
 
 export const OrchestrationV2DelegatedCompletionCohort = Schema.Struct({
   disposition: Schema.Literals(["open", "stopped", "disposed"]),
+  /** Reopened for a follow-up after a Stop; the tasks that Stop interrupted still need the Stop note. */
+  reopenedAfterStop: Schema.optionalKey(Schema.Literal(true)),
   nextGeneration: PositiveInt,
   delivery: Schema.NullOr(OrchestrationV2DelegatedCompletionDelivery),
 });
@@ -829,6 +832,8 @@ export const OrchestrationV2Run = Schema.Struct({
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
   queueHeld: Schema.optional(Schema.Boolean),
+  /** The sender asked for a separate turn; it is not an ordering barrier for a later auto send. */
+  explicitQueue: Schema.optional(Schema.Literal(true)),
   steerWhenReadyRunId: Schema.optional(RunId),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -1229,6 +1234,8 @@ export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
   claudeAttachmentBudget: Schema.optional(
     Schema.Struct({ bytesUsed: NonNegativeInt, pagesUsed: NonNegativeInt }),
   ),
+  /** MCP app notes already in the Claude session's history: note key to a digest of its text. */
+  claudeDeliveredAppContext: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 export type OrchestrationV2ProviderThreadNativeMetadata =
   typeof OrchestrationV2ProviderThreadNativeMetadata.Type;
@@ -1730,13 +1737,21 @@ const OrchestrationV2ProviderFailureMessage = TrimmedNonEmptyString.check(
 );
 const OrchestrationV2ProviderFailureCode = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 
-/** Producers must redact credentials before construction. */
+export const GoogleAccountVerificationUrl = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(4_096),
+  Schema.isPattern(
+    /^https:\/\/accounts\.google\.com\/(?:v3\/)?signin\/continue\?[^\s\p{Cc}\\#]+$/u,
+  ),
+);
+
+/** Producers must redact credentials from diagnostic text before construction. */
 export const OrchestrationV2ProviderFailure = Schema.Struct({
   class: OrchestrationV2ProviderFailureClass,
   message: OrchestrationV2ProviderFailureMessage,
   code: Schema.NullOr(OrchestrationV2ProviderFailureCode),
   retryable: Schema.NullOr(Schema.Boolean),
   resetAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  verificationUrl: Schema.optionalKey(GoogleAccountVerificationUrl),
 });
 export type OrchestrationV2ProviderFailure = typeof OrchestrationV2ProviderFailure.Type;
 
@@ -1801,7 +1816,7 @@ const OrchestrationV2TurnItemBaseFields = {
 } as const;
 
 export const OrchestrationV2FileSearchResult = Schema.Struct({
-  fileName: TrimmedNonEmptyString,
+  fileName: Schema.NonEmptyString,
   line: Schema.optional(PositiveInt),
   column: Schema.optional(PositiveInt),
   preview: Schema.optional(Schema.String),
@@ -2007,6 +2022,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     reason: Schema.optional(Schema.String),
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
     appName: Schema.optional(Schema.String),
+    pushHooks: Schema.optional(ProviderApprovalPushHooks),
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
   }),
   Schema.Struct({
@@ -2908,6 +2924,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     reason: Schema.optional(Schema.String),
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
     appName: Schema.optional(Schema.String),
+    pushHooks: Schema.optional(ProviderApprovalPushHooks),
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
   }),
   Schema.Struct({
@@ -3624,6 +3641,7 @@ export const OrchestrationV2Command = Schema.Union([
     steerFollowUpAfterRunOrdinal: Schema.optional(NonNegativeInt),
     usageLimitRecoveryRequestId: Schema.optional(CommandId),
     deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
+    explicitQueue: Schema.optional(Schema.Literal(true)),
     delegatedCompletion: Schema.optional(
       Schema.Struct({
         parentRunId: RunId,

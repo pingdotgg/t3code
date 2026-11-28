@@ -25,6 +25,20 @@ clients read declared capabilities, never provider names.
   `ProviderHost` rather than `apps/server`. Client definitions (`./client`) must stay browser- and
   React Native-safe.
 
+## Choose the integration shape
+
+The generic ACP integration excludes per-agent branches, private vendor RPC or HTTP calls, and
+readers for a vendor CLI's credentials or history. A dedicated driver requires a maintainer's
+explicit decision to own that integration. Existing exceptions establish no precedent.
+
+Decline workarounds for agents that violate the ACP spec and ask the author to file an issue with
+the agent's maintainer, including a minimal protocol transcript and the relevant spec section.
+Missing portable capabilities belong upstream in ACP. Vendor-neutral primitives, including shared
+ACP text generation and user-hosted HTTP quota sources, are welcome.
+
+A misleading permission guarantee in T3 is a T3 bug. Correct the shared behavior so the capability
+and permission claims match what the protocol can enforce.
+
 ## Honest capabilities and permissions
 
 - **Declare only what the provider actually supports.** Turn off fork, rollback, steering, or
@@ -40,6 +54,9 @@ clients read declared capabilities, never provider names.
   awaited request with one meaning, never a timer. Clear it the moment the provider can be doing
   something else. Clients show it until the run's first output. A session that serves several
   threads names the one it describes with `startupPhaseThreadId`.
+  Before a turn opens, even before the server has the send, clients show "Starting" only when the
+  session is not live or reports a phase. A live session with no process reports `launch` while no
+  turn is open; an open turn, even one being stopped, would read it as starting.
   Nothing an adapter emits during `openSession` is visible, because the session is not attached yet.
   Turn start republishes `runtime.providerSession`, so a phase that spans it must be on that record.
 - **Reject conversation rollback before touching files** when the provider cannot roll back its

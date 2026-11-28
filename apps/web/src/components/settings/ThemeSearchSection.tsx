@@ -447,8 +447,14 @@ export function ThemeSearchSection({
                     <div className="min-w-0 flex-1">
                       <h4 className="truncate text-sm font-medium">{extension.name}</h4>
                       <p className="truncate text-muted-foreground text-xs">
-                        {extension.publisher} · {DOWNLOAD_FORMAT.format(extension.downloadCount)}{" "}
-                        downloads
+                        {extension.publisher} ·{" "}
+                        {gt(
+                          "{count, plural, one {{formatted} download} other {{formatted} downloads}}",
+                          {
+                            count: extension.downloadCount,
+                            formatted: DOWNLOAD_FORMAT.format(extension.downloadCount),
+                          },
+                        )}
                       </p>
                     </div>
                   </div>

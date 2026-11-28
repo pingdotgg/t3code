@@ -14,7 +14,7 @@ import type { BranchToolbarHandle } from "../BranchToolbar";
 import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
 import { composerShortcutCommands } from "./composerShortcuts";
 
-/** Returning false lets the key event through untouched. */
+/** Returning false lets the key through, except for cycling while a terminal owns focus. */
 type ChatShortcutHandler = (context: {
   readonly event: KeyboardEvent;
   readonly terminalFocusOwner: TerminalFocusOwner | null;
@@ -62,6 +62,9 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
   const embedded = input.embedded === true;
   const composerElement = embedded ? (input.composerElement ?? null) : null;
   const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (event.target instanceof Element && event.target.closest("[data-keybinding-capture]")) {
+      return;
+    }
     const { keybindings } = input;
     if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
       event.stopPropagation();
@@ -98,7 +101,14 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       input.commands[command] ??
       composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??
       input.fallback(command);
-    if (!run || run({ event, terminalFocusOwner }) === false) return;
+    if (!run) return;
+    const handled = run({ event, terminalFocusOwner });
+    if (
+      handled === false &&
+      (terminalFocusOwner === null ||
+        (command !== "terminal.previous" && command !== "terminal.next"))
+    )
+      return;
     event.preventDefault();
     event.stopPropagation();
   });
