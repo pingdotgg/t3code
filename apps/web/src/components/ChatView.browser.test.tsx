@@ -799,8 +799,12 @@ it("a rejected send leaves the timeline when a new draft was typed meanwhile", a
   expect(editor.element().textContent).toContain("Next draft");
 });
 
-async function renderModeThread(interactionMode: "default" | "plan", planModeEnabled: boolean) {
-  const thread = { ...threadWithHistory(`mode-${interactionMode}`, 1), interactionMode };
+async function renderModeThread(
+  interactionMode: "default" | "plan",
+  planModeEnabled: boolean,
+  name = `mode-${interactionMode}`,
+) {
+  const thread = { ...threadWithHistory(name, 1), interactionMode };
   const environment = installFakeEnvironment([thread], { acceptCommands: true });
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
@@ -842,6 +846,19 @@ it.each([
   await toggle.click();
   await expect.element(toggle).toHaveAttribute("aria-pressed", String(to === "plan"));
   await sendAndExpectMode(thread.id, to);
+});
+
+it("the plan mode toggle is locked while a turn runs", async () => {
+  const { thread, environment, app } = await renderModeThread("default", true, "mode-running");
+  using _environment = environment;
+  await using _app = app;
+  const toggle = page.getByRole("button", { name: "Plan mode" });
+  await expect.element(toggle).toBeEnabled();
+  const running = { ...thread.runs[0]!, status: "running" as const, completedAt: null };
+  await act(() => emitThreadEvent(thread.id, { type: "run.updated", payload: running }));
+  await expect.element(page.getByRole("button", { name: "Stop generation" })).toBeVisible();
+  await expect.element(toggle).toBeDisabled();
+  await expect.element(toggle).toHaveAttribute("aria-pressed", "false");
 });
 
 it("with plan mode off, the toggle is hidden and a plan thread sends in build mode", async () => {

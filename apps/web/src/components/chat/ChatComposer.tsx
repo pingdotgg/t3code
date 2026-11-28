@@ -2743,7 +2743,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           aria-label={gt("Plan mode")}
           aria-pressed={interactionMode === "plan"}
           title={gt("Plan mode")}
-          disabled={!canOperateThread || isSendBusy}
+          // A message sent mid-turn steers that turn, which keeps the mode it started in.
+          disabled={
+            !canOperateThread || isSendBusy || phase === "running" || phase === "connecting"
+          }
           onClick={togglePlanModeStable}
         >
           <ComposerControlIcon
