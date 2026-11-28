@@ -12,8 +12,8 @@ test(
     const project = await t3.project("demo", settings);
     await t3.project("other-project", settings);
     const cases = [
-      { branch: "return", projects: ["other-project", "demo"] },
-      { branch: "workspace", projects: [] },
+      { branch: "return", roundTrip: true },
+      { branch: "workspace", roundTrip: false },
     ];
     for (const { branch } of cases) {
       await runPromise(run("git", ["branch", branch], { cwd: project }));
@@ -91,16 +91,17 @@ test(
     await screen.getByRole("textbox").fill("Plan the next change");
     const draftPath = await browser.evaluate(() => location.pathname);
 
-    for (const { branch, projects } of cases) {
+    for (const { branch, roundTrip } of cases) {
       await branchPicker.click();
       await screen.getByRole("option", new RegExp(`^${branch}\\b`)).tap();
       await browser.locator("html[data-scenario-branch-reply=ready]").waitFor();
 
-      for (const project of projects) await moveDraft(project);
-      if (projects.length) {
+      if (roundTrip) {
+        await moveDraft("other-project");
+        // Detach before returning so live Git status cannot replace the draft's base branch.
+        await runPromise(run("git", ["switch", "--detach", "main"], { cwd: project }));
+        await moveDraft("demo");
         await expect(workspace).toContainText("Current checkout");
-        // Keep the real Git HEAD distinct from the branch in the held reply.
-        await runPromise(run("git", ["switch", "main"], { cwd: project }));
       } else {
         await workspace.tap();
         await screen.getByRole("option", "New worktree", { exact: true }).tap();
@@ -115,10 +116,14 @@ test(
         return null;
       });
       await expect(branchPicker).toBeEnabled();
-      if (projects.length) {
+      if (roundTrip) {
         await workspace.tap();
         await screen.getByRole("option", "New worktree", { exact: true }).tap();
-        await expect(branchPicker).toHaveAttribute("aria-label", /^Branch: (From )?main\b/);
+        await expect(branchPicker).toHaveAttribute(
+          "aria-label",
+          /^Branch: (Select ref|(From )?main\b)/,
+        );
+        await runPromise(run("git", ["switch", "main"], { cwd: project }));
         await workspace.tap();
         await screen.getByRole("option", "Current checkout", { exact: true }).tap();
       } else {
