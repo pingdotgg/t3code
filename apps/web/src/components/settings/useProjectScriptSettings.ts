@@ -1,3 +1,4 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { AuthSettingsWriteScope, EnvironmentAuthorizationError } from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
 import {
@@ -17,6 +18,7 @@ import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { clearProjectSettingsOverrides } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
+import { msg } from "gt-react";
 import { useRef, useState } from "react";
 
 import {
@@ -33,6 +35,7 @@ import { useProjects } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { NewProjectScriptInput } from "../projectScriptEditor";
+import { m } from "../../i18n/messages";
 import { toastManager } from "../ui/toast";
 
 function reportScriptFailure(result: AtomCommandResult<unknown, unknown>) {
@@ -40,8 +43,11 @@ function reportScriptFailure(result: AtomCommandResult<unknown, unknown>) {
     const error = squashAtomCommandFailure(result);
     toastManager.add({
       type: "error",
-      title: "Failed to save project actions",
-      description: error instanceof Error ? error.message : "An error occurred.",
+      title: m(msg("Failed to save project actions")),
+      description:
+        error instanceof Error
+          ? (thrownErrorMessage(error, m) ?? error.message)
+          : m(msg("An error occurred.")),
     });
   }
   return mapAtomCommandResult(result, () => undefined);
@@ -72,10 +78,15 @@ export function useProjectScriptSettings(
     transform: (current: readonly ProjectScript[]) => readonly ProjectScript[] | null,
     scriptId?: string,
     keybinding?: string | null,
+    onSettingsSaved?: () => void,
   ): Promise<AtomCommandResult<void, unknown>> {
     if (savingRef.current || targets.length === 0) {
-      const message = "No available machine, or another action change is saving.";
-      toastManager.add({ type: "error", title: "Actions not saved", description: message });
+      const message = m(msg("No available machine, or another action change is saving."));
+      toastManager.add({
+        type: "error",
+        title: m(msg("Actions not saved")),
+        description: message,
+      });
       return AsyncResult.failure(Cause.fail(new Error(message)));
     }
     if (
@@ -88,7 +99,7 @@ export function useProjectScriptSettings(
           Cause.fail(
             new EnvironmentAuthorizationError({
               requiredScope: AuthSettingsWriteScope,
-              message: "This connection cannot change environment settings.",
+              message: m(msg("This connection cannot change environment settings.")),
             }),
           ),
         ),
@@ -96,7 +107,7 @@ export function useProjectScriptSettings(
     }
     savingRef.current = true;
     setSaving(true);
-    return writeTargets(transform, scriptId, keybinding).finally(() => {
+    return writeTargets(transform, scriptId, keybinding, onSettingsSaved).finally(() => {
       savingRef.current = false;
       setSaving(false);
     });
@@ -106,6 +117,7 @@ export function useProjectScriptSettings(
     transform: (current: readonly ProjectScript[]) => readonly ProjectScript[] | null,
     scriptId: string | undefined,
     keybinding: string | null | undefined,
+    onSettingsSaved: (() => void) | undefined,
   ): Promise<AtomCommandResult<void, unknown>> {
     for (const { environmentId, settings, keybindings, project } of targets) {
       const current = project
@@ -134,6 +146,7 @@ export function useProjectScriptSettings(
         },
       });
       if (result._tag === "Failure") return reportScriptFailure(result);
+      onSettingsSaved?.();
       const changedIds = scriptId
         ? [scriptId]
         : current
@@ -179,7 +192,12 @@ export function useProjectScriptSettings(
     return AsyncResult.success(undefined);
   }
 
-  function submit(scriptId: string | null, input: NewProjectScriptInput) {
+  function submit(
+    scriptId: string | null,
+    input: NewProjectScriptInput,
+    onActionCreated?: (scriptId: string) => void,
+    retryingCreation = false,
+  ) {
     const existingIds = [
       ...projects.flatMap((project) => project.scripts.map((script) => script.id)),
       ...targets.flatMap(({ settings, project }) =>
@@ -194,15 +212,20 @@ export function useProjectScriptSettings(
     ];
     const id = scriptId ?? nextProjectScriptId(input.name, existingIds);
     const next = buildProjectScript(id, input);
+    const creating = scriptId === null || retryingCreation;
     return persist(
       (current) => {
         const updated = current.map((script) =>
           script.id === id ? next : releaseClaimedRoles(script, input),
         );
-        return scriptId === null ? [...updated, next] : updated;
+        // A retried creation may have reached only some targets before failing.
+        return creating && !current.some((script) => script.id === id)
+          ? [...updated, next]
+          : updated;
       },
       id,
       input.keybinding,
+      creating ? () => onActionCreated?.(id) : undefined,
     );
   }
 

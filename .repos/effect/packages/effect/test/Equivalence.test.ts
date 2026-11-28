@@ -1,6 +1,7 @@
-import { describe, it } from "@effect/vitest"
+import { assert, describe, it } from "@effect/vitest"
 import { assertFalse, assertTrue } from "@effect/vitest/utils"
 import { Equivalence, pipe } from "effect"
+import { withIgnoredProperties } from "./utils/structFields.ts"
 
 describe("Equivalence", () => {
   it("String", () => {
@@ -112,16 +113,20 @@ describe("Equivalence", () => {
       assertFalse(eq({ [a]: "a", [b]: 1 }, { [a]: "a", [b]: 2 }))
     })
 
-    it("mixed keys", () => {
+    it("discovers enumerable own fields and reads non-enumerable input fields", () => {
       const b = Symbol.for("b")
-      const eq = Equivalence.Struct({
+      const eq = Equivalence.Struct(withIgnoredProperties({
         a: Equivalence.strictEqual<string>(),
         [b]: Equivalence.strictEqual<number>()
+      }))
+      const input = Object.defineProperties({ a: "a", [b]: 1 }, {
+        a: { enumerable: false },
+        [b]: { enumerable: false }
       })
 
-      assertTrue(eq({ a: "a", [b]: 1 }, { a: "a", [b]: 1 }))
-      assertFalse(eq({ a: "a", [b]: 1 }, { a: "c", [b]: 1 }))
-      assertFalse(eq({ a: "a", [b]: 1 }, { a: "a", [b]: 2 }))
+      assert.isTrue(eq(input, { a: "a", [b]: 1 }))
+      assert.isFalse(eq(input, { a: "c", [b]: 1 }))
+      assert.isFalse(eq(input, { a: "a", [b]: 2 }))
     })
   })
 
@@ -146,14 +151,28 @@ describe("Equivalence", () => {
       assertFalse(eq({ [a]: 1 }, { [a]: 1, [b]: 2 }))
     })
 
-    it("mixed keys", () => {
+    it("compares only enumerable own string and symbol entries", () => {
       const b = Symbol.for("b")
       const eq = Equivalence.Record(Equivalence.strictEqual<number>())
+      const input = withIgnoredProperties({ a: 1, [b]: 2 })
 
-      assertTrue(eq({ a: 1, [b]: 2 }, { a: 1, [b]: 2 }))
-      assertFalse(eq({ a: 1, [b]: 2 }, { a: 1, [b]: 3 }))
-      assertFalse(eq({ a: 1, [b]: 2 }, { a: 1 }))
-      assertFalse(eq({ a: 1 }, { a: 1, [b]: 2 }))
+      assert.isTrue(eq(input, { a: 1, [b]: 2 }))
+      assert.isTrue(eq({ a: 1, [b]: 2 }, input))
+      assert.isTrue(eq(withIgnoredProperties({}), {}))
+      assert.isFalse(eq(input, { a: 1, [b]: 3 }))
+      assert.isFalse(eq(input, { a: 1 }))
+      assert.isFalse(eq({ a: 1 }, input))
+    })
+
+    it("requires the same enumerable keys on both sides", () => {
+      const eq = Equivalence.Record(Equivalence.Number)
+      for (const key of ["a", Symbol("a")]) {
+        const left = { [key]: 1 }
+        const right = Object.defineProperty({ b: 1 }, key, { value: 1, enumerable: false })
+
+        assert.isFalse(eq(left, right))
+        assert.isFalse(eq(right, left))
+      }
     })
   })
 

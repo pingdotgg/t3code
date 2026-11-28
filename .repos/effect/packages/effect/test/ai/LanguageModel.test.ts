@@ -1,5 +1,5 @@
 import { describe, it } from "@effect/vitest"
-import { assertDefined, assertTrue, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
+import { assertDefined, assertNone, assertSome, assertTrue, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
 import { type Cause, Effect, Fiber, Latch, Option, Queue, Ref, Schema, Stream } from "effect"
 import { AiError, LanguageModel, Prompt, Response, ResponseIdTracker, Tool, Toolkit } from "effect/ai"
 import { TestClock } from "effect/testing"
@@ -11,6 +11,13 @@ const MyTool = Tool.make("MyTool", {
 })
 
 const MyToolkit = Toolkit.make(MyTool)
+
+// Executed by the application, which answers in a later request
+const ClientTool = Tool.make("ClientTool", {
+  parameters: Schema.Struct({ question: Schema.String }),
+  success: Schema.Boolean,
+  execution: "client"
+})
 
 const MyToolkitLayer = MyToolkit.toLayer({
   MyTool: () =>
@@ -100,6 +107,37 @@ describe("LanguageModel", () => {
         generateText: [{ type: "tool-call", id: "call", name: "MyTool", params: { testParam: "test-param" } }],
         streamText: [{ type: "tool-call", id: "call", name: "MyTool", params: { testParam: "test-param" } }]
       })))
+
+    it.effect(`${method} leaves client-executed tool calls unresolved`, () =>
+      Effect.gen(function*() {
+        const toolkit = Toolkit.make(MyTool, ClientTool)
+        // A complete finish runs the server tool, an incomplete one gives it a
+        // synthesized failure, and neither may answer the client tool
+        for (const reason of ["tool-calls", "length"] as const) {
+          const toolCalls: Array<Response.ToolCallPartEncoded | Response.FinishPartEncoded> = [
+            { type: "tool-call", id: "server-call", name: "MyTool", params: { testParam: "test-param" } },
+            { type: "tool-call", id: "client-call", name: "ClientTool", params: { question: "Proceed?" } },
+            { ...finishPart, reason }
+          ]
+          const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            effect.pipe(
+              TestUtils.withLanguageModel({ generateText: toolCalls, streamText: toolCalls }),
+              Effect.provide(toolkit.toLayer({ MyTool: () => Effect.succeed({ testSuccess: "test-success" }) }))
+            )
+          const parts: ReadonlyArray<Response.AnyPart> = yield* (method === "generateText"
+            ? provide(
+              LanguageModel.generateText({ prompt: "hi", toolkit }).pipe(Effect.map((response) => response.content))
+            )
+            : provide(LanguageModel.streamText({ prompt: "hi", toolkit }).pipe(Stream.runCollect)))
+
+          assertTrue(parts.some((part) => part.type === "tool-call" && part.id === "client-call"), reason)
+          deepStrictEqual(
+            parts.flatMap((part) => part.type === "tool-result" ? [part.id] : []),
+            ["server-call"],
+            reason
+          )
+        }
+      }))
   }
 
   describe("generateText", () => {
@@ -287,6 +325,35 @@ describe("LanguageModel", () => {
         Effect.provide(TransformToolkitLayer)
       ))
 
+    it.effect("validates locally handled provider-defined tool parameters in their JSON encoding", () =>
+      Effect.gen(function*() {
+        const toolkit = Toolkit.make(
+          Tool.providerDefined({
+            id: "test.schedule",
+            customName: "Schedule",
+            providerName: "schedule",
+            requiresHandler: true,
+            parameters: Schema.Struct({ at: Schema.Date })
+          })({})
+        )
+        const response = yield* LanguageModel.generateText({
+          prompt: [],
+          toolkit,
+          disableToolCallResolution: true
+        })
+
+        deepStrictEqual(response.toolCalls[0]?.params as unknown, { at: "2026-01-01T00:00:00.000Z" })
+      }).pipe(
+        TestUtils.withLanguageModel({
+          generateText: [{
+            type: "tool-call",
+            id: "call",
+            name: "Schedule",
+            params: { at: "2026-01-01T00:00:00.000Z" }
+          }]
+        })
+      ))
+
     it.effect("preserves encoded tool parameters when tool call resolution is enabled", () =>
       Effect.gen(function*() {
         const response = yield* LanguageModel.generateText({
@@ -379,6 +446,33 @@ describe("LanguageModel", () => {
           }]
         })
       ))
+
+    it.effect("validates tool parameters by tool kind when requests share a schema", () => {
+      const parameters = Schema.Struct({ signature: Schema.optional(Schema.String) })
+      const native = Toolkit.make(
+        Tool.providerDefined({
+          id: "test.sign",
+          customName: "Sign",
+          providerName: "sign",
+          parameters
+        })()
+      )
+      const local = Toolkit.make(Tool.make("Sign", { parameters }))
+      const responses: Array<Array<Response.PartEncoded>> = [
+        [{ type: "tool-call", id: "native", name: "Sign", params: {}, providerExecuted: true }],
+        [{ type: "tool-call", id: "local", name: "Sign", params: { signature: null } }]
+      ]
+      return Effect.gen(function*() {
+        yield* LanguageModel.generateText({ prompt: [], toolkit: native, disableToolCallResolution: true })
+        const response = yield* LanguageModel.generateText({
+          prompt: [],
+          toolkit: local,
+          disableToolCallResolution: true
+        })
+
+        deepStrictEqual(response.toolCalls[0]?.params as unknown, { signature: null })
+      }).pipe(TestUtils.withLanguageModel({ generateText: () => responses.shift()! }))
+    })
 
     it.effect("validates encoded tool parameters after a request with tool call resolution enabled", () => {
       // A tool unused by other tests, so the opaque request decodes it first
@@ -1429,13 +1523,11 @@ describe("LanguageModel", () => {
       Effect.gen(function*() {
         const error = yield* LanguageModel.generateObject({
           prompt: [],
-          schema: Schema.Struct({ count: Schema.Number })
+          schema: Schema.Struct({ count: Schema.Number }),
+          allowEmpty: true
         }).pipe(
           TestUtils.withLanguageModel({
-            generateText: [{
-              type: "text",
-              text: "{\"count\":\"oops\"}"
-            }]
+            generateText: [{ type: "text", text: "{\"count\":\"oops\"}" }]
           }),
           Effect.flip
         )
@@ -1444,6 +1536,30 @@ describe("LanguageModel", () => {
         if (error.reason._tag === "StructuredOutputError") {
           strictEqual(error.reason.responseText, "{\"count\":\"oops\"}")
         }
+      }))
+
+    it.effect("allowEmpty treats whitespace-only text as empty", () =>
+      Effect.gen(function*() {
+        const response = yield* LanguageModel.generateObject({
+          prompt: "hi",
+          schema: Schema.Struct({ count: Schema.Number }),
+          allowEmpty: true
+        }).pipe(TestUtils.withLanguageModel({ generateText: [{ type: "text", text: " \n\t" }] }))
+
+        assertNone(response.value)
+      }))
+
+    it.effect("wraps generated values in some when empty output is allowed", () =>
+      Effect.gen(function*() {
+        const response = yield* LanguageModel.generateObject({
+          prompt: "hi",
+          schema: Schema.Struct({ count: Schema.Number }),
+          allowEmpty: true
+        }).pipe(
+          TestUtils.withLanguageModel({ generateText: [{ type: "text", text: "{\"count\":1}" }] })
+        )
+
+        assertSome(response.value, { count: 1 })
       }))
 
     it("resolves the canonical top-level $ref for class schemas in defaultCodecTransformer", () => {

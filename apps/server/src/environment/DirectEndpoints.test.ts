@@ -1,7 +1,10 @@
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { EnvironmentId } from "@t3tools/contracts";
 import { it as effectIt } from "@effect/vitest";
 import type * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
@@ -9,13 +12,15 @@ import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
+import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as DirectEndpoints from "./DirectEndpoints.ts";
-import { resolveBoundEndpoints } from "./DirectEndpoints.ts";
+import * as ServerEnvironment from "./ServerEnvironment.ts";
+import { readIsolatedLinuxBridges, resolveBoundEndpoints } from "./DirectEndpoints.ts";
 
 const INTERFACES: ReturnType<typeof NodeOS.networkInterfaces> = {
   lo0: [
@@ -124,13 +129,50 @@ describe("resolveBoundEndpoints", () => {
       "vEthernet (WSL)": virtualInterface("172.24.0.1"),
       bridge100: virtualInterface("192.168.64.1"),
       vmbr0: virtualInterface("192.168.1.20"),
+      fhciowner: virtualInterface("10.221.0.1"),
+    };
+    expect(
+      resolveBoundEndpoints({
+        platform: "linux",
+        host: "0.0.0.0",
+        port: 3773,
+        interfaces,
+        isolatedBridges: new Set(["fhciowner"]),
+      }),
+    ).toEqual([
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+      { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.20:3773/" },
+    ]);
+  });
+
+  it("skips NixOS container and systemd-nspawn veths, which only this machine reaches", () => {
+    const interfaces = {
+      ...INTERFACES,
+      "ve-jellyfin": virtualInterface("192.168.53.193"),
+      "ve-qbittorrent": virtualInterface("192.168.55.225"),
+      "vb-jellyfin": virtualInterface("192.168.100.1"),
+      "vz-machine": virtualInterface("192.168.101.1"),
     };
     expect(
       resolveBoundEndpoints({ platform: "linux", host: "0.0.0.0", port: 3773, interfaces }),
     ).toEqual([
       { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
-      { kind: "lan", httpBaseUrl: "http://192.168.1.20:3773/" },
+    ]);
+  });
+
+  it("keeps a Windows alias matching a Linux container prefix eligible", () => {
+    const interfaces = {
+      ...INTERFACES,
+      "ve-office": virtualInterface("192.168.1.30"),
+    };
+    expect(
+      resolveBoundEndpoints({ platform: "win32", host: "0.0.0.0", port: 3773, interfaces }),
+    ).toEqual([
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+      { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.30:3773/" },
     ]);
   });
 
@@ -213,6 +255,17 @@ describe("resolveBoundEndpoints", () => {
     ).toEqual([{ kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" }]);
   });
 
+  it("reports an explicit bind to Tailscale's IPv6 address as the tailnet route", () => {
+    expect(
+      resolveBoundEndpoints({
+        platform: "linux",
+        host: "fd7a:115c:a1e0::1",
+        port: 3773,
+        interfaces: INTERFACES,
+      }),
+    ).toEqual([{ kind: "tailnet", httpBaseUrl: "http://[fd7a:115c:a1e0::1]:3773/" }]);
+  });
+
   it("never reports an IPv4-mapped host, which can name the client's own loopback", () => {
     expect(
       resolveBoundEndpoints({
@@ -223,6 +276,34 @@ describe("resolveBoundEndpoints", () => {
       }),
     ).toEqual([]);
   });
+});
+
+describe("readIsolatedLinuxBridges", () => {
+  effectIt.effect("finds bridges whose ports never reach a NIC, under any name", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sysfs-" });
+      const dirs = [
+        "eth0/device",
+        "eth1/device",
+        "bond0/lower_eth1",
+        "veth1",
+        "br0/bridge",
+        "br0/brif/eth0",
+        "vmbr0/bridge",
+        "vmbr0/brif/bond0",
+        "fhciowner/bridge",
+        "fhciowner/brif/veth1",
+        "virbr0/bridge",
+      ];
+      for (const dir of dirs) yield* fs.makeDirectory(`${root}/${dir}`, { recursive: true });
+      const names = ["eth0", "bond0", "veth1", "br0", "vmbr0", "fhciowner", "virbr0"];
+      expect([...(yield* readIsolatedLinuxBridges(names, root))].toSorted()).toEqual([
+        "fhciowner",
+        "virbr0",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
 
 const TAILSCALE_STATUS_JSON = JSON.stringify({
@@ -250,12 +331,24 @@ const layerTailscaleUp = Layer.succeed(
   ),
 );
 
+const T3_DESCRIPTOR_BODY = JSON.stringify({
+  environmentId: "serve-test",
+  label: "Serve test",
+  platform: { os: "darwin", arch: "arm64" },
+  serverVersion: "0.0.0-test",
+  capabilities: { repositoryIdentity: true },
+});
+
+const serveProbeResponse = (request: HttpClientRequest.HttpClientRequest, status: number) =>
+  HttpClientResponse.fromWeb(
+    request,
+    new Response(status === 200 ? T3_DESCRIPTOR_BODY : null, { status }),
+  );
+
 const layerServeProbe = (status: number) =>
   Layer.succeed(
     HttpClient.HttpClient,
-    HttpClient.make((request) =>
-      Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status }))),
-    ),
+    HttpClient.make((request) => Effect.succeed(serveProbeResponse(request, status))),
   );
 
 const layerServeConfig = (host = "127.0.0.1") =>
@@ -271,6 +364,12 @@ const layerServeConfig = (host = "127.0.0.1") =>
   ).pipe(
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-direct-" })),
     Layer.provide(NodeServices.layer),
+    Layer.merge(
+      Layer.succeed(ServerEnvironment.ServerEnvironment, {
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("serve-test")),
+        getDescriptor: Effect.die("unused"),
+      }),
+    ),
   );
 
 const resolveWithServe = (probeStatus: number) =>
@@ -278,7 +377,12 @@ const resolveWithServe = (probeStatus: number) =>
     Effect.provide(
       DirectEndpoints.layer.pipe(
         Layer.provide(
-          Layer.mergeAll(layerServeConfig(), layerTailscaleUp, layerServeProbe(probeStatus)),
+          Layer.mergeAll(
+            layerServeConfig(),
+            layerTailscaleUp,
+            layerServeProbe(probeStatus),
+            NodeFileSystem.layer,
+          ),
         ),
       ),
     ),
@@ -306,6 +410,7 @@ describe("DirectEndpoints Tailscale Serve", () => {
           Effect.provide(
             Layer.mergeAll(
               layerServeConfig("192.168.1.10"),
+              NodeFileSystem.layer,
               layerTailscaleUp,
               Layer.succeed(
                 HttpClient.HttpClient,
@@ -320,9 +425,7 @@ describe("DirectEndpoints Tailscale Serve", () => {
                           )
                         : Effect.void,
                     ),
-                    Effect.map((status) =>
-                      HttpClientResponse.fromWeb(request, new Response(null, { status })),
-                    ),
+                    Effect.map((status) => serveProbeResponse(request, status)),
                   ),
                 ),
               ),
@@ -347,7 +450,7 @@ describe("DirectEndpoints Tailscale Serve", () => {
         yield* Deferred.succeed(finishRevalidation, undefined);
         expect(yield* Fiber.join(revalidating)).toEqual([bound]);
         expect(yield* service.resolveAvailable()).toEqual([bound]);
-      }).pipe(Effect.scoped),
+      }),
   );
 
   effectIt.effect("leaves the tailnet name out when Serve is not forwarding", () =>

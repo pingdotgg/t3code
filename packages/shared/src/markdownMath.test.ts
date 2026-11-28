@@ -1,4 +1,8 @@
 import type { Nodes } from "mdast";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
 import { mathKind } from "./markdownMath.ts";
@@ -29,6 +33,13 @@ function text(markdown: string) {
 }
 
 describe("chat math parsing", () => {
+  it("keeps original source offsets after a leading byte-order mark", () => {
+    const source = "\uFEFFSee $x$ now";
+    const expected = [{ start: 5, end: 8, source: "$x$" }];
+    expect(markdownMathRanges(source)).toMatchObject(expected);
+    expect(markdownMathRanges(source, parse(source))).toMatchObject(expected);
+  });
+
   it("keeps GFM autolink destinations intact while restoring literal dollars", () => {
     const source = "Query www.example.com/?$select=id and $x$.";
     const link = collect(parse(source)).find((node) => node.type === "link");
@@ -264,6 +275,63 @@ describe("chat math parsing", () => {
       column: 1,
       offset: source.indexOf("- [ ]"),
     });
+  });
+
+  it.each(["\\( a ", "\\[ a ", "\\[\n"])(
+    "bounds tokenizer work for repeated unclosed %j",
+    (opener) => {
+      let consumed = 0;
+      const parser = unified()
+        .use(remarkParse)
+        .use(remarkGfm)
+        .use(remarkMath)
+        .use(function () {
+          for (const extension of this.data().micromarkExtensions ?? []) {
+            for (const constructs of [extension.text, extension.flow]) {
+              const entries = constructs?.[92];
+              if (!entries || !constructs) continue;
+              constructs[92] = (Array.isArray(entries) ? entries : [entries]).map((construct) => ({
+                ...construct,
+                tokenize(effects, ok, nok) {
+                  return construct.tokenize.call(
+                    this,
+                    {
+                      ...effects,
+                      consume(code) {
+                        consumed++;
+                        effects.consume(code);
+                      },
+                    },
+                    ok,
+                    nok,
+                  );
+                },
+              }));
+            }
+          }
+        });
+      const source = opener.repeat(200);
+      expect(
+        collect(parser.parse(source)).some((node) => /^(inlineMath|math)$/.test(node.type)),
+      ).toBe(false);
+      expect(consumed).toBeGreaterThan(source.length);
+      expect(consumed).toBeLessThan(source.length * 24);
+    },
+  );
+
+  it.each([
+    ["\\( a \\[b\\]", [["display", "b"]]],
+    ["\\[ a \\(b\\)", [["inline", "b"]]],
+    ["\\( a \\( b`code` \\(c\\)", [["inline", "c"]]],
+    ["\\[1\\] \\[x\\]", [["display", "x"]]],
+    ["\\( a\n\n\\(b\\)", [["inline", "b"]]],
+    ["> \\[\n> \\[\n\n\\[\nx\n\\]", [["display", "x"]]],
+    ["\\[\n\\[\nx\n\\]", [["display", "\\[\nx"]]],
+    ["\\(a \\\\\\(b\\)", [["inline", "a \\\\\\(b"]]],
+    ["\\(a \\\\) \\(b\\)", [["inline", "a \\\\) \\(b"]]],
+    ["| a | b |\n| --- | --- |\n| \\(a \\(b | c |\n\n\\(x\\)", [["inline", "x"]]],
+  ])("keeps valid formulas after failed scans in %j", (source, expected) => {
+    expect(formulas(source)).toEqual(expected);
   });
 
   it("shows unfinished formulas as text while a response streams", () => {

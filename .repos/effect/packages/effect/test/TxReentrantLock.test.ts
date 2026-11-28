@@ -155,7 +155,8 @@ describe("TxReentrantLock", () => {
         yield* Effect.scoped(
           Effect.gen(function*() {
             yield* TxReentrantLock.writeLock(lock)
-            assert.strictEqual(yield* Effect.tx(TxReentrantLock.writeLocked(lock)), true)
+            yield* TxReentrantLock.writeLock(lock)
+            assert.strictEqual(yield* Effect.tx(TxReentrantLock.writeLocks(lock)), 2)
           })
         )
 

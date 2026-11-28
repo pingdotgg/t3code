@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  claimWorkspaceBasenameLookup,
+  agentWorkingDirectories,
+  findAgentDirectoryMatch,
+  pickProjectLinkMatch,
   pickWorkspaceBasenameMatch,
   pickWorkspaceLinkMatch,
   workspaceLinkLookupQuery,
@@ -89,12 +91,188 @@ describe("chat file links an agent shortened", () => {
   });
 });
 
-describe("claimWorkspaceBasenameLookup", () => {
-  it("keeps only the newest claim, whatever order the lookups settle in", () => {
-    const first = claimWorkspaceBasenameLookup();
-    const second = claimWorkspaceBasenameLookup();
+describe("chat file links into another project", () => {
+  const appB = {
+    root: "/home/user/app-b",
+    entries: [{ path: "src/api/rules/categories.ts", kind: "file" as const }],
+  };
 
-    expect(second()).toBe(true);
-    expect(first()).toBe(false);
+  // regression: #10553 a path the agent cited inside another registered project
+  it("resolves to the absolute path in the one project that has the file", () => {
+    expect(
+      pickProjectLinkMatch("rules/categories.ts", [
+        { root: "/home/user/app-c", entries: [] },
+        appB,
+      ]),
+    ).toBe("/home/user/app-b/src/api/rules/categories.ts");
+  });
+
+  it.each([
+    {
+      outer: "/home/user/reports",
+      inner: "/home/user/reports/docs",
+      found: "/home/user/reports/docs/handoff.txt",
+    },
+    { outer: "C:\\Reports", inner: "C:/Reports/docs/", found: "C:\\Reports\\docs\\handoff.txt" },
+  ])("resolves one file that a project nested in $outer also lists", ({ outer, inner, found }) => {
+    expect(
+      pickProjectLinkMatch("handoff.txt", [
+        { root: outer, entries: [{ path: "docs/handoff.txt", kind: "file" }] },
+        { root: inner, entries: [{ path: "handoff.txt", kind: "file" }] },
+      ]),
+    ).toBe(found);
+  });
+
+  it("opens nothing when several projects have the file", () => {
+    expect(
+      pickProjectLinkMatch("rules/categories.ts", [appB, { ...appB, root: "/home/user/app-c" }]),
+    ).toBeNull();
+  });
+
+  it("opens nothing when a project left ambiguous by case also has the name", () => {
+    expect(
+      pickProjectLinkMatch("handoff.txt", [
+        { root: "/reports", entries: [{ path: "notes/HANDOFF.txt", kind: "file" }] },
+        {
+          root: "/support",
+          entries: [
+            { path: "current/Handoff.txt", kind: "file" },
+            { path: "archive/HANDOFF.txt", kind: "file" },
+          ],
+        },
+      ]),
+    ).toBeNull();
+  });
+
+  it("opens nothing when overlapping projects also list a second suffix match", () => {
+    expect(
+      pickProjectLinkMatch("docs/handoff.txt", [
+        {
+          root: "/home/user/reports",
+          entries: [
+            { path: "quarter/docs/handoff.txt", kind: "file" },
+            { path: "archive/docs/handoff.txt", kind: "file" },
+          ],
+        },
+        {
+          root: "/home/user/reports/quarter",
+          entries: [{ path: "docs/handoff.txt", kind: "file" }],
+        },
+        {
+          root: "/home/user/reports/quarter/docs",
+          entries: [{ path: "handoff.txt", kind: "file" }],
+        },
+      ]),
+    ).toBeNull();
+  });
+
+  it.each([
+    { cited: "handoff.txt", other: "archive/handoff.txt" },
+    { cited: "HANDOFF.txt", other: "archive/Handoff.txt" },
+  ])("opens nothing when overlapping projects also list $other", ({ cited, other }) => {
+    expect(
+      pickProjectLinkMatch("handoff.txt", [
+        {
+          root: "/home/user/reports",
+          entries: [
+            { path: `team/docs/${cited}`, kind: "file" },
+            { path: other, kind: "file" },
+          ],
+        },
+        { root: "/home/user/reports/team", entries: [{ path: `docs/${cited}`, kind: "file" }] },
+        { root: "/home/user/reports/team/docs", entries: [{ path: cited, kind: "file" }] },
+      ]),
+    ).toBeNull();
+  });
+});
+
+// regression: #35337 a path the agent cited inside a checkout no project is rooted at
+describe("agentWorkingDirectories", () => {
+  const directories = (...commands: ReadonlyArray<string>) =>
+    agentWorkingDirectories(
+      [...commands, "the reply", "cd /work/later"].map((input, index) => ({
+        sourceThreadId: "thread",
+        sourceItemId: `item-${index}`,
+        item: { type: "command_execution", input },
+      })),
+      { sourceThreadId: "thread", sourceItemId: `item-${commands.length}` },
+    );
+
+  it("lists the folders commands above the reply changed into, the latest first", () => {
+    expect(
+      directories(
+        "cd /work/repo-c && cd /work/repo-b && git diff",
+        "git status",
+        `/bin/zsh -lc "cd '/work/my repo'; ls"`,
+        "cd -P /work/repo-a # not this; cd /work/commented",
+        "cd /work/repo-c\npwd",
+      ),
+    ).toEqual(["/work/repo-c", "/work/repo-a", "/work/my repo", "/work/repo-b"]);
+  });
+
+  it("skips operands only the shell can resolve and words that are not the command", () => {
+    expect(
+      directories(
+        "cd docs && cd ../other && cd ~/repo && cd $ROOT/x && cd /work/*/src",
+        "abcd /work/a; echo cd /work/b; git -C /work/c status; cd /work/d",
+        `echo "cd /work/g"; echo 'x; cd /work/h' && grep -c "cd /work/i" notes`,
+        "echo bash -c 'cd /work/j'; cd -",
+        `sh "cd /work/l"`,
+        "cat <<EOF > notes\ncd /work/k\nEOF",
+        "cd /work/e\\ f && cd `pwd`/x",
+      ),
+    ).toEqual(["/work/d"]);
+  });
+
+  it("reads cd through every sh-family wrapper an agent runs", () => {
+    expect(
+      directories(
+        `bash -c -- "cd /work/a"`,
+        `bash -Ec 'cd /work/b'`,
+        `ksh -c 'cd /work/c'`,
+        `/bin/ash -c "cd /work/d"`,
+        `mksh -c 'cd /work/e'`,
+      ),
+    ).toEqual(["/work/e", "/work/d", "/work/c", "/work/b", "/work/a"]);
+  });
+
+  it("leaves network shares out of the search roots", () => {
+    expect(
+      directories(
+        "cd //files.example/share",
+        String.raw`cd '\\files.example\share'; cd C:\work\repo`,
+      ),
+    ).toEqual([String.raw`C:\work\repo`]);
+  });
+});
+
+// regression: #35337 a bare file name the agent cited from a subfolder of an unregistered checkout
+describe("findAgentDirectoryMatch", () => {
+  const search = (found: Record<string, ReadonlyArray<string>>) => (root: string) =>
+    Promise.resolve({
+      root,
+      entries: (found[root] ?? []).map((path) => ({ path, kind: "file" as const })),
+    });
+
+  it("opens the one file of that name in the latest folder the agent worked in", async () => {
+    expect(
+      await findAgentDirectoryMatch(
+        "config.test.yaml",
+        ["/work/repo-b/server", "/work/repo-b", "/work/repo-c"],
+        search({
+          "/work/repo-b/server": ["config.test.yaml"],
+          "/work/repo-b": ["server/config.test.yaml"],
+          "/work/repo-c": ["config.test.yaml"],
+        }),
+      ),
+    ).toBe("/work/repo-b/server/config.test.yaml");
+  });
+
+  it("passes over a folder without the file, and opens nothing when none has it", async () => {
+    const found = search({ "/work/repo-c": ["etc/config.test.yaml"] });
+    expect(
+      await findAgentDirectoryMatch("config.test.yaml", ["/work/repo-b", "/work/repo-c"], found),
+    ).toBe("/work/repo-c/etc/config.test.yaml");
+    expect(await findAgentDirectoryMatch("config.test.yaml", ["/work/repo-b"], found)).toBeNull();
   });
 });

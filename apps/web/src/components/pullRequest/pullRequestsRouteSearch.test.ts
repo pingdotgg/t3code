@@ -36,4 +36,19 @@ describe("pull requests route search", () => {
     expect(matchedSearch("/pull-requests?q=fix")?.q).toBe("fix");
     expect(matchedSearch("/pull-requests?q=%224089%22")?.q).toBe("4089");
   });
+
+  it("drops an author or labels the URL parser turned into a number", () => {
+    expect(matchedSearch("/pull-requests?author=4089")?.author).toBeUndefined();
+    expect(matchedSearch("/pull-requests?labels=4089")?.labels).toBeUndefined();
+  });
+
+  it("cuts a long author and label before an emoji the limit would split", () => {
+    const author = "a".repeat(199);
+    const label = "b".repeat(199);
+    expect(
+      matchedSearch(
+        `/pull-requests?${new URLSearchParams({ author: `${author}😀`, labels: `${label}🐛` })}`,
+      ),
+    ).toMatchObject({ author, labels: [label] });
+  });
 });

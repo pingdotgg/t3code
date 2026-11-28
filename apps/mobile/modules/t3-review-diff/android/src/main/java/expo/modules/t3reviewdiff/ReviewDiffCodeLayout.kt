@@ -182,6 +182,20 @@ internal class CodeLayoutCache {
         }
       }
     }
+    row.noteStart?.takeIf { it in 0 until text.length }?.let { start ->
+      text.setSpan(
+        ForegroundColorSpan(theme.warningText),
+        start,
+        text.length,
+        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+      )
+      text.setSpan(
+        BackgroundColorSpan(theme.warningBackground),
+        start,
+        text.length,
+        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+      )
+    }
     return text
   }
 }

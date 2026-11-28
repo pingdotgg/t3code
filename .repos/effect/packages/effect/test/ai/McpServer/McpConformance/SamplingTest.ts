@@ -19,12 +19,6 @@ const SamplingRequest = Schema.Struct({
 })
 
 const decodeSamplingRequest = Schema.decodeUnknownEffect(SamplingRequest)
-const decodeSamplingResult = Schema.decodeUnknownEffect(Schema.Struct({
-  role: Schema.String,
-  content: Schema.Record(Schema.String, Schema.Unknown),
-  model: Schema.String,
-  stopReason: Schema.optionalKey(Schema.String)
-}))
 
 const textResponse = {
   role: "assistant",
@@ -84,7 +78,7 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
               }
             })
 
-            yield* peer.wireClient["sampling/createMessage"](samplingRequest)
+            yield* peer.reverseClient.createMessage(samplingRequest)
 
             assert.strictEqual((yield* peer.takeRequest).method, "sampling/createMessage")
           }))
@@ -163,7 +157,7 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
                 assert.strictEqual(exit._tag, "Failure", testCase.name)
                 assert.deepStrictEqual(yield* peer.requests, [], testCase.name)
               }
-            }).pipe(Effect.scoped)
+            })
         )
 
         it.effect.skipIf(protocol.protocolVersion !== "2025-11-25")(
@@ -240,7 +234,7 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
               }
             })
 
-            yield* peer.wireClient["sampling/createMessage"](samplingRequestWithOptions)
+            yield* peer.reverseClient.createMessage(samplingRequestWithOptions)
             const recorded = yield* peer.takeRequest
             const payload = yield* decodeSamplingRequest(recorded.payload)
 
@@ -277,9 +271,7 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
               }
             })
 
-            const result = yield* peer.wireClient["sampling/createMessage"](samplingRequest).pipe(
-              Effect.flatMap(decodeSamplingResult)
-            )
+            const result = yield* peer.reverseClient.createMessage(samplingRequest)
 
             assert.strictEqual(result.role, "assistant")
             assert.strictEqual(result.model, "test-model")
@@ -309,13 +301,11 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
               }
             })
 
-            const result = yield* peer.wireClient["sampling/createMessage"](samplingRequest).pipe(
-              Effect.flatMap(decodeSamplingResult)
-            )
+            const result = yield* peer.reverseClient.createMessage(samplingRequest)
 
             assert.deepStrictEqual(result.content, {
               type: "image",
-              data: "AQID",
+              data: new Uint8Array([1, 2, 3]),
               mimeType: "image/png"
             })
           }))
@@ -341,13 +331,11 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
                 }
               })
 
-              const result = yield* peer.wireClient["sampling/createMessage"](samplingRequest).pipe(
-                Effect.flatMap(decodeSamplingResult)
-              )
+              const result = yield* peer.reverseClient.createMessage(samplingRequest)
 
               assert.deepStrictEqual(result.content, {
                 type: "audio",
-                data: "BAUG",
+                data: new Uint8Array([4, 5, 6]),
                 mimeType: "audio/wav"
               })
             })
@@ -368,11 +356,11 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
               }
             })
 
-            const error = yield* peer.wireClient["sampling/createMessage"](samplingRequest).pipe(Effect.flip)
+            const error = yield* peer.reverseClient.createMessage(samplingRequest).pipe(Effect.flip)
 
-            assert.isTrue("code" in error)
-            if ("code" in error) assert.strictEqual(error.code, McpSchema.INTERNAL_ERROR_CODE)
-            assert.strictEqual(error.message, "Sampling failed")
+            assert.instanceOf(error, McpSchema.McpReverseOperationError)
+            assert.strictEqual(error.operation, "sampling/createMessage")
+            assert.deepInclude(error.cause, { code: McpSchema.INTERNAL_ERROR_CODE, message: "Sampling failed" })
           }))
 
         it.effect.skipIf(protocol.protocolVersion !== "2025-11-25")(

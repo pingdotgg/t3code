@@ -1,16 +1,23 @@
 import { decodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import {
+  AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type AuthEnvironmentScope,
+  EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
+  type EnvironmentSpeechModels,
   EnvironmentVoiceBodyLimit,
+  requiredScopesForServerSettingsPatch,
   SPEECH_MAX_OPTIONS_BYTES,
+  TextGenerationError,
 } from "@t3tools/contracts";
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
@@ -26,6 +33,7 @@ import * as SpeechService from "./SpeechService.ts";
 
 const MAX_TRANSCRIBE_BODY_BYTES = SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 4;
 const parseAudio = Option.liftThrowable(decodeSpeechPcmRequest);
+const isTextGenerationError = Schema.is(TextGenerationError);
 
 const bodyLimit = Layer.succeed(EnvironmentVoiceBodyLimit, (effect) =>
   Effect.gen(function* () {
@@ -52,6 +60,21 @@ const mapSpeechError = <A, R>(effect: Effect.Effect<A, SpeechService.SpeechError
       SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
     }),
   );
+
+// A linked model's origin is a path on this machine; only filesystem readers may see it.
+// Untraced: it runs inside each handler's own span.
+const withoutHostPaths = Effect.fnUntraced(function* <Fields extends EnvironmentSpeechModels>({
+  models,
+  ...fields
+}: Fields) {
+  const session = yield* EnvironmentAuthenticatedPrincipal;
+  return {
+    ...fields,
+    models: session.scopes.has(AuthFilesystemReadScope)
+      ? models
+      : models.map(({ linkedFrom: _, ...model }) => model),
+  };
+});
 
 export const speechHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -81,6 +104,14 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         "setCloudKey",
         Effect.fn("environment.voice.setCloudKey")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          // The key is a setting, so saving it needs what the same settings patch would.
+          const { key } = args.payload;
+          const value = key === null || Redacted.isRedacted(key) ? "" : key;
+          for (const scope of requiredScopesForServerSettingsPatch({
+            cloudSpeechCredentials: { [args.params.provider]: value },
+          })) {
+            yield* requireEnvironmentScope(scope);
+          }
           yield* cloud
             .setKey(args.params.provider, args.payload.key)
             .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
@@ -133,35 +164,54 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         "models",
         Effect.fn("environment.voice.models")(function* (args) {
           yield* guard(args.endpoint.name);
-          return yield* speech.models(args.query.benchmarks === "1").pipe(mapSpeechError);
+          return yield* speech
+            .models(args.query.benchmarks === "1")
+            .pipe(mapSpeechError, Effect.flatMap(withoutHostPaths));
         }),
       )
       .handle(
         "downloadModel",
         Effect.fn("environment.voice.downloadModel")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
-          return yield* speech.downloadModel(args.payload.modelId).pipe(mapSpeechError);
+          return yield* speech
+            .downloadModel(args.payload.modelId)
+            .pipe(mapSpeechError, Effect.flatMap(withoutHostPaths));
         }),
       )
       .handle(
         "selectModel",
         Effect.fn("environment.voice.selectModel")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
-          return yield* speech.selectModel(args.payload.modelId).pipe(mapSpeechError);
+          return yield* speech
+            .selectModel(args.payload.modelId)
+            .pipe(mapSpeechError, Effect.flatMap(withoutHostPaths));
         }),
       )
       .handle(
         "cancelModelDownload",
         Effect.fn("environment.voice.cancelModelDownload")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
-          return yield* speech.cancelDownload(args.payload.modelId).pipe(mapSpeechError);
+          return yield* speech
+            .cancelDownload(args.payload.modelId)
+            .pipe(mapSpeechError, Effect.flatMap(withoutHostPaths));
         }),
       )
       .handle(
         "removeModel",
         Effect.fn("environment.voice.removeModel")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);
-          return yield* speech.removeModel(args.payload.modelId).pipe(mapSpeechError);
+          return yield* speech
+            .removeModel(args.payload.modelId)
+            .pipe(mapSpeechError, Effect.flatMap(withoutHostPaths));
+        }),
+      )
+      .handle(
+        "linkModels",
+        Effect.fn("environment.voice.linkModels")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          // The request names a path on this machine and the result reveals what is there.
+          yield* requireEnvironmentScope(AuthFilesystemReadScope);
+          return yield* speech.linkModels(args.payload.path).pipe(mapSpeechError);
         }),
       )
       .handle(
@@ -196,7 +246,15 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
           yield* guard(args.endpoint.name);
           return yield* postProcessing
             .process(args.payload)
-            .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
+            .pipe(
+              Effect.catch((error) =>
+                failEnvironmentInternal(
+                  "internal_error",
+                  error,
+                  isTextGenerationError(error.cause) ? error.cause.detail : undefined,
+                ),
+              ),
+            );
         }),
       );
   }),

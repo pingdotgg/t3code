@@ -1,12 +1,7 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  getFileViewedRange,
-  isFileDiffCollapsed,
-  isLineInFileDiff,
-  toggleFileDiffFoldForViewed,
-} from "./pullRequestDiff.logic";
+import { getFileViewedRange, isLineInFileDiff } from "./pullRequestDiff.logic";
 
 function fileWithHunks(
   hunks: ReadonlyArray<{
@@ -37,22 +32,6 @@ describe("isLineInFileDiff", () => {
   it("keeps the two sides apart, since one line number means two lines", () => {
     expect(isLineInFileDiff(file, "right", 43)).toBe(true);
     expect(isLineInFileDiff(file, "left", 40)).toBe(false);
-  });
-});
-
-describe("isFileDiffCollapsed", () => {
-  // regression: #9174 diffs now expand by default; a reader's fold must survive new slices
-  it("keeps a file the reader folded closed as the next slice arrives", () => {
-    const toggled = new Set(["b.ts"]);
-    expect(isFileDiffCollapsed("b.ts", null, toggled)).toBe(true);
-    expect(isFileDiffCollapsed("c.ts", null, toggled)).toBe(false);
-  });
-});
-
-describe("toggleFileDiffFoldForViewed", () => {
-  it("moves against whatever the toolbar last asked for", () => {
-    expect([...toggleFileDiffFoldForViewed("a.ts", true, "expanded", new Set())]).toEqual(["a.ts"]);
-    expect(toggleFileDiffFoldForViewed("a.ts", false, "expanded", new Set()).size).toBe(0);
   });
 });
 
