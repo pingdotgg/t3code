@@ -212,7 +212,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PR filesystem ca
         yield* Effect.forEach(["pr-1", "pr-2"], read, { discard: true });
       });
       for (let index = 0; index < 5; index++) yield* sweep(index);
-      // Counts after a full GC. A WeakRef would keep its target alive until the job ends.
+      // Each count runs a full GC first. A WeakRef would keep its target alive until the job ends.
+      // On a busy runner the last sweep's data can outlive the first GC; a second one frees it.
+      NodeV8.queryObjects(SweepData, { format: "count" });
       assert.strictEqual(NodeV8.queryObjects(SweepData, { format: "count" }), 0);
     }).pipe(Effect.provide(KeyValueStore.layerMemory)),
   );
