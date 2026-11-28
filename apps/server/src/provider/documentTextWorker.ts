@@ -416,7 +416,11 @@ function xml(
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
-    if (extension === ".docx" && node.name === "vMerge" && parent.name === "tcPr") {
+    if (
+      extension === ".docx" &&
+      (node.name === "hMerge" || node.name === "vMerge") &&
+      parent.name === "tcPr"
+    ) {
       const table = stack.findLast((ancestor) => ancestor.name === "tbl");
       if (table) wordMergeTables.add(table);
     }
@@ -956,14 +960,23 @@ function markWordMergeContinuations(table: XmlNode) {
   // Empty cells and rows still participate in the Word table grid.
   for (const row of all(table, "tr")) {
     let column = wordSkippedColumns(row);
+    let horizontalMerge = false;
     for (const cell of all(row, "tc")) {
       const properties = childNamed(cell, "tcPr");
       const span = wordColumnSpan(properties);
       const merge = childNamed(properties, "vMerge");
       if (merge) {
         const value = merge.attrs.val?.trim() ?? "continue";
-        if (value === "continue" && previous.get(column) === span) cell.wordMergeCovered = true;
-        if (value === "restart" || cell.wordMergeCovered) current.set(column, span);
+        const verticalContinuation = value === "continue" && previous.get(column) === span;
+        if (verticalContinuation) cell.wordMergeCovered = true;
+        if (value === "restart" || verticalContinuation) current.set(column, span);
+      }
+      const horizontal = childNamed(properties, "hMerge");
+      const value = horizontal && (horizontal.attrs.val?.trim() ?? "continue");
+      if (value === "continue" && horizontalMerge) {
+        cell.wordMergeCovered = true;
+      } else {
+        horizontalMerge = value === "restart";
       }
       column += span;
     }
