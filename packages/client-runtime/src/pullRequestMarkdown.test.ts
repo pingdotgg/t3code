@@ -536,6 +536,12 @@ describe("media on custom hosts", () => {
     ],
     ["[Demo](https://example.com/demo(1).mp4)", "https://example.com/demo(1).mp4", "video", "Demo"],
     [
+      "[Demo [v2]](https://example.com/demo.mp4)",
+      "https://example.com/demo.mp4",
+      "video",
+      "Demo [v2]",
+    ],
+    [
       "[Demo](https://example.com/demo\\(1\\).mp4)",
       "https://example.com/demo(1).mp4",
       "video",
