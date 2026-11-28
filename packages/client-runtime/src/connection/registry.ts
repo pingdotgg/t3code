@@ -51,6 +51,7 @@ import {
   credentialConnectionId,
   entryWithRoutes,
   findRouteToSameAddress,
+  hasRelayRoute,
   hasSavedBearerRoute,
   mergeLearnedRoutes,
   routesAfterRemoving,
@@ -1055,13 +1056,20 @@ export const make = Effect.gen(function* () {
     if (trimmed === "") {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
-        detail: "Environment label cannot be empty.",
+        ...translatableDetail(msg("Environment label cannot be empty.")),
       });
     }
     yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
         const entry = yield* userEntry(environmentId);
+        // T3 Connect owns the label of relay environments and would overwrite a local rename.
+        if (hasRelayRoute(entry)) {
+          return yield* new ConnectionBlockedError({
+            reason: "unsupported",
+            ...translatableDetail(msg("T3 Connect environments cannot be renamed here.")),
+          });
+        }
         const routes = connectionRoutes(entry);
         if (routes.every((route) => route.target.label === trimmed)) return;
         // Only targets' labels are read, so profiles keep what the SSH broker last saved.

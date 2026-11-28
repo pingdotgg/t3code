@@ -2209,7 +2209,7 @@ describe("EnvironmentRegistry routes", () => {
           new BearerConnectionTarget({ ...LAN_TARGET, connectionId: learnedId }),
           LAN_TARGET,
           new SshConnectionTarget({ ...SSH_CONNECTION, environmentId }),
-          RELAY_TARGET,
+          SECOND_RELAY_TARGET,
         ],
         [
           new BearerConnectionProfile({ ...LAN_PROFILE, connectionId: learnedId, learned: true }),
@@ -2233,7 +2233,7 @@ describe("EnvironmentRegistry routes", () => {
           routesOf(yield* Ref.get(harness.storedTargets), environmentId).map(
             (target) => target.label,
           ),
-        ).toEqual(["Studio", "Studio", "Studio", "Studio"]);
+        ).toEqual(["Studio", "Studio", "Studio"]);
         expect(
           (yield* SubscriptionRef.get(registry.entries)).get(environmentId)?.target.label,
         ).toBe("Studio");
@@ -2257,6 +2257,15 @@ describe("EnvironmentRegistry routes", () => {
 
         const error = yield* registry.setLabel(environmentId, "   ").pipe(Effect.flip);
         expect(error._tag).toBe("ConnectionBlockedError");
+        const relayError = yield* registry
+          .setLabel(SECOND_RELAY_TARGET.environmentId, "Studio")
+          .pipe(Effect.flip);
+        expect(relayError._tag).toBe("ConnectionBlockedError");
+        expect(
+          routesOf(yield* Ref.get(harness.storedTargets), SECOND_RELAY_TARGET.environmentId).map(
+            (target) => target.label,
+          ),
+        ).toEqual([SECOND_RELAY_TARGET.label]);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
@@ -2310,9 +2319,6 @@ describe("EnvironmentRegistry routes", () => {
             "relay",
             LAN_TARGET.connectionId,
           ]);
-          expect(yield* permissions.get(yield* current())).toBe("read");
-
-          yield* registry.setLabel(LAN_TARGET.environmentId, "Studio");
           expect(yield* permissions.get(yield* current())).toBe("read");
         }).pipe(
           Effect.provide(harness.layer),

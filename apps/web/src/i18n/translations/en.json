@@ -13057,5 +13057,11 @@
   "5807c08e225c6b3d": "Download",
   "0d50b5bfe7151ece": "Could not download file",
   "eb1fd384ad5919dd": "Internal note",
-  "b45f0b467e9406d0": "Reply to customer"
+  "b45f0b467e9406d0": "Reply to customer",
+  "2461bdd8e58e0a72": "T3 Connect environments cannot be renamed here.",
+  "97b2dbeab0530a77": "Could not rename environment",
+  "dbb0d030f5ddf24d": "The label was not saved.",
+  "7a5b4572ef7aeae7": "Rename environment",
+  "12213bee093a9859": "Label",
+  "a7f525695195f5b3": "Rename…"
 }
