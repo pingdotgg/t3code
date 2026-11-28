@@ -2225,10 +2225,25 @@ export const make = Effect.gen(function* () {
       if (gitDir !== null) {
         const headPath = path.join(gitDir, "HEAD");
         const head = (yield* readGitFiles([headPath])).get(headPath) ?? "";
-        worktree = {
-          path: resolved,
-          branch: /^ref: refs\/heads\/(.+)$/.exec(trimAsciiWhitespace(head))?.[1] ?? null,
-        };
+        let branch = /^ref: refs\/heads\/(.+)$/.exec(trimAsciiWhitespace(head))?.[1] ?? null;
+        // Reftable repositories keep this placeholder in HEAD, so only Git knows the branch.
+        if (branch === ".invalid") {
+          const result = yield* processRunner
+            .run({
+              command: "git",
+              args: ["-C", resolved, "symbolic-ref", "--quiet", "HEAD"],
+              timeout: GIT_FILE_READ_DEADLINE,
+              timeoutBehavior: "timedOutResult",
+              maxOutputBytes: MAX_GIT_FILE_BYTES,
+              outputMode: "truncate",
+            })
+            .pipe(Effect.option);
+          branch =
+            Option.isSome(result) && result.value.code === 0
+              ? (/^refs\/heads\/(.+)$/.exec(trimAsciiWhitespace(result.value.stdout))?.[1] ?? null)
+              : null;
+        }
+        worktree = { path: resolved, branch };
       }
       worktreesByDirectory.set(resolved, worktree);
       return worktree;
