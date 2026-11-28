@@ -732,6 +732,42 @@ describe("VoiceInputController", () => {
     await next.controller.interruptRecording();
   });
 
+  it("releases a late audio session after parallel model preparation fails", async () => {
+    const configuring = deferred<void>();
+    const configured = deferred<void>();
+    const model = deferred<PreparedVoiceTranscription>();
+    const aborted = deferred<void>();
+    const releaseRecording = vi.fn(async () => {});
+    const first = createHarness({
+      configureRecording: () => {
+        configuring.resolve();
+        return configured.promise;
+      },
+      releaseRecording,
+      getTranscriber: () => ({
+        prepareAlongsideRecorder: true,
+        prepare: ({ signal }) => {
+          signal.addEventListener("abort", () => aborted.resolve(), { once: true });
+          return model.promise;
+        },
+      }),
+    });
+    const starting = first.controller.start();
+    await configuring.promise;
+    model.reject(new Error("Model unavailable"));
+    await aborted.promise;
+    expect(releaseRecording).not.toHaveBeenCalled();
+    configured.resolve();
+    await starting;
+    expect(first.controller.currentState.phase).toBe("error");
+    expect(first.recorder.prepareToRecordAsync).not.toHaveBeenCalled();
+    expect(releaseRecording).toHaveBeenCalledOnce();
+    const next = createHarness();
+    await next.controller.start();
+    expect(next.controller.currentState.phase).toBe("recording");
+    await next.controller.interruptRecording();
+  });
+
   it("still rejects a second start while the first recording is active", async () => {
     const first = createHarness();
     await first.controller.start();

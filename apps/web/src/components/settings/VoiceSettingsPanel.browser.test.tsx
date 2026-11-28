@@ -939,8 +939,6 @@ it("records from the first connected microphone in the saved order", async () =>
   await userEvent.click(screen.getByRole("button", { name: "Refresh microphones" }));
   await expect.element(row(0)).toHaveTextContent("1Blue YetiNot connected");
   await expect.element(row(1)).toHaveTextContent("2System defaultIn use");
-  expect(await chooseRecordingMicrophone()).toBe("");
-
   await userEvent.click(screen.getByRole("button", { name: "Move AirPods Pro up" }));
   await userEvent.click(screen.getByRole("button", { name: "Move AirPods Pro up" }));
   expect(saved()).toEqual(["AirPods Pro", "Blue Yeti", "System default"]);

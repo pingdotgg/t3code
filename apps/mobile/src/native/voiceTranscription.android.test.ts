@@ -56,20 +56,13 @@ it.each([false, true])(
   },
 );
 
-it.each([
-  ["preparation", "storage", /disk|storage|space/i],
-  ["preparation", "quota", /quota|limit/i],
-  ["transcription", "storage", /disk|storage|space/i],
-  ["transcription", "quota", /quota|limit/i],
-] as const)("preserves an actionable %s error: %s", async (phase, code, expected) => {
+async function setupRecording() {
   vi.resetAllMocks();
   resetVoiceInputGlobalsForTests();
   mocks.checkAvailability.mockResolvedValue(true);
   mocks.prepare.mockResolvedValue({ locale: "en-US", mode: 0 });
   mocks.transcribe.mockResolvedValue("Complete transcript.");
   mocks.cancel.mockResolvedValue(undefined);
-  const rejection = Object.assign(new Error("Native SDK failure"), { code });
-  (phase === "preparation" ? mocks.prepare : mocks.transcribe).mockRejectedValue(rejection);
   const transcriber = await getLocalVoiceTranscriber();
   const commit = vi.fn();
   const draft = {
@@ -78,12 +71,13 @@ it.each([
     selection: { start: 16, end: 16 },
     revision: 1,
   };
-  const prepareToRecordAsync = vi.fn(async () => {});
+  const recorderReady = Promise.withResolvers<void>();
+  const record = vi.fn();
   const controller = new VoiceInputController({
     recorder: {
       uri: "file:///acceptance.m4a",
-      prepareToRecordAsync,
-      record: () => {},
+      prepareToRecordAsync: async () => recorderReady.resolve(),
+      record,
       stop: async () => {},
     },
     getTranscriber: () => transcriber,
@@ -95,6 +89,32 @@ it.each([
     commitDraft: commit,
     onStateChange: () => {},
   });
+  return { controller, commit, draft, recorderReady, record };
+}
+
+it("prepares the recorder alongside the Android model but waits to record", async () => {
+  const { controller, recorderReady, record } = await setupRecording();
+  const model = Promise.withResolvers<{ locale: string; mode: number }>();
+  mocks.prepare.mockReturnValueOnce(model.promise);
+  const starting = controller.start();
+  await recorderReady.promise;
+  expect(controller.currentState.phase).toBe("preparing");
+  expect(record).not.toHaveBeenCalled();
+  model.resolve({ locale: "en-US", mode: 0 });
+  await starting;
+  expect(controller.currentState.phase).toBe("recording");
+  await controller.stop();
+});
+
+it.each([
+  ["preparation", "storage", /disk|storage|space/i],
+  ["preparation", "quota", /quota|limit/i],
+  ["transcription", "storage", /disk|storage|space/i],
+  ["transcription", "quota", /quota|limit/i],
+] as const)("preserves an actionable %s error: %s", async (phase, code, expected) => {
+  const { controller, commit, draft, record } = await setupRecording();
+  const rejection = Object.assign(new Error("Native SDK failure"), { code });
+  (phase === "preparation" ? mocks.prepare : mocks.transcribe).mockRejectedValue(rejection);
   await controller.start();
   if (phase === "transcription") await controller.stop();
 
@@ -102,5 +122,5 @@ it.each([
   expect(commit).not.toHaveBeenCalled();
   expect(draft.text).toBe("Preserved draft.");
   expect(controller.currentState.error).toMatch(expected);
-  expect(prepareToRecordAsync).toHaveBeenCalledTimes(phase === "preparation" ? 0 : 1);
+  expect(record).toHaveBeenCalledTimes(phase === "preparation" ? 0 : 1);
 });

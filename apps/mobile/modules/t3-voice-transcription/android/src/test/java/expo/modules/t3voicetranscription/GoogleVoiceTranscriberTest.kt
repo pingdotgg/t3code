@@ -125,13 +125,15 @@ class GoogleVoiceTranscriberTest {
       FeatureStatus.DOWNLOADABLE,
       FeatureStatus.DOWNLOADING
     )) {
-      val client = Client(status)
+      var checks = 0
+      val client = Client(status, onStatus = { checks++ })
       val mode = prepareGoogleVoiceTranscription {
         assertEquals(SpeechRecognizerOptions.Mode.MODE_ADVANCED, it)
         client
       }
       assertEquals(SpeechRecognizerOptions.Mode.MODE_ADVANCED, mode)
       assertEquals(if (status == FeatureStatus.AVAILABLE) 0 else 1, client.downloads)
+      assertEquals(1 + client.downloads, checks)
       assertTrue(client.closed)
     }
   }

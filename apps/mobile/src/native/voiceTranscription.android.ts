@@ -55,6 +55,7 @@ export async function getLocalVoiceTranscriber(): Promise<VoiceTranscriber | nul
   if (!native || !(await native.checkAvailability())) return null;
   const module = native;
   return {
+    prepareAlongsideRecorder: true,
     prepare: async ({ signal }) => {
       const prepared = await runOperation(module, signal, "preparation-failed", (id) =>
         module.prepare(id),

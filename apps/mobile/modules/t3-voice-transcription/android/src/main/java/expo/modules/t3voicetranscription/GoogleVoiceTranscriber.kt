@@ -67,23 +67,20 @@ internal suspend fun prepareGoogleVoiceTranscription(
 }
 
 private suspend fun prepareModel(client: GoogleSpeechClient): Boolean = try {
-  val status = client.checkStatus()
-  if (status == FeatureStatus.UNAVAILABLE) {
-    false
+  val initial = client.checkStatus()
+  val status = if (initial == FeatureStatus.DOWNLOADABLE || initial == FeatureStatus.DOWNLOADING) {
+    client.download()
+    client.checkStatus()
   } else {
-    if (status == FeatureStatus.DOWNLOADABLE ||
-      status == FeatureStatus.DOWNLOADING
-    ) {
-      client.download()
-    }
-    when (client.checkStatus()) {
-      FeatureStatus.UNAVAILABLE -> false
-      FeatureStatus.AVAILABLE -> true
-      else -> throw VoiceTranscriptionException(
-        "preparation-failed",
-        "Voice transcription could not prepare this language."
-      )
-    }
+    initial
+  }
+  when (status) {
+    FeatureStatus.UNAVAILABLE -> false
+    FeatureStatus.AVAILABLE -> true
+    else -> throw VoiceTranscriptionException(
+      "preparation-failed",
+      "Voice transcription could not prepare this language."
+    )
   }
 } catch (error: GenAiException) {
   if (!isModelUnavailable(error)) throw error
