@@ -44,7 +44,7 @@ export function WorkspacePlane({ children }: { children: ReactNode }) {
   const atIndex = useMatch({ from: "/_chat/", shouldThrow: false, select: () => true }) === true;
   const { authGateState } = useRouteContext({ from: "__root__" });
   const indexShowsLayout = useIndexShowsLayout(authGateState.status === "hosted-static");
-  const layout = useLayoutRouteSync(canonicalTarget, atIndex);
+  const { layout, switches } = useLayoutRouteSync(canonicalTarget, atIndex);
   useDraftSurfaceCleanupOnLayoutClose();
   const workspaceOpen =
     modalOpen ||
@@ -56,6 +56,7 @@ export function WorkspacePlane({ children }: { children: ReactNode }) {
   const host = (
     <LayoutSurfaceHost
       layout={layout}
+      routeSwitches={switches}
       active={workspaceOpen}
       background={modalOpen}
       pagePlane={pagePlane}

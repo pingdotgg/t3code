@@ -118,7 +118,7 @@ import {
   subscribePaneTabSelection,
   useIsLayoutTabSelected,
 } from "./paneTabSelection";
-import { followLayoutCompanions } from "./openRules";
+import { followLayoutCompanions, isLayoutSwitching, isThreadSwitch } from "./openRules";
 import {
   scrollLeftByWheel,
   scrollTabStripFromRow,
@@ -198,7 +198,10 @@ function schedulePlacement(strip: HTMLElement, motionMs: number): void {
     placementFrame = null;
     const placements = [...pendingPlacements];
     pendingPlacements.clear();
-    for (const [pending, motion] of placements) stripPlacers.get(pending)?.(motion);
+    const switching = isLayoutSwitching();
+    for (const [pending, motion] of placements) {
+      stripPlacers.get(pending)?.(switching ? 0 : motion);
+    }
   });
 }
 
@@ -1058,6 +1061,9 @@ function slideOnPress(entry: PaneStrip, event: PointerEvent): void {
   if (!tab || !entry.strip.contains(tab)) return;
   const tabId = stripTabId(tab);
   if (tabId === null || tabId === entry.shown?.tabId) return;
+  const { layout } = useLayoutStore.getState();
+  const pressed = findLayoutTab(layout, (candidate) => candidate.id === tabId);
+  if (isThreadSwitch(layout, pressed?.pane.id, pressed?.tab.content)) return;
   const box = stripBoxOf(entry.strip, tab);
   if (!box) return;
   moveJoin(entry, { tabId, ...box }, entry.motionMs);

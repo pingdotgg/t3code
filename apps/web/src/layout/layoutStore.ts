@@ -290,6 +290,9 @@ interface LayoutStoreState {
   /** Content keys retain Fill window across tab swaps, including replaced ghost tabs. */
   filledContentKeys: ReadonlySet<string>;
   toggleMaximizedTab: (tabId: string) => void;
+  /** Bumped by each switch to another thread's chat: the panes it swaps land in place, unanimated. */
+  navigation: number;
+  noteNavigation: () => void;
   /**
    * The share a thread's surfaces reopen at beside (`panel`) or below
    * (`terminal`) its chat, remembered from when they last hid. A kind without
@@ -523,6 +526,8 @@ export const useLayoutStore = create<LayoutStoreState>()(
         newTabRequest: null,
         maximizedTabId: null,
         filledContentKeys: new Set(),
+        navigation: 0,
+        noteNavigation: () => set((state) => ({ navigation: state.navigation + 1 })),
         toggleMaximizedTab: (tabId) =>
           set((state) => {
             const focused = selectFocusedTab(state.layout);

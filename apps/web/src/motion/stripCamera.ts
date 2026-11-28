@@ -53,12 +53,13 @@ export function endUserStripScroll(): void {
 /**
  * Spring the camera from where it shows now to `target` (a scrollLeft). With `carryOn` (a focus key,
  * whose layout does not change), a move in flight carries on in this frame at the speed it had.
+ * With `jump` (a switch to another thread) it lands there at once.
  */
 export function moveStripCamera(
   scroller: HTMLElement,
   stage: HTMLElement,
   target: number,
-  { carryOn = false }: { carryOn?: boolean } = {},
+  { carryOn = false, jump = false }: { carryOn?: boolean; jump?: boolean } = {},
 ): void {
   claimStripScroll(scroller);
   userScrollAt = Number.NEGATIVE_INFINITY;
@@ -71,6 +72,10 @@ export function moveStripCamera(
   scroller.scrollLeft = toDevicePixel(target);
   // The browser clamps a scroll past the strip's end.
   const landed = scroller.scrollLeft;
+  if (jump) {
+    previous?.run.cancel();
+    return;
+  }
   const motion = MotionAnimation.start("horizontal-view-movement", from, landed, velocity);
   let finished = false;
   const keyframe = (camera: number) => ({

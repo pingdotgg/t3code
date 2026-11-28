@@ -81,6 +81,7 @@ import {
 import { useThreeFingerSwipe } from "./useThreeFingerSwipe";
 import { ThreadSurfaceServices, ThreadSurfaceTab } from "../components/ThreadSurfaceTab";
 import { findThreadChat, useLayoutSurfaceSync } from "./surfaceSync";
+import { markLayoutSwitching } from "./openRules";
 import {
   isLayoutPageContent,
   sameLayoutSpan,
@@ -704,11 +705,14 @@ function useSurfacePlacement(
  * ChatView, terminals, drafts and scroll state. */
 export function LayoutSurfaceHost({
   layout,
+  routeSwitches = 0,
   active = true,
   background = false,
   pagePlane,
 }: {
   layout: LayoutState;
+  /** Routes that switched thread (useLayoutRouteSync), shown a pass before the store notes them. */
+  routeSwitches?: number;
   active?: boolean;
   background?: boolean;
   pagePlane?: React.ReactNode;
@@ -741,6 +745,8 @@ export function LayoutSurfaceHost({
   }, [narrow, viewportWidth]);
   const focusedPaneId = selectFocusedPane(shown)?.id ?? null;
   const maximizedTabId = useLayoutStore((state) => state.maximizedTabId);
+  // Every thread switch so far: one lands its panes in place, with none of a pane change's motion.
+  const navigation = useLayoutStore((state) => state.navigation) + routeSwitches;
   const { whenNoRoom } = useLayoutBehavior();
   const {
     slots,
@@ -1048,6 +1054,7 @@ export function LayoutSurfaceHost({
   useOverviewStage(overviewPhase, stage, scrollerRef, stageRef);
 
   const revealedSpan = useRef<LayoutSpan | null>(null);
+  const revealedNavigation = useRef(navigation);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reveal the committed focused pane with an imperative camera move after measuring its DOM.
   useLayoutEffect(() => {
@@ -1066,6 +1073,8 @@ export function LayoutSurfaceHost({
       return;
     }
     const span = { paneId: focusedPaneId, left: focusedStart, width: focusedShare };
+    const jump = revealedNavigation.current !== navigation;
+    revealedNavigation.current = navigation;
     // The first render sizes the strip for the window's width, before the
     // scroller is measured, and a scroll then clamps short of the pane. The
     // render with the measured width reveals it.
@@ -1083,7 +1092,7 @@ export function LayoutSurfaceHost({
       if (target === null) return;
       // The scroll lands at once and the stage springs there on the compositor,
       // so the composer's caret scroll, right after, finds the pane in place.
-      moveStripCamera(scroller, element, target);
+      moveStripCamera(scroller, element, target, { jump });
     });
   }, [
     dragging,
@@ -1092,6 +1101,7 @@ export function LayoutSurfaceHost({
     focusedShare,
     focusedStart,
     focusedWidth,
+    navigation,
     stacked,
     staged,
     viewportWidth,
@@ -1535,9 +1545,11 @@ export function LayoutSurfaceHost({
 
   // Panes open, close and shift with niri's window motion (motion/paneMotion.ts)
   // on the plain strip; a resize drag, a switch, the overview, filling the
-  // window and the window resizing move them 1:1.
+  // window, a switch to another thread and the window resizing move them 1:1.
   const paneMotionKey =
-    staged || stacked || dragging || narrow ? null : `${workspace.id}:${maximizedTabId !== null}`;
+    staged || stacked || dragging || narrow
+      ? null
+      : `${workspace.id}:${maximizedTabId !== null}:${navigation}`;
   const [ghosts, setGhosts] = useState<ReadonlyMap<string, ClosingTab>>(NO_GHOSTS);
   const presentPanes = shown.workspaces.flatMap((candidate) =>
     candidate.columns.flatMap((column) => column.panes),
@@ -1607,6 +1619,8 @@ export function LayoutSurfaceHost({
   // Stacked mid-switch, every pane draws its own, as in the overview. While
   // a closed pane slides off, the one left keeps it too, until it rests.
   const split = paneCount > 1 || maximizedTabId !== null || stacked || ghosts.size > 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Marks the document for the frames a thread switch lands in, before they paint.
+  useLayoutEffect(() => (navigation === 0 ? undefined : markLayoutSwitching()), [navigation]);
   usePaneMotion(
     stageRef,
     paneMotionKey,

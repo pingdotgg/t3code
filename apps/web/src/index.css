@@ -7224,6 +7224,15 @@ body {
   display: none;
 }
 
+/* A thread switch replaces the view: its pane chrome lands in place (markLayoutSwitching). Only
+   attributed elements, so marking the document restyles them alone. */
+[data-layout-switching] [data-pane-bar-corner],
+[data-layout-switching] [data-pane-cut],
+[data-layout-switching] [data-layout-tab-strip],
+[data-layout-switching] [data-strip-scroll-button] {
+  transition: none !important;
+}
+
 /* Multi-selected tabs reuse the strip's existing tokens across every Appearance
    style, dark and light, black chrome, and mobile. Leave box-shadow unset on
    :focus-visible so keyboard focus keeps its inset ring utility. */
