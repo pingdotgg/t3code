@@ -113,8 +113,10 @@ export function createNewThreadHandler(router: AnyRouter) {
       replace?: boolean;
       /** Composer text for the draft, set before it shows. A draft with user text keeps it. */
       prompt?: string;
+      shouldContinue?: () => boolean;
     },
   ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
+    if (options?.shouldContinue?.() === false) return Promise.resolve(null);
     const projects = readProjects();
     const projectGroupingSettings = selectProjectGroupingSettings(getClientSettings());
     // Read at call time; status pushes replace the config map and would recreate every sidebar handler.

@@ -69,6 +69,8 @@ The desktop app bundles `t3` and sets it up on first launch (manage anytime unde
 
 Select a WSL distro in **Settings → Sharing & access** to run agents and projects inside WSL (install provider CLIs inside that distro). T3 Code manages its own server runtime inside WSL automatically.
 
+To open a WSL project from its terminal in the Windows desktop app, install **t3 command in WSL** in **Settings → About**. If `t3` is not found in a new terminal, add `~/.local/bin` to your shell's `PATH`. Run `t3 app` from the project directory, or pass the directory as an argument. The desktop app and matching WSL environment must be running. If installation reports another `t3` command on the distro's `PATH`, remove it or adjust the `PATH` before installing the WSL command.
+
 ## Mobile app
 
 Install from the [App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) or [Google Play](https://play.google.com/store/apps/details?id=com.t3tools.t3code) (QR codes are also in **Settings → About → Mobile app**). The mobile app connects to a server on another machine via [remote access](./remote-access.md).

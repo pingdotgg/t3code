@@ -313,6 +313,18 @@ describe.each([
     });
   });
 
+  it("does not open an automatic draft when activation is pending", async () => {
+    testState.reset(draft);
+    await expect(
+      useNewThreadHandler()(
+        { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+        { replace: true, shouldContinue: () => false },
+      ),
+    ).resolves.toBeNull();
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+  });
+
   it("applies the project file's default to a draft chosen manually before it opened", async () => {
     testState.reset(draft, { envMode: null, startFromOrigin: false });
     testState.keepEarlierManualChoice();

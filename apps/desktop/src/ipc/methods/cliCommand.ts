@@ -33,6 +33,24 @@ export const uninstallCliCommand = makeIpcMethod({
   }),
 });
 
+export const installWslCliCommand = makeIpcMethod({
+  channel: IpcChannels.CLI_COMMAND_INSTALL_WSL_CHANNEL,
+  payload: Schema.Void,
+  result: DesktopCliCommandStateSchema,
+  handler: Effect.fn("desktop.ipc.cliCommand.installWsl")(function* () {
+    return yield* (yield* DesktopCliCommand.DesktopCliCommand).installWsl;
+  }),
+});
+
+export const uninstallWslCliCommand = makeIpcMethod({
+  channel: IpcChannels.CLI_COMMAND_UNINSTALL_WSL_CHANNEL,
+  payload: Schema.Void,
+  result: DesktopCliCommandStateSchema,
+  handler: Effect.fn("desktop.ipc.cliCommand.uninstallWsl")(function* () {
+    return yield* (yield* DesktopCliCommand.DesktopCliCommand).uninstallWsl;
+  }),
+});
+
 export const addCliCommandToPath = makeIpcMethod({
   channel: IpcChannels.CLI_COMMAND_ADD_TO_PATH_CHANNEL,
   payload: Schema.Void,
