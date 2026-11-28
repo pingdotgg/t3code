@@ -5,9 +5,10 @@ import type { OrchestrationV2ThreadOpens } from "@t3tools/contracts";
 import { WORKTREE_BRANCH_PREFIX } from "./git.ts";
 
 const ALPHANUMERIC = /[\p{L}\p{N}]/u;
-// A vowel sign or accent continues the letter before it, so the next letter starts no word.
-// Variation selectors and enclosing marks follow emoji ("⚠️", "1️⃣"), not letters.
-const WORD_CHARACTER = /(?![\uFE00-\uFE0F\u{E0100}-\u{E01EF}])[\p{L}\p{N}\p{Mn}\p{Mc}]/u;
+// A vowel sign or accent; variation selectors follow emoji ("⚠️"), not letters.
+const LETTER_MARK = /(?![\uFE00-\uFE0F\u{E0100}-\u{E01EF}])[\p{Mn}\p{Mc}]/u;
+// Thai, Lao, Myanmar and Khmer have no spaces, so a letter after a mark stays their only word start.
+const SPACELESS = /[\u0E00-\u0EFF\u1000-\u109F\u1780-\u17FF]/;
 const LOWERCASE = /\p{Ll}/u;
 const UPPERCASE = /\p{Lu}/u;
 const DIGIT = /\p{N}/u;
@@ -81,6 +82,14 @@ function hasCjkWord(token: string): boolean {
   });
 }
 
+// "ताब" is not a word in "किताब": the vowel sign continues the letter before it.
+function continuesWord(previous: string, character: string): boolean {
+  return (
+    ALPHANUMERIC.test(previous) ||
+    (LETTER_MARK.test(previous) && ALPHANUMERIC.test(character) && !SPACELESS.test(character))
+  );
+}
+
 /**
  * Whether `character` starts a word after `previous` and `beforePrevious`
  * ("" at the start): after a non-letter, at a camelCase or digit boundary, or
@@ -98,7 +107,7 @@ function isWordStart(
     (ALPHANUMERIC.test(character) || SYMBOL.test(character)) &&
     !afterApostrophe &&
     (previous === "" ||
-      !WORD_CHARACTER.test(previous) ||
+      !continuesWord(previous, character) ||
       (LOWERCASE.test(previous) && UPPERCASE.test(character)) ||
       // The last capital of an acronym starts the next word: "JSONSchema".
       (UPPERCASE.test(previous) && UPPERCASE.test(character) && LOWERCASE.test(next)) ||
