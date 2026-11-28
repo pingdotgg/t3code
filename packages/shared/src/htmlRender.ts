@@ -14,6 +14,14 @@ export const HTML_RENDER_MAX_HEIGHT = 2000;
 export const HTML_RENDER_MAX_FIT_HEIGHT = 20_000;
 export const HTML_RENDER_MAX_TITLE_LENGTH = 200;
 
+/** Labels and titles must not end on a lone high surrogate. */
+export function htmlRenderTitle(title: string): string {
+  const trimmed = title.trim();
+  const last = trimmed.charCodeAt(HTML_RENDER_MAX_TITLE_LENGTH - 1);
+  const end = HTML_RENDER_MAX_TITLE_LENGTH - (last >= 0xd800 && last <= 0xdbff ? 1 : 0);
+  return trimmed.slice(0, end) || "HTML";
+}
+
 export interface HtmlRenderReference {
   readonly attachmentId: string;
   readonly title: string;
@@ -63,7 +71,7 @@ export function readHtmlRenderReference(value: unknown): HtmlRenderReference | u
   const measured = readMeasuredHeights(heights);
   return {
     attachmentId,
-    title: title.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) || "HTML",
+    title: htmlRenderTitle(title),
     height: clampHtmlRenderHeight(height),
     ...(measured === undefined ? {} : { heights: measured }),
   };
