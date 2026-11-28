@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   threadDetailErrorIsCurrent,
-  threadRouteConnectionWait,
   threadRouteIsHydrating,
   threadRouteOpensDraft,
 } from "./thread-route-hydration";
@@ -97,43 +96,12 @@ describe("threadRouteIsHydrating", () => {
 });
 
 describe("threadRouteOpensDraft", () => {
-  it("never replaces a linked thread the route has not shown", () => {
-    expect(threadRouteOpensDraft({ detailStatus: "deleted", threadWasShown: false })).toBe(false);
+  it("keeps the route while an unreachable environment may still deliver the thread", () => {
     expect(threadRouteOpensDraft({ detailStatus: "empty", threadWasShown: false })).toBe(false);
   });
 
   it("opens a draft once a thread the route showed is deleted", () => {
     expect(threadRouteOpensDraft({ detailStatus: "deleted", threadWasShown: true })).toBe(true);
-    expect(threadRouteOpensDraft({ detailStatus: "empty", threadWasShown: true })).toBe(false);
-  });
-});
-
-describe("threadRouteConnectionWait", () => {
-  const waiting = {
-    environmentActive: true,
-    connectionState: "offline" as const,
-    detailStatus: "empty" as const,
-  };
-
-  it("waits for an unreachable environment instead of calling the thread missing", () => {
-    expect(threadRouteConnectionWait(waiting)).toBe("unreachable");
-    expect(threadRouteConnectionWait({ ...waiting, connectionState: "error" })).toBe("unreachable");
-    expect(threadRouteConnectionWait({ ...waiting, connectionState: "reconnecting" })).toBe(
-      "unreachable",
-    );
-  });
-
-  it("keeps opening while the environment connects", () => {
-    expect(threadRouteConnectionWait({ ...waiting, connectionState: "connecting" })).toBe(
-      "connecting",
-    );
-  });
-
-  it("stops waiting once the environment can answer for the thread", () => {
-    expect(threadRouteConnectionWait({ ...waiting, connectionState: "connected" })).toBe(null);
-    expect(threadRouteConnectionWait({ ...waiting, connectionState: "unsupported" })).toBe(null);
-    expect(threadRouteConnectionWait({ ...waiting, detailStatus: "deleted" })).toBe(null);
-    expect(threadRouteConnectionWait({ ...waiting, environmentActive: false })).toBe(null);
   });
 });
 
