@@ -1,4 +1,4 @@
-import { stripDisplayedPlanMarkdown, proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
+import { displayedPlanMarkdown, proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "./i18n/messages";
@@ -11,16 +11,18 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
   resolve: MessageResolver = m,
 ): string {
   const maxLines = options?.maxLines ?? 8;
-  const lines = stripDisplayedPlanMarkdown(planMarkdown)
+  const { markdown, separatorLine } = displayedPlanMarkdown(planMarkdown);
+  const lines = markdown
     .trimEnd()
     .split(/\r?\n/)
     .map((line) => line.trimEnd());
   const previewLines: string[] = [];
   let visibleLineCount = 0;
   let hasMoreContent = false;
+  let openFence: { marker: string; indent: string } | null = null;
 
-  for (const line of lines) {
-    const isVisibleLine = line.trim().length > 0;
+  for (const [index, line] of lines.entries()) {
+    const isVisibleLine = index !== separatorLine && line.trim().length > 0;
     if (isVisibleLine && visibleLineCount >= maxLines) {
       hasMoreContent = true;
       break;
@@ -28,6 +30,20 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
     previewLines.push(line);
     if (isVisibleLine) {
       visibleLineCount += 1;
+    }
+    const match = /^( {0,3})(?:(`{3,})[^`]*|(~{3,}).*)$/.exec(line);
+    const fence = match?.[2] ?? match?.[3];
+    if (match === null || fence === undefined) {
+      continue;
+    }
+    if (openFence === null) {
+      openFence = { marker: fence, indent: match[1] ?? "" };
+    } else if (
+      fence[0] === openFence.marker[0] &&
+      fence.length >= openFence.marker.length &&
+      line.trim() === fence
+    ) {
+      openFence = null;
     }
   }
 
@@ -37,6 +53,10 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
 
   if (previewLines.length === 0) {
     return proposedPlanTitle(planMarkdown) ?? resolve(msg("Plan preview unavailable."));
+  }
+
+  if (openFence !== null) {
+    previewLines.push(openFence.indent + openFence.marker);
   }
 
   if (hasMoreContent) {

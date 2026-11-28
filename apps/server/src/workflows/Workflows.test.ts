@@ -20,7 +20,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
+import { checkTriggers, daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
 import { issues, pullRequests } from "./forgeApi.ts";
 import { cancel, runs, signalAll, start, withdraw } from "./stepServices.ts";
 import {
@@ -30,6 +30,7 @@ import {
   sleep,
   step,
   stop,
+  subject,
   tags,
   text,
   title,
@@ -44,10 +45,12 @@ import * as ServerSettings from "../serverSettings.ts";
 import WorkflowRunTagsMigration from "../persistence/Migrations/115_WorkflowRunTags.ts";
 import WorkflowMailSenderMigration from "../persistence/Migrations/117_WorkflowMailSender.ts";
 import WorkflowPoolsMigration from "../persistence/Migrations/118_WorkflowPools.ts";
+import WorkflowRunSubjectMigration from "../persistence/Migrations/119_WorkflowRunSubject.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import {
   Issue,
   pullRequestReferenceOf,
+  type SubjectInput,
   unavailable,
   WorkflowForge,
   WorkflowForgeError,
@@ -843,6 +846,45 @@ const sorted = [
   ),
 ];
 
+/** Says what it is about, once or more, then waits; or starts one about a thread and finds it. */
+const about = workflow(
+  "about",
+  {
+    version: 1,
+    payload: Schema.Struct({ subjects: Schema.Array(Schema.Json) }),
+  },
+  Effect.fn(function* (payload) {
+    for (const value of payload.subjects) yield* subject(value as SubjectInput);
+    yield* wait("go", { returns: Schema.String });
+  }),
+);
+const aboutFinder = workflow(
+  "aboutFinder",
+  {
+    version: 1,
+    payload: Schema.Struct({ threadId: Schema.String, url: Schema.String }),
+    returns: Schema.Array(Schema.String),
+  },
+  (payload) =>
+    step(
+      "find",
+      { returns: Schema.Array(Schema.String) },
+      Effect.gen(function* () {
+        yield* start(
+          about,
+          { subjects: [] },
+          { key: "started", subject: { threadId: payload.threadId } },
+        );
+        const found = [
+          ...(yield* runs({ workflow: about, subject: { threadId: payload.threadId } })),
+          // An issue's web address finds the run about that issue, as the CLI's does.
+          ...(yield* runs({ workflow: about, subject: payload.url })),
+        ];
+        return found.map((run) => `${run.key} ${run.subject?.kind}`);
+      }),
+    ),
+);
+
 const PROJECT = "/home/me/app";
 const triage = workflow(
   "triage",
@@ -975,6 +1017,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
       Effect.andThen(WorkflowRunTagsMigration),
       Effect.andThen(WorkflowMailSenderMigration),
       Effect.andThen(WorkflowPoolsMigration),
+      Effect.andThen(WorkflowRunSubjectMigration),
     ),
     database,
   );
@@ -999,6 +1042,8 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
     ...control,
     ...sorted,
     ...pooled,
+    about,
+    aboutFinder,
   ];
   const engineOf = (registered: typeof all) =>
     WorkflowEngine.layer(registered, store).pipe(
@@ -1244,54 +1289,87 @@ it.effect("a signal sent before its wait opens is delivered when it does", () =>
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
-it.effect("a signal buffered as its wait opens is still delivered to that wait", () =>
-  Effect.gen(function* () {
-    const looked = yield* Deferred.make<void>();
-    const opened = yield* Deferred.make<void>();
-    const checked = yield* Deferred.make<void>();
-    // Holds the signal between finding no wait and buffering, while the wait opens and finds no mail.
-    const store = Layer.effect(
-      WorkflowStore.WorkflowStore,
-      Effect.gen(function* () {
-        const real = yield* WorkflowStore.make;
-        let first = true;
-        return WorkflowStore.WorkflowStore.of({
-          ...real,
-          waitAt: (address) =>
-            Effect.tap(real.waitAt(address), () => {
-              if (!("channel" in address) || address.channel !== "c9" || !first) return Effect.void;
-              first = false;
-              return Effect.andThen(Deferred.succeed(looked, undefined), Deferred.await(opened));
-            }),
-          mailNext: (addresses, passed) =>
-            Effect.tap(real.mailNext(addresses, passed), (mail) =>
-              mail === undefined && !first ? Deferred.succeed(checked, undefined) : Effect.void,
+it.effect.each(["stays live", "expires", "is delivered concurrently"] as const)(
+  "a signal buffered as its wait opens %s",
+  (how) =>
+    Effect.gen(function* () {
+      const looked = yield* Deferred.make<void>();
+      const opened = yield* Deferred.make<void>();
+      const checked = yield* Deferred.make<void>();
+      const claiming = yield* Deferred.make<void>();
+      const claim = yield* Deferred.make<void>();
+      // Holds the signal between finding no wait and buffering, while the wait opens and finds no mail.
+      const store = Layer.effect(
+        WorkflowStore.WorkflowStore,
+        Effect.gen(function* () {
+          const real = yield* WorkflowStore.make;
+          let first = true;
+          return WorkflowStore.WorkflowStore.of({
+            ...real,
+            waitAt: (address) =>
+              Effect.tap(real.waitAt(address), () => {
+                if (!("channel" in address) || address.channel !== "c9" || !first)
+                  return Effect.void;
+                first = false;
+                return Effect.andThen(Deferred.succeed(looked, undefined), Deferred.await(opened));
+              }),
+            mailNext: (addresses, passed) =>
+              Effect.tap(real.mailNext(addresses, passed), (mail) =>
+                mail === undefined && !first ? Deferred.succeed(checked, undefined) : Effect.void,
+              ),
+            mailDeliver: (id, runId, name, woke) =>
+              Effect.andThen(
+                Effect.andThen(Deferred.succeed(claiming, undefined), Deferred.await(claim)),
+                real.mailDeliver(id, runId, name, woke),
+              ),
+          });
+        }),
+      );
+      const { boot, clock, database } = yield* harness(store);
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const address = { workflow: "review", channel: "c9" };
+          const send = workflows.signal(address, { merge: true }, { id: "s9", ttl: "1 millis" });
+          const sent = yield* Effect.forkChild(
+            send.pipe(
+              Effect.match({ onFailure: (error) => error._tag, onSuccess: (outcome) => outcome }),
             ),
-        });
-      }),
-    );
-    const { boot } = yield* harness(store);
-    yield* boot(
-      Effect.gen(function* () {
-        const workflows = yield* Workflows.Workflows;
-        const sent = yield* Effect.forkChild(
-          workflows.signal({ workflow: "review", channel: "c9" }, { merge: true }, { id: "s9" }),
-        );
-        yield* Deferred.await(looked);
-        const { runId } = yield* workflows.start(
-          "review",
-          { change: "c9" },
-          { idempotencyKey: "c9" },
-        );
-        // Released once the open wait has looked for mail and found none.
-        yield* Deferred.await(checked);
-        yield* Deferred.succeed(opened, undefined);
-        assert.equal(yield* Fiber.join(sent), "delivered");
-        const done = yield* workflows.waitFor(runId, status("completed"));
-        assert.equal(done.result, "2 checks, merge: true");
-      }),
-    );
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+          );
+          yield* Deferred.await(looked);
+          const { runId } = yield* workflows.start(
+            "review",
+            { change: "c9" },
+            { idempotencyKey: "c9" },
+          );
+          // Released once the open wait has looked for mail and found none.
+          yield* Deferred.await(checked);
+          yield* clock.close;
+          yield* TestClock.adjust(0);
+          yield* Deferred.succeed(opened, undefined);
+          yield* Deferred.await(claiming);
+          if (how === "expires") yield* TestClock.adjust("1 millis");
+          if (how === "is delivered concurrently") assert.equal(yield* send, "delivered");
+          yield* Deferred.succeed(claim, undefined);
+          assert.equal(
+            yield* Fiber.join(sent),
+            how === "expires" ? "WorkflowInputError" : "delivered",
+          );
+          if (how === "expires") {
+            const sql = yield* Effect.provide(SqlClient.SqlClient, database);
+            assert.lengthOf(yield* sql`SELECT 1 FROM workflow_mail WHERE signal_id = 's9'`, 1);
+            assert.lengthOf(yield* sql`SELECT 1 FROM workflow_signals WHERE signal_id = 's9'`, 0);
+            assert.equal(
+              yield* workflows.signal(address, { merge: false }, { id: "replacement" }),
+              "delivered",
+            );
+          }
+          yield* clock.open;
+          const done = yield* workflows.waitFor(runId, status("completed"));
+          assert.equal(done.result, `2 checks, merge: ${how !== "expires"}`);
+        }).pipe(Effect.ensuring(clock.open)),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
 it.effect("a wait another signal claimed first wakes with that signal's value", () =>
@@ -2319,6 +2397,57 @@ it("every accepts bigint nanoseconds and names short ones in its error", () => {
   assert.throws(() => every(1_000n), /^every\(1000n\) is shorter than the shortest, one minute\.$/);
 });
 
+it("a workflow refuses two daily schedules that fire at the same times", () => {
+  const twice = /^workflow\("standup"\) lists the same schedule twice\. List it once\.$/;
+  const refused = (...triggers: ReadonlyArray<ReturnType<typeof daily>>) =>
+    assert.throws(() => checkTriggers("standup", triggers), twice);
+  refused(daily("9:00"), daily("09:00"));
+  refused(daily("09:00"), daily("09:00", { weekdays: [] }));
+  refused(daily("09:00"), daily("09:00", { weekdays: [6, 5, 4, 3, 2, 1, 0] }));
+  refused(daily("09:00", { weekdays: [3, 1, 1] }), daily("09:00", { weekdays: [1, 3] }));
+  checkTriggers("standup", [daily("09:00", { weekdays: [1] }), daily("09:00")]);
+});
+
+it.effect("a daily schedule written another way after a restart keeps its next time and runs", () =>
+  Effect.gen(function* () {
+    const { boot, database } = yield* harness();
+    const db = <A, E>(query: (sql: SqlClient.SqlClient) => Effect.Effect<A, E>) =>
+      Effect.flatMap(SqlClient.SqlClient, query).pipe(Effect.provide(database));
+    const standup = (...written: Parameters<typeof daily>) =>
+      [
+        workflow(
+          "standup",
+          { version: 1, payload: Tick, triggers: [daily(...written)] },
+          () => Effect.void,
+        ),
+      ] as never;
+    const swept = Effect.flatMap(Workflows.Workflows, (workflows) => workflows.sweep).pipe(
+      Effect.andThen(
+        db((sql) => sql<{ idempotency_key: string }>`SELECT idempotency_key FROM workflow_runs`),
+      ),
+      Effect.map((runs) => runs.map((run) => run.idempotency_key)),
+    );
+    const saved = db(
+      (sql) => sql<{ trigger_id: string; next_at: string }>`SELECT * FROM workflow_triggers`,
+    );
+    // Saved by a server from before ids stopped following the spelling.
+    assert.deepStrictEqual(yield* boot(swept, standup("09:00")), []);
+    const [first] = yield* saved;
+    yield* db((sql) => sql`UPDATE workflow_triggers SET trigger_id = 'standup/daily:9:00:all'`);
+    // Down until a minute past the time, which is within what a daily schedule catches up on.
+    yield* TestClock.setTime(Date.parse(first!.next_at) + 60_000);
+    const key = `trigger:standup/daily:9:00:all:${first!.next_at}`;
+    assert.deepStrictEqual(yield* boot(swept, standup("09:00")), [key]);
+    const [moved, ...others] = yield* saved;
+    assert.deepStrictEqual(others, []);
+    assert.equal(moved!.trigger_id, "standup/daily:9:00:all");
+    assert.isAbove(Date.parse(moved!.next_at), Date.parse(first!.next_at));
+    // A crash between the start and moving on left the time it had started: not started again.
+    yield* db((sql) => sql`UPDATE workflow_triggers SET next_at = ${first!.next_at}`);
+    assert.deepStrictEqual(yield* boot(swept, standup(" 9:00", { weekdays: [] })), [key]);
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("the sweep deletes skipped runs past the number the settings keep", () =>
   Effect.gen(function* () {
     const exposed = exposedStore();
@@ -2671,6 +2800,82 @@ it.effect("a step of a paused run waits for the resume, even when the engine rep
         yield* workflows.resume(runId);
         assert.equal((yield* workflows.waitFor(runId, status("completed"))).status, "completed");
         assert.equal((yield* Ref.get(counts)).take, 1);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("about keeps the waiting run when 500 newer skipped runs are about the same item", () =>
+  Effect.gen(function* () {
+    const { boot, database } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const issue = {
+          projectId: "p1",
+          tracker: "github",
+          host: "github.com",
+          scope: "acme/app",
+          key: "412",
+          title: "Crash on save",
+          url: "https://github.com/acme/app/issues/412",
+        };
+        const target = yield* workflows.start(
+          "about",
+          { subjects: [issue] },
+          { idempotencyKey: "t" },
+        );
+        yield* workflows.waitFor(target.runId, status("waiting"));
+        // Skipped runs about the same issue, all newer than the waiting one.
+        yield* Effect.flatMap(
+          SqlClient.SqlClient,
+          (sql) => sql`
+            WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 500)
+            INSERT INTO workflow_runs (run_id, workflow, version, engine_tag, idempotency_key,
+              title, status, pauses, started_at, updated_at, ended_at, held, tags_json,
+              subject_kind, subject_key, subject_url, subject_json)
+            SELECT 'skip-' || i, workflow, version, engine_tag, 'skip-' || i, title, 'skipped',
+              0, '2999-01-01T00:00:00.000Z', '2999-01-01T00:00:00.000Z',
+              '2999-01-01T00:00:00.000Z', 0, tags_json,
+              subject_kind, subject_key, subject_url, subject_json
+            FROM n, workflow_runs WHERE run_id = ${target.runId}
+          `,
+        ).pipe(Effect.provide(database));
+        const about = yield* workflows.about({ subject: issue.url });
+        assert.include(
+          about.runs.map((run) => run.runId),
+          target.runId,
+        );
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a list by tag keeps the runs that did something apart from skipped ones", () =>
+  Effect.gen(function* () {
+    const { boot, database } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const run = yield* workflows.start("sorter", { tags: ["pr"] }, { idempotencyKey: "kept" });
+        yield* workflows.waitFor(run.runId, status("waiting"));
+        // A trigger that skips most of what it brings: 500 newer skipped runs with the same tag.
+        yield* Effect.flatMap(
+          SqlClient.SqlClient,
+          (sql) => sql`
+            WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 500)
+            INSERT INTO workflow_runs (run_id, workflow, version, engine_tag, idempotency_key,
+              title, status, pauses, started_at, updated_at, ended_at, held, tags_json)
+            SELECT 'skip-' || i, workflow, version, engine_tag, 'skip-' || i, title, 'skipped',
+              0, '2999-01-01T00:00:00.000Z', '2999-01-01T00:00:00.000Z',
+              '2999-01-01T00:00:00.000Z', 0, tags_json
+            FROM n, workflow_runs WHERE run_id = ${run.runId}
+          `,
+        ).pipe(Effect.provide(database));
+        assert.include(
+          (yield* workflows.list({ tag: "pr" })).map((listed) => listed.runId),
+          run.runId,
+        );
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -3037,6 +3242,167 @@ it.effect.each(["finds the question open", "finds it after keeping itself"] as c
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a run says what it is about, and is found by it", () =>
+  Effect.gen(function* () {
+    const { boot } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const issue = {
+          projectId: "p1",
+          tracker: "github",
+          host: "github.com",
+          scope: "acme/app",
+          key: "412",
+          title: "Crash on save",
+          url: "https://github.com/acme/app/issues/412",
+        };
+        const [onIssue, moved, plain] = yield* Effect.all([
+          workflows.start("about", { subjects: [issue] }, { idempotencyKey: "a" }),
+          // A later subject replaces the earlier one.
+          workflows.start(
+            "about",
+            { subjects: [issue, { threadId: "thread-1" }] },
+            { idempotencyKey: "b" },
+          ),
+          workflows.start("about", { subjects: [] }, { idempotencyKey: "c" }),
+        ]);
+        for (const run of [onIssue, moved, plain]) {
+          yield* workflows.waitFor(run.runId, status("waiting"));
+        }
+        const snapshot = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
+        const subjectOf = (runId: string) =>
+          snapshot.runs.find((listed) => listed.runId === runId)?.subject;
+        assert.deepStrictEqual(subjectOf(onIssue.runId), {
+          kind: "issue",
+          key: JSON.stringify(["github", "github.com", "acme/app", "412"]),
+          address: {
+            projectId: "p1",
+            tracker: "github",
+            host: "github.com",
+            scope: "acme/app",
+            key: "412",
+          },
+          title: "Crash on save",
+          url: "https://github.com/acme/app/issues/412",
+        });
+        assert.deepStrictEqual(subjectOf(moved.runId)?.kind, "thread");
+        assert.equal(subjectOf(plain.runId), undefined);
+        // It is among what the run touched, so it opens beside the run as those do.
+        assert.deepStrictEqual(
+          (yield* workflows.get(onIssue.runId)).references.map((reference) => reference.kind),
+          ["issue"],
+        );
+        assert.deepStrictEqual(
+          (yield* workflows.list({ subject: issue.url })).map((run) => run.runId),
+          [onIssue.runId],
+        );
+        assert.deepStrictEqual(
+          (yield* workflows.list({ subject: "thread-1" })).map((run) => run.runId),
+          [moved.runId],
+        );
+
+        const finder = yield* workflows.start(
+          "aboutFinder",
+          { threadId: "thread-1", url: issue.url },
+          { idempotencyKey: "f" },
+        );
+        const found = yield* workflows.waitFor(finder.runId, status("completed", "paused"));
+        assert.deepStrictEqual(found.result, ["started thread", "b thread", "a issue"]);
+        assert.throws(() => subject("not an address"), /is not a web address/);
+        assert.throws(() => subject({ project: "/x", url: "https://x" } as never), /subject takes/);
+        // Nothing can open a bare project, so it is no subject.
+        assert.throws(() => subject({ projectId: "p1" } as never), /subject takes/);
+        // An item's own view knows its project and host, and could not match one kept without.
+        const { projectId: _projectId, ...unowned } = issue;
+        const { host: _host, ...unhosted } = issue;
+        assert.throws(() => subject(unowned as never), /projectId, tracker, host, scope and key/);
+        assert.throws(() => subject(unhosted as never), /projectId, tracker, host, scope and key/);
+        assert.throws(
+          () => subject({ projectId: "p1", repository: "acme/app", number: 7 } as never),
+          /projectId, host, repository and number/,
+        );
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("an item finds its runs past the newest 500 runs of every subject", () =>
+  Effect.gen(function* () {
+    const exposed = exposedStore();
+    const { boot, clock } = yield* harness(exposed.layer);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const store = yield* exposed.store;
+        const url = "https://github.com/acme/app/issues/412";
+        const issue = {
+          projectId: "p1",
+          tracker: "github",
+          host: "github.com",
+          scope: "acme/app",
+          key: "412",
+          url,
+        };
+        // Time stands still, so every run starts in the same instant as the target: only the
+        // order they were started in says which 500 are the newest.
+        yield* clock.close;
+        const target = yield* workflows.start(
+          "about",
+          { subjects: [issue] },
+          { idempotencyKey: "target" },
+        );
+        yield* workflows.waitFor(target.runId, status("waiting"));
+        for (let n = 0; n < 500; n++) {
+          const runId = `other-${n}`;
+          yield* store.runStarted({
+            runId,
+            workflow: "about",
+            version: 1,
+            engineTag: "about@1",
+            idempotencyKey: runId,
+            input: { subjects: [] },
+          });
+          yield* store.runEnded(runId, "completed", null, null);
+        }
+        yield* clock.open;
+        const snapshot = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
+        assert.equal(snapshot.runs.length, 500);
+        assert.isFalse(snapshot.runs.some((run) => run.runId === target.runId));
+        const about = yield* workflows.about({ subject: url });
+        assert.deepStrictEqual(
+          about.runs.map((run) => run.runId),
+          [target.runId],
+        );
+        assert.deepStrictEqual(about.questions, []);
+
+        // Named without its address, the issue is found by what it is, as its own view knows it.
+        const { url: _url, ...unaddressed } = { ...issue, key: "413" };
+        const quiet = yield* workflows.start(
+          "about",
+          { subjects: [unaddressed] },
+          { idempotencyKey: "unaddressed" },
+        );
+        yield* workflows.waitFor(quiet.runId, status("waiting"));
+        const byItem = yield* workflows.about({
+          subject: "https://github.com/acme/app/issues/413/",
+          issue: {
+            projectId: ProjectId.make("p1"),
+            tracker: "github" as never,
+            host: "github.com",
+            scope: "acme/app",
+            key: "413",
+          },
+        });
+        assert.deepStrictEqual(
+          byItem.runs.map((run) => run.runId),
+          [quiet.runId],
+        );
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
 it.effect("a workflow can take an agent's failure as an answer and go on", () =>
