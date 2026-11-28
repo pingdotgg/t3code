@@ -1650,6 +1650,49 @@ describe("pullCurrentBranch", () => {
     ).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect(
+    "the startup pull covers tracked repositories, not folders inside one or opted-out projects",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tracked = yield* cloneBehindRemote;
+          const container = yield* cloneBehindRemote;
+          const plainFolder = path.join(container.cwd, "docs");
+          yield* fs.makeDirectory(path.join(plainFolder, ".git"), { recursive: true });
+          const optedOut = yield* cloneBehindRemote;
+          const containerHead = yield* git(container.cwd, ["rev-parse", "HEAD"]);
+          const optedOutHead = yield* git(optedOut.cwd, ["rev-parse", "HEAD"]);
+          yield* autoPullProjects(
+            [
+              {
+                id: ProjectId.make("multi-repo"),
+                workspaceRoot: yield* makeTmpDir(),
+                autoPull: true,
+                trackedFolders: [
+                  { path: tracked.cwd, name: "tracked" },
+                  { path: plainFolder, name: "docs" },
+                  { path: optedOut.cwd, name: "opted-out" },
+                ],
+              },
+              { id: ProjectId.make("opted-out"), workspaceRoot: optedOut.cwd, autoPull: false },
+            ],
+            {
+              ...DEFAULT_SERVER_SETTINGS,
+              defaultAutoPull: true,
+              projectSettingsOverrides: {
+                [ProjectId.make("opted-out")]: { defaultAutoPull: false },
+              },
+            },
+          );
+          assert.equal(yield* git(tracked.cwd, ["rev-parse", "HEAD"]), tracked.remoteHead);
+          assert.equal(yield* git(container.cwd, ["rev-parse", "HEAD"]), containerHead);
+          assert.equal(yield* git(optedOut.cwd, ["rev-parse", "HEAD"]), optedOutHead);
+        }),
+      ).pipe(Effect.provide(layerTest)),
+  );
+
   const claimedFetchFallbacks = ["diverged", "interrupted", "upstream-only"] as const;
 
   it.effect.each(claimedFetchFallbacks)(
