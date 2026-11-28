@@ -8,7 +8,7 @@ import * as Schema from "effect/Schema";
 
 import { isWildcardHost, listensOnLoopback, normalizeHostname } from "./hostClassification.ts";
 
-const WILDCARD_PORT_ATTEMPTS = 8;
+const LOOPBACK_PORT_ATTEMPTS = 8;
 
 export class NetError extends Schema.TaggedError<NetError>()("NetError", {
   message: Schema.String,
@@ -243,16 +243,21 @@ export const make = () => {
         );
         if (canBind) return preferred;
       }
-      if (wildcardHost === undefined) {
-        return yield* reserveLoopbackPort(bindHost ?? (listensOnLoopback(host) ? undefined : host));
+      if (bindHost === undefined) {
+        return yield* reserveLoopbackPort(listensOnLoopback(host) ? undefined : host);
       }
 
-      // A wildcard bind can succeed while another address family owns the localhost port.
-      for (let attempt = 0; attempt < WILDCARD_PORT_ATTEMPTS; attempt += 1) {
-        const port = yield* reserveLoopbackPort(wildcardHost);
+      // The requested bind can succeed while another address family owns the localhost port.
+      for (let attempt = 0; attempt < LOOPBACK_PORT_ATTEMPTS; attempt += 1) {
+        const port = yield* reserveLoopbackPort(bindHost);
         if (yield* isPortAvailableOnLoopback(port)) return port;
       }
-      return yield* new NetError({ message: "Failed to find an available wildcard port" });
+      return yield* new NetError({
+        message:
+          wildcardHost === undefined
+            ? "Failed to find an available IPv6 loopback port"
+            : "Failed to find an available wildcard port",
+      });
     }),
   } satisfies NetServiceShape;
 };
