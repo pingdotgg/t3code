@@ -443,15 +443,14 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
     throw new PreviewError({ code: "notebook-unsupported" });
   const metadata = record(notebook.metadata);
   const kernelspec = record(metadata.kernelspec);
+  const explicitLanguage = [record(metadata.language_info).name, kernelspec.language].find(
+    (value): value is string => typeof value === "string" && value !== "",
+  );
+  const kernelName = kernelspec.name;
   const language =
-    String(
-      record(metadata.language_info).name ||
-        kernelspec.language ||
-        // Kernel names are strings. Coercing a malformed JSON object can throw.
-        (typeof kernelspec.name === "string" &&
-          kernelspec.name.toLowerCase() === "python3" &&
-          "python") ||
-        "",
+    (
+      explicitLanguage ??
+      (typeof kernelName === "string" && kernelName.toLowerCase() === "python3" ? "python" : "")
     )
       .replaceAll(/[^a-z\d+#-]/gi, "")
       .slice(0, 40) || "text";
