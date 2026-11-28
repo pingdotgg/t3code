@@ -41,6 +41,8 @@ import {
 } from "./layoutStore";
 import { LayoutDropZones } from "./DropZones";
 import { toggleThreadSidePane } from "./openRules";
+import { buildLayoutTabMenuItems, runLayoutTabMenuAction } from "./PaneTabs";
+import { clearPaneTabSelection } from "./paneTabSelection";
 import { LayoutSurfaceHost, selectSurfaceMounts } from "./SurfaceHost";
 import { requestLayoutSurfacePlacement, useLayoutSurfaceSync } from "./surfaceSync";
 import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../previewMiniPlayerStore";
@@ -1692,4 +1694,108 @@ it.each([
   expect(
     usePreviewMiniPlayerStore.getState().byThreadKey[scopedThreadKey(threadRef)]?.source,
   ).toEqual(floated ? { kind: "device", ...target } : undefined);
+});
+
+it("supports Shift-range, Cmd/Ctrl-toggle, Escape/plain-click clear, per-pane scope and close-selected on pane tabs", async () => {
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  const original = useLayoutStore.getState().layout;
+  const settings = getClientSettings();
+  const tour = localStorage.getItem(TOUR_KEY);
+  localStorage.setItem(TOUR_KEY, "true");
+  __setClientSettingsForTests({ ...settings, scrollingWorkspacesEnabled: true });
+  useLayoutStore.setState({ layout: createLayoutState() });
+  const store = useLayoutStore.getState();
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  store.openTab(createLayoutLauncherContent(null), { placement: "new-column" });
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  const initialLayout = useLayoutStore.getState().layout;
+  const firstPane = initialLayout.workspaces[0]!.columns[0]!.panes[0]!;
+  const secondPane = initialLayout.workspaces[0]!.columns[1]!.panes[0]!;
+  const [t0, t1, t2, t3] = firstPane.tabs;
+  const [p2t0, p2t1] = secondPane.tabs;
+  store.focusTab(t0!.id);
+  using _cleanup = {
+    [Symbol.dispose]: () => {
+      clearPaneTabSelection();
+      __setClientSettingsForTests(settings);
+      useLayoutStore.setState({ layout: original });
+      if (tour === null) localStorage.removeItem(TOUR_KEY);
+      else localStorage.setItem(TOUR_KEY, tour);
+    },
+  };
+
+  await using _screen = await renderHost({ viewport: 1200 });
+  const tabEl = (id: string) =>
+    page.elementLocator(document.querySelector<HTMLElement>(`[data-layout-pane-tab="${id}"]`)!);
+
+  // Shift-click range from active t0 to t2 selects t0, t1, t2 without switching active tab.
+  await userEvent.click(tabEl(t2!.id), { modifiers: ["Shift"] });
+  expect(focusedTabId()).toBe(t0!.id);
+  await expect.element(tabEl(t0!.id)).toHaveAttribute("data-selected-tab", "");
+  await expect.element(tabEl(t1!.id)).toHaveAttribute("data-selected-tab", "");
+  await expect.element(tabEl(t2!.id)).toHaveAttribute("data-selected-tab", "");
+  await expect.element(tabEl(t1!.id)).toHaveAttribute("aria-pressed", "true");
+  await expect.element(tabEl(t2!.id)).toHaveAttribute("aria-pressed", "true");
+  await expect.element(tabEl(t3!.id)).toHaveAttribute("aria-pressed", "false");
+
+  // Context menu offers "Close selected tabs" on selected tabs and "Close" on unselected ones.
+  const selectedMenu = buildLayoutTabMenuItems(useLayoutStore.getState().layout, t1!.id);
+  expect(selectedMenu.some((item) => item.id === "layout:close-selected-tabs")).toBe(true);
+  expect(selectedMenu.some((item) => item.id === "layout:close-tab")).toBe(false);
+  const unselectedMenu = buildLayoutTabMenuItems(useLayoutStore.getState().layout, t3!.id);
+  expect(unselectedMenu.some((item) => item.id === "layout:close-tab")).toBe(true);
+  expect(unselectedMenu.some((item) => item.id === "layout:close-selected-tabs")).toBe(false);
+
+  // Escape clears selection.
+  await userEvent.keyboard("{Escape}");
+  await expect.element(tabEl(t1!.id)).toHaveAttribute("aria-pressed", "false");
+  await expect.element(tabEl(t2!.id)).toHaveAttribute("aria-pressed", "false");
+
+  // Cmd-click toggles individual tabs in and out, clearing when < 2 remain.
+  await userEvent.click(tabEl(t2!.id), { modifiers: ["Meta"] });
+  await expect.element(tabEl(t0!.id)).toHaveAttribute("data-selected-tab", "");
+  await expect.element(tabEl(t2!.id)).toHaveAttribute("aria-pressed", "true");
+  await expect.element(tabEl(t1!.id)).toHaveAttribute("aria-pressed", "false");
+  await userEvent.click(tabEl(t3!.id), { modifiers: ["Meta"] });
+  await expect.element(tabEl(t3!.id)).toHaveAttribute("aria-pressed", "true");
+  await userEvent.click(tabEl(t2!.id), { modifiers: ["Meta"] });
+  await expect.element(tabEl(t2!.id)).toHaveAttribute("aria-pressed", "false");
+  await expect.element(tabEl(t3!.id)).toHaveAttribute("aria-pressed", "true");
+
+  // Plain click clears selection and activates the clicked tab.
+  await userEvent.click(tabEl(t1!.id));
+  expect(focusedTabId()).toBe(t1!.id);
+  await expect.element(tabEl(t3!.id)).toHaveAttribute("aria-pressed", "false");
+
+  // Selection never spans panes: Shift-clicking in pane 2 clears pane 1 and selects in pane 2.
+  await userEvent.click(tabEl(t3!.id), { modifiers: ["Shift"] });
+  await expect.element(tabEl(t2!.id)).toHaveAttribute("aria-pressed", "true");
+  await userEvent.click(tabEl(p2t0!.id), { modifiers: ["Shift"] });
+  await expect.element(tabEl(t2!.id)).toHaveAttribute("aria-pressed", "false");
+  await expect.element(tabEl(p2t0!.id)).toHaveAttribute("aria-pressed", "true");
+  await expect.element(tabEl(p2t1!.id)).toHaveAttribute("data-selected-tab", "");
+
+  // Close button on a selected tab closes all selected tabs in that pane; menu action works too.
+  await userEvent.click(tabEl(t0!.id));
+  await userEvent.click(tabEl(t2!.id), { modifiers: ["Shift"] });
+  const closeButton = document
+    .querySelector<HTMLElement>(`[data-layout-pane-tab="${t1!.id}"]`)!
+    .parentElement!.querySelector<HTMLButtonElement>("[data-tab-close]")!;
+  await userEvent.click(closeButton);
+  await vi.waitFor(() => {
+    const remaining = useLayoutStore
+      .getState()
+      .layout.workspaces[0]!.columns[0]!.panes[0]!.tabs.map((tab) => tab.id);
+    expect(remaining).toEqual([t3!.id]);
+  });
+
+  // Closing via context menu action closes selected tabs in pane 2.
+  await userEvent.click(tabEl(p2t1!.id));
+  await userEvent.click(tabEl(p2t0!.id), { modifiers: ["Shift"] });
+  await act(() => runLayoutTabMenuAction("layout:close-selected-tabs", p2t0!.id));
+  await vi.waitFor(() => {
+    expect(useLayoutStore.getState().layout.workspaces[0]!.columns).toHaveLength(1);
+  });
 });

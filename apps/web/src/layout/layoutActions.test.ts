@@ -23,6 +23,7 @@ import * as sessionState from "../state/session";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import {
   closeLayoutTabByUser,
+  closeLayoutTabsByUser,
   closeOtherLayoutTabsByUser,
   createLayoutNewTabContent,
   toggleFocusedLayoutFill,
@@ -177,6 +178,23 @@ describe("closeLayoutTabByUser", () => {
       expect(layout.chats()).toEqual(contents.filter((content) => content !== subagent));
     },
   );
+
+  it("closes selected tabs together and remembers the active tab last so it reopens first", () => {
+    using layout = setup([other, parent, subagent]);
+    useClosedViewStore.setState({ entries: [] });
+    const otherTab = layout.tabOf(other)!;
+    const parentTab = layout.tabOf(parent)!;
+    const subagentTab = layout.tabOf(subagent)!;
+    useLayoutStore.getState().focusTab(parentTab.id);
+
+    closeLayoutTabsByUser([parentTab.id, subagentTab.id]);
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(otherTab.id);
+    expect(layout.chats()).toEqual([other]);
+    expect(useClosedViewStore.getState().entries[0]).toMatchObject({
+      kind: "chat",
+      threadRef: parentRef,
+    });
+  });
 });
 
 describe("reopening a closed list page", () => {

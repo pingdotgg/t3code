@@ -396,3 +396,58 @@ describe("layout drops of a thread's surfaces", () => {
     expect(panel().surfaces).toEqual([]);
   });
 });
+
+describe("layout drops of multi-selected tabs", () => {
+  it("reorders, moves and splits selected tabs together in pane order", () => {
+    using fixture = setup();
+    const { chatPaneId } = fixture;
+    const store = useLayoutStore.getState();
+    store.openTab({ kind: "issues" }, { placement: "active-pane", position: "end" });
+    store.openTab({ kind: "pull-requests" }, { placement: "active-pane", position: "end" });
+    store.openTab({ kind: "workflows" }, { placement: "active-pane", position: "end" });
+    const paneTabs = () =>
+      useLayoutStore.getState().layout.workspaces[0]!.columns[0]!.panes[0]!.tabs;
+    const [chatTab, issuesTab, prsTab, workflowsTab] = paneTabs();
+    store.focusTab(chatTab!.id);
+
+    const reorderSource: LayoutDragSource = {
+      kind: "tab",
+      tabId: issuesTab!.id,
+      tabIds: [chatTab!.id, issuesTab!.id],
+    };
+    expect(
+      isLayoutDropUseful(useLayoutStore.getState().layout, reorderSource, {
+        kind: "into",
+        paneId: chatPaneId,
+        index: 0,
+      }),
+    ).toBe(false);
+    expect(
+      isLayoutDropUseful(useLayoutStore.getState().layout, reorderSource, {
+        kind: "into",
+        paneId: chatPaneId,
+        index: 2,
+      }),
+    ).toBe(true);
+    expect(commitLayoutDrop(reorderSource, { kind: "into", paneId: chatPaneId, index: 2 })).toBe(
+      true,
+    );
+    expect(paneTabs().map((tab) => tab.id)).toEqual([
+      prsTab!.id,
+      workflowsTab!.id,
+      chatTab!.id,
+      issuesTab!.id,
+    ]);
+    // Same-pane reorder keeps the active tab unchanged.
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(chatTab!.id);
+
+    // Splitting with the selected pair puts both in the new column together.
+    expect(
+      commitLayoutDrop(reorderSource, { kind: "side", paneId: chatPaneId, side: "right" }),
+    ).toBe(true);
+    const columns = useLayoutStore.getState().layout.workspaces[0]!.columns;
+    expect(columns).toHaveLength(2);
+    expect(columns[0]!.panes[0]!.tabs.map((tab) => tab.id)).toEqual([prsTab!.id, workflowsTab!.id]);
+    expect(columns[1]!.panes[0]!.tabs.map((tab) => tab.id)).toEqual([chatTab!.id, issuesTab!.id]);
+  });
+});
