@@ -234,16 +234,19 @@ function ThreadConnectionWaitScreen(props: {
           <Text className="text-center font-t3-bold text-lg text-foreground">{props.title}</Text>
           <AppActivityIndicator size="large" />
         </View>
-        <View className="flex-1 items-center gap-5 px-8 pt-5">
-          <Text
-            textRole="body"
-            textBreakStrategy="balanced"
-            className="text-center font-sans leading-normal text-foreground-muted"
-          >
-            {props.detail}
-          </Text>
-          <View>
-            <Button tone="primary" label={gt("Retry")} onPress={props.onRetry} />
+        {/* Padding on the flex-1 half itself would count toward its size and shift the block up. */}
+        <View className="flex-1">
+          <View className="items-center gap-5 px-8 pt-5">
+            <Text
+              textRole="body"
+              textBreakStrategy="balanced"
+              className="text-center font-sans leading-normal text-foreground-muted"
+            >
+              {props.detail}
+            </Text>
+            <View>
+              <Button tone="primary" label={gt("Retry")} onPress={props.onRetry} />
+            </View>
           </View>
         </View>
       </View>
