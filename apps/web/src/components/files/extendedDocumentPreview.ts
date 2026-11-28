@@ -285,6 +285,25 @@ async function odfHtml(
   reserveMarkup(count * markup.length - children.length);
   return markup.repeat(count);
 }
+// A drawing can contain paragraphs of its own, even when anchored inside cell text.
+function withoutOdsDrawings(node: XmlNode): XmlNode | undefined {
+  if (node.name.startsWith("draw:")) return undefined;
+  let children: XmlNode[] | undefined;
+  for (const [index, child] of node.children.entries()) {
+    const content = withoutOdsDrawings(child);
+    if (content !== child) children ??= node.children.slice(0, index);
+    if (content) children?.push(content);
+  }
+  return children ? { ...node, children } : node;
+}
+function odsCellText(cell: XmlNode): string {
+  const paragraphs = cell.children
+    .filter((child) => child.name !== "office:annotation")
+    .map(withoutOdsDrawings)
+    .flatMap((child) => (!child ? [] : child.name === "text:p" ? [child] : find(child, "text:p")))
+    .map(text);
+  return paragraphs.some(Boolean) ? paragraphs.join("\n") : "";
+}
 export async function openDocument(
   archive: JSZip,
   kind: "odt" | "ods" | "odp",
@@ -319,15 +338,7 @@ export async function openDocument(
             const value =
               cell.name === "table:covered-table-cell"
                 ? ""
-                : cell.children
-                    // Shapes anchored to a cell float over the sheet; their text is not the cell's value.
-                    .filter(
-                      (child) =>
-                        child.name !== "office:annotation" && !child.name.startsWith("draw:"),
-                    )
-                    .flatMap((child) => (child.name === "text:p" ? [child] : find(child, "text:p")))
-                    .map(text)
-                    .join("\n") ||
+                : odsCellText(cell) ||
                   cell.attrs["office:value"] ||
                   cell.attrs["office:date-value"] ||
                   cell.attrs["office:time-value"] ||
@@ -546,6 +557,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   if (!source.startsWith("{\\rtf")) throw new PreviewError({ code: "rtf-invalid" });
   let state = {
     skip: false,
+    nestedTableProperties: false,
     deleted: false,
     hiddenText: false,
     inTable: false,
@@ -581,7 +593,9 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     });
     completedLength += html.length;
     html = notes = "";
+    nestedRowEnd = -1;
   };
+  let nestedRowEnd = -1;
   let run = "";
   let fallback = 0;
   const hidden = () => state.skip || state.deleted || state.hiddenText;
@@ -625,6 +639,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     if (fallback > 0) fallback--;
     else if (!hidden()) encoded[encodedLength++] = value;
   };
+  const nestedTablePropertiesHeader = /[\r\n]*\\\*[\r\n]*\\nesttableprops(?![A-Za-z])/y;
   for (let i = 0; i < source.length;) {
     const char = source[i++];
     if (char === "{") {
@@ -632,6 +647,9 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       fallback = 0;
       if (stack.length > 100) throw new PreviewError({ code: "rtf-too-deep" });
       stack.push({ ...state });
+      // Only this destination's own row marker can render while its contents are skipped.
+      nestedTablePropertiesHeader.lastIndex = i;
+      state.nestedTableProperties = !state.skip && nestedTablePropertiesHeader.test(source);
     } else if (char === "}") {
       flush();
       fallback = 0;
@@ -738,6 +756,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
           // Shape properties, and the drawing that repeats a shape for older readers.
           "sp",
           "shprslt",
+          "nonesttables",
           "header",
           "headerl",
           "headerr",
@@ -800,8 +819,16 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         html += `<sup>${noteDepth === undefined ? ++noteCount : noteCount}</sup>`;
       else if (!hidden() && word === "page") finishPage();
       else if (word === "cell" || word === "nestcell") emit("\t", state.skip);
-      else if (!state.skip && word === "row") html += "<br>";
-      else if (!hidden() && (word === "par" || word === "line")) html += lineBreak();
+      else if (word === "nestrow" && (!state.skip || state.nestedTableProperties)) {
+        html += "<br>";
+        nestedRowEnd = html.length;
+      } else if (!state.skip && word === "row") {
+        // A cell holding only a nested table ends after the nested row's break; skip its empty line.
+        if (nestedRowEnd >= 0 && /^\t*$/.test(html.slice(nestedRowEnd)))
+          html = html.slice(0, nestedRowEnd);
+        else html += "<br>";
+        nestedRowEnd = -1;
+      } else if (!hidden() && (word === "par" || word === "line")) html += lineBreak();
       // Writers usually end the paragraph before these breaks; a second break would add a blank line.
       else if (!hidden() && (word === "sect" || word === "column")) {
         if (html && !html.endsWith("<br>")) html += "<br>";

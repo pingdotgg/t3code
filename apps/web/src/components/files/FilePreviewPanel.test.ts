@@ -180,7 +180,7 @@ describe("document preview contents", () => {
     [
       "nested table cells",
       String.raw`{\rtf1\ansi\trowd\cellx3000\pard\intbl\itap2 Inner A\nestcell\pard\intbl\itap2 Inner B\nestcell{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}\pard\intbl\itap1\cell\row}`,
-      "Inner A\tInner B\t\t",
+      "Inner A\tInner B\t",
     ],
   ])("keeps the text of %s", (_name, source, expected) => {
     const result = openRtf(bytes(source));
@@ -218,6 +218,42 @@ describe("document preview contents", () => {
       expect(result.pages[0]!.html).toBe("<p data-rtf-whitespace>Hello</p>");
     },
   );
+
+  it("keeps successive rows of a nested RTF table on separate lines", () => {
+    const source = String.raw`{\rtf1\ansi
+\pard Before table\par
+\trowd\cellx3000
+\pard\intbl\itap2 Item\nestcell\pard\intbl\itap2 Quantity\nestcell
+{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}{\nonesttables\par}
+\pard\intbl\itap2 Bolts\nestcell\pard\intbl\itap2 Four\nestcell
+{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}{\nonesttables\par}
+\pard\intbl\itap1\cell\row
+\pard After table\par
+}`;
+    const result = openRtf(bytes(source));
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace>Before table<br>Item\tQuantity\t<br>Bolts\tFour\t<br>After table<br></p>",
+    );
+  });
+
+  it.each([
+    ["a child destination", String.raw`A{\*\nesttableprops{\*\vendor\nestrow}\nestrow}B`, "A<br>B"],
+    [
+      "a compatibility paragraph",
+      String.raw`{\intbl\itap2 A\nestcell}{\*\nesttableprops\nestrow}{\nonesttables\par}{\intbl\itap2 B\nestcell}{\*\nesttableprops\nestrow}`,
+      "A\t<br>B\t<br>",
+    ],
+    [
+      "an ungrouped row marker",
+      String.raw`\intbl A\nestcell\nestrow B\nestcell\nestrow`,
+      "A\t<br>B\t<br>",
+    ],
+  ])("keeps nested row boundaries with %s", (_name, source, expected) => {
+    const result = openRtf(bytes(String.raw`{\rtf1\ansi ` + source + "}"));
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(`<p data-rtf-whitespace>${expected}</p>`);
+  });
 
   it("reads EPUB chapters independently of the total rendered size", async () => {
     const archive = new JSZip()
@@ -752,16 +788,25 @@ Third}`;
   });
 
   it("keeps the text of shapes anchored to an ODS cell out of its value", async () => {
+    const inlineShape =
+      '<draw:frame text:anchor-type="as-char"><draw:text-box><text:p>Recount on Monday</text:p></draw:text-box></draw:frame>';
     const archive = new JSZip().file(
       "content.xml",
       '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"><office:body><office:spreadsheet><table:table table:name="Stock">' +
         '<table:table-row><table:table-cell><text:p>Apples</text:p></table:table-cell><table:table-cell office:value-type="float" office:value="42"><text:p>42</text:p><draw:custom-shape table:end-cell-address="Stock.D4"><text:p>Recount on Monday</text:p></draw:custom-shape></table:table-cell></table:table-row>' +
         '<table:table-row><table:table-cell><text:p>Pears</text:p></table:table-cell><table:table-cell><draw:frame table:end-cell-address="Stock.D6"><draw:text-box><text:p>Supplier late</text:p></draw:text-box></draw:frame></table:table-cell></table:table-row>' +
+        `<table:table-row><table:table-cell><text:p>Plums</text:p></table:table-cell><table:table-cell><text:list><text:list-item><text:p>Low<text:s/><text:span>${inlineShape}stock</text:span></text:p></text:list-item></text:list></table:table-cell></table:table-row>` +
+        `<table:table-row><table:table-cell><text:p>Figs</text:p></table:table-cell><table:table-cell office:value-type="string" office:string-value="Available"><text:p>${inlineShape}</text:p><text:p>${inlineShape}</text:p></table:table-cell></table:table-row>` +
         "</table:table></office:spreadsheet></office:body></office:document-content>",
     );
     const result = await openDocument(archive, "ods");
     if (result.type !== "ods") throw new Error("Expected workbook");
-    expect(result.sheets[0]!.rows).toEqual([["Apples", "42"], ["Pears"]]);
+    expect(result.sheets[0]!.rows).toEqual([
+      ["Apples", "42"],
+      ["Pears"],
+      ["Plums", "Low stock"],
+      ["Figs", "Available"],
+    ]);
   });
 
   it("reads an ODS time cell that has no display paragraph", async () => {
