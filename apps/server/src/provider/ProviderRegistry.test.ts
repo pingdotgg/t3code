@@ -664,6 +664,20 @@ it.layer(
       }),
     );
 
+    // codex-cli 0.172 answers `initialize` only after its first state DB backfill; 15,000
+    // sessions take ~22 s. Killing it mid-backfill leaves a claim that stalls later starts.
+    it.effect("waits out a first-run state DB backfill with the default budget", () =>
+      Effect.gen(function* () {
+        const fiber = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          Effect.sleep("22 seconds").pipe(Effect.as(makeCodexProbeSnapshot())),
+        ).pipe(Effect.forkChild);
+        yield* TestClock.adjust("22 seconds");
+        const status = yield* Fiber.join(fiber);
+        assert.strictEqual(status.message, undefined);
+        assert.strictEqual(status.status, "ready");
+      }),
+    );
+
     it.effect("labels the plan the usage read reports over the cached login plan", () =>
       Effect.gen(function* () {
         const statusWithUsagePlan = (planType: string | null) =>
