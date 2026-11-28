@@ -35,6 +35,8 @@ interface ComposerResumeInput {
   readonly isSendBusy: boolean;
   readonly isRevertingCheckpoint: boolean;
   readonly threadDetailLoading: boolean;
+  /** The thread shows a cached copy that may be behind the server, so a resume waits. */
+  readonly threadCatchingUp: boolean;
   readonly activeEnvironmentUnavailable: boolean;
   readonly runtimeMode: RuntimeMode;
   readonly localCheckoutBranchMismatch: { readonly currentBranch: string } | null;
@@ -67,6 +69,7 @@ export function useComposerResume(input: ComposerResumeInput) {
     isSendBusy,
     isRevertingCheckpoint,
     threadDetailLoading,
+    threadCatchingUp,
     activeEnvironmentUnavailable,
     runtimeMode,
     localCheckoutBranchMismatch,
@@ -96,6 +99,7 @@ export function useComposerResume(input: ComposerResumeInput) {
       isResuming ||
       isRevertingCheckpoint ||
       threadDetailLoading ||
+      threadCatchingUp ||
       activeEnvironmentUnavailable ||
       sendInFlightRef.current
     ) {

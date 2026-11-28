@@ -43,7 +43,8 @@ function composerShowing(selectedModelSelection: typeof threadAModel) {
 
 function ResumeButton(props: {
   readonly composerRef: ComposerHandleRef;
-  readonly persistSettings: () => Promise<AtomCommandResult<void, unknown>>;
+  readonly persistSettings: (input: unknown) => Promise<AtomCommandResult<void, unknown>>;
+  readonly threadCatchingUp?: boolean;
 }) {
   const { onResume } = useComposerResume({
     environmentId: EnvironmentId.make("environment:test"),
@@ -56,6 +57,7 @@ function ResumeButton(props: {
     isSendBusy: false,
     isRevertingCheckpoint: false,
     threadDetailLoading: false,
+    threadCatchingUp: props.threadCatchingUp ?? false,
     activeEnvironmentUnavailable: false,
     runtimeMode: "full-access",
     localCheckoutBranchMismatch: null,
@@ -90,4 +92,35 @@ it("continues on the resumed thread's model after the composer moves to another 
     manualContinuationOfRunId: "run:interrupted",
     modelSelection: threadAModel,
   });
+});
+
+it("resumes only once a thread catching up from its cached copy is live", async () => {
+  const { startedTurn } = setup();
+  const settingsWrites: unknown[] = [];
+  const persistSettings = (input: unknown) => {
+    settingsWrites.push(input);
+    return Promise.resolve(AsyncResult.success(undefined));
+  };
+  const composerRef: ComposerHandleRef = { current: composerShowing(threadAModel) };
+  await using screen = await render(
+    <ResumeButton composerRef={composerRef} persistSettings={persistSettings} threadCatchingUp />,
+  );
+
+  // A resume writes the thread's settings before its first await, so a refused one wrote none.
+  await screen.getByRole("button", { name: "Resume" }).click();
+  expect(settingsWrites).toEqual([]);
+
+  await screen.rerender(
+    <ResumeButton
+      composerRef={composerRef}
+      persistSettings={persistSettings}
+      threadCatchingUp={false}
+    />,
+  );
+  await screen.getByRole("button", { name: "Resume" }).click();
+  expect(await startedTurn.promise).toMatchObject({
+    threadId: threadA,
+    manualContinuationOfRunId: "run:interrupted",
+  });
+  expect(settingsWrites).toHaveLength(1);
 });

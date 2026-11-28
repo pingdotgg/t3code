@@ -367,7 +367,7 @@ import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { modelFallbackBannerItem } from "./chat/ComposerUsageLimits";
 import { ComposerSurface } from "./chat/ComposerSurface";
-import { resolveThreadSyncPhase } from "../threadSync";
+import { isThreadCatchingUp, resolveThreadSyncPhase, threadSyncLabel } from "../threadSync";
 import { hasAvailableCompactionProvider } from "./chat/compaction.logic";
 import {
   deriveLatestContextWindowSnapshot,
@@ -1300,6 +1300,7 @@ export default function ChatView(props: ChatViewProps) {
   const activeEnvironmentUnavailable =
     activeEnvironment !== null && activeEnvironment.connection.phase !== "connected";
   const activeEnvironmentUnavailableLabel = activeEnvironment?.label ?? null;
+  const threadCatchingUp = isThreadCatchingUp(threadSyncPhase, activeEnvironmentUnavailable);
   const activeEnvironmentUnavailableState = (() => {
     if (!activeEnvironmentUnavailable || !activeEnvironmentUnavailableLabel || !activeEnvironment) {
       return null;
@@ -2047,6 +2048,8 @@ export default function ChatView(props: ChatViewProps) {
     if (!isServerThread || activeThreadId === null) {
       throw new Error(gt("Messages from apps need a started thread."));
     }
+    // Checked at send time: the person approved it while looking at a copy that may be behind.
+    if (threadCatchingUp) throw new Error(threadSyncLabel("syncing", messages));
     const result = await startThreadTurn({
       environmentId,
       input: {
@@ -2681,6 +2684,7 @@ export default function ChatView(props: ChatViewProps) {
     !manualCompactionProviderAvailable ||
     isRevertingCheckpoint ||
     threadDetailLoading ||
+    threadCatchingUp ||
     isPreparingWorktree ||
     activeEnvironmentUnavailable ||
     feedbackUploading ||
@@ -3144,6 +3148,7 @@ export default function ChatView(props: ChatViewProps) {
     isSendBusy,
     isRevertingCheckpoint,
     threadDetailLoading,
+    threadCatchingUp,
     activeEnvironmentUnavailable,
     runtimeMode,
     localCheckoutBranchMismatch,
@@ -3187,6 +3192,7 @@ export default function ChatView(props: ChatViewProps) {
     queuedRunEdit,
     isRevertingCheckpoint,
     threadDetailLoading,
+    threadCatchingUp,
     activeEnvironmentUnavailable,
     isSendBusy,
     sendQueuesBehindSetup,
@@ -3936,9 +3942,11 @@ export default function ChatView(props: ChatViewProps) {
                                           ? gt("Sending feedback")
                                           : threadDetailLoading
                                             ? gt("Messages loading")
-                                            : worktreeSetupBlocksSend
-                                              ? gt("Preparing worktree")
-                                              : projectCloneSendBlockReason
+                                            : threadCatchingUp
+                                              ? threadSyncLabel("syncing", messages)
+                                              : worktreeSetupBlocksSend
+                                                ? gt("Preparing worktree")
+                                                : projectCloneSendBlockReason
                                 }
                                 isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                                 bannerItems={

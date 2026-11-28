@@ -27,6 +27,18 @@ export function resolveThreadSyncPhase(input: {
   }
 }
 
+/**
+ * A thread showing a cached copy that may be behind the server, so anything that sends waits
+ * until it is live. A failed sync does not hold, so a broken sync never locks the person out,
+ * and an unreachable environment keeps its own notice and send rules.
+ */
+export function isThreadCatchingUp(
+  phase: ThreadSyncPhase | null,
+  environmentUnavailable: boolean,
+): boolean {
+  return phase === "syncing" && !environmentUnavailable;
+}
+
 export function threadSyncLabel(phase: ThreadSyncPhase, resolve: MessageResolver = m): string {
   switch (phase) {
     case "loading":

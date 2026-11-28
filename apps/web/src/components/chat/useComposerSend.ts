@@ -245,6 +245,8 @@ interface ComposerSendInput {
   readonly queuedRunEdit: ReturnType<typeof useQueuedRunEdit>;
   readonly isRevertingCheckpoint: boolean;
   readonly threadDetailLoading: boolean;
+  /** The thread shows a cached copy that may be behind the server, so a send waits. */
+  readonly threadCatchingUp: boolean;
   readonly activeEnvironmentUnavailable: boolean;
   readonly isSendBusy: boolean;
   readonly sendQueuesBehindSetup: boolean;
@@ -344,6 +346,7 @@ export function useComposerSend(input: ComposerSendInput) {
     queuedRunEdit,
     isRevertingCheckpoint,
     threadDetailLoading,
+    threadCatchingUp,
     activeEnvironmentUnavailable,
     isSendBusy,
     sendQueuesBehindSetup,
@@ -502,6 +505,7 @@ export function useComposerSend(input: ComposerSendInput) {
       isRevertingCheckpoint ||
       !clientSettingsHydrated ||
       threadDetailLoading ||
+      threadCatchingUp ||
       readPendingEnvironmentChange() !== null ||
       feedbackUploadsInFlightRef.current.has(routeThreadKey)
     ) {
