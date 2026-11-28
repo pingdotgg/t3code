@@ -91,6 +91,7 @@ describe("commandProgramName", () => {
     ["sudo [ -f /etc/hosts ] && git status", "git"],
     ["sudo -n [ -d /opt ] && pytest", "pytest"],
     ["sudo [[ -f /etc/hosts ]] && git status", "git"],
+    ["true && git --version", "git"],
   ])("skips shell setup commands and uses the next useful program: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
   });
@@ -124,6 +125,8 @@ describe("commandProgramName", () => {
     "$PY scripts/check.py",
     "& { Get-Process }",
     "coproc npm test",
+    "true || git --version",
+    "builtin true || git --version",
   ])("does not treat shell lookup and commandless wrapper forms as executions: %s", (command) => {
     expect(commandProgramName(command)).toBeNull();
   });
