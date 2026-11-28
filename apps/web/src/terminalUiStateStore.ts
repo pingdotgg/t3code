@@ -590,7 +590,16 @@ interface TerminalUiStateStoreState {
   suppressedTerminalIdsByThreadKey: Record<string, string[]>;
   setTerminalOpen: (threadRef: ScopedThreadRef, open: boolean) => void;
   setTerminalHeight: (threadRef: ScopedThreadRef, height: number) => void;
-  splitTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
+  splitTerminal: (
+    threadRef: ScopedThreadRef,
+    terminalId: string,
+    direction?: "horizontal" | "vertical",
+  ) => void;
+  setSplitDirection: (
+    threadRef: ScopedThreadRef,
+    terminalId: string,
+    direction: "horizontal" | "vertical",
+  ) => void;
   splitTerminalVertical: (threadRef: ScopedThreadRef, terminalId: string) => void;
   newTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
   ensureTerminal: (
@@ -600,6 +609,10 @@ interface TerminalUiStateStoreState {
   ) => void;
   setActiveTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
   closeTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
+  trackTerminalPlacement: (
+    threadRef: ScopedThreadRef,
+    terminalId: string,
+  ) => (rejected: boolean) => void;
   reconcileTerminalIds: (
     threadRef: ScopedThreadRef,
     serverIds: string[],
@@ -613,6 +626,7 @@ interface TerminalUiStateStoreState {
 export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
   persist(
     (set, get) => {
+      const pendingPredecessors = new Map<string, readonly string[]>();
       const removeTerminalUiState = (threadRef: ScopedThreadRef) =>
         set((state) => {
           const threadKey = terminalThreadKey(threadRef);
@@ -707,11 +721,20 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
         },
         setTerminalHeight: (threadRef, height) =>
           updateTerminal(threadRef, (state) => setThreadTerminalHeight(state, height)),
-        splitTerminal: (threadRef, terminalId) =>
-          updateTerminal(threadRef, (state) => splitThreadTerminal(state, terminalId), {
+        splitTerminal: (threadRef, terminalId, direction) =>
+          updateTerminal(threadRef, (state) => splitThreadTerminal(state, terminalId, direction), {
             terminalId,
             suppressed: false,
           }),
+        setSplitDirection: (threadRef, terminalId, direction) =>
+          updateTerminal(threadRef, (state) => ({
+            ...state,
+            terminalGroups: state.terminalGroups.map((group) =>
+              group.terminalIds.length > 1 && group.terminalIds.includes(terminalId)
+                ? { ...group, splitDirection: direction }
+                : group,
+            ),
+          })),
         splitTerminalVertical: (threadRef, terminalId) =>
           updateTerminal(threadRef, (state) => splitThreadTerminal(state, terminalId, "vertical"), {
             terminalId,
@@ -754,6 +777,31 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
             terminalId,
             suppressed: true,
           }),
+        trackTerminalPlacement: (threadRef, terminalId) => {
+          const threadKey = terminalThreadKey(threadRef);
+          const key = JSON.stringify([threadKey, terminalId]);
+          const { activeTerminalId } = selectThreadTerminalUiState(
+            get().terminalUiStateByThreadKey,
+            threadRef,
+          );
+          // Capture the chain while its pending predecessors are still tracked.
+          const predecessors = [
+            activeTerminalId,
+            ...(pendingPredecessors.get(JSON.stringify([threadKey, activeTerminalId])) ?? []),
+          ];
+          pendingPredecessors.set(key, predecessors);
+          return (rejected) => {
+            if (pendingPredecessors.get(key) !== predecessors) return;
+            pendingPredecessors.delete(key);
+            if (!rejected) return;
+            updateTerminal(threadRef, (state) => {
+              const next = closeThreadTerminal(state, terminalId);
+              if (state.activeTerminalId !== terminalId) return next;
+              const previous = predecessors.find((id) => next.terminalIds.includes(id));
+              return previous === undefined ? next : setThreadActiveTerminal(next, previous);
+            });
+          };
+        },
         reconcileTerminalIds: (threadRef, serverIds, snapshotId) => {
           if (threadRef.threadId.length === 0) return;
           const threadKey = terminalThreadKey(threadRef);

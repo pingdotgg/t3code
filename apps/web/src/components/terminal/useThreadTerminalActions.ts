@@ -4,19 +4,30 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { nextTerminalId } from "@t3tools/shared/terminalLabels";
+import { msg } from "gt-react";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { m } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
-import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
+import {
+  rightPanelHostRef,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "../../rightPanelStore";
 import { useProject, useQuietThreadShell } from "../../state/entities";
 import { readEnvironmentScope } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
 import { useKnownTerminalSessions } from "../../state/terminalSessions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../../terminalUiStateStore";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 import { closingTerminalIds, holdTerminalIdWhileClosing } from "./closingTerminals";
 
 /** Where a new terminal starts. Omitted fields fall back to the thread's project and worktree. */
@@ -45,22 +56,20 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     environmentId: threadRef?.environmentId ?? null,
     threadId: threadRef?.threadId ?? null,
   });
-  const drawerTerminalIds = useTerminalUiStateStore(
-    (state) => selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef).terminalIds,
-  );
-  const panelSurfaces = useRightPanelStore(
-    (state) => selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces,
-  );
-
   const canWrite = () =>
     threadRef !== null && readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
 
   // Server lists lag and colliding ids share a PTY; without read access, suffix ids to avoid unseen sessions.
-  const allocateTerminalId = () => {
+  const allocateTerminalId = (panelRef: ScopedThreadRef) => {
+    const drawer = selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      threadRef,
+    );
+    const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, panelRef);
     const ids = new Set([
       ...(knownSessions ?? []).map((session) => session.target.terminalId),
-      ...drawerTerminalIds,
-      ...panelSurfaces.flatMap((surface) =>
+      ...drawer.terminalIds,
+      ...panel.surfaces.flatMap((surface) =>
         surface.kind === "terminal" ? surface.terminalIds : [],
       ),
       ...(threadRef ? closingTerminalIds(threadRef) : []),
@@ -83,9 +92,10 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
         }
       : null;
 
-  /** place mounts the destination before the server open resolves. */
+  /** place mounts the destination before the server open resolves and may return an undo for a rejected open. */
   const launchTerminal = (input: {
-    readonly place: (terminalId: string) => void;
+    readonly place: (terminalId: string) => void | (() => void);
+    readonly reportRejection?: boolean;
     readonly terminalId?: string;
     readonly location?: TerminalLaunchLocation | null;
     readonly extraEnv?: Record<string, string>;
@@ -95,8 +105,13 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     if (!threadRef || !canWrite() || !project) return null;
     const location = input.location ?? defaultLaunchLocation();
     if (!location) return null;
-    const terminalId = input.terminalId ?? allocateTerminalId();
-    input.place(terminalId);
+    const panelRef = rightPanelHostRef(threadRef);
+    const terminalId = input.terminalId ?? allocateTerminalId(panelRef);
+    const settlePlacement =
+      input.terminalId === undefined
+        ? useTerminalUiStateStore.getState().trackTerminalPlacement(threadRef, terminalId)
+        : undefined;
+    const undoPlacement = input.place(terminalId);
     const result = openTerminalCommand({
       environmentId: threadRef.environmentId,
       input: {
@@ -112,8 +127,70 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
         ...input.size,
         ...(input.stopOnSettle !== undefined ? { stopOnSettle: input.stopOnSettle } : {}),
       },
+    }).then((outcome) => {
+      const rejected = outcome._tag === "Failure" && !isAtomCommandInterrupted(outcome);
+      settlePlacement?.(rejected);
+      if (rejected) {
+        // A supplied ID refers to a reusable session. A rejected reopen does not delete it.
+        if (input.terminalId === undefined) {
+          const panel = useRightPanelStore.getState();
+          const surface = selectThreadRightPanelState(panel.byThreadKey, panelRef).surfaces.find(
+            (entry) => entry.kind === "terminal" && entry.terminalIds.includes(terminalId),
+          );
+          if (surface) panel.closeTerminal(panelRef, surface.id, terminalId);
+        }
+        undoPlacement?.();
+        if (input.reportRejection !== false) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title:
+                thrownErrorMessage(squashAtomCommandFailure(outcome), m) ||
+                m(msg("An unexpected error occurred.")),
+            }),
+          );
+        }
+      }
+      return outcome;
     });
     return { terminalId, result };
+  };
+
+  const launchSplitTerminal = (input: {
+    readonly direction: "horizontal" | "vertical";
+    readonly surfaceId?: string;
+    readonly location?: TerminalLaunchLocation;
+  }) => {
+    if (!threadRef) return null;
+    const { direction, surfaceId } = input;
+    return launchTerminal({
+      location: input.location ?? null,
+      place: (terminalId) => {
+        // A rejected split restores the surviving panes' previous layout.
+        if (surfaceId !== undefined) {
+          const panel = useRightPanelStore.getState();
+          const panelRef = rightPanelHostRef(threadRef);
+          const surface = selectThreadRightPanelState(panel.byThreadKey, panelRef).surfaces.find(
+            (entry) => entry.id === surfaceId,
+          );
+          if (surface?.kind !== "terminal") return;
+          const { activeTerminalId, splitDirection = "horizontal" } = surface;
+          panel.splitTerminal(threadRef, surfaceId, terminalId, direction);
+          return () =>
+            panel.setTerminalSplitDirection(panelRef, surfaceId, activeTerminalId, splitDirection);
+        }
+        const drawer = useTerminalUiStateStore.getState();
+        const { activeTerminalId, terminalGroups } = selectThreadTerminalUiState(
+          drawer.terminalUiStateByThreadKey,
+          threadRef,
+        );
+        const splitDirection =
+          terminalGroups.find((group) => group.terminalIds.includes(activeTerminalId))
+            ?.splitDirection ?? "horizontal";
+        drawer.splitTerminal(threadRef, terminalId, direction);
+        return () => drawer.setSplitDirection(threadRef, activeTerminalId, splitDirection);
+      },
+    });
   };
 
   /** Ends a session and deletes its history. A failed close falls back to typing `exit`. */
@@ -146,8 +223,8 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
 
   return {
     canWrite: useStableCallback(canWrite),
-    allocateTerminalId: useStableCallback(allocateTerminalId),
     launchTerminal: useStableCallback(launchTerminal),
+    launchSplitTerminal: useStableCallback(launchSplitTerminal),
     closeTerminalSession: useStableCallback(closeTerminalSession),
     writeToTerminal: useStableCallback(writeToTerminal),
   };

@@ -28,6 +28,62 @@ describe("terminalUiStateStore actions", () => {
     });
   });
 
+  it("discards a failed split without hiding a later session with its ID", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.newTerminal(THREAD_REF, "first");
+    store.splitTerminalVertical(THREAD_REF, "second");
+    const settle = store.trackTerminalPlacement(THREAD_REF, "pending");
+    store.splitTerminal(THREAD_REF, "pending");
+
+    settle(true);
+    expect(layout().terminalGroups).toEqual([
+      expect.objectContaining({ terminalIds: ["first", "second"] }),
+    ]);
+
+    store.reconcileTerminalIds(THREAD_REF, ["first", "second", "pending"]);
+    expect(layout().terminalIds).toContain("pending");
+  });
+
+  it.each([
+    { change: "no selection change", select: "", close: "", expected: "first" },
+    { change: "a newer selection", select: "second", close: "", expected: "second" },
+    { change: "the previous tab closing", select: "", close: "first", expected: "third" },
+  ])(
+    "selects the right tab after a rejected launch with $change",
+    ({ select, close, expected }) => {
+      const store = useTerminalUiStateStore.getState();
+      for (const id of ["first", "second", "third"]) store.newTerminal(THREAD_REF, id);
+      store.setActiveTerminal(THREAD_REF, "first");
+      const settle = store.trackTerminalPlacement(THREAD_REF, "pending");
+      store.newTerminal(THREAD_REF, "pending");
+      if (select) store.setActiveTerminal(THREAD_REF, select);
+      if (close) store.closeTerminal(THREAD_REF, close);
+
+      settle(true);
+
+      expect(layout().activeTerminalId).toBe(expected);
+    },
+  );
+
+  it.each([
+    { order: "first then second", reverse: false },
+    { order: "second then first", reverse: true },
+  ])("restores the original tab when overlapping launches are rejected $order", ({ reverse }) => {
+    const store = useTerminalUiStateStore.getState();
+    for (const id of ["first", "second", "third"]) store.newTerminal(THREAD_REF, id);
+    store.setActiveTerminal(THREAD_REF, "first");
+    const settleFirst = store.trackTerminalPlacement(THREAD_REF, "pending-1");
+    store.newTerminal(THREAD_REF, "pending-1");
+    const settleSecond = store.trackTerminalPlacement(THREAD_REF, "pending-2");
+    store.newTerminal(THREAD_REF, "pending-2");
+
+    for (const settle of reverse ? [settleSecond, settleFirst] : [settleFirst, settleSecond]) {
+      settle(true);
+    }
+
+    expect(layout().activeTerminalId).toBe("first");
+  });
+
   it("caps splits at four terminals per group", () => {
     const store = useTerminalUiStateStore.getState();
     store.splitTerminal(THREAD_REF, "terminal-2");
