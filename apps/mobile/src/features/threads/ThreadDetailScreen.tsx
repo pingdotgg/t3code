@@ -190,6 +190,7 @@ import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
 import { ProviderSubagentBar } from "./ProviderSubagentBar";
 import { ThreadCreationFailedCard } from "./ThreadCreationFailedCard";
+import { useThreadTaskList } from "./ThreadTasksSheet";
 import {
   FLOATING_WORKING_CONTROL_COVERAGE,
   FloatingWorkingControl,
@@ -527,6 +528,7 @@ function ThreadDetailBody(
     : "showAll";
   const queuedCount = useThreadQueuedCount(props.selectedThreadDetailRef);
   const turnSubagents = useThreadTurnSubagents(props.selectedThreadDetailRef);
+  const taskList = useThreadTaskList(props.selectedThreadDetailRef);
   const agentsSegment = resolveSubagentPillSegment(turnSubagents, messages);
   const defaultComposerEditorRef = useRef<ComposerEditorHandle>(null);
   const composerEditorRef = props.draftMode?.editorRef ?? defaultComposerEditorRef;
@@ -941,6 +943,7 @@ function ThreadDetailBody(
     showWorkingControl ||
     queuedCount > 0 ||
     agentsSegment !== null ||
+    taskList !== null ||
     devicePreviewCount > 0 ||
     browserTabCount > 0;
   const selectedThreadFeed = props.selectedThreadFeed;
@@ -1708,6 +1711,20 @@ function ThreadDetailBody(
                     showScrollToEnd={showScrollToEndButton}
                     onScrollToEnd={handleScrollToEnd}
                     agents={agentsSegment}
+                    tasks={
+                      taskList === null
+                        ? null
+                        : {
+                            plan: taskList,
+                            onPress: () => {
+                              Keyboard.dismiss();
+                              navigation.navigate("ThreadTasks", {
+                                environmentId: props.environmentId,
+                                threadId: props.selectedThread.id,
+                              });
+                            },
+                          }
+                    }
                     onOpenAgents={() => {
                       Keyboard.dismiss();
                       navigation.navigate("ThreadAgents", {

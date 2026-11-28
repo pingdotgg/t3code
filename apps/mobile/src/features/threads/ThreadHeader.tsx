@@ -16,6 +16,7 @@ import {
 
 export function ThreadHeader(props: {
   readonly title: string;
+  readonly tasksAction?: AppBarAction | null;
   readonly subtitle: string;
   readonly gitControls: ThreadGitControlsProps;
   readonly onReturnToThread?: () => void;
@@ -44,6 +45,7 @@ export function ThreadHeader(props: {
         },
       ]
     : [];
+  if (props.tasksAction) actions.push(props.tasksAction);
   const menus = [gitMenu, terminalMenu].filter((menu): menu is AppBarMenu => menu !== null);
 
   return (

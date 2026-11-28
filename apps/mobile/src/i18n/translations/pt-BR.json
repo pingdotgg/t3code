@@ -1,5 +1,10 @@
 {
   "035aab5e99159bd8": "{count, plural, one {… {hidden} caractere do meio não é exibido.} other {… {hidden} caracteres do meio não são exibidos.}} O texto termina com:",
+  "fae3639874428042": "Tarefas",
+  "7342bfc328008926": "Em execução",
+  "353b08f4363dbb2c": "Pendente",
+  "7ead7eba403ccf8d": "Nenhuma tarefa nesta conversa.",
+  "ab790e733ad16c7e": "Abrir tarefas, {done} de {total} concluídas",
   "4bcfa3b976a421cf": "Chat paralelo",
   "23be753133ae6950": "Thread",
   "0001ae5846061bb6": "Thread em {machine}",

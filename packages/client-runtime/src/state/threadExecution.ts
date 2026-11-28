@@ -18,6 +18,8 @@ import {
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderGoal,
   type OrchestrationV2ProviderSession,
+  type OrchestrationV2PlanArtifact,
+  type OrchestrationV2PlanStep,
   type ProviderOptionDescriptor,
   type ServerProvider,
   type ServerProviderModel,
@@ -63,6 +65,36 @@ const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"])
 // Preparing runs show their workspace setup instead.
 const PROVIDER_STARTING_RUN_STATUSES = new Set(["starting", "running"]);
 const LIVE_PROVIDER_SESSION_STATUSES = new Set(["ready", "running", "waiting"]);
+
+export type TaskListPlan = Extract<OrchestrationV2PlanArtifact, { readonly kind: "todo_list" }>;
+
+// Snapshots do not load plans in run order, so the run ordinal decides which list is newest.
+export function findLatestTaskList(projection: ThreadStructure | null): TaskListPlan | null {
+  if (projection === null) return null;
+  const runOrdinals = new Map<RunId | null, number>(
+    projection.runs.map((run) => [run.id, run.ordinal]),
+  );
+  let latest: TaskListPlan | null = null;
+  for (const plan of projection.plans) {
+    if (plan.kind !== "todo_list" || plan.status === "superseded") continue;
+    if (
+      latest === null ||
+      (runOrdinals.get(plan.runId) ?? -1) >= (runOrdinals.get(latest.runId) ?? -1)
+    ) {
+      latest = plan;
+    }
+  }
+  return latest === null || latest.steps.length === 0 ? null : latest;
+}
+
+export function taskListProgress(steps: ReadonlyArray<OrchestrationV2PlanStep>) {
+  const completed = steps.filter((step) => step.status === "completed").length;
+  return {
+    completed,
+    total: steps.length,
+    percentage: steps.length === 0 ? 0 : Math.floor((completed / steps.length) * 100),
+  };
+}
 
 /** The startup a send to this instance waits on, or null when its session is live and idle. */
 export function pendingProviderStartup(

@@ -1,5 +1,10 @@
 {
   "035aab5e99159bd8": "{count, plural, one {… {hidden} tecken i mitten visas inte.} other {… {hidden} tecken i mitten visas inte.}} Texten slutar med:",
+  "fae3639874428042": "Uppgifter",
+  "7342bfc328008926": "Pågår",
+  "353b08f4363dbb2c": "Väntar",
+  "7ead7eba403ccf8d": "Inga uppgifter i den här tråden.",
+  "ab790e733ad16c7e": "Öppna uppgifter, {done} av {total} slutförda",
   "4bcfa3b976a421cf": "Sidochatt",
   "23be753133ae6950": "Tråd",
   "0001ae5846061bb6": "Tråd på {machine}",

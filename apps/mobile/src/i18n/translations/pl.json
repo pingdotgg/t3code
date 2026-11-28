@@ -1,5 +1,10 @@
 {
   "035aab5e99159bd8": "{count, plural, one {… {hidden} znak w środku nie jest wyświetlany.} few {… {hidden} znaki w środku nie są wyświetlane.} many {… {hidden} znaków w środku nie jest wyświetlanych.} other {… {hidden} znaków w środku nie jest wyświetlanych.}} Tekst kończy się na:",
+  "fae3639874428042": "Zadania",
+  "7342bfc328008926": "W toku",
+  "353b08f4363dbb2c": "Oczekujące",
+  "7ead7eba403ccf8d": "Brak zadań w tym wątku.",
+  "ab790e733ad16c7e": "Otwórz zadania, ukończono {done} z {total}",
   "4bcfa3b976a421cf": "Czat boczny",
   "23be753133ae6950": "Wątek",
   "0001ae5846061bb6": "Wątek na {machine}",
