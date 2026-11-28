@@ -1,14 +1,19 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { CommandId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 
 import { toPersistenceSqlError } from "../persistence/Errors.ts";
+import { CommandPolicyCapabilityUnsupportedError } from "./CommandPolicy.ts";
 import { userFacingDispatchErrorMessage } from "./UserFacingErrors.ts";
+
+const decodeProviderInstanceId = Schema.decodeUnknownSync(ProviderInstanceId);
 
 describe("userFacingDispatchErrorMessage", () => {
   it.effect("explains a real database open failure through dispatch and persistence wrappers", () =>
@@ -79,5 +84,25 @@ describe("userFacingDispatchErrorMessage", () => {
     assert.include(message, "server could not complete this database request");
     assert.include(message, "server logs");
     assert.notInclude(message, "private-query-data");
+  });
+
+  it("formats capability errors for provider instance IDs matching Object.prototype keys", () => {
+    for (const [instanceId, expectedName] of [
+      ["constructor", "Constructor"],
+      ["claudeAgent", "Claude"],
+    ] as const) {
+      const error = new CommandPolicyCapabilityUnsupportedError({
+        commandId: CommandId.make("command-1"),
+        threadId: ThreadId.make("thread-1"),
+        providerInstanceId: decodeProviderInstanceId(instanceId),
+        capability: "rollback",
+        detail: "providerInstanceId conversation rollback is unavailable",
+      });
+
+      assert.equal(
+        userFacingDispatchErrorMessage(error),
+        `${expectedName} cannot rewind its conversation, so this checkpoint cannot be restored on this thread.`,
+      );
+    }
   });
 });
