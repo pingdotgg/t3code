@@ -3672,11 +3672,43 @@ describe("v2 run and attempt history", () => {
       supportsConversationRollback: false,
     });
     expect(stoppedRows.map((row) => row.id)).toEqual(["stopped-command-entry", "interrupt-result"]);
-    expect(stoppedRows[0]).toMatchObject({
-      kind: "work",
-      displayLabel: "sleep 90 && echo slept",
-    });
+    const stoppedRow = stoppedRows[0];
+    expect(
+      stoppedRow?.kind === "work" &&
+        (stoppedRow.displayLabel ??
+          workEntryDisplayLabel(stoppedRow.groupedEntries[0]!, undefined)),
+    ).toBe("sleep 90 && echo slept");
   });
+});
+
+it("shows a lone read relative to the workspace", () => {
+  const rows = deriveMessagesTimelineRows({
+    timelineEntries: [
+      {
+        id: "read-entry",
+        kind: "work",
+        createdAt: "2026-01-01T00:00:01Z",
+        entry: {
+          id: "read",
+          createdAt: "2026-01-01T00:00:01Z",
+          label: "Read /repo/package.json",
+          tone: "tool",
+          itemType: "dynamic_tool",
+          toolTitle: "Read",
+          toolData: { toolName: "Read", input: { path: "/repo/package.json" } },
+          toolLifecycleStatus: "completed",
+        },
+      },
+    ],
+    isWorking: false,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  });
+  const row = rows.find((candidate) => candidate.kind === "work");
+  expect(
+    row?.kind === "work" &&
+      (row.displayLabel ?? workEntryDisplayLabel(row.groupedEntries[0]!, "/repo")),
+  ).toBe("Read repo/package.json");
 });
 
 it.each([
