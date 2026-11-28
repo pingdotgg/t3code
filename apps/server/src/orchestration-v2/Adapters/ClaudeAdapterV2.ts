@@ -4368,6 +4368,10 @@ function isClaudeRootTurnFrame(message: SDKMessage): boolean {
   );
 }
 
+function isClaudeBufferedWakeRootFrame(message: SDKMessage): boolean {
+  return message.type !== "stream_event" && isClaudeRootTurnFrame(message);
+}
+
 // One stable id per native thread: a new ScheduleWakeup replaces the pending one.
 const CLAUDE_SCHEDULED_WAKEUP_TASK: OrchestrationV2PendingBackgroundTask = {
   taskId: "claude-scheduled-wakeup",
@@ -5629,10 +5633,16 @@ interface ActiveClaudeTurnContext {
     readonly streamBlocks: Map<number, string>;
     readonly nextBlockIndex: Map<string, number>;
     readonly snapshotBlockIndex: Map<string, number>;
+    readonly finalAnswerMessageIds: Set<string>;
+    readonly itemsByNativeMessage: Map<
+      string,
+      Map<string, Extract<OrchestrationV2TurnItem, { readonly type: "assistant_message" }>>
+    >;
     readonly streamItems: Map<
       string,
       {
         readonly startedAt: DateTime.Utc;
+        readonly nativeMessageId: string;
         status: "completed" | "interrupted";
         // Set when the block stops; the snapshot only corrects it.
         text: string | null;
@@ -5640,6 +5650,7 @@ interface ActiveClaudeTurnContext {
     >;
     // The root reply the latest assistant frame carried; a steer's aborted_streaming cuts it off.
     lastReply: {
+      readonly nativeMessageId?: string;
       readonly nativeItemId: string;
       readonly text: string;
       readonly startedAt: DateTime.Utc;
@@ -7711,7 +7722,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           const messages = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
           const lastResult = messages.findLastIndex((entry) => entry.type === "result");
-          if (!messages.slice(lastResult + 1).some(isClaudeRootTurnFrame)) return;
+          if (!messages.slice(lastResult + 1).some(isClaudeBufferedWakeRootFrame)) return;
           yield* Ref.update(absorbedWakes, (current) => new Set(current).add(nativeThreadId));
           if (latch !== undefined && latch.end === undefined) {
             yield* Ref.update(requestedContinuations, (current) =>
@@ -10051,6 +10062,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         const publishAssistantArtifacts = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
+          readonly nativeMessageId?: string;
           readonly nativeItemId: string;
           readonly text: string;
           readonly status: "running" | "completed" | "interrupted";
@@ -10060,6 +10072,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly finalAnswer?: boolean;
         }) {
           const ordinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
+          const assistant = input.context.assistant;
+          const finalAnswer =
+            input.status === "completed" &&
+            (input.finalAnswer === true ||
+              (input.nativeMessageId !== undefined &&
+                assistant.finalAnswerMessageIds.has(input.nativeMessageId)));
           const artifacts = buildAssistantArtifacts({
             idAllocator,
             turnInput: input.context.input,
@@ -10071,8 +10089,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             startedAt: input.startedAt,
             completedAt: input.completedAt,
             ...(input.createdAt === undefined ? {} : { createdAt: input.createdAt }),
-            ...(input.finalAnswer === undefined ? {} : { finalAnswer: input.finalAnswer }),
+            finalAnswer,
           });
+          if (
+            input.nativeMessageId !== undefined &&
+            !assistant.finalAnswerMessageIds.has(input.nativeMessageId) &&
+            artifacts.turnItem.type === "assistant_message"
+          ) {
+            const items = assistant.itemsByNativeMessage.get(input.nativeMessageId) ?? new Map();
+            items.set(input.nativeItemId, artifacts.turnItem);
+            assistant.itemsByNativeMessage.set(input.nativeMessageId, items);
+          }
           yield* Effect.all(
             [
               emitProviderEvent({
@@ -10095,6 +10122,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
         });
 
+        const confirmFinalAnswer = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          nativeMessageId: string,
+        ) {
+          if (context.assistant.finalAnswerMessageIds.has(nativeMessageId)) return;
+          context.assistant.finalAnswerMessageIds.add(nativeMessageId);
+          // The SDK can deliver end_turn after the completed text snapshot.
+          const items = context.assistant.itemsByNativeMessage.get(nativeMessageId);
+          if (items === undefined) return;
+          const now = yield* DateTime.now;
+          context.assistant.itemsByNativeMessage.delete(nativeMessageId);
+          for (const item of items.values()) {
+            if (item.status !== "completed" || item.phase === "final_answer") continue;
+            const turnItem = { ...item, phase: "final_answer" as const, updatedAt: now };
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem,
+            });
+          }
+        });
+
         const assistantDeltas = yield* makeProviderTextDeltaCoalescer({
           flushIntervalMs: 50,
           emit:
@@ -10108,6 +10157,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               yield* publishAssistantArtifacts({
                 context,
                 nativeItemId: update.itemId,
+                nativeMessageId: item.nativeMessageId,
                 text: update.text,
                 status: update.completed ? item.status : "running",
                 startedAt: item.startedAt,
@@ -10384,6 +10434,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               providerTurnId: input.context.providerTurnId,
               nativeItemId: input.context.assistant.fallbackNativeItemId,
               text: fallbackText,
+              finalAnswer:
+                input.status === "completed" &&
+                input.result?.subtype === "success" &&
+                !input.result.is_error &&
+                input.result.stop_reason === "end_turn" &&
+                input.result.uuid === input.context.assistant.fallbackNativeItemId,
               ordinal,
               startedAt: input.context.startedAt,
               completedAt: input.completedAt,
@@ -10678,6 +10734,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         const emitAssistantTextArtifacts = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
+          readonly nativeMessageId?: string;
           readonly nativeItemId: string;
           readonly text: string;
         }) {
@@ -10944,6 +11001,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
           }
           const isWakeTurnStart = isClaudeTurnStartMessage(message);
+          // Replay only the stream frames that associate an end_turn with a root snapshot.
+          const isAnswerMetadata =
+            message.type === "stream_event" &&
+            message.parent_tool_use_id == null &&
+            (message.event.type === "message_start" ||
+              (message.event.type === "message_delta" &&
+                message.event.delta.stop_reason === "end_turn"));
           const isWakeEvidence =
             isPendingTaskNotification ||
             isPendingSubagentNotification ||
@@ -10951,6 +11015,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             isKnownSubagentTaskStarted ||
             isNewSubagentTaskStarted ||
             isWakeTurnStart ||
+            isAnswerMetadata ||
             message.type === "assistant" ||
             message.type === "user" ||
             message.type === "result" ||
@@ -10961,6 +11026,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const retired = (yield* Ref.get(requestedContinuations)).get(
             wakeInput.nativeThreadId,
           )?.retired;
+          if (retired != null && isAnswerMetadata) return;
           if (
             retired === "unopened" &&
             (isPendingTaskNotification || isPendingSubagentNotification)
@@ -10968,7 +11034,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* releaseContinuationLatch(wakeInput.nativeThreadId);
           } else if (
             retired != null &&
-            (isClaudeRootTurnFrame(message) ||
+            (isClaudeBufferedWakeRootFrame(message) ||
               message.type === "result" ||
               message.type === "rate_limit_event")
           ) {
@@ -10977,7 +11043,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } else if (message.type === "result") {
               yield* releaseContinuationLatch(wakeInput.nativeThreadId);
               yield* offerBufferedWake(wakeInput.nativeThreadId);
-            } else if (isClaudeRootTurnFrame(message)) {
+            } else if (isClaudeBufferedWakeRootFrame(message)) {
               yield* setRetiredLatch(wakeInput.nativeThreadId, "opened");
               yield* dropSettledSubagents(
                 wakeInput.nativeThreadId,
@@ -11018,7 +11084,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (message.type === "result") {
             bufferedResultArrivals.set(message, yield* DateTime.now);
           }
-          if (isClaudeRootTurnFrame(message)) {
+          if (isClaudeBufferedWakeRootFrame(message)) {
             yield* forgetAbsorbedWake(wakeInput.nativeThreadId);
           }
           if (
@@ -11192,7 +11258,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
             yield* setRetiredLatch(
               nativeThreadId,
-              sinceLifecycleResult.some(isClaudeRootTurnFrame) ? "opened" : "unopened",
+              sinceLifecycleResult.some(isClaudeBufferedWakeRootFrame) ? "opened" : "unopened",
             );
             return;
           }
@@ -11285,7 +11351,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return (
             messages
               .slice(messages.findLastIndex(isClaudeEmptyTaskNotificationSuccess) + 1)
-              .some(isClaudeRootTurnFrame) ||
+              .some(isClaudeBufferedWakeRootFrame) ||
             messages.some(
               (entry) =>
                 (entry.type === "result" && !isClaudeEmptyTaskNotificationSuccess(entry)) ||
@@ -11884,6 +11950,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               context.streamUsage = { messageId: event.message.id, usage };
               yield* emitContextUsage(context, usage, true);
             } else if (event.type === "message_delta") {
+              const nativeMessageId = text(field(message, "api_message_id")) ?? reasoning.messageId;
+              if (event.delta.stop_reason === "end_turn" && nativeMessageId !== null) {
+                yield* confirmFinalAnswer(context, nativeMessageId);
+              }
               const usage: typeof event.usage | null | undefined = event.usage;
               const stream = context.streamUsage;
               if (stream?.usage && usage != null) {
@@ -11929,6 +11999,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               assistant.streamBlocks.set(event.index, itemId);
               assistant.lastReply = null;
               assistant.streamItems.set(itemId, {
+                nativeMessageId: reasoning.messageId,
                 startedAt: yield* DateTime.now,
                 status: "completed",
                 text: null,
@@ -11974,6 +12045,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return;
           }
+          if (
+            message.type === "assistant" &&
+            !message.parent_tool_use_id &&
+            message.message.stop_reason === "end_turn" &&
+            message.message.model !== "<synthetic>" &&
+            field(message, "error") === undefined
+          ) {
+            yield* confirmFinalAnswer(context, message.message.id);
+          }
           // Snapshot text the stream did not deliver, once any of it streamed.
           const unstreamedSnapshotText: Array<string> = [];
           let streamedSnapshotReply: NonNullable<
@@ -12008,6 +12088,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   streamed.text = text;
                   if (text.length > 0) {
                     streamedSnapshotReply = {
+                      nativeMessageId: message.message.id,
                       nativeItemId: itemId,
                       text,
                       startedAt: streamed.startedAt,
@@ -12967,11 +13048,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const startedAt = yield* emitAssistantTextArtifacts({
               context,
               nativeItemId: assistantText.nativeItemId,
+              ...(message.type === "assistant" ? { nativeMessageId: message.message.id } : {}),
               text,
             });
             if (startedAt !== undefined) {
               context.assistant.lastReply = {
                 nativeItemId: assistantText.nativeItemId,
+                ...(message.type === "assistant" ? { nativeMessageId: message.message.id } : {}),
                 text,
                 startedAt,
               };
@@ -14778,6 +14861,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 streamBlocks: new Map(),
                 nextBlockIndex: new Map(),
                 snapshotBlockIndex: new Map(),
+                finalAnswerMessageIds: new Set(),
+                itemsByNativeMessage: new Map(),
                 streamItems: new Map(),
                 lastReply: null,
                 noticeTexts: new Set(),
