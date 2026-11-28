@@ -1465,13 +1465,13 @@ describe("question answer paths", () => {
             "ppt/slides/a.xml":
               '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
               "<p:cSld><p:spTree><p:graphicFrame><a:graphic><a:graphicData><a:tbl><a:tblGrid><a:gridCol/><a:gridCol/><a:gridCol/></a:tblGrid>" +
-              '<a:tr><a:tc gridSpan="2"><a:txBody><a:p><a:r><a:t>Route</a:t></a:r></a:p></a:txBody></a:tc><a:tc hMerge="1"><a:txBody><a:p><a:r><a:t>Old spare</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Status</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
+              '<a:tr><a:tc gridSpan="2"><a:txBody><a:p><a:r><a:t>Route</a:t></a:r></a:p></a:txBody></a:tc><a:tc hMerge=" true "><a:txBody><a:p><a:r><a:t>Old spare</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Status</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
               '<a:tr><a:tc rowSpan="2"><a:txBody><a:p><a:r><a:t>North</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Gate A</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Open</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
               '<a:tr><a:tc vMerge="1"><a:txBody><a:p><a:r><a:t>Old north</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Gate B</a:t></a:r></a:p></a:txBody></a:tc><a:tc><a:txBody><a:p><a:r><a:t>Closed</a:t></a:r></a:p></a:txBody></a:tc></a:tr>' +
               "</a:tbl></a:graphicData></a:graphic></p:graphicFrame></p:spTree></p:cSld></p:sld>",
           },
-          expected: ["## Slide 1", "Route\t\tStatus\nNorth\tGate A\tOpen\n\tGate B\tClosed"],
-          absent: ["Old spare", "Old north"],
+          expected: [],
+          exact: "## Slide 1\nRoute\t\tStatus\nNorth\tGate A\tOpen\n\tGate B\tClosed",
         },
         {
           ext: "docx",
