@@ -7573,4 +7573,107 @@ describe("orchestration v2 provider switching", () => {
       );
     }),
   );
+
+  it.effect("resends every stopped request that a closed session was carrying", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("stopped-twice-session-closed");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      // The session that saw run 2's Stop carries its request into run 3. Once the session
+      // closes, neither stopped request is in the provider's history.
+      let sessionOpen = true;
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CODEX_MODEL_SELECTION.instanceId,
+          driver: CODEX_DRIVER,
+          capabilities: CodexProviderCapabilitiesV2,
+          modelSelection: CODEX_MODEL_SELECTION,
+          responseByRunOrdinal: { 1: "Morning Codex summary.", 2: "", 3: "", 4: "Recovered." },
+          capturedTurns,
+          interruptedRunOrdinals: new Set([2, 3]),
+          nativeTurnKept: (nativeTurnId) =>
+            !(nativeTurnId.endsWith(":2") || nativeTurnId.endsWith(":3")) ||
+            (sessionOpen && nativeTurnId.endsWith(":2")),
+        }),
+      ]);
+
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const testThreadId = ThreadId.make("thread:stopped-twice-session-closed");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:stopped-twice:create"),
+          threadId: testThreadId,
+          projectId,
+          title: "Stopped twice, session closed",
+          modelSelection: CODEX_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        let step = 0;
+        const send = (text: string) =>
+          Effect.gen(function* () {
+            step += 1;
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:stopped-twice:msg-${step}`),
+              threadId: testThreadId,
+              messageId: MessageId.make(`message:stopped-twice:${step}`),
+              text,
+              attachments: [],
+              modelSelection: CODEX_MODEL_SELECTION,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* worker.drain();
+            yield* waitForIdle(testThreadId);
+            yield* worker.drain();
+            return yield* orchestrator.getThreadProjection(testThreadId);
+          });
+
+        yield* send("Morning task");
+        yield* send("First stopped question");
+        const afterRun3 = yield* send("Second stopped question");
+        // The live session carries run 2's request itself, so the server sends nothing extra.
+        assert.notInclude((yield* Ref.get(capturedTurns)).at(-1)!.text, "First stopped question");
+
+        sessionOpen = false;
+        const afterRun4 = yield* send("Resume");
+        const run4Turn = (yield* Ref.get(capturedTurns)).at(-1)!;
+        assert.include(run4Turn.text, "First stopped question");
+        assert.include(run4Turn.text, "Second stopped question");
+        for (const ordinal of [2, 3]) {
+          const stoppedRun = afterRun3.runs.find((run) => run.ordinal === ordinal)!;
+          assert.equal(stoppedRun.status, "interrupted");
+          const stoppedTurn = afterRun4.providerTurns.find(
+            (turn) => turn.runAttemptId === stoppedRun.activeAttemptId,
+          );
+          assert.equal(stoppedTurn?.promptDropped, true);
+        }
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "stopped-twice-session-closed",
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
+  );
 });
