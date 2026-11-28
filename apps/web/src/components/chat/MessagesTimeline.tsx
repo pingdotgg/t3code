@@ -288,6 +288,7 @@ interface MessagesTimelineProps {
     intent?: SideThreadOpenIntent,
   ) => void;
   renderHtmlRender?: TimelineRowSharedState["renderHtmlRender"];
+  renderMcpApp?: TimelineRowSharedState["renderMcpApp"];
   turnItemSource?: TimelineRowSharedState["turnItemSource"];
   /**
    * The thread this one is a subagent or side chat of; `open` is absent when it cannot be
@@ -407,6 +408,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onOpenToolDiff,
   onOpenThread,
   renderHtmlRender,
+  renderMcpApp,
   turnItemSource,
   parentThreadLink = null,
   workflowOpening = null,
@@ -1164,6 +1166,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onOpenToolDiff,
     onOpenThread,
     renderHtmlRender,
+    renderMcpApp,
     turnItemSource,
     workflowOpening,
     onForkFromRun,

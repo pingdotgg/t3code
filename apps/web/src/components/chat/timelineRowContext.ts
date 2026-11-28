@@ -80,6 +80,8 @@ export interface TimelineRowSharedState {
    * loads it through its own route.
    */
   renderHtmlRender: ((row: Extract<TimelineRow, { kind: "html-render" }>) => ReactNode) | undefined;
+  /** Draws an MCP App. Unset, the row loads it from the environment. */
+  renderMcpApp: ((row: Extract<TimelineRow, { kind: "mcp-app" }>) => ReactNode) | undefined;
   /** Unset, expanded rows read detail and command output from the environment. */
   turnItemSource: TurnItemSource | undefined;
   onOpenThread: (
