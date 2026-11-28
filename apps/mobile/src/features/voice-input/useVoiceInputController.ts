@@ -62,6 +62,17 @@ export function useVoiceInputController(input: {
       label: captured.label,
     });
   }, [session]);
+  // Leaving the screen or switching drafts unfocuses the owner, so a start it no longer wants is dropped.
+  const startAfter = useCallback(
+    (ready: Promise<unknown>) => {
+      const ownerKey = latestInput.current.ownerKey;
+      if (!ownerKey) return;
+      void ready.then(() => {
+        if (session.getSnapshot().focusedOwners.has(ownerKey)) start();
+      });
+    },
+    [session, start],
+  );
   const state = global.ownerKey === input.ownerKey ? global.state : IDLE_STATE;
   const isBusy = voiceInputBlocksSubmission(state);
   return {
@@ -73,6 +84,7 @@ export function useVoiceInputController(input: {
     freezesEditor: isBusy,
     blocksSubmission: isBusy,
     start,
+    startAfter,
     stop: global.stop,
     cancel: global.cancel,
   };
