@@ -611,6 +611,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     if (fallback > 0) fallback--;
     else if (!hidden()) encoded[encodedLength++] = value;
   };
+  const nestedTablePropertiesHeader = /[\r\n]*\\\*[\r\n]*\\nesttableprops(?![a-z])/y;
   for (let i = 0; i < source.length;) {
     const char = source[i++];
     if (char === "{") {
@@ -618,6 +619,9 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       fallback = 0;
       if (stack.length > 100) throw new PreviewError({ code: "rtf-too-deep" });
       stack.push({ ...state });
+      // Only this destination's own row marker can render while its contents are skipped.
+      nestedTablePropertiesHeader.lastIndex = i;
+      state.nestedTableProperties = !state.skip && nestedTablePropertiesHeader.test(source);
     } else if (char === "}") {
       flush();
       fallback = 0;
@@ -700,8 +704,6 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         )[arg];
         if (label) fonts.set(state.font, new TextDecoder(label));
       } else if (word === "fontfile") state.fontFile = true;
-      // Skipped like any \* destination, but its \nestrow still ends a visible row.
-      else if (word === "nesttableprops") state.nestedTableProperties = !stack.at(-1)?.skip;
       else if (word === "cpg" && state.fontTable && !state.fontFile) {
         try {
           fonts.set(state.font, new TextDecoder(rtfCodePageLabel(arg)));
@@ -719,6 +721,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
           // Shape properties, and the drawing that repeats a shape for older readers.
           "sp",
           "shprslt",
+          "nonesttables",
           "header",
           "headerl",
           "headerr",
@@ -778,7 +781,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       else if (word === "cell" || word === "nestcell") emit("\t", state.skip);
       else if (
         (!state.skip && word === "row") ||
-        (state.nestedTableProperties && word === "nestrow")
+        (word === "nestrow" && (!state.skip || state.nestedTableProperties))
       )
         html += "<br>";
       else if (!hidden() && (word === "par" || word === "line")) html += lineBreak();
