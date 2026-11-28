@@ -295,6 +295,15 @@ describe("document preview contents", () => {
     expect(underlines.pages[0]!.html).toBe(
       "<p data-rtf-whitespace><u>single</u> <u>double</u> plain <u>words</u> <u>dotted</u> <u>wave</u> color</p>",
     );
+    const scripts = openRtf(
+      bytes(
+        String.raw`{\rtf1\ansi{\strike old} \strike on\strike0  off \striked1 dbl\striked0  plain x\super 2\nosupersub+H\sub 2\super+\nosupersub O {\sub scoped} \strike\super both\plain  reset}`,
+      ),
+    );
+    if (scripts.type !== "document") throw new Error("Expected document");
+    expect(scripts.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace><s>old</s> <s>on</s> off <s>dbl</s> plain x<sup>2</sup>+H<sub>2</sub><sup>+</sup>O <sub>scoped</sub> <sup><s>both</s></sup> reset</p>",
+    );
   });
 
   it("breaks lines at the paragraph and line breaks TextEdit writes", () => {
