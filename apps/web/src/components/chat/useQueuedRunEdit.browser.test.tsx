@@ -47,6 +47,8 @@ const mocks = await vi.hoisted(async () => {
     editQueuedRun: vi.fn<(value: unknown) => Promise<{ readonly _tag: "Success" | "Failure" }>>(),
     promoteQueuedRun: vi.fn<(value: unknown) => Promise<{ readonly _tag: "Success" }>>(),
     promoteCommand: {},
+    cancelQueuedRun: vi.fn<(value: unknown) => Promise<{ readonly _tag: "Success" }>>(),
+    cancelCommand: {},
     // The projection's runs per thread, written by each test to stand in for the server.
     threadRuns: Atom.family((_key: string) =>
       Atom.make<ReadonlyArray<RunStatus> | null>(null).pipe(Atom.keepAlive),
@@ -56,7 +58,11 @@ const mocks = await vi.hoisted(async () => {
 
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) =>
-    command === mocks.promoteCommand ? mocks.promoteQueuedRun : mocks.editQueuedRun,
+    command === mocks.promoteCommand
+      ? mocks.promoteQueuedRun
+      : command === mocks.cancelCommand
+        ? mocks.cancelQueuedRun
+        : mocks.editQueuedRun,
 }));
 
 vi.mock("../../hooks/useSettings", () => ({
@@ -73,6 +79,7 @@ vi.mock("../../state/threads", async () => {
       snapshotAtom: () => Atom.make(null),
       editQueuedRun: {},
       promoteQueuedRun: mocks.promoteCommand,
+      cancelQueuedRun: mocks.cancelCommand,
     },
     environmentThreadDetails: {
       statusAtom: () => Atom.make("ready"),
@@ -214,6 +221,7 @@ function view(
 function setup() {
   mocks.editQueuedRun.mockReset();
   mocks.promoteQueuedRun.mockReset();
+  mocks.cancelQueuedRun.mockReset();
   useAttachmentUploadStore.setState({ uploadsByImageId: {} });
   useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
   setRuns(THREAD_A, "queued");
@@ -402,6 +410,27 @@ describe("useQueuedRunEdit", () => {
       );
     },
   );
+
+  it("ends the edit and removes the queued message once it moved to the stash", async () => {
+    const { hook } = setup();
+    mocks.cancelQueuedRun.mockResolvedValue({ _tag: "Success" });
+    const composer: ComposerRefs = {
+      promptRef: { current: "changed" },
+      composerRef: { current: null },
+    };
+    await using _screen = await render(view(THREAD_A, "queued", hook, [], composer));
+    await beginChangedEdit(hook);
+    const editTarget = requireHook(hook).draftTarget;
+
+    await act(() => requireHook(hook).removeEditedRun());
+
+    expect(requireHook(hook).isEditing).toBe(false);
+    expect(useComposerDraftStore.getState().getComposerDraft(editTarget)).toBeNull();
+    expect(mocks.cancelQueuedRun).toHaveBeenCalledExactlyOnceWith({
+      environmentId: THREAD_A.environmentId,
+      input: { threadId: THREAD_A.threadId, runId: RUN },
+    });
+  });
 
   it("saves an effort-only prompt without claiming removed attachments remain", async () => {
     const { hook } = setup();

@@ -232,6 +232,7 @@ export function useQueuedRunEdit(input: {
   } = input;
   const editQueuedRunCommand = useEditQueuedRunCommand();
   const promoteQueuedRun = useAtomCommand(threadEnvironment.promoteQueuedRun);
+  const cancelQueuedRun = useAtomCommand(threadEnvironment.cancelQueuedRun);
   const editKey = scopedThreadKey(routeThreadRef);
   const storedEdit = useAtomValue(queuedRunEdits.atom)[editKey] ?? null;
   const editing = activeThreadId === null ? null : storedEdit;
@@ -396,6 +397,13 @@ export function useQueuedRunEdit(input: {
     clearEditDraft(editing.runId);
     queuedRunEdits.end(editKey);
     focusComposerSoon();
+  });
+  /** The edited text went to the stash, so the queued original must not send. */
+  const removeEditedRun = useStableCallback(() => {
+    if (editing === null) return;
+    const { threadId, runId } = editing;
+    cancelEdit();
+    void cancelQueuedRun({ environmentId, input: { threadId, runId } });
   });
   const removeEditingAttachment = useStableCallback((attachmentId: string) => {
     const removed = editing?.existingAttachments.find(
@@ -567,6 +575,7 @@ export function useQueuedRunEdit(input: {
     removedEditingAttachments,
     beginEdit,
     cancelEdit,
+    removeEditedRun,
     removeEditingAttachment,
     restoreEditingAttachment,
     saveEdit,

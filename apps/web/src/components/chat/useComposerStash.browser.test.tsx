@@ -153,3 +153,101 @@ it("stashes a side chat's prompt when Mod+S is pressed inside its pane", async (
     ]);
   });
 });
+
+function queuedEditInput(
+  target: ReturnType<typeof DraftId.make>,
+  promptRef: { current: string },
+  editingQueuedMessage: NonNullable<StashInput["editingQueuedMessage"]>,
+): StashInput {
+  const environmentId = EnvironmentId.make("stash-env");
+  return {
+    environmentId,
+    composerDraftTarget: target,
+    promptRef,
+    readAttachmentDraft: () => ({ images: [], files: [] }),
+    readTerminalContexts: () => [],
+    routeThreadRef: { environmentId, threadId: ThreadId.make("stash-queued-thread") },
+    projectSelectionRequired: false,
+    pendingUserInputs: [],
+    activePendingProgress: null,
+    prompt: promptRef.current,
+    composerMenuOpen: false,
+    isComposerCollapsedMobile: false,
+    composerPreviewAnnotations: [],
+    composerReviewComments: [],
+    composerThreadContexts: [],
+    attachmentTargetKey: target,
+    isComposerDraftTargetOpen: () => true,
+    composerEditorRef: { current: null },
+    isRevertingCheckpoint: () => false,
+    pendingThreadImportsRef: { current: new Map() },
+    setComposerCursor: vi.fn(),
+    setComposerTrigger: vi.fn(),
+    importContextRecords: () => new Map(),
+    expandMobileComposer: vi.fn(),
+    editingQueuedMessage,
+  };
+}
+
+function pressStashShortcut() {
+  const mod = isMacPlatform(navigator.platform) ? { metaKey: true } : { ctrlKey: true };
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "s", ...mod, bubbles: true, cancelable: true }),
+  );
+}
+
+it("moves an edited queued message to the stash and ends the edit", async () => {
+  const target = DraftId.make("stash-queued-edit");
+  using _draft = {
+    [Symbol.dispose]: () => useComposerDraftStore.getState().clearComposerContent(target),
+  };
+  using _stash = {
+    [Symbol.dispose]: () => {
+      writePromptStashStorageForTest("");
+      removeLocalStorageItem(PROMPT_STASH_STORAGE_KEY);
+    },
+  };
+  const promptRef = { current: "Queued follow-up, edited" };
+  const onMovedToStash = vi.fn();
+  await using _screen = await render(
+    <Harness
+      input={queuedEditInput(target, promptRef, { hasAttachments: false, onMovedToStash })}
+    />,
+  );
+
+  await act(pressStashShortcut);
+
+  await vi.waitFor(() => {
+    expect(usePromptStashStore.getState().entries.map((entry) => entry.prompt)).toEqual([
+      "Queued follow-up, edited",
+    ]);
+  });
+  expect(onMovedToStash).toHaveBeenCalledTimes(1);
+  expect(promptRef.current).toBe("");
+});
+
+it("leaves an edited queued message alone when its attachments cannot be stashed", async () => {
+  const target = DraftId.make("stash-queued-edit-attachments");
+  using _draft = {
+    [Symbol.dispose]: () => useComposerDraftStore.getState().clearComposerContent(target),
+  };
+  using _stash = {
+    [Symbol.dispose]: () => {
+      writePromptStashStorageForTest("");
+      removeLocalStorageItem(PROMPT_STASH_STORAGE_KEY);
+    },
+  };
+  const promptRef = { current: "Queued follow-up with a screenshot" };
+  const onMovedToStash = vi.fn();
+  await using _screen = await render(
+    <Harness
+      input={queuedEditInput(target, promptRef, { hasAttachments: true, onMovedToStash })}
+    />,
+  );
+
+  await act(pressStashShortcut);
+
+  expect(usePromptStashStore.getState().entries).toEqual([]);
+  expect(onMovedToStash).not.toHaveBeenCalled();
+  expect(promptRef.current).toBe("Queued follow-up with a screenshot");
+});

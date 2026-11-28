@@ -492,6 +492,7 @@ export interface ChatComposerProps {
   removedEditingQueuedAttachments?: ReadonlyArray<QueuedAttachmentContextBinding> | undefined;
   onRemoveEditingQueuedAttachment: (attachmentId: string) => void;
   onRestoreEditingQueuedAttachment?: ((attachment: ContractChatAttachment) => void) | undefined;
+  onMoveEditingQueuedMessageToStash?: (() => void) | undefined;
 
   onCompactContext: () => void;
   onSend: (
@@ -635,6 +636,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     removedEditingQueuedAttachments,
     onRemoveEditingQueuedAttachment,
     onRestoreEditingQueuedAttachment,
+    onMoveEditingQueuedMessageToStash,
   } = props;
   const {
     activePendingProgress: incomingPendingProgress,
@@ -2699,6 +2701,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerTrigger,
     importContextRecords,
     expandMobileComposer: expandMobileComposerStable,
+    editingQueuedMessage:
+      activeEditingQueuedAttachments !== null && onMoveEditingQueuedMessageToStash
+        ? {
+            hasAttachments: activeEditingQueuedAttachments.length > 0,
+            onMovedToStash: onMoveEditingQueuedMessageToStash,
+          }
+        : null,
   });
   const hasBlockingComposerTopDrawer = pendingUserInputs.length > 0;
   const composerControlsCollapsed = isComposerCollapsedMobile;
