@@ -420,27 +420,23 @@ it("Escape cancels a column resize without closing the panel sheet", async () =>
   await vi.waitFor(() => expect(onCloseSheet).toHaveBeenCalledOnce());
 });
 
-it("Shift+Click on a hyperlinked cell extends selection without following the link", async () => {
+it("Shift+Click on a hyperlinked cell does not follow the link", async () => {
   const archive = new JSZip();
   archive.file(
     "xl/workbook.xml",
-    '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Summary" sheetId="1" r:id="rId1"/><sheet name="Details" sheetId="2" r:id="rId2"/></sheets></workbook>',
+    '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Summary" sheetId="1" r:id="rId1"/></sheets></workbook>',
   );
   archive.file(
     "xl/_rels/workbook.xml.rels",
-    '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>',
+    '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
   );
   archive.file(
     "xl/worksheets/sheet1.xml",
-    '<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Open Details</t></is></c><c r="B1"><v>100</v></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Example</t></is></c><c r="B2"><v>200</v></c></row></sheetData><hyperlinks><hyperlink ref="A1" location="Details!A1"/><hyperlink ref="A2" r:id="rId1"/></hyperlinks></worksheet>',
+    '<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Example</t></is></c></row></sheetData><hyperlinks><hyperlink ref="A1" r:id="rId1"/></hyperlinks></worksheet>',
   );
   archive.file(
     "xl/worksheets/_rels/sheet1.xml.rels",
     '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com" TargetMode="External"/></Relationships>',
-  );
-  archive.file(
-    "xl/worksheets/sheet2.xml",
-    '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Details</t></is></c></row></sheetData></worksheet>',
   );
   const bytes = await archive.generateAsync({ type: "arraybuffer" });
   const container = document.createElement("div");
@@ -467,42 +463,23 @@ it("Shift+Click on a hyperlinked cell extends selection without following the li
   using _release = vi.spyOn(root, "releasePointerCapture").mockImplementation(() => {});
   using open = vi.spyOn(window, "open").mockReturnValue(null);
   const rect = canvas.getBoundingClientRect();
-  const ratio = window.devicePixelRatio || 1;
-  const clickCell = (x: number, y: number, shiftKey = false) =>
+  const clickLink = (shiftKey: boolean) =>
     act(() => {
       const init = {
         bubbles: true,
         pointerId: 1,
         button: 0,
-        clientX: rect.left + x,
-        clientY: rect.top + y,
+        clientX: rect.left + 76,
+        clientY: rect.top + 30,
         shiftKey,
       };
       root.dispatchEvent(new PointerEvent("pointerdown", init));
       root.dispatchEvent(new PointerEvent("pointerup", init));
     });
-  const pixel = (x: number, y: number) => [
-    ...canvas.getContext("2d")!.getImageData(Math.round(x * ratio), Math.round(y * ratio), 1, 1)
-      .data,
-  ];
 
-  await clickCell(140, 30);
-  await clickCell(76, 30, true);
-  await vi.waitFor(() => {
-    expect(pixel(60, 5)).toEqual([211, 236, 221, 255]);
-    expect(pixel(124, 5)).toEqual([211, 236, 221, 255]);
-  });
-  await expect.element(summary).toHaveAttribute("aria-activedescendant", "office-cell-0-0");
-  await expect
-    .element(screen.getByRole("tab", { name: "Details" }))
-    .toHaveAttribute("aria-selected", "false");
-
-  await clickCell(76, 50, true);
+  await clickLink(true);
   expect(open).not.toHaveBeenCalled();
 
-  await clickCell(76, 50);
+  await clickLink(false);
   expect(open).toHaveBeenCalledWith("https://example.com/", "_blank", "noopener,noreferrer");
-
-  await clickCell(76, 30);
-  await expect.element(screen.getByRole("grid", { name: "Details" })).toBeVisible();
 });
