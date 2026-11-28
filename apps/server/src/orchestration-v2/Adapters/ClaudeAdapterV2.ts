@@ -11836,7 +11836,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 finalAnswer: true,
               });
             }
-            const nativeItemId = message.uuid ?? `stop-hook:${context.providerTurnId}`;
+            const nativeItemId =
+              message.uuid ?? `stop-hook:${context.providerTurnId}:${context.itemOrdinals.size}`;
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver: CLAUDE_PROVIDER,
@@ -11853,7 +11854,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 nativeItemRef: {
                   driver: CLAUDE_PROVIDER,
                   nativeId: nativeItemId,
-                  strength: "strong",
+                  strength: message.uuid === undefined ? "weak" : "strong",
                 },
                 parentItemId: null,
                 ordinal: yield* resolveItemOrdinal(context, nativeItemId),
