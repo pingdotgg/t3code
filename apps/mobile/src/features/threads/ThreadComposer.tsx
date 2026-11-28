@@ -374,7 +374,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
+  // Updating a queued message saves `/usage-limits` as its text.
   const usageLimitsOffered =
+    queuedEdit === null &&
     selectedProviderStatus !== null &&
     hasProviderUsageLimits(
       selectedProviderStatus.driver,
