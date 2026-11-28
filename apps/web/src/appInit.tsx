@@ -170,6 +170,18 @@ function startDocumentTitle(router: AppRouter): void {
               scopeProjectRef(thread.environmentId, thread.projectId),
             ),
           );
+    // A Bot stands alone in the title; its workers sit under the Bot instead of their project.
+    const windowTitleScope = (shell: typeof thread): string | null => {
+      if (shell === null) return null;
+      if (shell.botConfig != null) return "";
+      if (shell.groupedUnderThreadId == null) return null;
+      const leader = appAtomRegistry.get(
+        environmentThreadShells.quietThreadShellAtom(
+          scopeThreadRef(shell.environmentId, shell.groupedUnderThreadId),
+        ),
+      );
+      return leader?.botConfig != null ? leader.title : null;
+    };
     const title = resolveWindowTitle({
       appDisplayName: resolveServerBackedAppDisplayName({
         baseName: APP_BASE_NAME,
@@ -178,7 +190,7 @@ function startDocumentTitle(router: AppRouter): void {
         primaryServerVersion:
           appAtomRegistry.get(primaryServerConfigAtom)?.environment.serverVersion ?? null,
       }),
-      projectTitle: project?.title ?? null,
+      projectTitle: windowTitleScope(thread) ?? project?.title ?? null,
       threadTitle: thread?.title ?? null,
       ...(getClientSettings().screenReaderWindowTitle && {
         screenReader: {

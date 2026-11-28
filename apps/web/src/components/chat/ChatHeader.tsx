@@ -44,6 +44,7 @@ import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { useQuietThreadShell } from "../../state/entities";
+import { BotAvatar } from "../bot/BotAvatar";
 import { BotHeaderAvatar } from "../bot/BotHeaderAvatar";
 import { GuestShareIndicator } from "./GuestShareControls";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
@@ -95,7 +96,15 @@ export const ChatHeader = memo(function ChatHeader({
   const [collapseParentTitle, setCollapseParentTitle] = useState(false);
   const activeThreadRef = scopeThreadRef(activeThreadEnvironmentId, activeThreadId);
   // A Bot works across projects, so its header names the Bot instead of its scratch folder.
-  const isBot = useQuietThreadShell(isServerThread ? activeThreadRef : null)?.botConfig != null;
+  const activeShell = useQuietThreadShell(isServerThread ? activeThreadRef : null);
+  const isBot = activeShell?.botConfig != null;
+  // A Bot's worker belongs to the Bot first, so its breadcrumb leads with the Bot, not the project.
+  const leaderShell = useQuietThreadShell(
+    activeShell?.groupedUnderThreadId == null
+      ? null
+      : scopeThreadRef(activeThreadEnvironmentId, activeShell.groupedUnderThreadId),
+  );
+  const workerOfBot = leaderShell?.botConfig != null ? leaderShell : null;
   const canOperateThread = useEnvironmentScope(
     activeThreadEnvironmentId,
     AuthOrchestrationOperateScope,
@@ -267,7 +276,39 @@ export const ChatHeader = memo(function ChatHeader({
         ariaLabel={gt("Thread breadcrumb")}
         className="flex-1 overflow-clip [overflow-clip-margin:2px]"
       >
-        {activeProject && !isBot ? (
+        {workerOfBot !== null ? (
+          <>
+            <WorkspaceBreadcrumbItem className="shrink">
+              <SharedTooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={gt("Open {bot}", { bot: workerOfBot.title })}
+                    onClick={() => onOpenThread(workerOfBot.id)}
+                    className="inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                  />
+                }
+                label={gt("Open {bot}", { bot: workerOfBot.title })}
+              >
+                <BotAvatar
+                  threadId={workerOfBot.id}
+                  choice={workerOfBot.botConfig?.avatar}
+                  state="idle"
+                  size={16}
+                />
+                <MiddleTruncate
+                  data-slot="workspace-breadcrumb-text"
+                  value={workerOfBot.title}
+                  showTitle={false}
+                  variant="cap-aligned"
+                />
+              </SharedTooltipTrigger>
+            </WorkspaceBreadcrumbItem>
+            <WorkspaceBreadcrumbSeparator>
+              <WorkspaceBreadcrumbText>/</WorkspaceBreadcrumbText>
+            </WorkspaceBreadcrumbSeparator>
+          </>
+        ) : activeProject && !isBot ? (
           <>
             <WorkspaceBreadcrumbItem className="shrink">
               <SharedTooltipTrigger
