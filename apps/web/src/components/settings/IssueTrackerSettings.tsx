@@ -5,6 +5,7 @@ import {
   issueTrackerBindInput,
   issueTrackerBindingFor,
   issueTrackerBindings,
+  issueTrackerConnectFailure,
   issueTrackerScopeOptions,
   issueTrackerSummary,
 } from "@t3tools/client-runtime/state/issue-trackers";
@@ -23,13 +24,14 @@ import { useEnvironmentQuery } from "../../state/query";
 import { issueTrackerEnvironment } from "../../state/issueTrackers";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { LinearIcon } from "../Icons";
+import { JiraIcon, LinearIcon } from "../Icons";
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
 import { CheckboxMark } from "../ui/checkbox";
 import { Button, InlineButton } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
+import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Skeleton } from "../ui/skeleton";
 import { SecretInput } from "./SecretInput";
@@ -41,6 +43,7 @@ type TrackerIcon = ElementType<{ className?: string }>;
 
 /** Web art per tracker kind; the server supplies everything else about a tracker. */
 const TRACKER_ICONS: Partial<Record<string, TrackerIcon>> = {
+  jira: JiraIcon,
   linear: LinearIcon,
 };
 
@@ -132,22 +135,48 @@ function TrackerRow({
     label: `connect ${tracker.displayName}`,
   });
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  // Which form failed, so the new account's error is not shown under the saved one too.
+  const [failure, setFailure] = useState<{
+    readonly adding: boolean;
+    readonly text: string;
+  } | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
+  const fields = tracker.credential.fields ?? [];
+  const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>(tracker.fields ?? {});
 
-  const submit = async (token: string | null, addAccount = false) => {
+  const submit = async (token: string | null, values = drafts, addAccount = false) => {
+    const missing = fields.find((field) => !values[field.key]?.trim());
+    if (token !== null && missing !== undefined) {
+      setFailure({
+        adding: addAccount,
+        text: gt("Enter the {field} first.", { field: missing.label.toLowerCase() }),
+      });
+      return false;
+    }
     setBusy(true);
     setFailure(null);
     const result = await connect({
       environmentId,
-      input: addAccount
-        ? { tracker: tracker.tracker, token, addAccount }
-        : { tracker: tracker.tracker, accountId: tracker.accountId, token },
+      input: {
+        tracker: tracker.tracker,
+        token,
+        ...(addAccount ? { addAccount } : { accountId: tracker.accountId }),
+        ...(token === null || fields.length === 0
+          ? {}
+          : {
+              fields: Object.fromEntries(
+                fields.map((field) => [field.key, values[field.key]!.trim()]),
+              ),
+            }),
+      },
     });
     setBusy(false);
     if (result._tag === "Success") return true;
     const error = squashAtomCommandFailure(result);
-    setFailure(error instanceof Error ? error.message : gt("The request failed."));
+    setFailure({
+      adding: addAccount,
+      text: issueTrackerConnectFailure(error) ?? gt("The request failed."),
+    });
     return false;
   };
 
@@ -195,6 +224,12 @@ function TrackerRow({
         {/* Locked while saving, so an edit made mid-request is not overwritten by the saved value. */}
         <fieldset disabled={!canEdit || busy} className="contents">
           <div className="px-3 pb-4 pt-1 sm:px-4">
+            <CredentialFieldRows
+              tracker={tracker}
+              inputId={inputId}
+              values={drafts}
+              onChange={setDrafts}
+            />
             <SettingsRow
               title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
               description={
@@ -217,7 +252,9 @@ function TrackerRow({
                       </InlineButton>
                     </>
                   ) : null}
-                  {failure ? <span className="block text-destructive">{failure}</span> : null}
+                  {failure && !failure.adding ? (
+                    <span className="block text-destructive">{failure.text}</span>
+                  ) : null}
                 </>
               }
               control={
@@ -256,7 +293,11 @@ function TrackerRow({
               />
             ) : null}
             {canAddAccount ? (
-              <AddAccountRow tracker={tracker} onAdd={(token) => submit(token, true)} />
+              <AddAccountRow
+                tracker={tracker}
+                failure={failure?.adding ? failure.text : null}
+                onAdd={(token, values) => submit(token, values, true)}
+              />
             ) : null}
           </div>
         </fieldset>
@@ -379,15 +420,51 @@ function ProjectBindings({
 }
 
 /** A credential for another account of the tracker, kept beside this one. */
+/** What a tracker needs beside its secret, such as a Jira site and email. */
+function CredentialFieldRows({
+  tracker,
+  inputId,
+  values,
+  onChange,
+}: {
+  readonly tracker: IssueTrackerConnection;
+  readonly inputId: string;
+  readonly values: Readonly<Record<string, string>>;
+  readonly onChange: (values: Readonly<Record<string, string>>) => void;
+}) {
+  return (tracker.credential.fields ?? []).map((field) => (
+    <SettingsRow
+      key={field.key}
+      title={<label htmlFor={`${inputId}-${field.key}`}>{field.label}</label>}
+      control={
+        <div className="w-full min-w-0 @min-[32rem]/settings-row:w-56">
+          <Input
+            id={`${inputId}-${field.key}`}
+            size="sm"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={field.placeholder ?? undefined}
+            value={values[field.key] ?? ""}
+            onChange={(event) => onChange({ ...values, [field.key]: event.target.value })}
+          />
+        </div>
+      }
+    />
+  ));
+}
+
 function AddAccountRow({
   tracker,
+  failure,
   onAdd,
 }: {
   readonly tracker: IssueTrackerConnection;
-  readonly onAdd: (token: string) => Promise<boolean>;
+  readonly failure: string | null;
+  readonly onAdd: (token: string, values: Readonly<Record<string, string>>) => Promise<boolean>;
 }) {
   const gt = useGT();
   const [adding, setAdding] = useState(false);
+  const [values, setValues] = useState<Readonly<Record<string, string>>>({});
   const inputId = `issue-tracker-${tracker.tracker}-add-account`;
   if (!adding) {
     return (
@@ -406,20 +483,38 @@ function AddAccountRow({
     );
   }
   return (
-    <SettingsRow
-      title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
-      description={gt("For the new {tracker} account.", { tracker: tracker.displayName })}
-      control={
-        <SecretInput
-          id={inputId}
-          size="sm"
-          className="w-full min-w-0 @min-[32rem]/settings-row:w-56"
-          value=""
-          onCommit={(next) => {
-            if (next.trim()) void onAdd(next.trim()).then((added) => added && setAdding(false));
-          }}
-        />
-      }
-    />
+    <>
+      <CredentialFieldRows
+        tracker={tracker}
+        inputId={inputId}
+        values={values}
+        onChange={setValues}
+      />
+      <SettingsRow
+        title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
+        description={
+          <>
+            {gt("For the new {tracker} account.", { tracker: tracker.displayName })}
+            {failure ? <span className="block text-destructive">{failure}</span> : null}
+          </>
+        }
+        control={
+          <SecretInput
+            id={inputId}
+            size="sm"
+            className="w-full min-w-0 @min-[32rem]/settings-row:w-56"
+            value=""
+            onCommit={(next) => {
+              if (!next.trim()) return;
+              void onAdd(next.trim(), values).then((added) => {
+                if (!added) return;
+                setAdding(false);
+                setValues({});
+              });
+            }}
+          />
+        }
+      />
+    </>
   );
 }

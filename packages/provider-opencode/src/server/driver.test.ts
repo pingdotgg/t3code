@@ -95,6 +95,7 @@ const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient, 
     displayName: undefined,
     environment: [],
     enabled,
+    usageAccess: Effect.succeed(true),
     config: { ...OpenCodeDriver.defaultConfig(), ...config },
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
 
@@ -1190,12 +1191,35 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     "reads external workspace usage without local credentials, HTTP $status, $reason",
     (scenario) =>
       Effect.gen(function* () {
-        const requested: string[] = [];
-        const replay = replayOpenCodeServer(OPENCODE_2_RESPONSES, "secret", requested);
+        const replay = replayOpenCodeServer(OPENCODE_2_RESPONSES, "secret");
         const server = HttpClient.make((request) => {
           assert.notInclude(request.url, "opencode.ai/zen");
-          if (request.url.endsWith("/api/experimental/usage/limits")) {
+          const path = new URL(request.url).pathname;
+          if (path === "/api/experimental/usage/limits" || path === "/api/provider") {
             assert.strictEqual(request.headers.authorization, "Basic b3BlbmNvZGU6c2VjcmV0");
+            if (Array.from(request.urlParams).length > 0) {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({ message: "Location not found" }, { status: 404 }),
+                ),
+              );
+            }
+            if (path === "/api/provider") {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({
+                    location: { directory: "/work" },
+                    data: [
+                      { id: "opencode", integrationID: "opencode" },
+                      { id: "opencode-go", integrationID: "opencode" },
+                      { id: "github-copilot", integrationID: "github-copilot" },
+                    ],
+                  }),
+                ),
+              );
+            }
             return Effect.succeed(
               HttpClientResponse.fromWeb(
                 request,
@@ -1226,7 +1250,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         if (scenario.reason === undefined) {
           assert.strictEqual(snapshot?.usageLimits?.windows[0]?.usedPercent, 75);
           assert.strictEqual(snapshot?.usageLimits?.externalUsage?.label, "Remote workspace");
-          assert.deepStrictEqual(snapshot?.usageLimits?.windows[0]?.providerIds, []);
+          assert.deepStrictEqual(snapshot?.usageLimits?.windows[0]?.providerIds, ["opencode"]);
         } else {
           assert.deepStrictEqual(snapshot?.usageLimits?.windows, []);
         }
@@ -1322,6 +1346,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       };
       const instance = yield* OpenCodeDriver.create({
         instanceId: ProviderInstanceId.make("opencode-usage-recovery"),
+        usageAccess: Effect.succeed(true),
         displayName: undefined,
         environment: [
           {
@@ -1408,7 +1433,10 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
-  it.effect("reads Go usage from a stored key when the local server has no Console workspace", () =>
+  it.effect.each([
+    { name: "reads Go usage from a stored key", usageAccess: true },
+    { name: "reads no Go key before usage access is allowed", usageAccess: false },
+  ])("$name when the local server has no Console workspace", ({ usageAccess }) =>
     Effect.gen(function* () {
       let goUsageReads = 0;
       const usageStarted = yield* Deferred.make<void>();
@@ -1453,6 +1481,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       };
       const instance = yield* OpenCodeDriver.create({
         instanceId: ProviderInstanceId.make("opencode-go-key-only"),
+        usageAccess: Effect.succeed(usageAccess),
         displayName: undefined,
         environment: [
           {
@@ -1479,6 +1508,11 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       yield* TestClock.adjust("5 seconds");
       const [snapshot] = Array.from(yield* Fiber.join(initial));
       assert.strictEqual(snapshot?.usageLimits?.unavailable, undefined);
+      if (!usageAccess) {
+        assert.strictEqual(snapshot?.usageLimits?.needsUsageAccess, true);
+        assert.strictEqual(goUsageReads, 0);
+        return;
+      }
       assert.deepStrictEqual(
         snapshot?.usageLimits?.windows.map((window) => window.kind),
         ["session", "weekly", "monthly"],

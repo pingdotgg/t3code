@@ -9,8 +9,10 @@ export interface TerminalLinkMatch {
   start: number;
   end: number;
   /**
-   * `text` cut after its `:line:col`. Only the filesystem can tell grep's `./a.js:1:function`
-   * from a name with colons in it, so this stands in when `text` as a whole is not a file.
+   * `text` cut after its `:line:col` or after the `(line)` of a pdb frame, or with its closing
+   * `(line,col)`, `:[line,col]` or `:line` and its number, each read as a position. Only the
+   * filesystem can tell grep's `./a.js:1:function` or MSBuild's `/a.cs(1,2)` from a name that
+   * holds those characters, so this stands in when `text` as a whole is not a file.
    */
   fallback?: { text: string; end: number };
 }
@@ -46,6 +48,17 @@ const QUOTED_FILE_PATH_PATTERN =
 // The `:line` or `:line:col` that grep, ripgrep and Ruby backtraces follow with a colon and text.
 const POSITION_BEFORE_TEXT_PATTERN = /^.+?(?::\d+){1,2}(?=:)/u;
 const POSITIONS_ONLY_PATTERN = /^(?::\d+)+$/u;
+// The `(line)` or `(line,col)` that MSBuild, MSVC and PHP stack frames put right after a file name.
+const PARENTHESIZED_POSITION_PATTERN = /(?<![\\/])\((\d+)(?:,(\d+))?\)$/u;
+// The `:[line]` or `:[line,col]` that Maven's compiler plugin puts there instead.
+const BRACKETED_POSITION_PATTERN = /(?<![\\/]):\[(\d+)(?:,(\d+))?\]$/u;
+// The `:line 29` that .NET stack frames put there; the candidate stops at the space, so the
+// number is read from the text after it.
+const LINE_WORD_PATTERN = /(?<![\\/]):line$/u;
+const NUMBER_AFTER_LINE_WORD_PATTERN = /^ (\d+)\b/u;
+// The `(line)` that pdb follows with the function name, as in `/a.py(3)f()` or `/a.py(3)f()->None`;
+// the candidate stops at the `>`.
+const POSITION_BEFORE_FUNCTION_PATTERN = /^.+[^\\/]\(\d+\)(?=[\p{L}\p{M}\p{N}_]+\(\)-?$)/u;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
 // Paths also drop a trailing colon: compilers end `file:line:col:` with one.
 const TRAILING_PATH_PUNCTUATION_PATTERN = /[.,;:!?]+$/;
@@ -82,6 +95,10 @@ function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
   return output.slice(0, end);
 }
 
+function toPosition(_: string, row: string, column?: string): string {
+  return column === undefined ? `:${row}` : `:${row}:${column}`;
+}
+
 function overlaps(a: { start: number; end: number }, b: { start: number; end: number }): boolean {
   return a.start < b.end && b.start < a.end;
 }
@@ -115,18 +132,42 @@ function collectMatches(
       cut !== undefined && !POSITIONS_ONLY_PATTERN.test(trimmed.slice(cut.length))
         ? cut
         : undefined;
+    const text =
+      kind === "path" && /^:\s+(?:error|warning) TS\d+:/u.test(line.slice(start + trimmed.length))
+        ? trimmed.replace(/\((\d+),(\d+)\)$/, ":$1:$2")
+        : trimmed;
+    const located =
+      kind === "path" && quotedPath === undefined
+        ? text
+            .replace(PARENTHESIZED_POSITION_PATTERN, toPosition)
+            .replace(BRACKETED_POSITION_PATTERN, toPosition)
+            .replace(LINE_WORD_PATTERN, (word) => {
+              const row = NUMBER_AFTER_LINE_WORD_PATTERN.exec(line.slice(start + trimmed.length));
+              return row ? `:${row[1]}` : word;
+            })
+        : text;
+    const frame =
+      kind === "path" && quotedPath === undefined
+        ? POSITION_BEFORE_FUNCTION_PATTERN.exec(text)?.[0]
+        : undefined;
     const candidate: TerminalLinkMatch = {
       kind,
-      text:
-        kind === "path" && /^:\s+(?:error|warning) TS\d+:/u.test(line.slice(start + trimmed.length))
-          ? trimmed.replace(/\((\d+),(\d+)\)$/, ":$1:$2")
-          : trimmed,
+      text,
       start,
       // A position outside quotes spans the closing quote in the terminal buffer.
       end: start + trimmed.length + (rawMatch.groups?.position ? 1 : 0),
-      ...(fallback === undefined
-        ? {}
-        : { fallback: { text: fallback, end: start + fallback.length } }),
+      ...(fallback !== undefined
+        ? { fallback: { text: fallback, end: start + fallback.length } }
+        : located !== text
+          ? { fallback: { text: located, end: start + trimmed.length } }
+          : frame !== undefined
+            ? {
+                fallback: {
+                  text: frame.replace(PARENTHESIZED_POSITION_PATTERN, toPosition),
+                  end: start + frame.length,
+                },
+              }
+            : {}),
     };
 
     const collides = [...existing, ...matches].some((other) => overlaps(candidate, other));
