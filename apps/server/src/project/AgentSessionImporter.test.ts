@@ -705,6 +705,54 @@ it.effect("re-import leaves an import thread that has runs at its stored message
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
+it.effect("re-import brings back an imported thread deleted from the same project", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const first = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "4c9e2f1a-8b7d-4e6c-a5f4-3b2a1c0d9e8f",
+      "claudeAgent",
+    );
+    const threadId = importId(first);
+    yield* (yield* makeImporter([first])).run;
+    const { thread } = yield* projections.getThreadRecords(threadId, []);
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(`${threadId}:deleted`),
+          type: "thread.deleted",
+          threadId,
+          occurredAt: now,
+          payload: { ...thread, deletedAt: now, updatedAt: now },
+        },
+      ],
+    });
+
+    const continued = candidate(
+      CLAUDE_MODEL_SELECTION,
+      first.source.providerSessionId,
+      "claudeAgent",
+    );
+    continued.source.size = 200;
+    continued.source.mtimeMs = 3;
+    continued.thread.messages.push(
+      { role: "user", text: "Continue in the terminal", createdAt: timestamp },
+      { role: "assistant", text: "Continued in the terminal", createdAt: timestamp },
+    );
+    yield* (yield* makeImporter([continued])).run;
+
+    const records = yield* projections.getThreadRecords(threadId, ["messages"]);
+    expect({
+      deletedAt: records.thread.deletedAt,
+      messages: records.messages.map((message) => message.text),
+    }).toEqual({
+      deletedAt: null,
+      messages: ["Fix it", "Fixed", "Continue in the terminal", "Continued in the terminal"],
+    });
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
 it.effect(
   "copies native session history into the imported thread once, retrying a failed read",
   () =>
