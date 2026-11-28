@@ -9539,8 +9539,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         branch: null,
         worktreePath: process.cwd(),
       });
-      const send = (key: string, createdBy: "user" | "agent", start: boolean) =>
+      const send = (
+        key: string,
+        createdBy: "user" | "agent",
+        start: boolean,
+        extra: { idleCompaction?: "beforeCacheExpires"; restartContinuationOfRunId?: RunId } = {},
+      ) =>
         orchestrator.dispatch({
+          ...extra,
           type: "message.dispatch",
           createdBy,
           creationSource: createdBy === "user" ? "web" : "server",
@@ -9589,7 +9595,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
       const end = (
         key: string,
-        status: "completed" | "failed",
+        status: "completed" | "failed" | "cancelled",
         revision = "",
         patch: Partial<OrchestrationV2Run> = {},
       ) =>
@@ -9736,6 +9742,33 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* end("probe", "completed");
       assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("after-stop")).id);
       yield* releasedAfter("after-stop", "probe");
+    }),
+  );
+
+  it.effect("a compaction resumed after a restart releases only what that restart held", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("runtime-layer-held-queue-resumed-compaction");
+      const { send, runFor, end, startedRunIds, awaitHeld } = yield* queueTestThread(threadId);
+      yield* send("failed", "agent", true);
+      yield* send("earlier", "user", false);
+      yield* send("later", "user", false);
+      yield* end("failed", "failed");
+      yield* awaitHeld("later");
+      yield* send("cut", "agent", true);
+      yield* end("cut", "cancelled", "", { restartHeldRunIds: [(yield* runFor("later")).id] });
+      // A second restart cuts the first continuation, which adds no holds of its own.
+      yield* send(" /compact", "agent", true);
+      yield* end(" /compact", "cancelled", "", {
+        restartContinuationOfRunId: (yield* runFor("cut")).id,
+      });
+      // Queued runs are held, so an idle compaction does not wait for them.
+      yield* send("/compact", "agent", true, {
+        idleCompaction: "beforeCacheExpires",
+        restartContinuationOfRunId: (yield* runFor(" /compact")).id,
+      });
+      yield* end("/compact", "completed");
+      assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("later")).id);
+      assert.isTrue((yield* runFor("earlier")).queueHeld);
     }),
   );
 

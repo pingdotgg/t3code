@@ -127,7 +127,7 @@ Queued messages appear at the end of the thread (web/desktop) or above the compo
 - **Edit**: Opens the message and its attachments in the composer without losing your existing draft.
 - **Remove**: Cancels the queued message.
 
-If you stop the agent or the server restarts, queued messages pause in order. Click **Resume** in an empty composer (or send a new message) to continue. When the provider supports native continuation, **Resume** continues without sending a new prompt.
+If you stop the agent or the server restarts, queued messages pause in order. Click **Resume** in an empty composer (or send a new message) to continue. When the provider supports native continuation, **Resume** continues without sending a new prompt. A `/compact` cut by a restart runs again, and messages queued behind it send when it finishes.
 
 ## Commands and skills
 
