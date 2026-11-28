@@ -1,5 +1,6 @@
 import { pipe } from "effect/Function";
 import { IMAGE_DIMENSIONS_HEADER_BYTES } from "@t3tools/shared/imageDimensions";
+import { notebookOutputGroups } from "@t3tools/shared/notebookOutput";
 import { decodeHTMLAttribute } from "entities";
 import type JSZip from "jszip";
 import {
@@ -8,7 +9,7 @@ import {
 } from "@t3tools/shared/terminalOutput";
 
 import { type OfficeWorkerResult, type NotebookCell } from "./officePreviewProtocol";
-import { PreviewError } from "./previewFailure";
+import { isPreviewError, PreviewError } from "./previewFailure";
 import { officeXmlDecoder } from "./officeArchive";
 import {
   archivePath,
@@ -40,9 +41,9 @@ function base64ImageFits(base64: string) {
 function htmlImagesFit(html: string) {
   // HTML attribute entities can obscure a data URL until the client parses it.
   for (const match of decodeHTMLAttribute(html).matchAll(
-    /data:image\/(?:png|jpeg|gif|webp);base64,([a-z\d+/]*={0,2})/gi,
+    /(?<=[\t\n\f\r "'/])src[\t\n\f\r ]*=[\t\n\f\r ]*(["'])[\t\n\f\r ]*data:image\/(?:png|jpeg|gif|webp);base64,([a-z\d+/\t\n\f\r ]*(?:=[\t\n\f\r ]*){0,2})\1|data:image\/(?:png|jpeg|gif|webp);base64,([a-z\d+/]*={0,2})/gi,
   ))
-    if (!base64ImageFits(match[1]!)) return false;
+    if (!base64ImageFits(match[2]?.replaceAll(/[\t\n\f\r ]/g, "") ?? match[3]!)) return false;
   return true;
 }
 async function imageData(archive: JSZip, path: string | null): Promise<string> {
@@ -58,6 +59,7 @@ async function imageData(archive: JSZip, path: string | null): Promise<string> {
   return `data:image/${mime};base64,${await entry.async("base64")}`;
 }
 let markupBytes = 0;
+const odfNotes: string[] = [];
 function reserveMarkup(size: number) {
   markupBytes += size;
   if (markupBytes > 16 * 1024 * 1024) throw new PreviewError({ code: "rendered-too-large" });
@@ -66,18 +68,60 @@ function boundedMarkup(value: string): string {
   reserveMarkup(value.length);
   return value;
 }
+function odfListStart(node: XmlNode | undefined): number | undefined {
+  const start = node?.attrs["text:start-value"]?.trim();
+  if (!start || !/^[+-]?\d+$/.test(start)) return undefined;
+  const value = Number(start);
+  return value >= 0 && value <= 2_147_483_647 ? value : undefined;
+}
+// Writer hides text whose character style sets text:display="none"; a style without it inherits from its
+// parent style, and a span whose styles set nothing inherits from the enclosing span.
+// ODF 1.3 Part 3 §19.510: parent-style-name names a common style, never an automatic one.
+function odfSpanHidden(styles: Map<string, XmlNode>, name = ""): boolean | undefined {
+  let style = styles.get(`auto\n${name}`) ?? styles.get(`span\n${name}`);
+  for (const seen = new Set<XmlNode>(); style && !seen.has(style);) {
+    seen.add(style);
+    const display = find(style, "style:text-properties")[0]?.attrs["text:display"]?.trim();
+    if (display) return display === "none";
+    style = styles.get(`span\n${style.attrs["style:parent-style-name"] ?? ""}`);
+  }
+  return undefined;
+}
 async function odfHtml(
   node: XmlNode,
   archive: JSZip,
+  listStyles: Map<string, XmlNode>,
   imageAlt = "",
   inRepeatedRow = false,
+  list: [string, number] = ["", 0],
+  inOrderedList = false,
+  listEnds = new Map<string, number>(),
+  hidden = false,
 ): Promise<string> {
+  if (
+    hidden &&
+    ["#text", "text:s", "text:tab", "text:line-break", "text:note", "draw:image"].includes(
+      node.name,
+    )
+  )
+    return "";
   if (node.name === "#text") return pipe(text(node), escape, boundedMarkup);
   if (node.name === "text:s" || node.name === "text:tab")
     return boundedMarkup(
       `<span data-odf-whitespace>${node.name === "text:tab" ? "&#9;" : " ".repeat(repeat(node.attrs["text:c"], 100))}</span>`,
     );
   if (node.name === "text:line-break") return boundedMarkup("<br>");
+  if (node.name === "text:note") {
+    const mark = `<sup>${escape(find(node, "text:note-citation", "text:note-body").map(text).join(""))}</sup>`;
+    const [body] = find(node, "text:note-body");
+    const html = body ? (await odfHtml(body, archive, listStyles)).trimStart() : "";
+    odfNotes.push(
+      html.startsWith("<p>")
+        ? `<p>${boundedMarkup(mark)}${html.slice(3)}`
+        : `${boundedMarkup(`<p>${mark}</p>`)}${html}`,
+    );
+    return boundedMarkup(mark);
+  }
   if (node.name === "draw:image") {
     const src = await imageData(
       archive,
@@ -103,7 +147,8 @@ async function odfHtml(
       "text:alphabetical-index-source",
       "text:bibliography-source",
       "table:covered-table-cell",
-    ].includes(node.name)
+    ].includes(node.name) ||
+    (node.name === "text:section" && node.attrs["text:display"]?.trim() === "none")
   )
     return "";
   const childImageAlt =
@@ -115,31 +160,84 @@ async function odfHtml(
           .join(" ")
       : "";
   let children = "";
+  const childHidden =
+    node.name === "text:span"
+      ? (odfSpanHidden(listStyles, node.attrs["text:style-name"]) ?? hidden)
+      : hidden;
   const repeatedRow =
     node.name === "table:table-row"
       ? Number(node.attrs["table:number-rows-repeated"]) > 1
       : inRepeatedRow;
+  // Sub-lists nest directly in list items; a list in a table cell, frame or note restarts at level 1.
+  const nextList: [string, number] =
+    node.name === "text:list"
+      ? [node.attrs["text:style-name"] || list[0], list[1] + 1]
+      : node.name === "text:list-item" || node.name === "text:list-header"
+        ? list
+        : ["", 0];
+  const numberingLevel =
+    node.name === "text:list"
+      ? listStyles
+          .get(nextList[0])
+          ?.children.find(
+            (level) =>
+              level.name === "text:list-level-style-number" &&
+              level.attrs["text:level"] === String(nextList[1]) &&
+              !!level.attrs["style:num-format"],
+          )
+      : undefined;
   for (const child of node.children)
-    children += await odfHtml(child, archive, childImageAlt, repeatedRow);
+    children += await odfHtml(
+      child,
+      archive,
+      listStyles,
+      childImageAlt,
+      repeatedRow,
+      nextList,
+      numberingLevel !== undefined,
+      listEnds,
+      childHidden,
+    );
   const tags: Record<string, string> = {
     "text:p": "p",
     "text:h": "h2",
     "text:span": "span",
-    "text:list": "ul",
+    "text:list": numberingLevel ? "ol" : "ul",
     "text:list-item": "li",
     "table:table": "table",
     "table:table-row": "tr",
     "table:table-cell": "td",
   };
-  const tag = tags[node.name];
-  if (!tag) return children;
+  const level = node.name === "text:h" ? Number(node.attrs["text:outline-level"]) : NaN;
+  const tag =
+    Number.isSafeInteger(level) && level >= 1 ? `h${Math.min(level, 6)}` : tags[node.name];
+  if (!tag || (tag === "span" && childHidden)) return children;
   const count =
     tag === "tr"
       ? repeat(node.attrs["table:number-rows-repeated"], TABLE_PREVIEW_MAX_ROWS)
       : tag === "td"
         ? repeat(node.attrs["table:number-columns-repeated"], TABLE_PREVIEW_MAX_COLUMNS)
         : 1;
-  let spans = "";
+  // A list split by a paragraph continues the one it names, or the last one in its style and level.
+  const styleKey = `${nextList[0]}\n${nextList[1]}`;
+  const continueKey =
+    node.attrs["text:continue-list"] ??
+    (node.attrs["text:continue-numbering"] === "true" ? styleKey : undefined);
+  const continuedFrom = numberingLevel && continueKey ? listEnds.get(continueKey) : undefined;
+  const start =
+    continuedFrom === undefined
+      ? odfListStart(tag === "li" && inOrderedList ? node : numberingLevel)
+      : continuedFrom + 1;
+  if (numberingLevel) {
+    let last = (start ?? 1) - 1;
+    for (const item of node.children)
+      if (item.name === "text:list-item") last = odfListStart(item) ?? last + 1;
+    listEnds.set(styleKey, last);
+    if (node.attrs["xml:id"]) listEnds.set(node.attrs["xml:id"], last);
+  }
+  let attributes = start === undefined ? "" : ` ${tag === "ol" ? "start" : "value"}="${start}"`;
+  const format = numberingLevel?.attrs["style:num-format"] ?? "";
+  if (/^[aAiI]$/.test(format)) attributes += ` type="${format}"`;
   // Spans on repeated cells or rows would multiply past the preview's table limits.
   if (tag === "td" && count === 1)
     for (const [name, attr, max] of [
@@ -148,9 +246,9 @@ async function odfHtml(
     ] as const) {
       const span = Number(node.attrs[attr]);
       if (max > 1 && Number.isSafeInteger(span) && span > 1)
-        spans += ` ${name}="${Math.min(span, max)}"`;
+        attributes += ` ${name}="${Math.min(span, max)}"`;
     }
-  const markup = `<${tag}${spans}>${children}</${tag}>`;
+  const markup = `<${tag}${attributes}>${children}</${tag}>`;
   reserveMarkup(count * markup.length - children.length);
   return markup.repeat(count);
 }
@@ -159,6 +257,7 @@ export async function openDocument(
   kind: "odt" | "ods" | "odp",
 ): Promise<OfficeWorkerResult> {
   markupBytes = 0;
+  odfNotes.length = 0;
   const content = await archive.file("content.xml")?.async("uint8array");
   if (!content?.length) throw new PreviewError({ code: "odf-no-content" });
   const root = parseXml(officeXmlDecoder(content).decode(content));
@@ -180,7 +279,15 @@ export async function openDocument(
             const value =
               cell.name === "table:covered-table-cell"
                 ? ""
-                : find(cell, "text:p", "office:annotation").map(text).join("\n") ||
+                : cell.children
+                    // Shapes anchored to a cell float over the sheet; their text is not the cell's value.
+                    .filter(
+                      (child) =>
+                        child.name !== "office:annotation" && !child.name.startsWith("draw:"),
+                    )
+                    .flatMap((child) => (child.name === "text:p" ? [child] : find(child, "text:p")))
+                    .map(text)
+                    .join("\n") ||
                   cell.attrs["office:value"] ||
                   cell.attrs["office:date-value"] ||
                   cell.attrs["office:time-value"] ||
@@ -228,11 +335,38 @@ export async function openDocument(
   }
   const pages = kind === "odp" ? find(root, "draw:page") : find(root, "office:text");
   if (!pages.length || pages.length > 500) throw new PreviewError({ code: "odf-page-count" });
+  const listStyles = new Map<string, XmlNode>();
+  if (find(root, "text:list").length || kind === "odt") {
+    // Named styles live in styles.xml; it only decides numbering and hidden text, so a bad part loses both.
+    let named: XmlNode[] = [];
+    const styles = await archive.file("styles.xml")?.async("uint8array");
+    try {
+      if (styles?.length)
+        named = find(parseXml(officeXmlDecoder(styles).decode(styles)), "office:styles");
+    } catch (cause) {
+      if (!isPreviewError(cause) && !(cause instanceof RangeError)) throw cause;
+    }
+    for (const style of [...named, root].flatMap((part) =>
+      find(part, "text:list-style", "office:body"),
+    ))
+      if (style.attrs["style:name"]) listStyles.set(style.attrs["style:name"], style);
+    if (kind === "odt")
+      for (const [prefix, part] of [
+        ...named.map((part) => ["span", part] as const),
+        ["auto", root] as const,
+      ])
+        for (const style of find(part, "style:style", "office:body"))
+          if (style.attrs["style:family"] === "text" && style.attrs["style:name"])
+            listStyles.set(`${prefix}\n${style.attrs["style:name"]}`, style);
+  }
   const rendered = [];
   for (const page of pages) {
+    const html = await odfHtml(page, archive, listStyles);
     rendered.push({
       title: page.attrs["draw:name"] || undefined,
-      html: await odfHtml(page, archive),
+      html: odfNotes.length
+        ? `${html}${boundedMarkup("<hr>")}${odfNotes.splice(0).join("")}`
+        : html,
     });
   }
   return { type: "document", navigation: kind === "odp" ? "slide" : "page", pages: rendered };
@@ -267,8 +401,9 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   const notebook = record(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
   if (notebook.nbformat !== 4 || !Array.isArray(notebook.cells) || notebook.cells.length > 500)
     throw new PreviewError({ code: "notebook-unsupported" });
+  const metadata = record(notebook.metadata);
   const language =
-    String(record(record(notebook.metadata).language_info).name ?? "")
+    String(record(metadata.language_info).name || record(metadata.kernelspec).language || "")
       .replaceAll(/[^a-z\d+#-]/gi, "")
       .slice(0, 40) || "text";
   const cells: NotebookCell[] = notebook.cells.map((value) => {
@@ -278,38 +413,41 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
     return {
       kind: cell.cell_type === "markdown" ? "markdown" : cell.cell_type === "code" ? "code" : "raw",
       source: notebookText(cell.source),
-      outputs: outputs
-        .map((value) => {
-          const output = record(value);
-          const data = record(output.data);
-          for (const mime of ["image/png", "image/jpeg", "image/gif", "image/webp"]) {
-            if (data[mime]) {
-              const base64 = notebookText(data[mime], 4 * 1024 * 1024).replaceAll(/\s/g, "");
-              if (base64ImageFits(base64))
-                return { kind: "image" as const, text: `data:${mime};base64,${base64}` };
-            }
+      outputs: Array.from(notebookOutputGroups(outputs, notebookText), (group) => {
+        if (group.kind === "stream") {
+          return {
+            kind: "text" as const,
+            text: terminalOutputCollapseRedraws(terminalOutputPlainText(group.text)),
+          };
+        }
+        const output = record(group.output);
+        const data = record(output.data);
+        for (const mime of ["image/png", "image/jpeg", "image/gif", "image/webp"]) {
+          if (data[mime]) {
+            const base64 = notebookText(data[mime], 4 * 1024 * 1024).replaceAll(/\s/g, "");
+            if (base64ImageFits(base64))
+              return { kind: "image" as const, text: `data:${mime};base64,${base64}` };
           }
-          const html = notebookText(data["text/html"]);
-          if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
-          const plain = terminalOutputPlainText(
-            notebookText(
-              output.text ??
-                data["text/plain"] ??
-                data["text/markdown"] ??
-                tracebackLines(output.traceback),
-            ),
-          );
-          const text =
-            output.output_type === "stream" ? terminalOutputCollapseRedraws(plain) : plain;
-          if (text.trim() || output.output_type !== "error") return { kind: "text" as const, text };
-          const summary = [output.ename, output.evalue]
-            .filter((part) => typeof part === "string")
-            .map((part) => terminalOutputPlainText(notebookText(part)))
-            .filter((part) => part.trim().length > 0)
-            .join(": ");
-          return { kind: "text" as const, text: summary };
-        })
-        .filter((output) => output.text.trim().length > 0),
+        }
+        const html = notebookText(data["text/html"]);
+        if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
+        const plain = terminalOutputPlainText(
+          notebookText(
+            output.text ??
+              data["text/plain"] ??
+              data["text/markdown"] ??
+              tracebackLines(output.traceback),
+          ),
+        );
+        const text = output.output_type === "stream" ? terminalOutputCollapseRedraws(plain) : plain;
+        if (text.trim() || output.output_type !== "error") return { kind: "text" as const, text };
+        const summary = [output.ename, output.evalue]
+          .filter((part) => typeof part === "string")
+          .map((part) => terminalOutputPlainText(notebookText(part)))
+          .filter((part) => part.trim().length > 0)
+          .join(": ");
+        return { kind: "text" as const, text: summary };
+      }).filter((output) => output.text.trim().length > 0),
     };
   });
   return { type: "notebook", language, cells };
@@ -339,6 +477,9 @@ const RTF_CHARACTERS = new Map([
   ["rtlmark", "\u200f"],
 ]);
 
+const RTF_UNDERLINE_WORD =
+  /^(?:ul|uld|uldash|uldashd|uldashdd|uldb|ulhair|ulhwave|ulldash|ulth|ulthd|ulthdash|ulthdashd|ulthdashdd|ulthldash|ululdbwave|ulw|ulwave)$/;
+
 const rtfCodePageLabel = (codePage: number) =>
   (
     {
@@ -367,6 +508,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     skip: false,
     deleted: false,
     hiddenText: false,
+    inTable: false,
     bold: false,
     italic: false,
     underline: false,
@@ -386,13 +528,15 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   let completedLength = 0;
   const finishPage = () => {
     if (pages.length >= 500) throw new PreviewError({ code: "rtf-too-many-pages" });
-    pages.push({ title: undefined, html: `<p>${html}</p>` });
+    pages.push({ title: undefined, html: `<p data-rtf-whitespace>${html}</p>` });
     completedLength += html.length;
     html = "";
   };
   let run = "";
   let fallback = 0;
   const hidden = () => state.skip || state.deleted || state.hiddenText;
+  // A table cell's lines share its column, so the row stays on one line.
+  const lineBreak = () => (state.inTable ? " " : "<br>");
   const encoded = new Uint8Array(bytes.byteLength);
   let encodedLength = 0;
   const decodeBytes = () => {
@@ -460,7 +604,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         continue;
       }
       if (next === "*") {
-        state.skip = true;
+        // Shape instructions are an optional destination, but a text box keeps its text there.
+        if (!/^\*[\r\n]*\\shpinst(?![a-z])/i.test(source.slice(i, i + 16))) state.skip = true;
         i++;
         continue;
       }
@@ -471,7 +616,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         // A backslash before a line break is \par; TextEdit ends paragraphs this way.
         else if (next === "\n" || next === "\r") {
           if (fallback > 0) fallback--;
-          else if (!hidden()) html += "<br>";
+          else if (!hidden()) html += lineBreak();
         }
         i++;
         continue;
@@ -531,6 +676,9 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
           "pict",
           "object",
           "fldinst",
+          // Shape properties, and the drawing that repeats a shape for older readers.
+          "sp",
+          "shprslt",
           "header",
           "headerl",
           "headerr",
@@ -554,10 +702,12 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         }
       } else if (word === "b") state.bold = arg !== 0;
       else if (word === "i") state.italic = arg !== 0;
-      else if (word === "ul") state.underline = arg !== 0;
+      else if (RTF_UNDERLINE_WORD.test(word!)) state.underline = arg !== 0;
       else if (word === "ulnone") state.underline = false;
       else if (word === "deleted") state.deleted = arg !== 0;
       else if (word === "v") state.hiddenText = arg !== 0;
+      // \intbl is a paragraph property, so it lasts until \pard resets the paragraph.
+      else if (word === "intbl" || word === "pard") state.inTable = word === "intbl";
       else if (word === "plain")
         state = {
           ...state,
@@ -575,16 +725,13 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         if (arg !== 0x2028) emit(String.fromCharCode(arg < 0 ? arg + 65536 : arg));
         else if (!hidden()) {
           flush();
-          html += "<br>";
+          html += lineBreak();
         }
         fallback = state.uc;
       } else if (!hidden() && word === "page") finishPage();
-      else if (word === "cell") emit("\t", state.skip);
-      else if (
-        (!state.skip && word === "row") ||
-        (!hidden() && (word === "par" || word === "line"))
-      )
-        html += "<br>";
+      else if (word === "cell" || word === "nestcell") emit("\t", state.skip);
+      else if (!state.skip && word === "row") html += "<br>";
+      else if (!hidden() && (word === "par" || word === "line")) html += lineBreak();
       // Writers usually end the paragraph before these breaks; a second break would add a blank line.
       else if (!hidden() && (word === "sect" || word === "column")) {
         if (html && !html.endsWith("<br>")) html += "<br>";

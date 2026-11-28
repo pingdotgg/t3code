@@ -1,0 +1,103 @@
+// Polish. Same shape as `en` (see `Messages`). `{name}` placeholders survive translation.
+import type { Messages } from "./en";
+
+export const pl: Messages = {
+  layout: {
+    defaultTitle: "T3 Code",
+    defaultDescription: "T3 Code. Open source'owa płaszczyzna sterowania dla agentów kodujących.",
+    socialImageAlt:
+      "T3 Code: open source'owa płaszczyzna sterowania dla agentów kodujących, z Claude Code, Codex, Cursor, OpenCode, Grok i Antigravity.",
+    homeLabel: "Strona główna T3 Code",
+    download: "Pobierz",
+    starsLabel: "Oznacz T3 Code gwiazdką na GitHubie, {stars} gwiazdek",
+    githubStars: "{stars} gwiazdek na GitHubie",
+    language: "Język",
+    mitLicensed: "Licencja MIT",
+    iosApp: "Aplikacja na iOS",
+    androidApp: "Aplikacja na Androida",
+    terms: "Warunki",
+    privacy: "Prywatność",
+    security: "Bezpieczeństwo",
+  },
+  home: {
+    title: "T3 Code | Open source'owa płaszczyzna sterowania dla agentów kodujących",
+    description: "T3 Code. Open source'owa płaszczyzna sterowania dla agentów kodujących.",
+    heroTitle: ["Open source'owa", "płaszczyzna sterowania", "dla agentów kodujących."],
+    heroSub:
+      "Orkiestruj Claude Code, Codex, Antigravity, OpenCode, Cursor i Grok z jednego miejsca. Używaj własnej subskrypcji. Sforkuj całość.",
+    downloadForMac: "Pobierz na macOS",
+    downloadForWindows: "Pobierz na Windows",
+    downloadForLinux: "Pobierz na Linuksa",
+    downloadForIos: "Pobierz na iOS",
+    downloadForAndroid: "Pobierz na Androida",
+    sourceLink: "Ukradnij nasz kod (legalnie)",
+    alsoOnPhone: "Dostępne też na telefonie:",
+    screenshotAlt: "T3 Code uruchamiający subagenty Claude, Codex, Muse i Gemini w jednym wątku",
+    endorsementsTitle: "Tolerowany przez ponad {users} programistów",
+    endorsementsSub: "Niektórzy nawet tweetowali o tym.",
+    endorsementsLabel: "Opinie programistów",
+    readPost: "Przeczytaj post {handle} na X",
+    harnessTitle: "Przynieś własną subskrypcję",
+    harnessBody:
+      "T3 Code nie odsprzedaje tokenów. Podłącz Claude Code, Codex, Antigravity, OpenCode, Cursor lub Grok z danymi uwierzytelniającymi, które już masz. My nimi orkiestrujemy, a Ty zachowujesz swój plan.",
+    googleSignIn: "Logowanie Google",
+    harnessPoints: [
+      "Bez odsprzedaży kluczy. Bez limitów.",
+      "Zmieniaj modele w trakcie wątku.",
+      "Kolejne harnessy wypuszczamy co tydzień.",
+    ],
+    gitVisualLabel:
+      "Ilustracja przepływu Git w T3 Code: przegląd diffa, commit i push zmian oraz otwarcie pull requesta.",
+    prReady: "Gotowy",
+    prCommits: "3 commity",
+    viewDiff: "Zobacz diff",
+    openPullRequest: "Otwórz pull request",
+    commitPush: "Commit i push",
+    gitTitle: "Jeden przycisk: commit, push i PR.",
+    gitBody:
+      "Każdy wątek agenta pisze na własnej gałęzi. Gdy wszystko wygląda dobrze, jeden przycisk otwiera PR na GitHubie z wygenerowanym tytułem, opisem i listą zmian. Bez tańczenia w terminalu.",
+    gitPoints: [
+      "Automatycznie generowane tytuły i opisy PR",
+      "Przegląd diffa przed pushem",
+      "Draft PR, stack PR, amend PR",
+      "Działa z Twoim istniejącym logowaniem do GitHuba",
+    ],
+    openTitle: "Nie podoba Ci się coś? Sforkuj to.",
+    openPoints: [
+      { lead: "Zmień interfejs.", rest: "Przystosuj każdy ekran do własnego gustu." },
+      { lead: "Dodaj agenta.", rest: "Podłącz własne narzędzia, modele i przepływy." },
+      {
+        lead: "Wydaj własną wersję.",
+        rest: "Hostuj samodzielnie albo dystrybuuj jako swój produkt.",
+      },
+    ],
+    stars: "{stars} gwiazdek",
+    forkOnGithub: "Forkuj na GitHubie",
+    browseSource: "Przeglądaj kod źródłowy",
+    ctaTitle: "Twoi agenci zasługują na coś lepszego niż terminal.",
+    ctaSub:
+      "T3 Code jest darmowy, open source i szybki. Zainstaluj go, podłącz harness, za który już płacisz, i pozwól agentom zabrać się do pracy.",
+    otherPlatforms: "Inne platformy",
+  },
+  download: {
+    title: "Pobierz T3 Code na macOS, Windows i Linux | T3 Code",
+    description:
+      "Pobierz oficjalną aplikację desktopową T3 Code na macOS, Windows lub Linux albo pobierz aplikacje na iOS i Androida. t3.codes to jedyna oficjalna strona pobierania.",
+    breadcrumb: "Pobierz",
+    heading: "Pobierz T3 Code",
+    channelLabel: "Kanał wydań",
+    stable: "Stabilna",
+    nightly: "Nightly",
+    intelNote: "Masz Maca z Intelem? {link}.",
+    intelLink: "Pobierz wersję x64",
+    armNote: "Masz ARM? Pobierz arm64: {deb} lub {appimage}.",
+    mobile: "Mobile",
+    iphoneIpad: "iPhone i iPad",
+    terminal: "Terminal",
+    tryOnce: "Albo wypróbuj bez instalacji:",
+    allBuilds: "Wszystkie wersje znajdziesz na: {link}",
+    releasesPage: "stronie wydań na GitHubie",
+    builtAgo: "Zbudowano {age}",
+    releasesFallback: "Wydania",
+  },
+};

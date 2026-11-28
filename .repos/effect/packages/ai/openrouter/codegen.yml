@@ -43,6 +43,8 @@ patches:
   - '[{"op":"remove","path":"/components/schemas/ChatToolCall/required/0"},{"op":"remove","path":"/components/schemas/ChatStreamToolCall/required/0"}]'
   # Make finish_reason optional (only present on final streaming chunk)
   - '[{"op":"remove","path":"/components/schemas/ChatStreamChoice/required/1"}]'
+  # OpenRouter reports the serving provider on streamed chat chunks.
+  - '[{"op":"add","path":"/components/schemas/ChatStreamChunk/properties/provider","value":{"anyOf":[{"type":"string"},{"type":"null"}]}}]'
 replacements:
   # Help TypeScript serialize oversized generated schema values
   - from: "export const StreamEvents = Schema.Union(["

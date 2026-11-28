@@ -5,11 +5,12 @@ import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments"
 import type { OfficePreviewKind } from "@t3tools/shared/filePreview";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useContext, useEffect, useRef, useState } from "react";
 import { m } from "~/i18n/messages";
 import { useStableCallback } from "~/hooks/useStableCallback";
 
 import VirtualTablePreview from "./VirtualTablePreview";
+import { PreviewPositionKey } from "./previewPosition";
 
 import {
   Select,
@@ -100,6 +101,7 @@ function ExtendedOfficeViewer(props: {
   const [count, setCount] = useState(0);
   const [fileSize, setFileSize] = useState(props.sizeBytes);
   const [page, setPage] = useState(0);
+  const filePositionKey = useContext(PreviewPositionKey);
   const workerRef = useRef<Worker | null>(null);
   const submitPassword = useRef<((password: string) => void) | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -357,19 +359,23 @@ function ExtendedOfficeViewer(props: {
               <T>This sheet is empty.</T>
             </p>
           ) : (
-            <VirtualTablePreview
-              key={page}
-              name={`${props.name}: ${sheetName(page)}`}
-              count={sheet.rowCount}
-              columns={sheet.columns}
-              getRows={(index) => (index === 0 ? sheet.rows : sheetPages.get(`${page}:${index}`))}
-              loadPage={(index) => {
-                const key = `${page}:${index}`;
-                if (pendingPages.current.has(key)) return;
-                pendingPages.current.add(key);
-                workerRef.current?.postMessage({ type: "sheet-page", sheet: page, index });
-              }}
-            />
+            <PreviewPositionKey
+              value={filePositionKey === null ? null : `${filePositionKey}:${page}`}
+            >
+              <VirtualTablePreview
+                key={page}
+                name={`${props.name}: ${sheetName(page)}`}
+                count={sheet.rowCount}
+                columns={sheet.columns}
+                getRows={(index) => (index === 0 ? sheet.rows : sheetPages.get(`${page}:${index}`))}
+                loadPage={(index) => {
+                  const key = `${page}:${index}`;
+                  if (pendingPages.current.has(key)) return;
+                  pendingPages.current.add(key);
+                  workerRef.current?.postMessage({ type: "sheet-page", sheet: page, index });
+                }}
+              />
+            </PreviewPositionKey>
           )}
         </>
       ) : (

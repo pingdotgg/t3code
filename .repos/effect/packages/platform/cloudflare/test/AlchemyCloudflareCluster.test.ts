@@ -3,7 +3,7 @@ import type { DurableObjectProgramState } from "@effect/platform-cloudflare/Clou
 import { makeClusterSingletonProgram } from "@effect/platform-cloudflare/CloudflareDurableObjectPrograms"
 import { inertClusterHandle, makeClusterHandle } from "@effect/platform-cloudflare/internal/alchemyCluster"
 import { assert, describe, it } from "@effect/vitest"
-import { Context, Cron, Effect, Exit, Fiber } from "effect"
+import { Cause, Context, Cron, Effect, Exit, Fiber, Layer } from "effect"
 import { ClusterCron, Singleton } from "effect/cluster"
 import { Sharding } from "effect/cluster/Sharding"
 import { TestClock } from "effect/testing"
@@ -214,6 +214,54 @@ describe("AlchemyCloudflareCluster", () => {
       )
     })
   }
+
+  const makeRestrictedHandle = (namespace: object) =>
+    makeClusterHandle({
+      entities: [],
+      layer: Layer.empty,
+      jurisdiction: "eu",
+      env: {
+        ClusterEntity: namespace,
+        ClusterWorkflow: namespace,
+        ClusterDurableQueue: namespace,
+        ClusterSingleton: namespace
+      }
+    })
+
+  it.effect("restricts the namespace bindings to the jurisdiction", () =>
+    Effect.gen(function*() {
+      const jurisdictions: Array<string> = []
+      const cluster = yield* makeRestrictedHandle({
+        getByName: () => undefined,
+        jurisdiction: (j: string) => {
+          jurisdictions.push(j)
+          return unusedNamespace
+        }
+      })
+      assert.deepStrictEqual(jurisdictions, ["eu", "eu", "eu", "eu"])
+      assert.deepStrictEqual(
+        [cluster.entityNamespace, cluster.workflowNamespace, cluster.queueNamespace, cluster.singletonNamespace],
+        [unusedNamespace, unusedNamespace, unusedNamespace, unusedNamespace] as any
+      )
+    }))
+
+  it.effect("falls back to unrestricted bindings only for workerd's unsupported-jurisdiction error", () =>
+    Effect.gen(function*() {
+      const failingNamespace = (error: Error) => ({
+        getByName: () => undefined,
+        jurisdiction: () => {
+          throw error
+        }
+      })
+      const unsupported = failingNamespace(new Error("Jurisdiction restrictions are not implemented in workerd."))
+      const cluster = yield* makeRestrictedHandle(unsupported)
+      assert.strictEqual(cluster.entityNamespace, unsupported as any)
+
+      const unexpected = new Error("Wrapped error: Jurisdiction restrictions are not implemented in workerd.")
+      const exit = yield* Effect.exit(makeRestrictedHandle(failingNamespace(unexpected)))
+      assert.isTrue(Exit.isFailure(exit))
+      if (Exit.isFailure(exit)) assert.strictEqual(Cause.squash(exit.cause), unexpected)
+    }))
 
   it.effect("the plan-time handle is inert", () =>
     Effect.gen(function*() {
