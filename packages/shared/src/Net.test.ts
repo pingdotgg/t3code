@@ -3,7 +3,7 @@ import * as NodeOS from "node:os";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { vi } from "vite-plus/test";
+import { expect, vi } from "vite-plus/test";
 
 import * as NetService from "./Net.ts";
 
@@ -89,6 +89,36 @@ it.layer(NetService.layer)("NetService", (it) => {
             spy.mockRestore();
           }
         }),
+    );
+
+    it.effect("fails automatic port selection when the requested IPv6 bind is unavailable", () =>
+      Effect.gen(function* () {
+        const net = yield* NetService.NetService;
+        const preferred = yield* net.reserveLoopbackPort();
+        const listen = NodeNet.Server.prototype.listen;
+        const spy = vi.spyOn(NodeNet.Server.prototype, "listen").mockImplementation(function (
+          this: NodeNet.Server,
+          ...args
+        ) {
+          if (args[0]?.host === "::" || args[0]?.host === "::1") {
+            const code = "EAFNOSUPPORT";
+            process.nextTick(() => this.emit("error", Object.assign(new Error(code), { code })));
+            return this;
+          }
+          return listen.apply(this, args);
+        });
+        try {
+          const outcome = yield* net.findAvailablePort(preferred, "::").pipe(
+            Effect.match({
+              onFailure: () => "bind unavailable",
+              onSuccess: () => "port selected",
+            }),
+          );
+          expect(outcome).toBe("bind unavailable");
+        } finally {
+          spy.mockRestore();
+        }
+      }),
     );
 
     it.effect("isPortAvailableOnLoopback reports false for an occupied port", () =>
