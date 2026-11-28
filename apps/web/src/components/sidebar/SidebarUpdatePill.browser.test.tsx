@@ -150,6 +150,30 @@ describe("SidebarUpdatePill update everything", () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(button.element()));
   });
 
+  it("shows the local release notes inside the update everything dialog", async () => {
+    setup(nightlyUpdate(RELEASE_NOTES), {
+      hasUpdates: true,
+      rows: [
+        {
+          environmentId: null,
+          label: "This machine",
+          app: "this-app",
+          skipped: null,
+          providers: ["Claude"],
+        },
+      ],
+    });
+    await using screen = await render(<SidebarUpdatePill />);
+    await userEvent.click(screen.getByRole("button", { name: "Update everything" }));
+
+    const dialog = page.getByRole("alertdialog");
+    await expect.element(dialog.getByRole("region", { name: "Release notes" })).toBeVisible();
+    await expect.element(dialog.getByText("Faster sidebar.")).toBeVisible();
+    await expect
+      .element(dialog.getByRole("link", { name: "View release on GitHub" }))
+      .toBeVisible();
+  });
+
   it("exposes the machines as a table with each value in its column", async () => {
     const label = "DESKTOP-WORKSTATION-UPSTAIRS";
     setup(null, {
