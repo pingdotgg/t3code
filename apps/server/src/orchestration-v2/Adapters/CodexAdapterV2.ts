@@ -5590,6 +5590,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 nativeTurnId: payload.turn.id,
                 startedAt: codexTimestamp(payload.turn.startedAt),
               });
+              // Its input is the run's first selection; Codex runs it on what it accepted since.
+              if (goalHold.context.appliedServiceTier !== undefined) {
+                next.appliedServiceTier = goalHold.context.appliedServiceTier;
+              }
+              if (goalHold.context.appliedEffort !== undefined) {
+                next.appliedEffort = goalHold.context.appliedEffort;
+              }
               const goalRun = continuedRuns.get(goalHold.context.providerTurnId) ?? [
                 goalHold.context,
               ];
@@ -8512,9 +8519,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             adapterOptions.resolveRuntime === undefined
               ? getCodexServiceTierOptionValue(modelSelection)
               : undefined;
-          const turns = Array.from((yield* Ref.get(activeTurns)).values()).filter(
-            (turn) => turn.providerThread.nativeThreadRef?.nativeId === threadId,
-          );
+          // Between goal turns no turn is active; the held one stands in for the next.
+          const held = goalHolds.get(threadId)?.context;
+          const turns = [
+            ...Array.from((yield* Ref.get(activeTurns)).values()).filter(
+              (turn) => turn !== held && turn.providerThread.nativeThreadRef?.nativeId === threadId,
+            ),
+            ...(held === undefined ? [] : [held]),
+          ];
           // An effort picked with another model waits for the turn that starts that model.
           const effortTurns = turns.filter(
             (turn) => turn.input.modelSelection.model === modelSelection?.model,

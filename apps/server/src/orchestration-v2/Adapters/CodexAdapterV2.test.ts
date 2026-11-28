@@ -13385,6 +13385,124 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
+    it.effect.each([{ picked: "during a goal turn" }, { picked: "between goal turns" }] as const)(
+      "an effort picked $picked reaches Codex, and the next goal turn can change it back",
+      ({ picked }) =>
+        Effect.gen(function* () {
+          const prompt = "Keep going";
+          const firstPick = request(
+            4,
+            "thread/settings/update",
+            { threadId: nativeThreadId, effort: "high" },
+            {},
+          );
+          const transcript = makeCodexReplayTranscript({
+            scenario: `goal-effort-${picked.replaceAll(" ", "-")}`,
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: "goal-turn-1",
+                prompt,
+                effort: "low",
+              }),
+              notification("goal active", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                turnId: "goal-turn-1",
+                goal: codexGoal("active", 10),
+              }),
+              ...(picked === "during a goal turn" ? firstPick : []),
+              notification("first turn done", "turn/completed", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "goal-turn-1", status: "completed" }),
+              }),
+              notification("goal accounted", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                turnId: null,
+                goal: codexGoal("active", 11),
+              }),
+              ...(picked === "between goal turns" ? firstPick : []),
+              notification("continuation", "turn/started", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "goal-turn-2", status: "inProgress" }),
+              }),
+              // The continuation's input still says low; Codex runs it on high.
+              ...request(
+                5,
+                "thread/settings/update",
+                { threadId: nativeThreadId, effort: "low" },
+                {},
+              ),
+              notification("goal complete", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                turnId: "goal-turn-2",
+                goal: codexGoal("complete", 1200),
+              }),
+              notification("continuation done", "turn/completed", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "goal-turn-2", status: "completed" }),
+              }),
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          const selection = (effort: string) => ({
+            ...CODEX_TEST_MODEL_SELECTION,
+            options: [{ id: "reasoningEffort", value: effort }],
+          });
+          const pick = (effort: string) =>
+            harness.runtime.applyModelSelection!({
+              providerThread: harness.providerThread,
+              modelSelection: selection(effort),
+            });
+          yield* harness.runtime.startTurn({
+            ...makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("goal-effort-attempt"),
+              text: prompt,
+            }),
+            modelSelection: selection("low"),
+          });
+          yield* harness.until(() =>
+            harness.events.some(
+              (event) =>
+                event.type === "provider_thread.updated" &&
+                event.providerThread.goal?.tokensUsed ===
+                  (picked === "during a goal turn" ? 10 : 11),
+            ),
+          );
+          yield* pick("high");
+          const secondTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+            nativeTurnId: "goal-turn-2",
+          });
+          yield* harness.until(() =>
+            harness.events.some(
+              (event) =>
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.id === secondTurnId &&
+                event.providerTurn.status === "running",
+            ),
+          );
+          yield* pick("low");
+          yield* harness.firstTerminal;
+          assert.deepEqual(
+            harness.terminalEvents().map((event) => [event.providerTurnId, event.status]),
+            [[secondTurnId, "completed"]],
+          );
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+    );
+
     it.effect("rejects an oversized /goal objective before any goal request", () =>
       Effect.gen(function* () {
         const oversized = "x".repeat(4001);
