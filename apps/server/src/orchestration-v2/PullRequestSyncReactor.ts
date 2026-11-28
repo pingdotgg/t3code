@@ -57,9 +57,10 @@ const FAILED_READ_BACKOFF_MS = 60 * 1_000;
 
 // Where a shell starts a command, past `NAME=value` assignments and wrappers like `timeout 60`.
 // A create command anywhere else, as in `echo "gh pr create"`, is text, not a command that runs.
-// A keyword may also follow `]]`, `))` or a brace group's `}`; not a lone `)`, which `$(…)` ends too.
-const COMMAND_START =
-  "(?:(?:^|[;&|({`\\n])\\s*(?:(?:do|then|else)\\s+)?|(?:\\]\\]|\\)\\)|(?<![^\\s;&])\\})\\s*(?:do|then|else)\\s+)(?:(?:\\w+=\\S*|env|time|nohup|timeout\\s+\\S+)\\s+)*";
+// A compound header (`[[...]]`, `((...))`, `{ ...; }`) may also precede `do`/`then`/`else` without `;`.
+const COMPOUND_HEADER =
+  "(?:(?:for|if|elif|while|until|then|else|do)\\s+)?(?:!\\s+)?(?:\\[\\[(?:[^\\]]|\\](?!\\]))*\\]\\]|\\(\\((?:[^)]|\\)(?!\\)))*\\)\\)|\\{\\s[^{}]*[;&\\n]\\s*\\})";
+const COMMAND_START = `(?:^|[;&|({\`\\n])\\s*(?:(?:do|then|else)\\s+|${COMPOUND_HEADER}\\s*(?:do|then|else)\\s+)?(?:(?:\\w+=\\S*|env|time|nohup|timeout\\s+\\S+)\\s+)*`;
 const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap(
   ({ kind, changeRequestCreateCommand: command }) =>
     command === undefined
@@ -233,9 +234,9 @@ type CommandExecution = Extract<OrchestrationV2TurnItem, { readonly type: "comma
  * some, such as `gh pr list`, so none are taken.
  */
 export function changeRequestsCreatedBy(input: string, output: string) {
-  if (!CREATE_COMMANDS.some(({ command }) => command.test(input))) return [];
   const script = shellScript(input);
   const code = shellCode(script);
+  if (!CREATE_COMMANDS.some(({ command }) => command.test(code))) return [];
   const creates = createCommandCount(code);
   if (creates === 0) return [];
   const otherCommands = code

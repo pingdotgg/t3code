@@ -2401,8 +2401,32 @@ describe("PullRequestSyncReactor", () => {
       linked: [31],
     },
     {
+      name: "a create split across lines with a backslash continuation",
+      input: "gh pr \\\ncreate --fill",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [31],
+    },
+    {
       name: "a create command after then following an expansion",
       input: "echo ${X} then gh pr create $(date) then gh pr create; printf '%s\\n' \"$PR\"",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
+      name: "a create command after an arithmetic expansion before do",
+      input: "printf '%s\\n' $((1)) do gh pr create \"$PR\"",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
+      name: "a create command after a literal closing brace before then",
+      input: "printf '%s\\n' } then gh pr create \"$PR\"",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
+      name: "a create command after a literal ]] before then",
+      input: "printf '%s\\n' ]] then gh pr create \"$PR\"",
       output: "https://github.com/owner/repository/pull/31",
       linked: [],
     },
