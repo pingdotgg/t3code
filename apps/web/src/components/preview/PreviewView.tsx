@@ -1035,6 +1035,7 @@ export function PreviewView({
         />
       ) : null}
       <PreviewChromeRow
+        key={runtimeTabId}
         url={url}
         loading={loading || serverStreamPending}
         canGoBack={canGoBack && !serverInputDisabled}
