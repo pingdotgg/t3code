@@ -2,6 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
+import { decodeOptions } from "gt-react-native";
+
+import type { MessageResolver } from "../i18n/messages";
 
 import {
   AGENT_ACTIVITY_WIDGET_STALE_AFTER_MS,
@@ -68,5 +71,24 @@ describe("agentActivityWidgetTimeline", () => {
 
     expect(timeline).toHaveLength(1);
     expect(timeline[0]?.props.activities[0]?.phase).toBe("failed");
+  });
+
+  it("shows row statuses in the app language, not the relay's English", () => {
+    const toChinese = ((message: string) => {
+      const source = decodeOptions(message)?.$_source;
+      const text = typeof source === "string" ? source : message;
+      return text === "Done" ? "完成" : text === "Approval" ? "批准" : text;
+    }) as MessageResolver;
+
+    const timeline = agentActivityWidgetTimeline(
+      {
+        kind: "snapshot",
+        aggregate: aggregate([row("waiting_for_approval", "Approval"), row("completed", "Done")]),
+      },
+      now,
+      toChinese,
+    );
+
+    expect(timeline[0]?.props.activities.map((entry) => entry.status)).toEqual(["批准", "完成"]);
   });
 });
