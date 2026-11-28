@@ -599,6 +599,55 @@ layer("ProviderEventIngestorV2", (it) => {
         ["provider-thread.updated"],
       );
       assert.equal(latestThreadSequence, 2);
+
+      for (const responseProvenance of [
+        { createdBy: "agent", creationSource: "mcp" },
+        undefined,
+      ] as const) {
+        const request: OrchestrationV2RuntimeRequest = {
+          id: RuntimeRequestId.make(
+            `provider-response:${responseProvenance?.createdBy ?? "unknown"}`,
+          ),
+          nodeId: NodeId.make("provider-response-node"),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "user_input",
+          status: "resolved",
+          responseCapability: { type: "live", providerSessionId },
+          createdAt: now,
+          resolvedAt: now,
+        };
+        yield* eventSink.write({
+          events: [
+            {
+              id: yield* idAllocator.allocate.event({ threadId: threadEvent.threadId }),
+              type: "runtime-request.updated",
+              threadId: threadEvent.threadId,
+              occurredAt: now,
+              payload: {
+                ...request,
+                ...(responseProvenance === undefined ? {} : { responseProvenance }),
+              },
+            },
+          ],
+        });
+        const callbacks = yield* ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event: { type: "runtime_request.updated", driver: CODEX_DRIVER, runtimeRequest: request },
+        });
+        const callback = callbacks[0]?.event;
+        assert.equal(callback?.type, "runtime-request.updated");
+        if (callback?.type === "runtime-request.updated") {
+          assert.deepEqual(callback.payload.responseProvenance, responseProvenance);
+        }
+        const persisted = yield* projectionStore.getRuntimeRequest(
+          threadEvent.threadId,
+          request.id,
+        );
+        assert.deepEqual(persisted?.responseProvenance, responseProvenance);
+      }
     }),
   );
 
