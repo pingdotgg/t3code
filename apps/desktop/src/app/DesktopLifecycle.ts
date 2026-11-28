@@ -94,9 +94,19 @@ function addScopedListener<Args extends ReadonlyArray<unknown>>(
 const requestDesktopShutdownAndWait = Effect.fn("desktop.lifecycle.requestShutdownAndWait")(
   function* (
     afterBoundsFlush: Effect.Effect<void> = Effect.void,
-  ): Effect.fn.Return<void, never, DesktopShutdown.DesktopShutdown | DesktopWindow.DesktopWindow> {
+  ): Effect.fn.Return<
+    void,
+    never,
+    DesktopShutdown.DesktopShutdown | DesktopWindow.DesktopWindow | ElectronApp.ElectronApp
+  > {
     const shutdown = yield* DesktopShutdown.DesktopShutdown;
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    const electronApp = yield* ElectronApp.ElectronApp;
+    // A signal to the whole app also kills the GPU process and zygotes. Relaunches through the dead
+    // zygote fail, and Chromium aborts after three unless the crash limit is off; it reads these
+    // switches on each relaunch, so in-process GPU ends the retry loop for the rest of shutdown.
+    yield* electronApp.appendCommandLineSwitch("disable-gpu-process-crash-limit");
+    yield* electronApp.appendCommandLineSwitch("in-process-gpu");
     yield* desktopWindow.flushMainWindowBounds;
     yield* afterBoundsFlush;
     yield* shutdown.request;
