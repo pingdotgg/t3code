@@ -109,6 +109,29 @@ export function useServerConfigs() {
   return useAtomValue(environmentPresentations.serverConfigsAtom);
 }
 
+// Per-environment booleans so per-row hooks skip the re-render when the config map is replaced.
+const hasServerConfigAtom = Atom.family((environmentId: EnvironmentId | null) =>
+  Atom.make(
+    (get) =>
+      environmentId !== null && get(environmentPresentations.serverConfigsAtom).has(environmentId),
+  ),
+);
+const supportsIssuesAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    (get) =>
+      get(environmentPresentations.serverConfigsAtom).get(environmentId)?.environment.capabilities
+        .issues === true,
+  ),
+);
+
+export function useHasServerConfig(environmentId: EnvironmentId | null): boolean {
+  return useAtomValue(hasServerConfigAtom(environmentId));
+}
+
+export function useSupportsIssues(environmentId: EnvironmentId): boolean {
+  return useAtomValue(supportsIssuesAtom(environmentId));
+}
+
 export function useThreadShells(enabled = true): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(
     enabled ? environmentThreadShells.threadShellsAtom : EMPTY_THREAD_SHELLS_ATOM,

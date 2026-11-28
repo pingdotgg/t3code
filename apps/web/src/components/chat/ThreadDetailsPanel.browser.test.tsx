@@ -71,6 +71,7 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
           workspaceRoot: state.workspaceRoot,
           scripts: [],
         }) as never,
+  useHasServerConfig: () => state.configLoaded,
   useProjects: (() => []) as never,
   useQuietThreadShell: ((ref: unknown) =>
     ref === null
