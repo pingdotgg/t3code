@@ -825,6 +825,46 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
     }),
   );
 
+  it.effect("drops a compaction sent on return while a turn still runs", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:on-return-compaction-busy");
+      const runId = RunId.make("run:on-return-compaction-busy");
+      const taskId = NodeId.make("node:on-return-compaction-busy-task");
+
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId: ProjectId.make("project:on-return-compaction-busy"),
+        runId,
+        rootNodeId: NodeId.make("node:on-return-compaction-busy-root"),
+        taskId,
+        deliveryState: "delivered",
+        completionWake: "always",
+        parentRunStatus: "running",
+        now,
+      });
+
+      // A client deciding from a stale cached copy still sees the thread as idle.
+      const compactionId = MessageId.make(`message:${threadId}:compact`);
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`command:${threadId}:compact`),
+        threadId,
+        messageId: compactionId,
+        text: "/compact",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "mobile",
+        idleCompaction: "onReturn",
+        dispatchMode: { type: "queue_after_active" },
+      });
+
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.isFalse(projection.messages.some((message) => message.id === compactionId));
+    }),
+  );
+
   it.effect.each([
     {
       name: "oversized UTF-8 result",
