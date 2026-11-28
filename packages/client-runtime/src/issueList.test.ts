@@ -113,6 +113,22 @@ describe("holdIssuePages", () => {
     ).get(environmentId)!;
     expect(held.entries.map((issue) => issue.key)).toContain("2");
   });
+
+  it("starts over when the list's filters change", () => {
+    const cursors = { "github.com acme/api": "page-2" };
+    const first = holdIssuePages(
+      [[environmentId, answer({ entries: [entry({ key: "3" })], nextCursors: cursors })]],
+      new Map(),
+      { list: "open" },
+    ).get(environmentId)!;
+    const continued = continueIssuePage(first, answer({ entries: [entry({ key: "2" })] }), cursors);
+    const closed = answer({ entries: [entry({ key: "1" })], nextCursors: cursors });
+    const held = holdIssuePages([[environmentId, closed]], new Map([[environmentId, continued]]), {
+      list: "closed",
+    }).get(environmentId)!;
+    expect(held.entries.map((issue) => issue.key)).toEqual(["1"]);
+    expect(held.nextCursors).toEqual(cursors);
+  });
 });
 
 describe("issueFilterScopes", () => {

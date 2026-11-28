@@ -158,7 +158,7 @@ export function IssuesScreen(
   const list = useIssueList(targets);
 
   const [pages, setPages] = useState<ReadonlyMap<EnvironmentId, HeldIssuePage>>(new Map());
-  const held = holdIssuePages(list.answers, pages);
+  const held = holdIssuePages(list.answers, pages, { list: JSON.stringify(targets), sort });
   const loadPage = useAtomCommand(issueEnvironment.listPage, { reportFailure: false });
   const [loadingMore, setLoadingMore] = useState(false);
   const loading = useRef(false);
