@@ -588,6 +588,38 @@ describe("MuseAdapterV2", () => {
     ),
   );
 
+  it.effect("sends one root when extra roots name a junction and its target", () =>
+    Effect.gen(function* () {
+      using _realpath = vi
+        .spyOn(NodeFSP, "realpath")
+        .mockImplementation(async (path) =>
+          String(path) === "/work/repo" ? "/work/repo" : "/mnt/d/mind",
+        );
+      const fake = yield* makeFakeMuse();
+      const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        ...runtimePolicy,
+        cwd: "/work/repo",
+        workspace: { folders: [], extraRoots: ["/home/mind", "/mnt/d/mind"] },
+      });
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        policy,
+      );
+      yield* startConversation(harness, fake);
+      const turnStart = fake.calls.find((call) => call.method === "turn/start");
+      // Muse rejects a turn whose workspaceRoots repeat an entry.
+      assert.deepStrictEqual(turnStart?.params.workspaceRoots, ["/work/repo", "/mnt/d/mind"]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(testLayer),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+    ),
+  );
+
   it.effect("pins sessions and turns to native canonical case", () =>
     Effect.gen(function* () {
       using _realpath = vi.spyOn(NodeFSP, "realpath").mockResolvedValue("/workspace/eevee");
