@@ -107,6 +107,21 @@ const makeWslHost = Effect.gen(function* () {
 
 it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
   describe("getMetadata", () => {
+    it.effect("resolves a workspace-relative file under a long folder path", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* makeTempDir;
+        const cwd = path.join(root, ...Array.from({ length: 3 }, () => "folder".repeat(30)));
+        yield* fs.makeDirectory(cwd, { recursive: true });
+        yield* writeTextFile(cwd, "notes.md", "hello");
+
+        const result = yield* service.getMetadata({ cwd, paths: ["notes.md", "missing.md"] });
+        expect(result.entries).toEqual([{ kind: "file", byteLength: 5 }, null]);
+      }),
+    );
+
     it.effect(
       "reports actual kinds for extensionless files, dotfiles, and dotted directories",
       () =>
@@ -286,22 +301,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           .readFile({ cwd, relativePath: "t3.json" })
           .pipe(Effect.flip);
         expect(error).toMatchObject({ operation: "realpath-workspace-root" });
-      }),
-    );
-
-    it.effect("reports the file size without reading contents in a metadata-only read", () =>
-      Effect.gen(function* () {
-        const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-        const cwd = yield* makeTempDir;
-        yield* writeTextFile(cwd, "notes.md", "ab\0cd");
-        expect(
-          yield* files.readFile({ cwd, relativePath: "notes.md", metadataOnly: true }),
-        ).toEqual({
-          relativePath: "notes.md",
-          contents: "",
-          byteLength: 5,
-          truncated: true,
-        });
       }),
     );
 

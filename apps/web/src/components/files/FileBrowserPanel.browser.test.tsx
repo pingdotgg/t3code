@@ -1,6 +1,11 @@
-import { EnvironmentId, type ProjectEntry, type ProjectReadFileResult } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type ProjectEntry,
+  type FilesystemGetMetadataResult,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult, Atom } from "effect/reactivity";
+import * as Effect from "effect/Effect";
+import { Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { commands, page, userEvent } from "vite-plus/test/browser";
 
@@ -56,35 +61,38 @@ vi.mock("./useFileDownload", () => ({ useFileDownload: () => downloadFile }));
 vi.mock("~/hooks/useWorkspaceMutationRefresh", () => ({ useWorkspaceMutationRefresh: () => {} }));
 vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
-  readEnvironmentScope: () => true,
+  readEnvironmentScope: () => canReadFiles,
 }));
-vi.mock(import("~/state/projects"), async (original) => {
+vi.mock(import("~/state/filesystem"), async (original) => {
   const module = await original();
   return {
     ...module,
-    projectEnvironment: {
-      ...module.projectEnvironment,
-      readFile: ({ input }) => {
-        const byteLength = previewSizes.get(input.relativePath);
-        return Atom.make(
-          byteLength === undefined
-            ? AsyncResult.failure<ProjectReadFileResult>(Cause.die("File size unavailable"))
-            : AsyncResult.success({
-                relativePath: input.relativePath,
-                contents: "",
-                byteLength,
-                truncated: byteLength > 0,
-              }),
-        );
-      },
+    filesystemEnvironment: {
+      ...module.filesystemEnvironment,
+      getMetadata: ({ input }) => metadataForPath(input.paths[0] ?? ""),
     },
   };
 });
 
+let canReadFiles = true;
 const previewSizes = new Map([
-  ["README.md", FULL_TEXT_MAX_BYTES],
-  ["oversized.md", FULL_TEXT_MAX_BYTES + 1],
+  ["/repo/README.md", FULL_TEXT_MAX_BYTES],
+  ["/repo/oversized.md", FULL_TEXT_MAX_BYTES + 1],
 ]);
+const delayedSize = Promise.withResolvers<number>();
+const metadataForPath = Atom.family((path: string) =>
+  Atom.make(
+    Effect.gen(function* (): Effect.fn.Return<FilesystemGetMetadataResult> {
+      const byteLength =
+        path === "/repo/delayed.md"
+          ? yield* Effect.promise(() => delayedSize.promise)
+          : previewSizes.get(path);
+      if (byteLength === undefined)
+        return yield* Effect.failCause(Cause.die("File size unavailable"));
+      return { entries: [{ kind: "file", byteLength }] };
+    }),
+  ).pipe(Atom.setIdleTTL(60_000)),
+);
 
 function findTreeRow(path: string): HTMLElement | null {
   for (const host of document.querySelectorAll("*")) {
@@ -191,7 +199,7 @@ describe("FileBrowserPanel", () => {
   it("offers Open preview for Markdown files within the render limit", async () => {
     using _listing = withDirectoryListing([
       ...entries,
-      ...["missing.md", "oversized.md"].map((path): ProjectEntry => ({
+      ...["missing.md", "oversized.md", "delayed.md"].map((path): ProjectEntry => ({
         path,
         kind: "file",
       })),
@@ -211,12 +219,24 @@ describe("FileBrowserPanel", () => {
     );
     using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
     const action = page.getByRole("menuitem", { name: "Open preview", exact: true });
-    for (const [path, offersPreview] of [
-      ["README.md", true],
-      ["missing.md", true],
-      ["oversized.md", false],
-      ["src/", false],
+    using _reset = {
+      [Symbol.dispose]: () => {
+        canReadFiles = true;
+        previewSizes.set("/repo/README.md", FULL_TEXT_MAX_BYTES);
+      },
+    };
+    for (const [path, byteLength, readAllowed, offersPreview] of [
+      ["README.md", FULL_TEXT_MAX_BYTES, true, true],
+      ["README.md", FULL_TEXT_MAX_BYTES + 1, true, false],
+      ["README.md", FULL_TEXT_MAX_BYTES, true, true],
+      ["README.md", FULL_TEXT_MAX_BYTES, false, false],
+      ["missing.md", undefined, true, false],
+      ["oversized.md", FULL_TEXT_MAX_BYTES + 1, true, false],
+      ["delayed.md", undefined, true, false],
+      ["src/", undefined, true, false],
     ] as const) {
+      canReadFiles = readAllowed;
+      if (byteLength !== undefined) previewSizes.set(`/repo/${path}`, byteLength);
       await vi.waitFor(() => expect(findTreeRow(path)).not.toBeNull());
       findTreeRow(path)!.dispatchEvent(
         new MouseEvent("contextmenu", {
@@ -237,6 +257,7 @@ describe("FileBrowserPanel", () => {
         await userEvent.keyboard("{Escape}");
       }
     }
+    delayedSize.resolve(FULL_TEXT_MAX_BYTES + 1);
   });
 
   it("dragging a file row carries a composer mention without opening it, and dragend releases it", async () => {

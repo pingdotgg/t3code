@@ -1,12 +1,13 @@
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-const FILESYSTEM_PATH_MAX_LENGTH = 512;
+export const FILESYSTEM_PATH_MAX_LENGTH = 512;
 
 export const FILESYSTEM_METADATA_BATCH_LIMIT = 64;
 
 export const FilesystemGetMetadataInput = Schema.Struct({
-  // Absolute host paths, including ~/; clients must anchor relative paths.
+  cwd: Schema.optionalKey(TrimmedNonEmptyString),
+  // Absolute host paths, including ~/, or paths relative to cwd.
   paths: Schema.Array(
     TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
   ).check(Schema.isMinLength(1), Schema.isMaxLength(FILESYSTEM_METADATA_BATCH_LIMIT)),

@@ -481,8 +481,6 @@ export const ProjectReadFileInput = Schema.Struct({
   relativePath: Schema.NonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
   // Optional files can be absent without failing the read.
   allowMissing: Schema.optional(Schema.Boolean),
-  // Return the file size without reading its contents.
-  metadataOnly: Schema.optionalKey(Schema.Boolean),
 });
 export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
 

@@ -8,6 +8,7 @@ import type {
 } from "@pierre/trees";
 import {
   AuthFilesystemReadScope,
+  FILESYSTEM_PATH_MAX_LENGTH,
   type ContextMenuSource,
   type EnvironmentId,
   type ProjectEntry,
@@ -33,7 +34,7 @@ import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMen
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { projectEnvironment } from "~/state/projects";
+import { filesystemEnvironment } from "~/state/filesystem";
 import { readEnvironmentScope } from "~/state/session";
 import {
   PIERRE_TREE_UNSAFE_CSS,
@@ -269,7 +270,7 @@ export default function FileBrowserPanel({
       // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
       context.close({ restoreFocus: !pointerIsFresh });
       void settlePromise(async () => {
-        let canOpenPreview = isPreviewCandidate;
+        let canOpenPreview = false;
         if (isPreviewCandidate && readEnvironmentScope(environmentId, AuthFilesystemReadScope)) {
           const pending = new AbortController();
           pendingMenuRef.current = pending;
@@ -282,11 +283,15 @@ export default function FileBrowserPanel({
             },
             options,
           );
+          const absolutePath = joinHostPath(cwd, relativePath);
           const metadata = await executeAtomQuery(
             appAtomRegistry,
-            projectEnvironment.readFile({
+            filesystemEnvironment.getMetadata({
               environmentId,
-              input: { cwd, relativePath, metadataOnly: true },
+              input:
+                absolutePath.length <= FILESYSTEM_PATH_MAX_LENGTH
+                  ? { paths: [absolutePath] }
+                  : { cwd, paths: [relativePath] },
             }),
             {
               refresh: true,
@@ -300,8 +305,11 @@ export default function FileBrowserPanel({
           pending.abort();
           if (pendingMenuRef.current === pending) pendingMenuRef.current = null;
           if (dismissed) return;
+          const entry = metadata._tag === "Success" ? metadata.value.entries[0] : null;
           canOpenPreview =
-            metadata._tag !== "Success" || metadata.value.byteLength <= FULL_TEXT_MAX_BYTES;
+            entry?.kind === "file" &&
+            entry.byteLength !== undefined &&
+            entry.byteLength <= FULL_TEXT_MAX_BYTES;
         }
         const clicked = await api.contextMenu.show(
           [
