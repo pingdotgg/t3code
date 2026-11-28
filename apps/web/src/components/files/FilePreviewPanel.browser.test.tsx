@@ -15,6 +15,7 @@ import {
 
 const state = vi.hoisted(() => ({
   file: null as ProjectReadFileResult | null,
+  fileRefresh: vi.fn(),
   optimistic: null as ProjectReadFileResult | null,
   writeFile: vi.fn(),
   assetUrl: { _tag: "Loading" } as import("~/assets/assetUrls").AssetUrlState,
@@ -138,11 +139,9 @@ vi.mock(import("./FileBreadcrumbs"), () => ({ FileBreadcrumbs: () => <></> }));
 vi.mock(import("./FileBrowserPanel"), () => ({
   default: ({ onRefreshSelectedFile }: { onRefreshSelectedFile?: () => void }) => (
     <div role="tree">
-      {onRefreshSelectedFile ? (
-        <button type="button" onClick={onRefreshSelectedFile}>
-          Refresh workspace files
-        </button>
-      ) : null}
+      <button type="button" onClick={onRefreshSelectedFile}>
+        Refresh workspace files
+      </button>
       <button type="button" role="treeitem" data-item-path="src/">
         src
       </button>
@@ -167,7 +166,7 @@ vi.mock(import("./projectFilesQueryState"), async (original) => ({
     readError: null,
     isNotFile: false,
     isFile: true,
-    refresh: vi.fn(),
+    refresh: state.fileRefresh,
   }),
   getOptimisticProjectFileQueryData: () => state.optimistic,
   getUnsavedProjectFileQueryData: () => null,
@@ -198,6 +197,7 @@ function setup() {
   localStorage.setItem(keys[0]!, "false");
   localStorage.setItem(keys[1]!, "true");
   state.file = null;
+  state.fileRefresh.mockReset();
   state.optimistic = null;
   state.assetUrl = { _tag: "Loading" };
   state.assetUrlForRevision = null;
@@ -861,48 +861,71 @@ describe("open file in preview browser", () => {
   });
 });
 
-describe("workspace HTML preview refresh", () => {
+describe("workspace browser preview refresh", () => {
   it.each([
     {
       label: "reloads a rendered HTML preview on refresh when fileRevision advances",
+      relativePath: "page.html",
       workspaceMutationId: null as string | null,
       withFileRevision: true,
     },
     {
       label: "reloads a rendered HTML preview on refresh without a server fileRevision",
+      relativePath: "page.html",
       workspaceMutationId: "mutation-1" as string | null,
       withFileRevision: false,
     },
-  ])("$label", async ({ workspaceMutationId, withFileRevision }) => {
+    {
+      label: "reloads a PDF preview on refresh when fileRevision advances",
+      relativePath: "report.pdf",
+      workspaceMutationId: null as string | null,
+      withFileRevision: true,
+    },
+    {
+      label: "reloads a PDF preview on refresh without a server fileRevision",
+      relativePath: "report.pdf",
+      workspaceMutationId: "mutation-1" as string | null,
+      withFileRevision: false,
+    },
+  ])("$label", async ({ relativePath, workspaceMutationId, withFileRevision }) => {
     using _settings = setup();
+    using _native = vi.spyOn(navigator, "pdfViewerEnabled", "get").mockReturnValue(true);
     localStorage.setItem("t3code.fileExplorerOpen", "true");
-    state.file = {
-      relativePath: "page.html",
-      contents: "<h1>v1</h1>",
-      byteLength: 11,
-      truncated: false,
-    };
+    const isPdf = relativePath.endsWith(".pdf");
+    const mediaType = isPdf ? "application/pdf" : "text/html";
+    const v1Url = `data:${mediaType},v1`;
+    const v2Url = `data:${mediaType},v2`;
+    if (!isPdf) {
+      state.file = {
+        relativePath,
+        contents: "<h1>v1</h1>",
+        byteLength: 11,
+        truncated: false,
+      };
+    }
     const seenRevisions: Array<string | null | undefined> = [];
     state.assetUrlForRevision = (revision) => {
       seenRevisions.push(revision);
       const refreshed = revision !== workspaceMutationId;
       return {
         _tag: "Success",
-        url: refreshed ? "data:text/html,v2" : "data:text/html,v1",
+        url: refreshed ? v2Url : v1Url,
         expiresAt: Number.MAX_SAFE_INTEGER,
         ...(withFileRevision ? { fileRevision: refreshed ? "rev-2" : "rev-1" } : {}),
       };
     };
 
-    await using screen = await render(filePreview("page.html", workspaceMutationId));
+    await using screen = await render(filePreview(relativePath, workspaceMutationId));
     const shownIframeSrc = () =>
       screen.container.querySelector('iframe:not([aria-hidden="true"])')?.getAttribute("src");
-    await vi.waitFor(() => expect(shownIframeSrc()).toMatch(/^data:text\/html,v1/));
+    await vi.waitFor(() => expect(shownIframeSrc()?.startsWith(v1Url)).toBe(true));
 
     await userEvent.click(screen.getByRole("button", { name: "Refresh workspace files" }));
 
-    await vi.waitFor(() => expect(shownIframeSrc()).toMatch(/^data:text\/html,v2/));
+    await vi.waitFor(() => expect(shownIframeSrc()?.startsWith(v2Url)).toBe(true));
     expect(seenRevisions.at(-1)).not.toBe(workspaceMutationId);
+    if (isPdf) expect(state.fileRefresh).not.toHaveBeenCalled();
+    else expect(state.fileRefresh).toHaveBeenCalledOnce();
   });
 });
 

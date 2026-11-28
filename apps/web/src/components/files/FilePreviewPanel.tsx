@@ -1997,10 +1997,10 @@ function FilePreviewPanelContent({
                 }}
                 answersPanelFind={!previewPath}
                 workspaceMutationId={workspaceMutationId}
-                {...(previewPath && !isMedia && !isPdf
+                {...(previewPath && !isMedia
                   ? {
                       onRefreshSelectedFile: () => {
-                        if (!isDocument) file.refresh();
+                        if (!isDocument && !isPdf) file.refresh();
                         setFileRefreshRevision((value) => value + 1);
                       },
                     }
