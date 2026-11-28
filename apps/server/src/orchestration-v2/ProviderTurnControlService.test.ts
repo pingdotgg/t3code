@@ -137,6 +137,7 @@ function layerProjectionStore(
       getLimitRecoveryWakeAt: () => Effect.die("unused getLimitRecoveryWakeAt"),
       getOpenRemoteDelegatedTasks: Effect.die("unused getOpenRemoteDelegatedTasks"),
       getAgentAwarenessSnapshot: () => Effect.die("unused awareness snapshot"),
+      getStorageCleanupThreads: () => Effect.die("unused storage cleanup threads"),
       getShellSnapshot: () => Effect.die("unused getShellSnapshot"),
       listActiveSubagentThreadIds: () => Effect.die("unused listActiveSubagentThreadIds"),
       countThreads: () => Effect.die("unused countThreads"),

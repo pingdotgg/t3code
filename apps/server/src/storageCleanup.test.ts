@@ -421,20 +421,10 @@ const cleanupFixture = (
           ),
       } as unknown as ProjectStore.ProjectStoreV2["Service"]),
       Effect.provideService(ProjectionStore.ProjectionStoreV2, {
-        getShellSnapshot: (input?: { location?: string }) =>
+        getStorageCleanupThreads: () =>
           Effect.sync(() => {
             snapshotReads++;
-            const visible = threads.filter((thread) => thread.deletedAt === null);
-            return {
-              threads:
-                input?.location === "archive"
-                  ? []
-                  : visible.filter((thread) => thread.archivedAt === null),
-              archivedThreads:
-                input?.location === "active"
-                  ? []
-                  : visible.filter((thread) => thread.archivedAt !== null),
-            };
+            return threads.filter((thread) => thread.deletedAt === null);
           }),
         getThreadWorktreePaths: (input?: { includeArchived?: boolean }) =>
           Effect.sync(() =>
