@@ -2,6 +2,8 @@
 
 Unified release workflow: `.github/workflows/release.yml`. Beta is a product label, not a release channel—channels remain `stable` and `nightly` (plus `preview` for maintainer test builds).
 
+Keep the macOS executable name `T3 Code (Beta)` (`MAC_BUNDLE_FILENAME` in `scripts/build-desktop-artifact.ts`) when the label changes or is removed. Squirrel.Mac renames an install to the update's executable name and then fails to relaunch it. The nightly DMG still installs as `T3 Code (Nightly).app`. The first nightly with this pin moves a lone older nightly install to `T3 Code (Beta).app` without relaunching, so its notes should say `brew reinstall --cask t3-code@nightly`, then delete the moved `T3 Code (Beta).app`.
+
 ## Channels and triggers
 
 - **Stable (`channel=stable` on `main`, or pushing a `vX.Y.Z` tag):** Manual dispatch promotes the **latest published nightly commit** (not `main` HEAD) using its base version unless overridden. Pushing a `vX.Y.Z` tag ships that exact commit. Finalization commits version bumps to `main` using `RELEASE_APP_ID` / `RELEASE_APP_PRIVATE_KEY`.
