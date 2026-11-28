@@ -283,6 +283,7 @@ const layerAgentSessionImporterProvided = AgentSessionImporter.layer.pipe(
       ProviderSessionRuntime.layer,
       ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
       ThreadCommandExecutor.layer,
+      layerProjectionMaintenanceProvided,
     ),
   ),
 );

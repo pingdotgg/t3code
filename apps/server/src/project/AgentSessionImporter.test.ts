@@ -36,6 +36,7 @@ import * as ServerConfig from "../config.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -63,6 +64,7 @@ const persistence = Layer.mergeAll(
   EventSink.layer.pipe(Layer.provide(stores)),
   ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
   IdAllocator.layer,
+  ProjectionMaintenance.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
 );
 
 function candidate(
@@ -235,6 +237,10 @@ const makeImporter = Effect.fn(function* (
           sinkLayer,
           settings,
           Layer.succeed(IdAllocator.IdAllocatorV2, yield* IdAllocator.IdAllocatorV2),
+          Layer.succeed(
+            ProjectionMaintenance.ProjectionMaintenanceV2,
+            yield* ProjectionMaintenance.ProjectionMaintenanceV2,
+          ),
           Layer.succeed(
             ProviderSessionRuntime.ProviderSessionRuntimeRepository,
             yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository,
@@ -697,6 +703,84 @@ it.effect("re-import brings back a deleted import thread with its continued tran
     }).toEqual({
       deletedAt: null,
       messages: ["Fix it", "Fixed", "Continue in the terminal", "Continued in the terminal"],
+    });
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("a purge already under way leaves a re-imported deleted thread its history", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const session = candidate(CODEX_MODEL_SELECTION, "restored-during-purge");
+    const threadId = importId(session);
+    yield* (yield* makeImporter([session])).run;
+    const { thread } = yield* projections.getThreadRecords(threadId, []);
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(`${threadId}:run`),
+          type: "run.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: RunId.make(`${threadId}:run`),
+            threadId,
+            ordinal: 1,
+            providerInstanceId: thread.providerInstanceId,
+            modelSelection: thread.modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make(`${threadId}:prompt`),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "completed",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        },
+        {
+          id: EventId.make(`${threadId}:deleted`),
+          type: "thread.deleted",
+          threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: { ...thread, deletedAt: now, updatedAt: now },
+        },
+      ],
+    });
+
+    // The sweep has selected the thread and removed its first batch when the import runs.
+    const importer = yield* makeImporter([session]);
+    let results: ReadonlyArray<{ readonly importedCount: number }> = [];
+    yield* maintenance.pruneEventStore(
+      Effect.suspend(() =>
+        results.length > 0
+          ? Effect.void
+          : importer.run.pipe(
+              Effect.map((result) => {
+                results = [result];
+              }),
+              Effect.orDie,
+            ),
+      ),
+    );
+
+    const restored = yield* projections.getThreadRecords(threadId, ["messages", "runs"]);
+    expect({
+      results,
+      deletedAt: restored.thread.deletedAt,
+      title: restored.thread.title,
+      messages: restored.messages.map((message) => message.text),
+      runs: restored.runs,
+    }).toEqual({
+      results: [{ importedCount: 1, skippedCount: 0 }],
+      deletedAt: null,
+      title: thread.title,
+      messages: ["Fix it", "Fixed"],
+      runs: [],
     });
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );

@@ -413,6 +413,12 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
         }
       });
       for (const { thread_id: threadId } of threads) {
+        // A re-import restores a deleted thread in one transaction, and each statement here
+        // commits on its own, so each checks again that the thread is still deleted.
+        const stillDeleted = sql`EXISTS (
+          SELECT 1 FROM orchestration_v2_projection_threads
+          WHERE thread_id = ${threadId} AND deleted_at IS NOT NULL
+        )`;
         const tombstone = sql`(
           SELECT json_remove(json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE}), '$.guestShare')
           FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}
@@ -427,6 +433,7 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
             AND aggregate_kind = 'thread'
             AND stream_id = ${threadId}
             AND event_type IN ('thread.created', 'thread.deleted')
+            AND ${stillDeleted}
         `;
         // The head row only holds the stream's position, so any other head becomes the tombstone.
         // First, so the head never borrows a prompt from an anchor already deleted below.
@@ -443,6 +450,7 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
             AND NOT (
               event_type = 'run.updated' AND json_extract(payload_json, '$.status') = 'running'
             )
+            AND ${stillDeleted}
         `;
         for (const table of DELETED_THREAD_CONTENT_TABLES) {
           yield* drain(sql`
@@ -450,6 +458,7 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
             WHERE rowid IN (
               SELECT rowid FROM ${sql(table)} WHERE thread_id = ${threadId} LIMIT ${PURGE_BATCH_SIZE}
             )
+              AND ${stillDeleted}
             RETURNING 1 AS purged
           `);
         }
@@ -476,6 +485,7 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
             ORDER BY sequence DESC
             LIMIT ${PURGE_BATCH_SIZE}
           )
+            AND ${stillDeleted}
           RETURNING 1 AS purged
         `);
         // Settled requests can hold answers, feedback, and titles. A failed one stays as the
@@ -483,6 +493,7 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
         yield* sql`
           DELETE FROM orchestration_v2_effect_outbox
           WHERE thread_id = ${threadId} AND status IN ('succeeded', 'cancelled')
+            AND ${stillDeleted}
         `;
         yield* sql`
           UPDATE orchestration_v2_effect_outbox
@@ -492,22 +503,23 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
             ELSE json_remove(payload_json, '$.feedback', '$.answers')
           END,
             last_error = NULL
-          WHERE thread_id = ${threadId} AND status = 'failed'
+          WHERE thread_id = ${threadId} AND status = 'failed' AND ${stillDeleted}
         `;
         // Its v1 events then go with the imported-history prune, and no import refills it.
         yield* sql`
           UPDATE orchestration_v2_legacy_imports
           SET transcript_imported_at = ${now}
-          WHERE thread_id = ${threadId} AND transcript_imported_at IS NULL
+          WHERE thread_id = ${threadId} AND transcript_imported_at IS NULL AND ${stillDeleted}
         `;
         // Last, because the new title is what marks the purge as done.
         yield* sql`
-          UPDATE projection_threads SET title = ${DELETED_THREAD_TITLE} WHERE thread_id = ${threadId}
+          UPDATE projection_threads SET title = ${DELETED_THREAD_TITLE}
+          WHERE thread_id = ${threadId} AND ${stillDeleted}
         `;
         yield* sql`
           UPDATE orchestration_v2_projection_threads
           SET title = ${DELETED_THREAD_TITLE}, payload_json = ${tombstone}
-          WHERE thread_id = ${threadId}
+          WHERE thread_id = ${threadId} AND deleted_at IS NOT NULL
         `;
       }
       return purged;
