@@ -3,7 +3,6 @@ import {
   type ProjectEntry,
   type FilesystemGetMetadataResult,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import { Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -87,8 +86,7 @@ const metadataForPath = Atom.family((path: string) =>
         path === "/repo/delayed.md"
           ? yield* Effect.promise(() => delayedSize.promise)
           : previewSizes.get(path);
-      if (byteLength === undefined)
-        return yield* Effect.failCause(Cause.die("File size unavailable"));
+      if (byteLength === undefined) return yield* Effect.die("File size unavailable");
       return { entries: [{ kind: "file", byteLength }] };
     }),
   ).pipe(Atom.setIdleTTL(60_000)),
