@@ -1321,6 +1321,8 @@
   "732708950237004e": "Ten klient jest starszy niż serwer na {environment}; jego użycie jest wykluczone z sum.",
   "9758c2ede06aa19b": "{hour} dziś",
   "9102fd47fc686f0f": "{hour} wczoraj",
+  "a645030d190791e2": "Do {percent}% Twojego limitu tygodniowego",
+  "d9d3e9b17c602345": "Do {percent}% Twojego limitu {limit}",
   "72777a9fb1f7f637": "Ogółem",
   "cb42b8946f737f0c": "Całe użycie na Twoim planie w tym cyklu rozliczeniowym.",
   "935292957f8578fb": "Modele Cursor",
