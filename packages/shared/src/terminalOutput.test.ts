@@ -195,6 +195,15 @@ describe("appendTerminalOutput", () => {
     expect(feed([`a\u001b]0;${"t".repeat(80)}`, "\u001b", "\\b"]).text).toBe("ab");
   });
 
+  it("keeps a DCS payload hidden past a BEL until ST, wherever the chunk splits", () => {
+    const dcs = "\u001bPqA\u0007BBB\u001b\\OK";
+    for (let cut = 0; cut <= dcs.length; cut += 1) {
+      const state = feed([dcs.slice(0, cut)]);
+      expect(appendTerminalOutput(state, dcs.slice(cut)).text).toBe("OK");
+      expect(feed([terminalOutputResumeText(state), dcs.slice(cut)]).text).toBe("OK");
+    }
+  });
+
   it("drops an escape sequence that never terminates and resumes after it", () => {
     expect(feed(["ok\u001b]", "x".repeat(200), "\nafter"]).text).toBe("ok\nafter");
     expect(feed(["ok\u001b]0;title\u001b", "\u001b[31mred"]).text).toBe(
@@ -467,6 +476,29 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
 });
 
 describe("terminalOutputTail", () => {
+  it("drops a detached emoji skin tone at the start of a command tail", () => {
+    const output = normalizeTerminalOutput("before👍🏽done", 6);
+    expect(terminalOutputPlainText(output.text)).toBe("done");
+  });
+
+  it("drops a detached skin tone from serialized output and keeps its active style", () => {
+    const tail = terminalOutputTail("before👍\u001b[0;31m🏽done\u001b[0m", 10);
+    expect(tail).toEqual({ text: "\u001b[0;31mdone\u001b[0m", truncated: true });
+  });
+
+  it.each([
+    ["tone: 🏽", 2, 2, "🏽"],
+    ["\u001b[31m🖐️\u001b[0m🏽X", 3, 3, "X"],
+    ["✌️🏽X", 4, 4, "X"],
+    ["✌️🏽X", 3, 3, "X"],
+    ["✌\u001b[0;31m️\u001b[0m🏽X", 3, 8, "X"],
+    ["xx\u001b[0;31m🇺\u001b[0m🇸🇫🇷", 6, 6, "🇫🇷"],
+    ["xx🇺🇸🇫🇷", 4, 4, "🇫🇷"],
+  ] as const)("keeps complete glyphs in %j", (text, live, saved, expected) => {
+    expect(terminalOutputPlainText(normalizeTerminalOutput(text, live).text)).toBe(expected);
+    expect(terminalOutputPlainText(terminalOutputTail(text, saved).text)).toBe(expected);
+  });
+
   it("never begins on a lone low surrogate", () => {
     const text = `${"a".repeat(10)}😀${"b".repeat(4)}`;
     const tail = terminalOutputTail(text, 5);

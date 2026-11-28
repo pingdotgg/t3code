@@ -213,7 +213,18 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
       ? {
           ...previewItem,
           src: editedImage.src,
-          ...(previewItem.edit ? { edit: { ...previewItem.edit, file: editedImage.file } } : {}),
+          name: editedImage.file.name,
+          mimeType: editedImage.file.type,
+          ...(previewItem.edit
+            ? {
+                edit: {
+                  ...previewItem.edit,
+                  file: editedImage.file,
+                  name: editedImage.file.name,
+                  mimeType: editedImage.file.type,
+                },
+              }
+            : {}),
         }
       : previewItem;
   const source: MediaActionSource = item?.actionsSource ?? {
