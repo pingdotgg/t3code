@@ -104,6 +104,28 @@ function openRouterBody(model: string, audio: ArrayBuffer, language: string) {
   });
 }
 
+/** The transcriptions URL for a configured custom base URL, or null when it is unusable. */
+function customTranscriptionsUrl(baseUrl: string) {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    return null;
+  }
+  if (url.search || url.hash || url.username || url.password) return null;
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  return `${url.origin}${url.pathname.replace(/\/+$/, "")}/audio/transcriptions`;
+}
+
+/** The multipart body an OpenAI-compatible transcription server accepts. */
+function customBody(model: string, audio: ArrayBuffer, language: string) {
+  const form = new FormData();
+  form.set("model", model);
+  if (language !== "auto") form.set("language", language);
+  form.set("file", new Blob([audio], { type: "audio/wav" }), "dictation.wav");
+  return HttpClientRequest.bodyFormData(form);
+}
+
 export class CloudSpeech extends Context.Service<
   CloudSpeech,
   {
@@ -119,6 +141,7 @@ export class CloudSpeech extends Context.Service<
       pcm: Uint8Array,
       options: SpeechTranscriptionOptions,
       model?: string | undefined,
+      endpoint?: string | undefined,
     ) => Effect.Effect<string, CloudSpeechError | SpeechInvalidAudioError | ServerSettingsError>;
   }
 >()("t3/speech/CloudSpeech") {}
@@ -132,11 +155,12 @@ export const layer = Layer.effect(
     const credentials = settings.getSettings.pipe(
       Effect.map((value) => value.cloudSpeechCredentials),
     );
-    const configured = credentials.pipe(
-      Effect.map(({ openai, xai, openrouter }) => ({
-        openai: Boolean(openai),
-        xai: Boolean(xai),
-        openrouter: Boolean(openrouter),
+    const configured = settings.getSettings.pipe(
+      Effect.map((value) => ({
+        openai: Boolean(value.cloudSpeechCredentials.openai),
+        xai: Boolean(value.cloudSpeechCredentials.xai),
+        openrouter: Boolean(value.cloudSpeechCredentials.openrouter),
+        custom: Boolean(value.cloudSpeechCredentials.custom),
       })),
     );
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -187,10 +211,18 @@ export const layer = Layer.effect(
         pcm: Uint8Array,
         options: SpeechTranscriptionOptions,
         model?: string,
+        endpoint?: string,
       ) {
         const source = (yield* credentials)[provider];
         if (!source) return yield* new CloudSpeechError({ provider, reason: "missing-key" });
         if (provider === "openrouter" && (!model || !isModelId(model)))
+          return yield* new CloudSpeechError({ provider, reason: "model-unavailable" });
+        // A custom grant names the base URL it consented to; audio never goes anywhere else.
+        const consentedUrl = Effect.map(settings.getSettings, ({ cloudSpeechCustomBaseUrl }) =>
+          endpoint === cloudSpeechCustomBaseUrl ? customTranscriptionsUrl(endpoint) : null,
+        );
+        const customUrl = provider === "custom" ? yield* consentedUrl : null;
+        if (provider === "custom" && (!model || !customUrl))
           return yield* new CloudSpeechError({ provider, reason: "model-unavailable" });
         const samples = yield* Effect.try({
           try: () => decodeSpeechPcm(pcm),
@@ -211,11 +243,15 @@ export const layer = Layer.effect(
         );
         if (!isApiKey(key)) return yield* unreadable();
         const audio = wave(samples);
-        const request = HttpClientRequest.post(endpoints[provider].url).pipe(
+        const request = HttpClientRequest.post(
+          provider === "custom" ? customUrl! : endpoints[provider].url,
+        ).pipe(
           HttpClientRequest.bearerToken(Redacted.make(key)),
           provider === "openrouter"
             ? openRouterBody(model!, audio, language)
-            : audioBody(provider, audio, language, options),
+            : provider === "custom"
+              ? customBody(model!, audio, language)
+              : audioBody(provider, audio, language, options),
         );
         const unavailable = () => new CloudSpeechError({ provider, reason: "unavailable" });
         // A catalog fetch or vault lookup may have outlived the credential it started with.
@@ -225,6 +261,8 @@ export const layer = Layer.effect(
             provider,
             reason: current ? "key-changed" : "missing-key",
           });
+        if (provider === "custom" && (yield* consentedUrl) !== customUrl)
+          return yield* new CloudSpeechError({ provider, reason: "model-unavailable" });
         const response = yield* execute(request).pipe(Effect.mapError(unavailable));
         if (response.status < 200 || response.status >= 300)
           return yield* new CloudSpeechError({
@@ -234,7 +272,7 @@ export const layer = Layer.effect(
                 ? "rate-limit"
                 : [401, 402, 403].includes(response.status)
                   ? "rejected-key"
-                  : response.status === 404 && provider === "openrouter"
+                  : response.status === 404 && (provider === "openrouter" || provider === "custom")
                     ? "model-unavailable"
                     : "unavailable",
           });

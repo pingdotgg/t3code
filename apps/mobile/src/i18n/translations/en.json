@@ -3323,6 +3323,8 @@
   "5e7930d71a5c7f7c": "Enter a valid API key.",
   "7d8a206fd3f67264": "Uses the API key saved on this environment. The model choice applies only to this device.",
   "0a9e4d44c145cd07": "Anyone with dictation access to {environment} can bill this key.",
+  "fb6adc43377d4ca0": "After you stop, {environment} sends your recording to your endpoint at {host}.",
+  "1391f283f6ea713c": "After you stop, {environment} sends your recording to the custom endpoint configured on it.",
   "df7658221f3e8971": "Updates the {company} key on {environment}. Your dictation destination stays the same.",
   "c58d3c64027807c6": "Could not load models · Retry",
   "dddfe3741f379a11": "Loading transcription models…",

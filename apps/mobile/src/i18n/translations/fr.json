@@ -3316,6 +3316,8 @@
   "5e7930d71a5c7f7c": "Saisissez une clé d’API valide.",
   "7d8a206fd3f67264": "Utilise la clé d’API enregistrée dans cet environnement. Le choix du modèle ne s’applique qu’à cet appareil.",
   "0a9e4d44c145cd07": "Toute personne ayant accès à la dictée sur {environment} peut facturer cette clé.",
+  "fb6adc43377d4ca0": "Une fois l’enregistrement terminé, {environment} envoie votre enregistrement à votre point de terminaison sur {host}.",
+  "1391f283f6ea713c": "Une fois l’enregistrement terminé, {environment} envoie votre enregistrement au point de terminaison personnalisé configuré.",
   "df7658221f3e8971": "Met à jour la clé {company} sur {environment}. Votre destination de dictée reste la même.",
   "c58d3c64027807c6": "Impossible de charger les modèles · Réessayer",
   "dddfe3741f379a11": "Chargement des modèles de transcription…",

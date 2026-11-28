@@ -164,8 +164,8 @@ effectIt.effect(
               Redacted.isRedacted(key) &&
               Redacted.value(key) === "fixture";
           }),
-        transcribe: (provider, _pcm, _options, model) => {
-          transcribe(provider, model);
+        transcribe: (provider, _pcm, _options, model, endpoint) => {
+          transcribe(provider, model, endpoint);
           return Effect.fail(new CloudSpeechError({ provider, reason: "rejected-key" }));
         },
       });
@@ -249,7 +249,7 @@ effectIt.effect(
         provider: "openai",
         reason: "rejected-key",
       });
-      expect(transcribe).toHaveBeenLastCalledWith("openai", undefined);
+      expect(transcribe).toHaveBeenLastCalledWith("openai", undefined, undefined);
       const catalog = yield* call("openrouter/models");
       expect(yield* Effect.promise(() => catalog.json())).toEqual({
         models: [{ id: "acme/transcribe-1", name: "Acme Transcribe" }],
@@ -259,13 +259,32 @@ effectIt.effect(
         headers: { "content-type": "application/octet-stream" },
         body: encodeSpeechPcmRequest(new Uint8Array(4), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS),
       };
+      expect((yield* call("openrouter/transcribe?model=", audio)).status).toBe(400);
+      // Loosening the query to any model id does not let a known-bad id through as an upload.
       expect((yield* call("openrouter/transcribe?model=openrouter%2Fauto", audio)).status).toBe(
-        400,
+        422,
       );
       expect((yield* call("openrouter/transcribe?model=acme%2Ftranscribe-1", audio)).status).toBe(
         422,
       );
-      expect(transcribe).toHaveBeenLastCalledWith("openrouter", "acme/transcribe-1");
+      expect(transcribe).toHaveBeenLastCalledWith("openrouter", "acme/transcribe-1", undefined);
+      // The consenting endpoint travels with the recording, so the server can re-check it.
+      expect(
+        (yield* call(
+          "custom/transcribe?model=whisper-1&endpoint=http%3A%2F%2Flocalhost%3A8080%2Fv1",
+          audio,
+        )).status,
+      ).toBe(422);
+      expect(transcribe).toHaveBeenLastCalledWith(
+        "custom",
+        "whisper-1",
+        "http://localhost:8080/v1",
+      );
+      // A malformed endpoint is rejected before anything reaches the speech service.
+      expect(
+        (yield* call("custom/transcribe?model=whisper-1&endpoint=ftp%3A%2F%2Fhost%2Fv1", audio))
+          .status,
+      ).toBe(400);
       // Naming a path on the environment needs filesystem access, not only settings access.
       const link = yield* Effect.promise(() =>
         handler(

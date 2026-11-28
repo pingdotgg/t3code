@@ -1,30 +1,59 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 
 export const CloudSpeechApiKey = TrimmedNonEmptyString.check(
   Schema.isMaxLength(4096),
   Schema.isPattern(/^(?![a-z][a-z\d+.-]*:\/\/)[!-~]+$/i),
 );
 
-export const CloudSpeechProvider = Schema.Literals(["openai", "xai", "openrouter"]);
+/**
+ * The base URL of an OpenAI-compatible transcription server: empty until one is set, otherwise an
+ * http(s) URL with no credentials, query, or hash. The server joins its /audio/transcriptions route.
+ */
+export const CloudSpeechCustomBaseUrl = TrimmedString.check(
+  Schema.isMaxLength(2048),
+  Schema.makeFilter(
+    (value) => {
+      if (value === "") return true;
+      try {
+        const url = new URL(value);
+        return (
+          (url.protocol === "http:" || url.protocol === "https:") &&
+          !url.username &&
+          !url.password &&
+          !url.search &&
+          !url.hash
+        );
+      } catch {
+        return false;
+      }
+    },
+    { expected: "an http or https URL without credentials, a query, or a hash" },
+  ),
+);
+
+export const CloudSpeechProvider = Schema.Literals(["openai", "xai", "openrouter", "custom"]);
 export type CloudSpeechProvider = typeof CloudSpeechProvider.Type;
 export const CLOUD_SPEECH_LABELS = {
   openai: "OpenAI",
   xai: "Grok Voice Transcribe",
   openrouter: "OpenRouter",
+  custom: "Custom endpoint",
 } as const;
 export const CLOUD_SPEECH_PROVIDER_NAMES = {
   openai: "OpenAI",
   xai: "xAI",
   openrouter: "OpenRouter",
+  custom: "Custom endpoint",
 } as const;
 /** Servers that predate OpenRouter report only the first two providers. */
 export const CloudSpeechKeys = Schema.Struct({
   openai: Schema.Boolean,
   xai: Schema.Boolean,
   openrouter: Schema.optionalKey(Schema.Boolean),
+  custom: Schema.optionalKey(Schema.Boolean),
 });
 export type CloudSpeechKeys = typeof CloudSpeechKeys.Type;
 
@@ -58,6 +87,24 @@ export class CloudSpeechError extends Schema.TaggedError<CloudSpeechError>()(
 ) {
   override get message() {
     const name = CLOUD_SPEECH_PROVIDER_NAMES[this.provider];
+    if (this.provider === "custom") {
+      switch (this.reason) {
+        case "missing-key":
+          return "Add an API key for the custom endpoint in Settings → Voice.";
+        case "key-changed":
+          return "The custom endpoint key changed before your recording was sent. Try again.";
+        case "unreadable-key":
+          return "Couldn’t read the custom endpoint API key. Unlock the vault on the selected environment or update the key in Settings → Voice. No audio was sent.";
+        case "rejected-key":
+          return "The custom endpoint rejected this API key. Check the key and endpoint URL in Settings → Voice.";
+        case "rate-limit":
+          return "The custom endpoint reached a usage limit. Check the endpoint's quota or try again later.";
+        case "model-unavailable":
+          return "Check the custom endpoint URL and model in Settings → Voice, then choose it again.";
+        case "unavailable":
+          return "The custom endpoint couldn’t transcribe this recording. Check its URL in Settings → Voice.";
+      }
+    }
     switch (this.reason) {
       case "missing-key":
         return `Add your ${name} API key in Settings → Voice.`;

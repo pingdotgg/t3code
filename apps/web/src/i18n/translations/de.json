@@ -7978,6 +7978,22 @@
   "0a9e4d44c145cd07": "Alle mit Diktat-Zugriff auf {environment} können über diesen Schlüssel abrechnen.",
   "55803224ee096dc0": "{company}-Schlüssel entfernen?",
   "0a7813c7df04ffe9": "OpenRouter-Diktat verwalten",
+  "532ba611f4afacb8": "Gib den Schlüssel für die neue URL erneut ein.",
+  "5ffb239a74670f75": "Benutzerdefiniertes Diktat entfernen?",
+  "60dcc46f4e796a5b": "Entfernt die Endpunkt-URL und den Schlüssel auf {environment}. Alle, die es für Diktat nutzen, verlieren den Zugriff.",
+  "e12429ce0cec3dc3": "Basis-URL eines OpenAI-kompatiblen Servers einschließlich Versionspfad. Audio wird an seine Route /audio/transcriptions gesendet. Verwende https, außer der Endpunkt befindet sich in einem Netzwerk, dem du vertraust.",
+  "242717485ad57422": "Gib eine http- oder https-URL ein.",
+  "fb6adc43377d4ca0": "Nachdem du aufgehört hast, sendet {environment} deine Aufnahme an deinen Endpunkt unter {host}.",
+  "1391f283f6ea713c": "Nachdem du aufgehört hast, sendet {environment} deine Aufnahme an den dafür konfigurierten benutzerdefinierten Endpunkt.",
+  "719eaff335f3245d": "Benutzerdefiniertes Diktat verwalten",
+  "2b5b356019c6857b": [
+    "Aktualisiere ",
+    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    ", um Diktat mit ",
+    { "i": 2, "k": "_gt_value_2", "v": "v" },
+    " zu nutzen."
+  ],
+  "2ce113aa171d3337": "Endpunkt verwalten",
   "9996968084688efe": "{company}-Schlüssel verwalten",
   "bf6a4f30c36e0a87": "{name} für Diktat verwenden?",
   "710bec893f7881d1": "Alle, die {name} auf {environment} für Diktat nutzen, verlieren den Zugriff.",
@@ -8004,15 +8020,6 @@
     ", um fortzufahren."
   ],
   "1d33877ef8ea3559": "Laden des API-Schlüssels wiederholen",
-  "be805c1729dc0726": [
-    "Aktualisiere ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ", um OpenRouter-Diktat zu nutzen."
-  ],
   "d7acad5dde4c1d1b": "Es wird nach einem API-Schlüssel gesucht…",
   "8257030da7a4ad4e": "Modell",
   "418d9b293a8983a9": [

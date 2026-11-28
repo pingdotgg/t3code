@@ -7977,6 +7977,22 @@
   "0a9e4d44c145cd07": "Qualquer pessoa com acesso ao ditado em {environment} pode gerar cobranças nesta chave.",
   "55803224ee096dc0": "Remover a chave da {company}?",
   "0a7813c7df04ffe9": "Gerenciar o ditado do OpenRouter",
+  "532ba611f4afacb8": "Insira a chave novamente para a nova URL.",
+  "5ffb239a74670f75": "Remover o ditado personalizado?",
+  "60dcc46f4e796a5b": "Remove a URL do endpoint e a chave em {environment}. Todos que o usam para ditado perdem o acesso.",
+  "e12429ce0cec3dc3": "URL base de um servidor compatível com OpenAI, incluindo o caminho da versão. O áudio é enviado para a rota /audio/transcriptions. Use https, a menos que o endpoint esteja em uma rede confiável.",
+  "242717485ad57422": "Insira uma URL http ou https.",
+  "fb6adc43377d4ca0": "Quando você parar, {environment} enviará sua gravação para o seu endpoint em {host}.",
+  "1391f283f6ea713c": "Quando você parar, {environment} enviará sua gravação para o endpoint personalizado configurado.",
+  "719eaff335f3245d": "Gerenciar o ditado personalizado",
+  "2b5b356019c6857b": [
+    "Atualize ",
+    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    " para usar o ditado com ",
+    { "i": 2, "k": "_gt_value_2", "v": "v" },
+    "."
+  ],
+  "2ce113aa171d3337": "Gerenciar endpoint",
   "9996968084688efe": "Gerenciar a chave da {company}",
   "bf6a4f30c36e0a87": "Usar {name} para ditado?",
   "710bec893f7881d1": "Todos que usam {name} para ditado em {environment} perderão o acesso.",
@@ -8003,15 +8019,6 @@
     " com acesso ao ditado para continuar."
   ],
   "1d33877ef8ea3559": "Tentar carregar a chave de API novamente",
-  "be805c1729dc0726": [
-    "Atualize ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " para usar o ditado do OpenRouter."
-  ],
   "d7acad5dde4c1d1b": "Verificando se há uma chave de API…",
   "8257030da7a4ad4e": "Modelo",
   "418d9b293a8983a9": [

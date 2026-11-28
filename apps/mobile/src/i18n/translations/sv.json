@@ -3322,6 +3322,8 @@
   "5e7930d71a5c7f7c": "Ange en giltig API-nyckel.",
   "7d8a206fd3f67264": "Använder API-nyckeln som sparats i den här miljön. Modellvalet gäller bara den här enheten.",
   "0a9e4d44c145cd07": "Alla med dikteringsåtkomst till {environment} kan debitera den här nyckeln.",
+  "fb6adc43377d4ca0": "När du slutar spela in skickar {environment} din inspelning till din slutpunkt på {host}.",
+  "1391f283f6ea713c": "När du slutar spela in skickar {environment} din inspelning till den konfigurerade anpassade slutpunkten.",
   "df7658221f3e8971": "Uppdaterar {company}-nyckeln på {environment}. Ditt mål för diktering förblir detsamma.",
   "c58d3c64027807c6": "Kunde inte läsa in modeller · Försök igen",
   "dddfe3741f379a11": "Läser in transkriberingsmodeller…",

@@ -3316,6 +3316,8 @@
   "5e7930d71a5c7f7c": "Informe uma chave de API válida.",
   "7d8a206fd3f67264": "Usa a chave de API salva neste ambiente. A escolha do modelo vale só para este dispositivo.",
   "0a9e4d44c145cd07": "Qualquer pessoa com acesso ao ditado em {environment} pode gerar cobranças nesta chave.",
+  "fb6adc43377d4ca0": "Quando você parar, {environment} enviará sua gravação para o seu endpoint em {host}.",
+  "1391f283f6ea713c": "Quando você parar, {environment} enviará sua gravação para o endpoint personalizado configurado.",
   "df7658221f3e8971": "Atualiza a chave da {company} em {environment}. O destino do seu ditado continua o mesmo.",
   "c58d3c64027807c6": "Não foi possível carregar os modelos · Tentar novamente",
   "dddfe3741f379a11": "Carregando modelos de transcrição…",

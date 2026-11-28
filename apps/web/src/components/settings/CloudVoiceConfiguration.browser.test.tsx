@@ -11,6 +11,32 @@ import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
 
 vi.mock(import("../../state/session"), { spy: true });
+const persistedSettings: unknown[] = [];
+let configuredEndpoint = "";
+function setup() {
+  persistedSettings.length = 0;
+  configuredEndpoint = "";
+}
+vi.mock(import("../../state/use-atom-command"), async (original) => ({
+  ...(await original<typeof import("../../state/use-atom-command")>()),
+  useAtomCommand: (() => async (input: unknown) => {
+    persistedSettings.push(input);
+    configuredEndpoint =
+      typeof input === "object" &&
+      input !== null &&
+      "input" in input &&
+      typeof input.input === "object" &&
+      input.input !== null &&
+      "patch" in input.input &&
+      typeof input.input.patch === "object" &&
+      input.input.patch !== null &&
+      "cloudSpeechCustomBaseUrl" in input.input.patch &&
+      typeof input.input.patch.cloudSpeechCustomBaseUrl === "string"
+        ? input.input.patch.cloudSpeechCustomBaseUrl
+        : configuredEndpoint;
+    return { _tag: "Success" };
+  }) as never,
+}));
 vi.mock("../../state/environments", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/environments")>()),
   useEnvironments: () => ({
@@ -26,6 +52,7 @@ vi.mock("../../state/environments", async (importOriginal) => ({
             secretProviders: {
               work: { kind: "one_password", label: "Work vault", config: { account: "work" } },
             },
+            cloudSpeechCustomBaseUrl: configuredEndpoint,
           },
           environment: {
             platform: { os: "linux", arch: "x64" },
@@ -256,6 +283,241 @@ it("OpenRouter needs an exact model, and changing it writes no credential", asyn
       await expect.element(destination).toHaveTextContent("OpenRouter via Laptop");
       expect(grantModel()).toBe("acme/transcribe-1");
       expect(writes).toEqual([]);
+    },
+  );
+});
+
+it("configures a custom OpenAI-compatible endpoint with its URL, model, and key", async () => {
+  setup();
+  const id = EnvironmentId.make("voice-host");
+  const target = new PrimaryConnectionTarget({
+    environmentId: id,
+    label: "Laptop",
+    httpBaseUrl: window.location.origin,
+    wsBaseUrl: "ws://localhost",
+  });
+  const prepared = Option.some({
+    ...target,
+    target,
+    socketUrl: target.wsBaseUrl,
+    httpAuthorization: null,
+  });
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => chooseAudioDestination(null));
+  chooseAudioDestination(null);
+  const writes: unknown[] = [];
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((request, init) => {
+    const url = new URL(request instanceof Request ? request.url : request, window.location.href);
+    if (url.pathname === "/api/voice/cloud/keys")
+      return Promise.resolve(Response.json({ openai: true, xai: true, custom: true }));
+    if (url.pathname === "/api/voice/cloud/openrouter/models")
+      return Promise.resolve(Response.json({ models: [] }));
+    if (url.pathname === "/api/voice/cloud/custom/key")
+      return new Request(request, init).json().then((body) => {
+        writes.push(body);
+        return new Response(null, { status: 204 });
+      });
+    return fetch(request, init);
+  });
+  const grantDestination = () => {
+    const raw = window.localStorage.getItem("t3code:voice-audio-grant:v1");
+    const parsed = raw
+      ? (JSON.parse(raw) as {
+          destination?: Record<string, unknown>;
+          pending?: { destination?: Record<string, unknown> };
+        })
+      : null;
+    return parsed?.destination ?? parsed?.pending?.destination ?? null;
+  };
+  await vi.mocked(useEnvironmentScope).withImplementation(
+    () => true,
+    async () => {
+      await vi.mocked(usePreparedConnection).withImplementation(
+        () => prepared,
+        async () => {
+          await using screen = await render(
+            <SettingsScopeProvider search={{}} onChange={() => {}}>
+              <VoiceSettingsPanel />
+            </SettingsScopeProvider>,
+          );
+          const destination = screen.getByRole("combobox", { name: "Transcribe with" });
+          await destination.click();
+          await page.getByRole("option", { name: "Custom endpoint via Laptop" }).click();
+          const dialog = page.getByRole("dialog");
+          const save = dialog.getByRole("button", { name: "Save and enable" });
+          await expect.element(save).toBeDisabled();
+          await dialog
+            .getByLabelText("Custom endpoint API key", { exact: true })
+            .fill("custom-key");
+          await dialog.getByLabelText("Model").fill("whisper-1");
+          const endpoint = dialog.getByLabelText("Endpoint URL");
+          await endpoint.fill("not-a-url");
+          await expect.element(save).toBeDisabled();
+          await expect.element(dialog.getByText("Enter an http or https URL.")).toBeVisible();
+          await endpoint.fill("https://stt.example.com/v1");
+          await expect
+            .element(dialog.getByText("your endpoint at stt.example.com", { exact: false }))
+            .toBeVisible();
+          await userEvent.keyboard("{Enter}");
+          await expect.element(dialog).not.toBeInTheDocument();
+          await expect.element(destination).toHaveTextContent("Custom endpoint via Laptop");
+          // The URL and the key are one consent: one settings write, no separate key request.
+          expect(persistedSettings).toEqual([
+            {
+              environmentId: id,
+              input: {
+                patch: {
+                  cloudSpeechCustomBaseUrl: "https://stt.example.com/v1",
+                  cloudSpeechCredentials: { custom: "custom-key" },
+                },
+              },
+            },
+          ]);
+          expect(writes).toEqual([]);
+          expect(grantDestination()).toMatchObject({
+            provider: "custom",
+            environmentId: "voice-host",
+            model: "whisper-1",
+            endpoint: "https://stt.example.com/v1",
+          });
+        },
+      );
+    },
+  );
+});
+
+it("a grant for another endpoint asks for approval and writes no settings", async () => {
+  setup();
+  configuredEndpoint = "https://stt.example.com/v1";
+  chooseAudioDestination({
+    kind: "cloud",
+    environmentId: EnvironmentId.make("voice-host"),
+    provider: "custom",
+    model: "whisper-1",
+    endpoint: "https://old.example.com/v1",
+  });
+  const id = EnvironmentId.make("voice-host");
+  const target = new PrimaryConnectionTarget({
+    environmentId: id,
+    label: "Laptop",
+    httpBaseUrl: window.location.origin,
+    wsBaseUrl: "ws://localhost",
+  });
+  const prepared = Option.some({
+    ...target,
+    target,
+    socketUrl: target.wsBaseUrl,
+    httpAuthorization: null,
+  });
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => chooseAudioDestination(null));
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((request, init) => {
+    const url = new URL(request instanceof Request ? request.url : request, window.location.href);
+    if (url.pathname === "/api/voice/cloud/keys")
+      return Promise.resolve(Response.json({ openai: true, xai: true, custom: true }));
+    return fetch(request, init);
+  });
+  await vi.mocked(useEnvironmentScope).withImplementation(
+    () => true,
+    async () => {
+      await vi.mocked(usePreparedConnection).withImplementation(
+        () => prepared,
+        async () => {
+          await using screen = await render(
+            <SettingsScopeProvider search={{}} onChange={() => {}}>
+              <VoiceSettingsPanel />
+            </SettingsScopeProvider>,
+          );
+          const destination = screen.getByRole("combobox", { name: "Transcribe with" });
+          await destination.click();
+          await page.getByRole("option", { name: "Custom endpoint via Laptop" }).click();
+          const dialog = page.getByRole("dialog");
+          await expect
+            .element(dialog.getByText("Use Custom endpoint for dictation?"))
+            .toBeVisible();
+          const endpoint = dialog.getByLabelText("Endpoint URL");
+          await expect.element(endpoint).toHaveValue("https://stt.example.com/v1");
+          // Re-approving binds the device to the saved endpoint, and moves no server setting.
+          await dialog.getByRole("button", { name: "Save and enable" }).click();
+          await expect.element(dialog).not.toBeInTheDocument();
+          expect(persistedSettings).toEqual([]);
+          const raw = window.localStorage.getItem("t3code:voice-audio-grant:v1");
+          expect(raw).toContain("https://stt.example.com/v1");
+        },
+      );
+    },
+  );
+});
+
+it("changing a saved endpoint asks for the key again", async () => {
+  setup();
+  configuredEndpoint = "https://stt.example.com/v1";
+  chooseAudioDestination(null);
+  const id = EnvironmentId.make("voice-host");
+  const target = new PrimaryConnectionTarget({
+    environmentId: id,
+    label: "Laptop",
+    httpBaseUrl: window.location.origin,
+    wsBaseUrl: "ws://localhost",
+  });
+  const prepared = Option.some({
+    ...target,
+    target,
+    socketUrl: target.wsBaseUrl,
+    httpAuthorization: null,
+  });
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => chooseAudioDestination(null));
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((request, init) => {
+    const url = new URL(request instanceof Request ? request.url : request, window.location.href);
+    if (url.pathname === "/api/voice/cloud/keys")
+      return Promise.resolve(Response.json({ openai: true, xai: true, custom: true }));
+    return fetch(request, init);
+  });
+  await vi.mocked(useEnvironmentScope).withImplementation(
+    () => true,
+    async () => {
+      await vi.mocked(usePreparedConnection).withImplementation(
+        () => prepared,
+        async () => {
+          await using screen = await render(
+            <SettingsScopeProvider search={{}} onChange={() => {}}>
+              <VoiceSettingsPanel />
+            </SettingsScopeProvider>,
+          );
+          const destination = screen.getByRole("combobox", { name: "Transcribe with" });
+          await destination.click();
+          await page.getByRole("option", { name: "Custom endpoint via Laptop" }).click();
+          const dialog = page.getByRole("dialog");
+          await dialog.getByLabelText("Model").fill("whisper-1");
+          const save = dialog.getByRole("button", { name: "Save and enable" });
+          await expect.element(save).toBeEnabled();
+          await dialog.getByLabelText("Endpoint URL").fill("https://other.example.com/v1");
+          // The saved key does not follow a new URL, so the key is required again.
+          await expect
+            .element(dialog.getByText("Enter the key again for the new URL."))
+            .toBeVisible();
+          await expect.element(save).toBeDisabled();
+          await dialog.getByLabelText("Custom endpoint API key", { exact: true }).fill("new-key");
+          await expect.element(save).toBeEnabled();
+          await save.click();
+          await expect.element(dialog).not.toBeInTheDocument();
+          expect(persistedSettings).toEqual([
+            {
+              environmentId: id,
+              input: {
+                patch: {
+                  cloudSpeechCustomBaseUrl: "https://other.example.com/v1",
+                  cloudSpeechCredentials: { custom: "new-key" },
+                },
+              },
+            },
+          ]);
+        },
+      );
     },
   );
 });

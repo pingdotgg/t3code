@@ -3316,6 +3316,8 @@
   "5e7930d71a5c7f7c": "Introduce una clave de API válida.",
   "7d8a206fd3f67264": "Usa la clave de API guardada en este entorno. La elección de modelo solo se aplica a este dispositivo.",
   "0a9e4d44c145cd07": "Cualquiera con acceso al dictado en {environment} puede cargar costes a esta clave.",
+  "fb6adc43377d4ca0": "Cuando dejes de hablar, {environment} enviará tu grabación a tu endpoint en {host}.",
+  "1391f283f6ea713c": "Cuando dejes de hablar, {environment} enviará tu grabación al endpoint personalizado configurado.",
   "df7658221f3e8971": "Actualiza la clave de {company} en {environment}. El destino de tu dictado no cambia.",
   "c58d3c64027807c6": "No se pudieron cargar los modelos · Reintentar",
   "dddfe3741f379a11": "Cargando modelos de transcripción…",

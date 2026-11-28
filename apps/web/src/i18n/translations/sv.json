@@ -7983,6 +7983,22 @@
   "0a9e4d44c145cd07": "Alla med dikteringsåtkomst till {environment} kan debitera den här nyckeln.",
   "55803224ee096dc0": "Ta bort nyckeln för {company}?",
   "0a7813c7df04ffe9": "Hantera diktering med OpenRouter",
+  "532ba611f4afacb8": "Ange nyckeln igen för den nya URL:en.",
+  "5ffb239a74670f75": "Ta bort anpassad diktering?",
+  "60dcc46f4e796a5b": "Tar bort slutpunktens URL och nyckeln på {environment}. Alla som använder den för diktering förlorar åtkomsten.",
+  "e12429ce0cec3dc3": "Bas-URL för en OpenAI-kompatibel server, inklusive versionssökvägen. Ljud skickas till dess /audio/transcriptions-rutt. Använd https om inte slutpunkten finns i ett nätverk du litar på.",
+  "242717485ad57422": "Ange en http- eller https-URL.",
+  "fb6adc43377d4ca0": "När du slutar spela in skickar {environment} din inspelning till din slutpunkt på {host}.",
+  "1391f283f6ea713c": "När du slutar spela in skickar {environment} din inspelning till den konfigurerade anpassade slutpunkten.",
+  "719eaff335f3245d": "Hantera anpassad diktering",
+  "2b5b356019c6857b": [
+    "Uppdatera ",
+    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    " för att använda diktering med ",
+    { "i": 2, "k": "_gt_value_2", "v": "v" },
+    "."
+  ],
+  "2ce113aa171d3337": "Hantera slutpunkt",
   "9996968084688efe": "Hantera nyckel för {company}",
   "bf6a4f30c36e0a87": "Använda {name} för diktering?",
   "710bec893f7881d1": "Alla som använder {name} för diktering på {environment} förlorar åtkomsten.",
@@ -8009,15 +8025,6 @@
     " med dikteringsåtkomst för att fortsätta."
   ],
   "1d33877ef8ea3559": "Försök läsa in API-nyckeln igen",
-  "be805c1729dc0726": [
-    "Uppdatera ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " för att använda diktering med OpenRouter."
-  ],
   "d7acad5dde4c1d1b": "Söker efter en API-nyckel…",
   "8257030da7a4ad4e": "Modell",
   "418d9b293a8983a9": [

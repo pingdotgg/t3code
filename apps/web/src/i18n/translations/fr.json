@@ -7978,6 +7978,22 @@
   "0a9e4d44c145cd07": "Toute personne ayant accès à la dictée sur {environment} peut facturer cette clé.",
   "55803224ee096dc0": "Supprimer la clé {company} ?",
   "0a7813c7df04ffe9": "Gérer la dictée OpenRouter",
+  "532ba611f4afacb8": "Saisissez à nouveau la clé pour la nouvelle URL.",
+  "5ffb239a74670f75": "Supprimer la dictée personnalisée ?",
+  "60dcc46f4e796a5b": "Supprime l’URL du point de terminaison et la clé sur {environment}. Toutes les personnes qui l’utilisent pour la dictée perdent l’accès.",
+  "e12429ce0cec3dc3": "URL de base d’un serveur compatible OpenAI, y compris le chemin de version. L’audio est envoyé à sa route /audio/transcriptions. Utilisez https sauf si le point de terminaison se trouve sur un réseau de confiance.",
+  "242717485ad57422": "Saisissez une URL http ou https.",
+  "fb6adc43377d4ca0": "Une fois l’enregistrement terminé, {environment} envoie votre enregistrement à votre point de terminaison sur {host}.",
+  "1391f283f6ea713c": "Une fois l’enregistrement terminé, {environment} envoie votre enregistrement au point de terminaison personnalisé configuré.",
+  "719eaff335f3245d": "Gérer la dictée personnalisée",
+  "2b5b356019c6857b": [
+    "Mettez à jour ",
+    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    " pour utiliser la dictée avec ",
+    { "i": 2, "k": "_gt_value_2", "v": "v" },
+    "."
+  ],
+  "2ce113aa171d3337": "Gérer le point de terminaison",
   "9996968084688efe": "Gérer la clé {company}",
   "bf6a4f30c36e0a87": "Utiliser {name} pour la dictée ?",
   "710bec893f7881d1": "Toutes les personnes qui utilisent {name} pour la dictée sur {environment} perdront l’accès.",
@@ -8004,15 +8020,6 @@
     " avec l’accès à la dictée pour continuer."
   ],
   "1d33877ef8ea3559": "Réessayer de charger la clé API",
-  "be805c1729dc0726": [
-    "Mettez à jour ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " pour utiliser la dictée OpenRouter."
-  ],
   "d7acad5dde4c1d1b": "Recherche d’une clé API…",
   "8257030da7a4ad4e": "Modèle",
   "418d9b293a8983a9": [

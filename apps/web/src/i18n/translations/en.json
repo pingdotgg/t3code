@@ -7984,6 +7984,22 @@
   "0a9e4d44c145cd07": "Anyone with dictation access to {environment} can bill this key.",
   "55803224ee096dc0": "Remove the {company} key?",
   "0a7813c7df04ffe9": "Manage OpenRouter dictation",
+  "532ba611f4afacb8": "Enter the key again for the new URL.",
+  "5ffb239a74670f75": "Remove custom dictation?",
+  "60dcc46f4e796a5b": "Removes the endpoint URL and key on {environment}. Everyone using it for dictation loses access.",
+  "e12429ce0cec3dc3": "Base URL of an OpenAI-compatible server, including the version path. Audio is sent to its /audio/transcriptions route. Use https unless the endpoint is on a network you trust.",
+  "242717485ad57422": "Enter an http or https URL.",
+  "fb6adc43377d4ca0": "After you stop, {environment} sends your recording to your endpoint at {host}.",
+  "1391f283f6ea713c": "After you stop, {environment} sends your recording to the custom endpoint configured on it.",
+  "719eaff335f3245d": "Manage custom dictation",
+  "2b5b356019c6857b": [
+    "Update ",
+    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    " to use ",
+    { "i": 2, "k": "_gt_value_2", "v": "v" },
+    " dictation."
+  ],
+  "2ce113aa171d3337": "Manage endpoint",
   "9996968084688efe": "Manage {company} key",
   "bf6a4f30c36e0a87": "Use {name} for dictation?",
   "710bec893f7881d1": "Everyone using {name} for dictation on {environment} will lose access.",
@@ -8010,15 +8026,6 @@
     " with dictation access to continue."
   ],
   "1d33877ef8ea3559": "Retry loading API key",
-  "be805c1729dc0726": [
-    "Update ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " to use OpenRouter dictation."
-  ],
   "d7acad5dde4c1d1b": "Checking for an API key…",
   "8257030da7a4ad4e": "Model",
   "418d9b293a8983a9": [

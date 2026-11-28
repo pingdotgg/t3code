@@ -372,6 +372,14 @@ export function withoutRedirectedSecrets(
         rebound(generator, current.textGenerators[id as ProviderInstanceId], "apiKey", "baseUrl"),
       ]),
     ) as ServerSettings["textGenerators"],
+    // A custom speech key is saved for the URL it was entered for. A kept key (the redacted
+    // marker or the same reference) does not follow a changed URL; a new key does.
+    cloudSpeechCredentials:
+      destination(current.cloudSpeechCustomBaseUrl) ===
+        destination(next.cloudSpeechCustomBaseUrl) ||
+      !kept(next.cloudSpeechCredentials.custom, current.cloudSpeechCredentials.custom)
+        ? next.cloudSpeechCredentials
+        : { ...next.cloudSpeechCredentials, custom: "" },
     simlockDeviceHosts: next.simlockDeviceHosts.map((host) =>
       rebound(host, simlockHosts.get(host.id), "agentToken", "gatewayUrl"),
     ),

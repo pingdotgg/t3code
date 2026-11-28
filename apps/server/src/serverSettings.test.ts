@@ -1859,6 +1859,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           openai: SECRET_REDACTED,
           xai: SECRET_REDACTED,
           openrouter: "",
+          custom: "",
         });
         assert.equal(legacy.sourceControlHosts.bitbucket?.accessToken, SECRET_REDACTED);
         assert.equal(legacy.usageLimitSources[hub]?.managementKey, SECRET_REDACTED);
@@ -1903,6 +1904,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           openai: usageReference,
           xai: "literal-fixture",
           openrouter: "",
+          custom: "",
         });
         assert.deepEqual(echoed.easDeviceHosts[0]?.accessToken, easReference);
         assert.deepEqual(echoed.simlockDeviceHosts[0]?.agentToken, simlockReference);
@@ -2138,10 +2140,91 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         "ghe.acme.test": work,
       });
       assert.equal(removed.usageLimitSources[hub]?.managementKey, "");
-      assert.deepEqual(removed.cloudSpeechCredentials, { openai: "", xai: work, openrouter: "" });
+      assert.deepEqual(removed.cloudSpeechCredentials, {
+        openai: "",
+        xai: work,
+        openrouter: "",
+        custom: "",
+      });
       assert.equal(removed.easDeviceHosts[0]?.accessToken, "");
       assert.deepEqual(Object.keys(removed.secretProviders), ["work"]);
     }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("clears the custom speech key when its endpoint changes without a new key", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      yield* service.updateSettings({
+        cloudSpeechCustomBaseUrl: "https://one.example/v1",
+        cloudSpeechCredentials: { custom: "first-key" },
+      });
+      // Pointing the saved key at another host is exactly what a URL-only change must not do.
+      const moved = yield* service.updateSettings({
+        cloudSpeechCustomBaseUrl: "https://two.example/v1",
+      });
+      assert.equal(moved.cloudSpeechCustomBaseUrl, "https://two.example/v1");
+      assert.equal(moved.cloudSpeechCredentials.custom, "");
+      const both = yield* service.updateSettings({
+        cloudSpeechCustomBaseUrl: "https://three.example/v1",
+        cloudSpeechCredentials: { custom: "second-key" },
+      });
+      assert.equal(both.cloudSpeechCredentials.custom, "second-key");
+      const unchanged = yield* service.updateSettings({
+        cloudSpeechCustomBaseUrl: "https://three.example/v1",
+      });
+      assert.equal(unchanged.cloudSpeechCredentials.custom, "second-key");
+      // A trailing slash is the same destination, so the key stays.
+      const slashed = yield* service.updateSettings({
+        cloudSpeechCustomBaseUrl: "https://three.example/v1/",
+      });
+      assert.equal(slashed.cloudSpeechCredentials.custom, "second-key");
+      // Older clients and generic settings forms echo the redacted marker for a saved key.
+      const echoed = yield* service.updateSettings({
+        cloudSpeechCustomBaseUrl: "https://four.example/v1",
+        cloudSpeechCredentials: { custom: SECRET_REDACTED },
+      });
+      assert.equal(echoed.cloudSpeechCredentials.custom, "");
+      // Echoing the same reference is still a kept key, not a new one.
+      const reference = {
+        provider: SecretProviderId.make("work"),
+        reference: "op://Work/Voice/key",
+      };
+      yield* service.updateSettings({
+        cloudSpeechCustomBaseUrl: "https://five.example/v1",
+        cloudSpeechCredentials: { custom: reference },
+      });
+      const sameReference = yield* service.updateSettings({
+        cloudSpeechCustomBaseUrl: "https://six.example/v1",
+        cloudSpeechCredentials: { custom: reference },
+      });
+      assert.equal(sameReference.cloudSpeechCredentials.custom, "");
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("rejects a malformed custom speech endpoint when the patch is decoded", () =>
+    Effect.gen(function* () {
+      for (const value of [
+        "ftp://host/v1",
+        "https://user:pass@host/v1",
+        "https://host/v1?key=1",
+        "https://host/v1#fragment",
+        "host/v1",
+      ]) {
+        const exit = yield* Effect.exit(
+          decodeServerSettingsPatch({ cloudSpeechCustomBaseUrl: value }),
+        );
+        assert.equal(exit._tag, "Failure");
+      }
+      const decoded = yield* decodeServerSettingsPatch({
+        cloudSpeechCustomBaseUrl: "  https://host/v1  ",
+      });
+      assert.equal(decoded.cloudSpeechCustomBaseUrl, "https://host/v1");
+      assert.equal(
+        (yield* decodeServerSettingsPatch({ cloudSpeechCustomBaseUrl: "" }))
+          .cloudSpeechCustomBaseUrl,
+        "",
+      );
+    }),
   );
 
   it.effect("knows every strictly decoded field that can hold a secret reference", () =>
@@ -2151,6 +2234,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         "cloudSpeechCredentials.openai",
         "cloudSpeechCredentials.xai",
         "cloudSpeechCredentials.openrouter",
+        "cloudSpeechCredentials.custom",
         "easDeviceHosts.[].accessToken",
         "simlockDeviceHosts.[].agentToken",
         "usageLimitSources.*.managementKey",

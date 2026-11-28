@@ -7977,6 +7977,22 @@
   "0a9e4d44c145cd07": "Cualquiera con acceso al dictado en {environment} puede cargar costes a esta clave.",
   "55803224ee096dc0": "¿Quitar la clave de {company}?",
   "0a7813c7df04ffe9": "Gestionar el dictado con OpenRouter",
+  "532ba611f4afacb8": "Introduce la clave de nuevo para la nueva URL.",
+  "5ffb239a74670f75": "¿Eliminar el dictado personalizado?",
+  "60dcc46f4e796a5b": "Elimina la URL del endpoint y la clave en {environment}. Todos los que lo usan para dictado pierden el acceso.",
+  "e12429ce0cec3dc3": "URL base de un servidor compatible con OpenAI, incluida la ruta de versión. El audio se envía a su ruta /audio/transcriptions. Usa https salvo que el endpoint esté en una red de confianza.",
+  "242717485ad57422": "Introduce una URL http o https.",
+  "fb6adc43377d4ca0": "Cuando dejes de hablar, {environment} enviará tu grabación a tu endpoint en {host}.",
+  "1391f283f6ea713c": "Cuando dejes de hablar, {environment} enviará tu grabación al endpoint personalizado configurado.",
+  "719eaff335f3245d": "Gestionar el dictado personalizado",
+  "2b5b356019c6857b": [
+    "Actualiza ",
+    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    " para usar el dictado con ",
+    { "i": 2, "k": "_gt_value_2", "v": "v" },
+    "."
+  ],
+  "2ce113aa171d3337": "Gestionar endpoint",
   "9996968084688efe": "Gestionar la clave de {company}",
   "bf6a4f30c36e0a87": "¿Usar {name} para el dictado?",
   "710bec893f7881d1": "Todos los que usan {name} para el dictado en {environment} perderán el acceso.",
@@ -8003,15 +8019,6 @@
     " con acceso al dictado para continuar."
   ],
   "1d33877ef8ea3559": "Reintentar la carga de la clave de API",
-  "be805c1729dc0726": [
-    "Actualiza ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " para usar el dictado con OpenRouter."
-  ],
   "d7acad5dde4c1d1b": "Buscando una clave de API…",
   "8257030da7a4ad4e": "Modelo",
   "418d9b293a8983a9": [
