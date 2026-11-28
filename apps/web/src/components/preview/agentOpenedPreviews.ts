@@ -70,7 +70,11 @@ export function followPreviewSessions(threadRef: ScopedThreadRef, state: ThreadP
     sessions.map((session) => session.tabId),
     new Set(
       sessions
-        .filter((session) => session.runtime === "server" && session.reveal === false)
+        .filter(
+          (session) =>
+            state.closingTabIds.has(session.tabId) ||
+            (session.runtime === "server" && session.reveal === false),
+        )
         .map((session) => session.tabId),
     ),
   );
@@ -112,6 +116,8 @@ function followThread(threadKey: string, threadRef: ScopedThreadRef): () => void
         autoShowFloatingPreview: getClientSettings().browserAutoShowFloatingPreview,
       });
     }
+    // A closing mark only keeps a tab from being added, so it needs no reconcile: running one there
+    // would add back the rest of a bulk close before their own marks land.
     if (before.sessions !== next.sessions || before.listLoaded !== next.listLoaded) {
       followPreviewSessions(threadRef, next);
     }
