@@ -107,6 +107,7 @@ export function IssueCommentComposer(props: {
     const submitted = latestDraft.current;
     if (submitted.trim().length === 0) return;
     const sent = await props.onSubmit(submitted, props.audiences ? audience : undefined);
+    if (sent) setAudience("internal");
     if (sent && latestDraft.current === submitted) changeDraft("");
   };
   const send = () => {

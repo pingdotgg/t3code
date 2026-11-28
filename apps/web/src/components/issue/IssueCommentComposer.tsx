@@ -79,6 +79,7 @@ export function IssueCommentComposer({
       return;
     }
     setBody("");
+    changeAudience("internal");
   };
   const submitAfterDictation = () => speech.submitAfterDictation((text) => void submit(text));
   const submitDisabled =
