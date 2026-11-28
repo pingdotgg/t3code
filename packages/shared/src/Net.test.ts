@@ -77,18 +77,14 @@ it.layer(NetService.layer)("NetService", (it) => {
           try {
             assert.equal(yield* net.isPortAvailableOnLoopback(port), true);
             assert.equal(yield* net.canListenOnHost(port, "::"), true);
-            assert.equal(yield* net.canListenOnHost(port, "192.0.2.123"), false);
-            assert.equal(yield* net.canListenOnHost(port, "2001:db8::1"), false);
-            const ipv4Error = yield* net.probeListenOnHost(port, "192.0.2.123").pipe(Effect.flip);
-            assert.equal(ipv4Error._tag, "NetListenError");
-            assert.equal(ipv4Error.host, "192.0.2.123");
-            assert.equal(ipv4Error.port, port);
-            assert.equal(ipv4Error.code, code);
-            const ipv6Error = yield* net.probeListenOnHost(port, "2001:db8::1").pipe(Effect.flip);
-            assert.equal(ipv6Error._tag, "NetListenError");
-            assert.equal(ipv6Error.host, "2001:db8::1");
-            assert.equal(ipv6Error.port, port);
-            assert.equal(ipv6Error.code, code);
+            for (const host of ["192.0.2.123", "2001:db8::1"]) {
+              assert.equal(yield* net.canListenOnHost(port, host), false);
+              const error = yield* net.probeListenOnHost(port, host).pipe(Effect.flip);
+              assert.deepStrictEqual(
+                [error._tag, error.host, error.code],
+                ["NetListenError", host, code],
+              );
+            }
           } finally {
             spy.mockRestore();
           }
