@@ -168,6 +168,8 @@ export interface EnvironmentThreadShell {
   readonly linkOrigin: OrchestrationV2ThreadShell["linkOrigin"] | null;
   /** The thread in a linked environment that delegated this one, if one did. */
   readonly delegatedFrom: OrchestrationV2ThreadShell["delegatedFrom"] | null;
+  /** A move to a linked environment: waiting, under way, done, or failed. */
+  readonly handoff: NonNullable<OrchestrationV2ThreadShell["handoff"]> | null;
   /** The workflow run this thread is an agent step of, if it is one. */
   readonly workflowRun: OrchestrationV2ThreadShell["workflowRun"] | null;
   readonly activeProviderThreadId: OrchestrationV2ThreadShell["activeProviderThreadId"];
@@ -322,6 +324,7 @@ export function presentThreadShell(
     forkedFrom: thread.forkedFrom,
     linkOrigin: thread.linkOrigin ?? null,
     delegatedFrom: thread.delegatedFrom ?? null,
+    handoff: thread.handoff ?? null,
     workflowRun: thread.workflowRun ?? null,
     activeProviderThreadId: thread.activeProviderThreadId,
     latestRun,

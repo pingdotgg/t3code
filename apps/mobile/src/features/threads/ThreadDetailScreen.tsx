@@ -16,6 +16,8 @@ import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entitie
 import { createThreadVisitTracker } from "@t3tools/client-runtime/state/thread-visits";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
+import { threadHandoffClosesComposer } from "@t3tools/client-runtime/state/peerLinks";
+import { ThreadHandoffCard } from "./ThreadHandoffCard";
 import { useFocusEffect, useIsFocused, useNavigation } from "@react-navigation/native";
 import { useAppActive } from "../../lib/appState";
 import {
@@ -1006,7 +1008,9 @@ function ThreadDetailBody(
   const activeUserInputRequestId = props.activePendingUserInput?.requestId ?? null;
   const questionInFlow = Platform.OS === "android" && activeUserInputRequestId !== null;
   const composerSlotHidden =
-    activeUserInputRequestId !== null || props.creationState?.kind === "failed";
+    activeUserInputRequestId !== null ||
+    props.creationState?.kind === "failed" ||
+    threadHandoffClosesComposer(props.selectedThread.handoff);
   const pendingMessageEditBlocked =
     queuedRunEditBlockedReason(
       { openQuestionCount: activeUserInputRequestId === null ? 0 : 1 },
@@ -1743,6 +1747,16 @@ function ThreadDetailBody(
                         />
                       </Animated.View>
                     ) : null}
+                    <View
+                      // With the composer closed, the card pads the home indicator itself.
+                      style={
+                        threadHandoffClosesComposer(props.selectedThread.handoff)
+                          ? { paddingBottom: composerBottomInset }
+                          : undefined
+                      }
+                    >
+                      <ThreadHandoffCard thread={props.selectedThread} />
+                    </View>
                     <UsageLimitRecoveryCard
                       key={props.selectedThread.latestRun?.runId}
                       thread={props.selectedThread}

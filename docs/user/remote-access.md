@@ -86,9 +86,11 @@ Open a delegated task or thread link on a linked machine to follow it live (read
 
 ### Continue a thread on another machine
 
-A thread can move to a linked machine with its conversation and its code: commits you have not pushed, uncommitted edits and new files. Tell the agent to move it, for example "I need to wrap up, move this to my VPS". It finishes its reply first, then the thread moves and picks up where it said it would. Sending a message before then cancels the move.
+A thread can move to a linked machine with its conversation and its code: commits you have not pushed, uncommitted edits and new files. Choose **Continue on another machine** from the thread's menu or the command palette (the thread's long-press menu on mobile), then pick the machine. The thread has to be idle.
 
-The thread continues there in a new worktree of the project with the same repository, and the copy here becomes read-only. Ignored files such as `.env` stay behind, and a move larger than 50 MB asks you to push the branch first. A long conversation arrives as its first request and most recent turns, not in full.
+You can also tell the agent to move it, for example "I need to wrap up, move this to my VPS". It finishes its reply first, then the thread moves and picks up where it said it would. Sending a message before then cancels the move.
+
+The thread continues there in a new worktree of the project with the same repository, and the copy here becomes read-only with a way to open it there. Ignored files such as `.env` stay behind, and a move larger than 50 MB asks you to push the branch first. A long conversation arrives as its first request and most recent turns, not in full.
 
 If the other machine's branch has commits this one lacks, the move is refused and nothing changes on either side.
 

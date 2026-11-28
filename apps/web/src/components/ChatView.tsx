@@ -216,6 +216,10 @@ import {
 import { threadPullRequestPanelTarget } from "./pullRequest/pullRequestDetail.logic";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { GuestPendingMessages } from "./chat/GuestShareControls";
+import {
+  threadHandoffSendBlockReason,
+  useThreadHandoffBannerItem,
+} from "./chat/ThreadHandoffBanner";
 import { useDeviceState } from "~/state/device";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { ComposerContextPermissions } from "./ComposerContextPermissions";
@@ -2791,7 +2795,9 @@ export default function ChatView(props: ChatViewProps) {
       : null,
     messages,
   );
+  const threadHandoffBannerItem = useThreadHandoffBannerItem(activeThreadShell);
   const composerBannerItems = (() => {
+    const handoffItems = threadHandoffBannerItem === null ? [] : [threadHandoffBannerItem];
     const fallbackSelection = draftFallback?.selection;
     const defaultSelection =
       draftDefaultModelSelection ??
@@ -2871,6 +2877,7 @@ export default function ChatView(props: ChatViewProps) {
         ...freshSessionItems,
         ...heldSendItems,
         ...systemComposerBannerItems,
+        ...handoffItems,
       ];
     }
     return [
@@ -2883,6 +2890,7 @@ export default function ChatView(props: ChatViewProps) {
       ...freshSessionItems,
       ...heldSendItems,
       ...systemComposerBannerItems,
+      ...handoffItems,
       branchMismatchBannerItem(
         {
           mismatchKey: activeBranchMismatchKey,
@@ -3923,17 +3931,18 @@ export default function ChatView(props: ChatViewProps) {
                                 sendDisabledReason={
                                   !canOperateThread
                                     ? gt("This connection cannot change threads.")
-                                    : isEnvironmentChanging
-                                      ? gt("Preparing machine")
-                                      : isRevertingCheckpoint
-                                        ? gt("Rewinding conversation")
-                                        : feedbackUploading
-                                          ? gt("Sending feedback")
-                                          : threadDetailLoading
-                                            ? gt("Messages loading")
-                                            : worktreeSetupBlocksSend
-                                              ? gt("Preparing worktree")
-                                              : projectCloneSendBlockReason
+                                    : (threadHandoffSendBlockReason(activeThreadShell, messages) ??
+                                      (isEnvironmentChanging
+                                        ? gt("Preparing machine")
+                                        : isRevertingCheckpoint
+                                          ? gt("Rewinding conversation")
+                                          : feedbackUploading
+                                            ? gt("Sending feedback")
+                                            : threadDetailLoading
+                                              ? gt("Messages loading")
+                                              : worktreeSetupBlocksSend
+                                                ? gt("Preparing worktree")
+                                                : projectCloneSendBlockReason))
                                 }
                                 isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                                 bannerItems={

@@ -55,6 +55,9 @@ import {
 import { useThreadSearch } from "../../state/queries";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import { useCanShareWithGuest } from "../threads/useCanShareWithGuest";
+import { useCanMoveThreads } from "../../state/threadHandoff";
+import { threadCanStartHandoff } from "@t3tools/client-runtime/state/peerLinks";
+import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "../../state/server";
@@ -292,6 +295,7 @@ export function CommandPalette(props: {
     triageEnvironmentId !== null &&
     serverConfigs.get(triageEnvironmentId)?.environment.capabilities.triage === true;
   const canShareWithGuest = useCanShareWithGuest(activeThreadRef?.environmentId ?? null);
+  const canMoveThreads = useCanMoveThreads(activeThreadRef?.environmentId ?? null);
   const contentMatchByKey = new Map(
     search.matches
       .filter((match) => match.source === "user" || match.source === "assistant")
@@ -422,6 +426,20 @@ export function CommandPalette(props: {
           run: () => navigation.navigate("ThreadGuestShare", activeThreadRef),
         });
       }
+      if (
+        canMoveThreads &&
+        activeThread != null &&
+        threadCanStartHandoff(activeThread.handoff) &&
+        threadRuntimeCanArchive(activeThread.runtime)
+      ) {
+        actions.push({
+          key: "continueElsewhere",
+          kind: "action",
+          title: gt("Continue on another machine"),
+          searchTerms: ["continue", "move", "hand off", "handoff", "machine", "environment"],
+          run: () => navigation.navigate("ThreadHandoff", activeThreadRef),
+        });
+      }
     }
     const openProjects = projects.filter((project) => project.archivedAt == null);
     const projectItems: CommandPaletteItem[] = [
@@ -500,6 +518,7 @@ export function CommandPalette(props: {
     environments.length,
     canTriage,
     canShareWithGuest,
+    canMoveThreads,
     navigation,
     projects,
     runCommand,
