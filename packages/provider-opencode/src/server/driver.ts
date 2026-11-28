@@ -756,6 +756,7 @@ export const OpenCodeDriver: ProviderDriver<
         makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
       checkUsageLimits,
+      recoverUsageOnInterval: true,
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) => {
         let enriched = snapshot;
         let catalog: ReadonlyArray<OpenCode2Model> | undefined;
