@@ -68,7 +68,9 @@ describe("scan cache round trip", () => {
         [
           record(),
           record({
-            dedupeKey: "msg_2:",
+            dedupeKey: "msg_2::fallback",
+            supersedesDedupeKey: "msg_2:",
+            modelCalls: 3,
             model: "claude-opus-5-5",
             speed: "fast",
             cacheCreation1hTokens: 8,
@@ -183,7 +185,7 @@ describe("scan cache round trip", () => {
     expect(reparsed.malformedRecords).toEqual([]);
   });
 
-  it.each([5, 6, 7, 8, 10, 11, 12, 13])(
+  it.each([5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16])(
     "retains v%s history and compatible positions but invalidates obsolete state",
     (version) => {
       const original = cacheWith([["/gone.jsonl", 100, [record({ speed: "fast" })]]]);
@@ -240,25 +242,29 @@ describe("scan cache round trip", () => {
       };
 
       const restored = decodeScanCache(JSON.parse(JSON.stringify(legacy)), TEST_FORMAT_MAP);
-      expect(restored.get("/gone.jsonl")).toEqual(
-        version >= 13
-          ? original.get("/gone.jsonl")
+      expect(restored.get("/gone.jsonl")).toEqual({
+        ...original.get("/gone.jsonl"),
+        size: -1,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+      });
+      expect(restored.get("/gone-codex.jsonl")).toEqual(
+        version >= 16
+          ? original.get("/gone-codex.jsonl")
           : {
-              ...original.get("/gone.jsonl"),
-              size: -1,
+              ...original.get("/gone-codex.jsonl"),
+              size: version === 15 ? original.get("/gone-codex.jsonl")!.size : -1,
               position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
             },
       );
-      expect(restored.get("/gone-codex.jsonl")).toEqual({
-        ...original.get("/gone-codex.jsonl"),
-        size: -1,
-        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
-      });
-      expect(restored.get("/clean-codex.jsonl")).toEqual({
-        ...cleanCodex,
-        size: -1,
-        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
-      });
+      expect(restored.get("/clean-codex.jsonl")).toEqual(
+        version >= 16
+          ? cleanCodex
+          : {
+              ...cleanCodex,
+              size: version >= 14 ? cleanCodex.size : -1,
+              position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+            },
+      );
       expect(restored.get("/gone-pi.jsonl")).toEqual(
         version >= 6
           ? original.get("/gone-pi.jsonl")
@@ -342,36 +348,86 @@ describe("scan cache round trip", () => {
     expect(decodeScanCache(current, TEST_FORMAT_MAP).get("/codex.jsonl")).toEqual(entry);
   });
 
-  it("re-parses a Claude transcript cached before 1-hour cache writes were counted", () => {
-    const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
-    const v12 = { ...parse(makeScanCacheWriter()(original, {})), version: 12 };
-
-    const restored = decodeScanCache(JSON.parse(JSON.stringify(v12)), TEST_FORMAT_MAP);
-    expect(restored.get("/claude.jsonl")).toEqual({
-      ...original.get("/claude.jsonl"),
-      size: -1,
-      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
-    });
-  });
-
-  it.each(["s:p:grok-4.5", "s:p:1786000000000:grok-4.5"])(
-    "re-parses v16 Grok transcripts with key %s",
-    (dedupeKey) => {
+  it.each([
+    ...[11, 12, 13, 14, 15, 16, 17, 18].map((version) => ({ version, replacement: false })),
+    { version: 18, replacement: true },
+  ])(
+    "re-parses Claude transcripts for corrected attempt usage (%j)",
+    ({ version, replacement }) => {
       const original = cacheWith([
-        ["/grok/updates.jsonl", 100, [record({ provider: "grok", model: "grok-4.5", dedupeKey })]],
+        [
+          "/claude.jsonl",
+          100,
+          [
+            record(
+              replacement ? { dedupeKey: "msg_1::fallback", supersedesDedupeKey: "msg_1:" } : {},
+            ),
+          ],
+        ],
+      ]);
+      const encoded = parse(makeScanCacheWriter()(original, {}));
+      if (replacement) {
+        const row = encoded.files["/claude.jsonl"].r[0];
+        row[14] = row.pop();
+      }
+      const legacy = { ...encoded, version };
+
+      const restored = decodeScanCache(JSON.parse(JSON.stringify(legacy)), TEST_FORMAT_MAP);
+      expect(restored.get("/claude.jsonl")).toEqual({
+        ...original.get("/claude.jsonl"),
+        size: -1,
+        position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+      });
+    },
+  );
+
+  it.each(
+    [16, 17, 18].flatMap((version) =>
+      (version === 16
+        ? ["s:p:grok-4.5", "s:p:1786000000000:grok-4.5"]
+        : ["s:p:1786000000000:grok-4.5"]
+      ).flatMap((dedupeKey) =>
+        (version === 18 ? [false, true] : [false]).map((modelCalls) => ({
+          version,
+          dedupeKey,
+          modelCalls,
+        })),
+      ),
+    ),
+  )(
+    "retains Grok history and invalidates both v18 layouts (%j)",
+    ({ version, dedupeKey, modelCalls }) => {
+      const original = cacheWith([
+        [
+          "/grok/updates.jsonl",
+          100,
+          [
+            record({
+              provider: "grok",
+              model: "grok-4.5",
+              dedupeKey,
+              ...(modelCalls ? { modelCalls: 8 } : {}),
+            }),
+          ],
+        ],
       ]);
       original.set("/grok/updates.jsonl", {
         ...original.get("/grok/updates.jsonl")!,
         provider: "grok",
       });
       const encoded = parse(makeScanCacheWriter()(original, {}));
-      const restored = decodeScanCache({ ...encoded, version: 16 }, TEST_FORMAT_MAP);
+      const restored = decodeScanCache({ ...encoded, version }, TEST_FORMAT_MAP);
       expect(restored.get("/grok/updates.jsonl")).toEqual({
         ...original.get("/grok/updates.jsonl"),
         size: -1,
         position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
         records: [
-          record({ provider: "grok", model: "grok-4.5", dedupeKey: "s:p:1786000000000:grok-4.5" }),
+          record({
+            provider: "grok",
+            model: "grok-4.5",
+            dedupeKey: "s:p:1786000000000:grok-4.5",
+            ...(modelCalls ? { modelCalls: 8 } : {}),
+          }),
         ],
       });
     },

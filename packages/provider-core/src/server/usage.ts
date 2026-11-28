@@ -26,6 +26,8 @@ export interface UsageRecord {
   readonly modelCalls?: number;
   readonly unresolvedServiceTierTurnId?: string;
   readonly dedupeKey: string | null;
+  /** An authoritative attempt replaces this provisional message, including cached copies. */
+  readonly supersedesDedupeKey?: string;
 }
 
 export const EMPTY_TOTALS: UsageTokenTotals = {

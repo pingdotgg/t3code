@@ -10,7 +10,7 @@ import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
 import { mergeUsageCopies } from "./usageAggregation.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-const USAGE_SCAN_CACHE_VERSION = 18 as const;
+const USAGE_SCAN_CACHE_VERSION = 19 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
@@ -18,8 +18,9 @@ const SPEED_COMPATIBLE_SINCE_VERSION = 4;
  * replace it, dropping saved usage for deleted transcripts. Separate files keep
  * the newer one; older files are removed once it is saved.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v18.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v19.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v18.json",
   "usage-scan-cache-v17.json",
   "usage-scan-cache-v16.json",
   "usage-scan-cache-v15.json",
@@ -68,6 +69,7 @@ type SerializedRecord = readonly [
   unresolvedServiceTierTurnId?: string | null,
   cacheCreation1hTokens?: number,
   modelCalls?: number,
+  supersedesDedupeKey?: string,
 ];
 
 interface SerializedFile {
@@ -127,17 +129,24 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
     record.rateModel === undefined
       ? null
       : intern(tables.models, tables.modelIndex, record.rateModel),
-    ...(record.modelCalls !== undefined && record.modelCalls > 1
+    ...(record.supersedesDedupeKey !== undefined
       ? ([
           record.unresolvedServiceTierTurnId ?? null,
           record.cacheCreation1hTokens ?? 0,
-          record.modelCalls,
+          record.modelCalls ?? 1,
+          record.supersedesDedupeKey,
         ] as const)
-      : record.cacheCreation1hTokens !== undefined
-        ? ([record.unresolvedServiceTierTurnId ?? null, record.cacheCreation1hTokens] as const)
-        : record.unresolvedServiceTierTurnId !== undefined
-          ? ([record.unresolvedServiceTierTurnId] as const)
-          : ([] as const)),
+      : record.modelCalls !== undefined && record.modelCalls > 1
+        ? ([
+            record.unresolvedServiceTierTurnId ?? null,
+            record.cacheCreation1hTokens ?? 0,
+            record.modelCalls,
+          ] as const)
+        : record.cacheCreation1hTokens !== undefined
+          ? ([record.unresolvedServiceTierTurnId ?? null, record.cacheCreation1hTokens] as const)
+          : record.unresolvedServiceTierTurnId !== undefined
+            ? ([record.unresolvedServiceTierTurnId] as const)
+            : ([] as const)),
   ];
   return {
     s: entry.size,
@@ -230,8 +239,14 @@ export function decodeScanCache(
         rateModelIndex,
         unresolvedServiceTierTurnId,
         cacheCreation1h = 0,
-        modelCalls = 1,
+        savedModelCalls = 1,
+        savedSupersedesDedupeKey,
       ] = row as SerializedRecord;
+      // Earlier fallback builds wrote v18 Claude replacement keys in the modelCalls slot.
+      const legacyReplacement =
+        version === 18 && provider === "claude" && typeof savedModelCalls === "string";
+      const modelCalls = legacyReplacement ? 1 : savedModelCalls;
+      const supersedesDedupeKey = legacyReplacement ? savedModelCalls : savedSupersedesDedupeKey;
       const speed = typeof speedIndex === "number" ? SPEEDS[speedIndex] : undefined;
 
       const model = typeof modelIndex === "number" ? models[modelIndex] : undefined;
@@ -242,6 +257,7 @@ export function decodeScanCache(
         model === undefined ||
         (unresolvedServiceTierTurnId != null && typeof unresolvedServiceTierTurnId !== "string") ||
         !Number.isFinite(cacheCreation1h) ||
+        (supersedesDedupeKey !== undefined && typeof supersedesDedupeKey !== "string") ||
         typeof modelCalls !== "number" ||
         !Number.isFinite(modelCalls) ||
         modelCalls < 0 ||
@@ -281,6 +297,7 @@ export function decodeScanCache(
         ...(version >= 7 && unresolvedServiceTierTurnId != null
           ? { unresolvedServiceTierTurnId }
           : {}),
+        ...(supersedesDedupeKey === undefined ? {} : { supersedesDedupeKey }),
         dedupeKey:
           typeof dedupeKey !== "string"
             ? null
@@ -335,11 +352,11 @@ export function decodeScanCache(
       continue;
     }
     // Keep history for deleted rollouts, but re-parse incompatible reducer state:
-    // v13 1h cache writes, v14 Codex ledgers, v15 rewound Codex counters,
-    // v17 time-keyed Grok turns, v18 Grok modelCalls for per-call context tiers.
+    // v14 Codex ledgers, v15 rewound Codex counters, v17 time-keyed Grok turns,
+    // v19 combines Grok modelCalls and Claude replacement keys from incompatible v18 builds.
     const legacy =
-      (entry.p === "claude" && version < 13) ||
-      (entry.p === "grok" && version < 18) ||
+      (entry.p === "claude" && version < 19) ||
+      (entry.p === "grok" && version < 19) ||
       (format.state !== undefined &&
         (version < 6 ||
           (entry.p === "codex" && (version < 14 || (version < 15 && malformedCount > 0)))));
