@@ -120,6 +120,7 @@ export function useEnrichedLinkVariants(
   urls: ReadonlyArray<string>,
   props: SelectableMarkdownTextProps,
   fileHrefs: ReadonlySet<string>,
+  inlineCodeHrefs: ReadonlySet<string>,
 ) {
   const { linkCustomization, skills, models, textStyle, fileEmbedLabel } = props;
   const theme = useUniwindTheme();
@@ -136,10 +137,24 @@ export function useEnrichedLinkVariants(
             icon: markdownFileIconSource(resolveMarkdownFileIcon(label)),
           }
         : presentation(url, { linkCustomization, skills, models, textStyle });
-      if (value) byUrl.set(url, value);
+      if (!value) continue;
+      // Inline-code file links keep the text the agent wrote instead of a short pill label.
+      if (inlineCodeHrefs.has(url)) {
+        const { label: _label, ...authored } = value;
+        byUrl.set(url, authored);
+      } else byUrl.set(url, value);
     }
     return byUrl;
-  }, [urls, linkCustomization, skills, models, textStyle, fileHrefs, fileEmbedLabel]);
+  }, [
+    urls,
+    linkCustomization,
+    skills,
+    models,
+    textStyle,
+    fileHrefs,
+    fileEmbedLabel,
+    inlineCodeHrefs,
+  ]);
   const chipForegrounds = useMemo(
     () =>
       new Map(

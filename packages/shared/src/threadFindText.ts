@@ -150,14 +150,6 @@ function markdownThreadFindText(
             candidate = authoredSrc;
           }
         }
-      } else if (
-        node.tagName === "code" &&
-        !inPre &&
-        node.properties?.dataInlineCode !== undefined
-      ) {
-        candidate = inlineCodeFilePathCandidate(
-          (node.children ?? []).map((child) => child.value ?? "").join(""),
-        );
       }
       const resolved = candidate ? resolveMarkdownFileLink(candidate, cwd) : null;
       if (candidate && resolved) {
