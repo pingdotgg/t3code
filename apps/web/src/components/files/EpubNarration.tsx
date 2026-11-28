@@ -54,8 +54,11 @@ export function EpubNarration(props: {
     if (!player) return;
     const command = ++request.current;
     const sameSource = player.getAttribute("src") === cue.src;
+    const reload = sameSource && player.error !== null;
+    const start = resume && sameSource ? player.currentTime : cue.begin;
     if (!sameSource) player.src = cue.src;
-    if (!resume || !sameSource) player.currentTime = cue.begin;
+    else if (reload) player.load();
+    if (!resume || !sameSource || reload) player.currentTime = start;
     void player.play().catch(() => {
       if (command !== request.current) return;
       fail();
