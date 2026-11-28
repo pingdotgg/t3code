@@ -93,6 +93,28 @@ describe("continueIssuePage", () => {
   });
 });
 
+describe("holdIssuePages", () => {
+  it("keeps the loaded pages when a refresh after a ticket action changes the first page", () => {
+    const cursors = { "github.com acme/api": "page-2" };
+    const first = answer({ entries: [entry({ key: "3" })], nextCursors: cursors });
+    const continued = continueIssuePage(
+      hold(first),
+      answer({ entries: [entry({ key: "2" }), entry({ key: "1" })] }),
+      cursors,
+    );
+    // Closing #1 moves it to the top of the first page the refresh reads.
+    const refreshed = answer({
+      entries: [entry({ key: "1", updatedAt: "2026-10-02T00:00:00.000Z" }), entry({ key: "3" })],
+      nextCursors: cursors,
+    });
+    const held = holdIssuePages(
+      [[environmentId, refreshed]],
+      new Map([[environmentId, continued]]),
+    ).get(environmentId)!;
+    expect(held.entries.map((issue) => issue.key)).toContain("2");
+  });
+});
+
 describe("issueFilterScopes", () => {
   const tracker = (overrides: Partial<IssueTrackerSummary>): IssueTrackerSummary =>
     ({
