@@ -617,15 +617,48 @@ export const layer: Layer.Layer<
                   nodeId: input.event.turnItem.nodeId,
                 }),
               ];
-            case "runtime_request.updated":
+            case "runtime_request.updated": {
+              const request = input.event.runtimeRequest;
+              const updated = yield* makeDomainEvent(input, {
+                type: "runtime-request.updated",
+                ...(input.event.threadId === undefined ? {} : { threadId: input.event.threadId }),
+                payload: request,
+                nodeId: request.nodeId,
+              });
+              if (request.status !== "pending" || request.kind === "dynamic_tool_call") {
+                return [updated];
+              }
+              // A settled thread can run a background wake; a question or approval it raises
+              // after the settle needs the user, so it reopens the thread.
+              const thread = yield* projections.getThread(updated.threadId).pipe(
+                Effect.catchTags({
+                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+                }),
+              );
+              if (
+                thread?.settledOverride !== "settled" ||
+                (thread.settledAt !== null &&
+                  !DateTime.isGreaterThan(request.createdAt, thread.settledAt))
+              ) {
+                return [updated];
+              }
+              const now = yield* DateTime.now;
               return [
+                updated,
                 yield* makeDomainEvent(input, {
-                  type: "runtime-request.updated",
-                  ...(input.event.threadId === undefined ? {} : { threadId: input.event.threadId }),
-                  payload: input.event.runtimeRequest,
-                  nodeId: input.event.runtimeRequest.nodeId,
+                  type: "thread.unsettled",
+                  threadId: thread.id,
+                  payload: {
+                    ...thread,
+                    settledOverride: null,
+                    settledAt: null,
+                    unsettledAt: now,
+                    updatedAt: now,
+                  },
+                  occurredAt: now,
                 }),
               ];
+            }
             case "plan.updated": {
               const occurredAt = yield* DateTime.now;
               const plan = input.event.plan;

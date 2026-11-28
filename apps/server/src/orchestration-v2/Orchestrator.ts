@@ -7584,7 +7584,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : run.id === command.restartContinuationOfRunId,
     )?.delegatedTaskId;
 
-    if (projection.thread.settledOverride !== null) {
+    // A background wake or a delegated task's result runs on a settled thread without reopening it.
+    // A delegated task's question is for the user, so it reopens the thread like a message does.
+    const keepsSettled =
+      command.delegatedCompletion !== undefined ||
+      (command.notification !== undefined && command.notification.source.kind !== "delegated_task");
+    if (
+      projection.thread.settledOverride !== null &&
+      !(keepsSettled && projection.thread.settledOverride === "settled")
+    ) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
         ...projection.thread,
