@@ -401,6 +401,7 @@ async function loadNativeSpeechModelOnce(
     supportsLongForm: loaded.supportsLongForm === true,
     supportsTranslation: loaded.supportsTranslation === true,
     supportsVocabulary: loaded.supportsVocabulary === true,
+    isStopped: () => stopped,
     begin: async (options: NativeSpeechOptions, filterSilence: boolean, vadPath?: string) => {
       await send({ kind: "begin", options, filterSilence, vadPath });
     },
