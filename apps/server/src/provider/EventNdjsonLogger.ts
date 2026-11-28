@@ -211,13 +211,7 @@ export function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unk
     }
 
     const nativeType = Reflect.get(nativeEvent, "type");
-    // Hook output is needed by the adapter but may contain credentials; omit these frames from logs.
-    if (
-      nativeType === "system" &&
-      ["thinking_tokens", "hook_progress", "hook_response"].includes(
-        Reflect.get(nativeEvent, "subtype"),
-      )
-    ) {
+    if (nativeType === "system" && Reflect.get(nativeEvent, "subtype") === "thinking_tokens") {
       return false;
     }
     if (nativeType === "message.part.delta") return false;

@@ -17955,20 +17955,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       requesting: false,
       backgroundProgress: true,
     },
-    {
-      case: "while an earlier background task runs a hook",
-      requesting: true,
-      backgroundHook: true,
-    },
   ])(
     "does not keep a turn silently running when Claude goes quiet $case",
-    ({
-      requesting,
-      backgroundProgress = false,
-      forkedTask = false,
-      nestedTaskStarted = false,
-      backgroundHook = false,
-    }) =>
+    ({ requesting, backgroundProgress = false, forkedTask = false, nestedTaskStarted = false }) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         const now = yield* DateTime.now;
@@ -18014,19 +18003,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               description: "Earlier background task",
               usage: { total_tokens: 1, tool_uses: 0, duration_ms: 1 },
               uuid: "00000000-0000-4000-8000-000000000793",
-              session_id: WAKE_NATIVE_SESSION,
-            }),
-          );
-        }
-        if (backgroundHook) {
-          yield* harness.offerAndWait(
-            claudeSdkFrame({
-              type: "system",
-              subtype: "hook_started",
-              hook_id: "earlier-background-hook",
-              hook_name: "PreToolUse:Bash",
-              hook_event: "PreToolUse",
-              uuid: "00000000-0000-4000-8000-000000000796",
               session_id: WAKE_NATIVE_SESSION,
             }),
           );
@@ -27367,7 +27343,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         uuid,
         session_id: WAKE_NATIVE_SESSION,
       });
-    const stopHookFeedback = (uuid: string | undefined, condition: string, reason: string) =>
+    const stopHookFeedback = (uuid: string, condition: string, reason: string) =>
       claudeSdkFrame({
         type: "user",
         message: {
@@ -27386,53 +27362,46 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           : [],
       );
 
-    it.effect.each([
-      { activeGoal: false, uuid: "stop-hook" },
-      { activeGoal: true, uuid: "stop-hook" },
-      { activeGoal: false, uuid: undefined },
-    ])(
-      "shows non-goal Stop hook feedback in the current run, active goal=$activeGoal, uuid=$uuid",
-      ({ activeGoal, uuid }) =>
+    const stopHookEffects = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+      events.flatMap((event) =>
+        event.type !== "turn_item.updated"
+          ? []
+          : event.turnItem.type === "notification"
+            ? [`${event.turnItem.summary}: ${event.turnItem.detail}`]
+            : event.turnItem.type === "assistant_message" && event.turnItem.phase === "final_answer"
+              ? [`final answer: ${event.turnItem.text}`]
+              : [],
+      );
+
+    it.effect.each([{ activeGoal: false }, { activeGoal: true }])(
+      "keeps the answer a Stop hook continued past, active goal=$activeGoal",
+      ({ activeGoal }) =>
         Effect.gen(function* () {
           const harness = yield* makeWakeHarness;
-          const input = makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("stop-hook-attempt"),
-            text: "Check the changes.",
-            attachments: [],
-          });
-          yield* harness.runtime.startTurn(input);
-          if (activeGoal) {
-            yield* Queue.offer(
-              harness.sdkMessages,
-              syntheticFrame("goal-set", "Goal set: all tests pass"),
-            );
-          }
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("stop-hook-attempt"),
+              text: "Check the changes.",
+              attachments: [],
+            }),
+          );
           for (const frame of [
+            ...(activeGoal ? [syntheticFrame("goal-set", "Goal set: all tests pass")] : []),
             makeAssistantTextFrame({ uuid: "answer", text: "Here is the answer." }),
-            stopHookFeedback(uuid, "./check.sh", "Run the formatter before finishing."),
+            stopHookFeedback("stop-hook", "./check.sh", "Run the formatter before finishing."),
             makeAssistantTextFrame({ uuid: "reply", text: "The formatter has run." }),
             makeResultFrame({ uuid: "result", result: "The formatter has run." }),
           ]) {
             yield* Queue.offer(harness.sdkMessages, frame);
           }
           assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
-          const notices = harness.events.flatMap((event) =>
-            event.type === "turn_item.updated" && event.turnItem.type === "notification"
-              ? [event.turnItem]
-              : [],
-          );
-          assert.lengthOf(notices, 1);
-          assert.deepInclude(notices[0], {
-            type: "notification",
-            runId: input.runId,
-            status: "completed",
-            source: { kind: "system" },
-            summary: "Stop hook asked Claude to continue",
-            detail: "[./check.sh]: Run the formatter before finishing.",
-          });
+          assert.deepEqual(stopHookEffects(harness.events), [
+            "final answer: Here is the answer.",
+            "Stop hook asked Claude to continue: [./check.sh]: Run the formatter before finishing.",
+          ]);
         }).pipe(
           Effect.scoped,
           Effect.provide(
@@ -27444,87 +27413,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ),
           ),
         ),
-    );
-
-    it.effect("shows only Stop hook responses that continue with additionalContext", () =>
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        const input = makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("stop-hook-response-attempt"),
-          text: "Check the changes.",
-          attachments: [],
-        });
-        yield* harness.runtime.startTurn(input);
-        const hookResponse = (
-          uuid: string,
-          hookEvent: string,
-          outcome: "success" | "error",
-          output: object | "",
-        ) => {
-          const stdout = output === "" ? "" : JSON.stringify(output);
-          return claudeSdkFrame({
-            type: "system",
-            subtype: "hook_response",
-            hook_id: uuid,
-            hook_name: hookEvent,
-            hook_event: hookEvent,
-            output: stdout,
-            stdout,
-            stderr: "",
-            exit_code: 0,
-            outcome,
-            uuid,
-            session_id: WAKE_NATIVE_SESSION,
-          });
-        };
-        const context = (text: string) => ({
-          hookSpecificOutput: { hookEventName: "Stop", additionalContext: text },
-        });
-        for (const frame of [
-          makeAssistantTextFrame({ uuid: "answer", text: "Here is the answer." }),
-          hookResponse("post-tool", "PostToolUse", "success", context("Not a stop.")),
-          hookResponse("failed", "Stop", "error", context("The hook failed.")),
-          hookResponse("missing-event", "Stop", "success", {
-            hookSpecificOutput: { additionalContext: "Missing event name." },
-          }),
-          hookResponse("wrong-event", "Stop", "success", {
-            hookSpecificOutput: {
-              hookEventName: "PostToolUse",
-              additionalContext: "Wrong event name.",
-            },
-          }),
-          hookResponse("halt", "Stop", "success", { ...context("Halted."), continue: false }),
-          hookResponse("continue", "Stop", "success", context("Run the formatter.")),
-          makeAssistantTextFrame({ uuid: "reply", text: "The formatter has run." }),
-          hookResponse("done", "Stop", "success", ""),
-          makeResultFrame({ uuid: "result", result: "The formatter has run." }),
-        ]) {
-          yield* Queue.offer(harness.sdkMessages, frame);
-        }
-        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
-        const notices = harness.events.flatMap((event) =>
-          event.type === "turn_item.updated" && event.turnItem.type === "notification"
-            ? [event.turnItem]
-            : [],
-        );
-        assert.deepEqual(
-          notices.map((notice) => [notice.runId, notice.detail]),
-          [[input.runId, "Run the formatter."]],
-        );
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
-        ),
-      ),
     );
 
     it.effect("tracks a /goal through unmet checks until Claude stops on its own", () =>
@@ -27552,11 +27440,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }
         const terminal = yield* Queue.take(harness.terminalReceipts);
         assert.equal(terminal.status, "completed");
-        assert.isFalse(
-          harness.events.some(
-            (event) => event.type === "turn_item.updated" && event.turnItem.type === "notification",
-          ),
-        );
+        assert.deepEqual(stopHookEffects(harness.events), []);
         assert.deepEqual(goalStatuses(harness.events), [
           { objective: condition, status: "active", checks: 0 },
           {

@@ -54,7 +54,6 @@ import {
   type TurnDiffSummary,
 } from "../../types";
 import {
-  CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY,
   idleCompactionOf,
   isCompactionCommandMessage,
   isOrchestrationV2WorkActive,
@@ -756,31 +755,6 @@ export function resolveAssistantMessageCopyState({
   };
 }
 
-function timelineEntryIsStopHook(entry: TimelineEntry): boolean {
-  if (entry.kind !== "work") return false;
-  const item = entry.entry.structuredPayload;
-  return (
-    item?.type === "notification" &&
-    item.source.kind === "system" &&
-    item.summary === CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY
-  );
-}
-
-function deriveStopHookAnswerIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
-  const lastAssistantMessageIdByRun = new Map<RunId, MessageId>();
-  const stopHookAnswerIds = new Set<string>();
-  for (const entry of timelineEntries) {
-    if (entry.kind === "message" && entry.message.role === "assistant" && entry.message.runId) {
-      lastAssistantMessageIdByRun.set(entry.message.runId, entry.message.id);
-    } else if (timelineEntryIsStopHook(entry)) {
-      const runId = timelineEntryRunId(entry);
-      const answerId = runId === null ? undefined : lastAssistantMessageIdByRun.get(runId);
-      if (answerId !== undefined) stopHookAnswerIds.add(answerId);
-    }
-  }
-  return stopHookAnswerIds;
-}
-
 function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
   const lastAssistantMessageIdByResponseKey = new Map<string, string>();
   let nullTurnResponseIndex = 0;
@@ -1012,9 +986,7 @@ function timelineEntryIsSteer(entry: TimelineEntry): boolean {
 export function timelineEntryStartsResponse(entry: TimelineEntry): boolean {
   return (
     (entry.kind === "message" && entry.message.role === "user" && !timelineEntryIsSteer(entry)) ||
-    (entry.kind === "work" &&
-      entry.entry.itemType === "notification" &&
-      !timelineEntryIsStopHook(entry))
+    (entry.kind === "work" && entry.entry.itemType === "notification")
   );
 }
 
@@ -1113,7 +1085,6 @@ function itemizedFailedRunIds(
 function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   terminalAssistantMessageIds: ReadonlySet<string>;
-  stopHookAnswerIds: ReadonlySet<string>;
   latestRun: TimelineLatestRun | null;
   unfoldedRunIds: ReadonlySet<RunId>;
   runlessWorkActive: boolean;
@@ -1237,10 +1208,7 @@ function deriveTurnFolds(input: {
     // Folded dividers lose their place in the turn, so only the latest stays visible.
     const visibleCompactionId = group.entries.findLast(timelineEntryIsCompaction)?.id;
     for (const [index, entry] of group.entries.entries()) {
-      if (
-        entry.id === group.terminalEntry?.id ||
-        (entry.kind === "message" && input.stopHookAnswerIds.has(entry.message.id))
-      ) {
+      if (entry.id === group.terminalEntry?.id) {
         continue;
       }
       const isCompaction = timelineEntryIsCompaction(entry);
@@ -1514,7 +1482,6 @@ function workShownAsFinalAnswerOnly(
     work.questionAnswer !== undefined ||
     timelineEntryIsCompaction(entry) ||
     timelineEntryStartsResponse(entry) ||
-    timelineEntryIsStopHook(entry) ||
     work.tone === "error" ||
     work.sourceActivityKind === "runtime.error" ||
     (work.itemType === "error" && work.toolLifecycleStatus !== "completed")
@@ -1604,7 +1571,6 @@ function timelineRowEntries(
     const terminalIds = deriveTerminalAssistantMessageIds(entries);
     const steerAnswerIds = deriveInFlightSteerAnswerIds(entries);
     const retainedReplyIds = retainedAssistantReplyEntryIds(entries);
-    const stopHookAnswerIds = deriveStopHookAnswerIds(entries);
     shown = entries.filter((entry, index) => {
       if (entry.kind !== "message") {
         return workShownAsFinalAnswerOnly(entry, input.pendingApprovalRequestIds);
@@ -1615,7 +1581,6 @@ function timelineRowEntries(
         message.id === input.revealedMessageId ||
         steerAnswerIds.has(message.id) ||
         retainedReplyIds.has(entry.id) ||
-        stopHookAnswerIds.has(message.id) ||
         (terminalIds.has(message.id) &&
           index < answeringFrom &&
           (answeringRunId === null || message.runId !== answeringRunId))
@@ -1654,7 +1619,6 @@ function deriveTimelineTurnFolds(
   return deriveTurnFolds({
     timelineEntries,
     terminalAssistantMessageIds: deriveTerminalAssistantMessageIds(timelineEntries),
-    stopHookAnswerIds: deriveStopHookAnswerIds(timelineEntries),
     latestRun: input.latestRun ?? null,
     unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
     runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
@@ -1744,7 +1708,6 @@ export function deriveMessagesTimelineRows(
       : deriveTurnFolds({
           timelineEntries: timelineEntries,
           terminalAssistantMessageIds,
-          stopHookAnswerIds: deriveStopHookAnswerIds(timelineEntries),
           latestRun: input.latestRun ?? null,
           unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
           runlessWorkActive,

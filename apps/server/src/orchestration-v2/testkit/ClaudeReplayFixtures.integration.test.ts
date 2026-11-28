@@ -1,7 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
-  CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY,
   CommandId,
   isProviderNativeSubagentThread,
   MessageId,
@@ -22,7 +21,6 @@ import * as UsageLimitSources from "../../usage/UsageLimitSources.ts";
 import { claudeUsageLimitFailure } from "./fixtures/usage_limit/claude_output.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { subagentInput } from "./fixtures/subagent/input.ts";
-import { claudeStopHookContinuationInput } from "./fixtures/claude_stop_hook_continuation/input.ts";
 import { runOrchestratorV2Scenario } from "./OrchestratorScenario.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 import { materializeReplayTranscriptRuntimeInstructions } from "./ReplayRuntimeInstructions.ts";
@@ -127,44 +125,6 @@ describe("Claude Agent SDK replay fixtures", () => {
         provideDeterministicTestRuntime,
         Effect.scoped,
       );
-    }),
-  );
-
-  // regression: #5297 a Stop hook continuation hid the answer before it. Recorded live: an
-  // additionalContext hook shows up only as a hook_response; a blocking one also sends a user frame.
-  it.effect("marks each Stop hook continuation between the answer and the reply", () =>
-    runClaudeReplayFixture({
-      fixtureName: "claude_stop_hook_continuation",
-      buildInput: claudeStopHookContinuationInput,
-      driver: {
-        driver: ProviderDriverKind.make("claudeAgent"),
-        transcriptFile: new URL(
-          "./fixtures/claude_stop_hook_continuation/claude_transcript.ndjson",
-          import.meta.url,
-        ),
-        modelSelection: CLAUDE_MODEL_SELECTION,
-        assertOutput: (result) => {
-          const projection = projectionFor(result, "claude_stop_hook_continuation");
-          assert.deepEqual(
-            projection.runs.map((run) => run.status),
-            ["completed"],
-          );
-          const items = projection.turnItems.flatMap((item) =>
-            item.type === "assistant_message"
-              ? [item.text.trim()]
-              : item.type === "notification"
-                ? [`notification:${item.summary}: ${item.detail}`]
-                : [],
-          );
-          assert.deepEqual(items, [
-            "STOP_HOOK_ANSWER",
-            `notification:${CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY}: Reply with exactly: STOP_HOOK_REPLY`,
-            "STOP_HOOK_REPLY",
-            `notification:${CLAUDE_STOP_HOOK_CONTINUATION_SUMMARY}: Reply with exactly: STOP_HOOK_BLOCK_REPLY`,
-            "STOP_HOOK_BLOCK_REPLY",
-          ]);
-        },
-      },
     }),
   );
 
