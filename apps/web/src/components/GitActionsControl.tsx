@@ -1663,6 +1663,18 @@ function CheckoutGitActionsControl({
                   {changesSummary}
                 </MenuItem>
               ) : null}
+              {showActions && quickAction.kind === "run_pull" ? (
+                <MenuItem
+                  disabled={!canWriteSourceControl || isGitActionRunning || quickAction.disabled}
+                  onClick={runQuickAction}
+                >
+                  <GitQuickActionIcon
+                    quickAction={quickAction}
+                    SourceControlIcon={SourceControlIcon}
+                  />
+                  <MenuItemLabel>{quickAction.label}</MenuItemLabel>
+                </MenuItem>
+              ) : null}
               {showActions ? gitItems : null}
             </MenuPopup>
           </Menu>
