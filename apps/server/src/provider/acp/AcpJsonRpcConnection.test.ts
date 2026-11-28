@@ -397,6 +397,44 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("launches a Linux cgroup-owning agent such as Grok in an agent scope", () =>
+    Effect.gen(function* () {
+      const wrapped: Array<string> = [];
+      const fakeLease: AcpSessionRuntime.AcpLinuxCgroupLease = {
+        contains: () => false,
+        exists: () => false,
+        path: "/sys/fs/cgroup/t3code.service/t3-acp-test",
+        relativePath: "/t3code.service/t3-acp-test",
+        kill: () => {},
+        populated: () => false,
+        remove: () => {},
+      };
+      yield* Effect.exit(
+        AcpSessionRuntime.make({
+          ...mockRuntimeOptions,
+          ownDescendantProcessGroups: true,
+          ownDetachedProcessGroup: true,
+          processGroupPlatform: "linux",
+          linuxCgroupController: { create: () => fakeLease },
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() => Effect.die(new Error("spawn is not under test"))),
+          ),
+          Effect.provideService(AgentScope, {
+            ...AgentScope.defaultValue(),
+            wrap: ({ command, args, name }) =>
+              Effect.sync(() => {
+                wrapped.push(name);
+                return { command, args, unit: "t3code-acp-test.scope" };
+              }),
+          }),
+        ),
+      );
+      expect(wrapped).toEqual(["acp"]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("retires a native runtime when its prompt caller is interrupted", () =>
     Effect.gen(function* () {
       const dispatched = yield* Deferred.make<void>();
