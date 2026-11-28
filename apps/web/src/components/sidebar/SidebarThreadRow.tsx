@@ -201,6 +201,11 @@ export function JumpHintBadge(props: { label: string }) {
 export const JUMP_HINT_SLOT_CLASS_NAME =
   "[&>:not([data-jump-hint])]:invisible [&>:not([data-jump-hint])]:absolute";
 
+// WebKit (seen on iPadOS 27.2) can leave an on-screen row skipped after the list reorders, painting
+// an empty block until the next reorder. Only Safari supports hanging-punctuation.
+const ROW_CONTENT_VISIBILITY_CLASS_NAME =
+  "[content-visibility:auto] supports-[hanging-punctuation:first]:[content-visibility:visible]";
+
 function WorkingDuration(props: { environmentId: EnvironmentId; startedAt: string | null }) {
   const startedMs = props.startedAt !== null ? Date.parse(props.startedAt) : Number.NaN;
   if (Number.isNaN(startedMs)) return null;
@@ -1370,7 +1375,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         {...sortableRootProps}
         {...(fileDropHandlers ?? {})}
         className={cn(
-          "list-none [content-visibility:auto] [contain-intrinsic-size:auto_--spacing(9)]",
+          "list-none [contain-intrinsic-size:auto_--spacing(9)]",
+          ROW_CONTENT_VISIBILITY_CLASS_NAME,
           metaLine !== null && multiline && "[contain-intrinsic-size:auto_--spacing(13.5)]",
           sortable?.isDragging && "relative z-20",
         )}
@@ -1585,7 +1591,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       // The hints are the rendered heights inside py-0.5. Revealing the open thread measures rows
       // that have not rendered yet, so a hint off by a pixel lands it a pixel short per row above.
       className={cn(
-        "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
+        "list-none py-0.5 [contain-intrinsic-size:auto_78px]",
+        ROW_CONTENT_VISIBILITY_CLASS_NAME,
         metaLineEmpty && "[contain-intrinsic-size:auto_60px]",
         sortable?.isDragging && "relative z-20",
       )}
