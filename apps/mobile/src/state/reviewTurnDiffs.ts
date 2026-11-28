@@ -4,6 +4,10 @@ import { quoteGitPatchPath, unquoteGitPatchPath } from "@t3tools/shared/gitPatch
 import * as Effect from "effect/Effect";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
+import {
+  MAX_CACHED_REVIEW_DIFFS,
+  MAX_CACHED_REVIEW_SOURCE_CHARACTERS,
+} from "../features/review/reviewState";
 const TRUNCATION_MARKER = /(?:\r?\n){1,2}\[truncated\]\s*$/;
 const QUOTED_PATH = String.raw`"(?:[^"\\]|\\.)*"`;
 const GIT_HEADER_PATHS = new RegExp(`^(${QUOTED_PATH}|a/.*?) (${QUOTED_PATH}|b/.*)$`);
@@ -110,6 +114,31 @@ export function lastReviewTurnDiffsAtom(environmentId: EnvironmentId, threadId: 
   return lastTurnDiffsFamily(JSON.stringify([environmentId, threadId]));
 }
 
+// Integer keys enumerate in ascending order, so the lowest turn counts are evicted first.
+const pruneTurnDiffs = (diffs: Readonly<Record<number, string>>) => {
+  const turnCounts = Object.keys(diffs).map((key) => Number(key));
+  let characters = turnCounts.reduce(
+    (total, turnCount) => total + (diffs[turnCount]?.length ?? 0),
+    0,
+  );
+  let dropped = 0;
+  while (
+    turnCounts.length - dropped > MAX_CACHED_REVIEW_DIFFS ||
+    characters > MAX_CACHED_REVIEW_SOURCE_CHARACTERS
+  ) {
+    const oldest = turnCounts[dropped];
+    if (oldest === undefined) break;
+    characters -= diffs[oldest]?.length ?? 0;
+    dropped += 1;
+  }
+  if (dropped === 0) return diffs;
+  const kept: Record<number, string> = { ...diffs };
+  for (const turnCount of turnCounts.slice(0, dropped)) {
+    delete kept[turnCount];
+  }
+  return kept;
+};
+
 export const recordReviewTurnDiffAnswer = (
   target: {
     readonly environmentId: EnvironmentId;
@@ -128,5 +157,8 @@ export const recordReviewTurnDiffAnswer = (
     const current = registry.get(atom);
     const diff = reviewTurnDiffText(value);
     if (current[value.toTurnCount] === diff) return;
-    registry.set(atom, { ...current, [value.toTurnCount]: diff });
+    // A diff larger than the whole budget never fits, so it is left out and the turns
+    // already kept stay, the way the parsed diff cache leaves out one it cannot hold.
+    if (diff.length > MAX_CACHED_REVIEW_SOURCE_CHARACTERS) return;
+    registry.set(atom, pruneTurnDiffs({ ...current, [value.toTurnCount]: diff }));
   });
