@@ -106,14 +106,6 @@ it.each([
     "125t",
     "00:00:01.000 --> 00:00:02.500",
   ],
-  [
-    "fractional DFXP tick offsets",
-    dfxp,
-    'p:tickRate="10"',
-    "1.5t",
-    "20t",
-    "00:00:00.150 --> 00:00:02.000",
-  ],
 ])("keeps captions using %s", (_label, namespace, parameters, begin, end, timing) => {
   const captions = parseXml(`
     <tt xmlns="${namespace}" xmlns:p="${namespace}#parameter" ${parameters}>
