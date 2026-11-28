@@ -77,19 +77,18 @@ function odfListStart(node: XmlNode | undefined): number | undefined {
 // Writer hides text whose character style sets text:display="none"; a style without it inherits from its
 // parent style, and a span whose styles set nothing inherits from the enclosing span.
 // ODF 1.3 Part 3 §19.510: parent-style-name names a common style, never an automatic one.
-// Paragraph styles hide their paragraph's text the same way, from their own family.
-function odfSpanHidden(
+// Paragraph styles hide their paragraph's text the same way, within the paragraph family.
+function odfStyleHidden(
   styles: Map<string, XmlNode>,
+  family: "text" | "paragraph",
   name = "",
-  family: "text" | "paragraph" = "text",
 ): boolean | undefined {
-  const [auto, common] = family === "text" ? ["auto", "span"] : ["auto-paragraph", "paragraph"];
-  let style = styles.get(`${auto}\n${name}`) ?? styles.get(`${common}\n${name}`);
+  let style = styles.get(`auto\n${family}\n${name}`) ?? styles.get(`common\n${family}\n${name}`);
   for (const seen = new Set<XmlNode>(); style && !seen.has(style);) {
     seen.add(style);
     const display = find(style, "style:text-properties")[0]?.attrs["text:display"]?.trim();
     if (display) return display === "none";
-    style = styles.get(`${common}\n${style.attrs["style:parent-style-name"] ?? ""}`);
+    style = styles.get(`common\n${family}\n${style.attrs["style:parent-style-name"] ?? ""}`);
   }
   return undefined;
 }
@@ -197,12 +196,15 @@ async function odfHtml(
           .join(" ")
       : "";
   let children = "";
+  const paragraph = node.name === "text:p" || node.name === "text:h";
   const childHidden =
-    node.name === "text:span"
-      ? (odfSpanHidden(listStyles, node.attrs["text:style-name"]) ?? hidden)
-      : node.name === "text:p" || node.name === "text:h"
-        ? (odfSpanHidden(listStyles, node.attrs["text:style-name"], "paragraph") ?? hidden)
-        : hidden;
+    node.name === "text:span" || paragraph
+      ? (odfStyleHidden(
+          listStyles,
+          paragraph ? "paragraph" : "text",
+          node.attrs["text:style-name"],
+        ) ?? hidden)
+      : hidden;
   const repeatedRow =
     node.name === "table:table-row"
       ? Number(node.attrs["table:number-rows-repeated"]) > 1
@@ -237,7 +239,7 @@ async function odfHtml(
       listEnds,
       childHidden,
     );
-  if (childHidden && !children && (node.name === "text:p" || node.name === "text:h")) return "";
+  if (paragraph && childHidden && !children) return "";
   const tags: Record<string, string> = {
     "text:p": "p",
     "text:h": "h2",
@@ -412,16 +414,13 @@ export async function openDocument(
       if (style.attrs["style:name"]) listStyles.set(style.attrs["style:name"], style);
     if (kind === "odt")
       for (const [prefix, part] of [
-        ...named.map((part) => ["span", part] as const),
+        ...named.map((part) => ["common", part] as const),
         ["auto", root] as const,
       ])
         for (const style of find(part, "style:style", "office:body")) {
           const family = style.attrs["style:family"];
           if ((family === "text" || family === "paragraph") && style.attrs["style:name"])
-            listStyles.set(
-              `${family === "text" ? prefix : prefix === "auto" ? "auto-paragraph" : "paragraph"}\n${style.attrs["style:name"]}`,
-              style,
-            );
+            listStyles.set(`${prefix}\n${family}\n${style.attrs["style:name"]}`, style);
         }
   }
   const rendered = [];
