@@ -4,9 +4,11 @@ import {
   type DesktopPortForward,
   type EnvironmentId,
 } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
@@ -78,6 +80,13 @@ class PortForwardLocalityError extends Schema.TaggedError<PortForwardLocalityErr
   }
 }
 
+// A probe can fail while the environment is briefly unreachable (a reconnect race); retry it.
+const LOCALITY_RETRY_SCHEDULE = Schedule.exponential("1 second").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+  ),
+);
+
 const localityResultAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get) => {
     // Each established connection probes anew, so a failed probe never outlives a reconnect.
@@ -90,7 +99,10 @@ const localityResultAtom = Atom.family((environmentId: EnvironmentId) =>
     return Effect.tryPromise({
       try: () => bridge.sharesLoopback(environmentId),
       catch: (cause) => new PortForwardLocalityError({ environmentId, cause }),
-    }).pipe(Effect.map((shares): ForwardLocality => (shares ? "local" : "remote")));
+    }).pipe(
+      Effect.retry(LOCALITY_RETRY_SCHEDULE),
+      Effect.map((shares): ForwardLocality => (shares ? "local" : "remote")),
+    );
   }).pipe(
     Atom.setIdleTTL(10 * 60_000),
     Atom.withLabel(`desktop:port-forward-locality-probe:${environmentId}`),

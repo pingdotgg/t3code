@@ -86,6 +86,7 @@ export function orchestrationV2WorktreePending(
     (latest?.status === "preparing" ||
       latest?.status === "failed" ||
       latest?.status === "interrupted") &&
+    latest.startedAt === null &&
     latest.workspacePreparation?.type === "worktree"
   );
 }

@@ -41,7 +41,19 @@ export interface SerializedWorkerError {
   readonly code?: string;
   readonly status?: number;
   readonly sdkErrorKind?: CursorSdkErrorKind;
+  /** Names from the SDK's InlineMcpServersBlockedError, which lists the servers a team MCP policy rejected. */
+  readonly servers?: ReadonlyArray<string>;
   readonly cause?: SerializedWorkerError;
+}
+
+function serializeBlockedMcpServers(value: unknown): ReadonlyArray<string> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const names = value.flatMap((server: unknown) => {
+    const name =
+      typeof server === "object" && server !== null ? safeGetProperty(server, "name") : undefined;
+    return typeof name === "string" ? [name] : [];
+  });
+  return names.length === 0 ? undefined : names;
 }
 
 export interface SerializedRunnerFailure {
@@ -162,6 +174,11 @@ export type CursorWorkerMessage =
       readonly update: InteractionUpdate;
     }
   | {
+      readonly type: "startupPhase";
+      readonly sendId: number;
+      readonly phase: string;
+    }
+  | {
       readonly type: "runDone";
       readonly sendId: number;
       readonly ok: true;
@@ -219,6 +236,7 @@ export function serializeWorkerError(
     const rawStack = safeGetProperty(cause, "stack");
     const rawCode = safeGetProperty(cause, "code");
     const rawStatus = safeGetProperty(cause, "status");
+    const servers = serializeBlockedMcpServers(safeGetProperty(cause, "servers"));
     const rawCause = depth < MAX_ERROR_CAUSE_DEPTH ? safeGetProperty(cause, "cause") : undefined;
     let sdkErrorKind: CursorSdkErrorKind | undefined;
     try {
@@ -233,6 +251,7 @@ export function serializeWorkerError(
       ...(typeof rawCode === "string" ? { code: rawCode } : {}),
       ...(typeof rawStatus === "number" ? { status: rawStatus } : {}),
       ...(sdkErrorKind === undefined ? {} : { sdkErrorKind }),
+      ...(servers === undefined ? {} : { servers }),
       ...(rawCause === undefined ? {} : { cause: serializeWorkerError(rawCause, depth + 1, seen) }),
     };
   }
@@ -261,6 +280,13 @@ export function deserializeWorkerError(serialized: SerializedWorkerError): Error
   }
   if (serialized.sdkErrorKind !== undefined) {
     tagCursorSdkError(error, serialized.sdkErrorKind);
+  }
+  if (serialized.servers !== undefined) {
+    Reflect.set(
+      error,
+      "servers",
+      serialized.servers.map((name) => ({ name })),
+    );
   }
   return error;
 }

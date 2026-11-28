@@ -257,7 +257,8 @@ export function PullRequestMarkdownTextarea({
                 return true;
               }
               if (candidates.length === 0) return false;
-              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              const plain = !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey;
+              if ((event.key === "ArrowDown" || event.key === "ArrowUp") && plain) {
                 const step = event.key === "ArrowDown" ? 1 : -1;
                 setHighlight({
                   query: trigger.query,
@@ -265,7 +266,6 @@ export function PullRequestMarkdownTextarea({
                 });
                 return true;
               }
-              const plain = !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey;
               if ((event.key === "Enter" || event.key === "Tab") && plain && active) {
                 select(active);
                 return true;

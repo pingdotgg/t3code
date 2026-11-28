@@ -6,8 +6,11 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -79,7 +82,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
   it.effect("publishes proven install ownership only for manually updated servers", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const baseDir = yield* fs.makeTempDirectoryScoped();
+      const platform = yield* HostProcess.Platform;
+      const baseDir = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
       const prefix = `${baseDir}/node`;
       const entry = `${prefix}/lib/node_modules/t3/dist/bin.mjs`;
       yield* fs.makeDirectory(`${prefix}/lib/node_modules/t3/dist`, { recursive: true });
@@ -105,11 +109,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
           ),
           Effect.provideService(HostProcess.Arguments, ["node", entry]),
           Effect.provideService(HostProcess.IsExecutable, false),
-          Effect.provideService(HostProcess.Platform, "linux"),
           Effect.provideService(HostProcess.Environment, {}),
         );
         expect(descriptor.capabilities.serverInstallation).toEqual(
-          mode === "web" ? { kind: "npm-global", prefix } : undefined,
+          mode === "web" && platform !== "win32" ? { kind: "npm-global", prefix } : undefined,
         );
         expect(descriptor.capabilities.serverSelfUpdate).toBe(
           mode === "web" ? undefined : "desktop-managed",
@@ -395,6 +398,59 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
         const disabled = yield* serverEnvironment.getDescriptor;
         expect(disabled.capabilities.agentActivityPublishing).toBe(false);
       }).pipe(Effect.provide(layerTest));
+    }),
+  );
+
+  // The descriptor is the clients' liveness probe; a stalled secrets read must not hang it.
+  it.effect("answers the descriptor while secret file reads are stalled", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-stalled-secrets-test-",
+      });
+      let stalled = false;
+      let stalledReads = 0;
+      const layerStallableSecretStore = Layer.effect(
+        ServerSecretStore.ServerSecretStore,
+        Effect.map(ServerSecretStore.ServerSecretStore, (secrets) =>
+          ServerSecretStore.ServerSecretStore.of({
+            ...secrets,
+            get: (name) =>
+              stalled
+                ? Effect.sync(() => {
+                    stalledReads++;
+                  }).pipe(Effect.andThen(Effect.never))
+                : secrets.get(name),
+          }),
+        ),
+      ).pipe(Layer.provide(ServerSecretStore.layer));
+
+      const descriptor = yield* Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        yield* serverEnvironment.getDescriptor;
+        stalled = true;
+        const probe = Effect.gen(function* () {
+          const pending = yield* serverEnvironment.getDescriptor.pipe(
+            Effect.timeoutOption("10 seconds"),
+            Effect.forkChild,
+          );
+          yield* TestClock.adjust("10 seconds");
+          return yield* Fiber.join(pending);
+        });
+        yield* probe;
+        return yield* probe;
+      }).pipe(
+        Effect.provide(
+          ServerEnvironment.layer.pipe(
+            Layer.provide(layerStallableSecretStore),
+            Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+          ),
+        ),
+      );
+
+      expect(Option.isSome(descriptor)).toBe(true);
+      // Both probes wait on the one stalled read instead of each starting another.
+      expect(stalledReads).toBe(1);
     }),
   );
 });

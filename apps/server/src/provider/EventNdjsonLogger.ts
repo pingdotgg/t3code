@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 
 import type { ThreadId } from "@t3tools/contracts";
 import type * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import { makeAsyncRotatingFileSink } from "@t3tools/shared/logging";
+import { makeAsyncRotatingFileSink, rotationSidecarBase } from "@t3tools/shared/logging";
 import { errorTag } from "@t3tools/shared/observability";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -177,6 +177,14 @@ function providerLogPrefix(filePath: string): string {
 
 function providerLogPath(directory: string, prefix: string, threadSegment: string): string {
   return NodePath.join(directory, `${prefix}${threadSegment}.log`);
+}
+
+export function providerThreadLogPath(providerEventLogPath: string, threadId: string): string {
+  return providerLogPath(
+    NodePath.dirname(providerEventLogPath),
+    providerLogPrefix(providerEventLogPath),
+    resolveThreadSegment(threadId),
+  );
 }
 
 export function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unknown): boolean {
@@ -430,7 +438,14 @@ async function enforceRetention(input: {
   readonly now: number;
 }): Promise<RetentionResult> {
   const failures: Array<FileOperationFailure> = [];
-  const files: Array<{ filePath: string; mtimeMs: number; size: number }> = [];
+  interface RetentionEntry {
+    readonly name: string;
+    readonly members: Array<{ path: string; size: number }>;
+    mtimeMs: number;
+  }
+  const files = new Map<string, RetentionEntry>();
+  let totalBytes = 0;
+  const unreadable = new Set<string>();
 
   let entries: ReadonlyArray<NodeFS.Dirent>;
   try {
@@ -439,38 +454,69 @@ async function enforceRetention(input: {
     return { failures: [{ filePath: input.directory, cause }] };
   }
 
+  const pending = new Set<string>();
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const base = rotationSidecarBase(entry.name);
+    if (base?.startsWith(input.filePrefix) && base.endsWith(".log")) pending.add(base);
+  }
+
   for (const entry of entries) {
     if (!entry.isFile()) continue;
     const filePath = NodePath.join(input.directory, entry.name);
+    const sidecar = rotationSidecarBase(entry.name);
+    const base = sidecar ?? entry.name.replace(/\.\d+$/u, "");
+    const group = pending.has(base) ? base : entry.name;
     try {
-      if (!(await isProviderLogFile(filePath, entry.name, input.filePrefix))) continue;
+      if (
+        !(sidecar && pending.has(sidecar)) &&
+        !(await isProviderLogFile(filePath, entry.name, input.filePrefix))
+      )
+        continue;
       const stat = await NodeFS.promises.stat(filePath);
-      files.push({ filePath, mtimeMs: stat.mtimeMs, size: stat.size });
+      const file = files.get(group) ?? { name: group, members: [], mtimeMs: stat.mtimeMs };
+      file.members.push({ path: filePath, size: stat.size });
+      file.mtimeMs = Math.max(file.mtimeMs, stat.mtimeMs);
+      totalBytes += stat.size;
+      files.set(group, file);
     } catch (cause) {
+      unreadable.add(group);
       failures.push({ filePath, cause });
     }
   }
 
-  let totalBytes = files.reduce((total, file) => total + file.size, 0);
-  const remove = async (file: (typeof files)[number]) => {
-    if (input.activeFilePaths.has(file.filePath)) return false;
-    try {
-      await NodeFS.promises.rm(file.filePath, { force: true });
-      totalBytes -= file.size;
-      return true;
-    } catch (cause) {
-      failures.push({ filePath: file.filePath, cause });
+  const removalOrder = (path: string) =>
+    path.endsWith(".rotating.json") ? 2 : path.endsWith(".rotating") ? 1 : 0;
+  const remove = async (file: RetentionEntry) => {
+    if (
+      unreadable.has(file.name) ||
+      input.activeFilePaths.has(NodePath.join(input.directory, file.name))
+    ) {
       return false;
     }
+    // Keep the staged file and journal until the other payload files have been removed.
+    file.members.sort((left, right) => removalOrder(left.path) - removalOrder(right.path));
+    while (file.members.length > 0) {
+      const { path: filePath, size } = file.members[0]!;
+      try {
+        await NodeFS.promises.rm(filePath, { force: true });
+      } catch (cause) {
+        failures.push({ filePath, cause });
+        return false;
+      }
+      file.members.shift();
+      totalBytes -= size;
+    }
+    return true;
   };
 
-  const retained: typeof files = [];
-  for (const file of files) {
+  const retained: RetentionEntry[] = [];
+  for (const file of files.values()) {
     if (input.now - file.mtimeMs <= input.maxAgeMs || !(await remove(file))) retained.push(file);
   }
 
   for (const file of retained.toSorted(
-    (left, right) => left.mtimeMs - right.mtimeMs || left.filePath.localeCompare(right.filePath),
+    (left, right) => left.mtimeMs - right.mtimeMs || left.name.localeCompare(right.name),
   )) {
     if (totalBytes <= input.maxTotalBytes) break;
     await remove(file);
@@ -528,6 +574,7 @@ const drainPending = Effect.fnUntraced(function* (input: {
 
   for (const [threadSegment, records] of recordsBySegment) {
     const filePath = providerLogPath(input.directory, input.filePrefix, threadSegment);
+    writtenSegments.add(threadSegment);
     let sink = sinks.get(threadSegment);
     if (!sink) {
       const created = yield* input.makeSink(filePath).pipe(Effect.result);
@@ -538,7 +585,6 @@ const drainPending = Effect.fnUntraced(function* (input: {
       sink = created.success;
       sinks.set(threadSegment, sink);
     }
-    writtenSegments.add(threadSegment);
 
     const written = yield* writeBatchedMessages(
       sink,
@@ -579,7 +625,7 @@ const drainPending = Effect.fnUntraced(function* (input: {
           maxTotalBytes: input.options.maxTotalBytes,
           maxAgeMs: input.options.maxAgeMs,
           activeFilePaths: new Set(
-            Array.from(sinks.keys(), (threadSegment) =>
+            Array.from(writtenSegments, (threadSegment) =>
               providerLogPath(input.directory, input.filePrefix, threadSegment),
             ),
           ),

@@ -140,4 +140,24 @@ describe("WorktreeSetupTracker", () => {
       yield* Fiber.interrupt(fiber);
     }),
   );
+
+  it.effect("clamps stage detail and finish error without splitting surrogate pairs", () =>
+    Effect.gen(function* () {
+      const tracker = yield* WorktreeSetupTracker.make;
+      yield* tracker.begin({
+        threadId,
+        branch: null,
+        baseRef: null,
+        stages: ["agent"],
+        fiber: null,
+      });
+
+      yield* tracker.stageStatus(threadId, "agent", "running", `${"a".repeat(198)}\u{1F680}tail`);
+      yield* tracker.finish(threadId, "failed", `${"e".repeat(998)}\u{1F680}tail`);
+
+      const final = yield* tracker.get(threadId);
+      expect(final?.stages[0]?.detail).toBe(`${"a".repeat(198)}\u2026`);
+      expect(final?.error).toBe(`${"e".repeat(998)}\u2026`);
+    }),
+  );
 });

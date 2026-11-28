@@ -54,6 +54,13 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("lets only a session that operates threads approve sending a feedback report", () => {
+    // Guest links have no RPC session, and read-only sessions lack this scope.
+    expect(requiredScopeForRpcMethod(WS_METHODS.agentFeedbackAnswerRequest)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("keeps triage, which seeds an agent that reads logs and the database, behind operate scope", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.serverPrepareTriage)).toBe(
       AuthOrchestrationOperateScope,
@@ -348,6 +355,76 @@ it.effect("pairs a client with a linked environment only for one that may hand o
   }).pipe(Effect.scoped),
 );
 
+it.effect("hands out a link code or a guest link only within what the session itself holds", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.peerLinksPairLink | typeof WS_METHODS.guestShareCreate
+        > => tag !== WS_METHODS.peerLinksPairLink && tag !== WS_METHODS.guestShareCreate,
+      ),
+    );
+    let handled = 0;
+    const environmentId = EnvironmentId.make("environment-box");
+    const threadId = ThreadId.make("thread-1");
+    const handlers = Layer.mergeAll(
+      group.toLayerHandler(WS_METHODS.peerLinksPairLink, () =>
+        Effect.sync(() => {
+          handled++;
+          return {
+            type: "unsupported" as const,
+            reason: "link_access" as const,
+            environmentId,
+            label: "Box",
+            urls: [],
+          };
+        }),
+      ),
+      group.toLayerHandler(WS_METHODS.guestShareCreate, () =>
+        Effect.sync(() => handled++).pipe(Effect.andThen(Effect.die("no share in this test"))),
+      ),
+    );
+    const clientWith = (scopes: Parameters<typeof RpcAuthorization.layer>[0]) =>
+      RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.merge(handlers, RpcAuthorization.layer(scopes))),
+      );
+
+    // Managing access alone is not running agents or reading threads.
+    const manager = yield* clientWith([AuthAccessWriteScope]);
+    expect(
+      yield* manager[WS_METHODS.peerLinksPairLink]({ environmentId, access: "read-only" }).pipe(
+        Effect.flip,
+      ),
+    ).toMatchObject({ requiredPermission: AuthOrchestrationReadScope });
+    expect(
+      yield* manager[WS_METHODS.guestShareCreate]({ threadId }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthOrchestrationReadScope });
+
+    const supervisor = yield* clientWith([
+      AuthAccessWriteScope,
+      AuthOrchestrationReadScope,
+      AuthOrchestrationOperateScope,
+    ]);
+    expect(
+      yield* supervisor[WS_METHODS.peerLinksPairLink]({
+        environmentId,
+        access: "full-access",
+      }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+    expect(handled).toBe(0);
+
+    expect(
+      (yield* supervisor[WS_METHODS.peerLinksPairLink]({ environmentId, access: "auto" })).type,
+    ).toBe("unsupported");
+    expect(handled).toBe(1);
+    yield* supervisor[WS_METHODS.guestShareCreate]({ threadId }).pipe(Effect.exit);
+    expect(handled).toBe(2);
+  }).pipe(Effect.scoped),
+);
+
 it.effect.each([WS_METHODS.subscribeVcsBranch, WS_METHODS.subscribeVcsStatus] as const)(
   "enforces read permission on stream %s",
   (method) =>
@@ -531,6 +608,66 @@ describe("settings mutation authorization", () => {
       }),
   );
 
+  it.effect("saving project scripts needs task operation as well as the settings grant", () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project-1");
+      const scripts = [
+        {
+          id: "setup",
+          name: "Setup",
+          command: "pnpm install",
+          icon: "play" as const,
+          runOnWorktreeCreate: true,
+        },
+      ];
+      const update = (scopes: Parameters<typeof RpcAuthorization.layer>[0]) => {
+        let handled = 0;
+        return RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
+                Effect.sync(() => {
+                  handled++;
+                  return DEFAULT_SERVER_SETTINGS;
+                }),
+              ),
+              RpcAuthorization.layer(scopes),
+            ),
+          ),
+          Effect.map((client) => ({ client, handled: () => handled })),
+        );
+      };
+      const patches = [
+        { defaultProjectScripts: scripts },
+        { projectScriptOverrides: { [projectId]: scripts } },
+        { projectSettingsOverrides: { [projectId]: { defaultProjectScripts: scripts } } },
+      ];
+
+      const settingsOnly = yield* update([AuthSettingsWriteScope]);
+      for (const patch of patches) {
+        expect(
+          yield* settingsOnly.client[WS_METHODS.serverUpdateSettings]({ patch }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthOrchestrationOperateScope });
+      }
+      expect(settingsOnly.handled()).toBe(0);
+      // Settings that carry no script stay with the settings grant alone.
+      yield* settingsOnly.client[WS_METHODS.serverUpdateSettings]({
+        patch: {
+          defaultAutoPull: true,
+          projectScriptOverrides: { [projectId]: null },
+          projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+        },
+      });
+      expect(settingsOnly.handled()).toBe(1);
+
+      const operator = yield* update([AuthSettingsWriteScope, AuthOrchestrationOperateScope]);
+      for (const patch of patches) {
+        yield* operator.client[WS_METHODS.serverUpdateSettings]({ patch });
+      }
+      expect(operator.handled()).toBe(patches.length);
+    }),
+  );
+
   it.effect("does not let a settings grant send a named secret to a gateway it picks", () =>
     Effect.gen(function* () {
       const group = WsRpcGroup.omit(
@@ -579,6 +716,67 @@ describe("settings mutation authorization", () => {
     }),
   );
 });
+
+it.effect("answering a secret request with a reference needs provider management", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.secretsAnswerRequest
+        > => tag !== WS_METHODS.secretsAnswerRequest,
+      ),
+    );
+    const handled: string[] = [];
+    const handler = group.toLayerHandler(WS_METHODS.secretsAnswerRequest, ({ answer }) =>
+      Effect.sync(() => {
+        handled.push(answer.type);
+      }),
+    );
+    const clientWith = (...scopes: Parameters<typeof RpcAuthorization.layer>[0]) =>
+      RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.merge(handler, RpcAuthorization.layer(scopes))),
+      );
+    const request = { threadId: ThreadId.make("thread"), turnItemId: TurnItemId.make("item") };
+    const reference = {
+      type: "reference" as const,
+      reference: {
+        provider: SecretProviderId.make("personal"),
+        reference: "op://Private/OpenAI/credential",
+      },
+    };
+
+    const operate = yield* clientWith(AuthOrchestrationOperateScope);
+    expect(
+      yield* operate[WS_METHODS.secretsAnswerRequest]({ ...request, answer: reference }).pipe(
+        Effect.flip,
+      ),
+    ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+    expect(handled).toEqual([]);
+    // Typed values stay with the scope that runs the thread, whatever the fields are called.
+    yield* operate[WS_METHODS.secretsAnswerRequest]({
+      ...request,
+      answer: { type: "save", secret: "typed-value" },
+    });
+    yield* operate[WS_METHODS.secretsAnswerRequest]({
+      ...request,
+      answer: { type: "save", values: { provider: "personal", reference: "typed-value" } },
+    });
+    expect(handled).toEqual(["save", "save"]);
+
+    const manage = yield* clientWith(AuthOrchestrationOperateScope, AuthProvidersManageScope);
+    yield* manage[WS_METHODS.secretsAnswerRequest]({ ...request, answer: reference });
+    expect(handled).toEqual(["save", "save", "reference"]);
+    const manageOnly = yield* clientWith(AuthProvidersManageScope);
+    expect(
+      yield* manageOnly[WS_METHODS.secretsAnswerRequest]({ ...request, answer: reference }).pipe(
+        Effect.flip,
+      ),
+    ).toMatchObject({ requiredPermission: AuthOrchestrationOperateScope });
+  }),
+);
 
 it.effect("requires task permission before attaching a prepared worktree to a thread", () =>
   Effect.gen(function* () {

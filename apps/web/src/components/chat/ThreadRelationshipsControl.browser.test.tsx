@@ -66,7 +66,7 @@ vi.mock(import("../../state/use-atom-command"), () => ({
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 
-import { render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 import { isMacPlatform } from "../../lib/utils";
 import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
@@ -236,6 +236,48 @@ it("opens an idle child beside the thread, and in its place with the modifier", 
   expect(panel().surfaces).toHaveLength(1);
 });
 
+it("keeps focus on the list when Show more pages reveal the last rows", async () => {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  const environmentId = EnvironmentId.make("local");
+  const { updatedAt } = projection.thread;
+  state.projection = {
+    ...projection,
+    subagents: Array.from({ length: 7 }, (_, index) => ({
+      id: NodeId.make(`agent-${index}`),
+      threadId: projection.thread.id,
+      runId: null,
+      parentNodeId: NodeId.make("parent"),
+      origin: "app_owned",
+      createdBy: "agent",
+      driver: "codex",
+      providerInstanceId: projection.thread.providerInstanceId,
+      providerThreadId: null,
+      childThreadId: ThreadId.make(`omitted-child-${index}`),
+      nativeTaskRef: null,
+      prompt: `Inspect the change part ${index}`,
+      title: `Agent ${index}`,
+      model: null,
+      status: "completed",
+      result: null,
+      startedAt: null,
+      completedAt: updatedAt,
+      updatedAt,
+    })),
+  };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={projection.thread.id}
+      showLineage
+      showSideChats
+    />,
+  );
+  await screen.getByRole("button", { name: /Previous agents/ }).click();
+  await screen.getByRole("button", { name: "Show 1 more" }).click();
+  await expect.element(screen.getByRole("list", { name: "Related threads" })).toHaveFocus();
+});
+
 it("shows a lineage thread's full title in its tooltip", async () => {
   setup();
   const longTitle = "Compare the lineage tooltip against a title that the row truncates";
@@ -363,6 +405,58 @@ it("shows a remote subagent's full title in its tooltip even when its environmen
   expect(screen.router?.state.location.pathname).toBe("/environment/fork");
 });
 
+it("shows how long a running remote subagent has been running, as a local one does", async () => {
+  setup();
+  const remoteTitle = "Remote subagent running on a linked machine";
+  using _timers = fakeTimers();
+  vi.setSystemTime(new Date("2026-11-23T12:12:00.000Z"));
+  const startedAt = DateTime.makeUnsafe("2026-11-23T12:00:00.000Z");
+  state.projection = {
+    ...(state.projection as Record<string, unknown>),
+    subagents: [
+      {
+        id: NodeId.make("remote-agent"),
+        threadId,
+        runId: null,
+        parentNodeId: NodeId.make("parent"),
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: "remote",
+        providerInstanceId: "provider",
+        providerThreadId: null,
+        childThreadId: null,
+        nativeTaskRef: null,
+        prompt: "Run remote task",
+        title: remoteTitle,
+        model: null,
+        status: "running",
+        result: null,
+        startedAt,
+        completedAt: null,
+        updatedAt: startedAt,
+        remoteChild: {
+          environmentId: EnvironmentId.make("remote-env"),
+          threadId: ThreadId.make("remote-thread"),
+          label: "127x05",
+        },
+      },
+    ],
+  };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats={false}
+    />,
+    { router: "/environment/fork" },
+  );
+
+  // Assert synchronously: expect.element polls on timers this test fakes.
+  const row = screen.getByRole("button", { name: new RegExp(remoteTitle) });
+  expect(row.element().textContent).toContain("12m");
+});
+
 it("explains why Merge back is unavailable before the fork completes a run", async () => {
   setup();
   state.projection = { ...(state.projection as Record<string, unknown>), runs: [] };
@@ -458,6 +552,35 @@ it("hides a deleted fork and keeps unloaded and archived forks with their curren
   await expect.element(screen.getByText("Unloaded fork", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("Archived fork", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("deleted-fork", { exact: true })).not.toBeInTheDocument();
+});
+
+it("shares the hover delay between adjacent lineage rows", async () => {
+  setup();
+  state.relatedShells = [
+    { id: "source", title: "First agent", lineage: { parentThreadId: null } },
+    {
+      id: "child",
+      title: "Second agent",
+      lineage: { parentThreadId: threadId, relationshipToParent: "fork", sideChat: false },
+    },
+  ];
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats={false}
+    />,
+  );
+  using _timers = fakeTimers();
+  const first = screen.getByRole("button", { name: /^First agent/ });
+  const second = screen.getByRole("button", { name: /^Second agent/ });
+  await userEvent.hover(first);
+  await act(() => vi.advanceTimersByTime(200));
+  expect(first.element()).toHaveAttribute("data-popup-open");
+  await userEvent.hover(second);
+  await act(() => vi.advanceTimersByTime(1));
+  expect(second.element()).toHaveAttribute("data-popup-open");
 });
 
 it.each([1, 18])("continues scrolling the panel past a list of %i subagents", async (count) => {

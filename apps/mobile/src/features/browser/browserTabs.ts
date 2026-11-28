@@ -38,3 +38,15 @@ export function loopbackUrlForDevice(value: string): string | null {
     return null;
   }
 }
+
+/** The address a local preview loads for `value`: an http(s) URL, or null when it is anything else. */
+export function localPreviewUrlForDevice(value: string): string | null {
+  const loopback = loopbackUrlForDevice(value);
+  if (loopback !== null) return loopback;
+  try {
+    const url = new URL(value);
+    return /^https?:$/.test(url.protocol) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}

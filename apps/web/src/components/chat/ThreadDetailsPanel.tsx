@@ -11,18 +11,16 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 
 import type { ComposerThreadTarget, DraftId } from "../../composerDraftStore";
-import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
+import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
 import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
 import GitActionsControl from "../GitActionsControl";
-import ProjectScriptsControl, {
-  type NewProjectScriptInput,
-  type ProjectScriptActionResult,
-} from "../ProjectScriptsControl";
+import ProjectScriptsControl, { type ProjectScriptActionResult } from "../ProjectScriptsControl";
 import { T, useGT } from "gt-react";
 import { useState, type ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
+import { ThreadDetailsMachineLoad } from "./ThreadDetailsMachineLoad";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
@@ -33,6 +31,8 @@ import {
   ThreadDetailsUsage,
   type ThreadDetailsUsageInput,
 } from "./ThreadDetailsUsage";
+import { ThreadDetailsTasks } from "./ThreadDetailsTasks";
+import type { TaskListPlan } from "../../session-logic";
 import { ThreadDetailsItemsMenuItems } from "./ThreadDetailsItemsMenu";
 import { resolveThreadDetailsVisibility, THREAD_DETAILS_ITEMS } from "./threadDetailsItems";
 import { useClientSettings } from "../../hooks/useSettings";
@@ -71,6 +71,8 @@ interface ThreadDetailsPanelProps extends Pick<
   gitCwd: string | null;
   workspaceMutationId: string | null;
   isGitRepo: boolean;
+  /** False when no worktree can come from this folder, so it offers no workspace modes. */
+  offersWorkspaceModes: boolean;
   envLocked: boolean;
   availableEnvironments: readonly EnvironmentOption[];
   autoEnvironmentLabel?: string | undefined;
@@ -86,20 +88,18 @@ interface ThreadDetailsPanelProps extends Pick<
   onComposerFocusRequest: () => void;
   onOpenChanges?: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
-  onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
-  onUpdateProjectScript: (
-    scriptId: string,
-    input: NewProjectScriptInput,
-  ) => Promise<ProjectScriptActionResult>;
+  onAddProjectScript: ComponentProps<typeof ProjectScriptsControl>["onAddScript"];
+  onUpdateProjectScript: ComponentProps<typeof ProjectScriptsControl>["onUpdateScript"];
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
   usage: ThreadDetailsUsageInput;
+  taskList: TaskListPlan | null;
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const visible = useClientSettings(resolveThreadDetailsVisibility);
   const gt = useGT();
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
-  const fileScripts = useT3ProjectFileScripts(
+  const t3File = useT3ProjectFileState(
     props.environmentId,
     props.activeProjectScripts && visible.scripts ? props.gitCwd : null,
   );
@@ -220,6 +220,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         autoEnvironmentLabel={props.autoEnvironmentLabel}
                         onAutoEnvironment={props.onAutoEnvironment}
                         {...branchToolbarProps}
+                        // Workspace modes follow the composer's rule, not this folder's own status.
+                        showGitControls={props.offersWorkspaceModes}
                       />
                     ) : null}
 
@@ -239,7 +241,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         environmentId={props.environmentId}
                         displayMode="panel"
                         scripts={props.activeProjectScripts}
-                        fileScripts={fileScripts}
+                        fileScripts={t3File.scripts}
+                        onActionsMenuOpen={t3File.refresh}
                         preferredScriptId={props.preferredScriptId}
                         onRunScript={props.onRunProjectScript}
                         onAddScript={props.onAddProjectScript}
@@ -322,10 +325,20 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 />
               ) : null}
 
-              {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
+              {visible.tasks && props.taskList ? (
+                <ThreadDetailsTasks plan={props.taskList} compact={density !== "full"} />
+              ) : null}
+
+              {visible.usage ? (
+                <ThreadDetailsUsage {...props.usage} environmentId={props.environmentId} />
+              ) : null}
 
               {visible.context && props.usage.contextWindow ? (
                 <ThreadDetailsContext usage={props.usage.contextWindow} />
+              ) : null}
+
+              {visible.machineLoad ? (
+                <ThreadDetailsMachineLoad environmentId={props.environmentId} />
               ) : null}
 
               {/* Shown only when no section above has content, so an emptied card can be refilled. */}

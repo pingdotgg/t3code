@@ -263,7 +263,7 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
           // Agents that send shell source write bash; Node's shell on Windows is cmd.exe.
           const gitExecutable =
             isWindows && options.shellCommands === true
-              ? resolveExecutable("git", "win32", environment)
+              ? yield* Effect.promise(async () => resolveExecutable("git", "win32", environment))
               : undefined;
           const posixShell =
             gitExecutable === undefined ? undefined : gitForWindowsBash(gitExecutable);

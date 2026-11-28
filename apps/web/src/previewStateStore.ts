@@ -416,6 +416,17 @@ function isPreviewStateEqual(
   );
 }
 
+// A new Electron tab is Idle until its first URL commits, while the server already has it Loading.
+export function previewNavStatus(
+  snapshot: PreviewSessionSnapshot | null,
+  overlay: DesktopPreviewOverlay | null,
+): PreviewSessionSnapshot["navStatus"] {
+  if (snapshot?.runtime !== "server" && overlay && overlay.navStatus._tag !== "Idle") {
+    return overlay.navStatus;
+  }
+  return snapshot?.navStatus ?? { _tag: "Idle" };
+}
+
 export function applyPreviewDesktopState(
   ref: ScopedThreadRef,
   tabId: string,

@@ -4288,7 +4288,6 @@ export function isFinite(annotations?: Schema.Annotations.Filter) {
         payload: null
       },
       toJsonSchema: () => ({ type: "number" }),
-      toCode: () => ({ runtime: "Schema.isFinite()" }),
       arbitraryConstraint: {
         number: "finite"
       },

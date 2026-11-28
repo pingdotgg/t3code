@@ -20,6 +20,16 @@ export const environmentSession = createEnvironmentSessionAtoms(connectionAtomRu
 
 const EMPTY_SESSION_STATE_ATOM = Atom.make(AsyncResult.initial<AuthSessionState>());
 
+/** This client's own session on the environment, or null until the host has said. */
+export function useEnvironmentSessionId(environmentId: EnvironmentId | null): string | null {
+  return useAtomValue(
+    environmentId === null
+      ? EMPTY_SESSION_STATE_ATOM
+      : environmentSession.sessionStateAtom(environmentId),
+    (result) => AsyncResult.getOrElse(result, () => null)?.sessionId ?? null,
+  );
+}
+
 export function sessionHasScope(
   result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
   scope: AuthEnvironmentScope,
@@ -81,6 +91,16 @@ export function readEnvironmentScope(
 ): boolean {
   const result = appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId));
   return sessionHasScope(result, scope);
+}
+
+export function readEnvironmentScopeDenied(
+  environmentId: EnvironmentId,
+  scope: AuthEnvironmentScope,
+): boolean {
+  return sessionDeniesScope(
+    appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId)),
+    scope,
+  );
 }
 
 const EMPTY_PREPARED_CONNECTION_ATOM = Atom.make(Option.none()).pipe(

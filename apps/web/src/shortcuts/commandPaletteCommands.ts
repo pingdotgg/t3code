@@ -28,6 +28,7 @@ const toggleOverlay =
     const mode = overlayModeForCommand(command);
     if (mode === null) return false;
     consume(event);
+    if (event.repeat) return;
     dispatchCommandPalette({ _tag: "ToggleMode", mode });
   };
 
@@ -56,6 +57,7 @@ export function installCommandPaletteCommands(
         const { open, mode } = useCommandPaletteStore.getState();
         if (!open || mode === "command") return false;
         consume(event);
+        if (event.repeat) return;
         dispatchCommandPalette({ _tag: "BackToCommand" });
       },
     },
@@ -91,11 +93,13 @@ export function installCommandPaletteCommands(
       },
       "themeEditor.toggle": (event) => {
         consume(event);
+        if (event.repeat) return;
         const { theme, themeHalves, resolvedTheme } = getThemeSnapshot();
         toggleThemeEditorForTheme({ theme, themeHalves, initialAppearance: resolvedTheme });
       },
       "usage.open": (event) => {
         consume(event);
+        if (event.repeat) return;
         dispatchCommandPalette({ _tag: "SetOpen", open: false });
         void router.navigate({ to: "/usage" });
       },

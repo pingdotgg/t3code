@@ -1,10 +1,13 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import * as Equal from "effect/Equal";
 import { useEffect, useRef } from "react";
 import { create } from "zustand";
 
 import {
+  composerDraftHasUserContent,
   composerTargetKey,
+  type ComposerThreadDraftState,
   type ComposerThreadTarget,
   useComposerDraftStore,
 } from "../../composerDraftStore";
@@ -159,6 +162,55 @@ export function joinPreparedImagesToDraft<T>(insert: () => T): T {
   }
 }
 
+function composerSendSettingsChanged(
+  before: ComposerThreadDraftState | null,
+  after: ComposerThreadDraftState | null,
+): boolean {
+  const modelsChanged =
+    before && after
+      ? !Equal.equals(before.modelSelectionByProvider, after.modelSelectionByProvider)
+      : Object.keys((before ?? after)?.modelSelectionByProvider ?? {}).length > 0;
+  return (
+    modelsChanged ||
+    (before?.activeProvider ?? null) !== (after?.activeProvider ?? null) ||
+    (before?.runtimeMode ?? null) !== (after?.runtimeMode ?? null) ||
+    (before?.interactionMode ?? null) !== (after?.interactionMode ?? null)
+  );
+}
+
+/** Watches for edits and attachment invalidation while a send waits for routing. */
+export function watchComposerSendEdits(
+  draftTarget: ComposerThreadTarget,
+): () => "ready" | "edited" | "attachments-cancelled" {
+  const targetKey = composerTargetKey(draftTarget);
+  const submittedImages = new Set(getPreparingComposerImages(targetKey));
+  const cancelGeneration = cancelGenerations.get(targetKey);
+  let draft = useComposerDraftStore.getState().getComposerDraft(draftTarget);
+  let changed = false;
+  const stopWatchingDraft = useComposerDraftStore.subscribe((state) => {
+    const next = state.getComposerDraft(draftTarget);
+    if (!preparedImagesJoiningDraft) {
+      changed ||=
+        composerSendSettingsChanged(draft, next) ||
+        (draft && next
+          ? composerDraftContentChanged(draft, next)
+          : composerDraftHasUserContent(draft ?? next));
+    }
+    draft = next;
+  });
+  const stopWatchingImages = usePreparingComposerImageStore.subscribe(() => {
+    if (getPreparingComposerImages(targetKey).some((image) => !submittedImages.has(image))) {
+      changed = true;
+    }
+  });
+  return () => {
+    stopWatchingDraft();
+    stopWatchingImages();
+    if (cancelGenerations.get(targetKey) !== cancelGeneration) return "attachments-cancelled";
+    return changed ? "edited" : "ready";
+  };
+}
+
 /**
  * Holds a send made while the draft still has images compressing. Resolves ready once they join
  * the draft, or cancelled if the draft is edited or the send cancelled. Null means nothing needs
@@ -194,11 +246,7 @@ export function holdComposerSend(
       const next = state.getComposerDraft(draftTarget);
       if (
         !preparedImagesJoiningDraft &&
-        (composerDraftContentChanged(draft, next) ||
-          draft?.modelSelectionByProvider !== next?.modelSelectionByProvider ||
-          draft?.activeProvider !== next?.activeProvider ||
-          draft?.runtimeMode !== next?.runtimeMode ||
-          draft?.interactionMode !== next?.interactionMode)
+        (composerDraftContentChanged(draft, next) || composerSendSettingsChanged(draft, next))
       ) {
         settle({ status: "cancelled" });
       }

@@ -1,7 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, type ScopedThreadRef } from "@t3tools/contracts";
 import type { ChildThreadApproval } from "@t3tools/client-runtime/state/thread-requests";
-import { fullAccessOverrideExplanation } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  fullAccessOverrideExplanation,
+  PUSH_HOOKS_APPROVAL_QUESTION,
+} from "@t3tools/client-runtime/state/thread-requests";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -11,7 +14,9 @@ import { useState } from "react";
 import { useEnvironmentScope } from "../../state/session";
 import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { ApprovalText } from "./ApprovalText";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
+import { PushHooksApprovalDetails } from "./PushHooksApprovalDetails";
 
 function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
   const canRespond = useEnvironmentScope(entry.thread.environmentId, AuthOrchestrationOperateScope);
@@ -31,9 +36,14 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
           Approval needed from <Var>{entry.title}</Var>
         </T>
       </p>
-      <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono">
-        {approval.detail || approval.requestKind}
-      </pre>
+      {approval.pushHooks ? (
+        <>
+          <p className="mb-1">{messages(PUSH_HOOKS_APPROVAL_QUESTION)}</p>
+          <PushHooksApprovalDetails pushHooks={approval.pushHooks} />
+        </>
+      ) : (
+        <ApprovalText text={approval.detail || approval.requestKind} />
+      )}
       {approval.appName ? <p className="mt-2 text-muted-foreground">{approval.appName}</p> : null}
       {approval.responseCapability !== "live" ? (
         <p className="mt-2 text-warning">

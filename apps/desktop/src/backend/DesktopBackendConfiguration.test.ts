@@ -2,6 +2,11 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
+import {
+  DESKTOP_READINESS_CHALLENGE_PARAM,
+  DESKTOP_READINESS_PROOF_PATH,
+  desktopReadinessProof,
+} from "@t3tools/shared/desktopReadinessProof";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -695,6 +700,44 @@ describe("DesktopBackendConfiguration", () => {
         );
 
         assert.equal(wsl.bootstrap.desktopBootstrapToken, primary.bootstrap.desktopBootstrapToken);
+      }),
+    ),
+  );
+
+  it.effect("resolveWsl gives each launch a readiness probe only its own backend passes", () =>
+    withHarness(
+      Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+
+        const primary = yield* configuration.resolvePrimary;
+        const first = yield* configuration.resolveWsl({ port: 5000, distro: null });
+        const second = yield* configuration.resolveWsl({ port: 5000, distro: null });
+        const firstSecret = first.bootstrap.desktopReadinessSecret;
+        const secondSecret = second.bootstrap.desktopReadinessSecret;
+        assert.isDefined(firstSecret);
+        assert.isDefined(secondSecret);
+        assert.notEqual(firstSecret, secondSecret);
+        assert.notEqual(firstSecret, first.bootstrap.desktopBootstrapSecret);
+        assert.isUndefined(first.bootstrap.desktopTelemetryControlFd);
+        assert.isUndefined(primary.readinessProbe);
+        assert.isDefined(first.readinessProbe);
+
+        const probe = yield* first.readinessProbe!;
+        const laterProbe = yield* first.readinessProbe!;
+        assert.notEqual(probe.path, laterProbe.path);
+        const url = new URL(probe.path, first.httpBaseUrl);
+        assert.equal(url.pathname, DESKTOP_READINESS_PROOF_PATH);
+        const challenge = url.searchParams.get(DESKTOP_READINESS_CHALLENGE_PARAM)!;
+        const answerWith = (secret: string) =>
+          desktopReadinessProof(secret, challenge).pipe(Effect.provide(NodeCrypto.layerMac));
+
+        assert.isTrue(yield* probe.accept(yield* answerWith(firstSecret!)));
+        assert.isFalse(yield* probe.accept(yield* answerWith(secondSecret!)));
+        assert.isFalse(
+          yield* probe.accept(yield* answerWith(first.bootstrap.desktopBootstrapSecret!)),
+        );
+        assert.isFalse(yield* laterProbe.accept(yield* answerWith(firstSecret!)));
+        assert.isFalse(yield* probe.accept("{}"));
       }),
     ),
   );

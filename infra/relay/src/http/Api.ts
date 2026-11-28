@@ -231,27 +231,20 @@ const traceRelayHttpRequest = Effect.fnUntraced(function* <E, R>(
   >,
 ) {
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const traced = annotateRelayEdgeLocation.pipe(
-    Effect.andThen(appendRelayTraceContextResponseHeader),
-    Effect.andThen(relayRequestDeadline(httpEffect)),
-  );
-  if (!isRelayHookPath(request.url)) {
-    return yield* HttpMiddleware.tracer(traced).pipe(
-      Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
-      // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
-      Effect.ensuring(Effect.yieldNow),
-    );
-  }
-  // Hook URLs carry a secret token: the tracer and deadline log see a redacted
-  // request, while the route itself still receives the original. A webhook
-  // sender's trace context is dropped, so it cannot pick the trace our relay
-  // and environment spans land in.
-  const redacted = request.modify({
-    url: redactRelayHookUrl(request.url),
+  const isHook = isRelayHookPath(request.url);
+  // The span sees a copy of the request without the caller's address or user agent: the edge
+  // location above is enough to tell where users are. Hook URLs carry a secret token, so their
+  // copy is redacted too, and a webhook sender's trace context is dropped so it cannot pick the
+  // trace our relay and environment spans land in. The route still receives the original.
+  const spanRequest = request.modify({
+    remoteAddress: Option.none(),
     headers: Headers.removeMany(
       request.headers,
-      Object.keys(request.headers).filter((name) => SENDER_TRACE_HEADER.test(name)),
+      Object.keys(request.headers).filter(
+        (name) => name.toLowerCase() === "user-agent" || (isHook && SENDER_TRACE_HEADER.test(name)),
+      ),
     ),
+    ...(isHook ? { url: redactRelayHookUrl(request.url) } : {}),
   });
   return yield* HttpMiddleware.tracer(
     annotateRelayEdgeLocation.pipe(
@@ -259,13 +252,14 @@ const traceRelayHttpRequest = Effect.fnUntraced(function* <E, R>(
       Effect.andThen(
         relayRequestDeadline(
           httpEffect.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request)),
-          RELAY_HOOK_REQUEST_DEADLINE_MS,
+          isHook ? RELAY_HOOK_REQUEST_DEADLINE_MS : RELAY_REQUEST_DEADLINE_MS,
         ),
       ),
     ),
   ).pipe(
-    Effect.provideService(HttpServerRequest.HttpServerRequest, redacted),
+    Effect.provideService(HttpServerRequest.HttpServerRequest, spanRequest),
     Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
+    // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
     Effect.ensuring(Effect.yieldNow),
   );
 });
@@ -508,6 +502,7 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
     readonly userId: string;
     readonly environmentId: string;
     readonly managedEndpointNamespace?: string | undefined;
+    readonly forceDisconnect?: boolean;
   }) {
     const links = yield* EnvironmentLinks.EnvironmentLinks;
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
@@ -547,16 +542,22 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
       );
     }
     // Deprovision after revocation commits; retry even if already revoked to finish failed Cloudflare cleanup.
+    const forceDisconnect = input.forceDisconnect === true;
     const deprovisioned = yield* managedEndpointProvider.deprovision({
       userId: input.userId,
       environmentId: input.environmentId,
       target: deprovisionTarget,
+      forceDisconnect,
     });
     if (!deprovisioned) {
       const key = { userId: input.userId, environmentId: input.environmentId };
       const retryTarget = yield* managedEndpointProvider.prepareDeprovision(key);
       if (retryTarget !== null && (yield* links.getForUser(key)) === null) {
-        yield* managedEndpointProvider.deprovision({ ...key, target: retryTarget });
+        yield* managedEndpointProvider.deprovision({
+          ...key,
+          target: retryTarget,
+          forceDisconnect,
+        });
       }
     }
     return unlinked;

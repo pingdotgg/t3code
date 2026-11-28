@@ -281,6 +281,7 @@ export interface RetryWorkspacePreparationInput extends ThreadCommandInput {
 }
 
 export interface EditQueuedRunInput extends ThreadCommandInput {
+  readonly modelSelection?: ModelSelection;
   readonly runId: RunId;
   readonly text: string;
   /**
@@ -870,6 +871,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
           ? {}
           : { idleCompaction: input.message.idleCompaction }),
         attachments,
+        ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
         ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
         ...(input.sourceProposedPlan === undefined
           ? {}
@@ -1074,9 +1076,9 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
       );
     if (
       checkpoint === undefined ||
-      // Missing snapshots support conversation rewind only.
+      // Missing or failed snapshots support conversation rewind only.
       (checkpoint.status !== "ready" &&
-        !(input.restoreFiles === false && checkpoint.status === "missing"))
+        !(input.restoreFiles === false && checkpoint.status !== "stale"))
     ) {
       const target =
         input.checkpointId === undefined
@@ -1225,6 +1227,7 @@ export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(func
     threadId: input.threadId,
     runId: input.runId,
     text: input.text,
+    ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
     ...(attachments === undefined ? {} : { attachments }),
     ...(input.edit?.context && attachments
       ? {

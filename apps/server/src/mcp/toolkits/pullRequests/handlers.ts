@@ -1,6 +1,7 @@
 import {
   CommandId,
   NonNegativeInt,
+  type ProviderApprovalPushHooks,
   type PullRequestActivity,
   PullRequestListCursors,
   type PullRequestRef,
@@ -43,6 +44,9 @@ import {
   threadPullRequestsOf,
   visibleThreadPullRequests,
 } from "../../../sourceControl/threadPullRequests.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
+import * as TaskFolders from "../../../workspace/TaskFolders.ts";
+import * as McpClientInput from "../../McpClientInput.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { threadNotFound } from "../../threadAccess.ts";
@@ -66,6 +70,7 @@ import {
   PullRequestsToolkit,
   type ThreadPullRequestEntry,
   alreadyEndedWatchNext,
+  CHECKS_ALREADY_PASSED_WATCH_NEXT,
   CHILD_PULL_REQUEST_REPORT_NEXT,
 } from "./tools.ts";
 
@@ -220,7 +225,13 @@ export function listThreadPullRequests(
 ): ListThreadPullRequestsResult {
   const chains = resolveThreadPullRequestChains(thread.pullRequests ?? []);
   const after = visibleThreadPullRequests(thread.pullRequests ?? [])
-    .filter((link) => states === undefined || states.includes(link.snapshot?.state ?? "open"))
+    // An empty list is no filter: clients that fill every optional field send `[]`.
+    .filter(
+      (link) =>
+        states === undefined ||
+        states.length === 0 ||
+        states.includes(link.snapshot?.state ?? "open"),
+    )
     .map((link) => ({ link, position: pullRequestListPosition(link) }))
     .filter(({ position }) => cursor === undefined || position > cursor)
     .toSorted((left, right) => (left.position < right.position ? -1 : 1));
@@ -261,6 +272,77 @@ function projectForPullRequest(
   return projects.find(matches);
 }
 
+const isPushHooksUnapproved = Schema.is(GitManager.GitPushHooksUnapprovedError);
+
+const PUSH_HOOKS_DECLINED =
+  "The person declined to run this repository's push hooks. Nothing was pushed and no PR was opened.";
+const PUSH_HOOKS_UNCONFIRMED =
+  "T3 Code has no approval from the person for this repository's push hooks. Nothing was pushed and no PR was opened. Call again to ask.";
+const PUSH_HOOKS_KEPT_CHANGING =
+  "This repository's push hooks kept changing while approval was asked. Nothing was pushed.";
+const PUSH_HOOKS_SKIPPED =
+  "The repository's push hooks were not run, because this client cannot ask a person to approve them.";
+
+// Each request is followed by one push, so the last approval is tried too.
+const PUSH_HOOKS_MAX_REQUESTS = 3;
+
+/**
+ * A request's state: the digest it asks about and which request of its call this is. A client
+ * asked by a call's answer sends it back with the reply, so the count goes on where it stopped.
+ * A client that sends back another count changes only how often its person is asked.
+ */
+const pushHooksRequestState = (hooks: GitManager.GitPushHooksUnapprovedError, request: number) =>
+  `${pushHooksApprovalKey(hooks).join(" ")} ${request}`;
+const pushHooksRequestOf = (state: string) => {
+  const match = /^(.+) ([1-9]\d*)$/.exec(state);
+  return match === null ? undefined : { digest: match[1]!, request: Number(match[2]) };
+};
+
+/**
+ * What one approval is given for, and so what a client that remembers approvals remembers it by:
+ * the contents of the named files. The request's state carries these whole and its text the
+ * start of each, so edited files read differently and are asked about again.
+ */
+const pushHooksApprovalKey = (hooks: GitManager.GitPushHooksUnapprovedError) => [hooks.digest];
+
+/** The branch and hooks one approval names, for a client that shows them as details. */
+const pushHooksNamed = (
+  cwd: string,
+  hooks: GitManager.GitPushHooksUnapprovedError,
+): ProviderApprovalPushHooks => ({
+  branch: hooks.branch,
+  // Hooks kept in the checkout read as the person knows them, such as `.husky/pre-push`.
+  files: hooks.files.map((file) =>
+    file.startsWith(cwd) && /^[\\/]/.test(file.slice(cwd.length))
+      ? file.slice(cwd.length + 1)
+      : file,
+  ),
+  commands: hooks.commands,
+});
+
+/** What the person approves: the push, the hooks named, and the start of the approval's key. */
+const pushHooksQuestion = (
+  { branch, files, commands: configured }: ProviderApprovalPushHooks,
+  hooks: GitManager.GitPushHooksUnapprovedError,
+) => {
+  const list = (one: string, many: string, items: ReadonlyArray<string>) =>
+    items.length === 0
+      ? []
+      : items.length === 1
+        ? [`${one} ${items[0]}`]
+        : [`${many} ${items.slice(0, -1).join(", ")} and ${items.at(-1)}`];
+  // A command is quoted whole on one line, so it cannot read as part of the question.
+  const commands = configured.map(({ name, command }) => `${name} (${JSON.stringify(command)})`);
+  const named = [
+    ...list("hook file", "hook files", files),
+    ...list("configured hook", "configured hooks", commands),
+  ].join(" and its ");
+  const key = pushHooksApprovalKey(hooks)
+    .map((part) => part.slice(0, 8))
+    .join(" ");
+  return `Push ${branch} and run this repository's ${named} (contents ${key})?`;
+};
+
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
@@ -270,6 +352,9 @@ const make = Effect.gen(function* () {
 
   const projects = yield* ProjectService.ProjectService;
   const random = yield* SecureRandom.SecureRandom;
+  // The administrator's limit, fixed for the server's life as it is where turns start.
+  const maxRuntimeMode = (yield* ServerSettings.ServerSettingsService).managedPolicy?.limits
+    ?.maxRuntimeMode;
 
   const commandId = (tag: string, threadId: ThreadId) =>
     random.uuidV4().pipe(
@@ -307,10 +392,9 @@ const make = Effect.gen(function* () {
       | typeof PullRequestUnlinkFailedError
       | typeof PullRequestForgeError,
   ) =>
-    projects.getShell(thread.projectId).pipe(
-      Effect.map(Option.getOrUndefined),
-      Effect.mapError((cause) => new Failure({ cause })),
-    );
+    pullRequests
+      .addressedProject(thread.projectId)
+      .pipe(Effect.mapError((cause) => new Failure({ cause })));
 
   const dispatchFailure =
     (Failure: typeof PullRequestLinkFailedError | typeof PullRequestUnlinkFailedError) =>
@@ -333,9 +417,11 @@ const make = Effect.gen(function* () {
       .setWatching({ threadId, target: input, watching, until: input.until })
       .pipe(
         Effect.map((result) =>
-          result.state === undefined
-            ? result
-            : { ...result, next: alreadyEndedWatchNext(result.state) },
+          result.state !== undefined
+            ? { ...result, next: alreadyEndedWatchNext(result.state) }
+            : result.checksState === "passing"
+              ? { ...result, next: CHECKS_ALREADY_PASSED_WATCH_NEXT }
+              : result,
         ),
         Effect.catchTags({
           PullRequestWatchThreadNotFoundError: (error) =>
@@ -358,7 +444,12 @@ const make = Effect.gen(function* () {
     const known = yield* projects
       .listShells()
       .pipe(Effect.mapError((cause) => new PullRequestListFailedError({ cause })));
-    const callerProject = known.find((project) => project.id === callerThread?.projectId);
+    const callerProject =
+      callerThread === undefined
+        ? undefined
+        : yield* pullRequests
+            .addressedProject(callerThread.projectId)
+            .pipe(Effect.mapError((cause) => new PullRequestListFailedError({ cause })));
     // A pull request named by host and repository builds its URL through the project that holds
     // it, which need not be the caller's.
     const urlProject = (input: PullRequestTargetInput) =>
@@ -414,10 +505,8 @@ const make = Effect.gen(function* () {
   // Layers below the target are pinned to the heads read here; the host refuses if any moved.
   const stackMergeScope = Effect.fnUntraced(function* (
     ref: PullRequestRef,
-    input: { readonly expectedHeadSha: string; readonly auto?: boolean | undefined },
+    input: { readonly expectedHeadSha: string },
   ) {
-    if (input.auto === true)
-      return yield* new PullRequestForgeError({ detail: "A stack merge cannot wait with auto." });
     const stack = yield* pullRequests
       .stack(ref, { bypassCache: true })
       .pipe(Effect.mapError(forgeFailure));
@@ -471,6 +560,8 @@ const make = Effect.gen(function* () {
     comments: ReadonlyArray<ReviewLineComment>,
   ) {
     const placed = new Map<ReviewLineComment, PullRequestReviewCommentDraft>();
+    // Comments whose end line some page showed, so a failure names the line that is missing.
+    const lineShown = new Set<ReviewLineComment>();
     const unplaced = () => comments.filter((comment) => !placed.has(comment));
     let cursor: string | undefined;
     for (let page = 0; page < REVIEW_DIFF_PAGES && unplaced().length > 0; page += 1) {
@@ -484,6 +575,7 @@ const make = Effect.gen(function* () {
           comment.startLine === undefined
             ? undefined
             : reviewPositionInPatch(diff.patch, comment.path, comment.startLine, side);
+        if (position !== null) lineShown.add(comment);
         if (position === null || start === null) continue;
         placed.set(comment, {
           path: comment.path,
@@ -497,8 +589,12 @@ const make = Effect.gen(function* () {
     }
     const missing = unplaced()[0];
     if (missing !== undefined) {
+      const missingLine =
+        missing.startLine !== undefined && lineShown.has(missing)
+          ? missing.startLine
+          : missing.line;
       return yield* new PullRequestForgeError({
-        detail: `${missing.path} line ${missing.startLine ?? missing.line} (${missing.side ?? "new"} side) is not in this PR's diff. Comment on a changed line or one shown around it.`,
+        detail: `${missing.path} line ${missingLine} (${missing.side ?? "new"} side) is not in this PR's diff. Comment on a changed line or one shown around it.`,
       });
     }
     return comments.map((comment) => placed.get(comment)!);
@@ -617,6 +713,7 @@ const make = Effect.gen(function* () {
       title: detail.title,
       state: detail.state,
       isDraft: detail.isDraft,
+      ...(detail.visibility === undefined ? {} : { visibility: detail.visibility }),
       author: detail.author?.login ?? null,
       headBranch: detail.headBranch,
       baseBranch: detail.baseBranch,
@@ -1044,16 +1141,90 @@ const make = Effect.gen(function* () {
         if (project === undefined) {
           return yield* new PullRequestProjectNotFoundError({ repository: "" });
         }
-        const created = yield* git
-          .createPullRequest({
-            cwd: thread.worktreePath ?? project.workspaceRoot,
-            projectId: project.id,
-            title: input.title,
-            body: input.body,
-            baseBranch: input.base,
-            draft: input.draft,
-          })
-          .pipe(Effect.mapError(forgeFailure));
+        const cwd = thread.worktreePath ?? project.workspaceRoot;
+        const create = (
+          pushHooks?: Parameters<
+            GitManager.GitManager["Service"]["createPullRequest"]
+          >[0]["pushHooks"],
+        ) =>
+          git
+            .createPullRequest({
+              cwd,
+              projectId: project.id,
+              title: input.title,
+              body: input.body,
+              baseBranch: input.base,
+              draft: input.draft,
+              private: input.private,
+              pushHooks,
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                isPushHooksUnapproved(error) ? error : forgeFailure(error),
+              ),
+            );
+        // The repository's push hooks are its owner's code. Below Full access the agent's own
+        // commands wait for a person, so these do too: by the rule a worktree's commands follow.
+        const fullAccess =
+          TaskFolders.projectCommandsForAgent(thread.linkOrigin, thread, maxRuntimeMode) ===
+          "permitted";
+        let hooksSkipped = false;
+        const createOnceApproved = Effect.gen(function* () {
+          // A client asked by the last call's answer is back with the reply. It is read before
+          // any push: a decline pushes nothing, whatever the hooks are by now.
+          const reply = yield* McpClientInput.answered("push-hooks");
+          if (reply !== undefined && reply.answer !== "accepted") {
+            return yield* new PullRequestForgeError({
+              detail: reply.answer === "declined" ? PUSH_HOOKS_DECLINED : PUSH_HOOKS_UNCONFIRMED,
+            });
+          }
+          const approved = reply === undefined ? undefined : pushHooksRequestOf(reply.state);
+          let approvedDigest: string | null = approved?.digest ?? null;
+          // A hook edited while the person reads the question is asked about again; the limit
+          // bounds one that keeps changing.
+          for (let requests = approved?.request ?? 0; ; requests++) {
+            const outcome:
+              | GitManager.GitCreatePullRequestResult
+              | GitManager.GitPushHooksUnapprovedError = yield* create({ approvedDigest }).pipe(
+              Effect.catchTags({
+                GitPushHooksUnapprovedError: (unapproved) => Effect.succeed(unapproved),
+              }),
+            );
+            if (!isPushHooksUnapproved(outcome)) return outcome;
+            if (requests >= PUSH_HOOKS_MAX_REQUESTS) {
+              return yield* new PullRequestForgeError({ detail: PUSH_HOOKS_KEPT_CHANGING });
+            }
+            const pushHooks = pushHooksNamed(cwd, outcome);
+            const answer = yield* McpClientInput.askApproval({
+              key: "push-hooks",
+              state: pushHooksRequestState(outcome, requests + 1),
+              message: pushHooksQuestion(pushHooks, outcome),
+              pushHooks,
+            });
+            if (answer === "accepted") {
+              approvedDigest = outcome.digest;
+              continue;
+            }
+            if (answer === "unavailable") {
+              hooksSkipped = true;
+              return yield* create("off").pipe(
+                Effect.catchTags({ GitPushHooksUnapprovedError: forgeFailure }),
+              );
+            }
+            return yield* new PullRequestForgeError({
+              detail:
+                answer === "declined"
+                  ? PUSH_HOOKS_DECLINED
+                  : answer === "unconfirmed"
+                    ? PUSH_HOOKS_UNCONFIRMED
+                    : // Never read: the question is this call's answer.
+                      "Waiting for approval.",
+            });
+          }
+        });
+        const created = yield* fullAccess
+          ? create().pipe(Effect.catchTags({ GitPushHooksUnapprovedError: forgeFailure }))
+          : createOnceApproved;
         if (created.url === undefined) {
           return yield* new PullRequestForgeError({
             detail:
@@ -1065,6 +1236,7 @@ const make = Effect.gen(function* () {
         return {
           ...identityOf(target),
           created: created.status === "created",
+          ...(hooksSkipped ? { note: PUSH_HOOKS_SKIPPED } : {}),
           ...(thread.lineage.relationshipToParent === "subagent"
             ? { next: CHILD_PULL_REQUEST_REPORT_NEXT }
             : {}),
@@ -1175,10 +1347,24 @@ const make = Effect.gen(function* () {
     ),
     pull_request_review: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
+        if (input.verdict === "approve" && input.expectedHeadSha === undefined) {
+          return yield* new PullRequestForgeError({
+            detail:
+              "Approving needs expectedHeadSha: the headSha pull_request_read reported for the commits you reviewed.",
+          });
+        }
         const { target, ref } = yield* locate(input);
         const comments = yield* reviewComments(ref, input.comments ?? []);
         yield* pullRequests
-          .submitReview({ ...ref, verdict: input.verdict, body: input.body ?? "", comments })
+          .submitReview({
+            ...ref,
+            verdict: input.verdict,
+            body: input.body ?? "",
+            comments,
+            ...(input.expectedHeadSha === undefined
+              ? {}
+              : { expectedHeadSha: input.expectedHeadSha }),
+          })
           .pipe(Effect.mapError(forgeFailure));
         return identityOf(target);
       }),

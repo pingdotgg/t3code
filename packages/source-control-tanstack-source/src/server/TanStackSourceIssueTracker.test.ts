@@ -189,4 +189,34 @@ describe("TanStackSourceIssueTracker", () => {
       ]);
     });
   });
+
+  it.effect("sends nothing for a key that is not an issue number", () => {
+    const { tracker, paths } = withApi({ "/user": { username: "alice" } });
+    return Effect.gen(function* () {
+      const issues = yield* tracker;
+      for (const key of ["7/labels", "7/../8", "7?state=open", "0", "x"]) {
+        const issue = { ...target, key };
+        const exits = yield* Effect.forEach(
+          [
+            issues.getIssue(issue),
+            issues.getComments({ ...issue, cursor: "t2" }),
+            issues.comment!({ ...issue, body: "Hello." }),
+            issues.update!({ ...issue, title: "New title", labels: [], assignees: [] }),
+            issues.setState!({ ...issue, state: "Closed" }),
+          ],
+          (effect) => Effect.exit(effect),
+        );
+        assert.deepStrictEqual(
+          exits.map((exit) => exit._tag),
+          ["Failure", "Failure", "Failure", "Failure", "Failure"],
+          key,
+        );
+      }
+      // Reading an issue asks for the viewer alongside it.
+      assert.deepStrictEqual(
+        paths.filter((path) => path !== "/user"),
+        [],
+      );
+    });
+  });
 });

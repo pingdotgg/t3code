@@ -28,6 +28,11 @@ export type ActiveWindow = {
 const MAC_LOOKUP_TIMEOUT_MS = 5_000;
 
 const MAC_HELPER_STRIP_MAX_THICKNESS_RATIO = 0.25;
+// During a ScreenCaptureKit window share macOS adds a titled sharing indicator (66x20 or 31x20)
+// to the shared app's own window list, in front of the window being shared.
+const MAC_SHARING_INDICATOR_TITLE = "Window";
+const MAC_SHARING_INDICATOR_MAX_WIDTH = 100;
+const MAC_SHARING_INDICATOR_MAX_HEIGHT = 28;
 
 const MacActiveWindowLookup = Schema.Struct({
   owner: Schema.Struct({
@@ -118,6 +123,13 @@ async function macActiveWindow(): Promise<ActiveWindow | undefined> {
   );
   // Helpers belong to the content behind them, which may not be the app's largest window.
   const window = visible.find((candidate, index) => {
+    if (
+      candidate.title === MAC_SHARING_INDICATOR_TITLE &&
+      candidate.bounds.width < MAC_SHARING_INDICATOR_MAX_WIDTH &&
+      candidate.bounds.height < MAC_SHARING_INDICATOR_MAX_HEIGHT
+    ) {
+      return false;
+    }
     if (candidate.title.trim() !== "") return true;
     const bounds = candidate.bounds;
     return !visible.some((reference, referenceIndex) => {

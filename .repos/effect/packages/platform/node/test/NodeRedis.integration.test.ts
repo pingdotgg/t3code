@@ -47,7 +47,7 @@ PersistedQueueTest.suite(
     pollInterval: "50 millis",
     lockRefreshInterval: "100 millis"
   }).pipe(Layer.provide(RedisLayer)),
-  { cleanupUsesClock: true }
+  { cleanupUsesClock: true, nonDeliveryWait: "250 millis" }
 )
 
 RateLimiterTest.suite(

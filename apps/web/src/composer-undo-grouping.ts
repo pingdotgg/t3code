@@ -10,12 +10,13 @@ export type ComposerChangeKind = "insert" | "delete" | "other";
 const CLIPBOARD_EDIT_META = "composerClipboardEdit";
 const COMPOSITION_REPLACE_META = "composerCompositionReplace";
 
-/**
- * Tag custom paste/cut dispatches; ProseMirror only tags its built-in paths.
- * Not `uiEvent`: Tiptap's paste rules would style the already parsed paste a second time.
- */
+/** Tag custom paste/cut dispatches; ProseMirror only tags its built-in paths. */
 export function markAsClipboardEdit(tr: Transaction, event: "paste" | "cut"): Transaction {
   return tr.setMeta(CLIPBOARD_EDIT_META, event);
+}
+
+export function isPasteTransaction(tr: Transaction): boolean {
+  return tr.getMeta("uiEvent") === "paste" || tr.getMeta(CLIPBOARD_EDIT_META) === "paste";
 }
 
 /** Start a replacement undo group, keeping the IME edits together and prior typing separate. */

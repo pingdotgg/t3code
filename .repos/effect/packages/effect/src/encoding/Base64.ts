@@ -252,7 +252,11 @@ const encodeBytes = (bytes: Uint8Array): string => {
   // Looked up on the prototype at call time, so own or subclass overrides are ignored.
   const toBase64 = (Uint8Array.prototype as { readonly toBase64?: (this: Uint8Array) => string }).toBase64
   // The size guard also keeps detached buffers (length 0) away from native `toBase64`, which throws on them.
-  if (length >= 32 && typeof toBase64 === "function") return toBase64.call(bytes)
+  if (length >= 32) {
+    if (typeof toBase64 === "function") return toBase64.call(bytes)
+    const encoded = base64.encodeBuffer(bytes, "base64")
+    if (encoded !== undefined) return encoded
+  }
   // Below ~128 bytes, appending to a string beats filling a byte array and decoding it once.
   return length < 128 ? encodeShort(bytes) : encodeLong(bytes)
 }

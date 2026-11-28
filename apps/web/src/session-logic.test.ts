@@ -30,6 +30,7 @@ import {
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   deriveRevertTurnCountByUserMessageId,
   derivePhase,
+  findLatestTaskList,
   findRevertCheckpoint,
   isLatestRunSettled,
   selectHandoffImageResources,
@@ -290,7 +291,10 @@ describe("V2 session presentation", () => {
           },
         };
       });
-    const checkpoint = (ordinal: number, status: "ready" | "missing" | "stale" = "ready") => ({
+    const checkpoint = (
+      ordinal: number,
+      status: "ready" | "missing" | "stale" | "error" = "ready",
+    ) => ({
       runId: runId(ordinal),
       checkpointTurnCount: ordinal,
       checkpointRef: `checkpoint-${ordinal}` as never,
@@ -323,6 +327,11 @@ describe("V2 session presentation", () => {
       expect(targets([2], [checkpoint(1, "stale")])).toEqual({ "user-2": 0 });
       // Without file snapshots, missing checkpoints still pin the conversation.
       expect(targets([1, 2], [checkpoint(1, "missing"), checkpoint(2, "missing")])).toEqual({
+        "user-1": 0,
+        "user-2": 1,
+      });
+      // A failed snapshot capture still pins the conversation; only file restore needs one.
+      expect(targets([1, 2], [checkpoint(1, "error")])).toEqual({
         "user-1": 0,
         "user-2": 1,
       });
@@ -710,6 +719,48 @@ describe("V2 session presentation", () => {
       ]);
     },
   );
+
+  it("finds the newest task list by run order, not snapshot order", () => {
+    const projection = makeThreadProjectionFixture();
+    const run = (ordinal: number) => ({
+      id: RunId.make(`run-${ordinal}`),
+      threadId: projection.thread.id,
+      ordinal,
+      providerInstanceId: projection.thread.providerInstanceId,
+      modelSelection: projection.thread.modelSelection,
+      providerThreadId: null,
+      userMessageId: MessageId.make(`message-${ordinal}`),
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "completed" as const,
+      requestedAt: projection.updatedAt,
+      startedAt: projection.updatedAt,
+      completedAt: projection.updatedAt,
+      checkpointId: null,
+      contextHandoffId: null,
+    });
+    const plan = (ordinal: number, text: string, status: "active" | "superseded" = "active") => ({
+      id: PlanId.make(`plan-${ordinal}-${status}`),
+      threadId: projection.thread.id,
+      runId: RunId.make(`run-${ordinal}`),
+      nodeId: NodeId.make(`node-${ordinal}`),
+      kind: "todo_list" as const,
+      status,
+      steps: text === "" ? [] : [{ id: `step-${ordinal}`, text, status: "pending" as const }],
+    });
+    const runs = [run(1), run(2), run(3)];
+
+    expect(
+      findLatestTaskList({
+        ...projection,
+        runs,
+        plans: [plan(2, "Newest"), plan(1, "Older"), plan(3, "Replaced", "superseded")],
+      })?.steps[0]?.text,
+    ).toBe("Newest");
+    expect(
+      findLatestTaskList({ ...projection, runs, plans: [plan(1, "Older"), plan(2, "")] }),
+    ).toBeNull();
+  });
 
   it("waits for a dispatched turn item before adding queued input to the timeline", () => {
     const projection = makeThreadProjectionFixture();
