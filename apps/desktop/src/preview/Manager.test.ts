@@ -333,7 +333,7 @@ const makeTestPreviewWebContents = (
     isCurrentlyAudible: () => false,
     on: vi.fn(),
     off: vi.fn(),
-    ipc: { on: vi.fn(), off: vi.fn() },
+    ipc: { on: vi.fn(), off: vi.fn(), handle: vi.fn(), removeHandler: vi.fn() },
     send: webviewSend,
     navigationHistory: { canGoBack: () => false, canGoForward: () => false },
     setIgnoreMenuShortcuts: vi.fn(),
@@ -493,7 +493,7 @@ const makeFaviconWebContents = (options?: {
       listeners.set(event, listener);
     }),
     off,
-    ipc: { on: vi.fn(), off: vi.fn() },
+    ipc: { on: vi.fn(), off: vi.fn(), handle: vi.fn(), removeHandler: vi.fn() },
     send: webviewSend,
     session: { fetch },
     navigationHistory: { canGoBack: () => false, canGoForward: () => false },
@@ -1246,7 +1246,7 @@ describe("PreviewManager", () => {
             listeners.set(event, listener);
           }),
           off: vi.fn(),
-          ipc: { on: vi.fn(), off: vi.fn() },
+          ipc: { on: vi.fn(), off: vi.fn(), handle: vi.fn(), removeHandler: vi.fn() },
           send: webviewSend,
           navigationHistory: { canGoBack: () => false, canGoForward: () => false },
           setIgnoreMenuShortcuts: vi.fn(),
@@ -1419,7 +1419,7 @@ describe("PreviewManager", () => {
           loadURL: vi.fn(async () => undefined),
           on: vi.fn(),
           off: vi.fn(),
-          ipc: { on: vi.fn(), off: vi.fn() },
+          ipc: { on: vi.fn(), off: vi.fn(), handle: vi.fn(), removeHandler: vi.fn() },
           send: webviewSend,
           navigationHistory: { canGoBack: () => false, canGoForward: () => false },
           setIgnoreMenuShortcuts: vi.fn(),
@@ -1691,7 +1691,7 @@ describe("PreviewManager", () => {
       once: (event: string, listener: () => void) => {
         listeners.set(event, listener);
       },
-      ipc: { on: vi.fn(), off: vi.fn() },
+      ipc: { on: vi.fn(), off: vi.fn(), handle: vi.fn(), removeHandler: vi.fn() },
       send: webviewSend,
       navigationHistory: { canGoBack: () => false, canGoForward: () => false },
       setIgnoreMenuShortcuts: vi.fn(),
@@ -1837,7 +1837,7 @@ describe("PreviewManager", () => {
         off: vi.fn((event: string) => {
           listeners.delete(event);
         }),
-        ipc: { on: vi.fn(), off: vi.fn() },
+        ipc: { on: vi.fn(), off: vi.fn(), handle: vi.fn(), removeHandler: vi.fn() },
         send: webviewSend,
         navigationHistory: { canGoBack: () => false, canGoForward: () => false },
         setIgnoreMenuShortcuts: vi.fn(),
@@ -2865,7 +2865,7 @@ describe("PreviewManager", () => {
             isCurrentlyAudible: () => false,
             on: vi.fn(),
             off: vi.fn(),
-            ipc: { on: vi.fn(), off: vi.fn() },
+            ipc: { on: vi.fn(), off: vi.fn(), handle: vi.fn(), removeHandler: vi.fn() },
             send: webviewSend,
             navigationHistory: { canGoBack: () => false, canGoForward: () => false },
             setIgnoreMenuShortcuts: vi.fn(),
@@ -3467,7 +3467,13 @@ describe("PreviewManager", () => {
             });
           }),
           off: vi.fn(),
-          ipc: { on: vi.fn(), off: vi.fn(), removeListener: vi.fn() },
+          ipc: {
+            on: vi.fn(),
+            off: vi.fn(),
+            removeListener: vi.fn(),
+            handle: vi.fn(),
+            removeHandler: vi.fn(),
+          },
           send: webviewSend,
           navigationHistory: { canGoBack: () => false, canGoForward: () => false },
           setIgnoreMenuShortcuts: vi.fn(),
@@ -3528,7 +3534,13 @@ describe("PreviewManager", () => {
               Deferred.doneUnsafe(registrations++ === 0 ? firstReady : secondReady, Effect.void);
           },
           once: vi.fn(),
-          ipc: { on: vi.fn(), off: vi.fn(), removeListener: vi.fn() },
+          ipc: {
+            on: vi.fn(),
+            off: vi.fn(),
+            removeListener: vi.fn(),
+            handle: vi.fn(),
+            removeHandler: vi.fn(),
+          },
         };
         fromId.mockReturnValue(guest as never);
         yield* manager.createTab("tab_1");
@@ -3597,6 +3609,8 @@ describe("PreviewManager", () => {
                     ),
                     off: vi.fn(),
                     removeListener: vi.fn(),
+                    handle: vi.fn(),
+                    removeHandler: vi.fn(),
                   },
                 }),
               ] as const,
@@ -3686,6 +3700,8 @@ describe("PreviewManager", () => {
                 }),
                 off: vi.fn(),
                 removeListener: vi.fn(),
+                handle: vi.fn(),
+                removeHandler: vi.fn(),
               },
             }),
           );

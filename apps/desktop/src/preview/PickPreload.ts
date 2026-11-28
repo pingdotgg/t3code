@@ -18,6 +18,22 @@ import type {
 } from "@t3tools/contracts";
 
 import { createAnnotationIdSource } from "./AnnotationIds.ts";
+import {
+  FRAME_PICK_COMMAND_CHANNEL,
+  FRAME_PICK_ESCAPE_CHANNEL,
+  FRAME_PICK_MESSAGE_KEY,
+  installFramePickAgent,
+  type FramePickCapture,
+  type FramePickCommand,
+  type FramePickDelivery,
+  type FramePickElementBox,
+  type FramePickHit,
+  type FramePickPointerType,
+  type FramePickRect,
+  type FramePickRelay,
+  type FramePickSize,
+  type FramePickUp,
+} from "./FramePickAgent.ts";
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import {
   addStrokePoint,
@@ -162,6 +178,19 @@ interface AnnotationSession {
   setSendEnabled: (enabled: boolean) => void;
   handleOverlayKey: (event: KeyboardEvent) => void;
 }
+
+interface RemoteTarget {
+  readonly label: string;
+  readonly styles: CSSStyleDeclaration;
+  readonly stylesWhenPicked: CSSStyleDeclaration;
+  readonly reloadStyles: () => void;
+  readonly unclippedSize: () => FramePickSize;
+  readonly capture: () => Promise<PickedElementPayload>;
+  readonly setStyle: (property: string, value: string) => void;
+  readonly restoreStyles: () => void;
+}
+
+const remoteTargets = new WeakMap<Element, RemoteTarget>();
 
 let activeSession: AnnotationSession | null = null;
 let annotationTheme: DesktopPreviewAnnotationTheme | null = null;
@@ -334,6 +363,8 @@ function pickFromPoint(clientX: number, clientY: number): Element | null {
 }
 
 function describeRawElement(element: Element): string {
+  const remote = remoteTargets.get(element);
+  if (remote) return remote.label;
   const tag = element.tagName.toLowerCase();
   const id = element.id ? `#${element.id}` : "";
   const classes =
@@ -447,6 +478,114 @@ const pageNumber = (source: unknown, key: string): number | null => {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 };
 
+const pageRect = (source: unknown): FramePickRect | null => {
+  const x = pageNumber(source, "x");
+  const y = pageNumber(source, "y");
+  const width = pageNumber(source, "width");
+  const height = pageNumber(source, "height");
+  return x === null || y === null || width === null || height === null
+    ? null
+    : { x, y, width, height };
+};
+
+const pageSize = (source: unknown): FramePickSize | null => {
+  const width = pageNumber(source, "width");
+  const height = pageNumber(source, "height");
+  return width === null || height === null ? null : { width, height };
+};
+
+const pageHit = (source: unknown): FramePickHit | null => {
+  const label = pageString(source, "label");
+  const visibleRect = pageRect(pageField(source, "visibleRect"));
+  const unclippedSize = pageSize(pageField(source, "unclippedSize"));
+  if (label === null || visibleRect === null || unclippedSize === null) return null;
+  return { id: pageString(source, "id"), label, visibleRect, unclippedSize };
+};
+
+const pageElementBox = (source: unknown): FramePickElementBox | null => {
+  const id = pageString(source, "id");
+  const visibleRect = pageRect(pageField(source, "visibleRect"));
+  const unclippedSize = pageSize(pageField(source, "unclippedSize"));
+  return id === null || visibleRect === null || unclippedSize === null
+    ? null
+    : { id, visibleRect, unclippedSize };
+};
+
+const pageCapture = (source: unknown): FramePickCapture | null => {
+  const selector = pageString(source, "selector");
+  const htmlPreview = pageString(source, "htmlPreview");
+  const tagName = pageString(source, "tagName");
+  return selector === null || htmlPreview === null || tagName === null
+    ? null
+    : { selector, htmlPreview: htmlPreview.slice(0, HTML_PREVIEW_MAX_CHARS), tagName };
+};
+
+const pageStyles = (source: unknown): Record<string, string> =>
+  typeof source === "object" && source !== null
+    ? Object.fromEntries(
+        Object.entries(source).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      )
+    : {};
+
+const FRAME_POINTER_TYPES: ReadonlySet<unknown> = new Set([
+  "pointermove",
+  "pointerdown",
+  "pointerup",
+  "pointerout",
+]);
+
+/** Subframe agents run in the page's world, so a relayed message is checked field by field. */
+function parseFrameDelivery(delivery: FramePickDelivery): FramePickDelivery | null {
+  const { up, framePathsOutermostFirst, senderDocumentToken } = delivery as {
+    up: unknown;
+    framePathsOutermostFirst: unknown;
+    senderDocumentToken: unknown;
+  };
+  if (
+    !Array.isArray(framePathsOutermostFirst) ||
+    !framePathsOutermostFirst.every((path) => typeof path === "string")
+  )
+    return null;
+  if (typeof senderDocumentToken !== "string") return null;
+  const relayed = (parsed: FramePickUp | null): FramePickDelivery | null =>
+    parsed && { up: parsed, framePathsOutermostFirst, senderDocumentToken };
+  const kind = pageField(up, "kind");
+  if (kind === "pointer") {
+    const type = pageField(up, "type");
+    const x = pageNumber(up, "x");
+    const y = pageNumber(up, "y");
+    const button = pageNumber(up, "button");
+    if (!FRAME_POINTER_TYPES.has(type) || x === null || y === null || button === null) return null;
+    return relayed({
+      kind,
+      type: type as FramePickPointerType,
+      x,
+      y,
+      button,
+      shiftKey: pageField(up, "shiftKey") === true,
+      hit: pageHit(pageField(up, "hit")),
+    });
+  }
+  if (kind === "key") {
+    const key = pageString(up, "key");
+    return relayed(key === null ? null : { kind, key });
+  }
+  if (kind === "rects") {
+    const entries = pageField(up, "rects");
+    if (!Array.isArray(entries)) return null;
+    return relayed({
+      kind,
+      rects: entries.flatMap((entry) => {
+        const box = pageElementBox(entry);
+        return box ? [box] : [];
+      }),
+    });
+  }
+  return null;
+}
+
 const toStackFrame = (frame: unknown): PickedElementStackFrame => ({
   functionName: pageString(frame, "functionName"),
   fileName: pageString(frame, "fileName"),
@@ -466,9 +605,12 @@ function withCaptureTimeout<A>(promise: Promise<A>, millis: number): Promise<A |
 }
 
 const HTML_PREVIEW_MAX_CHARS = 500;
+const FRESH_RECT_TIMEOUT_MS = 500;
 
 /** Preserve the tag, HTML, and crop rect when React context lookup fails or stalls. */
 async function captureElement(element: Element): Promise<PickedElementPayload> {
+  const remote = remoteTargets.get(element);
+  if (remote) return remote.capture();
   const base = {
     pageUrl: location.href,
     pageTitle: document.title?.trim() || null,
@@ -965,6 +1107,7 @@ function startAnnotation(
   };
 
   const removeSelected = (target: SelectedElement): void => {
+    remoteTargets.get(target.element)?.restoreStyles();
     if (target.element instanceof HTMLElement || target.element instanceof SVGElement) {
       for (const [property, baseline] of target.baselineStyles) {
         if (baseline) target.element.style.setProperty(property, baseline);
@@ -1013,6 +1156,21 @@ function startAnnotation(
 
   const setStyleForSelected = (property: string, value: string): void => {
     for (const target of selected.values()) {
+      const remote = remoteTargets.get(target.element);
+      if (remote) {
+        const key = `${target.id}:${property}`;
+        styleChanges.set(key, {
+          targetId: target.id,
+          selector: null,
+          property,
+          previousValue:
+            styleChanges.get(key)?.previousValue ??
+            remote.stylesWhenPicked.getPropertyValue(property).trim(),
+          value,
+        });
+        remote.setStyle(property, value);
+        continue;
+      }
       if (!(target.element instanceof HTMLElement || target.element instanceof SVGElement))
         continue;
       if (!target.baselineStyles.has(property)) {
@@ -1233,8 +1391,9 @@ function startAnnotation(
   const syncStyleControls = (): void => {
     const first = selected.values().next().value as SelectedElement | undefined;
     if (!first) return;
-    const computed = getComputedStyle(first.element);
-    const rect = first.element.getBoundingClientRect();
+    const remote = remoteTargets.get(first.element);
+    const computed = remote?.styles ?? getComputedStyle(first.element);
+    const rect = remote?.unclippedSize() ?? first.element.getBoundingClientRect();
     aspectRatio = rect.height > 0 ? rect.width / rect.height : 1;
     widthInput.value = String(Math.round(rect.width));
     heightInput.value = String(Math.round(rect.height));
@@ -1359,7 +1518,10 @@ function startAnnotation(
       adjust.setAttribute("aria-expanded", "true");
       adjust.title = "Collapse annotation editor";
       adjust.setAttribute("aria-label", "Collapse annotation editor");
-      if (selected.size > 0) syncStyleControls();
+      if (selected.size > 0) {
+        syncStyleControls();
+        for (const target of selected.values()) remoteTargets.get(target.element)?.reloadStyles();
+      }
     } else {
       editorExpanded = false;
       editorPosition = null;
@@ -1410,7 +1572,7 @@ function startAnnotation(
   dragHandle.addEventListener("pointerup", onEditorPointerUp);
   dragHandle.addEventListener("pointercancel", onEditorPointerUp);
 
-  const repaint = (): void => {
+  const repaintSelection = (): void => {
     for (const target of selected.values()) updateSelectedVisual(target);
     queueEditorLayout();
   };
@@ -1420,6 +1582,11 @@ function startAnnotation(
       if (!target.element.isConnected) target.rect = { x: 0, y: 0, width: 0, height: 0 };
     }
     repaint();
+  };
+  let frameRelay: FramePickRelay | null = null;
+  const repaint = (): void => {
+    repaintSelection();
+    frameRelay?.send({ kind: "refresh" });
   };
   // A scrollbar appearing narrows the viewport without a window resize.
   const rootResizeObserver = new ResizeObserver(repaint);
@@ -1497,6 +1664,11 @@ function startAnnotation(
     return candidates.length;
   };
 
+  let forwardedHit: Element | null | undefined;
+  let dragStartedInFrame = false;
+  const pickAt = (clientX: number, clientY: number): Element | null =>
+    forwardedHit === undefined ? pickFromPoint(clientX, clientY) : forwardedHit;
+
   const clearHoverOutline = (): void => {
     hoverOutline.style.display = "none";
   };
@@ -1507,7 +1679,7 @@ function startAnnotation(
       return;
     }
     if (tool === "select" && dragStart === null) {
-      const target = pickFromPoint(event.clientX, event.clientY);
+      const target = pickAt(event.clientX, event.clientY);
       if (target) positionBox(hoverOutline, visibleElementRect(target));
       else clearHoverOutline();
       return;
@@ -1541,7 +1713,7 @@ function startAnnotation(
     event.preventDefault();
     event.stopPropagation();
     if (tool === "select") {
-      const target = pickFromPoint(event.clientX, event.clientY);
+      const target = pickAt(event.clientX, event.clientY);
       if (target) toggleSelected(target, event.shiftKey);
       return;
     }
@@ -1550,6 +1722,7 @@ function startAnnotation(
       return;
     }
     dragStart = { x: event.clientX, y: event.clientY };
+    dragStartedInFrame = forwardedHit !== undefined;
     if (tool === "draw") {
       const geometry = startStroke(dragStart);
       const stroke: PreviewAnnotationStrokeTarget = {
@@ -1583,7 +1756,7 @@ function startAnnotation(
       const rect = normalizeRect(dragStart.x, dragStart.y, event.clientX, event.clientY);
       marqueeBox.style.display = "none";
       if (isUsableRect(rect)) {
-        const found = selectElementsInRect(rect);
+        const found = dragStartedInFrame ? 0 : selectElementsInRect(rect);
         if (found === 0) {
           const region: PreviewAnnotationRegionTarget = { id: nextId("region"), rect };
           regions.push(region);
@@ -1678,6 +1851,12 @@ function startAnnotation(
     finished = true;
     rootResizeObserver.disconnect();
     restoreStyles();
+    frameRelay?.send({ kind: "stop" });
+    frameRelay?.dispose();
+    frameRelay = null;
+    for (const settle of rectWaiters.values()) settle();
+    rectWaiters.clear();
+    ipcRenderer.off(FRAME_PICK_ESCAPE_CHANNEL, onFrameEscape);
     window.removeEventListener("pointermove", onPointerMove, true);
     window.removeEventListener("pointerdown", onPointerDown, true);
     window.removeEventListener("pointerup", onPointerUp, true);
@@ -1713,6 +1892,14 @@ function startAnnotation(
   };
 
   const onCancel = (): void => teardown(false);
+  const focusIsInsideAFrame = (): boolean => {
+    let focused = document.activeElement;
+    while (focused?.shadowRoot?.activeElement) focused = focused.shadowRoot.activeElement;
+    return focused instanceof HTMLIFrameElement || focused?.tagName === "FRAME";
+  };
+  const onFrameEscape = (): void => {
+    if (focusIsInsideAFrame()) teardown(true);
+  };
   const onCaptured = (): void => teardown(false);
   const onVoiceKeyUp = (event: KeyboardEvent): void => {
     if (!event.isTrusted || (event.code || event.key) !== voiceKeyCode) return;
@@ -1740,7 +1927,7 @@ function startAnnotation(
         return;
       }
     }
-    if (event.key === "Escape" && !event.isComposing) {
+    if (event.key === "Escape" && event.isTrusted && !event.isComposing) {
       event.preventDefault();
       event.stopPropagation();
       teardown(true);
@@ -1845,6 +2032,191 @@ function startAnnotation(
     submitAnnotation(submission);
   };
 
+  const mirrors = new Map<string, HTMLDivElement>();
+  const mirrorSizes = new WeakMap<HTMLDivElement, FramePickSize>();
+  const rectWaiters = new Map<string, () => void>();
+  const mirrorKey = (documentToken: string, id: string | null): string =>
+    `${documentToken}#${id ?? "hover"}`;
+
+  const commandFrame = (documentToken: string, command: FramePickCommand): Promise<unknown> =>
+    ipcRenderer.invoke(FRAME_PICK_COMMAND_CHANNEL, documentToken, command).catch(() => null);
+
+  const nextRectsFrom = (documentToken: string): Promise<void> =>
+    withCaptureTimeout(
+      new Promise<void>((resolve) => {
+        rectWaiters.get(documentToken)?.();
+        const settle = (): void => {
+          if (rectWaiters.get(documentToken) === settle) rectWaiters.delete(documentToken);
+          resolve();
+        };
+        rectWaiters.set(documentToken, settle);
+      }),
+      FRESH_RECT_TIMEOUT_MS,
+    ).then(() => undefined);
+
+  const captureRemote = async (
+    documentToken: string,
+    framePaths: ReadonlyArray<string>,
+    id: string,
+    label: string,
+  ): Promise<PickedElementPayload> => {
+    const freshRect = nextRectsFrom(documentToken);
+    const capture = pageCapture(
+      await withCaptureTimeout(
+        commandFrame(documentToken, { kind: "capture", id }),
+        ELEMENT_CONTEXT_TIMEOUT_MS,
+      ),
+    );
+    if (capture) await freshRect;
+    return {
+      pageUrl: location.href,
+      pageTitle: document.title?.trim() || null,
+      tagName: capture?.tagName ?? label.split(/[#.]/)[0] ?? "",
+      pickedAt: new Date().toISOString(),
+      selector: capture ? [...framePaths, capture.selector].join(" >>> ") : null,
+      htmlPreview: capture?.htmlPreview ?? "",
+      componentName: null,
+      source: null,
+      stack: [],
+      styles: "",
+    };
+  };
+
+  const placeMirror = (mirror: HTMLDivElement, box: Omit<FramePickElementBox, "id">): void => {
+    positionBox(mirror, box.visibleRect);
+    mirrorSizes.set(mirror, box.unclippedSize);
+  };
+
+  const loadRemoteStyles = (
+    mirror: HTMLDivElement,
+    targets: ReadonlyArray<CSSStyleDeclaration>,
+    documentToken: string,
+    id: string,
+  ): void => {
+    void commandFrame(documentToken, { kind: "describe", id }).then((described) => {
+      for (const [property, value] of Object.entries(pageStyles(described)))
+        for (const styles of targets) styles.setProperty(property, value);
+      if (selected.values().next().value?.element === mirror && editorExpanded) syncStyleControls();
+    });
+  };
+
+  const hoverTarget = (label: string): RemoteTarget => ({
+    label,
+    styles: document.createElement("div").style,
+    stylesWhenPicked: document.createElement("div").style,
+    reloadStyles: () => undefined,
+    unclippedSize: () => ({ width: 0, height: 0 }),
+    capture: () => Promise.reject(new Error("hover outline only")),
+    setStyle: () => undefined,
+    restoreStyles: () => undefined,
+  });
+
+  const mirrorFor = (
+    documentToken: string,
+    framePaths: ReadonlyArray<string>,
+    hit: FramePickHit,
+  ): Element => {
+    const key = mirrorKey(documentToken, hit.id);
+    let mirror = mirrors.get(key);
+    if (!mirror) {
+      mirror = document.createElement("div");
+      mirror.setAttribute(OVERLAY_ATTRIBUTE, "");
+      mirror.style.cssText = "position:fixed;left:0;top:0;visibility:hidden;pointer-events:none";
+      root.appendChild(mirror);
+      mirrors.set(key, mirror);
+    }
+    placeMirror(mirror, hit);
+    const id = hit.id;
+    if (id === null) {
+      remoteTargets.set(mirror, hoverTarget(hit.label));
+      return mirror;
+    }
+    if (remoteTargets.has(mirror)) return mirror;
+    const styles = document.createElement("div").style;
+    const stylesWhenPicked = document.createElement("div").style;
+    const sizedMirror = mirror;
+    remoteTargets.set(mirror, {
+      label: hit.label,
+      styles,
+      stylesWhenPicked,
+      reloadStyles: () => loadRemoteStyles(sizedMirror, [styles], documentToken, id),
+      unclippedSize: () => mirrorSizes.get(sizedMirror) ?? hit.unclippedSize,
+      capture: () => captureRemote(documentToken, framePaths, id, hit.label),
+      setStyle: (property, value) => {
+        void commandFrame(documentToken, { kind: "style", id, property, value });
+      },
+      restoreStyles: () => {
+        void commandFrame(documentToken, { kind: "restore", id });
+      },
+    });
+    loadRemoteStyles(mirror, [styles, stylesWhenPicked], documentToken, id);
+    return mirror;
+  };
+
+  const forwardedPointerHandlers = {
+    pointermove: onPointerMove,
+    pointerdown: onPointerDown,
+    pointerup: onPointerUp,
+    pointerout: onPointerOut,
+  };
+
+  const forwardPointer = (
+    up: Extract<FramePickUp, { kind: "pointer" }>,
+    documentToken: string,
+    framePaths: ReadonlyArray<string>,
+  ): void => {
+    const handler = forwardedPointerHandlers[up.type];
+    const forwarded = {
+      type: up.type,
+      clientX: up.x,
+      clientY: up.y,
+      button: up.button,
+      shiftKey: up.shiftKey,
+      target: document.documentElement,
+      relatedTarget: null,
+      preventDefault: () => undefined,
+      stopPropagation: () => undefined,
+    } as unknown as PointerEvent;
+    forwardedHit = up.hit ? mirrorFor(documentToken, framePaths, up.hit) : null;
+    try {
+      handler(forwarded);
+    } finally {
+      forwardedHit = undefined;
+    }
+  };
+
+  const forwardKey = (key: string): void => {
+    onKeyDown({
+      key,
+      code: key,
+      isTrusted: false,
+      isComposing: false,
+      keyCode: 0,
+      preventDefault: () => undefined,
+      stopPropagation: () => undefined,
+      stopImmediatePropagation: () => undefined,
+    } as unknown as KeyboardEvent);
+  };
+
+  const onFrameDelivery = (delivery: FramePickDelivery): void => {
+    const parsed = parseFrameDelivery(delivery);
+    if (finished || !parsed || parsed.senderDocumentToken === null) return;
+    const { up, framePathsOutermostFirst, senderDocumentToken } = parsed;
+    if (up.kind === "pointer") forwardPointer(up, senderDocumentToken, framePathsOutermostFirst);
+    else if (up.kind === "key") forwardKey(up.key);
+    else if (up.kind === "rects") {
+      for (const entry of up.rects) {
+        const mirror = mirrors.get(mirrorKey(senderDocumentToken, entry.id));
+        if (mirror) placeMirror(mirror, entry);
+      }
+      repaintSelection();
+      rectWaiters.get(senderDocumentToken)?.();
+    }
+  };
+
+  frameRelay = installFramePickAgent(FRAME_PICK_MESSAGE_KEY, onFrameDelivery);
+  frameRelay.send({ kind: "start" });
+
   window.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
   window.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });
   window.addEventListener("pointerup", onPointerUp, { capture: true, passive: false });
@@ -1861,6 +2233,7 @@ function startAnnotation(
     host.addEventListener(type, stopAtOverlay, { passive: true });
   document.documentElement.addEventListener("focusout", onFocusOutToOverlay);
   ipcRenderer.on(CANCEL_PICK_CHANNEL, onCancel);
+  ipcRenderer.on(FRAME_PICK_ESCAPE_CHANNEL, onFrameEscape);
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
   if (voice) ipcRenderer.on(ANNOTATION_VOICE_STATE_CHANNEL, onVoiceState);
   if (inputLayer) {
