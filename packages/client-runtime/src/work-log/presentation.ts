@@ -768,6 +768,14 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
   }
 }
 
+// An approval answers another step in the group; counting it would add a phantom "used 1 tool".
+function summarizedSteps(
+  entries: ReadonlyArray<WorkLogPresentationEntry>,
+): ReadonlyArray<WorkLogPresentationEntry> {
+  const steps = entries.filter((entry) => entry.itemType !== "approval_request");
+  return steps.length > 0 ? steps : entries;
+}
+
 export function summarizeToolGroup(
   entries: ReadonlyArray<WorkLogPresentationEntry>,
   resolve: MFunctionType = mFallback,
@@ -785,7 +793,7 @@ export function summarizeToolGroup(
       hasFailure: false,
     };
   }
-  entries = toolEntries;
+  entries = summarizedSteps(toolEntries);
   const groups = new Map<
     ToolGroupAction | T3McpToolSummaryAction,
     {
@@ -875,7 +883,7 @@ export function toolGroupSummaryKind(
 ): ToolGroupSummaryKind {
   const toolEntries = entries.filter((entry) => entry.itemType !== "reasoning");
   if (entries.length > 0 && toolEntries.length === 0) return "reasoning";
-  entries = toolEntries;
+  entries = summarizedSteps(toolEntries);
   if (
     entries.length > 0 &&
     entries.every((entry) => resolveWorkEntryToolPresentation(entry)?.icon === "pull-request")
