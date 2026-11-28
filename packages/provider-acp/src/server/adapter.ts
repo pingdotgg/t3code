@@ -928,6 +928,8 @@ export interface AcpAdapterV2Options {
   };
   readonly testHooks?: {
     readonly onDeferredFinalizeScheduled?: (debounce: Duration.Input) => Effect.Effect<void>;
+    readonly beforeDeferredFailureFinalize?: () => Effect.Effect<void>;
+    readonly afterDeferredFinalize?: () => Effect.Effect<void>;
     /** `cancelAfterPromptStarts`: Stop is holding `session/cancel` until the prompt starts. */
     readonly onCancelHeld?: () => Effect.Effect<void>;
     readonly afterPromptWireSettled?: () => Effect.Effect<void>;
@@ -1981,6 +1983,9 @@ interface ActiveAcpTurn {
   /** Completed when an update after dispatch matches `cancelAfterPromptStarts.isStart`. */
   readonly promptStarted: Deferred.Deferred<void, never>;
   promptUsage: EffectAcpSchema.Usage | undefined;
+  checkPromptOutcome:
+    | Effect.Success<ReturnType<NonNullable<AcpAdapterV2Flavor["watchPromptOutcome"]>>>
+    | undefined;
   backgroundFinalizeGeneration: number;
   /** `replyEndsWithUsageUpdate`: output arrived and its closing `usage_update` has not. */
   replyOpen: boolean;
@@ -9801,6 +9806,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           status: "completed" | "interrupted" | "failed" | "cancelled",
           failure?: OrchestrationV2ProviderFailure,
           options?: {
+            readonly restartRuntimeOnFailure?: boolean;
             readonly childTurnsContinue?: boolean;
             readonly threadDisposition?: "reusable" | "broken";
           },
@@ -9810,6 +9816,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const threadDisposition = options?.threadDisposition ?? "reusable";
           context.finalizedStatus = settledStatus;
           context.finalized = true;
+          if (settledStatus === "failed" && options?.restartRuntimeOnFailure === true) {
+            yield* Ref.set(runtimeRestartRequired, true);
+          }
           const watchdog = context.inactivityWatchdog;
           context.inactivityWatchdog = undefined;
           if (watchdog !== undefined) {
@@ -10027,6 +10036,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (hasDeferredBackgroundWork(context)) return;
           context.backgroundFinalizeGeneration += 1;
           const generation = context.backgroundFinalizeGeneration;
+          const runtimeGeneration = yield* Ref.get(runtimeCallbackGeneration);
           const replyOpen = context.replyOpen;
           const debounce = replyOpen ? ACP_OPEN_REPLY_QUIET_LIMIT : ACP_DEFERRED_FINALIZE_DEBOUNCE;
           yield* Effect.gen(function* () {
@@ -10048,7 +10058,68 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return;
             }
             const status = context.promptSettledStatus ?? "completed";
-            yield* finalizeTurn(context, status);
+            const checkPromptOutcome =
+              status === "completed" ? context.checkPromptOutcome : undefined;
+            if (checkPromptOutcome === undefined) {
+              yield* finalizeTurn(context, status);
+              yield* options.testHooks?.afterDeferredFinalize?.() ?? Effect.void;
+              return;
+            }
+            if (
+              (yield* Ref.get(runtimeTeardownState))._tag !== "Idle" ||
+              (yield* Ref.get(runtimeCallbackGeneration)) !== runtimeGeneration
+            ) {
+              return;
+            }
+            const hiddenFailure = yield* Effect.suspend(() =>
+              checkPromptOutcome({ stopReason: "end_turn" }),
+            ).pipe(
+              Effect.timeoutOrElse({
+                duration: PROMPT_OUTCOME_CHECK_TIMEOUT,
+                orElse: () =>
+                  Effect.logWarning("Deferred ACP prompt outcome check timed out.").pipe(
+                    Effect.as(undefined),
+                  ),
+              }),
+              Effect.catchDefect(() =>
+                Effect.logWarning("Could not check deferred ACP prompt outcome.").pipe(
+                  Effect.as(undefined),
+                ),
+              ),
+            );
+            if (hiddenFailure !== undefined) {
+              const toolsTerminalized = yield* runRuntimeCallbackAtGeneration(
+                runtimeGeneration,
+                Effect.gen(function* () {
+                  if (!stillCurrent()) return false;
+                  yield* terminalizeOpenForegroundTools(context, "failed");
+                  yield* options.testHooks?.beforeDeferredFailureFinalize?.() ?? Effect.void;
+                  return true;
+                }),
+              );
+              if (Option.isSome(toolsTerminalized) && toolsTerminalized.value) {
+                // Release the permit so queued soft Stop can claim the turn before failure.
+                yield* runRuntimeCallbackAtGeneration(
+                  runtimeGeneration,
+                  Effect.gen(function* () {
+                    if (!stillCurrent()) return;
+                    yield* finalizeTurn(context, "failed", hiddenFailure.failure, {
+                      restartRuntimeOnFailure: true,
+                      childTurnsContinue: hasSurvivingBackgroundWork(context),
+                      threadDisposition: hiddenFailure.threadDisposition,
+                    });
+                  }),
+                );
+              }
+            } else {
+              yield* runRuntimeCallbackAtGeneration(
+                runtimeGeneration,
+                Effect.suspend(() =>
+                  stillCurrent() ? finalizeTurn(context, status) : Effect.void,
+                ),
+              );
+            }
+            yield* options.testHooks?.afterDeferredFinalize?.() ?? Effect.void;
           }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
           yield* options.testHooks?.onDeferredFinalizeScheduled?.(debounce) ?? Effect.void;
         });
@@ -10902,6 +10973,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptSentAt: null,
               promptStarted,
               promptUsage: undefined,
+              checkPromptOutcome: undefined,
               backgroundFinalizeGeneration: 0,
               replyOpen: false,
               nativePromptId: undefined,
@@ -11064,6 +11136,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               flavor.watchPromptOutcome === undefined
                 ? undefined
                 : yield* flavor.watchPromptOutcome(requestedSessionId);
+            context.checkPromptOutcome = checkPromptOutcome;
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
             const promptOptions = {
               dispatched: context.promptDispatched,
@@ -11223,6 +11296,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   context.promptSettled = false;
                   context.promptSettledStatus = null;
                   context.backgroundFinalizeGeneration += 1;
+                  context.checkPromptOutcome = checkPromptOutcome;
                   context.promptSentAt = yield* Clock.currentTimeMillis;
                   context.lastProgressAt = context.promptSentAt;
                   const watchdog = context.inactivityWatchdog;
@@ -11799,17 +11873,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       // Native return can precede its callback; drain responses under the permit and check wire settlement before cancel.
                       let settledSoftInterrupt = false;
                       if (softSteerCandidate && interruptContext !== null) {
-                        const promptSettledUnderPermit = yield* runtimeCallbackPermit.withPermit(
-                          awaitAdmittedNativeResponses.pipe(
-                            Effect.andThen(
-                              Effect.sync(() => interruptContext.promptSettled === true),
-                            ),
-                          ),
+                        settledSoftInterrupt = yield* runtimeCallbackPermit.withPermit(
+                          Effect.gen(function* () {
+                            yield* awaitAdmittedNativeResponses;
+                            const settled =
+                              interruptContext.promptSettled ||
+                              (yield* Deferred.isDone(interruptContext.promptWireSettled));
+                            if (settled) interruptContext.interrupted = true;
+                            return settled;
+                          }),
                         );
-                        const wireSettled = yield* Deferred.isDone(
-                          interruptContext.promptWireSettled,
-                        );
-                        settledSoftInterrupt = promptSettledUnderPermit || wireSettled;
                       }
                       const restartRuntime =
                         !settledSoftInterrupt &&
