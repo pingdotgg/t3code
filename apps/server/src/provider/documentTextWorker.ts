@@ -853,7 +853,7 @@ function wordStyleVisibility(styles: XmlNode): WordStyleRunHidden | undefined {
     if (type === "character") character.set(styleId, defined);
     else if ((type ?? "paragraph") === "paragraph") {
       paragraph.set(styleId, defined);
-      if (["true", "1", "on"].includes(style.wordStyleAttrs.default ?? ""))
+      if (["true", "1", "on"].includes(style.wordStyleAttrs.default?.trim() ?? ""))
         defaultParagraph = styleId;
     }
   }
