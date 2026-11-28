@@ -352,6 +352,30 @@ describe("KeybindingsSettings.logic", () => {
     ).toBe("chat.new");
   });
 
+  it("records the physical letter for non-Latin Alt shortcuts on Linux and Windows", () => {
+    const record = (key: string, code: string, ctrlKey: boolean, platform = "Linux x86_64") =>
+      keybindingFromKeyboardEvent(
+        { key, code, metaKey: false, ctrlKey, altKey: true, shiftKey: false },
+        platform,
+        { layoutCharacter: true },
+      );
+    const recorded = record("и", "KeyB", true);
+    expect(recorded).toBe("mod+alt+b");
+    expect(record("л", "KeyK", false)).toBe("alt+k");
+    expect(record("ν", "KeyN", true)).toBe("mod+alt+n");
+    expect(record("и", "KeyB", true, "Win32")).toBe("mod+alt+b");
+    const shortcut = parseKeybindingShortcut(recorded!)!;
+    for (const key of ["b", "и"]) {
+      expect(
+        resolveShortcutCommand(
+          { key, code: "KeyB", metaKey: false, ctrlKey: true, altKey: true, shiftKey: false },
+          [{ command: "chat.new", shortcut }],
+          { platform: "Linux x86_64" },
+        ),
+      ).toBe("chat.new");
+    }
+  });
+
   it("keeps a literal plus key as its own part", () => {
     expect(shortcutToKeybindingParts(parseKeybindingShortcut("mod++")!)).toEqual(["mod", "+"]);
     expect(shortcutToKeybindingParts(parseKeybindingShortcut("mod+shift++")!)).toEqual([
