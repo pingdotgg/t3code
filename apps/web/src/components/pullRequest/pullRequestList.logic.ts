@@ -624,7 +624,7 @@ export const pullRequestDiffStatKey = (row: {
   `${row.environmentId} ${row.projectId} ${row.host?.toLowerCase() ?? ""} ${row.repository.toLowerCase()} ${row.number}`;
 
 /** Older servers send counts without a host; those stand for the repository on any host. */
-export const readPullRequestDiffStat = <Stat>(
+const readPullRequestDiffStat = <Stat>(
   statsByRow: ReadonlyMap<string, Stat>,
   row: Parameters<typeof pullRequestDiffStatKey>[0],
 ) =>

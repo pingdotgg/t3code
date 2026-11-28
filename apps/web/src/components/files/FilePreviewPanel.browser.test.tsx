@@ -572,7 +572,6 @@ describe("source file scroll", () => {
   ])(
     "$label",
     async ({
-      label,
       startLine,
       initialScrollLine,
       direction,
