@@ -39,12 +39,12 @@ export function filterComposerPullRequestMatches<
   readonly entries: ReadonlyArray<Entry>;
   readonly linked?: ReadonlyArray<Linked>;
   readonly projectId: string;
-  readonly repository: string;
+  readonly repository: string | null;
   readonly query: string;
   readonly limit: number;
   readonly keyOf: (entry: Entry | Linked) => string;
 }): ReadonlyArray<Entry | Linked> {
-  const repository = input.repository.trim().toLowerCase();
+  const repository = input.repository?.trim().toLowerCase() ?? null;
   const { keyOf } = input;
   // Compare numerically so a zero-padded query like "0042" still finds #42.
   const queryNumber = /^\d+$/u.test(input.query) ? Number(input.query) : Number.NaN;
@@ -56,7 +56,7 @@ export function filterComposerPullRequestMatches<
   const matchingEntries = input.entries.filter(
     (entry) =>
       entry.projectId === input.projectId &&
-      entry.repository.trim().toLowerCase() === repository &&
+      (repository === null || entry.repository.trim().toLowerCase() === repository) &&
       matchesQuery(entry),
   );
   const uniqueEntries = new Map<string, Entry | Linked>();
@@ -76,6 +76,60 @@ export function filterComposerPullRequestMatches<
         updatedAtMs(right) - updatedAtMs(left),
     )
     .slice(0, input.limit);
+}
+
+export interface ComposerPullRequestRepositoryTarget {
+  readonly host?: string | undefined;
+  readonly repository: string;
+}
+
+/** Repositories of a project that still need an exact-number detail lookup. */
+export function composerExactPullRequestRepositories(input: {
+  readonly projectId: string;
+  readonly repository: string | null;
+  readonly listedRepositories?: ReadonlyArray<ComposerPullRequestRepositoryTarget> | undefined;
+  readonly entries: ReadonlyArray<
+    Pick<ComposerPullRequestMatch, "projectId" | "host" | "repository" | "number">
+  >;
+  readonly number: number;
+}): ReadonlyArray<ComposerPullRequestRepositoryTarget> {
+  const candidates: ComposerPullRequestRepositoryTarget[] = [];
+  const seen = new Set<string>();
+  const add = (repository: string, host?: string) => {
+    const trimmedRepository = repository.trim();
+    const normalizedRepository = trimmedRepository.toLowerCase();
+    const trimmedHost = host?.trim();
+    const normalizedHost = trimmedHost ? trimmedHost.toLowerCase() : undefined;
+    const key = `${normalizedHost ?? ""}\0${normalizedRepository}`;
+    if (normalizedRepository.length === 0 || seen.has(key)) return;
+    seen.add(key);
+    candidates.push(
+      normalizedHost === undefined
+        ? { repository: trimmedRepository }
+        : { host: trimmedHost, repository: trimmedRepository },
+    );
+  };
+  if (input.repository !== null) {
+    add(input.repository);
+  } else {
+    for (const candidate of input.listedRepositories ?? []) {
+      add(candidate.repository, candidate.host);
+    }
+    for (const entry of input.entries) {
+      if (entry.projectId === input.projectId) add(entry.repository, entry.host);
+    }
+  }
+  return candidates.filter((candidate) => {
+    const normalizedRepository = candidate.repository.toLowerCase();
+    const normalizedHost = candidate.host?.toLowerCase();
+    return !input.entries.some(
+      (entry) =>
+        entry.projectId === input.projectId &&
+        entry.repository.trim().toLowerCase() === normalizedRepository &&
+        (normalizedHost === undefined || entry.host.trim().toLowerCase() === normalizedHost) &&
+        entry.number === input.number,
+    );
+  });
 }
 
 /** Puts the thread's linked pull requests that match a text query ahead of the searched ones. */

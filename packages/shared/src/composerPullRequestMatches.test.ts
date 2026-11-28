@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { ThreadPullRequestKey, ThreadPullRequestLink } from "@t3tools/contracts";
 
 import {
+  composerExactPullRequestRepositories,
   composerPullRequestsFromLinks,
   filterComposerPullRequestMatches,
   withLinkedComposerPullRequestsFirst,
@@ -54,6 +55,120 @@ describe("filterComposerPullRequestMatches", () => {
       limit: 10,
     });
     expect(result.map((match) => match.number)).toEqual([42, 10042]);
+  });
+
+  it("matches pull requests across all repositories of a project when repository is null", () => {
+    const result = filterComposerPullRequestMatches({
+      keyOf,
+      entries: [
+        { ...entry(25, "2026-01-03"), repository: "owner/repo-a" },
+        { ...entry(25, "2026-01-04"), repository: "owner/repo-b" },
+        { ...entry(250, "2026-01-05"), repository: "owner/repo-a" },
+        { ...entry(25, "2026-01-06"), projectId: "p2", repository: "owner/other" },
+      ],
+      projectId: "p1",
+      repository: null,
+      query: "25",
+      limit: 10,
+    });
+    expect(result.map((match) => `${match.repository}#${match.number}`)).toEqual([
+      "owner/repo-b#25",
+      "owner/repo-a#25",
+      "owner/repo-a#250",
+    ]);
+  });
+});
+
+describe("composerExactPullRequestRepositories", () => {
+  it("keeps single root repository lookup unchanged", () => {
+    expect(
+      composerExactPullRequestRepositories({
+        projectId: "p1",
+        repository: "owner/root",
+        entries: [entry(10, "2026-01-01")],
+        number: 25,
+      }),
+    ).toEqual([{ repository: "owner/root" }]);
+    expect(
+      composerExactPullRequestRepositories({
+        projectId: "p1",
+        repository: "owner/root",
+        entries: [{ ...entry(25, "2026-01-01"), repository: "Owner/Root" }],
+        number: 25,
+      }),
+    ).toEqual([]);
+  });
+
+  it("looks up missing exact numbers across tracked-folder repositories", () => {
+    expect(
+      composerExactPullRequestRepositories({
+        projectId: "p1",
+        repository: null,
+        listedRepositories: [{ host: "github.com", repository: "owner/repo-a" }],
+        entries: [{ ...entry(10, "2026-01-01"), repository: "owner/repo-a" }],
+        number: 25,
+      }),
+    ).toEqual([{ host: "github.com", repository: "owner/repo-a" }]);
+
+    expect(
+      composerExactPullRequestRepositories({
+        projectId: "p1",
+        repository: null,
+        listedRepositories: [
+          { host: "github.com", repository: "owner/repo-a" },
+          { host: "github.com", repository: "owner/repo-b" },
+        ],
+        entries: [{ ...entry(25, "2026-01-01"), repository: "owner/repo-a" }],
+        number: 25,
+      }),
+    ).toEqual([{ host: "github.com", repository: "owner/repo-b" }]);
+
+    expect(
+      composerExactPullRequestRepositories({
+        projectId: "p1",
+        repository: null,
+        entries: [
+          { ...entry(10, "2026-01-01"), repository: "owner/repo-a" },
+          { ...entry(11, "2026-01-01"), repository: "owner/repo-b" },
+          { ...entry(12, "2026-01-01"), projectId: "p2", repository: "owner/other" },
+        ],
+        number: 25,
+      }),
+    ).toEqual([
+      { host: "github.com", repository: "owner/repo-a" },
+      { host: "github.com", repository: "owner/repo-b" },
+    ]);
+  });
+
+  it("keeps same-named repositories on different hosts distinct for exact lookup and suppression", () => {
+    expect(
+      composerExactPullRequestRepositories({
+        projectId: "p1",
+        repository: null,
+        listedRepositories: [
+          { host: "github.com", repository: "acme/api" },
+          { host: "gitlab.com", repository: "acme/api" },
+        ],
+        entries: [{ ...entry(25, "2026-01-01"), host: "github.com", repository: "acme/api" }],
+        number: 25,
+      }),
+    ).toEqual([{ host: "gitlab.com", repository: "acme/api" }]);
+
+    expect(
+      composerExactPullRequestRepositories({
+        projectId: "p1",
+        repository: null,
+        listedRepositories: [
+          { host: "github.com", repository: "acme/api" },
+          { host: "gitlab.com", repository: "acme/api" },
+        ],
+        entries: [],
+        number: 25,
+      }),
+    ).toEqual([
+      { host: "github.com", repository: "acme/api" },
+      { host: "gitlab.com", repository: "acme/api" },
+    ]);
   });
 });
 

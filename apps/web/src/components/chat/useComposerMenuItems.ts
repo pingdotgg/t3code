@@ -1,9 +1,5 @@
 import { useGT, useMessages } from "gt-react";
 import {
-  legacyThreadPullRequestKey,
-  threadPullRequestKeyOf,
-} from "@t3tools/client-runtime/thread-pull-requests";
-import {
   matchComposerEnvironmentItems,
   matchComposerThreadItems,
 } from "@t3tools/client-runtime/composerThreadItems";
@@ -15,14 +11,14 @@ import type {
   ProviderDriverKind,
   ProviderInstanceId,
   PullRequestListInput,
+  PullRequestRef,
   ServerProvider,
   ThreadId,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import {
+  composerExactPullRequestRepositories,
   composerPullRequestsFromLinks,
-  filterComposerPullRequestMatches,
-  withLinkedComposerPullRequestsFirst,
 } from "@t3tools/shared/composerPullRequestMatches";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 
@@ -38,18 +34,18 @@ import { useVisibleThreadShells } from "~/state/entities";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
 import {
-  pullRequestEnvironment,
+  usePullRequestDetails,
   usePullRequestList,
   type EnvironmentQueryTarget,
 } from "~/state/pullRequests";
-import { useEnvironmentQuery } from "~/state/query";
 import { useComposerPathSearch, useDebouncedValue, useThreadSearch } from "~/state/queries";
-import {
-  matchesPullRequestQuery,
-  rankPullRequestMatches,
-} from "../pullRequest/pullRequestList.logic";
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
 import { matchComposerModelItems } from "./composerModelMentions";
+import {
+  buildComposerPullRequestItems,
+  hasComposerPullRequestSource,
+  resolveComposerPullRequestEmptyStateKind,
+} from "./composerPullRequestMenu.logic";
 import type { ModelEsque } from "./providerIconUtils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import {
@@ -61,6 +57,7 @@ const COMPOSER_PULL_REQUEST_LIST_LIMIT = 99;
 const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
 const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> =
   [];
+const EMPTY_PULL_REQUEST_DETAIL_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestRef>> = [];
 
 /** Builds the @, /, $ and # suggestion lists, running the searches each trigger needs. */
 export function useComposerMenuItems({
@@ -71,6 +68,7 @@ export function useComposerMenuItems({
   activeThreadId,
   pullRequestProjectId,
   pullRequestRepository,
+  pullRequestHasTrackedFolders = false,
   threadPullRequests,
   sideChatAvailable,
   sideChatDisabledReason,
@@ -91,6 +89,7 @@ export function useComposerMenuItems({
   readonly activeThreadId: ThreadId | null;
   readonly pullRequestProjectId: ProjectId | null;
   readonly pullRequestRepository: string | null;
+  readonly pullRequestHasTrackedFolders?: boolean;
   readonly threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
   readonly sideChatAvailable: boolean;
   readonly sideChatDisabledReason: string | null;
@@ -150,8 +149,14 @@ export function useComposerMenuItems({
     messages,
   );
 
+  const hasPullRequestSource = hasComposerPullRequestSource({
+    projectId: pullRequestProjectId,
+    repository: pullRequestRepository,
+    hasTrackedFolders: pullRequestHasTrackedFolders,
+  });
   const pullRequestListTargets =
     composerTriggerKind !== "pull-request" ||
+    !hasPullRequestSource ||
     pullRequestProjectId === null ||
     (pullRequestTextQuery !== null && settledPullRequestTextQuery === null)
       ? EMPTY_PULL_REQUEST_LIST_TARGETS
@@ -179,29 +184,28 @@ export function useComposerMenuItems({
   const debouncedPullRequestNumber = useDebouncedValue(pullRequestTriggerNumber, 180);
   const settledPullRequestNumber =
     pullRequestTriggerNumber === debouncedPullRequestNumber ? pullRequestTriggerNumber : null;
-  const recentHasExactPullRequest =
-    settledPullRequestNumber !== null &&
-    pullRequestLookup.data?.entries.some(
-      (entry) =>
-        entry.projectId === pullRequestProjectId &&
-        entry.repository.trim().toLowerCase() === pullRequestRepository?.trim().toLowerCase() &&
-        entry.number === settledPullRequestNumber,
-    ) === true;
-  const exactPullRequestLookup = useEnvironmentQuery(
+  const exactPullRequestTargets =
     settledPullRequestNumber === null ||
-      pullRequestProjectId === null ||
-      pullRequestRepository === null ||
-      recentHasExactPullRequest
-      ? null
-      : pullRequestEnvironment.detail({
+    pullRequestProjectId === null ||
+    !hasPullRequestSource ||
+    (pullRequestRepository === null && pullRequestLookup.data === null)
+      ? EMPTY_PULL_REQUEST_DETAIL_TARGETS
+      : composerExactPullRequestRepositories({
+          projectId: pullRequestProjectId,
+          repository: pullRequestRepository,
+          listedRepositories: pullRequestLookup.data?.repositories,
+          entries: pullRequestLookup.data?.entries ?? [],
+          number: settledPullRequestNumber,
+        }).map(({ host, repository }) => ({
           environmentId,
           input: {
             projectId: pullRequestProjectId,
-            repository: pullRequestRepository,
+            ...(host === undefined ? {} : { host }),
+            repository,
             number: settledPullRequestNumber,
           },
-        }),
-  );
+        }));
+  const exactPullRequestLookup = usePullRequestDetails(exactPullRequestTargets);
 
   const linkedPullRequests =
     pullRequestProjectId === null
@@ -344,74 +348,19 @@ export function useComposerMenuItems({
           (skill.scope ? gt("{scope} skill", { scope: skill.scope }) : gt("Run provider skill")),
       }));
     }
-    if (
-      composerTrigger.kind === "pull-request" &&
-      pullRequestProjectId !== null &&
-      pullRequestRepository !== null
-    ) {
-      const exactPullRequest =
-        exactPullRequestLookup.data?.number === pullRequestTriggerNumber
-          ? [
-              {
-                ...exactPullRequestLookup.data,
-                // Only the host: the URL's full repository path would not match the project's selector.
-                host: legacyThreadPullRequestKey(exactPullRequestLookup.data).host,
-              },
-            ]
-          : [];
-      const matches = /^\d*$/u.test(composerTrigger.query)
-        ? filterComposerPullRequestMatches({
-            keyOf: threadPullRequestKeyOf,
-            entries: [...exactPullRequest, ...(pullRequestLookup.data?.entries ?? [])],
-            linked: linkedPullRequests,
-            projectId: pullRequestProjectId,
-            repository: pullRequestRepository,
-            query: composerTrigger.query,
-            limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
-          })
-        : withLinkedComposerPullRequestsFirst({
-            keyOf: threadPullRequestKeyOf,
-            matches: rankPullRequestMatches(
-              (pullRequestLookup.data?.entries ?? []).filter((entry) => {
-                if (
-                  entry.projectId !== pullRequestProjectId ||
-                  entry.repository.trim().toLowerCase() !==
-                    pullRequestRepository.trim().toLowerCase()
-                ) {
-                  return false;
-                }
-                const provider = pullRequestLookup.data?.providers.find(
-                  (candidate) => candidate.host === entry.host,
-                );
-                return (
-                  provider?.searchesOnHost === true ||
-                  matchesPullRequestQuery(entry, composerTrigger.query)
-                );
-              }),
-              composerTrigger.query,
-            ),
-            linked: linkedPullRequests,
-            query: composerTrigger.query,
-            limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
-          });
-      return matches.map((pullRequest) => ({
-        id: `pull-request:${pullRequest.projectId}:${threadPullRequestKeyOf(pullRequest)}`,
-        type: "pull-request",
-        pullRequest: {
-          number: pullRequest.number,
-          title: pullRequest.title,
-          url: pullRequest.url,
-          headBranch: pullRequest.headBranch,
-          baseBranch: pullRequest.baseBranch,
-          state: pullRequest.state,
-          isDraft: pullRequest.isDraft,
-        },
-        label: `#${pullRequest.number}`,
-        description:
-          pullRequest.repository.trim().toLowerCase() === pullRequestRepository.trim().toLowerCase()
-            ? pullRequest.title
-            : `${pullRequest.repository} · ${pullRequest.title}`,
-      }));
+    if (composerTrigger.kind === "pull-request") {
+      return buildComposerPullRequestItems({
+        projectId: pullRequestProjectId,
+        repository: pullRequestRepository,
+        hasTrackedFolders: pullRequestHasTrackedFolders,
+        query: composerTrigger.query,
+        triggerNumber: pullRequestTriggerNumber,
+        listedEntries: pullRequestLookup.data?.entries ?? [],
+        providers: pullRequestLookup.data?.providers ?? [],
+        exactDetails: exactPullRequestLookup.details,
+        linkedPullRequests,
+        limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
+      });
     }
     return [];
   })();
@@ -420,8 +369,7 @@ export function useComposerMenuItems({
     ((composerTriggerKind === "skill" || composerTriggerKind === "slash-command") &&
       workspaceSkillsScanning) ||
     (composerTriggerKind === "pull-request" &&
-      pullRequestProjectId !== null &&
-      pullRequestRepository !== null &&
+      hasPullRequestSource &&
       (pullRequestLookup.isPending ||
         pullRequestTextQuery !== debouncedPullRequestTextQuery ||
         pullRequestTriggerNumber !== debouncedPullRequestNumber ||
@@ -431,18 +379,26 @@ export function useComposerMenuItems({
       return gt("No skills found. Try / to browse provider commands.");
     }
     if (composerTriggerKind === "pull-request") {
-      if (pullRequestProjectId === null || pullRequestRepository === null) {
-        return gt("Pull requests are not available for this project.");
-      }
-      if (
-        pullRequestLookup.error !== null ||
-        pullRequestLookup.data?.errors.some((error) => error.projectId === pullRequestProjectId)
+      switch (
+        resolveComposerPullRequestEmptyStateKind({
+          projectId: pullRequestProjectId,
+          repository: pullRequestRepository,
+          hasTrackedFolders: pullRequestHasTrackedFolders,
+          query: composerTrigger?.query ?? "",
+          listData: pullRequestLookup.data,
+          listError: pullRequestLookup.error,
+          detailError: exactPullRequestLookup.error,
+        })
       ) {
-        return gt("Pull requests could not be read for this project.");
+        case "unavailable":
+          return gt("Pull requests are not available for this project.");
+        case "error":
+          return gt("Pull requests could not be read for this project.");
+        case "no-match":
+          return gt("No pull request matches {query}.", { query: composerTrigger?.query ?? "" });
+        case "empty":
+          return gt("No pull requests found in this repository.");
       }
-      return composerTrigger?.query
-        ? gt("No pull request matches {query}.", { query: composerTrigger.query })
-        : gt("No pull requests found in this repository.");
     }
     return composerTriggerKind === "path"
       ? gt("No matching files or folders.")

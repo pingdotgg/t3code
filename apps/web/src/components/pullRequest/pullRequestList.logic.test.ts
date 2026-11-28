@@ -154,6 +154,65 @@ describe("visible pull request line-count targets", () => {
     ).toMatchObject({ additions: 7, deletions: 2 });
   });
 
+  it("matches diff stats by host and repository, ignoring case", () => {
+    const github = entry({
+      host: "github.com",
+      repository: "acme/api",
+      additions: 0,
+      deletions: 0,
+      number: 42,
+    });
+    const enterprise = entry({
+      host: "github.example.com",
+      repository: "acme/api",
+      additions: 0,
+      deletions: 0,
+      number: 42,
+      url: "https://github.example.com/acme/api/pull/42",
+    });
+    const entriesByKey = new Map(
+      [github, enterprise].map((item) => [pullRequestEntryKey(item), item]),
+    );
+    const githubKey = pullRequestEntryKey(github);
+    const enterpriseKey = pullRequestEntryKey(enterprise);
+    const githubOnlyStats = mergePullRequestDiffStats(new Map(), [
+      {
+        environmentId: ENV_1,
+        projectId: "project-1",
+        host: "GitHub.com",
+        repository: "Acme/API",
+        number: 42,
+        additions: 7,
+        deletions: 2,
+      },
+    ]);
+
+    expect(withDiffStat(github, githubOnlyStats)).toMatchObject({ additions: 7, deletions: 2 });
+    expect(withDiffStat(enterprise, githubOnlyStats)).toEqual(enterprise);
+    expect([
+      ...pullRequestStatsKeysToRequest(
+        entriesByKey,
+        new Set([githubKey, enterpriseKey]),
+        [],
+        githubOnlyStats,
+      ),
+    ]).toEqual([enterpriseKey]);
+
+    const bothHostStats = mergePullRequestDiffStats(githubOnlyStats, [
+      {
+        environmentId: ENV_1,
+        projectId: "project-1",
+        host: "github.example.com",
+        repository: "acme/api",
+        number: 42,
+        additions: 99,
+        deletions: 14,
+      },
+    ]);
+    expect(withDiffStat(github, bothHostStats)).toMatchObject({ additions: 7, deletions: 2 });
+    expect(withDiffStat(enterprise, bothHostStats)).toMatchObject({ additions: 99, deletions: 14 });
+  });
+
   it("keeps every per-environment batch within the stats contract limit", () => {
     const entries = Array.from({ length: 501 }, (_, index) =>
       entry({ additions: 0, deletions: 0, number: index + 1 }),
@@ -1086,5 +1145,31 @@ describe("filter picker choices", () => {
     expect(
       selectedPullRequestAuthor([], rememberPullRequestAuthors(first, [moved]), "juliana")?.actor,
     ).toEqual(moved);
+  });
+
+  it("keeps host-qualified listed repositories distinct across hosts when merging lists", () => {
+    const merged = mergePullRequestLists([
+      [
+        ENV_1,
+        {
+          viewers: {},
+          providers: [],
+          repositories: [
+            { host: "github.com", repository: "acme/api" },
+            { host: "gitlab.com", repository: "acme/api" },
+            { host: "GITHUB.COM", repository: "Acme/Api" },
+          ],
+          entries: [],
+          errors: [],
+          truncated: false,
+          nextCursors: {},
+        },
+      ],
+    ]);
+
+    expect(merged?.repositories).toEqual([
+      { host: "github.com", repository: "acme/api" },
+      { host: "gitlab.com", repository: "acme/api" },
+    ]);
   });
 });

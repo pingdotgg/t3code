@@ -3,6 +3,7 @@ import {
   threadPullRequestKeyOf,
 } from "@t3tools/client-runtime/thread-pull-requests";
 import {
+  composerExactPullRequestRepositories,
   composerPullRequestsFromLinks,
   filterComposerPullRequestMatches,
   withLinkedComposerPullRequestsFirst,
@@ -15,6 +16,8 @@ import type {
   EnvironmentId,
   OrchestrationV2ProjectedTurnItem,
   ProjectId,
+  PullRequestDetail,
+  PullRequestRef,
   ThreadPullRequestLink,
   VcsListRefsInput,
   VcsListRefsResult,
@@ -29,12 +32,13 @@ import {
   type ThreadSearchResultsState,
   type ThreadSearchScope,
 } from "@t3tools/client-runtime/state/thread-search";
-import { THREAD_SEARCH_QUERY_MAX_LENGTH } from "@t3tools/contracts";
+import { PullRequestOperationError, THREAD_SEARCH_QUERY_MAX_LENGTH } from "@t3tools/contracts";
 import { messageSearchTokens } from "@t3tools/shared/paletteSearch";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useMemo, useState } from "react";
 
@@ -42,7 +46,7 @@ import { appAtomRegistry } from "./atom-registry";
 import { orchestrationEnvironment } from "./orchestration";
 import { olderSettledThreads, threadFamilies } from "./threads";
 import { projectEnvironment } from "./projects";
-import { useEnvironmentQuery } from "./query";
+import { formatEnvironmentQueryError, useEnvironmentQuery } from "./query";
 import { msg, useMessages } from "gt-react-native";
 import { vcsEnvironment } from "./vcs";
 import { composerPullRequests } from "./pull-requests";
@@ -110,24 +114,65 @@ export function useDebouncedValue<A>(value: A, delayMs: number): A {
   return debounced;
 }
 
+const EMPTY_PULL_REQUEST_DETAILS_ATOM = Atom.make<{
+  readonly details: ReadonlyArray<PullRequestDetail>;
+  readonly failureCause: Cause.Cause<unknown> | null;
+  readonly isPending: boolean;
+}>({ details: [], failureCause: null, isPending: false }).pipe(
+  Atom.withLabel("mobile:composer-pr-details:empty"),
+);
+
+const isPullRequestOperationError = Schema.is(PullRequestOperationError);
+
+function isPullRequestNotFoundCause(cause: Cause.Cause<unknown>): boolean {
+  const failure = Option.getOrNull(Cause.findErrorOption(cause));
+  return isPullRequestOperationError(failure) && failure.reason === "not-found";
+}
+
+const composerPullRequestDetailsAtom = Atom.family((key: string) =>
+  Atom.make((get) => {
+    const targets = JSON.parse(key) as ReadonlyArray<{
+      readonly environmentId: EnvironmentId;
+      readonly input: PullRequestRef;
+    }>;
+    const details: PullRequestDetail[] = [];
+    let failureCause: Cause.Cause<unknown> | null = null;
+    let isPending = false;
+    for (const target of targets) {
+      const result = get(composerPullRequests.detail(target));
+      isPending ||= result.waiting;
+      if (
+        result._tag === "Failure" &&
+        failureCause === null &&
+        !isPullRequestNotFoundCause(result.cause)
+      ) {
+        failureCause = result.cause;
+      }
+      const value = AsyncResult.getOrElse(result, () => null);
+      if (value !== null) details.push(value);
+    }
+    return { details, failureCause, isPending };
+  }).pipe(Atom.withLabel(`mobile:composer-pr-details:${key}`)),
+);
+
 export function useComposerPullRequestSearch(input: {
   environmentId: EnvironmentId | null;
   projectId: ProjectId | null;
   repository: string | null;
+  hasTrackedFolders?: boolean;
   threadPullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
   query: string | null;
 }) {
+  const resolve = useMessages();
   const query = useDebouncedValue(input.query, 180);
   const linked =
     input.projectId === null
       ? []
       : composerPullRequestsFromLinks(input.threadPullRequests ?? [], input.projectId);
+  const hasSource =
+    input.projectId !== null && (input.repository !== null || input.hasTrackedFolders === true);
   const ready =
-    query === input.query &&
-    query !== null &&
-    input.environmentId !== null &&
-    input.projectId !== null &&
-    input.repository !== null;
+    query === input.query && query !== null && input.environmentId !== null && hasSource;
   const numeric = query !== null && /^\d*$/.test(query);
   const list = useEnvironmentQuery(
     ready
@@ -143,28 +188,44 @@ export function useComposerPullRequestSearch(input: {
       : null,
   );
   const number = numeric && query ? Number(query) : null;
-  const hasExact = list.data?.entries.some(
-    (entry) =>
-      entry.number === number && entry.repository.toLowerCase() === input.repository?.toLowerCase(),
-  );
-  const exact = useEnvironmentQuery(
-    ready && number !== null && Number.isSafeInteger(number) && number > 0 && !hasExact
-      ? composerPullRequests.detail({
+  const exactTargets =
+    ready &&
+    number !== null &&
+    Number.isSafeInteger(number) &&
+    number > 0 &&
+    (input.repository !== null || list.data !== null)
+      ? composerExactPullRequestRepositories({
+          projectId: input.projectId!,
+          repository: input.repository,
+          listedRepositories: list.data?.repositories,
+          entries: list.data?.entries ?? [],
+          number,
+        }).map(({ host, repository }) => ({
           environmentId: input.environmentId!,
-          input: { projectId: input.projectId!, repository: input.repository!, number },
-        })
-      : null,
+          input: {
+            projectId: input.projectId!,
+            ...(host === undefined ? {} : { host }),
+            repository,
+            number,
+          },
+        }))
+      : [];
+  const exact = useAtomValue(
+    exactTargets.length === 0
+      ? EMPTY_PULL_REQUEST_DETAILS_ATOM
+      : composerPullRequestDetailsAtom(JSON.stringify(exactTargets)),
   );
   // Only the host: the URL's full repository path would not match the project's selector.
-  const exactEntry = exact.data
-    ? { ...exact.data, host: legacyThreadPullRequestKey(exact.data).host }
-    : null;
+  const exactEntries = exact.details
+    .filter((detail) => detail.number === number)
+    .map((detail) => ({ ...detail, host: legacyThreadPullRequestKey(detail).host }));
+  const normalizedRepository = input.repository?.trim().toLowerCase() ?? null;
   const entries = (() => {
-    if (input.query === null || input.projectId === null || input.repository === null) return [];
+    if (input.query === null || input.projectId === null || !hasSource) return [];
     if (/^\d*$/.test(input.query)) {
       return filterComposerPullRequestMatches({
         keyOf: threadPullRequestKeyOf,
-        entries: ready ? [...(exactEntry ? [exactEntry] : []), ...(list.data?.entries ?? [])] : [],
+        entries: ready ? [...exactEntries, ...(list.data?.entries ?? [])] : [],
         linked,
         projectId: input.projectId,
         repository: input.repository,
@@ -182,10 +243,11 @@ export function useComposerPullRequestSearch(input: {
       });
     }
     const words = (query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-    const found = [...(exactEntry ? [exactEntry] : []), ...(list.data?.entries ?? [])].filter(
+    const found = [...exactEntries, ...(list.data?.entries ?? [])].filter(
       (entry) =>
         entry.projectId === input.projectId &&
-        entry.repository.toLowerCase() === input.repository?.toLowerCase() &&
+        (normalizedRepository === null ||
+          entry.repository.trim().toLowerCase() === normalizedRepository) &&
         words.every((word) =>
           `${entry.title} ${entry.headBranch} ${entry.baseBranch}`.toLowerCase().includes(word),
         ),
@@ -205,10 +267,23 @@ export function useComposerPullRequestSearch(input: {
       limit: 20,
     });
   })();
+  const unavailable =
+    input.repository === null &&
+    list.data !== null &&
+    list.error === null &&
+    list.data.providers.length === 0 &&
+    list.data.entries.length === 0 &&
+    list.data.errors.length === 0;
+  const exactError =
+    exact.failureCause === null ? null : formatEnvironmentQueryError(exact.failureCause, resolve);
   return {
     entries,
-    isPending: input.query !== null && (query !== input.query || list.isPending || exact.isPending),
-    error: list.error ?? list.data?.errors[0]?.message ?? exact.error,
+    isPending:
+      input.query !== null &&
+      hasSource &&
+      (query !== input.query || list.isPending || exact.isPending),
+    error: list.error ?? list.data?.errors[0]?.message ?? exactError,
+    unavailable,
   };
 }
 

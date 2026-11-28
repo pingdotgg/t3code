@@ -50,6 +50,7 @@ function project(input: {
   readonly provider?: string;
   readonly host?: string;
   readonly remoteUrl?: string;
+  readonly trackedFolders?: OrchestrationProjectShell["trackedFolders"];
 }): OrchestrationProjectShell {
   const host = input.host ?? (input.provider === "gitlab" ? "gitlab.com" : "github.com");
   return {
@@ -70,6 +71,7 @@ function project(input: {
           },
         }
       : {}),
+    ...(input.trackedFolders === undefined ? {} : { trackedFolders: input.trackedFolders }),
     defaultModelSelection: null,
     scripts: [],
     createdAt: "2026-07-01T00:00:00Z",
@@ -3522,6 +3524,62 @@ it.effect("believes a search's silence about a repository it vouches for", () =>
     );
   }),
 );
+it.effect("keeps a repository with the project rooted in it over a parent tracking it", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "parent",
+          title: "parent",
+          workspaceRoot: "/parent",
+          trackedFolders: [{ path: "/parent/web", name: "web", discovered: true }],
+        }),
+        project({ id: "own", title: "web", workspaceRoot: "/web", repository: "acme/web" }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: () =>
+            Effect.succeed({
+              items: [changeRequest(7, "2026-07-05T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            }),
+          listChangeRequestStats: () =>
+            Effect.succeed([{ repository: "acme/web", number: 7, additions: 1, deletions: 2 }]),
+        }),
+      ],
+      resolveRepositoryIdentity: (cwd) =>
+        Effect.succeed(
+          cwd === "/parent/web"
+            ? {
+                canonicalKey: "github.com/acme/web",
+                locator: {
+                  source: "git-remote" as const,
+                  remoteName: "origin",
+                  remoteUrl: "https://github.com/acme/web.git",
+                },
+                provider: SourceControlProviderKind.make("github"),
+                displayName: "acme/web",
+              }
+            : null,
+        ),
+    });
+
+    const list = yield* service.list({ state: "all" });
+    const stats = yield* service.listStats({
+      refs: [{ projectId: "own" as ProjectId, repository: "acme/web", number: 7 }],
+    });
+
+    assert.deepStrictEqual(
+      list.entries.map((entry) => `${entry.projectId}:${entry.number}`),
+      ["own:7"],
+    );
+    assert.deepStrictEqual(
+      stats.stats.map((stat) => stat.projectId),
+      ["own" as ProjectId],
+    );
+  }),
+);
 it.effect("fills in the line counts for the rows it is given", () =>
   Effect.gen(function* () {
     const asked: Array<unknown> = [];
@@ -5682,5 +5740,577 @@ it.effect.each(["expiry", "commit expiry", "cache hit", "commit cache hit", "ref
       assert.strictEqual(error._tag, "PullRequestOperationError");
       assert.strictEqual(error.reason, "not-found");
       assert.strictEqual(diffReads, 2);
+    }),
+);
+
+it.effect(
+  "lists and reads pull requests from tracked folder repositories when the project root is not a git repo",
+  () =>
+    Effect.gen(function* () {
+      const githubIdentity = (repository: string) => ({
+        canonicalKey: `github.com/${repository}`,
+        locator: {
+          source: "git-remote" as const,
+          remoteName: "origin",
+          remoteUrl: `https://github.com/${repository}.git`,
+        },
+        provider: SourceControlProviderKind.make("github"),
+        displayName: repository,
+      });
+      const resolvedCwds: string[] = [];
+      const listCwds = new Map<string, string>();
+      const detailCwds = new Map<string, string>();
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "root-git",
+            title: "Root git",
+            workspaceRoot: "/root-git",
+            repository: "acme/root",
+            trackedFolders: [{ path: "/root-git/child", name: "child", discovered: true }],
+          }),
+          project({
+            id: "single-tracked",
+            title: "Single tracked",
+            workspaceRoot: "/single",
+            trackedFolders: [{ path: "/single/repo-a", name: "repo-a", discovered: true }],
+          }),
+          project({
+            id: "multi-tracked",
+            title: "Multi tracked",
+            workspaceRoot: "/multi",
+            trackedFolders: [
+              { path: "/multi/repo-a", name: "repo-a", discovered: true },
+              { path: "/multi/repo-b", name: "repo-b", discovered: true },
+              { path: "/multi/notes", name: "notes" },
+            ],
+          }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            listChangeRequests: ({ cwd, repository }) => {
+              listCwds.set(repository, cwd);
+              const number =
+                repository === "acme/root" ? 10 : repository === "acme/repo-a" ? 25 : 26;
+              return Effect.succeed({
+                items: [
+                  {
+                    ...changeRequest(number, "2026-07-05T00:00:00Z"),
+                    url: `https://github.com/${repository}/pull/${number}`,
+                  },
+                ],
+                truncated: false,
+                continues: false,
+              });
+            },
+            getChangeRequest: ({ cwd, repository, number }) => {
+              detailCwds.set(`${repository}#${number}`, cwd);
+              return Effect.succeed({
+                ...hostedChangeRequest(`PR ${number}`),
+                number,
+                url: `https://github.com/${repository}/pull/${number}`,
+              });
+            },
+          }),
+        ],
+        resolveRepositoryIdentity: (cwd) =>
+          Effect.sync(() => {
+            resolvedCwds.push(cwd);
+            if (cwd === "/single/repo-a" || cwd === "/multi/repo-a") {
+              return githubIdentity("acme/repo-a");
+            }
+            if (cwd === "/multi/repo-b") {
+              return githubIdentity("acme/repo-b");
+            }
+            return null;
+          }),
+      });
+
+      const rootList = yield* service.list({ state: "all", projectId: "root-git" as ProjectId });
+      assert.deepStrictEqual(
+        rootList.entries.map((entry) => `${entry.repository}#${entry.number}`),
+        ["acme/root#10"],
+      );
+      assert.strictEqual(listCwds.get("acme/root"), "/root-git");
+      assert.isFalse(resolvedCwds.includes("/root-git/child"));
+
+      const singleList = yield* service.list({
+        state: "all",
+        projectId: "single-tracked" as ProjectId,
+      });
+      assert.deepStrictEqual(
+        singleList.entries.map((entry) => `${entry.repository}#${entry.number}`),
+        ["acme/repo-a#25"],
+      );
+      assert.deepStrictEqual(singleList.repositories, [
+        { host: "github.com", repository: "acme/repo-a" },
+      ]);
+      assert.strictEqual(listCwds.get("acme/repo-a"), "/single/repo-a");
+
+      const multiList = yield* service.list({
+        state: "all",
+        projectId: "multi-tracked" as ProjectId,
+      });
+      assert.deepStrictEqual(
+        multiList.entries.map((entry) => `${entry.repository}#${entry.number}`).toSorted(),
+        ["acme/repo-a#25", "acme/repo-b#26"],
+      );
+      assert.deepStrictEqual(multiList.repositories, [
+        { host: "github.com", repository: "acme/repo-a" },
+        { host: "github.com", repository: "acme/repo-b" },
+      ]);
+      assert.strictEqual(listCwds.get("acme/repo-b"), "/multi/repo-b");
+
+      const detail = yield* service.detail({
+        projectId: "multi-tracked" as ProjectId,
+        repository: "acme/repo-b",
+        number: 25,
+      });
+      assert.strictEqual(detail.repository, "acme/repo-b");
+      assert.strictEqual(detail.number, 25);
+      assert.strictEqual(detailCwds.get("acme/repo-b#25"), "/multi/repo-b");
+    }),
+);
+
+it.effect(
+  "returns stats for every project owning a deduplicated repository while keeping listing deduplicated",
+  () =>
+    Effect.gen(function* () {
+      const asked: Array<unknown> = [];
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "parent",
+            title: "parent",
+            workspaceRoot: "/parent",
+            trackedFolders: [{ path: "/parent/web", name: "web", discovered: true }],
+          }),
+          project({ id: "own", title: "web", workspaceRoot: "/web", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            listChangeRequests: () =>
+              Effect.succeed({
+                items: [changeRequest(7, "2026-07-05T00:00:00Z")],
+                truncated: false,
+                continues: false,
+              }),
+            listChangeRequestStats: (input) => {
+              asked.push(input.changeRequests);
+              return Effect.succeed([
+                { repository: "acme/web", number: 7, additions: 4, deletions: 2 },
+              ]);
+            },
+          }),
+        ],
+        resolveRepositoryIdentity: (cwd) =>
+          Effect.succeed(
+            cwd === "/parent/web"
+              ? {
+                  canonicalKey: "github.com/acme/web",
+                  locator: {
+                    source: "git-remote" as const,
+                    remoteName: "origin",
+                    remoteUrl: "https://github.com/acme/web.git",
+                  },
+                  provider: SourceControlProviderKind.make("github"),
+                  displayName: "acme/web",
+                }
+              : null,
+          ),
+      });
+
+      const unscopedList = yield* service.list({ state: "all" });
+      assert.deepStrictEqual(
+        unscopedList.entries.map((entry) => `${entry.projectId}:${entry.number}`),
+        ["own:7"],
+      );
+
+      const parentOnlyStats = yield* service.listStats({
+        refs: [
+          {
+            projectId: "parent" as ProjectId,
+            host: "github.com",
+            repository: "acme/web",
+            number: 7,
+          },
+        ],
+      });
+      assert.deepStrictEqual(parentOnlyStats.stats, [
+        {
+          projectId: "parent" as ProjectId,
+          host: "github.com",
+          repository: "acme/web",
+          number: 7,
+          additions: 4,
+          deletions: 2,
+        },
+      ]);
+
+      const bothStats = yield* service.listStats({
+        refs: [
+          { projectId: "own" as ProjectId, host: "github.com", repository: "acme/web", number: 7 },
+          {
+            projectId: "parent" as ProjectId,
+            host: "github.com",
+            repository: "acme/web",
+            number: 7,
+          },
+        ],
+      });
+      assert.deepStrictEqual(
+        bothStats.stats
+          .map((stat) => `${stat.projectId}:${stat.additions}/${stat.deletions}`)
+          .toSorted(),
+        ["own:4/2", "parent:4/2"],
+      );
+      // Only two provider calls total (parentOnlyStats + own from bothStats, since parent was cached).
+      assert.strictEqual(asked.length, 2);
+    }),
+);
+
+it.effect(
+  "preserves host identity for same-named tracked repositories in listing candidates and detail",
+  () =>
+    Effect.gen(function* () {
+      const detailCwds = new Map<string, string>();
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "multi-host",
+            title: "Multi host",
+            workspaceRoot: "/multi-host",
+            trackedFolders: [
+              { path: "/multi-host/gh", name: "gh", discovered: true },
+              { path: "/multi-host/ghe", name: "ghe", discovered: true },
+              { path: "/multi-host/gl", name: "gl", discovered: true },
+            ],
+          }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            listChangeRequests: ({ host, repository }) =>
+              Effect.succeed({
+                items: [
+                  {
+                    ...changeRequest(7, "2026-07-05T00:00:00Z"),
+                    url: `https://${host}/${repository}/pull/7`,
+                  },
+                ],
+                truncated: false,
+                continues: false,
+              }),
+            getChangeRequest: ({ cwd, host, repository, number }) => {
+              detailCwds.set(`${host}/${repository}#${number}`, cwd);
+              return Effect.succeed({
+                ...hostedChangeRequest(`PR ${number} on ${host}`),
+                number,
+                url: `https://${host}/${repository}/pull/${number}`,
+              });
+            },
+          }),
+          fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
+            listChangeRequests: () =>
+              Effect.succeed({
+                items: [],
+                truncated: false,
+                continues: false,
+              }),
+            getChangeRequest: ({ cwd, host, repository, number }) => {
+              detailCwds.set(`${host}/${repository}#${number}`, cwd);
+              return Effect.succeed({
+                ...hostedChangeRequest(`MR ${number} on ${host}`),
+                number,
+                url: `https://${host}/${repository}/-/merge_requests/${number}`,
+              });
+            },
+          }),
+        ],
+        resolveRepositoryIdentity: (cwd) => {
+          if (cwd === "/multi-host/gh") {
+            return Effect.succeed({
+              canonicalKey: "github.com/acme/api",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "https://github.com/acme/api.git",
+              },
+              provider: SourceControlProviderKind.make("github"),
+              displayName: "acme/api",
+            });
+          }
+          if (cwd === "/multi-host/ghe") {
+            return Effect.succeed({
+              canonicalKey: "github.example.com/acme/api",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "https://github.example.com/acme/api.git",
+              },
+              provider: SourceControlProviderKind.make("github"),
+              displayName: "acme/api",
+            });
+          }
+          if (cwd === "/multi-host/gl") {
+            return Effect.succeed({
+              canonicalKey: "gitlab.com/acme/api",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "https://gitlab.com/acme/api.git",
+              },
+              provider: SourceControlProviderKind.make("gitlab"),
+              displayName: "acme/api",
+            });
+          }
+          return Effect.succeed(null);
+        },
+      });
+
+      const listed = yield* service.list({ state: "all", projectId: "multi-host" as ProjectId });
+      assert.deepStrictEqual(listed.repositories, [
+        { host: "github.com", repository: "acme/api" },
+        { host: "github.example.com", repository: "acme/api" },
+        { host: "gitlab.com", repository: "acme/api" },
+      ]);
+
+      const gitlabDetail = yield* service.detail({
+        projectId: "multi-host" as ProjectId,
+        host: "gitlab.com",
+        repository: "acme/api",
+        number: 25,
+      });
+      assert.strictEqual(gitlabDetail.url, "https://gitlab.com/acme/api/-/merge_requests/25");
+      assert.strictEqual(detailCwds.get("gitlab.com/acme/api#25"), "/multi-host/gl");
+    }),
+);
+
+it.effect(
+  "keeps host identity distinct across stats lookup, batch cache keys, and recent stats",
+  () =>
+    Effect.gen(function* () {
+      const statsCalls: Array<{ readonly host: string; readonly count: number }> = [];
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "multi-host",
+            title: "Multi host",
+            workspaceRoot: "/multi-host",
+            trackedFolders: [
+              { path: "/multi-host/gh", name: "gh", discovered: true },
+              { path: "/multi-host/ghe", name: "ghe", discovered: true },
+            ],
+          }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            listChangeRequestStats: ({ host, changeRequests }) => {
+              statsCalls.push({ host, count: changeRequests.length });
+              return Effect.succeed(
+                changeRequests.map((request) => ({
+                  repository: request.repository,
+                  number: request.number,
+                  additions: host === "github.com" ? 11 : 99,
+                  deletions: host === "github.com" ? 2 : 44,
+                })),
+              );
+            },
+          }),
+        ],
+        resolveRepositoryIdentity: (cwd) => {
+          if (cwd === "/multi-host/gh") {
+            return Effect.succeed({
+              canonicalKey: "github.com/acme/api",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "https://github.com/acme/api.git",
+              },
+              provider: SourceControlProviderKind.make("github"),
+              displayName: "acme/api",
+            });
+          }
+          if (cwd === "/multi-host/ghe") {
+            return Effect.succeed({
+              canonicalKey: "github.example.com/acme/api",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "https://github.example.com/acme/api.git",
+              },
+              provider: SourceControlProviderKind.make("github"),
+              displayName: "acme/api",
+            });
+          }
+          return Effect.succeed(null);
+        },
+      });
+
+      const bothStats = yield* service.listStats({
+        refs: [
+          {
+            projectId: "multi-host" as ProjectId,
+            host: "github.com",
+            repository: "acme/api",
+            number: 7,
+          },
+          {
+            projectId: "multi-host" as ProjectId,
+            host: "github.example.com",
+            repository: "acme/api",
+            number: 7,
+          },
+        ],
+      });
+      assert.deepStrictEqual(
+        bothStats.stats.toSorted((left, right) =>
+          (left.host ?? "").localeCompare(right.host ?? ""),
+        ),
+        [
+          {
+            projectId: "multi-host" as ProjectId,
+            host: "github.com",
+            repository: "acme/api",
+            number: 7,
+            additions: 11,
+            deletions: 2,
+          },
+          {
+            projectId: "multi-host" as ProjectId,
+            host: "github.example.com",
+            repository: "acme/api",
+            number: 7,
+            additions: 99,
+            deletions: 44,
+          },
+        ],
+      );
+      assert.strictEqual(statsCalls.length, 2);
+
+      // Re-reading each host individually serves its own cached line counts without mixing hosts.
+      const gheCached = yield* service.listStats({
+        refs: [
+          {
+            projectId: "multi-host" as ProjectId,
+            host: "github.example.com",
+            repository: "acme/api",
+            number: 7,
+          },
+        ],
+      });
+      assert.deepStrictEqual(gheCached.stats, [
+        {
+          projectId: "multi-host" as ProjectId,
+          host: "github.example.com",
+          repository: "acme/api",
+          number: 7,
+          additions: 99,
+          deletions: 44,
+        },
+      ]);
+      assert.strictEqual(statsCalls.length, 2);
+    }),
+);
+
+it.effect(
+  "deduplicates listed repositories by canonical identity for same-named Azure DevOps repos while collapsing duplicate checkouts",
+  () =>
+    Effect.gen(function* () {
+      const detailCwds = new Map<string, string>();
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "azure-multi",
+            title: "Azure Multi",
+            workspaceRoot: "/azure-multi",
+            trackedFolders: [
+              { path: "/azure-multi/org-a", name: "org-a", discovered: true },
+              { path: "/azure-multi/org-a-ssh", name: "org-a-ssh", discovered: true },
+              { path: "/azure-multi/org-b", name: "org-b", discovered: true },
+            ],
+          }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("azure-devops"), {
+            ...keyedByCanonicalKey,
+            listChangeRequests: () =>
+              Effect.succeed({
+                items: [],
+                truncated: false,
+                continues: false,
+              }),
+            getChangeRequest: ({ cwd, repository, number }) => {
+              detailCwds.set(`${cwd}:${repository}#${number}`, cwd);
+              return Effect.succeed({
+                ...hostedChangeRequest(`Azure PR ${number} in ${cwd}`),
+                number,
+                url: `https://dev.azure.com${cwd}/project/_git/${repository}/pullrequest/${number}`,
+              });
+            },
+          }),
+        ],
+        resolveRepositoryIdentity: (cwd) => {
+          if (cwd === "/azure-multi/org-a") {
+            return Effect.succeed({
+              canonicalKey: "dev.azure.com/org-a/project/_git/web",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "https://dev.azure.com/org-a/project/_git/web",
+              },
+              provider: SourceControlProviderKind.make("azure-devops"),
+              displayName: "org-a/project/_git/web",
+            });
+          }
+          if (cwd === "/azure-multi/org-a-ssh") {
+            return Effect.succeed({
+              canonicalKey: "ssh.dev.azure.com/v3/org-a/project/web",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "git@ssh.dev.azure.com:v3/org-a/project/web",
+              },
+              provider: SourceControlProviderKind.make("azure-devops"),
+              displayName: "org-a/project/_git/web",
+            });
+          }
+          if (cwd === "/azure-multi/org-b") {
+            return Effect.succeed({
+              canonicalKey: "dev.azure.com/org-b/project/_git/web",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "https://dev.azure.com/org-b/project/_git/web",
+              },
+              provider: SourceControlProviderKind.make("azure-devops"),
+              displayName: "org-b/project/_git/web",
+            });
+          }
+          return Effect.succeed(null);
+        },
+      });
+
+      const listed = yield* service.list({ state: "all", projectId: "azure-multi" as ProjectId });
+      assert.deepStrictEqual(listed.repositories, [
+        { host: "dev.azure.com", repository: "org-a/project/_git/web" },
+        { host: "dev.azure.com", repository: "org-b/project/_git/web" },
+      ]);
+
+      const orgADetail = yield* service.detail({
+        projectId: "azure-multi" as ProjectId,
+        host: "dev.azure.com",
+        repository: "org-a/project/_git/web",
+        number: 7,
+      });
+      const orgBDetail = yield* service.detail({
+        projectId: "azure-multi" as ProjectId,
+        host: "dev.azure.com",
+        repository: "org-b/project/_git/web",
+        number: 7,
+      });
+      assert.strictEqual(orgADetail.workspaceRoot, "/azure-multi/org-a");
+      assert.strictEqual(orgBDetail.workspaceRoot, "/azure-multi/org-b");
+      assert.strictEqual(detailCwds.get("/azure-multi/org-a:web#7"), "/azure-multi/org-a");
+      assert.strictEqual(detailCwds.get("/azure-multi/org-b:web#7"), "/azure-multi/org-b");
     }),
 );

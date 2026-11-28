@@ -11,6 +11,7 @@ import {
   DEFAULT_PR_LIST_CONTROLS,
   EMPTY_PULL_REQUEST_STATS_CACHE,
   filterPullRequestList,
+  findCachedPullRequestStat,
   mergePullRequestListEntries,
   mergeEnvironmentPullRequestPages,
   nextPullRequestListInput,
@@ -526,11 +527,53 @@ describe("shown PR diff stats", () => {
     ]);
     expect(filled[1]).toBe(rows[1]);
   });
+
+  it("keeps same-project same-repository stats separate across hosts", () => {
+    const githubRow = { ...entry(1, { host: "github.com" }), environmentId: cups };
+    const enterpriseRow = {
+      ...entry(1, {
+        host: "github.example.com",
+        url: "https://github.example.com/org/repo/pull/1",
+      }),
+      environmentId: cups,
+    };
+    const githubOnly = withShownPullRequestStats(
+      [githubRow, enterpriseRow],
+      [
+        {
+          environmentId: cups,
+          stats: [{ ...stat(1, 11, 2), host: "github.com" }],
+        },
+      ],
+    );
+    expect(githubOnly.map(({ additions, deletions }) => [additions, deletions])).toEqual([
+      [11, 2],
+      [0, 0],
+    ]);
+
+    const bothHosts = withShownPullRequestStats(
+      [githubRow, enterpriseRow],
+      [
+        {
+          environmentId: cups,
+          stats: [
+            { ...stat(1, 11, 2), host: "GitHub.com" },
+            { ...stat(1, 99, 44), host: "github.example.com" },
+          ],
+        },
+      ],
+    );
+    expect(bothHosts.map(({ additions, deletions }) => [additions, deletions])).toEqual([
+      [11, 2],
+      [99, 44],
+    ]);
+  });
 });
 
 describe("cached PR diff stats", () => {
-  const stat = (number: number, additions: number) => ({
+  const stat = (number: number, additions: number, host?: string) => ({
     projectId: "project" as PullRequestListEntry["projectId"],
+    ...(host === undefined ? {} : { host }),
     repository: "org/repo",
     number,
     additions,
@@ -541,13 +584,17 @@ describe("cached PR diff stats", () => {
     const query = {
       refs: [1, 2].map((number) => ({
         projectId: stat(number, 0).projectId,
+        host: "github.com",
         repository: "org/repo",
         number,
       })),
     };
     const listed = withListedPullRequests(EMPTY_PULL_REQUEST_STATS_CACHE, [entry(1), entry(2)]);
     expect(listed.refresh).toEqual([]);
-    const answered = withAnsweredPullRequestStats(listed.cache, query, [stat(1, 5), stat(2, 7)]);
+    const answered = withAnsweredPullRequestStats(listed.cache, query, [
+      stat(1, 5, "github.com"),
+      stat(2, 7, "github.com"),
+    ]);
     expect(withListedPullRequests(answered, [entry(1), entry(2)])).toEqual({
       cache: answered,
       refresh: [],
@@ -557,7 +604,55 @@ describe("cached PR diff stats", () => {
       entry(1, { updatedAt: "2026-10-20T00:00:00Z" }),
       entry(2),
     ]);
-    expect([...pushed.cache.stats.values()]).toEqual([stat(2, 7)]);
+    expect([...pushed.cache.stats.values()]).toEqual([stat(2, 7, "github.com")]);
     expect(pushed.refresh).toEqual([query]);
+  });
+
+  it("keeps cached stats and invalidation distinct across hosts for the same repository and number", () => {
+    const githubEntry = entry(1, { host: "github.com" });
+    const enterpriseEntry = entry(1, {
+      host: "github.example.com",
+      url: "https://github.example.com/org/repo/pull/1",
+    });
+    const githubQuery = {
+      refs: [
+        { projectId: githubEntry.projectId, host: "github.com", repository: "org/repo", number: 1 },
+      ],
+    };
+    const enterpriseQuery = {
+      refs: [
+        {
+          projectId: enterpriseEntry.projectId,
+          host: "github.example.com",
+          repository: "org/repo",
+          number: 1,
+        },
+      ],
+    };
+    const listed = withListedPullRequests(EMPTY_PULL_REQUEST_STATS_CACHE, [
+      githubEntry,
+      enterpriseEntry,
+    ]);
+    const answered = withAnsweredPullRequestStats(
+      withAnsweredPullRequestStats(listed.cache, githubQuery, [stat(1, 11, "github.com")]),
+      enterpriseQuery,
+      [stat(1, 99, "github.example.com")],
+    );
+    expect(findCachedPullRequestStat(answered.stats, githubEntry)).toEqual(
+      stat(1, 11, "github.com"),
+    );
+    expect(findCachedPullRequestStat(answered.stats, enterpriseEntry)).toEqual(
+      stat(1, 99, "github.example.com"),
+    );
+
+    const pushed = withListedPullRequests(answered, [
+      entry(1, { host: "github.com", updatedAt: "2026-10-20T00:00:00Z" }),
+      enterpriseEntry,
+    ]);
+    expect(findCachedPullRequestStat(pushed.cache.stats, githubEntry)).toBeUndefined();
+    expect(findCachedPullRequestStat(pushed.cache.stats, enterpriseEntry)).toEqual(
+      stat(1, 99, "github.example.com"),
+    );
+    expect(pushed.refresh).toEqual([githubQuery]);
   });
 });

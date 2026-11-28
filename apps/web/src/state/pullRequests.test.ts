@@ -1,47 +1,107 @@
+import type { PullRequestAnswerHandlers } from "@t3tools/client-runtime/state/pull-requests";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
   EnvironmentId,
   ProjectId,
+  type PullRequestDetail,
   type PullRequestListEntry,
   type PullRequestListInput,
   PullRequestUnavailableError,
   PullRequestOperationError,
   type PullRequestListResult,
+  type PullRequestRef,
   type PullRequestSummary,
+  type RepositoryIdentity,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 const listAnswers = vi.hoisted(() => new Map<string, unknown>());
+const detailAnswers = vi.hoisted(() => new Map<string, unknown>());
+const projectIdentities = vi.hoisted(() => new Map<string, RepositoryIdentity | null>());
+const capturedHandlers = vi.hoisted(
+  () =>
+    ({
+      pullRequests: undefined as PullRequestAnswerHandlers | undefined,
+      linkedSummary: undefined as
+        | ((
+            target: { readonly environmentId: EnvironmentId; readonly input: PullRequestRef },
+            summary: PullRequestSummary,
+            atomRegistry: unknown,
+          ) => Effect.Effect<void>)
+        | undefined,
+    }) as {
+      pullRequests: PullRequestAnswerHandlers | undefined;
+      linkedSummary:
+        | ((
+            target: { readonly environmentId: EnvironmentId; readonly input: PullRequestRef },
+            summary: PullRequestSummary,
+            atomRegistry: unknown,
+          ) => Effect.Effect<void>)
+        | undefined;
+    },
+);
 const registry = await vi.hoisted(async () =>
   (await import("effect/reactivity")).AtomRegistry.make(),
 );
 
 vi.mock("@effect/atom-react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@effect/atom-react")>()),
-  useAtomValue: (atom: Atom.Atom<unknown>) => registry.get(atom),
+  useAtomValue: (atom: Atom.Atom<unknown>, select?: (value: unknown) => unknown) => {
+    const value = registry.get(atom);
+    return select === undefined ? value : select(value);
+  },
 }));
 vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: registry }));
+vi.mock("./projects", () => ({
+  environmentProjects: {
+    projectAtom: ({
+      environmentId,
+      projectId,
+    }: {
+      readonly environmentId: string;
+      readonly projectId: string;
+    }) =>
+      Atom.make(
+        projectIdentities.has(`${environmentId}|${projectId}`)
+          ? { repositoryIdentity: projectIdentities.get(`${environmentId}|${projectId}`) ?? null }
+          : null,
+      ),
+  },
+}));
 vi.mock("@t3tools/client-runtime/state/pull-requests", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("@t3tools/client-runtime/state/pull-requests")>();
   return {
     ...actual,
+    createLinkedPullRequestSummaryAtomFamily: (
+      ...args: Parameters<typeof actual.createLinkedPullRequestSummaryAtomFamily>
+    ) => {
+      capturedHandlers.linkedSummary = args[2] as typeof capturedHandlers.linkedSummary;
+      return actual.createLinkedPullRequestSummaryAtomFamily(...args);
+    },
     createPullRequestEnvironmentAtoms: (
       ...args: Parameters<typeof actual.createPullRequestEnvironmentAtoms>
-    ) => ({
-      ...actual.createPullRequestEnvironmentAtoms(...args),
-      list: ({ environmentId }: { readonly environmentId: string }) =>
-        listAnswers.get(environmentId),
-    }),
+    ) => {
+      capturedHandlers.pullRequests = args[1];
+      return {
+        ...actual.createPullRequestEnvironmentAtoms(...args),
+        list: ({ environmentId }: { readonly environmentId: string }) =>
+          listAnswers.get(environmentId),
+        detail: ({ input }: { readonly input: PullRequestRef }) =>
+          detailAnswers.get(`${input.host ?? ""}|${input.repository}|${input.number}`),
+      };
+    },
   };
 });
 
 import {
   newestPullRequestObservation,
   observedPullRequestSummary,
+  observedPullRequestTitle,
   observePullRequestChecks,
   observePullRequestMetadata,
   newestPullRequestSummary,
@@ -51,7 +111,9 @@ import {
   restoredPullRequestList,
   threadPullRequestLinkToSummary,
   observeFailedPullRequestList,
+  usePullRequestDetails,
   usePullRequestList,
+  useSharedPullRequestSummary,
 } from "./pullRequests";
 
 it("observes both typed list failures without changing their status or replaying cached timestamps", () => {
@@ -603,4 +665,436 @@ describe("pull request list answers across a reload", () => {
     ).toEqual([]);
     expect(storage.held.get("t3.other")).toBe("kept");
   });
+
+  it("surfaces non-not-found detail errors while ignoring repository-local not-found failures", () => {
+    const projectId = ProjectId.make("project-1");
+    const notFound = new PullRequestOperationError({
+      operation: "detail",
+      detail: "Pull request not found.",
+      reason: "not-found",
+    });
+    const unauthenticated = new PullRequestUnavailableError({
+      reason: "cli-unauthenticated",
+    });
+    const foundDetail = {
+      ...summary({ projectId, repository: "acme/api", number: 25 }),
+      capabilities: {
+        diff: true,
+        comment: true,
+        actions: [],
+        mergeMethods: [],
+        search: true,
+        review: { inlineComment: true, reply: true, resolve: true, verdicts: [] },
+        reviewers: { request: false, listCandidates: false },
+      },
+      projectTitle: "Workspace",
+      workspaceRoot: "/workspace/acme/api",
+      body: "",
+      additions: 1,
+      deletions: 0,
+      changedFiles: 1,
+      createdAt: "2026-09-09T00:00:00Z",
+      mergedAt: null,
+      closedAt: null,
+      reviewers: [],
+      labels: [],
+      checks: [],
+      mergeCapabilities: { merge: false, squash: false, rebase: false },
+      viewerPermissions: {
+        actions: [],
+        comment: false,
+        resolve: false,
+        verdicts: [],
+        requestReviewers: false,
+      },
+    } as PullRequestDetail;
+
+    detailAnswers.clear();
+    detailAnswers.set(
+      "github.com|acme/api|25",
+      Atom.make(AsyncResult.failure(Cause.fail(notFound))),
+    );
+    detailAnswers.set(
+      "gitlab.com|acme/api|25",
+      Atom.make(AsyncResult.failure(Cause.fail(unauthenticated))),
+    );
+    const failedView = usePullRequestDetails([
+      {
+        environmentId: local,
+        input: { projectId, host: "github.com", repository: "acme/api", number: 25 },
+      },
+      {
+        environmentId: local,
+        input: { projectId, host: "gitlab.com", repository: "acme/api", number: 25 },
+      },
+    ]);
+    expect(failedView.details).toEqual([]);
+    expect(failedView.error).toMatchObject({ environmentId: local });
+
+    detailAnswers.set(
+      "github.com|acme/api|26",
+      Atom.make(AsyncResult.failure(Cause.fail(notFound))),
+    );
+    detailAnswers.set(
+      "gitlab.com|acme/api|26",
+      Atom.make(AsyncResult.failure(Cause.fail(notFound))),
+    );
+    const notFoundView = usePullRequestDetails([
+      {
+        environmentId: local,
+        input: { projectId, host: "github.com", repository: "acme/api", number: 26 },
+      },
+      {
+        environmentId: local,
+        input: { projectId, host: "gitlab.com", repository: "acme/api", number: 26 },
+      },
+    ]);
+    expect(notFoundView.details).toEqual([]);
+    expect(notFoundView.error).toBeNull();
+
+    detailAnswers.set(
+      "github.com|acme/api|27",
+      Atom.make(AsyncResult.failure(Cause.fail(notFound))),
+    );
+    detailAnswers.set(
+      "gitlab.com|acme/api|27",
+      Atom.make(AsyncResult.success({ ...foundDetail, number: 27 })),
+    );
+    const foundView = usePullRequestDetails([
+      {
+        environmentId: local,
+        input: { projectId, host: "github.com", repository: "acme/api", number: 27 },
+      },
+      {
+        environmentId: local,
+        input: { projectId, host: "gitlab.com", repository: "acme/api", number: 27 },
+      },
+    ]);
+    expect(foundView.details).toEqual([{ ...foundDetail, number: 27 }]);
+    expect(foundView.error).toBeNull();
+  });
+});
+
+describe("pull request observation host isolation", () => {
+  const environmentId = EnvironmentId.make("env-host-isolation");
+  const listInput: PullRequestListInput = { state: "all", involvement: "all", limit: 50 };
+
+  const makeEntry = (overrides: Partial<PullRequestListEntry>): PullRequestListEntry => ({
+    provider: SourceControlProviderKind.make("github"),
+    host: "github.com",
+    projectId: ProjectId.make("project-tracked"),
+    projectTitle: "Workspace",
+    repository: "acme/api",
+    number: 7,
+    title: "Public PR",
+    url: "https://github.com/acme/api/pull/7",
+    author: { login: "octocat", name: null, avatarUrl: null },
+    headBranch: "feat/public",
+    baseBranch: "main",
+    state: "open",
+    isDraft: false,
+    mergeability: "mergeable",
+    additions: 1,
+    deletions: 0,
+    createdAt: "2026-09-09T00:00:00Z",
+    updatedAt: "2026-09-10T00:00:00Z",
+    observedAt: 100,
+    viewerReviewRequested: false,
+    labels: [],
+    checksState: "passing",
+    ...overrides,
+  });
+
+  const makeDetail = (overrides: Partial<PullRequestDetail>): PullRequestDetail =>
+    ({
+      ...summary(),
+      capabilities: {
+        diff: true,
+        comment: true,
+        actions: [],
+        mergeMethods: [],
+        search: true,
+        review: { inlineComment: true, reply: true, resolve: true, verdicts: [] },
+        reviewers: { request: false, listCandidates: false },
+      },
+      projectTitle: "Workspace",
+      workspaceRoot: "/workspace/acme/api",
+      body: "",
+      additions: 1,
+      deletions: 0,
+      changedFiles: 1,
+      createdAt: "2026-09-09T00:00:00Z",
+      mergedAt: null,
+      closedAt: null,
+      reviewers: [],
+      labels: [],
+      checks: [],
+      mergeCapabilities: { merge: false, squash: false, rebase: false },
+      viewerPermissions: {
+        actions: [],
+        comment: false,
+        resolve: false,
+        verdicts: [],
+        requestReviewers: false,
+      },
+      ...overrides,
+    }) as PullRequestDetail;
+
+  it.effect("isolates observations across hosts for same-named tracked-folder repositories", () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project-tracked-multi-host");
+      projectIdentities.set(`${environmentId}|${projectId}`, null);
+      const handlers = capturedHandlers.pullRequests!;
+      const linkedSummary = capturedHandlers.linkedSummary!;
+
+      const publicRef: PullRequestRef = {
+        projectId,
+        host: "github.com",
+        repository: "acme/api",
+        number: 7,
+      };
+      const enterpriseRef: PullRequestRef = {
+        projectId,
+        host: "github.example.com",
+        repository: "acme/api",
+        number: 7,
+      };
+
+      // List writes a merged PR on github.com and an open PR on github.example.com under one project.
+      yield* handlers.list!(
+        { environmentId, input: listInput },
+        {
+          viewers: {},
+          providers: [],
+          entries: [
+            makeEntry({
+              projectId,
+              host: "github.com",
+              title: "Public merged PR",
+              url: "https://github.com/acme/api/pull/7",
+              state: "merged",
+              checksState: "passing",
+              observedAt: 100,
+            }),
+            makeEntry({
+              projectId,
+              host: "github.example.com",
+              title: "Enterprise open PR",
+              url: "https://github.example.com/acme/api/pull/7",
+              state: "open",
+              checksState: "pending",
+              observedAt: 100,
+            }),
+          ],
+          errors: [],
+          truncated: false,
+          nextCursors: {},
+        },
+        registry,
+      );
+
+      expect(useSharedPullRequestSummary(environmentId, enterpriseRef)).toMatchObject({
+        state: "open",
+        title: "Enterprise open PR",
+        checksState: "pending",
+      });
+      expect(useSharedPullRequestSummary(environmentId, publicRef)).toMatchObject({
+        state: "merged",
+        title: "Public merged PR",
+        checksState: "passing",
+      });
+      // Mixed case and surrounding whitespace share the same normalized host key.
+      expect(
+        observedPullRequestTitle(registry, environmentId, {
+          ...enterpriseRef,
+          host: " GitHub.Example.COM ",
+        }),
+      ).toBe("Enterprise open PR");
+      expect(observedPullRequestTitle(registry, environmentId, publicRef)).toBe("Public merged PR");
+
+      // Checks, detail, edits, and linked summaries for one host must not bleed into the other.
+      yield* handlers.checks!(
+        { environmentId, input: enterpriseRef },
+        {
+          observedAt: 200,
+          state: "open",
+          checks: [
+            {
+              name: "ci",
+              status: "failure",
+              description: null,
+              url: null,
+            },
+          ],
+        },
+        registry,
+      );
+      expect(useSharedPullRequestSummary(environmentId, enterpriseRef)?.checksState).toBe(
+        "failing",
+      );
+      expect(useSharedPullRequestSummary(environmentId, publicRef)?.checksState).toBe("passing");
+
+      yield* handlers.acceptedEdit!(
+        { environmentId, input: enterpriseRef },
+        { reference: enterpriseRef, title: "Enterprise edited title" },
+        registry,
+      );
+      expect(observedPullRequestTitle(registry, environmentId, enterpriseRef)).toBe(
+        "Enterprise edited title",
+      );
+      expect(observedPullRequestTitle(registry, environmentId, publicRef)).toBe("Public merged PR");
+
+      // A hostless detail/linked summary resolves its host from the answer URL.
+      const hostlessRef: PullRequestRef = { projectId, repository: "acme/api", number: 7 };
+      yield* handlers.detail!(
+        { environmentId, input: hostlessRef },
+        makeDetail({
+          projectId,
+          repository: "acme/api",
+          number: 7,
+          title: "Enterprise detail title",
+          url: "https://github.example.com/acme/api/pull/7",
+          state: "open",
+          updatedAt: "2026-09-12T00:00:00Z",
+          observedAt: 300,
+          checks: [{ name: "ci", status: "success", description: null, url: null }],
+        }),
+        registry,
+      );
+      expect(useSharedPullRequestSummary(environmentId, enterpriseRef)).toMatchObject({
+        state: "open",
+        title: "Enterprise detail title",
+        checksState: "passing",
+      });
+      expect(useSharedPullRequestSummary(environmentId, publicRef)?.title).toBe("Public merged PR");
+
+      yield* linkedSummary(
+        { environmentId, input: hostlessRef },
+        summary({
+          projectId,
+          repository: "acme/api",
+          number: 7,
+          title: "Enterprise linked title",
+          url: "https://github.example.com/acme/api/pull/7",
+          state: "open",
+          updatedAt: "2026-09-13T00:00:00Z",
+          observedAt: 400,
+        }),
+        registry,
+      );
+      expect(observedPullRequestTitle(registry, environmentId, enterpriseRef)).toBe(
+        "Enterprise linked title",
+      );
+      expect(observedPullRequestTitle(registry, environmentId, publicRef)).toBe("Public merged PR");
+    }),
+  );
+
+  it.effect(
+    "resolves hostless references through project repository identity so they share with hostful reads",
+    () =>
+      Effect.gen(function* () {
+        const githubProjectId = ProjectId.make("project-root-github");
+        const gitlabProjectId = ProjectId.make("project-root-gitlab");
+        projectIdentities.set(`${environmentId}|${githubProjectId}`, {
+          canonicalKey: "github.com/acme/api",
+          provider: SourceControlProviderKind.make("github"),
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "https://github.com/acme/api.git",
+          },
+        });
+        projectIdentities.set(`${environmentId}|${gitlabProjectId}`, {
+          canonicalKey: "gitlab.example.com/acme/api",
+          provider: SourceControlProviderKind.make("gitlab"),
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "git@gitlab.example.com:acme/api.git",
+          },
+        });
+
+        const handlers = capturedHandlers.pullRequests!;
+        yield* handlers.list!(
+          { environmentId, input: listInput },
+          {
+            viewers: {},
+            providers: [],
+            entries: [
+              makeEntry({
+                projectId: githubProjectId,
+                host: "github.com",
+                title: "GitHub root PR",
+                url: "https://github.com/acme/api/pull/7",
+                checksState: "pending",
+                observedAt: 100,
+              }),
+              makeEntry({
+                provider: SourceControlProviderKind.make("gitlab"),
+                projectId: gitlabProjectId,
+                host: "gitlab.example.com",
+                title: "GitLab root MR",
+                url: "https://gitlab.example.com/acme/api/-/merge_requests/7",
+                checksState: "pending",
+                observedAt: 100,
+              }),
+            ],
+            errors: [],
+            truncated: false,
+            nextCursors: {},
+          },
+          registry,
+        );
+
+        const hostlessGithubRef: PullRequestRef = {
+          projectId: githubProjectId,
+          repository: "acme/api",
+          number: 7,
+        };
+        const hostlessGitlabRef: PullRequestRef = {
+          projectId: gitlabProjectId,
+          repository: "acme/api",
+          number: 7,
+        };
+
+        expect(useSharedPullRequestSummary(environmentId, hostlessGithubRef)?.title).toBe(
+          "GitHub root PR",
+        );
+        expect(observedPullRequestTitle(registry, environmentId, hostlessGithubRef)).toBe(
+          "GitHub root PR",
+        );
+        expect(useSharedPullRequestSummary(environmentId, hostlessGitlabRef)?.title).toBe(
+          "GitLab root MR",
+        );
+
+        // Hostless checks and accepted edits land in the same host-qualified entry.
+        yield* handlers.checks!(
+          { environmentId, input: hostlessGitlabRef },
+          {
+            observedAt: 200,
+            state: "open",
+            checks: [{ name: "pipeline", status: "success", description: null, url: null }],
+          },
+          registry,
+        );
+        yield* handlers.acceptedEdit!(
+          { environmentId, input: hostlessGithubRef },
+          { reference: hostlessGithubRef, title: "GitHub edited via hostless ref" },
+          registry,
+        );
+
+        expect(
+          useSharedPullRequestSummary(environmentId, {
+            ...hostlessGitlabRef,
+            host: "gitlab.example.com",
+          })?.checksState,
+        ).toBe("passing");
+        expect(
+          useSharedPullRequestSummary(environmentId, {
+            ...hostlessGithubRef,
+            host: "github.com",
+          })?.title,
+        ).toBe("GitHub edited via hostless ref");
+      }),
+  );
 });

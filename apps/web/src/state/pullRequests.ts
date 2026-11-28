@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
   applyPullRequestSummaryEdits,
@@ -9,6 +10,7 @@ import {
   pullRequestHostAnswer,
   type PullRequestPendingEdit,
 } from "@t3tools/client-runtime/state/pull-requests";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   PullRequestListResult,
   PullRequestOperationError,
@@ -16,6 +18,7 @@ import {
   type EnvironmentId,
   type ProjectId,
   type PullRequestChecksState,
+  type PullRequestDetail,
   type PullRequestFilesViewedResult,
   type PullRequestListInput,
   type PullRequestFilterOptionsInput,
@@ -23,6 +26,7 @@ import {
   type PullRequestListEntry,
   type PullRequestRef,
   type PullRequestSummary,
+  type RepositoryIdentity,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import {
@@ -47,6 +51,7 @@ import { writePullRequestDetailSnapshot } from "../components/pullRequest/pullRe
 import { pullRequestChecksState } from "../components/pullRequest/pullRequestPresentation";
 import { useGuideRunStore } from "../components/pullRequest/guide/guideRunStore";
 import { formatEnvironmentQueryError } from "./query";
+import { environmentProjects } from "./projects";
 import { environmentThreadShells } from "./threads";
 
 export interface ObservedPullRequestSummary {
@@ -112,14 +117,98 @@ export function pullRequestListEntryToSummary(entry: PullRequestListEntry): Pull
   };
 }
 
-// Project ids pin the remote host; omit host so legacy, URL, and list references share entries.
-function pullRequestSummaryKey(environmentId: EnvironmentId, reference: PullRequestRef): string {
+const EMPTY_PROJECT_ATOM = Atom.make<EnvironmentProject | null>(null).pipe(
+  Atom.withLabel("web-pull-requests:empty-project"),
+);
+
+function normalizePullRequestHost(host: string | undefined): string | undefined {
+  const normalized = host?.trim().toLowerCase();
+  return normalized ? normalized : undefined;
+}
+
+function pullRequestUrlHost(url: string | undefined): string | undefined {
+  if (url === undefined) return undefined;
+  const link = sourceControlClients.parseChangeRequestUrl(url)?.link;
+  return link === undefined ? undefined : normalizePullRequestHost(link.authority ?? link.host);
+}
+
+function resolvePullRequestSummaryHost(
+  reference: Pick<PullRequestRef, "host">,
+  identity: RepositoryIdentity | null | undefined,
+  url?: string,
+): string | undefined {
+  return (
+    normalizePullRequestHost(reference.host) ??
+    pullRequestUrlHost(url) ??
+    (identity == null
+      ? undefined
+      : normalizePullRequestHost(
+          sourceControlClients.changeRequestHost(identity, identity.provider),
+        ))
+  );
+}
+
+// Tracked folders let one project span multiple hosts, so key on the normalized host after
+// resolving hostless references from URL or project identity.
+function pullRequestSummaryKey(
+  environmentId: EnvironmentId,
+  reference: PullRequestRef,
+  identity?: RepositoryIdentity | null,
+  url?: string,
+): string {
+  const host = resolvePullRequestSummaryHost(reference, identity, url);
+  const repository = reference.repository.trim().toLowerCase();
+  if (host !== undefined) {
+    const canonical = sourceControlClients.canonicalRepositoryKey(`${host}/${repository}`);
+    const separator = canonical.indexOf("/");
+    if (separator > 0 && separator < canonical.length - 1) {
+      return JSON.stringify([
+        environmentId,
+        reference.projectId,
+        canonical.slice(0, separator),
+        canonical.slice(separator + 1),
+        reference.number,
+      ]);
+    }
+  }
   return JSON.stringify([
     environmentId,
     reference.projectId,
-    reference.repository.toLowerCase(),
+    host ?? "",
+    repository,
     reference.number,
   ]);
+}
+
+function projectIdentityForSummaryKey(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  reference: Pick<PullRequestRef, "projectId" | "host">,
+  url?: string,
+): RepositoryIdentity | null | undefined {
+  if (
+    normalizePullRequestHost(reference.host) !== undefined ||
+    pullRequestUrlHost(url) !== undefined
+  ) {
+    return undefined;
+  }
+  return registry.get(
+    environmentProjects.projectAtom(scopeProjectRef(environmentId, reference.projectId)),
+  )?.repositoryIdentity;
+}
+
+function pullRequestSummaryKeyForRegistry(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  reference: PullRequestRef,
+  url?: string,
+): string {
+  return pullRequestSummaryKey(
+    environmentId,
+    reference,
+    projectIdentityForSummaryKey(registry, environmentId, reference, url),
+    url,
+  );
 }
 
 export function newestPullRequestObservation(
@@ -436,17 +525,25 @@ export function subscribePullRequestFilesViewedAnswers(
 export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
   acceptedEdit: ({ environmentId, input }, edit, registry) =>
     Effect.map(Clock.currentTimeMillis, (observedAt) => {
+      const identity = projectIdentityForSummaryKey(registry, environmentId, input);
+      const resolvedHost = resolvePullRequestSummaryHost(input, identity);
       const saved = registry.get(
-        savedPullRequestSummaryAtom(savedPullRequestKey(environmentId, input)),
+        savedPullRequestSummaryAtom(
+          savedPullRequestKey(environmentId, { ...input, host: resolvedHost }),
+        ),
       );
-      recordObservation(registry, pullRequestSummaryKey(environmentId, input), (current) => {
-        const summary = applyPullRequestSummaryEdits(
-          input,
-          newestPullRequestSummary(saved, observedPullRequestSummary(current)),
-          [edit],
-        );
-        return summary === null ? current : { ...current, metadata: { summary, observedAt } };
-      });
+      recordObservation(
+        registry,
+        pullRequestSummaryKey(environmentId, input, identity),
+        (current) => {
+          const summary = applyPullRequestSummaryEdits(
+            input,
+            newestPullRequestSummary(saved, observedPullRequestSummary(current)),
+            [edit],
+          );
+          return summary === null ? current : { ...current, metadata: { summary, observedAt } };
+        },
+      );
     }),
   filesViewed: (target, answer) =>
     Effect.sync(() => {
@@ -459,7 +556,7 @@ export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connecti
       for (const entry of answer.entries) {
         observePullRequestSummary(
           registry,
-          pullRequestSummaryKey(environmentId, entry),
+          pullRequestSummaryKeyForRegistry(registry, environmentId, entry, entry.url),
           pullRequestListEntryToSummary(entry),
           observedAt,
         );
@@ -473,7 +570,7 @@ export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connecti
       }
       observePullRequestSummary(
         registry,
-        pullRequestSummaryKey(environmentId, input),
+        pullRequestSummaryKeyForRegistry(registry, environmentId, input, detail.url),
         { ...detail, checksState: pullRequestChecksState(detail.checks) },
         at,
       );
@@ -481,12 +578,15 @@ export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connecti
   checks: ({ environmentId, input }, checks, registry) =>
     Effect.map(Clock.currentTimeMillis, (observedAt) => {
       if (checks === null) return;
-      recordObservation(registry, pullRequestSummaryKey(environmentId, input), (current) =>
-        observePullRequestChecks(current, {
-          checksState: pullRequestChecksState(checks.checks),
-          readAt: checks.observedAt,
-          observedAt,
-        }),
+      recordObservation(
+        registry,
+        pullRequestSummaryKeyForRegistry(registry, environmentId, input),
+        (current) =>
+          observePullRequestChecks(current, {
+            checksState: pullRequestChecksState(checks.checks),
+            readAt: checks.observedAt,
+            observedAt,
+          }),
       );
     }),
   // Covers runs started elsewhere (another client, an agent) as well as this client's own.
@@ -512,7 +612,7 @@ export const linkedPullRequestDetailAtom = createLinkedPullRequestSummaryAtomFam
     Effect.map(Clock.currentTimeMillis, (observedAt) =>
       observePullRequestSummary(
         registry,
-        pullRequestSummaryKey(environmentId, input),
+        pullRequestSummaryKeyForRegistry(registry, environmentId, input, summary.url),
         summary,
         observedAt,
       ),
@@ -573,8 +673,11 @@ export function observedPullRequestTitle(
   reference: PullRequestRef,
 ): string | null {
   return (
-    registry.get(pullRequestObservationsAtom(pullRequestSummaryKey(environmentId, reference)))
-      .metadata?.summary.title ?? null
+    registry.get(
+      pullRequestObservationsAtom(
+        pullRequestSummaryKeyForRegistry(registry, environmentId, reference),
+      ),
+    ).metadata?.summary.title ?? null
   );
 }
 
@@ -583,10 +686,22 @@ export function useSharedPullRequestSummary(
   environmentId: EnvironmentId | null,
   reference: PullRequestRef | null,
 ): PullRequestSummary | null {
+  const needsProjectHost =
+    environmentId !== null &&
+    reference !== null &&
+    normalizePullRequestHost(reference.host) === undefined;
+  const project = useAtomValue(
+    needsProjectHost
+      ? environmentProjects.projectAtom(scopeProjectRef(environmentId, reference.projectId))
+      : EMPTY_PROJECT_ATOM,
+  );
+  const identity = project?.repositoryIdentity;
+  const resolvedHost =
+    reference === null ? undefined : resolvePullRequestSummaryHost(reference, identity);
   const key =
     environmentId === null || reference === null
       ? "none"
-      : pullRequestSummaryKey(environmentId, reference);
+      : pullRequestSummaryKey(environmentId, reference, identity);
   // Selected, so a reread that changes no field leaves its readers alone.
   const observed = useAtomValue(pullRequestObservationsAtom(key), observedPullRequestSummary);
   const edits = useAtomValue(pullRequestPendingEditsFor(environmentId, reference));
@@ -594,7 +709,7 @@ export function useSharedPullRequestSummary(
     savedPullRequestSummaryAtom(
       environmentId === null || reference === null
         ? ""
-        : savedPullRequestKey(environmentId, reference),
+        : savedPullRequestKey(environmentId, { ...reference, host: resolvedHost }),
     ),
   );
   return applyPullRequestSummaryEdits(reference, newestPullRequestSummary(saved, observed), edits);
@@ -625,6 +740,11 @@ const failedListObservedAt = new WeakMap<object, number>();
 const isUnavailableList = Schema.is(PullRequestUnavailableError);
 const isFailedList = Schema.is(PullRequestOperationError);
 
+function isPullRequestNotFoundCause(cause: Cause.Cause<unknown>): boolean {
+  const failure = Option.getOrNull(Cause.findErrorOption(cause));
+  return isFailedList(failure) && failure.reason === "not-found";
+}
+
 export function observeFailedPullRequestList(
   result: AsyncResult.Failure<PullRequestListResult, unknown>,
 ): { readonly value: PullRequestListResult; readonly observedAt: number } | undefined {
@@ -647,9 +767,12 @@ function createMergedEnvironmentQuery<Input, A>(
   atomFor: (
     target: EnvironmentQueryTarget<Input>,
   ) => Atom.Atom<AsyncResult.AsyncResult<A, unknown>>,
-  observeFailure?: (
-    result: AsyncResult.Failure<A, unknown>,
-  ) => { readonly value: A; readonly observedAt: number } | undefined,
+  options?: {
+    readonly observeFailure?: (
+      result: AsyncResult.Failure<A, unknown>,
+    ) => { readonly value: A; readonly observedAt: number } | undefined;
+    readonly ignoreFailure?: (cause: Cause.Cause<unknown>) => boolean;
+  },
 ) {
   const family = Atom.family((key: string) =>
     Atom.make((get): MergedEnvironmentQueryView<A> => {
@@ -663,7 +786,11 @@ function createMergedEnvironmentQuery<Input, A>(
         const result = get(atomFor(target));
         isPending ||= result.waiting;
         if (result.waiting) pendingEnvironments.add(target.environmentId);
-        if (result._tag === "Failure" && error === null) {
+        if (
+          result._tag === "Failure" &&
+          error === null &&
+          options?.ignoreFailure?.(result.cause) !== true
+        ) {
           error = {
             environmentId: target.environmentId,
             message: formatEnvironmentQueryError(result.cause),
@@ -674,7 +801,7 @@ function createMergedEnvironmentQuery<Input, A>(
         if (result._tag === "Success") {
           observations.push([target.environmentId, result.value, result.timestamp]);
         } else if (result._tag === "Failure") {
-          const observation = observeFailure?.(result);
+          const observation = options?.observeFailure?.(result);
           if (observation !== undefined) {
             observations.push([target.environmentId, observation.value, observation.observedAt]);
           }
@@ -724,18 +851,24 @@ const usePullRequestHostListsQuery = createMergedEnvironmentQuery(
   "web-pull-requests:host-list",
   (target: EnvironmentQueryTarget<PullRequestListInput>) =>
     pullRequestHostAnswer(pullRequestEnvironment.list(target)),
-  observeFailedPullRequestList,
+  { observeFailure: observeFailedPullRequestList },
 );
 
 const usePullRequestListsQuery = createMergedEnvironmentQuery(
   "web-pull-requests:list",
   pullRequestEnvironment.list,
-  observeFailedPullRequestList,
+  { observeFailure: observeFailedPullRequestList },
 );
 
 const usePullRequestStatsQuery = createMergedEnvironmentQuery(
   "web-pull-requests:list-stats",
   pullRequestEnvironment.listStats,
+);
+
+const usePullRequestDetailsQuery = createMergedEnvironmentQuery(
+  "web-pull-requests:detail",
+  pullRequestEnvironment.detail,
+  { ignoreFailure: isPullRequestNotFoundCause },
 );
 
 const usePullRequestFilterOptionsQuery = createMergedEnvironmentQuery(
@@ -800,6 +933,21 @@ export function usePullRequestHostList(
     observations: query.observations,
     refresh: query.refresh,
     retry: query.retry,
+  };
+}
+
+export function usePullRequestDetails(
+  targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestRef>>,
+): {
+  readonly details: ReadonlyArray<PullRequestDetail>;
+  readonly error: EnvironmentQueryError | null;
+  readonly isPending: boolean;
+} {
+  const query = usePullRequestDetailsQuery(targets);
+  return {
+    details: query.values.map(([, detail]) => detail),
+    error: query.error,
+    isPending: query.isPending,
   };
 }
 

@@ -259,6 +259,7 @@ export function useComposerCommandMenu({
   projectCwd,
   pullRequestProjectId = null,
   pullRequestRepository = null,
+  pullRequestHasTrackedFolders = false,
   threadPullRequests,
   selectedProviderStatus,
   hasThread,
@@ -284,6 +285,7 @@ export function useComposerCommandMenu({
   readonly projectCwd: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
   readonly pullRequestRepository?: string | null;
+  readonly pullRequestHasTrackedFolders?: boolean;
   readonly threadPullRequests?: ReadonlyArray<ThreadPullRequestLink>;
   readonly selectedProviderStatus: ServerProvider | null;
   readonly hasThread: boolean;
@@ -367,6 +369,7 @@ export function useComposerCommandMenu({
     environmentId,
     projectId: pullRequestProjectId,
     repository: pullRequestRepository,
+    hasTrackedFolders: pullRequestHasTrackedFolders,
     threadPullRequests,
     query: trigger?.kind === "pull-request" ? trigger.query : null,
   });
@@ -704,7 +707,9 @@ export function useComposerCommandMenu({
       trigger?.kind === "pull-request" ? pullRequestSearch.isPending : pathSearch.isPending,
     error:
       trigger?.kind === "pull-request"
-        ? pullRequestProjectId === null || pullRequestRepository === null
+        ? pullRequestProjectId === null ||
+          (pullRequestRepository === null &&
+            (!pullRequestHasTrackedFolders || pullRequestSearch.unavailable))
           ? gt("Pull requests are unavailable for this project.")
           : pullRequestSearch.error
         : null,

@@ -442,6 +442,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     projectCwd: props.projectCwd,
     pullRequestProjectId: props.serverConfig ? (project?.id ?? null) : null,
     pullRequestRepository: project?.repositoryIdentity?.displayName ?? null,
+    pullRequestHasTrackedFolders: props.serverConfig
+      ? (project?.trackedFolders?.length ?? 0) > 0
+      : false,
     threadPullRequests: props.selectedThread.pullRequests,
     selectedProviderStatus,
     hasThread: !props.isDraft,

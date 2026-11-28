@@ -897,6 +897,7 @@ function PullRequestSurfaceIcon({
   ).data;
   const reference = {
     projectId: surface.projectId as ProjectId,
+    ...(host !== null ? { host } : {}),
     repository: surface.repository,
     number: surface.number,
   };
