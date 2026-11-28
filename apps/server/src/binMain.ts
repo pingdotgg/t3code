@@ -11,6 +11,8 @@ export async function runCliCommand() {
     await import("./outboundHttp.ts");
   ignoreMacosTypeOfServiceEinval();
   extendConnectionAttemptTimeout();
+  const { patchAndroidHardlinkFallback } = await import("./androidCompat.ts");
+  patchAndroidHardlinkFallback();
   if (command === "__document-text") {
     const { extractDocumentText } = await import("./provider/documentTextWorker.ts");
     try {
