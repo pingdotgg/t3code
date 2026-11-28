@@ -66,7 +66,7 @@ export function ProjectsSettings() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {environment ? (
-        <div className="shrink-0 border-b border-border/60 px-6 py-3">
+        <div className="shrink-0 border-b border-divider px-6 py-3">
           <SettingsRow
             title={gt("Import projects and their threads")}
             description={environment.label}
