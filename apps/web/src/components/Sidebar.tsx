@@ -2248,10 +2248,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         : plan.kind === "reorder-pinned" || plan.kind === "move-active"
           ? plan.assignments
           : [];
+    const mutationThreadByKey = new Map(
+      listedThreads.map((thread) => [threadShellKey(thread), thread]),
+    );
     if (
       !checkThreadOperations(
         [activeKey, ...assignments.map(({ id }) => id)].flatMap((key) => {
-          const thread = threadByKey.get(key);
+          const thread = mutationThreadByKey.get(key);
           return thread ? [thread] : [];
         }),
       )
@@ -2342,7 +2345,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }
       const keyWrites = plan.kind === "pin" ? plan.extraAssignments : plan.assignments;
       for (const assignment of keyWrites) {
-        const thread = threadByKey.get(assignment.id);
+        const thread = mutationThreadByKey.get(assignment.id);
         if (thread === undefined) continue;
         if (
           !(await run(

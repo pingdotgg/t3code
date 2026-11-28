@@ -1,5 +1,6 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -9,8 +10,11 @@ import { AppRoot } from "~/AppRoot";
 import "~/components/ChatView";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { getRouter } from "~/router";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { threadEnvironment } from "~/state/threads";
 import {
   ENVIRONMENT_ID,
+  dispatchedCommands,
   installFakeEnvironment,
   threadWithHistory,
   type FakeDriver,
@@ -140,4 +144,101 @@ it("keeps focus in the search box when a click picks a search result", async () 
   expect(onSelect).toHaveBeenCalledOnce();
   // A focused result would take focus from the search box, and its recovery scrolls the list.
   await expect.element(search).toHaveFocus();
+});
+
+it("writes order keys for hidden keyless pins when dropping onto their closed shelf", async () => {
+  appAtomRegistry.reset();
+  using _registry = { [Symbol.dispose]: () => appAtomRegistry.reset() };
+  await page.viewport(1400, 900);
+  const [first, second, moving] = [
+    threadWithHistory("keyless-one", 1),
+    threadWithHistory("keyless-two", 1),
+    threadWithHistory("moving", 1),
+  ];
+  using _environment = installFakeEnvironment([first, second, moving], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${moving.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const source = page.getByTestId("sidebar-row-card").filter({ hasText: moving.title });
+  await expect.element(source).toBeInTheDocument();
+  for (const thread of [first, second]) {
+    await act(async () => {
+      const result = await runAtomCommand(appAtomRegistry, threadEnvironment.pin, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: thread.id },
+      });
+      expect(result._tag).toBe("Success");
+    });
+  }
+  const shelf = page.getByTestId("sidebar-pinned-shelf-toggle");
+  await expect.element(shelf).toHaveTextContent("Pinned2");
+  if (shelf.element().getAttribute("aria-expanded") === "false") await userEvent.click(shelf);
+  shelf.element().focus();
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByText(first.title, { exact: true })).not.toBeInTheDocument();
+  const start = source.element().getBoundingClientRect();
+  const end = shelf.element().getBoundingClientRect();
+  const pointer = {
+    bubbles: true,
+    cancelable: true,
+    pointerId: 1,
+    isPrimary: true,
+    button: 0,
+    buttons: 1,
+  };
+  using _release = {
+    [Symbol.dispose]: () => document.dispatchEvent(new PointerEvent("pointercancel", pointer)),
+  };
+  await act(() => {
+    source.element().dispatchEvent(
+      new PointerEvent("pointerdown", {
+        ...pointer,
+        clientX: start.x + 80,
+        clientY: start.y + 40,
+      }),
+    );
+    document.dispatchEvent(
+      new PointerEvent("pointermove", {
+        ...pointer,
+        clientX: start.x + 90,
+        clientY: start.y + 40,
+      }),
+    );
+  });
+  await act(() =>
+    document.dispatchEvent(
+      new PointerEvent("pointermove", {
+        ...pointer,
+        clientX: end.x + 80,
+        clientY: end.y + 16,
+      }),
+    ),
+  );
+  await expect.element(page.getByText("Pin", { exact: true })).toBeVisible();
+  await act(() =>
+    document.dispatchEvent(
+      new PointerEvent("pointerup", {
+        ...pointer,
+        buttons: 0,
+        clientX: end.x + 80,
+        clientY: end.y + 16,
+      }),
+    ),
+  );
+  await vi.waitFor(() =>
+    expect(
+      dispatchedCommands()
+        .filter((command) => command.type === "thread.pin.reorder")
+        .map((command) => command.threadId),
+    ).toEqual([first.id, second.id]),
+  );
 });
