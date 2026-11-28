@@ -1,4 +1,9 @@
-import { CommandId, type ModelSelection, type ThreadId } from "@t3tools/contracts";
+import {
+  type BotAvatarChoice,
+  CommandId,
+  type ModelSelection,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -381,6 +386,13 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    setBotAvatar: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-bot-avatar",
+      execute: (input: UpdateThreadMetadataInput & { readonly botAvatar: BotAvatarChoice }) =>
+        updateThreadMetadata(input),
+      scheduler,
+      concurrency,
+    }),
     setModelSelection: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:set-model-selection",
       execute: (input: UpdateThreadMetadataInput & { readonly modelSelection: ModelSelection }) =>
@@ -694,6 +706,13 @@ export function createThreadEnvironmentAtoms<R, E>(
         thread.botConfig == null
           ? thread.botConfig
           : { ...thread.botConfig, muteChildren: input.botMuteChildren },
+    })),
+    setBotAvatar: optimistic.wrap(commands.setBotAvatar, (thread, input) => ({
+      ...thread,
+      botConfig:
+        thread.botConfig == null
+          ? thread.botConfig
+          : { ...thread.botConfig, avatar: input.botAvatar },
     })),
     // Shown at once, so a composer that releases its accepted pick keeps showing it.
     setModelSelection: optimistic.wrap(commands.setModelSelection, (thread, input) => ({

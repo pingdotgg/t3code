@@ -8,12 +8,50 @@ import { ModelSelection } from "./modelSelection.ts";
  * when its workers or what it watches reaches a milestone.
  * Set when the thread is created; a thread never changes role mid-conversation.
  */
+/** The avatar shapes a Bot can wear, drawn by `open-bot-avatar` on every client. */
+const BOT_AVATAR_SHAPES = [
+  "controller",
+  "barbell",
+  "mug",
+  "lightbulb",
+  "chat",
+  "sprout",
+  "watering-can",
+  "book",
+  "brain",
+  "bull",
+  "bunny",
+  "camera",
+  "cat",
+  "cloud",
+  "egg",
+  "ghost",
+  "magnifier",
+  "paint-brush",
+  "palette",
+  "rocket",
+  "shield",
+  "star",
+  "witch-hat",
+] as const;
+export const BotAvatarShape = Schema.Literals(BOT_AVATAR_SHAPES);
+export type BotAvatarShape = typeof BotAvatarShape.Type;
+
+/** A Bot's chosen avatar: a shape and a `#rrggbb` color. */
+export const BotAvatarChoice = Schema.Struct({
+  shape: BotAvatarShape,
+  color: Schema.String.check(Schema.isPattern(/^#[0-9a-f]{6}$/i)),
+});
+export type BotAvatarChoice = typeof BotAvatarChoice.Type;
+
 export const ThreadBotConfig = Schema.Struct({
   enabled: Schema.Literal(true),
   /** Worker threads surface only when they need input; their other updates stay quiet. */
   muteChildren: Schema.Boolean,
   /** Its chat opens with the Bot asking what to look after, and the user's reply is its first turn. */
   greets: Schema.optional(Schema.Literal(true)),
+  /** Absent: the avatar is picked from the thread id. */
+  avatar: Schema.optional(BotAvatarChoice),
 });
 export type ThreadBotConfig = typeof ThreadBotConfig.Type;
 

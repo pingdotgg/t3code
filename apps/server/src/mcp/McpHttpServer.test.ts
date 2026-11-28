@@ -2488,6 +2488,7 @@ it.effect("lists and runs Bot tools only for a Bot thread, deferred or not", () 
         });
 
       const botTools = [
+        "t3_bot_avatar_set",
         "t3_bot_memory_read",
         "t3_bot_note_delete",
         "t3_bot_note_read",

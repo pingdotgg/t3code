@@ -856,6 +856,7 @@ const ORGANIZE_ONLY_METADATA_KEYS: ReadonlySet<string> = new Set([
   "threadId",
   "groupedUnderThreadId",
   "botMuteChildren",
+  "botAvatar",
 ]);
 
 function isOrganizeOnlyMetadataUpdate(
@@ -4656,7 +4657,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandType: command.type,
           cause,
         });
-      if (command.botMuteChildren !== undefined && thread.botConfig == null) {
+      if (
+        (command.botMuteChildren !== undefined || command.botAvatar !== undefined) &&
+        thread.botConfig == null
+      ) {
         return yield* refuse(`Thread ${command.threadId} is not a Bot.`);
       }
       const leaderId = command.groupedUnderThreadId;
@@ -5370,9 +5374,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(command.groupedUnderThreadId === undefined
               ? {}
               : { groupedUnderThreadId: command.groupedUnderThreadId }),
-            ...(command.botMuteChildren === undefined || thread.botConfig == null
+            ...(thread.botConfig == null ||
+            (command.botMuteChildren === undefined && command.botAvatar === undefined)
               ? {}
-              : { botConfig: { ...thread.botConfig, muteChildren: command.botMuteChildren } }),
+              : {
+                  botConfig: {
+                    ...thread.botConfig,
+                    ...(command.botMuteChildren === undefined
+                      ? {}
+                      : { muteChildren: command.botMuteChildren }),
+                    ...(command.botAvatar === undefined ? {} : { avatar: command.botAvatar }),
+                  },
+                }),
             // Grouping and worker muting arrange the sidebar; they are not activity on the thread.
             updatedAt: isOrganizeOnlyMetadataUpdate(command) ? thread.updatedAt : now,
           };

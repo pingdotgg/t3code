@@ -84,6 +84,28 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.map((item) => item.id)).not.toContain("mark-unread");
   });
 
+  it("gives a Bot only the actions that apply to it, with its worker muting", () => {
+    const bot = (mutesWorkers: boolean) =>
+      buildThreadActionMenuItems({
+        ...baseState,
+        branch: "main",
+        projectFilter: { label: "No project", isActive: false },
+        canTurnIntoProject: true,
+        grouping: { isBot: true, isGrouped: false, hasWorkers: true, mutesWorkers },
+      }).map((item) => item.id);
+    expect(bot(false)).toEqual([
+      "rename",
+      "mute-workers",
+      "mark-unread",
+      "settle",
+      "ungroup",
+      "copy",
+      "archive",
+      "delete",
+    ]);
+    expect(bot(true)).toContain("unmute-workers");
+  });
+
   it("disables only rename where no inline title editor exists", () => {
     const items = buildThreadActionMenuItems({ ...baseState, canRename: false });
     expect(items.filter((item) => item.disabled).map((item) => item.id)).toEqual(["rename"]);

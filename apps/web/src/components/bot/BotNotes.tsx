@@ -6,10 +6,17 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
+  BOT_AVATAR_COLORS,
+  BOT_AVATAR_GALLERY,
+  botAvatarFor,
+} from "@t3tools/client-runtime/state/bot-avatar";
+import {
   BOT_FILE_MAX_CHARS,
   type BotFilesReadResult,
   type BotNote,
   type BotNoteSummary,
+  type BotAvatarChoice,
+  type BotAvatarShape,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { PlusIcon } from "lucide-react";
@@ -24,6 +31,9 @@ import { useQuietThreadShell } from "~/state/entities";
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useOrchestrationCommand } from "~/state/use-orchestration-command";
+import { threadEnvironment } from "~/state/threads";
+import { cn } from "~/lib/utils";
 import { RelativeTime } from "../RelativeTime";
 import { Button } from "../ui/button";
 import {
@@ -39,7 +49,9 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { noteSlugFromTitle } from "./BotNotes.logic";
+import { BotAvatar } from "./BotAvatar";
 
 type OpenNote = { readonly kind: "new" } | { readonly kind: "note"; readonly slug: string };
 
@@ -438,6 +450,97 @@ function BotFiles(props: {
   );
 }
 
+function AvatarPicker(props: {
+  threadRef: ScopedThreadRef;
+  choice: BotAvatarChoice | null;
+  canWrite: boolean;
+}) {
+  const gt = useGT();
+  const setAvatar = useOrchestrationCommand(threadEnvironment.setBotAvatar, {
+    reportFailure: false,
+  });
+  const current = botAvatarFor(props.threadRef.threadId, props.choice);
+  const pick = (avatar: BotAvatarChoice) =>
+    void setAvatar({
+      environmentId: props.threadRef.environmentId,
+      input: { threadId: props.threadRef.threadId, botAvatar: avatar },
+    }).then((result) => {
+      const message = failureMessage(result, gt("An error occurred."));
+      if (message !== null) {
+        toastManager.add({
+          type: "error",
+          title: gt("Failed to update Bot"),
+          description: message,
+        });
+      }
+    });
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <Label render={<span />}>
+        <T>Avatar</T>
+      </Label>
+      <Popover>
+        <PopoverTrigger
+          disabled={!props.canWrite}
+          render={<Button type="button" variant="ghost-muted" size="icon-sm" />}
+          aria-label={gt("Change avatar")}
+        >
+          <BotAvatar
+            threadId={props.threadRef.threadId}
+            choice={props.choice}
+            state="idle"
+            size={20}
+          />
+        </PopoverTrigger>
+        <PopoverPopup side="left" align="start" className="w-64">
+          <div className="grid grid-cols-6 gap-1">
+            {BOT_AVATAR_GALLERY.map((avatar) => {
+              const shape = avatar.definition.id as BotAvatarShape;
+              const selected = shape === current.definition.id;
+              return (
+                <button
+                  key={shape}
+                  type="button"
+                  aria-label={avatar.definition.name}
+                  aria-pressed={selected}
+                  onClick={() => pick({ shape, color: current.color })}
+                  className={cn(
+                    "flex size-9 items-center justify-center rounded-md outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                    selected && "bg-accent",
+                  )}
+                >
+                  <BotAvatar
+                    threadId={props.threadRef.threadId}
+                    choice={{ shape, color: current.color }}
+                    state="idle"
+                    size={24}
+                  />
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5 border-t border-border/60 pt-2">
+            {BOT_AVATAR_COLORS.map((color) => (
+              <button
+                key={color}
+                type="button"
+                aria-label={color}
+                aria-pressed={color === current.color}
+                onClick={() => pick({ shape: current.definition.id as BotAvatarShape, color })}
+                className={cn(
+                  "size-5 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-foreground",
+                  color === current.color && "ring-2 ring-inset ring-foreground/70",
+                )}
+                style={{ backgroundColor: color }}
+              />
+            ))}
+          </div>
+        </PopoverPopup>
+      </Popover>
+    </div>
+  );
+}
+
 /** A Bot's instructions, notes and worker muting, on its page. */
 export function BotNotes(props: { threadRef: ScopedThreadRef }) {
   const thread = useQuietThreadShell(props.threadRef);
@@ -463,6 +566,11 @@ export function BotNotes(props: { threadRef: ScopedThreadRef }) {
   if (botConfig == null) return null;
   return (
     <div className="flex flex-col gap-3 px-2.5">
+      <AvatarPicker
+        threadRef={props.threadRef}
+        choice={botConfig.avatar ?? null}
+        canWrite={canWrite}
+      />
       <div className="flex items-center justify-between gap-3">
         <Label htmlFor="bot-mute-workers">
           <T>Mute worker updates</T>

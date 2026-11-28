@@ -19,6 +19,7 @@ import { BotAvatar } from "../bot/BotAvatar";
 import { type BotAvatarState, resolveBotStatus } from "../bot/botStatus";
 import { openNewBotDialog } from "../chat/NewBotDialog";
 import { Badge } from "../ui/badge";
+import { ThreadRenameInput } from "./SidebarThreadRow";
 
 // Long enough for a state change to read as the Bot reacting, short enough not to keep painting.
 const REACTION_MS = 2000;
@@ -32,10 +33,20 @@ type ThreadContextMenuHandler = (
 const ROW_CLASS =
   "flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
+/** The sidebar's one inline rename, shared with thread rows. */
+export interface SidebarRename {
+  readonly threadKey: string | null;
+  readonly title: string;
+  readonly onTitleChange: (title: string) => void;
+  readonly onCommit: (threadRef: ScopedThreadRef, title: string) => void;
+  readonly onCancel: () => void;
+}
+
 function BotRow(props: {
   bot: EnvironmentThreadShell;
   board: BotWorkersBoard<EnvironmentThreadShell>;
   isActive: boolean;
+  rename: SidebarRename;
   onNavigate: (threadRef: ScopedThreadRef) => void;
   onContextMenu: ThreadContextMenuHandler;
 }) {
@@ -55,6 +66,31 @@ function BotRow(props: {
     const timer = setTimeout(() => setReactingTo(null), REACTION_MS);
     return () => clearTimeout(timer);
   }, [reactingTo]);
+  const avatar = (
+    <BotAvatar
+      threadId={props.bot.id}
+      choice={props.bot.botConfig?.avatar}
+      state={status.state}
+      size={20}
+      live={hovered || reactingTo !== null}
+    />
+  );
+  // An input cannot sit inside the row's button, so renaming swaps the row for a plain one.
+  if (props.rename.threadKey === scopedThreadKey(threadRef)) {
+    return (
+      <li>
+        <div className={cn(ROW_CLASS, "bg-sidebar-row-active text-sidebar-foreground")}>
+          {avatar}
+          <ThreadRenameInput
+            title={props.rename.title}
+            onTitleChange={props.rename.onTitleChange}
+            onCommit={() => props.rename.onCommit(threadRef, props.rename.title)}
+            onCancel={props.rename.onCancel}
+          />
+        </div>
+      </li>
+    );
+  }
   return (
     <li>
       <button
@@ -78,12 +114,7 @@ function BotRow(props: {
             : "text-sidebar-foreground hover:bg-sidebar-row-hover",
         )}
       >
-        <BotAvatar
-          threadId={props.bot.id}
-          state={status.state}
-          size={20}
-          live={hovered || reactingTo !== null}
-        />
+        {avatar}
         <span className="min-w-0 flex-1 truncate">{props.bot.title}</span>
         {status.needsYou > 0 ? (
           <Badge variant="warning" size="sm">
@@ -131,6 +162,7 @@ function NewBotRow() {
 export function SidebarBotBlock(props: {
   botGroups: BotGroups<EnvironmentThreadShell>;
   routeThreadKey: string | null;
+  rename: SidebarRename;
   onNavigate: (threadRef: ScopedThreadRef) => void;
   onContextMenu: ThreadContextMenuHandler;
 }) {
@@ -155,6 +187,7 @@ export function SidebarBotBlock(props: {
             bot={bot}
             board={board}
             isActive={isActive}
+            rename={props.rename}
             onNavigate={props.onNavigate}
             onContextMenu={props.onContextMenu}
           />

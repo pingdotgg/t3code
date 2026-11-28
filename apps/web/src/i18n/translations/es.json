@@ -13084,5 +13084,14 @@
   "948b08d3848c400a": "Trabajadores terminados",
   "7fc043db70cdbe3f": "Máquina",
   "4d1c5a04868decc5": "¡Hola! ¿De qué me encargo por ti? Cuéntame el trabajo y cómo te gusta que se haga, y me configuro a partir de ahí.",
-  "df297d70075ed0cc": "Un Bot coordina otros hilos por ti. Elige dónde se ejecuta y su modelo, y luego dile en el chat de qué debe encargarse."
+  "df297d70075ed0cc": "Un Bot coordina otros hilos por ti. Elige dónde se ejecuta y su modelo, y luego dile en el chat de qué debe encargarse.",
+  "bf19ead7c340cdce": "Cambiar nombre del Bot",
+  "e74c139fdaf52c75": "Reactivar avisos de trabajadores",
+  "cd9e3ca7c13821f2": "Silenciar avisos de trabajadores",
+  "9ff48a833e870c6d": "Reabrir Bot",
+  "bcdef9bee5d72cc2": "Resolver Bot",
+  "cc94ed65a7458c93": "Liberar trabajadores",
+  "7753abe343657f04": "Archivar Bot",
+  "499f37587cce8356": "Cambiar avatar",
+  "f11d8c9f4a9ee220": "Avatar"
 }

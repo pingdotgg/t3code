@@ -98,6 +98,13 @@ export const layer = McpToolAccess.toLayer(BotToolkit, {
       return { saved: true };
     }),
   ),
+  t3_bot_avatar_set: McpToolAccess.actsAsCaller((avatar) =>
+    Effect.gen(function* () {
+      const { bots, threadId } = yield* callerBot;
+      yield* bots.setAvatar({ threadId, avatar }).pipe(Effect.mapError(botFailure));
+      return { saved: true };
+    }),
+  ),
   t3_bot_watch_add: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const { bots, threadId } = yield* callerBot;

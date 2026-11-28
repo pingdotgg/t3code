@@ -47,6 +47,7 @@ export function threadGroupingMenuState(
     isBot: thread.botConfig != null,
     isGrouped: thread.groupedUnderThreadId != null,
     hasWorkers: workersOf(thread, threads).length > 0,
+    ...(thread.botConfig == null ? {} : { mutesWorkers: thread.botConfig.muteChildren }),
   };
 }
 
@@ -79,11 +80,17 @@ export function resolveBulkGroupLeader<
 
 export type ThreadGroupingAction = Extract<
   ThreadActionMenuId,
-  "start-bot" | "remove-from-group" | "ungroup"
+  "start-bot" | "remove-from-group" | "ungroup" | "mute-workers" | "unmute-workers"
 >;
 
 export function isThreadGroupingAction(action: ThreadActionMenuId): action is ThreadGroupingAction {
-  return action === "start-bot" || action === "remove-from-group" || action === "ungroup";
+  return (
+    action === "start-bot" ||
+    action === "remove-from-group" ||
+    action === "ungroup" ||
+    action === "mute-workers" ||
+    action === "unmute-workers"
+  );
 }
 
 function reportFailure(title: string, result: Parameters<typeof isAtomCommandInterrupted>[0]) {
@@ -140,6 +147,10 @@ export function useThreadGroupingActions() {
     switch (action) {
       case "start-bot":
         return startBot(threadRef);
+      case "mute-workers":
+        return setMuteWorkers(threadRef, true);
+      case "unmute-workers":
+        return setMuteWorkers(threadRef, false);
       case "remove-from-group":
         return reportFailure(m(msg("Failed to update group")), await group(threadRef, null));
       case "ungroup": {

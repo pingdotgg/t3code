@@ -13,6 +13,7 @@ export function BotHeaderAvatar(props: { threadRef: ScopedThreadRef }) {
     <span className="mr-2 shrink-0">
       <BotAvatar
         threadId={bot.id}
+        choice={bot.botConfig?.avatar}
         state={resolveBotStatus(bot, board).state}
         size={22}
         live

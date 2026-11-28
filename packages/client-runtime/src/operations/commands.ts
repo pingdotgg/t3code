@@ -2,6 +2,7 @@ import { msg } from "gt-i18n";
 import { translatableMessage } from "../errors/translatable.ts";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import {
+  type BotAvatarChoice,
   type ThreadLinkedPullRequest,
   CommandId,
   CheckpointId,
@@ -161,6 +162,8 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly groupedUnderThreadId?: ThreadId | null;
   /** Mute or unmute a Bot's workers. */
   readonly botMuteChildren?: boolean;
+  /** Set a Bot's avatar. */
+  readonly botAvatar?: BotAvatarChoice;
 }
 
 export interface SetThreadRuntimeModeInput extends ThreadCommandInput {
@@ -730,7 +733,8 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
       input.linkedPullRequest !== undefined ||
       input.limitRecovery !== undefined ||
       input.groupedUnderThreadId !== undefined ||
-      input.botMuteChildren !== undefined
+      input.botMuteChildren !== undefined ||
+      input.botAvatar !== undefined
     ) {
       result = yield* dispatch({
         type: "thread.metadata.update",
@@ -749,6 +753,7 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
           ? {}
           : { groupedUnderThreadId: input.groupedUnderThreadId }),
         ...(input.botMuteChildren === undefined ? {} : { botMuteChildren: input.botMuteChildren }),
+        ...(input.botAvatar === undefined ? {} : { botAvatar: input.botAvatar }),
       });
     }
     if (input.modelSelection !== undefined) {

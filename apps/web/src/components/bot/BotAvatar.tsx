@@ -2,6 +2,7 @@ import {
   type BotAvatar as BotAvatarDefinition,
   botAvatarFor,
 } from "@t3tools/client-runtime/state/bot-avatar";
+import type { BotAvatarChoice } from "@t3tools/contracts";
 import { renderAvatarSvg, type AvatarState } from "open-bot-avatar";
 import { mountAvatar, type MountedAvatar } from "open-bot-avatar/dom";
 import { useEffect, useRef } from "react";
@@ -19,7 +20,7 @@ const STILL_TIME: Record<AvatarState, number> = {
 const stillFrames = new Map<string, string>();
 
 function stillFrame(avatar: BotAvatarDefinition, state: AvatarState): string {
-  const key = `${avatar.definition.id}:${state}`;
+  const key = `${avatar.definition.id}:${avatar.color}:${state}`;
   let frame = stillFrames.get(key);
   if (frame === undefined) {
     const svg = renderAvatarSvg(avatar.definition, {
@@ -75,12 +76,14 @@ function LiveAvatar(props: {
 /** A Bot's avatar: a still pose for its state, or the animated avatar while `live`. */
 export function BotAvatar(props: {
   threadId: string;
+  /** The avatar the Bot chose; absent picks one from its thread id. */
+  choice?: BotAvatarChoice | null | undefined;
   state: AvatarState;
   size: number;
   live?: boolean;
   followPointer?: boolean;
 }) {
-  const avatar = botAvatarFor(props.threadId);
+  const avatar = botAvatarFor(props.threadId, props.choice);
   if (props.live === true) {
     return (
       <LiveAvatar

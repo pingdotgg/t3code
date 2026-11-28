@@ -887,6 +887,7 @@ export default function ChatView(props: ChatViewProps) {
       : {
           threadId: botThreadId,
           name: botName,
+          avatar: serverThread?.botConfig?.avatar ?? null,
           greeting:
             serverThread?.botConfig?.greets === true
               ? {

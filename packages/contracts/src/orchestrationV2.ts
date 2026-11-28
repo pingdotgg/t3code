@@ -51,7 +51,7 @@ import { AuthMcpClientAccess } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
-import { ThreadBotConfig } from "./bots.ts";
+import { BotAvatarChoice, ThreadBotConfig } from "./bots.ts";
 import { ThreadTitleRegenerationOutcome } from "./threadTitle.ts";
 import {
   OrchestrationSearchThreadsInput,
@@ -3513,6 +3513,8 @@ export const OrchestrationV2Command = Schema.Union([
     groupedUnderThreadId: Schema.optional(Schema.NullOr(ThreadId)),
     /** Mutes or unmutes a Bot's workers; refused for a thread that is not a Bot. */
     botMuteChildren: Schema.optional(Schema.Boolean),
+    /** Sets a Bot's avatar; refused for a thread that is not a Bot. */
+    botAvatar: Schema.optional(BotAvatarChoice),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.link"),

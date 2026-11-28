@@ -5,6 +5,7 @@ import {
   type BotFilesReadResult,
   type BotNote,
   type BotNoteSummary,
+  type BotAvatarChoice,
   type BotCreateInput,
   type BotStartResult,
   type BotWatch,
@@ -93,6 +94,10 @@ export class BotService extends Context.Service<
     readonly appendPreference: (input: {
       readonly threadId: ThreadId;
       readonly text: string;
+    }) => Effect.Effect<void, BotError>;
+    readonly setAvatar: (input: {
+      readonly threadId: ThreadId;
+      readonly avatar: BotAvatarChoice;
     }) => Effect.Effect<void, BotError>;
     readonly watches: (botThreadId: ThreadId) => Effect.Effect<ReadonlyArray<BotWatch>>;
     readonly addWatch: (
@@ -592,6 +597,24 @@ const make = Effect.gen(function* () {
       Effect.mapError((cause) => new BotError({ threadId: leaderId, reason: "io", cause })),
     );
 
+  const setAvatar: BotService["Service"]["setAvatar"] = Effect.fn("BotService.setAvatar")(
+    function* (input) {
+      const id = yield* newId;
+      yield* threads
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`bot-avatar:${id}`),
+          threadId: input.threadId,
+          botAvatar: input.avatar,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) => new BotError({ threadId: input.threadId, reason: "io", cause }),
+          ),
+        );
+    },
+  );
+
   const moveWorkers: BotService["Service"]["moveWorkers"] = Effect.fn("BotService.moveWorkers")(
     function* (from, to) {
       const workers = yield* projectionStore
@@ -799,6 +822,7 @@ const make = Effect.gen(function* () {
     readFiles,
     writePreferences,
     appendPreference,
+    setAvatar,
     readNote,
     writeNote,
     deleteNote,

@@ -2,6 +2,7 @@ import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/models";
 import type {
+  BotAvatarChoice,
   ProviderApprovalDecision,
   ResponseContextRecord,
   RuntimeRequestId,
@@ -113,6 +114,7 @@ export interface TimelineRowSharedState {
 export interface TimelineBot {
   readonly threadId: ThreadId;
   readonly name: string;
+  readonly avatar: BotAvatarChoice | null;
   /** Set for a Bot whose chat opens with it asking what to look after. */
   readonly greeting: { readonly text: string; readonly createdAt: string } | null;
 }

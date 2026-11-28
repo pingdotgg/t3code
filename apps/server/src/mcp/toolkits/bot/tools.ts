@@ -1,4 +1,6 @@
 import {
+  BotAvatarChoice,
+  BotAvatarShape,
   BotNote,
   BotNoteSlug,
   BotNoteSummary,
@@ -138,6 +140,23 @@ const PreferencesAppend = Tool.make("t3_bot_preferences_append", {
   .annotate(Tool.OpenWorld, false)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromNonBots);
 
+const AvatarSet = Tool.make("t3_bot_avatar_set", {
+  ...shared,
+  description:
+    "Choose your avatar: a shape and a color. It shows beside your name in the sidebar and your chat.",
+  parameters: Schema.Struct({
+    shape: BotAvatarShape,
+    color: BotAvatarChoice.fields.color.annotate({ description: "A #rrggbb color." }),
+  }),
+  success: Saved,
+})
+  .annotate(Tool.Title, "Set your Bot avatar")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromNonBots);
+
 const WatchAdd = Tool.make("t3_bot_watch_add", {
   ...shared,
   description:
@@ -172,6 +191,7 @@ export const BotToolkit = Toolkit.make(
   NoteDelete,
   NoteSearch,
   PreferencesAppend,
+  AvatarSet,
   WatchAdd,
   WatchRemove,
 );

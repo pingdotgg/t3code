@@ -14,7 +14,7 @@ export function BotReplyHeader() {
   if (bot === null) return null;
   return (
     <div className="flex items-center gap-2 px-1 pb-1 text-xs font-medium text-foreground/80">
-      <BotAvatar threadId={bot.threadId} state="idle" size={20} />
+      <BotAvatar threadId={bot.threadId} choice={bot.avatar} state="idle" size={20} />
       <span className="min-w-0 truncate">{bot.name}</span>
     </div>
   );
@@ -31,7 +31,7 @@ export function BotTypingTimelineRow({
   if (bot === null || awaitingUser) return null;
   return (
     <div className="flex items-center gap-2 px-1 text-sm text-muted-foreground">
-      <BotAvatar threadId={bot.threadId} state="working" size={20} />
+      <BotAvatar threadId={bot.threadId} choice={bot.avatar} state="working" size={20} />
       <span className="min-w-0 truncate">
         {row.detail === undefined ? (
           <T>

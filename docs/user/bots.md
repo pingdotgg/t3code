@@ -22,7 +22,8 @@ workers stay out of the thread list.
   workflow runs too.
 - Bots and their workers run in Auto or Full Access, so they can work without stopping for
   approvals.
-- The panel beside a Bot's conversation holds its instructions and notes, which you can edit, and
-  can mute worker notifications other than requests for input. Its workers are listed there too.
+- The panel beside a Bot's conversation holds its avatar, instructions and notes, which you can
+  edit, and can mute worker notifications other than requests for input. Its workers are listed
+  there too. You can also ask the Bot to pick its own avatar.
 - Settle or archive a Bot when you are done: its workers go back to the thread list and it stops
   being woken. Reopen it to take them back.

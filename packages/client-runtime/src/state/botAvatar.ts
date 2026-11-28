@@ -1,3 +1,4 @@
+import type { BotAvatarChoice } from "@t3tools/contracts";
 import { examples, type AvatarDefinition } from "open-bot-avatar";
 
 // Gallery shapes and colors from github.com/DominikScholz/open-bot-avatar (MIT, © 2026 Dominik Scholz).
@@ -184,8 +185,21 @@ const AVATARS: ReadonlyArray<BotAvatar> = [...examples, ...GALLERY].map((definit
   color: COLORS[definition.id] ?? "#ff6a1a",
 }));
 
-/** A Bot's avatar, picked from its thread id so every client draws the same one. */
-export function botAvatarFor(threadId: string): BotAvatar {
+/** The gallery's colors, for a picker. */
+export const BOT_AVATAR_COLORS: ReadonlyArray<string> = [...new Set(Object.values(COLORS))];
+
+/** The shapes a Bot can pick, in the order a picker shows them. */
+export const BOT_AVATAR_GALLERY: ReadonlyArray<BotAvatar> = AVATARS;
+
+/**
+ * A Bot's avatar: the one it chose, else one picked from its thread id so every client draws the
+ * same one.
+ */
+export function botAvatarFor(threadId: string, choice?: BotAvatarChoice | null): BotAvatar {
+  if (choice != null) {
+    const chosen = AVATARS.find((avatar) => avatar.definition.id === choice.shape);
+    if (chosen !== undefined) return { definition: chosen.definition, color: choice.color };
+  }
   let hash = 0x811c9dc5;
   for (let index = 0; index < threadId.length; index++) {
     hash = Math.imul(hash ^ threadId.charCodeAt(index), 0x01000193);

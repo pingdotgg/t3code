@@ -3376,6 +3376,22 @@ it.effect("keeps thread groups one level deep without bumping activity", () =>
     const muted = yield* projections.getThread(bot);
     assert.deepEqual(muted.botConfig, { enabled: true, muteChildren: true });
     assert.deepEqual(muted.updatedAt, muted.createdAt);
+    // A Bot's avatar is set the same way, keeping its other settings.
+    const avatar = { shape: "rocket" as const, color: "#1f7cf2" };
+    const setAvatar = (threadId: ThreadId) =>
+      orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make(`avatar:${threadId}`),
+        threadId,
+        botAvatar: avatar,
+      });
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(setAvatar(leader))));
+    yield* setAvatar(bot);
+    assert.deepEqual((yield* projections.getThread(bot)).botConfig, {
+      enabled: true,
+      muteChildren: true,
+      avatar,
+    });
 
     yield* group(worker, null);
     assert.isNull((yield* projections.getThread(worker)).groupedUnderThreadId);

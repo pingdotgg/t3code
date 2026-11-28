@@ -3422,6 +3422,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             <SidebarBotBlock
               botGroups={botGroups}
               routeThreadKey={routeThreadKey}
+              rename={{
+                threadKey: renamingThreadKey,
+                title: renamingTitle,
+                onTitleChange: setRenamingTitle,
+                onCommit: commitThreadRename,
+                onCancel: cancelThreadRename,
+              }}
               onNavigate={navigateToThread}
               onContextMenu={handleThreadContextMenu}
             />
