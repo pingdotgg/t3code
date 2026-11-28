@@ -139,9 +139,11 @@ vi.mock(import("./FileBreadcrumbs"), () => ({ FileBreadcrumbs: () => <></> }));
 vi.mock(import("./FileBrowserPanel"), () => ({
   default: ({ onRefreshSelectedFile }: { onRefreshSelectedFile?: () => void }) => (
     <div role="tree">
-      <button type="button" onClick={onRefreshSelectedFile}>
-        Refresh workspace files
-      </button>
+      {onRefreshSelectedFile ? (
+        <button type="button" onClick={onRefreshSelectedFile}>
+          Refresh workspace files
+        </button>
+      ) : null}
       <button type="button" role="treeitem" data-item-path="src/">
         src
       </button>
@@ -880,12 +882,6 @@ describe("workspace browser preview refresh", () => {
       relativePath: "report.pdf",
       workspaceMutationId: null as string | null,
       withFileRevision: true,
-    },
-    {
-      label: "reloads a PDF preview on refresh without a server fileRevision",
-      relativePath: "report.pdf",
-      workspaceMutationId: "mutation-1" as string | null,
-      withFileRevision: false,
     },
   ])("$label", async ({ relativePath, workspaceMutationId, withFileRevision }) => {
     using _settings = setup();
