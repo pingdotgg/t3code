@@ -1473,8 +1473,22 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const commandLookupEnv = spawnExtendsEnv(options.spawn)
     ? { ...process.env, ...options.spawn.env }
     : (options.spawn.env ?? {});
+  const agentScope = yield* AgentScope;
+  const scopedLaunch = spawnCommand.shell
+    ? undefined
+    : yield* agentScope.wrap({
+        command: spawnCommand.command,
+        args: spawnCommand.args,
+        name: "acp",
+        threadId: yield* AgentScopeThreadId,
+        env: commandLookupEnv,
+      });
+  // A systemd agent scope is already a cgroup that owns every descendant; a
+  // lease beneath the server would pull the agent back out of the agents slice.
   const linuxCgroupLease =
-    options.ownDescendantProcessGroups === true && options.processGroupPlatform === "linux"
+    options.ownDescendantProcessGroups === true &&
+    options.processGroupPlatform === "linux" &&
+    scopedLaunch?.unit === undefined
       ? yield* Effect.sync(() => {
           try {
             if (options.linuxCgroupController === null) return undefined;
@@ -1508,17 +1522,6 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             command: options.spawn.command,
             cause: new Error("Contained ACP command was not found on PATH"),
           });
-        });
-  const agentScope = yield* AgentScope;
-  const scopedLaunch =
-    linuxCgroupLease !== undefined || spawnCommand.shell
-      ? undefined
-      : yield* agentScope.wrap({
-          command: spawnCommand.command,
-          args: spawnCommand.args,
-          name: "acp",
-          threadId: yield* AgentScopeThreadId,
-          env: commandLookupEnv,
         });
   const scopedSpawnCommand =
     scopedLaunch === undefined ? spawnCommand : { ...scopedLaunch, shell: false };
