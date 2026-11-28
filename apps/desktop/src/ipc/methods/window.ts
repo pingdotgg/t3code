@@ -51,6 +51,7 @@ import { msg } from "gt-i18n";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import { m } from "../../i18n/messages.ts";
+import { copySourcePng } from "../../window/ContextMenuImage.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
@@ -431,6 +432,27 @@ export const readMedia = DesktopIpc.makeIpcMethod({
       },
       catch: (cause) => new MediaReadError({ message: "Could not read media.", cause }),
     }).pipe(Effect.orElseSucceed(() => null));
+  }),
+});
+
+// The renderer's clipboard API re-encodes PNGs, which drops their text chunks.
+export const copyPng = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.COPY_PNG_CHANNEL,
+  payload: Schema.Uint8Array,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.copyPng")(function* (png, event) {
+    const window = yield* (yield* ElectronWindow.ElectronWindow).main;
+    if (
+      event === undefined ||
+      Option.isNone(window) ||
+      window.value.webContents.id !== event.sender.id
+    ) {
+      return false;
+    }
+    const platform = yield* HostProcess.Platform;
+    return yield* Effect.promise(() =>
+      copySourcePng(Buffer.from(png), platform).catch(() => false),
+    );
   }),
 });
 

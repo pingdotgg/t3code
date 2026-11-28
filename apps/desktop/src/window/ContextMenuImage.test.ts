@@ -1,12 +1,17 @@
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 import type * as Electron from "electron";
-import { copyContextMenuImage } from "./ContextMenuImage.ts";
+import { copyContextMenuImage, copySourcePng } from "./ContextMenuImage.ts";
 
 const native = vi.hoisted(() => ({
   fetch: vi.fn(),
   createFromBuffer: vi.fn(),
   write: vi.fn(),
-  image: { isEmpty: vi.fn(() => false), toPNG: vi.fn(() => Buffer.from("png")) },
+  image: {
+    isEmpty: vi.fn(() => false),
+    toPNG: vi.fn(() => Buffer.from("png")),
+    getSize: vi.fn(() => ({ width: 1, height: 2 })),
+    toBitmap: vi.fn(() => Buffer.from([1, 2, 3, 4, 5, 6, 7, 8])),
+  },
 }));
 
 vi.mock("electron", () => ({
@@ -40,10 +45,17 @@ const sourcePng = Buffer.from(
   "base64",
 );
 
-const copyImage = (overrides: Partial<typeof params> = {}) =>
+const rawFormat = (name: string) => `electron application/osclipboard;format="${name}"`;
+const writtenBlobs = () => native.write.mock.calls[0]?.[0][0].blobs as Record<string, Blob>;
+const blobBytes = async (blob: Blob | undefined) =>
+  Buffer.from(new Uint8Array((await blob?.arrayBuffer()) ?? new ArrayBuffer(0)));
+const gif = Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAkQBADs=", "base64");
+
+const copyImage = (overrides: Partial<typeof params> = {}, platform: NodeJS.Platform = "linux") =>
   copyContextMenuImage(
     contents as unknown as Electron.WebContents,
     { ...params, ...overrides } as unknown as Electron.ContextMenuParams,
+    platform,
   );
 
 beforeEach(() => {
@@ -74,11 +86,50 @@ it.each(["https://example.com/image.png", `data:image/png;base64,${sourcePng.toS
     }
     expect(contents.copyImageAt).not.toHaveBeenCalled();
     expect(native.createFromBuffer).toHaveBeenCalledWith(sourcePng);
-    const blob = native.write.mock.calls[0]?.[0][0].blobs["image/png"] as Blob;
-    expect(blob.type).toBe("image/png");
-    expect(Buffer.from(await blob.arrayBuffer())).toEqual(Buffer.from("png"));
+    expect(native.image.toPNG).not.toHaveBeenCalled();
+    expect(await blobBytes(writtenBlobs()[rawFormat("image/png")])).toEqual(sourcePng);
   },
 );
+
+it("re-encodes an iframe image that is not a PNG", async () => {
+  native.fetch.mockResolvedValue(new Response(Uint8Array.from(gif)));
+  await copyImage();
+  expect(await blobBytes(writtenBlobs()["image/png"])).toEqual(Buffer.from("png"));
+});
+
+it.each([
+  ["linux", rawFormat("image/png")],
+  ["darwin", rawFormat("public.png")],
+  ["win32", "PNG"],
+] as const)("copies a main-frame PNG unchanged on %s", async (platform, format) => {
+  await copyImage({ frame: mainFrame }, platform);
+  expect(contents.copyImageAt).not.toHaveBeenCalled();
+  const blobs = writtenBlobs();
+  expect(blobs["image/png"]).toBeUndefined();
+  expect(await blobBytes(blobs[format])).toEqual(sourcePng);
+  if (platform !== "win32") return expect(Object.keys(blobs)).toEqual([format]);
+  // Windows pastes need a bitmap beside the PNG: bottom-up rows after a BITMAPV5HEADER.
+  const dib = await blobBytes(blobs[rawFormat("#17")]);
+  expect([dib.readUInt32LE(0), dib.readInt32LE(4), dib.readInt32LE(8)]).toEqual([124, 1, 2]);
+  expect([...dib.subarray(124)]).toEqual([5, 6, 7, 8, 1, 2, 3, 4]);
+});
+
+it.each([
+  ["is not a PNG", () => native.fetch.mockResolvedValue(new Response(Uint8Array.from(gif)))],
+  ["cannot be read", () => native.fetch.mockRejectedValue(new Error("offline"))],
+])("copies the rendered bitmap when a main-frame image %s", async (_, arrange) => {
+  arrange();
+  await copyImage({ frame: mainFrame });
+  expect(contents.copyImageAt).toHaveBeenCalledWith(12, 34);
+  expect(native.write).not.toHaveBeenCalled();
+});
+
+it("refuses bytes that are not a decodable PNG", async () => {
+  expect(await copySourcePng(gif, "linux")).toBe(false);
+  native.image.isEmpty.mockReturnValue(true);
+  expect(await copySourcePng(sourcePng, "linux")).toBe(false);
+  expect(native.write).not.toHaveBeenCalled();
+});
 
 it.each([
   ["WebP", "UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAUAmJaQAA3AA/vz0AAA="],
@@ -173,6 +224,7 @@ it("rejects large decoded dimensions before image allocation", async () => {
 });
 
 it("preserves the clipboard when the encoded PNG exceeds the limit", async () => {
+  native.fetch.mockResolvedValue(new Response(Uint8Array.from(gif)));
   native.image.toPNG.mockReturnValueOnce(Buffer.alloc(32 * 1024 * 1024 + 1));
   await expect(copyImage()).rejects.toThrow("size limit");
   expect(native.write).not.toHaveBeenCalled();

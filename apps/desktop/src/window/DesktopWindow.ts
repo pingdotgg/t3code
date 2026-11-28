@@ -740,7 +740,7 @@ export const make = Effect.gen(function* () {
             click: () => {
               void runPromise(
                 Effect.tryPromise({
-                  try: () => copyContextMenuImage(contents, params),
+                  try: () => copyContextMenuImage(contents, params, environment.platform),
                   catch: (cause) => new ContextMenuImageCopyError({ cause }),
                 }).pipe(Effect.catch(() => logWindowWarning("failed to copy context-menu image"))),
               );

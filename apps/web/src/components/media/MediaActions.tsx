@@ -109,10 +109,16 @@ export function useMediaActions(source: MediaActionSource) {
         m(msg("Image copying is unavailable. Use a secure browser connection or save the image.")),
       );
     }
+    const png = actionUrl().then(readMediaPng);
     // Start the clipboard write in the user gesture; fetching/decoding may finish later.
-    await navigator.clipboard.write([
-      new ClipboardItem({ "image/png": actionUrl().then(readMediaPng) }),
-    ]);
+    const write = () => navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+    const desktop = typeof window === "undefined" ? undefined : window.desktopBridge;
+    if (!desktop) return write();
+    // The browser clipboard re-encodes PNGs and drops their text chunks; desktop keeps the bytes.
+    const copied = await desktop
+      .copyPng(new Uint8Array(await (await png).arrayBuffer()))
+      .catch(() => false);
+    if (!copied) await write();
   };
   return { save, copyImage, canReadMedia, assertCanReadMedia };
 }

@@ -187,3 +187,14 @@ it.each(["save", "copy-image", "open-file"])(
     expect(state.openFile).not.toHaveBeenCalled();
   },
 );
+
+it.each([
+  ["hands the PNG bytes to the desktop app", true, 0],
+  ["falls back to the browser clipboard when the desktop app cannot copy", false, 1],
+])("%s", async (_, copied, browserWrites) => {
+  const copyPng = vi.fn().mockResolvedValue(copied);
+  vi.stubGlobal("window", { desktopBridge: { copyPng } });
+  await useMediaActions({ kind: "image", name: "image.png", src: "/image.png" }).copyImage();
+  expect(Buffer.from(copyPng.mock.calls[0]?.[0]).toString()).toBe("png");
+  expect(state.clipboard).toHaveBeenCalledTimes(browserWrites);
+});
