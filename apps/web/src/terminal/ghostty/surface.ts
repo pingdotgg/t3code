@@ -252,8 +252,9 @@ function isSameTerminalLink(
 }
 
 function terminalColumnAtOffset(row: GhosttySnapshot["rowData"][number], offset: number): number {
+  let nextOffset = 0;
   for (let column = 0; column < row.cells.length; column += 1) {
-    const nextOffset = terminalColumnOffset(row, column + 1);
+    nextOffset += terminalCellText(row.cells[column]!).length;
     if (offset < nextOffset) return column;
   }
   return Math.max(0, row.cells.length - 1);

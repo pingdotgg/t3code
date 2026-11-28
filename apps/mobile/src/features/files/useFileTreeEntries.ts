@@ -76,11 +76,23 @@ function boundDirectories(current: ReturnType<typeof createDirectories>, preserv
   };
 }
 
+const entryIndexByListing = new WeakMap<ReadonlyArray<ProjectEntry>, Map<string, ProjectEntry>>();
+
+function findListingEntry(entries: ReadonlyArray<ProjectEntry>, path: string | undefined) {
+  let index = entryIndexByListing.get(entries);
+  if (index === undefined) {
+    index = new Map();
+    for (const entry of entries) if (!index.has(entry.path)) index.set(entry.path, entry);
+    entryIndexByListing.set(entries, index);
+  }
+  return path === undefined ? undefined : index.get(path);
+}
+
 function contradictsListing(path: string, parent: string, entries: ReadonlyArray<ProjectEntry>) {
   if (parent !== "" && !path.startsWith(`${parent}/`)) return false;
   const child = path.slice(parent === "" ? 0 : parent.length + 1).split("/")[0];
   const childPath = parent === "" ? child : `${parent}/${child}`;
-  const entry = entries.find((item) => item.path === childPath);
+  const entry = findListingEntry(entries, childPath);
   return !entry || (path !== childPath && entry.kind !== "directory");
 }
 
@@ -354,7 +366,7 @@ export function useFileTreeEntries(input: {
         const child = parts.slice(0, index + 1).join("/");
         const complete =
           index === 0 ? !rootData.truncated : directories.completeDirectories.has(parent);
-        const entry = listing?.find((item) => item.path === child);
+        const entry = listing ? findListingEntry(listing, child) : undefined;
         if (complete && listing && !entry) {
           const listingCompletedAt =
             index === 0 && directories.rootListing !== rootListing

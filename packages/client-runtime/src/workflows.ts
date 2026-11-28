@@ -168,9 +168,15 @@ export function groupWorkflowRuns(
     if (siblings) siblings.push(run);
     else childrenOf.set(run.parentRunId, [run]);
   }
+  const questionsOf = new Map<string, WorkflowQuestion[]>();
+  for (const question of questions) {
+    const own = questionsOf.get(question.runId);
+    if (own) own.push(question);
+    else questionsOf.set(question.runId, [question]);
+  }
   const node = (run: WorkflowRun): WorkflowRunNode => ({
     run,
-    questions: questions.filter((question) => question.runId === run.runId),
+    questions: questionsOf.get(run.runId) ?? [],
     children: (childrenOf.get(run.runId) ?? [])
       .slice()
       .sort((left, right) => left.startedAt.localeCompare(right.startedAt))

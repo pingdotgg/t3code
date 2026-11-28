@@ -451,10 +451,12 @@ export function filterPullRequestList<
       return false;
     if (filters.review === "none" && entry.reviewDecision) return false;
     if (filters.checks && entry.checksState && entry.checksState !== filters.checks) return false;
-    const labels = new Set(entry.labels.map((label) => normalize(label.name)));
-    if (filters.labels?.some((group) => !group.some((label) => labels.has(normalize(label)))))
-      return false;
-    if (filters.excludedLabels?.some((label) => labels.has(normalize(label)))) return false;
+    if (filters.labels?.length || filters.excludedLabels?.length) {
+      const labels = new Set(entry.labels.map((label) => normalize(label.name)));
+      if (filters.labels?.some((group) => !group.some((label) => labels.has(normalize(label)))))
+        return false;
+      if (filters.excludedLabels?.some((label) => labels.has(normalize(label)))) return false;
+    }
     if (words.length && localSearchHosts.has(viewerKey)) {
       const text =
         `${entry.repository} #${entry.number} ${entry.title} ${entry.author?.login ?? ""} ${entry.headBranch} ${entry.baseBranch} ${entry.labels.map((label) => label.name).join(" ")}`.toLowerCase();

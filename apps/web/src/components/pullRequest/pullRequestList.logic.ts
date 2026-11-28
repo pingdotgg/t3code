@@ -331,8 +331,10 @@ export function matchesPullRequestFilters(
   filters: PullRequestListFilters,
   viewer?: string | null,
 ): boolean {
-  const labels = entry.labels.map((label) => label.name.trim().toLowerCase());
-  const holds = (label: string) => labels.includes(label.trim().toLowerCase());
+  const holds = (label: string) => {
+    const wanted = label.trim().toLowerCase();
+    return entry.labels.some((held) => held.name.trim().toLowerCase() === wanted);
+  };
   return (
     (filters.draft === undefined || entry.isDraft === (filters.draft === "only")) &&
     (filters.review === undefined ||
