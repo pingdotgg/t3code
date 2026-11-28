@@ -33,11 +33,17 @@ export function resolvePendingHandoff(
   if (!projection?.visibleTurnItems.length) return null;
   // The handoff row is committed before the provider starts. Use its destination
   // during startup so the footer does not duplicate the committed handoff.
-  const from = projection.runs.findLast(
-    (run) =>
+  // Ordinal, not array position: an update for a run outside a windowed snapshot is appended.
+  let latest: ThreadStructure["runs"][number] | undefined;
+  for (const run of projection.runs) {
+    if (
       run.status !== "rolled_back" &&
-      (run.startedAt !== null || (run.status === "starting" && run.contextHandoffId !== null)),
-  )?.modelSelection;
+      (run.startedAt !== null || (run.status === "starting" && run.contextHandoffId !== null)) &&
+      (latest === undefined || run.ordinal > latest.ordinal)
+    )
+      latest = run;
+  }
+  const from = latest?.modelSelection;
   if (from === undefined || selection == null) return null;
   const source = providers.find((provider) => provider.instanceId === from.instanceId);
   const target = providers.find((provider) => provider.instanceId === selection.instanceId);

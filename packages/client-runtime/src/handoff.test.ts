@@ -151,6 +151,26 @@ describe("pending context handoff", () => {
     expect(resolvePendingHandoff(projection, { instanceId: from, model: "source" }, [])).toBeNull();
     expect(resolvePendingHandoff(projection, { instanceId: from, model: "other" }, [])).toBeNull();
   });
+  it("compares with the latest started run when an older run's update arrives last", () => {
+    // A windowed snapshot can omit an older run; a later update for it (a delegated task
+    // finishing) is appended after the run that already took the handoff.
+    const handedOff = {
+      ...projection,
+      runs: [
+        {
+          ...projection.runs[0]!,
+          ...run("target", 2, to, "destination"),
+          status: "running" as const,
+          contextHandoffId: ContextHandoffId.make("handoff"),
+        },
+        projection.runs[0]!,
+      ],
+    };
+
+    expect(
+      resolvePendingHandoff(handedOff, { instanceId: to, model: "destination" }, []),
+    ).toBeNull();
+  });
   it("stays hidden while the thread's timeline is empty", () => {
     const empty = { ...projection, visibleTurnItems: [] };
     expect(resolvePendingHandoff(empty, { instanceId: to, model: "first" }, [])).toBeNull();
