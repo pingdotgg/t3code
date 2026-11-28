@@ -3,11 +3,11 @@ title: Hyperdrive
 description: Cloudflare Hyperdrive pools connections to your external Postgres or MySQL database at the edge — provision a database (Neon or PlanetScale), front it with Hyperdrive, and bind the connection into your Worker.
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import { Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
-export const pgDeps = `pg`;
-export const pgDevDeps = `@types/pg`;
-export const mysqlDeps = `mysql2`;
+export const pgDeps = `@alchemy.run/sql @effect/sql-pg`;
+export const mysqlDeps = `@alchemy.run/sql @effect/sql-mysql2`;
 
 Hyperdrive is a Cloudflare-managed connection pooler that sits
 between Workers and an external Postgres or MySQL database. The
@@ -17,7 +17,8 @@ cold-start connection storms.
 
 Reach for Hyperdrive whenever your app needs a real relational
 database: managed Postgres/MySQL providers like Neon and
-PlanetScale, or a database you already run. (For serverless SQLite
+PlanetScale, or a database you already run — including one in a
+[private network](/cloudflare/data/hyperdrive-private-database). (For serverless SQLite
 inside Cloudflare, use [D1](/cloudflare/data/d1) instead.) This page
 provisions a serverless database, fronts it with Hyperdrive, and
 binds the connection into your Worker.
@@ -41,8 +42,8 @@ alongside `Cloudflare.providers()` in your stack:
 ```diff lang="typescript"
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-+import * as Neon from "alchemy/Neon";
+import * as Cloudflare from "@alchemy.run/cloudflare";
++import * as Neon from "@alchemy.run/neon";
 +import * as Layer from "effect/Layer";
 
 export default Alchemy.Stack(
@@ -67,8 +68,8 @@ from the environment (good for CI) or stores a key under
 ```diff lang="typescript"
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-+import * as Planetscale from "alchemy/Planetscale";
+import * as Cloudflare from "@alchemy.run/cloudflare";
++import * as Planetscale from "@alchemy.run/planetscale";
 +import * as Layer from "effect/Layer";
 
 export default Alchemy.Stack(
@@ -94,8 +95,8 @@ environment (good for CI) or stores the credentials under
 ```diff lang="typescript"
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-+import * as Planetscale from "alchemy/Planetscale";
+import * as Cloudflare from "@alchemy.run/cloudflare";
++import * as Planetscale from "@alchemy.run/planetscale";
 +import * as Layer from "effect/Layer";
 
 export default Alchemy.Stack(
@@ -133,7 +134,7 @@ branches fork from:
 
 ```typescript
 // src/Db.ts
-import * as Neon from "alchemy/Neon";
+import * as Neon from "@alchemy.run/neon";
 import * as Effect from "effect/Effect";
 
 export const Db = Effect.gen(function* () {
@@ -164,7 +165,7 @@ Hyperdrive:
 
 ```typescript
 // src/Db.ts
-import * as Planetscale from "alchemy/Planetscale";
+import * as Planetscale from "@alchemy.run/planetscale";
 import * as Effect from "effect/Effect";
 
 export const Db = Effect.gen(function* () {
@@ -202,7 +203,7 @@ Hyperdrive:
 
 ```typescript
 // src/Db.ts
-import * as Planetscale from "alchemy/Planetscale";
+import * as Planetscale from "@alchemy.run/planetscale";
 import * as Effect from "effect/Effect";
 
 export const Db = Effect.gen(function* () {
@@ -245,8 +246,8 @@ port, database, user, password }`) ready to feed straight in:
 
 ```diff lang="typescript"
 // src/Db.ts
-+import * as Cloudflare from "alchemy/Cloudflare";
-import * as Neon from "alchemy/Neon";
++import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Neon from "@alchemy.run/neon";
 import * as Effect from "effect/Effect";
 
 export const Db = Effect.gen(function* () {
@@ -272,8 +273,8 @@ Hyperdrive already does its own connection pooling.
 
 ```diff lang="typescript"
 // src/Db.ts
-+import * as Cloudflare from "alchemy/Cloudflare";
-import * as Planetscale from "alchemy/Planetscale";
++import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Planetscale from "@alchemy.run/planetscale";
 import * as Effect from "effect/Effect";
 
 export const Db = Effect.gen(function* () {
@@ -298,8 +299,8 @@ PostgresBranch → PostgresRole → Hyperdrive on the deploy graph.
 
 ```diff lang="typescript"
 // src/Db.ts
-+import * as Cloudflare from "alchemy/Cloudflare";
-import * as Planetscale from "alchemy/Planetscale";
++import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Planetscale from "@alchemy.run/planetscale";
 import * as Effect from "effect/Effect";
 
 export const Db = Effect.gen(function* () {
@@ -397,68 +398,29 @@ means two poolers fighting over the same connections.
 
 ## Install the client library
 
-The Worker uses a Node-compatible driver to talk to Hyperdrive over
-the binding. Pick the one that matches your engine:
+The Worker queries Hyperdrive with Effect SQL. Install the driver that
+matches your engine:
 
 <Tabs syncKey="db-provider">
   <TabItem label="Neon">
 
-[`pg`](https://node-postgres.com) — node-postgres:
+[`@effect/sql-pg`](https://github.com/Effect-TS/effect-smol/tree/main/packages/sql/pg) — Effect's native Postgres driver:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${pgDeps}\nbun add -d ${pgDevDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${pgDeps}\nnpm install -D ${pgDevDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${pgDeps}\npnpm add -D ${pgDevDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${pgDeps}\nyarn add -D ${pgDevDeps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={pgDeps} />
 
   </TabItem>
   <TabItem label="PlanetScale (Postgres)">
 
-[`pg`](https://node-postgres.com) — node-postgres:
+[`@effect/sql-pg`](https://github.com/Effect-TS/effect-smol/tree/main/packages/sql/pg) — Effect's native Postgres driver:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${pgDeps}\nbun add -d ${pgDevDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${pgDeps}\nnpm install -D ${pgDevDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${pgDeps}\npnpm add -D ${pgDevDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${pgDeps}\nyarn add -D ${pgDevDeps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={pgDeps} />
 
   </TabItem>
   <TabItem label="PlanetScale (MySQL)">
 
-[`mysql2`](https://github.com/sidorares/node-mysql2):
+[`@effect/sql-mysql2`](https://github.com/Effect-TS/effect-smol/tree/main/packages/sql/mysql2) — Effect's MySQL client:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${mysqlDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${mysqlDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${mysqlDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${mysqlDeps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={mysqlDeps} />
 
   </TabItem>
 </Tabs>
@@ -468,18 +430,17 @@ the binding. Pick the one that matches your engine:
 `Cloudflare.Hyperdrive.Connect(...)` returns a typed accessor for the
 runtime binding — connection string, host, port, user, password,
 database — plus a `raw` escape hatch for libraries that want the
-underlying `Hyperdrive` object:
+underlying `Hyperdrive` object. Pass its `connectionString` to Effect SQL:
 
 <Tabs syncKey="db-provider">
   <TabItem label="Neon">
 
 ```diff lang="typescript"
 // src/Api.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
++import * as SQL from "@alchemy.run/sql/Postgres";
 import * as Effect from "effect/Effect";
-+import * as Redacted from "effect/Redacted";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-+import { Client } from "pg";
 +import { Hyperdrive } from "./Db.ts";
 
 export default class Api extends Cloudflare.Worker<Api>()(
@@ -487,27 +448,17 @@ export default class Api extends Cloudflare.Worker<Api>()(
   {
     main: import.meta.url,
 +    compatibility: {
-+      // node-postgres needs Node.js APIs to run inside a Worker.
++      // The driver opens its socket through Node's `net` and `tls` APIs.
 +      flags: ["nodejs_compat"],
 +    },
   },
   Effect.gen(function* () {
 +    const hd = yield* Cloudflare.Hyperdrive.Connect(Hyperdrive);
++    const sql = yield* SQL.Postgres({ url: hd.connectionString });
 +
     return {
       fetch: Effect.gen(function* () {
-+        const connectionString = Redacted.value(yield* hd.connectionString);
-+        const rows = yield* Effect.promise(async () => {
-+          // One client per request — Hyperdrive does the pooling.
-+          const client = new Client({ connectionString });
-+          await client.connect();
-+          try {
-+            const r = await client.query("SELECT now() as now");
-+            return r.rows;
-+          } finally {
-+            await client.end().catch(() => {});
-+          }
-+        });
++        const rows = yield* sql`SELECT now() AS now`;
 +        return yield* HttpServerResponse.json({ ok: true, rows });
       }),
     };
@@ -521,11 +472,10 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
 ```diff lang="typescript"
 // src/Api.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
++import * as SQL from "@alchemy.run/sql/Postgres";
 import * as Effect from "effect/Effect";
-+import * as Redacted from "effect/Redacted";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-+import { Client } from "pg";
 +import { Hyperdrive } from "./Db.ts";
 
 export default class Api extends Cloudflare.Worker<Api>()(
@@ -533,27 +483,17 @@ export default class Api extends Cloudflare.Worker<Api>()(
   {
     main: import.meta.url,
 +    compatibility: {
-+      // node-postgres needs Node.js APIs to run inside a Worker.
++      // The driver opens its socket through Node's `net` and `tls` APIs.
 +      flags: ["nodejs_compat"],
 +    },
   },
   Effect.gen(function* () {
 +    const hd = yield* Cloudflare.Hyperdrive.Connect(Hyperdrive);
++    const sql = yield* SQL.Postgres({ url: hd.connectionString });
 +
     return {
       fetch: Effect.gen(function* () {
-+        const connectionString = Redacted.value(yield* hd.connectionString);
-+        const rows = yield* Effect.promise(async () => {
-+          // One client per request — Hyperdrive does the pooling.
-+          const client = new Client({ connectionString });
-+          await client.connect();
-+          try {
-+            const r = await client.query("SELECT now() as now");
-+            return r.rows;
-+          } finally {
-+            await client.end().catch(() => {});
-+          }
-+        });
++        const rows = yield* sql`SELECT now() AS now`;
 +        return yield* HttpServerResponse.json({ ok: true, rows });
       }),
     };
@@ -567,11 +507,10 @@ export default class Api extends Cloudflare.Worker<Api>()(
 
 ```diff lang="typescript"
 // src/Api.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
++import * as SQL from "@alchemy.run/sql/MySQL";
 import * as Effect from "effect/Effect";
-+import * as Redacted from "effect/Redacted";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-+import { createConnection } from "mysql2/promise";
 +import { Hyperdrive } from "./Db.ts";
 
 export default class Api extends Cloudflare.Worker<Api>()(
@@ -579,26 +518,17 @@ export default class Api extends Cloudflare.Worker<Api>()(
   {
     main: import.meta.url,
 +    compatibility: {
-+      // mysql2 needs Node.js APIs to run inside a Worker.
++      // The driver opens its socket through Node's `net` and `tls` APIs.
 +      flags: ["nodejs_compat"],
 +    },
   },
   Effect.gen(function* () {
 +    const hd = yield* Cloudflare.Hyperdrive.Connect(Hyperdrive);
++    const sql = yield* SQL.MySQL({ url: hd.connectionString });
 +
     return {
       fetch: Effect.gen(function* () {
-+        const connectionString = Redacted.value(yield* hd.connectionString);
-+        const rows = yield* Effect.promise(async () => {
-+          // One connection per request — Hyperdrive does the pooling.
-+          const conn = await createConnection(connectionString);
-+          try {
-+            const [r] = await conn.query("SELECT NOW() as now");
-+            return r;
-+          } finally {
-+            await conn.end().catch(() => {});
-+          }
-+        });
++        const rows = yield* sql`SELECT NOW() AS now`;
 +        return yield* HttpServerResponse.json({ ok: true, rows });
       }),
     };
@@ -610,15 +540,13 @@ export default class Api extends Cloudflare.Worker<Api>()(
   </TabItem>
 </Tabs>
 
-Two things to notice (regardless of engine):
-
-- The `nodejs_compat` flag is required because the driver uses
-  Node's `net` and `crypto` APIs.
-- The fetch handler opens a fresh connection per request and ends
-  it on the way out. This is intentional — Hyperdrive does the
-  pooling on Cloudflare's side, so the Worker doesn't need its
-  own. [Effect SQL](#use-effect-sql) and [Drizzle](/cloudflare/data/drizzle)
-  manage a client per execution scope rather than retaining sockets across requests.
+`SQL.Postgres` and `SQL.MySQL` open a pool lazily inside each request's
+[scope](/sql/effect-sql/lifecycle) and close it when the request ends.
+Hyperdrive does the pooling on Cloudflare's side, so the Worker never
+retains sockets across requests. The [Postgres](/sql/effect-sql/postgres)
+and [MySQL](/sql/effect-sql/mysql) client guides cover queries, typed
+errors, and transactions; [Drizzle](/cloudflare/data/drizzle) adds typed
+schemas on the same connection.
 
 ## Wire the resources into the stack
 
@@ -661,40 +589,6 @@ URL and you should see something like:
 You're now talking to your database from the edge through
 Hyperdrive.
 
-## Use Effect SQL
-
-```typescript
-// src/Api.ts
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as SQL from "alchemy/SQL/Postgres";
-import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { Hyperdrive } from "./Db.ts";
-
-export default class Api extends Cloudflare.Worker<Api>()(
-  "Api",
-  { main: import.meta.url, compatibilityFlags: ["nodejs_compat"] },
-  Effect.gen(function* () {
-    const connection = yield* Cloudflare.Hyperdrive.Connect(Hyperdrive);
-    const sql = yield* SQL.Postgres({ url: connection.connectionString });
-    return {
-      fetch: Effect.gen(function* () {
-        const rows = yield* sql`SELECT NOW() AS now`;
-        return yield* HttpServerResponse.json({ ok: true, rows });
-      }),
-    };
-  }).pipe(Effect.provide(Cloudflare.Hyperdrive.ConnectBinding)),
-) {}
-```
-
-Install `@effect/sql-pg` and `pg` for this Postgres variant. The binding and stack
-stay the same; Effect SQL opens and closes a pool for each execution scope.
-
-For a MySQL origin, install `@effect/sql-mysql2` and `mysql2`, import
-`alchemy/SQL/MySQL`, and construct `SQL.MySQL({ url: connection.connectionString })`.
-The [Postgres](/sql/effect-sql/postgres) and [MySQL](/sql/effect-sql/mysql) client
-guides cover queries, typed errors, and transactions.
-
 ## Workers defaults
 
 `SQL.MySQL` and `Drizzle.MySQL` disable prepared statements and mysql2's eval-based
@@ -718,8 +612,11 @@ driver configuration so `poolConfig` options reach mysql2.
 
 Guides that build on Hyperdrive:
 
-- [Add Drizzle ORM](/cloudflare/data/drizzle) — swap the raw
-  driver for typed schemas and alchemy-managed migrations.
+- [Private database (Workers VPC)](/cloudflare/data/hyperdrive-private-database)
+  — reach a database with no public endpoint, such as Aurora in an
+  AWS VPC, through a Cloudflare Tunnel.
+- [Add Drizzle ORM](/cloudflare/data/drizzle) — add typed
+  schemas and alchemy-managed migrations.
 - [Shared database across stages](/cloudflare/data/shared-database)
   — point PR-preview stages at one long-lived database.
 - [Branch from a shared database](/cloudflare/data/branch-from-shared-database)

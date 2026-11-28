@@ -19,8 +19,10 @@ export function persistPullRequestStats(): QueryPersistence<PullRequestListStats
     load: Effect.fn("pullRequestStatsPersistence.load")(
       function* (environmentId, key) {
         const [, input] = yield* Schema.decodeEffect(requestKey)(key);
-        const rows = yield* Effect.forEach(input.refs, (ref) =>
-          row.load(environmentId, statKey(ref)),
+        const rows = yield* Effect.forEach(
+          input.refs,
+          (ref) => row.load(environmentId, statKey(ref)),
+          { concurrency: "unbounded" },
         );
         const stats = rows.flatMap((value) => (Option.isSome(value) ? [value.value] : []));
         return stats.length ? Option.some({ stats }) : Option.none();
@@ -34,6 +36,9 @@ export function persistPullRequestStats(): QueryPersistence<PullRequestListStats
           const ref = input.refs.find(
             (ref) =>
               ref.projectId === stat.projectId &&
+              (stat.host === undefined ||
+                ref.host === undefined ||
+                ref.host.toLowerCase() === stat.host) &&
               ref.repository === stat.repository &&
               ref.number === stat.number,
           );

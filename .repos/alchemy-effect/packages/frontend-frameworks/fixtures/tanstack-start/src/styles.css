@@ -92,11 +92,7 @@ body {
   background:
     radial-gradient(1100px 620px at -8% -10%, var(--hero-a), transparent 58%),
     radial-gradient(1050px 620px at 112% -12%, var(--hero-b), transparent 62%),
-    radial-gradient(
-      720px 380px at 50% 115%,
-      rgba(79, 184, 178, 0.1),
-      transparent 68%
-    ),
+    radial-gradient(720px 380px at 50% 115%, rgba(79, 184, 178, 0.1), transparent 68%),
     linear-gradient(
       180deg,
       color-mix(in oklab, var(--sand) 68%, white) 0%,
@@ -116,16 +112,8 @@ body::before {
   z-index: -1;
   opacity: 0.28;
   background:
-    radial-gradient(
-      circle at 20% 15%,
-      rgba(255, 255, 255, 0.8),
-      transparent 34%
-    ),
-    radial-gradient(
-      circle at 78% 26%,
-      rgba(79, 184, 178, 0.2),
-      transparent 42%
-    ),
+    radial-gradient(circle at 20% 15%, rgba(255, 255, 255, 0.8), transparent 34%),
+    radial-gradient(circle at 78% 26%, rgba(79, 184, 178, 0.2), transparent 42%),
     radial-gradient(circle at 42% 82%, rgba(47, 106, 74, 0.14), transparent 36%);
 }
 

@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableDetail } from "../errors/translatable.ts";
 import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
@@ -75,7 +77,7 @@ function validateStatus(
     return Effect.fail(
       new ConnectionBlockedError({
         reason: "configuration",
-        detail: "Relay returned status for a different environment.",
+        ...translatableDetail(msg("Relay returned status for a different environment.")),
       }),
     );
   }
@@ -87,7 +89,7 @@ function validateStatus(
     return Effect.fail(
       new ConnectionBlockedError({
         reason: "configuration",
-        detail: "Relay returned status for a different environment endpoint.",
+        ...translatableDetail(msg("Relay returned status for a different environment endpoint.")),
       }),
     );
   }
@@ -98,22 +100,20 @@ function validateStatus(
     return Effect.fail(
       new ConnectionBlockedError({
         reason: "configuration",
-        detail: "Relay returned a descriptor for a different environment.",
+        ...translatableDetail(msg("Relay returned a descriptor for a different environment.")),
       }),
     );
   }
   return Effect.succeed(status);
 }
 
-function relayAccountId(clerkToken: string): Option.Option<string> {
-  try {
-    return Option.fromNullishOr(decodeRelayJwt(clerkToken).sub).pipe(
-      Option.filter((subject) => subject.length > 0),
-    );
-  } catch {
-    return Option.none();
-  }
-}
+const relayAccountId = Effect.fn("clientRuntime.discovery.relayAccountId")(function* (
+  clerkToken: string,
+) {
+  const claims = yield* decodeRelayJwt(clerkToken).pipe(Effect.option);
+  const sub = Option.isSome(claims) ? claims.value.sub : undefined;
+  return typeof sub === "string" && sub.length > 0 ? Option.some(sub) : Option.none<string>();
+});
 
 /** @public */
 export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
@@ -123,6 +123,8 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const state = yield* SubscriptionRef.make(EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
   const refreshLock = yield* Semaphore.make(1);
+  const foregroundCheckLock = yield* Semaphore.make(1);
+  const registrationCheckRequested = yield* Ref.make(false);
   const hasRefreshed = yield* Ref.make(false);
   const accountGeneration = yield* Ref.make(0);
   const activeAccountId = yield* Ref.make<Option.Option<string>>(Option.none());
@@ -258,7 +260,7 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
       if ((yield* Ref.get(accountGeneration)) !== generation) {
         return;
       }
-      const accountId = relayAccountId(clerkToken);
+      const accountId = yield* relayAccountId(clerkToken);
       const previousAccountId = yield* Ref.get(activeAccountId);
       if (
         Option.isSome(previousAccountId) &&
@@ -322,6 +324,52 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
     ),
   );
 
+  // Refreshes only when the account's registrations changed, so foregrounding keeps unchanged rows.
+  const checkRegistrations = Effect.fn("RelayEnvironmentDiscovery.checkRegistrations")(
+    function* () {
+      if (
+        !(yield* Ref.get(hasRefreshed)) ||
+        (yield* connectivity.status) === "offline" ||
+        Option.isNone(yield* session.identity)
+      ) {
+        return;
+      }
+      const current = yield* SubscriptionRef.get(state);
+      if (!current.listed || current.refreshing || Option.isSome(current.error)) {
+        return yield* refresh;
+      }
+      const generation = yield* Ref.get(accountGeneration);
+      const clerkToken = yield* session.clerkToken;
+      const listed = yield* relay.listEnvironments({ clerkToken });
+      if ((yield* Ref.get(accountGeneration)) !== generation) {
+        return;
+      }
+      const known = (yield* SubscriptionRef.get(state)).environments;
+      if (
+        listed.length === known.size &&
+        listed.every((environment) => known.has(environment.environmentId))
+      ) {
+        return;
+      }
+      yield* refresh;
+    },
+    Effect.catch((error) =>
+      Effect.logDebug("Relay foreground registration check failed", { error }),
+    ),
+  );
+  // A wakeup during a running check is answered by one more check once that one finishes.
+  const requestRegistrationCheck = Ref.set(registrationCheckRequested, true).pipe(
+    Effect.andThen(
+      foregroundCheckLock.withPermitsIfAvailable(1)(
+        Effect.gen(function* () {
+          while (yield* Ref.getAndSet(registrationCheckRequested, false)) {
+            yield* checkRegistrations();
+          }
+        }),
+      ),
+    ),
+  );
+
   yield* connectivity.changes.pipe(
     Stream.changes,
     Stream.runForEach((networkStatus) =>
@@ -347,7 +395,9 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
             yield* SubscriptionRef.set(state, EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
             yield* refresh.pipe(Effect.forkScoped);
           })
-        : Effect.void,
+        : ConnectionWakeups.shouldRelistAccountAfterWakeup(reason)
+          ? requestRegistrationCheck.pipe(Effect.forkScoped)
+          : Effect.void,
     ),
     Effect.forkScoped,
   );

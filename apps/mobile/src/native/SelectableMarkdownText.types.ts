@@ -18,6 +18,7 @@ export interface NativeMarkdownTextStyle {
   readonly fontFamily: string;
   readonly headingFontFamily: string;
   readonly boldFontFamily: string;
+  readonly monoFontFamily: string;
   readonly headingFontSizes?: ReadonlyArray<number>;
 }
 
@@ -25,6 +26,14 @@ export interface SelectableMarkdownSkill {
   readonly name: string;
   readonly displayName?: string | null;
   readonly path?: string;
+}
+
+export interface SelectableMarkdownModel {
+  readonly source: string;
+  readonly label: string;
+  readonly providerLabel: string;
+  readonly driver: string;
+  readonly iconUrl?: string | undefined;
 }
 
 export interface MarkdownImageRequest {
@@ -66,8 +75,10 @@ export interface SelectableMarkdownTextProps {
   readonly markdown: string;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
+  readonly models?: ReadonlyArray<SelectableMarkdownModel>;
   readonly preserveSoftBreaks?: boolean;
   readonly onLinkPress?: (href: string) => void;
+  readonly onCiteText?: (text: string) => void;
   readonly fileContextMenu?: (href: string) => MarkdownFileContextMenu | undefined;
   readonly onFileContextMenuAction?: (href: string, actionId: string) => void;
   readonly linkCustomization?: (href: string) => MarkdownLinkCustomization | undefined;
@@ -76,6 +87,15 @@ export interface SelectableMarkdownTextProps {
   readonly fileEmbedLabel?: (href: string, standalone: boolean) => string | null;
   readonly resolveImageSource?: MarkdownImageSourceResolver;
   readonly onImagePress?: (href: string) => void;
+  /**
+   * Makes task checkboxes tappable. The renderer ticks the box itself; `index` counts checkboxes
+   * in document order and `checked` is the new state.
+   */
+  readonly onTaskListItemPress?: (event: {
+    readonly index: number;
+    readonly checked: boolean;
+    readonly text: string;
+  }) => void;
   readonly marginTop?: number;
   readonly marginBottom?: number;
   readonly writingDirection?: "ltr" | "rtl";

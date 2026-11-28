@@ -101,6 +101,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   for (const required of [
     executable,
     path.join(contentDir, "client/index.html"),
+    path.join(contentDir, "client/.vite/manifest.json"),
     ...(platform === "linux" ? [bundledLibatomic, `${bundledLibatomic}.LICENSE`] : []),
   ]) {
     if (!(yield* fs.exists(required))) {
@@ -132,6 +133,15 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
     return yield* new CliArchiveSmokeError({
       step: "running --version",
       detail: `exit ${String(version.exitCode)}\n${version.stdout}${version.stderr}`,
+    });
+  }
+
+  // The service launcher loads outside the embedded CLI; without T3CODE_HOME it exits right away.
+  const launcher = yield* runExecutable(executable, ["__service-launcher"], contentDir);
+  if (launcher.exitCode !== 1 || !launcher.stderr.includes("T3CODE_HOME is required")) {
+    return yield* new CliArchiveSmokeError({
+      step: "running __service-launcher",
+      detail: `exit ${String(launcher.exitCode)}\n${launcher.stdout}${launcher.stderr}`,
     });
   }
 
@@ -191,7 +201,9 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
       detail: `no 200 from / within 30s\n${stdout}${stderr}`,
     });
   }
-  yield* Effect.log(`[cli-smoke] ${root}: --version passed and serve answered on ${String(port)}.`);
+  yield* Effect.log(
+    `[cli-smoke] ${root}: --version and __service-launcher passed, and serve answered on ${String(port)}.`,
+  );
 });
 
 const command = Command.make(

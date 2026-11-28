@@ -1,11 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /** Native and canonical views share write state to avoid races on the same thread file. */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import type { ThreadId } from "@t3tools/contracts";
 import type * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import { makeAsyncRotatingFileSink } from "@t3tools/shared/logging";
+import { makeAsyncRotatingFileSink, rotationSidecarBase } from "@t3tools/shared/logging";
 import { errorTag } from "@t3tools/shared/observability";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -18,7 +19,10 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
-import { toSafeThreadAttachmentSegment } from "../attachmentStore.ts";
+import {
+  ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS,
+  toSafeThreadAttachmentSegment,
+} from "../attachmentStore.ts";
 import type * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.ts";
 
 const MEBIBYTE = 1024 * 1024;
@@ -59,6 +63,13 @@ const transientNativeMethods = new Set([
   "turn/diff/updated",
 ]);
 const transientAcpUpdates = new Set(["agent_message_chunk", "agent_thought_chunk"]);
+const transientCursorUpdates = new Set([
+  "text-delta",
+  "thinking-delta",
+  "token-delta",
+  "shell-output-delta",
+  "partial-tool-call",
+]);
 
 export type EventNdjsonStream = "native" | "canonical" | "orchestration";
 
@@ -145,8 +156,13 @@ function logWarning(message: string, context: Record<string, unknown>): Effect.E
 }
 
 function resolveThreadSegment(raw: string | null | undefined): string {
-  const normalized = typeof raw === "string" ? toSafeThreadAttachmentSegment(raw) : null;
-  return normalized ?? GLOBAL_THREAD_SEGMENT;
+  if (typeof raw !== "string") return GLOBAL_THREAD_SEGMENT;
+  const normalized = toSafeThreadAttachmentSegment(raw);
+  if (normalized === null) return GLOBAL_THREAD_SEGMENT;
+  // Delegated thread ids share a prefix longer than the segment, so ids that may be cut get a hash.
+  if (raw.length <= ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS) return normalized;
+  const hash = NodeCrypto.createHash("sha256").update(raw).digest("hex").slice(0, 16);
+  return `${normalized}-${hash}`;
 }
 
 function resolveStreamLabel(stream: EventNdjsonStream): string {
@@ -208,6 +224,18 @@ export function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unk
       ) {
         return false;
       }
+    }
+
+    if (nativeType === "interaction.update") {
+      let update = Reflect.get(nativeEvent, "update");
+      if (typeof update !== "object" || update === null) return true;
+      // Subagent updates arrive wrapped; keep the wrapper when it carries a lifecycle record.
+      if (Reflect.get(update, "type") === "tool-call-delta") {
+        update = Reflect.get(update, "taskUpdate");
+        if (typeof update !== "object" || update === null) return true;
+      }
+      const updateType = Reflect.get(update, "type");
+      return typeof updateType !== "string" || !transientCursorUpdates.has(updateType);
     }
 
     const payload = Reflect.get(nativeEvent, "payload");
@@ -402,7 +430,14 @@ async function enforceRetention(input: {
   readonly now: number;
 }): Promise<RetentionResult> {
   const failures: Array<FileOperationFailure> = [];
-  const files: Array<{ filePath: string; mtimeMs: number; size: number }> = [];
+  interface RetentionEntry {
+    readonly name: string;
+    readonly members: Array<{ path: string; size: number }>;
+    mtimeMs: number;
+  }
+  const files = new Map<string, RetentionEntry>();
+  let totalBytes = 0;
+  const unreadable = new Set<string>();
 
   let entries: ReadonlyArray<NodeFS.Dirent>;
   try {
@@ -411,38 +446,69 @@ async function enforceRetention(input: {
     return { failures: [{ filePath: input.directory, cause }] };
   }
 
+  const pending = new Set<string>();
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const base = rotationSidecarBase(entry.name);
+    if (base?.startsWith(input.filePrefix) && base.endsWith(".log")) pending.add(base);
+  }
+
   for (const entry of entries) {
     if (!entry.isFile()) continue;
     const filePath = NodePath.join(input.directory, entry.name);
+    const sidecar = rotationSidecarBase(entry.name);
+    const base = sidecar ?? entry.name.replace(/\.\d+$/u, "");
+    const group = pending.has(base) ? base : entry.name;
     try {
-      if (!(await isProviderLogFile(filePath, entry.name, input.filePrefix))) continue;
+      if (
+        !(sidecar && pending.has(sidecar)) &&
+        !(await isProviderLogFile(filePath, entry.name, input.filePrefix))
+      )
+        continue;
       const stat = await NodeFS.promises.stat(filePath);
-      files.push({ filePath, mtimeMs: stat.mtimeMs, size: stat.size });
+      const file = files.get(group) ?? { name: group, members: [], mtimeMs: stat.mtimeMs };
+      file.members.push({ path: filePath, size: stat.size });
+      file.mtimeMs = Math.max(file.mtimeMs, stat.mtimeMs);
+      totalBytes += stat.size;
+      files.set(group, file);
     } catch (cause) {
+      unreadable.add(group);
       failures.push({ filePath, cause });
     }
   }
 
-  let totalBytes = files.reduce((total, file) => total + file.size, 0);
-  const remove = async (file: (typeof files)[number]) => {
-    if (input.activeFilePaths.has(file.filePath)) return false;
-    try {
-      await NodeFS.promises.rm(file.filePath, { force: true });
-      totalBytes -= file.size;
-      return true;
-    } catch (cause) {
-      failures.push({ filePath: file.filePath, cause });
+  const removalOrder = (path: string) =>
+    path.endsWith(".rotating.json") ? 2 : path.endsWith(".rotating") ? 1 : 0;
+  const remove = async (file: RetentionEntry) => {
+    if (
+      unreadable.has(file.name) ||
+      input.activeFilePaths.has(NodePath.join(input.directory, file.name))
+    ) {
       return false;
     }
+    // Keep the staged file and journal until the other payload files have been removed.
+    file.members.sort((left, right) => removalOrder(left.path) - removalOrder(right.path));
+    while (file.members.length > 0) {
+      const { path: filePath, size } = file.members[0]!;
+      try {
+        await NodeFS.promises.rm(filePath, { force: true });
+      } catch (cause) {
+        failures.push({ filePath, cause });
+        return false;
+      }
+      file.members.shift();
+      totalBytes -= size;
+    }
+    return true;
   };
 
-  const retained: typeof files = [];
-  for (const file of files) {
+  const retained: RetentionEntry[] = [];
+  for (const file of files.values()) {
     if (input.now - file.mtimeMs <= input.maxAgeMs || !(await remove(file))) retained.push(file);
   }
 
   for (const file of retained.toSorted(
-    (left, right) => left.mtimeMs - right.mtimeMs || left.filePath.localeCompare(right.filePath),
+    (left, right) => left.mtimeMs - right.mtimeMs || left.name.localeCompare(right.name),
   )) {
     if (totalBytes <= input.maxTotalBytes) break;
     await remove(file);
@@ -500,6 +566,7 @@ const drainPending = Effect.fnUntraced(function* (input: {
 
   for (const [threadSegment, records] of recordsBySegment) {
     const filePath = providerLogPath(input.directory, input.filePrefix, threadSegment);
+    writtenSegments.add(threadSegment);
     let sink = sinks.get(threadSegment);
     if (!sink) {
       const created = yield* input.makeSink(filePath).pipe(Effect.result);
@@ -510,7 +577,6 @@ const drainPending = Effect.fnUntraced(function* (input: {
       sink = created.success;
       sinks.set(threadSegment, sink);
     }
-    writtenSegments.add(threadSegment);
 
     const written = yield* writeBatchedMessages(
       sink,
@@ -551,7 +617,7 @@ const drainPending = Effect.fnUntraced(function* (input: {
           maxTotalBytes: input.options.maxTotalBytes,
           maxAgeMs: input.options.maxAgeMs,
           activeFilePaths: new Set(
-            Array.from(sinks.keys(), (threadSegment) =>
+            Array.from(writtenSegments, (threadSegment) =>
               providerLogPath(input.directory, input.filePrefix, threadSegment),
             ),
           ),
@@ -725,12 +791,13 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
       const observedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
       const line = `[${observedAt}] ${resolveStreamLabel(stream)}: ${payload}\n`;
       const bytes = Buffer.byteLength(line);
+      const threadSegment = resolveThreadSegment(threadId);
       const action = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
         if (state.closed) {
           return Effect.succeed([{ flush: false }, state] as const);
         }
         const pending = state.pending;
-        pending.push({ stream, threadSegment: resolveThreadSegment(threadId), line, bytes });
+        pending.push({ stream, threadSegment, line, bytes });
         const pendingBytes = state.pendingBytes + bytes;
         const flush =
           resolved.batchWindowMs === 0 ||

@@ -1,0 +1,352 @@
+import { LibsqlClient } from "@effect/sql-libsql"
+import { assert, describe, it, layer } from "@effect/vitest"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option } from "effect"
+import * as Reactivity from "effect/reactivity/Reactivity"
+import { SqlError } from "effect/sql/SqlError"
+import { LibsqlContainer } from "./util.ts"
+
+const Migrations = Layer.effectDiscard(
+  LibsqlClient.LibsqlClient.pipe(
+    Effect.andThen((sql) =>
+      Effect.acquireRelease(
+        sql`CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)`,
+        () => sql`DROP TABLE test;`.pipe(Effect.ignore)
+      )
+    )
+  )
+)
+
+describe("Client", () => {
+  it.effect("exposes the active transaction service for each client", () =>
+    Effect.gen(function*() {
+      const a = yield* LibsqlClient.make({ url: ":memory:" })
+      const b = yield* LibsqlClient.make({ url: ":memory:" })
+      const active = Effect.all([
+        Effect.map(Effect.serviceOption(a.transactionService), Option.isSome),
+        Effect.map(Effect.serviceOption(b.transactionService), Option.isSome)
+      ])
+
+      assert.deepStrictEqual(yield* active, [false, false])
+      yield* a.withTransaction(Effect.gen(function*() {
+        assert.deepStrictEqual(yield* active, [true, false])
+        assert.deepStrictEqual(yield* b.withTransaction(active), [true, true])
+        assert.deepStrictEqual(yield* active, [true, false])
+      }))
+      assert.deepStrictEqual(yield* active, [false, false])
+    }).pipe(Effect.provide(Reactivity.layer)))
+
+  it.effect.each(["transaction", "savepoint"] as const)(
+    "fails reserve from a fiber that outlives its %s",
+    (level) =>
+      Effect.gen(function*() {
+        const sql = yield* LibsqlClient.make({ url: ":memory:" })
+        yield* sql`CREATE TABLE stale_reserve (value INTEGER)`
+        const attempt = Effect.gen(function*() {
+          const go = yield* Deferred.make<void>()
+          const stale = yield* sql.withTransaction(
+            Effect.forkChild(Effect.andThen(
+              Deferred.await(go),
+              Effect.scoped(
+                Effect.flatMap(sql.reserve, (conn) => conn.executeRaw("INSERT INTO stale_reserve VALUES (1)", []))
+              )
+            ))
+          )
+          yield* Deferred.succeed(go, undefined)
+          // Keep the outer transaction alive until the stale attempt finishes, even if it succeeds.
+          yield* Fiber.await(stale)
+          return stale
+        })
+        const stale = yield* level === "savepoint" ? sql.withTransaction(attempt) : attempt
+        assert.deepStrictEqual(yield* sql`SELECT value FROM stale_reserve`, [])
+        const error = yield* Effect.flip(Fiber.join(stale))
+        assert.instanceOf(error, SqlError)
+        assert.deepStrictEqual(
+          [error.reason._tag, error.reason.message, error.isRetryable],
+          ["UnknownError", "SqlClient: the transaction has already ended", false]
+        )
+      }).pipe(Effect.provide(Reactivity.layer))
+  )
+
+  it.effect("releases completed nested savepoints", () =>
+    Effect.gen(function*() {
+      const sql = yield* LibsqlClient.make({ url: ":memory:" })
+      yield* sql`CREATE TABLE savepoint_release (value INTEGER)`
+      yield* sql.withTransaction(Effect.gen(function*() {
+        for (const rollback of [false, true]) {
+          yield* sql.withTransaction(
+            sql`INSERT INTO savepoint_release VALUES (1)`.pipe(
+              Effect.andThen(rollback ? Effect.fail("rollback") : Effect.void)
+            )
+          ).pipe(Effect.ignore)
+          const error = yield* sql`RELEASE SAVEPOINT effect_sql_1`.unprepared.pipe(Effect.flip)
+          assert.strictEqual(error._tag, "SqlError")
+        }
+      }))
+      assert.deepStrictEqual(yield* sql`SELECT value FROM savepoint_release`, [{ value: 1 }])
+      const error = yield* sql.withTransaction(
+        sql.withTransaction(sql`INSERT INTO savepoint_release VALUES (2)`).pipe(
+          Effect.andThen(Effect.fail("outer rollback"))
+        )
+      ).pipe(Effect.flip)
+      assert.strictEqual(error, "outer rollback")
+      assert.deepStrictEqual(yield* sql`SELECT value FROM savepoint_release`, [{ value: 1 }])
+    }).pipe(Effect.provide(Reactivity.layer)))
+
+  it.effect("keeps transactions isolated between clients", () =>
+    Effect.gen(function*() {
+      const a = yield* LibsqlClient.make({ url: ":memory:" })
+      const b = yield* LibsqlClient.make({ url: ":memory:" })
+
+      yield* a`CREATE TABLE marker (owner TEXT NOT NULL)`
+      yield* b`CREATE TABLE marker (owner TEXT NOT NULL)`
+      yield* a`INSERT INTO marker VALUES ('A')`
+      yield* b`INSERT INTO marker VALUES ('B')`
+
+      const rows = yield* a.withTransaction(b`SELECT owner FROM marker`)
+      assert.deepStrictEqual(rows, [{ owner: "B" }])
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Reactivity.layer)
+    ))
+
+  it.effect("releases transaction serialization after begin fails", () => {
+    let transactionCalls = 0
+    const transaction = {
+      execute: () => Promise.resolve({ rows: [] }),
+      commit: () => Promise.resolve(),
+      rollback: () => Promise.resolve()
+    }
+    const liveClient = {
+      execute: () => Promise.resolve({ rows: [] }),
+      transaction: () => {
+        transactionCalls++
+        return transactionCalls === 1
+          ? Promise.reject(new Error("transient begin failure"))
+          : Promise.resolve(transaction)
+      }
+    }
+
+    return Effect.gen(function*() {
+      const client = yield* LibsqlClient.make({ liveClient: liveClient as any })
+      const first = yield* Effect.exit(client.withTransaction(Effect.void))
+      assert.isTrue(Exit.isFailure(first))
+
+      yield* Effect.forkChild(client.withTransaction(Effect.void))
+      yield* Effect.yieldNow
+
+      assert.strictEqual(transactionCalls, 2)
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Reactivity.layer)
+    )
+  })
+
+  for (const rollbackFails of [false, true]) {
+    it.effect(`rolls back an interrupted pending begin (rollback ${rollbackFails ? "rejects" : "succeeds"})`, () =>
+      Effect.gen(function*() {
+        const calls: Array<string> = []
+        const rollbackError = new Error("rollback failed")
+        const transaction = {
+          execute: () => Promise.resolve({ rows: [] }),
+          commit: () => {
+            calls.push("commit")
+            return Promise.resolve()
+          },
+          rollback: () => {
+            calls.push("rollback")
+            return rollbackFails ? Promise.reject(rollbackError) : Promise.resolve()
+          }
+        }
+        const started = Promise.withResolvers<void>()
+        const begin = Promise.withResolvers<typeof transaction>()
+        let transactionCalls = 0
+        const liveClient = {
+          transaction: () => {
+            if (++transactionCalls === 1) {
+              started.resolve()
+              return begin.promise
+            }
+            return Promise.resolve(transaction)
+          }
+        }
+        const client = yield* LibsqlClient.make({ liveClient: liveClient as any })
+        const fiber = yield* Effect.forkChild(client.withTransaction(Effect.sync(() => {
+          calls.push("cancelled body")
+        })))
+        yield* Effect.promise(() => started.promise)
+        // Request interruption while the SDK still owns the pending BEGIN.
+        fiber.interruptUnsafe()
+        begin.resolve(transaction)
+        const exit = yield* Fiber.await(fiber)
+
+        assert.isTrue(Exit.isFailure(exit))
+        if (Exit.isFailure(exit)) {
+          assert.isTrue(Cause.hasInterrupts(exit.cause))
+          const defects = exit.cause.reasons.filter(Cause.isDieReason).map((reason) => reason.defect)
+          assert.strictEqual(defects.length, rollbackFails ? 1 : 0)
+          if (rollbackFails) {
+            assert.instanceOf(defects[0], SqlError)
+            assert.strictEqual((defects[0] as SqlError).reason.cause, rollbackError)
+          }
+        }
+        assert.deepStrictEqual(calls, ["rollback"])
+
+        yield* client.withTransaction(Effect.sync(() => {
+          calls.push("next body")
+        }))
+        assert.deepStrictEqual(calls, ["rollback", "next body", "commit"])
+      }).pipe(Effect.provide(Reactivity.layer)))
+  }
+
+  it.effect("overlaps remote statements with each other and open transactions", () =>
+    Effect.gen(function*() {
+      const calls: Array<string> = []
+      const statement = Promise.withResolvers<{ rows: Array<unknown> }>()
+      const transaction = {
+        execute: () => {
+          calls.push("transaction execute")
+          return Promise.resolve({ rows: [] })
+        },
+        commit: () => Promise.resolve(),
+        rollback: () => Promise.resolve()
+      }
+      const liveClient = {
+        protocol: "http",
+        execute: () => {
+          calls.push("execute")
+          return statement.promise
+        },
+        transaction: () => Promise.resolve(transaction)
+      }
+      const client = yield* LibsqlClient.make({ liveClient: liveClient as any })
+      const open = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const tx = yield* Effect.forkChild(client.withTransaction(
+        Deferred.succeed(open, undefined).pipe(Effect.andThen(Deferred.await(release)))
+      ))
+      yield* Deferred.await(open)
+
+      const statements = yield* Effect.forkChild(
+        Effect.all([client`SELECT 1`, client`SELECT 2`], { concurrency: "unbounded" })
+      )
+      yield* Effect.yieldNow
+      assert.deepStrictEqual(calls, ["execute", "execute"])
+
+      statement.resolve({ rows: [] })
+      yield* Fiber.join(statements)
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(tx)
+    }).pipe(Effect.provide(Reactivity.layer)))
+
+  it.effect("serializes local statements behind open transactions", () =>
+    Effect.gen(function*() {
+      const sql = yield* LibsqlClient.make({ url: ":memory:" })
+      yield* sql`CREATE TABLE serialized (value INTEGER)`
+      const open = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const tx = yield* Effect.forkChild(sql.withTransaction(
+        sql`INSERT INTO serialized VALUES (1)`.pipe(
+          Effect.andThen(Deferred.succeed(open, undefined)),
+          Effect.andThen(Deferred.await(release))
+        )
+      ))
+      yield* Deferred.await(open)
+
+      const read = yield* Effect.forkChild(sql`SELECT value FROM serialized`)
+      yield* Effect.yieldNow
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(tx)
+
+      assert.deepStrictEqual(yield* Fiber.join(read), [{ value: 1 }])
+    }).pipe(Effect.provide(Reactivity.layer)))
+
+  // Each test recreates the same tables.
+  layer(LibsqlContainer.layerClient, { timeout: "30 seconds", concurrent: false })("shared tables", (it) => {
+    it.effect("should work", () =>
+      Effect.gen(function*() {
+        const sql = yield* LibsqlClient.LibsqlClient
+        let response = yield* sql`INSERT INTO test (name) VALUES ('hello')`
+        assert.deepStrictEqual(response, [])
+        response = yield* sql`SELECT * FROM test`
+        assert.deepStrictEqual(response, [{ id: 1, name: "hello" }])
+        response = yield* sql`SELECT * FROM test`
+        assert.deepStrictEqual(yield* sql`select * from test`.values, [
+          [1, "hello"]
+        ])
+      }).pipe(Effect.provide(Migrations)))
+
+    it.effect("should work with raw", () =>
+      Effect.gen(function*() {
+        const sql = yield* LibsqlClient.LibsqlClient
+        let response: any
+        response = yield* sql`CREATE TABLE test2 (id INTEGER PRIMARY KEY, name TEXT)`.raw
+        yield* Effect.addFinalizer(() => sql`DROP TABLE test2;`.pipe(Effect.ignore))
+        assert.deepStrictEqual(response.toJSON(), {
+          columnTypes: [],
+          columns: [],
+          lastInsertRowid: null,
+          rows: [],
+          rowsAffected: 0
+        })
+        response = yield* sql`INSERT INTO test (name) VALUES ('hello')`.raw
+        assert.deepStrictEqual(response.toJSON(), {
+          columnTypes: [],
+          columns: [],
+          lastInsertRowid: "1",
+          rows: [],
+          rowsAffected: 1
+        })
+        response = yield* sql`SELECT * FROM test`.raw
+        assert.deepStrictEqual(response.toJSON(), {
+          columnTypes: ["INTEGER", "TEXT"],
+          columns: ["id", "name"],
+          lastInsertRowid: null,
+          rows: [[1, "hello"]],
+          rowsAffected: 0
+        })
+      }).pipe(Effect.provide(Migrations)))
+
+    it.effect("withTransaction", () =>
+      Effect.gen(function*() {
+        const sql = yield* LibsqlClient.LibsqlClient
+        yield* sql.withTransaction(sql`INSERT INTO test (name) VALUES ('hello')`)
+        const rows = yield* sql`SELECT * FROM test`
+        assert.deepStrictEqual(rows, [{ id: 1, name: "hello" }])
+      }).pipe(Effect.provide(Migrations)))
+
+    it.effect("withTransaction rollback", () =>
+      Effect.gen(function*() {
+        const sql = yield* LibsqlClient.LibsqlClient
+        yield* sql`INSERT INTO test (name) VALUES ('hello')`.pipe(
+          Effect.andThen(Effect.fail("boom")),
+          sql.withTransaction,
+          Effect.ignore
+        )
+        const rows = yield* sql`SELECT * FROM test`
+        assert.deepStrictEqual(rows, [])
+      }).pipe(Effect.provide(Migrations)))
+
+    it.effect("withTransaction nested", () =>
+      Effect.gen(function*() {
+        const sql = yield* LibsqlClient.LibsqlClient
+        const stmt = sql`INSERT INTO test (name) VALUES ('hello')`
+
+        yield* stmt.pipe(Effect.andThen(() => stmt.pipe(sql.withTransaction)), sql.withTransaction)
+        const rows = yield* sql<{ total_rows: number }>`select count(*) as total_rows FROM test`
+        assert.deepStrictEqual(rows.at(0)?.total_rows, 2)
+      }).pipe(Effect.provide(Migrations)))
+
+    it.effect("withTransaction nested rollback", () =>
+      Effect.gen(function*() {
+        const sql = yield* LibsqlClient.LibsqlClient
+        const stmt = sql`INSERT INTO test (name) VALUES ('hello')`
+
+        yield* stmt.pipe(
+          Effect.andThen(() => stmt.pipe(Effect.andThen(Effect.fail("boom")), sql.withTransaction, Effect.ignore)),
+          sql.withTransaction
+        )
+        const rows = yield* sql<{ total_rows: number }>`select count(*) as total_rows FROM test`
+        assert.deepStrictEqual(rows.at(0)?.total_rows, 1)
+      }).pipe(Effect.provide(Migrations)))
+  })
+})

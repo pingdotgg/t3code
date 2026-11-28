@@ -19,10 +19,7 @@
  * files via the `cache:storage` disk service.
  */
 import CachePolicy from "http-cache-semantics";
-import type {
-  InclusiveRange,
-  MultipartReadableStream,
-} from "../../internal/shared.worker.ts";
+import type { InclusiveRange, MultipartReadableStream } from "../../internal/shared.worker.ts";
 import {
   assert,
   BlobStore,
@@ -168,9 +165,7 @@ function getExpiration(timers: Timers, req: Request, res: Response) {
   // If Cache-Control contains private=set-cookie, Cloudflare will remove
   // the Set-Cookie header automatically
   const resHeaders = normaliseHeaders(res.headers);
-  if (
-    resHeaders["cache-control"]?.toLowerCase().includes("private=set-cookie")
-  ) {
+  if (resHeaders["cache-control"]?.toLowerCase().includes("private=set-cookie")) {
     resHeaders["cache-control"] = resHeaders["cache-control"]
       ?.toLowerCase()
       .replace(/private=set-cookie;?/i, "");
@@ -285,10 +280,7 @@ function getMatchResponse(reqHeaders: Headers, res: CachedResponse): Response {
       res.headers.set("Content-Type", res.body.multipartContentType);
     } else {
       const { start, end } = res.ranges[0];
-      res.headers.set(
-        "Content-Range",
-        `bytes ${start}-${end}/${res.totalSize}`,
-      );
+      res.headers.set("Content-Range", `bytes ${start}-${end}/${res.totalSize}`);
       res.headers.set("Content-Length", `${end - start + 1}`);
     }
   }
@@ -302,9 +294,7 @@ class SizingStream extends TransformStream<Uint8Array, Uint8Array> {
 
   constructor() {
     let resolveSize!: (size: number) => void;
-    const sizePromise = new Promise<number>(
-      (resolve) => (resolveSize = resolve),
-    );
+    const sizePromise = new Promise<number>((resolve) => (resolveSize = resolve));
     let size = 0;
     super({
       transform(chunk, controller) {
@@ -338,27 +328,17 @@ export class CacheObject implements DurableObject {
 
   get name(): string {
     // `name` is initialised from the name header on first request
-    assert(
-      this.#name !== undefined,
-      "Expected `CacheObject#fetch()` call before `name` access",
-    );
+    assert(this.#name !== undefined, "Expected `CacheObject#fetch()` call before `name` access");
     return this.#name;
   }
 
   get blob(): BlobStore {
-    return (this.#blob ??= new BlobStore(
-      this.env[BINDING_CACHE_BLOBS],
-      this.name,
-    ));
+    return (this.#blob ??= new BlobStore(this.env[BINDING_CACHE_BLOBS], this.name));
   }
 
   get storage(): KeyValueStorage<CacheMetadata> {
     // `KeyValueStorage` can only be constructed once `this.blob` is initialised
-    return (this.#storage ??= new KeyValueStorage(
-      this.state.storage,
-      this.blob,
-      this.timers,
-    ));
+    return (this.#storage ??= new KeyValueStorage(this.state.storage, this.blob, this.timers));
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -416,10 +396,7 @@ export class CacheObject implements DurableObject {
       // Enable/disable fake timers, advance time, or wait for tasks
       const func: unknown = this.timers[name as keyof Timers];
       assert(typeof func === "function", `Unknown control op: ${name}`);
-      const result = await (func as (...args: Array<unknown>) => unknown).apply(
-        this.timers,
-        args,
-      );
+      const result = await (func as (...args: Array<unknown>) => unknown).apply(this.timers, args);
       return Response.json(result ?? null);
     }
   }
@@ -486,11 +463,7 @@ export class CacheObject implements DurableObject {
     let body = res.body;
     assert(body !== null);
 
-    const { storable, expiration, headers } = getExpiration(
-      this.timers,
-      req,
-      res,
-    );
+    const { storable, expiration, headers } = getExpiration(this.timers, req, res);
     if (!storable) {
       // Make sure `body` is consumed to avoid `TypeError: Can't read from
       // request stream after response has been sent.`

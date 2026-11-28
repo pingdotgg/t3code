@@ -5,18 +5,27 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 
 import * as Electron from "electron";
+import { msg } from "gt-i18n";
 
-import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import {
+  type DatabaseMigrationProgress,
+  type DesktopSnapShotEvent,
+  DEFAULT_CLIENT_SETTINGS,
+} from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
+import * as DesktopClerk from "../app/DesktopClerk.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopPrimaryPaste from "../app/DesktopPrimaryPaste.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
-import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
+import { getDesktopOrigin, getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
@@ -28,20 +37,49 @@ import {
   TRACKPAD_SCROLL_END_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
-import { PASSKEY_BRIDGE_ARGUMENT } from "../preview/GuestProtocol.ts";
+import {
+  PASSKEY_BRIDGE_ARGUMENT,
+  PRIMARY_PASTE_DISABLED_ARGUMENT,
+} from "../preview/GuestProtocol.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import { m } from "../i18n/messages.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
+import { installMainWindowRemoteRequestHeaderPolicy } from "./RemoteRequestHeaders.ts";
 
 const TITLEBAR_HEIGHT = 40;
+
+class ContextMenuImageCopyError extends Schema.TaggedError<ContextMenuImageCopyError>()(
+  "ContextMenuImageCopyError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not copy the context-menu image.";
+  }
+}
 // Match --workspace-topbar-height in apps/web/src/index.css; native macOS buttons stay 14 points at any zoom.
 const MACOS_WORKSPACE_TOPBAR_HEIGHT = 52;
 const MACOS_WINDOW_BUTTON_RADIUS = 7;
+
+function parseMailtoAddress(rawUrl: string): Option.Option<string> {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return Option.none();
+  }
+  if (url.protocol !== "mailto:" || url.pathname === "") return Option.none();
+  try {
+    return Option.some(decodeURIComponent(url.pathname));
+  } catch {
+    return Option.some(url.pathname);
+  }
+}
 
 function syncMacosWindowButtons(window: Electron.BrowserWindow): void {
   if (window.isDestroyed() || window.isFullScreen()) return;
@@ -138,16 +176,72 @@ function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
 
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
 
+// A window snapped to a display edge can be reported 1px past that edge.
+const SAVED_BOUNDS_EDGE_TOLERANCE_PX = 1;
+
 function windowFitsWithinDisplay(
   windowBounds: DesktopAppSettings.DesktopWindowBounds,
   displayBounds: DisplayBounds,
 ): boolean {
+  const tolerance = SAVED_BOUNDS_EDGE_TOLERANCE_PX;
   return (
-    windowBounds.x >= displayBounds.x &&
-    windowBounds.y >= displayBounds.y &&
-    windowBounds.x + windowBounds.width <= displayBounds.x + displayBounds.width &&
-    windowBounds.y + windowBounds.height <= displayBounds.y + displayBounds.height
+    windowBounds.x >= displayBounds.x - tolerance &&
+    windowBounds.y >= displayBounds.y - tolerance &&
+    windowBounds.x + windowBounds.width <= displayBounds.x + displayBounds.width + tolerance &&
+    windowBounds.y + windowBounds.height <= displayBounds.y + displayBounds.height + tolerance
   );
+}
+
+function overlapArea(left: DisplayBounds, right: DisplayBounds): number {
+  const width = Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x);
+  const height = Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y);
+  return width > 0 && height > 0 ? width * height : 0;
+}
+
+function displayMatching(
+  bounds: DisplayBounds,
+  displays: readonly DisplayBounds[],
+): DisplayBounds | undefined {
+  let match: DisplayBounds | undefined;
+  let matchArea = 0;
+  for (const display of displays) {
+    const area = overlapArea(bounds, display);
+    if (area > matchArea) {
+      match = display;
+      matchArea = area;
+    }
+  }
+  return match;
+}
+
+// Normal bounds of a maximized window can sit on, or straddle into, another display than the window.
+function normalBoundsOnWindowDisplay(
+  normalBounds: DisplayBounds,
+  windowBounds: DisplayBounds,
+  displays: readonly DisplayBounds[],
+): DisplayBounds {
+  const target = displayMatching(windowBounds, displays);
+  if (target === undefined || windowFitsWithinDisplay(normalBounds, target)) {
+    return normalBounds;
+  }
+  const source = displayMatching(normalBounds, displays) ?? target;
+  const width = Math.min(normalBounds.width, target.width);
+  const height = Math.min(normalBounds.height, target.height);
+  const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+  return {
+    x: clamp(target.x + normalBounds.x - source.x, target.x, target.x + target.width - width),
+    y: clamp(target.y + normalBounds.y - source.y, target.y, target.y + target.height - height),
+    width,
+    height,
+  };
+}
+
+function readDisplayBoundsOrEmpty(): readonly DisplayBounds[] {
+  try {
+    return Electron.screen.getAllDisplays().map((display) => display.bounds);
+  } catch {
+    return [];
+  }
 }
 
 function windowBoundsEqual(
@@ -175,12 +269,18 @@ export function resolveInitialMainWindowBounds(
   return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
 }
 
-function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean): string {
+function buildConnectingSplashDataUrl(
+  shouldUseDarkColors: boolean,
+  progress: DatabaseMigrationProgress | null,
+): string {
   const background = getInitialWindowBackgroundColor(shouldUseDarkColors);
   const label = shouldUseDarkColors ? "#9ca3af" : "#6b7280";
   const accent = shouldUseDarkColors ? "#f8fafc" : "#1f2937";
   const track = shouldUseDarkColors ? "rgba(248,250,252,0.18)" : "rgba(31,41,55,0.18)";
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">Connecting to WSL…</div></body></html>`;
+  const message = progress
+    ? `Upgrading database (${progress.current} of ${progress.total})`
+    : "Connecting to WSL…";
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">${message}</div></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
@@ -258,6 +358,7 @@ function getWindowTitleBarOptions(
 
 function syncWindowAppearance(
   window: Electron.BrowserWindow,
+  hasTitleBarOverlay: boolean,
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
 ): Effect.Effect<void> {
@@ -268,7 +369,7 @@ function syncWindowAppearance(
 
     window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
     const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors, platform);
-    if (typeof titleBarOverlay === "object") {
+    if (hasTitleBarOverlay && typeof titleBarOverlay === "object") {
       window.setTitleBarOverlay(titleBarOverlay);
     }
   });
@@ -302,6 +403,7 @@ export const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const previewManager = yield* PreviewManager.PreviewManager;
   const previewPasskeys = yield* PreviewPasskeys.PreviewPasskeys;
+  const primaryPaste = yield* DesktopPrimaryPaste.DesktopPrimaryPaste;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const electronApp = yield* ElectronApp.ElectronApp;
@@ -319,6 +421,7 @@ export const make = Effect.gen(function* () {
     Effect.suspend(() => pendingMainReveals.get(window) ?? electronWindow.reveal(window)),
   );
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
+  let remoteRequestHeaderOwner: Electron.BrowserWindow | null = null;
 
   const dismissConnectingSplash = Effect.gen(function* () {
     const splash = yield* Ref.getAndSet(splashWindowRef, Option.none());
@@ -338,7 +441,6 @@ export const make = Effect.gen(function* () {
     );
 
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
-  const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
 
   const zoomWindow = Effect.fn("desktop.window.zoomWindow")(function* (
     window: Electron.BrowserWindow,
@@ -389,8 +491,8 @@ export const make = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return Option.none();
     const window = yield* electronWindow.create({
       ...initialBounds,
-      minWidth: 840,
-      minHeight: 620,
+      minWidth: DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.width,
+      minHeight: DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.height,
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
@@ -407,6 +509,7 @@ export const make = Effect.gen(function* () {
         sandbox: true,
         webviewTag: true,
         // Guest fullscreen propagates to the embedder; both must opt out to keep it inside the webview.
+        // The app's own fullscreen elements reach OS fullscreen through syncHtmlFullscreen.
         disableHtmlFullscreenWindowResize: true,
       },
     });
@@ -423,33 +526,52 @@ export const make = Effect.gen(function* () {
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let pendingBoundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let boundsPersistenceEnabled = persistedBounds === null || restoredPersistedBounds;
-    const readPersistableBounds = (): DesktopAppSettings.DesktopWindowBounds | null => {
+    let lastPersistableState: {
+      readonly bounds: DesktopAppSettings.DesktopWindowBounds;
+      readonly isMaximized: boolean;
+    } | null = null;
+    const readPersistableState = () => {
       if (window.isDestroyed()) {
         return null;
       }
+      // Minimized windows report stale state on some platforms (macOS: not maximized, the
+      // pre-move normal frame; Windows: -32000), so they keep the state seen before minimizing.
+      if (window.isMinimized()) {
+        return lastPersistableState;
+      }
+      const isMaximized = window.isMaximized();
       const bounds =
-        window.isFullScreen() || window.isMaximized() || window.isMinimized()
-          ? window.getNormalBounds()
+        window.isFullScreen() || isMaximized
+          ? normalBoundsOnWindowDisplay(
+              window.getNormalBounds(),
+              window.getBounds(),
+              readDisplayBoundsOrEmpty(),
+            )
           : window.getBounds();
-      return DesktopAppSettings.normalizeMainWindowBounds({
+      const persistableBounds = DesktopAppSettings.normalizeMainWindowBounds({
         x: Math.round(bounds.x),
         y: Math.round(bounds.y),
         width: Math.round(bounds.width),
         height: Math.round(bounds.height),
       });
+      lastPersistableState =
+        persistableBounds === null ? null : { bounds: persistableBounds, isMaximized };
+      return lastPersistableState;
     };
-    const fallbackWindowBounds = boundsPersistenceEnabled ? null : readPersistableBounds();
+    const fallbackWindowBounds = boundsPersistenceEnabled
+      ? null
+      : (readPersistableState()?.bounds ?? null);
     const fallbackWindowMaximized = persistedSettings.mainWindowMaximized;
     const persistCurrentBounds = (): Fiber.Fiber<void, never> | undefined => {
       if (!boundsPersistenceEnabled) {
         return pendingBoundsPersistFiber;
       }
-      const bounds = readPersistableBounds();
-      if (bounds === null) {
+      const state = readPersistableState();
+      if (state === null) {
         return pendingBoundsPersistFiber;
       }
       pendingBoundsPersistFiber = runFork(
-        desktopSettings.setMainWindowBounds(bounds, window.isMaximized()).pipe(
+        desktopSettings.setMainWindowBounds(state.bounds, state.isMaximized).pipe(
           Effect.asVoid,
           Effect.catch((error) =>
             logWindowWarning("failed to persist main window bounds", {
@@ -461,16 +583,15 @@ export const make = Effect.gen(function* () {
       return pendingBoundsPersistFiber;
     };
     const scheduleBoundsPersist = () => {
-      if (!boundsPersistenceEnabled) {
-        const currentBounds = readPersistableBounds();
-        if (
-          currentBounds === null ||
+      const state = readPersistableState();
+      if (
+        !boundsPersistenceEnabled &&
+        (state === null ||
           (fallbackWindowBounds !== null &&
-            windowBoundsEqual(currentBounds, fallbackWindowBounds) &&
-            window.isMaximized() === fallbackWindowMaximized)
-        ) {
-          return;
-        }
+            windowBoundsEqual(state.bounds, fallbackWindowBounds) &&
+            state.isMaximized === fallbackWindowMaximized))
+      ) {
+        return;
       }
       boundsPersistenceEnabled = true;
       if (boundsPersistFiber !== undefined) {
@@ -520,15 +641,23 @@ export const make = Effect.gen(function* () {
         event.preventDefault();
         return;
       }
+      // The guest always runs the app's own preload, whatever the element asked for.
+      webPreferences.preload = environment.previewPickPreloadPath;
       webPreferences.sandbox = true;
       webPreferences.nodeIntegration = false;
       webPreferences.nodeIntegrationInSubFrames = false;
-      webPreferences.contextIsolation = false;
+      webPreferences.contextIsolation = true;
       webPreferences.disableHtmlFullscreenWindowResize = true;
       if (previewPasskeys.bridgeEnabled) {
         webPreferences.additionalArguments = [
           ...(webPreferences.additionalArguments ?? []),
           PASSKEY_BRIDGE_ARGUMENT,
+        ];
+      }
+      if (!primaryPaste.enabled) {
+        webPreferences.additionalArguments = [
+          ...(webPreferences.additionalArguments ?? []),
+          PRIMARY_PASTE_DISABLED_ARGUMENT,
         ];
       }
     });
@@ -537,6 +666,7 @@ export const make = Effect.gen(function* () {
     const installContextMenu = (
       ownerWindow: Electron.BrowserWindow,
       contents: Electron.WebContents,
+      isBrowserContents = false,
     ): void => {
       if (contextMenuContents.has(contents)) return;
       contextMenuContents.add(contents);
@@ -548,6 +678,18 @@ export const make = Effect.gen(function* () {
 
         const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
 
+        if (isBrowserContents) {
+          menuTemplate.push(
+            {
+              label: m(msg("Reload")),
+              click: () => {
+                if (!contents.isDestroyed()) contents.reload();
+              },
+            },
+            { type: "separator" },
+          );
+        }
+
         if (params.misspelledWord) {
           for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
             menuTemplate.push({
@@ -558,7 +700,7 @@ export const make = Effect.gen(function* () {
             });
           }
           if (params.dictionarySuggestions.length === 0) {
-            menuTemplate.push({ label: "No suggestions", enabled: false });
+            menuTemplate.push({ label: m(msg("No suggestions")), enabled: false });
           }
           menuTemplate.push({ type: "separator" });
         }
@@ -566,7 +708,7 @@ export const make = Effect.gen(function* () {
         if (Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))) {
           menuTemplate.push(
             {
-              label: "Copy Link",
+              label: m(msg("Copy Link")),
               click: () => {
                 void runPromise(electronShell.copyText(params.linkURL));
               },
@@ -575,14 +717,28 @@ export const make = Effect.gen(function* () {
           );
         }
 
+        const mailtoAddress = parseMailtoAddress(params.linkURL);
+        if (Option.isSome(mailtoAddress)) {
+          menuTemplate.push(
+            {
+              label: m(msg("Copy Email Address")),
+              click: () => {
+                void runPromise(electronShell.copyText(mailtoAddress.value));
+              },
+            },
+            { type: "separator" },
+          );
+        }
+
         if (params.mediaType === "image") {
           menuTemplate.push({
-            label: "Copy Image",
+            label: m(msg("Copy Image")),
             click: () => {
               void runPromise(
-                Effect.tryPromise(() => copyContextMenuImage(contents, params)).pipe(
-                  Effect.catch(() => logWindowWarning("failed to copy context-menu image")),
-                ),
+                Effect.tryPromise({
+                  try: () => copyContextMenuImage(contents, params),
+                  catch: (cause) => new ContextMenuImageCopyError({ cause }),
+                }).pipe(Effect.catch(() => logWindowWarning("failed to copy context-menu image"))),
               );
             },
           });
@@ -590,10 +746,26 @@ export const make = Effect.gen(function* () {
         }
 
         menuTemplate.push(
-          { role: "cut", enabled: params.editFlags.canCut },
-          { role: "copy", enabled: params.editFlags.canCopy },
-          { role: "paste", enabled: params.editFlags.canPaste },
-          { role: "selectAll", enabled: params.editFlags.canSelectAll },
+          {
+            role: "cut",
+            label: m(msg("Cut", { $context: "Edit menu item" })),
+            enabled: params.editFlags.canCut,
+          },
+          {
+            role: "copy",
+            label: m(msg("Copy", { $context: "Edit menu item" })),
+            enabled: params.editFlags.canCopy,
+          },
+          {
+            role: "paste",
+            label: m(msg("Paste", { $context: "Edit menu item" })),
+            enabled: params.editFlags.canPaste,
+          },
+          {
+            role: "selectAll",
+            label: m(msg("Select All", { $context: "Edit menu item" })),
+            enabled: params.editFlags.canSelectAll,
+          },
         );
 
         void runPromise(
@@ -605,21 +777,28 @@ export const make = Effect.gen(function* () {
         );
       });
       contents.on("did-create-window", (popup) => {
-        installContextMenu(popup, popup.webContents);
+        installContextMenu(popup, popup.webContents, isBrowserContents);
       });
     };
     installContextMenu(window, window.webContents);
     window.webContents.on("did-attach-webview", (_event, contents) => {
-      installContextMenu(window, contents);
+      installContextMenu(window, contents, true);
       void runPromise(previewManager.prepareWebview(contents));
     });
 
+    // Popups from every frame in this window arrive here without a caller, so only web links
+    // pass. The app opens editors and other applications over IPC.
     window.webContents.setWindowOpenHandler(({ url }) => {
-      if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
+      if (Option.isSome(ElectronShell.parseWebExternalUrl(url))) {
         void runPromise(electronShell.openExternal(url));
       }
       return { action: "deny" };
     });
+    // Chromium asks this before handing a navigation to an OS protocol handler, and grants it
+    // when nothing answers. External links are opened through ElectronShell only.
+    window.webContents.session.setPermissionRequestHandler((_contents, permission, callback) =>
+      callback(permission !== "openExternal"),
+    );
     window.webContents.on("will-navigate", (event, url) => {
       if (
         isSameOriginRendererNavigation({
@@ -661,6 +840,14 @@ export const make = Effect.gen(function* () {
     });
     window.webContents.on("before-input-event", (event, input) => {
       quitShortcutHandler(event, input);
+      if (window.isDestroyed()) return;
+      // Cmd/Ctrl+W reaches the renderer; DevTools uses the native menu shortcut.
+      window.webContents.setIgnoreMenuShortcuts(
+        (environment.platform === "darwin" ? input.meta : input.control) &&
+          !input.alt &&
+          !input.shift &&
+          input.key.toLowerCase() === "w",
+      );
       // A held Cmd/Ctrl+W closes one tab or terminal, not each one behind it.
       if (input.type !== "keyDown" || !input.isAutoRepeat) return;
       const modifier = environment.platform === "darwin" ? input.meta : input.control;
@@ -669,6 +856,7 @@ export const make = Effect.gen(function* () {
       }
     });
     window.webContents.on("input-event", (_event, input) => {
+      if (window.isDestroyed()) return;
       if (input.type === "gestureScrollBegin") {
         window.webContents.send(TRACKPAD_SCROLL_BEGIN_CHANNEL);
       } else if (input.type === "gestureScrollEnd") {
@@ -681,7 +869,10 @@ export const make = Effect.gen(function* () {
       runFork(zoomWindow(window, direction));
     });
 
-    window.on("page-title-updated", (event) => {
+    // The renderer titles the window after the open thread; only a blank title
+    // falls back to the app name.
+    window.on("page-title-updated", (event, title) => {
+      if (title.trim() !== "") return;
       event.preventDefault();
       window.setTitle(environment.displayName);
     });
@@ -764,7 +955,6 @@ export const make = Effect.gen(function* () {
       }
       clearDevelopmentLoadRetry();
       developmentLoadRetryIndex = 0;
-      window.setTitle(environment.displayName);
       if (environment.platform === "darwin") syncMacosWindowButtons(window);
     });
     window.webContents.on(
@@ -806,20 +996,33 @@ export const make = Effect.gen(function* () {
           rendererRecoveryTimestamps = rendererRecoveryTimestamps.filter(
             (timestamp) => now - timestamp < RENDERER_RECOVERY_WINDOW_MS,
           );
-          const shouldRecover =
-            recoverable &&
-            !window.isDestroyed() &&
-            rendererRecoveryTimestamps.length < RENDERER_RECOVERY_MAX_ATTEMPTS;
+          const shouldRecover = recoverable && !window.isDestroyed();
+          // Past the budget, wait for the oldest attempt to leave the window instead of
+          // giving up, so a crash loop backs off but never leaves the window blank.
+          const oldestAttempt =
+            rendererRecoveryTimestamps.length >= RENDERER_RECOVERY_MAX_ATTEMPTS
+              ? rendererRecoveryTimestamps[
+                  rendererRecoveryTimestamps.length - RENDERER_RECOVERY_MAX_ATTEMPTS
+                ]
+              : undefined;
+          const reloadInMs =
+            oldestAttempt === undefined
+              ? RENDERER_RECOVERY_RELOAD_DELAY_MS
+              : Math.max(
+                  RENDERER_RECOVERY_RELOAD_DELAY_MS,
+                  oldestAttempt + RENDERER_RECOVERY_WINDOW_MS - now,
+                );
           yield* logWindowWarning("main window render process gone", {
             reason: details.reason,
             exitCode: details.exitCode,
             recovering: shouldRecover,
+            ...(shouldRecover ? { reloadInMs } : {}),
           });
           if (!shouldRecover) {
             return;
           }
-          rendererRecoveryTimestamps.push(now);
-          yield* Effect.sleep(RENDERER_RECOVERY_RELOAD_DELAY_MS);
+          rendererRecoveryTimestamps.push(now + reloadInMs);
+          yield* Effect.sleep(reloadInMs);
           if (!window.isDestroyed()) {
             loadApplication();
           }
@@ -854,6 +1057,21 @@ export const make = Effect.gen(function* () {
       void runPromise(revealWhenReady);
     });
 
+    // Desktop IPC only answers the main window, so register it before its renderer can call in.
+    yield* electronWindow.setMain(window);
+    remoteRequestHeaderOwner = window;
+    const detachRemoteRequestHeaders = installMainWindowRemoteRequestHeaderPolicy(
+      window.webContents.session,
+      {
+        desktopOrigin: getDesktopOrigin(environment.isDevelopment),
+        mainWebContentsId: window.webContents.id,
+        clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
+        devServerOrigin: Option.getOrUndefined(
+          Option.map(environment.devServerUrl, (url) => url.origin),
+        ),
+        isDevelopment: environment.isDevelopment,
+      },
+    );
     loadApplication();
     if (environment.isDevelopment) {
       window.webContents.openDevTools({ mode: "detach" });
@@ -863,6 +1081,10 @@ export const make = Effect.gen(function* () {
       if (!backendHasStarted) mainClosedDuringStartup = true;
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
+      if (remoteRequestHeaderOwner === window) {
+        remoteRequestHeaderOwner = null;
+        detachRemoteRequestHeaders();
+      }
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
 
@@ -872,7 +1094,6 @@ export const make = Effect.gen(function* () {
   const createMain = Effect.gen(function* () {
     const window = yield* createWindow();
     if (Option.isSome(window)) {
-      yield* electronWindow.setMain(window.value);
       mainClosedDuringStartup = false;
       yield* logWindowInfo("main window created");
     }
@@ -881,7 +1102,7 @@ export const make = Effect.gen(function* () {
 
   const ensureMain = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return Option.none<Electron.BrowserWindow>();
-    const existingWindow = yield* currentMainWindow;
+    const existingWindow = yield* electronWindow.main;
     if (Option.isSome(existingWindow)) {
       return existingWindow;
     }
@@ -945,15 +1166,34 @@ export const make = Effect.gen(function* () {
     }
     yield* rendererHistory.register(splash.webContents, { surface: "splash" });
     yield* Ref.set(splashWindowRef, Option.some(splash));
+    let renderedUrl: string | undefined;
+    const progressFiber = runFork(
+      Effect.gen(function* () {
+        if (splash.isDestroyed() || (yield* Ref.get(desktopState.quitting))) return;
+        const progress = yield* Ref.get(desktopState.databaseMigrationProgress);
+        const url = buildConnectingSplashDataUrl(shouldUseDarkColors, progress);
+        if (url === renderedUrl) return;
+        const loaded = yield* Effect.promise(() =>
+          splash.loadURL(url).then(
+            () => true,
+            () => false,
+          ),
+        );
+        if (loaded) renderedUrl = url;
+      }).pipe(Effect.repeat(Schedule.spaced("1 second"))),
+    );
     splash.once("closed", () => {
-      void runPromise(Ref.set(splashWindowRef, Option.none()));
+      runFork(
+        Fiber.interrupt(progressFiber).pipe(
+          Effect.andThen(Ref.set(splashWindowRef, Option.none())),
+        ),
+      );
     });
     splash.once("ready-to-show", () => {
       if (!splash.isDestroyed()) {
         splash.show();
       }
     });
-    void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors));
     yield* logWindowInfo("connecting splash shown");
   }).pipe(
     Effect.catch((error) =>
@@ -968,7 +1208,8 @@ export const make = Effect.gen(function* () {
     { reveal = true }: { readonly reveal?: boolean } = {},
   ) {
     if (yield* Ref.get(desktopState.quitting)) return;
-    const existingWindow = yield* reveal ? focusedMainWindow : electronWindow.main;
+    // Only the main renderer loads the app preload that listens on these channels.
+    const existingWindow = yield* electronWindow.main;
     if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) return;
     const window = Option.isSome(existingWindow) ? existingWindow : yield* ensureMain;
     if (Option.isNone(window) || window.value.isDestroyed()) return;
@@ -1065,8 +1306,8 @@ export const make = Effect.gen(function* () {
     }),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
-      yield* electronWindow.syncAllAppearance((window) =>
-        syncWindowAppearance(window, shouldUseDarkColors, environment.platform),
+      yield* electronWindow.syncAllAppearance((window, { titleBarOverlay }) =>
+        syncWindowAppearance(window, titleBarOverlay, shouldUseDarkColors, environment.platform),
       );
     }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
   });

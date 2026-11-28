@@ -13,19 +13,27 @@
  * (`RpcSpawner`) forks this entry once per run; `RpcProviderProxy` points
  * every provider at it.
  */
+
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as RpcServer from "./RpcServer.ts";
+
+export class SidecarInvalidProps extends Data.TaggedError("SidecarInvalidProps")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
 
 RpcServer.launch((group) =>
   Effect.promise(() => import(group)).pipe(
     Effect.flatMap((module: { default?: unknown }) =>
       Layer.isLayer(module.default)
-        ? Effect.succeed(module.default as RpcServer.ProviderLayer)
+        ? // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- dynamically imported provider group module
+          Effect.succeed(module.default as RpcServer.ProviderLayer)
         : Effect.fail(
-            new Error(
-              `Provider group module ${group} must default-export its provider Layer`,
-            ),
+            new SidecarInvalidProps({
+              message: `Provider group module ${group} must default-export its provider Layer`,
+            }),
           ),
     ),
   ),

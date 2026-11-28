@@ -1,0 +1,16 @@
+"@effect/ai-amazon-bedrock/AmazonBedrockLanguageModel":
+  replacement: "AmazonBedrockLanguageModel"
+  note: "The provider implements effect/ai/LanguageModel. Move prompt options and response metadata from the bedrock key to \"amazon-bedrock\"; model identifiers now accept arbitrary strings."
+"@effect/ai-amazon-bedrock/AmazonBedrockLanguageModel#AmazonBedrockReasoningInfo":
+  replacement: "AmazonBedrockLanguageModel.ReasoningInfo"
+  note: "ReasoningInfo now has optional signature and redactedContent fields instead of a type-discriminated union. Rename redactedData to redactedContent, remove the type discriminator, and use the \"amazon-bedrock\" provider options and metadata key."
+"@effect/ai-amazon-bedrock/AmazonBedrockLanguageModel#Config":
+  replacement: "AmazonBedrockLanguageModel.Config"
+  note: "Config is now a Context.Service. Use Context.getOrUndefined with the service identifier instead of Config.getOrUndefined. Configure native structured output with structuredOutputs; outputConfig exposes effort while textFormat is derived from the requested response format."
+"@effect/ai-amazon-bedrock/AmazonBedrockLanguageModel#Config.Service":
+  replacement: "typeof AmazonBedrockLanguageModel.Config.Service"
+  note: "The Config namespace interface is removed. Obtain the service type with typeof Config.Service; it contains partial Converse request options, structuredOutputs and outputConfig.effort."
+"@effect/ai-amazon-bedrock/AmazonBedrockLanguageModel#model":
+  include: true
+  replacement: "AmazonBedrockLanguageModel.model"
+  note: "The provider implements effect/ai/LanguageModel. Move prompt options and response metadata from the bedrock key to `amazon-bedrock`; model identifiers now accept arbitrary strings. Provide AmazonBedrockClient with its HTTP and crypto dependencies."

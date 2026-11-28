@@ -23,6 +23,11 @@ vi.mock("../../connection/catalog", async () => {
 vi.mock("../../state/pull-requests", async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const Effect = await import("effect/Effect");
+  const Schema = await import("effect/Schema");
+  class PullRequestListTestError extends Schema.TaggedError<PullRequestListTestError>()(
+    "PullRequestListTestError",
+    { message: Schema.String },
+  ) {}
   const page = (nextCursors: PullRequestListResult["nextCursors"]): PullRequestListResult => ({
     entries: [],
     nextCursors,
@@ -37,8 +42,11 @@ vi.mock("../../state/pull-requests", async () => {
     return Atom.make(
       Effect.suspend(() => {
         if (target.environmentId === "offline")
-          return Effect.fail(new Error("Environment is not connected."));
-        if (target.input.cursors && mocks.failPage) return Effect.fail(new Error("Page failed."));
+          return Effect.fail(
+            new PullRequestListTestError({ message: "Environment is not connected." }),
+          );
+        if (target.input.cursors && mocks.failPage)
+          return Effect.fail(new PullRequestListTestError({ message: "Page failed." }));
         return Effect.succeed(response);
       }),
     );

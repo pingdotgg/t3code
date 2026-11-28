@@ -1,0 +1,34 @@
+import * as sns from "@distilled.cloud/aws/sns";
+import * as Binding from "alchemy/Binding";
+import * as Effect from "effect/Effect";
+
+export interface ListPhoneNumbersOptedOutRequest extends sns.ListPhoneNumbersOptedOutInput {}
+
+/**
+ * Runtime binding for `sns:ListPhoneNumbersOptedOut`.
+ *
+ * An account-scoped operation — pages through the phone numbers whose
+ * owners opted out of receiving SMS from this account.
+ * Provide the `ListPhoneNumbersOptedOutHttp` layer on the Function to implement the binding.
+ * ### SMS Opt-Out Management
+ * **Example:** List Opted-Out Numbers
+ * ```typescript
+ * const listOptedOut = yield* SNS.ListPhoneNumbersOptedOut();
+ * const { phoneNumbers } = yield* listOptedOut();
+ * ```
+ *
+ * @binding
+ */
+export interface ListPhoneNumbersOptedOut extends Binding.Service<
+  ListPhoneNumbersOptedOut,
+  "AWS.SNS.ListPhoneNumbersOptedOut",
+  () => Effect.Effect<
+    (
+      request?: ListPhoneNumbersOptedOutRequest,
+    ) => Effect.Effect<sns.ListPhoneNumbersOptedOutResponse, sns.ListPhoneNumbersOptedOutError>
+  >
+> {}
+
+export const ListPhoneNumbersOptedOut = Binding.Service<ListPhoneNumbersOptedOut>(
+  "AWS.SNS.ListPhoneNumbersOptedOut",
+);

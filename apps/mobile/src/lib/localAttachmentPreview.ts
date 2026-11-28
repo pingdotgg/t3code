@@ -1,9 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { videoMimeType } from "@t3tools/shared/video";
 import * as Effect from "effect/Effect";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import * as Equal from "effect/Equal";
 import * as Hash from "effect/Hash";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { Atom, AsyncResult } from "effect/reactivity";
 
 import type { FileBackedComposerAttachment } from "./composerImages";
@@ -62,7 +66,9 @@ export async function loadLocalAttachmentPreview(
   } catch (cause) {
     release();
     if (signal.aborted) return null;
-    throw new Error("This attachment is no longer available. Attach the file again.", { cause });
+    throw new Error(m(msg("This attachment is no longer available. Attach the file again.")), {
+      cause,
+    });
   }
 }
 
@@ -84,6 +90,14 @@ class LocalAttachmentPreviewKey implements Equal.Equal {
   }
 }
 
+class LocalAttachmentPreviewLoadError extends Schema.TaggedError<LocalAttachmentPreviewLoadError>()(
+  "LocalAttachmentPreviewLoadError",
+  {
+    message: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {}
+
 const localAttachmentPreviewFamily = Atom.family((key: LocalAttachmentPreviewKey) =>
   Atom.make(
     // The lease lives as long as the atom: unmounting the last reader (or a
@@ -92,8 +106,16 @@ const localAttachmentPreviewFamily = Atom.family((key: LocalAttachmentPreviewKey
       Effect.tryPromise({
         try: (signal) => loadLocalAttachmentPreview(key.attachment, signal),
         catch: (cause) =>
-          cause instanceof Error ? cause : new Error("The local file is unavailable."),
-      }).pipe(Effect.flatMap((file) => (file === null ? Effect.interrupt : Effect.succeed(file)))),
+          new LocalAttachmentPreviewLoadError({
+            message: errorDisplayMessage(cause, m) ?? m(msg("The local file is unavailable.")),
+            cause,
+          }),
+      }).pipe(
+        Effect.filterOrElse(
+          (file) => file !== null,
+          () => Effect.interrupt,
+        ),
+      ),
       (file) => Effect.sync(file.dispose),
     ),
   ).pipe(Atom.withLabel(`local-attachment-preview:${key.attachment.id}`)),

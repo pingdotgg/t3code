@@ -45,9 +45,7 @@ declare const MetadataStaticRedirects: Schema.$Record<
     readonly lineNumber: Schema.Number;
   }>
 >;
-export type MetadataStaticRedirects = Mutable<
-  typeof MetadataStaticRedirects.Type
->;
+export type MetadataStaticRedirects = Mutable<typeof MetadataStaticRedirects.Type>;
 declare const MetadataRedirects: Schema.$Record<
   Schema.String,
   Schema.Struct<{
@@ -87,9 +85,7 @@ export declare const HeadersSchema: Schema.Struct<{
   readonly rules: Schema.$Record<
     Schema.String,
     Schema.Struct<{
-      readonly set: Schema.optional<
-        Schema.$Record<Schema.String, Schema.String>
-      >;
+      readonly set: Schema.optional<Schema.$Record<Schema.String, Schema.String>>;
       readonly unset: Schema.optional<Schema.$Array<Schema.String>>;
     }>
   >;
@@ -102,12 +98,7 @@ export declare const AssetConfigSchema: Schema.Struct<{
   readonly compatibility_flags: Schema.optional<Schema.$Array<Schema.String>>;
   readonly html_handling: Schema.optional<
     Schema.Literals<
-      readonly [
-        "auto-trailing-slash",
-        "force-trailing-slash",
-        "drop-trailing-slash",
-        "none",
-      ]
+      readonly ["auto-trailing-slash", "force-trailing-slash", "drop-trailing-slash", "none"]
     >
   >;
   readonly not_found_handling: Schema.optional<
@@ -139,9 +130,7 @@ export declare const AssetConfigSchema: Schema.Struct<{
       readonly rules: Schema.$Record<
         Schema.String,
         Schema.Struct<{
-          readonly set: Schema.optional<
-            Schema.$Record<Schema.String, Schema.String>
-          >;
+          readonly set: Schema.optional<Schema.$Record<Schema.String, Schema.String>>;
           readonly unset: Schema.optional<Schema.$Array<Schema.String>>;
         }>
       >;
@@ -149,9 +138,7 @@ export declare const AssetConfigSchema: Schema.Struct<{
   >;
   readonly has_static_routing: Schema.optional<Schema.Boolean>;
 }>;
-export type EyeballRouterConfig = Mutable<
-  typeof EyeballRouterConfigSchema.Type
->;
+export type EyeballRouterConfig = Mutable<typeof EyeballRouterConfigSchema.Type>;
 export type RouterConfig = Mutable<typeof RouterConfigSchema.Type>;
 export type AssetConfig = Mutable<typeof AssetConfigSchema.Type>;
 export interface UnsafePerformanceTimer {

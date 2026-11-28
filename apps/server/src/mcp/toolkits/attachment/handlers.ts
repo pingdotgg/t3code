@@ -6,12 +6,14 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as AssetSigner from "../../../assets/AssetSigner.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Upload from "../../../assets/AttachmentUpload.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { newCommandId, readThread, unavailable } from "../../threadAccess.ts";
+import { isThreadManagementError, threadManagementFailure } from "../../OrchestratorMcpService.ts";
+import { dispatchFailure, newCommandId, readThread, unavailable } from "../../threadAccess.ts";
 import { AttachmentToolkit } from "./tools.ts";
 
 export function resolveAttachmentReferences(
@@ -43,7 +45,8 @@ const uploadOwner = McpInvocationContext.McpInvocationContext.pipe(
 
 export const layer = McpToolAccess.toLayer(
   AttachmentToolkit,
-  Effect.sync(() => {
+  Effect.gen(function* () {
+    const assetSigner = yield* AssetSigner.AssetSigner;
     const uploadOwners = new Map<string, { readonly owner: string; readonly issuedAt: number }>();
     return {
       // A pending upload belongs to its caller until a send claims it, so
@@ -52,6 +55,7 @@ export const layer = McpToolAccess.toLayer(
         (input) =>
           Effect.gen(function* () {
             const result = yield* Upload.issueAttachmentUploadUrl(input.upload).pipe(
+              Effect.provideService(AssetSigner.AssetSigner, assetSigner),
               Effect.mapError(unavailable),
             );
             const now = yield* Clock.currentTimeMillis;
@@ -59,7 +63,10 @@ export const layer = McpToolAccess.toLayer(
               if (now - entry.issuedAt > UPLOAD_OWNER_TTL_MS) uploadOwners.delete(id);
             }
             uploadOwners.set(result.attachmentId, { owner: yield* uploadOwner, issuedAt: now });
-            return result;
+            const { origin } = yield* McpInvocationContext.McpInvocationContext;
+            return origin === undefined
+              ? result
+              : { ...result, uploadUrl: `${origin}${result.relativeUrl}` };
           }),
         { linkedCallers: "allowed" },
       ),
@@ -112,7 +119,9 @@ export const layer = McpToolAccess.toLayer(
                       code: "orchestration_error",
                       message: error.message,
                     })
-                  : unavailable(),
+                  : isThreadManagementError(error)
+                    ? threadManagementFailure(error)
+                    : dispatchFailure(error),
               ),
             );
             return {

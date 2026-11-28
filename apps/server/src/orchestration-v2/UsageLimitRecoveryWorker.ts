@@ -11,8 +11,9 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import { routineSpan } from "@t3tools/shared/observability";
 
-const MAX_OVERDUE_ARM_MS = 24 * 60 * 60 * 1000;
+export const MAX_OVERDUE_ARM_MS = 24 * 60 * 60 * 1000;
 
 export function limitRecoveryCommand(
   thread: ProjectionStore.ProjectionLimitRecoveryCandidate,
@@ -73,7 +74,7 @@ export function limitRecoveryCommand(
     text: "Continue where you left off.",
     attachments: [],
     dispatchMode: { type: "start_immediately" },
-    createdBy: "user",
+    createdBy: "agent",
     creationSource: "server",
   };
 }
@@ -99,7 +100,7 @@ const makeSweep = Effect.gen(function* () {
     ),
   );
   yield* forkParked(Stream.runForEach(settings.streamChanges, () => due.invalidate));
-  return Effect.fn("UsageLimitRecoveryWorker.sweep")(function* () {
+  return Effect.fn("UsageLimitRecoveryWorker.sweep", { attributes: routineSpan })(function* () {
     const now = yield* DateTime.now;
     const nowMs = DateTime.toEpochMillis(now);
     if (yield* due.isIdle(nowMs)) return;

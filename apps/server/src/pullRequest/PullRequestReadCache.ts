@@ -26,6 +26,8 @@ import { detachStackFrame } from "../git/detachStackFrame.ts";
 import { forkParked } from "../serverActivation.ts";
 
 const CONCURRENT_READS = 512;
+/** Invalidation excludes only reads whose scopes share its stripe, not every PR read. */
+const SCOPE_STRIPES = 64;
 // Entry filenames are the URI-encoded `<storeId>:<key>`; the scope revisions file has
 // no store id. Effect before 4.1 wrote `<storeId><key>`, still pruned here.
 const STORE_ID = "pr-v2";
@@ -87,6 +89,11 @@ export const make = Effect.gen(function* () {
   const clock = yield* Clock.Clock;
   let enabled = true;
   const lock = yield* Semaphore.make(CONCURRENT_READS);
+  const stripes = yield* Effect.forEach(Array.from({ length: SCOPE_STRIPES }), () =>
+    Semaphore.make(CONCURRENT_READS),
+  );
+  const stripeOf = (scope: string) => (Hash.string(scope) >>> 0) % SCOPE_STRIPES;
+  const revisionWrites = yield* Semaphore.make(1);
   const digest = (key: string) =>
     digester.digest(Digest.sha256, new TextEncoder().encode(key)).pipe(Effect.map(Hex.encode));
   const revisions = yield* Cache.makeWith(
@@ -162,6 +169,12 @@ export const make = Effect.gen(function* () {
           PersistenceError: () => read,
           SchemaError: () => read,
         }),
+        // A read stores its result under the revisions it started with, so an invalidation of
+        // one of its scopes must wait for it; reads of other scopes run on.
+        (effect) =>
+          [...new Set(scopes.map(stripeOf))]
+            .toSorted((left, right) => left - right)
+            .reduceRight((inner, stripe) => stripes[stripe]!.withPermits(1)(inner), effect),
         lock.withPermits(1),
       );
     }, detachStackFrame),
@@ -182,7 +195,8 @@ export const make = Effect.gen(function* () {
         return Effect.logWarning("PR cache disabled after clearing failed");
       }),
       Effect.uninterruptible,
-      lock.withPermits(CONCURRENT_READS),
+      revisionWrites.withPermits(1),
+      (effect, scope) => stripes[stripeOf(scope)]!.withPermits(CONCURRENT_READS)(effect),
       detachStackFrame,
     ),
   });

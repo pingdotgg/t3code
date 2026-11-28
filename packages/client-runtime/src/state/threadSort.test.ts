@@ -2,6 +2,7 @@ import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  activeThreadSortKey,
   generateSpreadPinOrderKeys,
   pinOrderKeyBetween,
   planPinnedReorder,
@@ -172,6 +173,26 @@ describe("sortThreads", () => {
 
     expect(sorted.map((thread) => thread.id)).toEqual(["thread-1", "thread-2"]);
   });
+
+  it("orders last user message by what the user wrote, not agent messages in the user role", () => {
+    const sorted = sortThreads(
+      [
+        makeThread({
+          id: "agent-posted",
+          latestUserAuthoredMessageAt: "2026-03-09T10:00:00.000Z",
+          latestUserMessageAt: "2026-03-09T10:30:00.000Z",
+        }),
+        makeThread({
+          id: "user-wrote",
+          latestUserAuthoredMessageAt: "2026-03-09T10:10:00.000Z",
+          latestUserMessageAt: "2026-03-09T10:10:00.000Z",
+        }),
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["user-wrote", "agent-posted"]);
+  });
 });
 
 describe("planPinnedReorder with hidden rows", () => {
@@ -264,6 +285,23 @@ describe("sortActiveThreadsByOrderKey", () => {
       "arranged-first",
       "arranged-last",
     ]);
+  });
+
+  it("places an arranged thread between unarranged ones without arranging them", () => {
+    const newer = { id: "newer", createdAt: "2026-03-09T12:00:00.000Z" };
+    const older = { id: "older", createdAt: "2026-03-09T10:00:00.000Z", unsettledAt: null };
+    const arranged = {
+      id: "arranged",
+      createdAt: "2026-03-01T09:00:00.000Z",
+      activeOrderKey: pinOrderKeyBetween(activeThreadSortKey(newer), activeThreadSortKey(older)),
+    };
+    const brandNew = { id: "brand-new", createdAt: "2026-03-10T09:00:00.000Z" };
+    const saved = { id: "saved", createdAt: "2026-03-11T09:00:00.000Z", activeOrderKey: "b" };
+    expect(
+      sortActiveThreadsByOrderKey([saved, older, arranged, newer, brandNew]).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual(["brand-new", "newer", "arranged", "older", "saved"]);
   });
 
   it("breaks equal order keys and timestamps by thread then environment", () => {

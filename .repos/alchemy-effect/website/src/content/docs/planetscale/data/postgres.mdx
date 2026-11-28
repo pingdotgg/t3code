@@ -22,7 +22,7 @@ Network-attached (NAS) sizes like `"PS_10"` are expanded to the full
 SKU using the target region and architecture:
 
 ```typescript
-import * as Planetscale from "alchemy/Planetscale";
+import * as Planetscale from "@alchemy.run/planetscale";
 
 const database = yield* Planetscale.PostgresDatabase("app-db", {
   region: { slug: "us-east" },
@@ -145,7 +145,7 @@ into consumers like [Cloudflare Hyperdrive](/cloudflare/data/hyperdrive):
   direct connection, e.g. Hyperdrive's local-dev origin.
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 const hyperdrive = yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
   origin: role.origin, // direct — Hyperdrive pools at the edge
@@ -165,7 +165,7 @@ an Interface VPC endpoint. With private DNS enabled, use
 `privateHost` for workloads in that VPC:
 
 ```typescript
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 
 const endpoint = yield* AWS.EC2.VpcEndpoint("postgres-private-link", {
   vpcId: vpc.vpcId,

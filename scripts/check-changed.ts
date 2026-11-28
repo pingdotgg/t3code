@@ -108,7 +108,14 @@ const CacheEntry = Schema.fromJsonString(
 const decodeCacheEntry = Schema.decodeEffect(CacheEntry);
 const encodeCacheEntry = Schema.encodeEffect(CacheEntry);
 const decodeRootPackageJson = Schema.decodeEffect(
-  Schema.fromJsonString(Schema.Struct({ scripts: Schema.Struct({ "knip:check": Schema.String }) })),
+  Schema.fromJsonString(
+    Schema.Struct({
+      scripts: Schema.Struct({
+        "knip:check:files": Schema.String,
+        "knip:check:exports": Schema.String,
+      }),
+    }),
+  ),
 );
 
 const collectBytes = (stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>) =>
@@ -142,6 +149,47 @@ export const git = Effect.fn("checkChanged.git")(function* (
 });
 export const gitLines = (cwd: string, args: ReadonlyArray<string>) =>
   git(cwd, args).pipe(Effect.map((stdout) => stdout.toString().split("\n").filter(Boolean)));
+
+// Ignored files that checks read: generated sources, declarations, and env files.
+const checkInput = /(^|\/)\.(generated|astro)\/|\.d\.ts$|(^|\/)\.env[^/]*$/;
+const inNodeModules = /(^|\/)node_modules\//;
+
+// Pathspecs don't stop git from walking an ignored directory, and on Windows it follows pnpm's
+// junctions in node_modules until MAX_PATH. `--directory` lists one without entering it.
+export const ignoredCheckInputs = Effect.fn("checkChanged.ignoredCheckInputs")(function* (
+  root: string,
+) {
+  const list = (args: ReadonlyArray<string>) =>
+    git(root, ["ls-files", "-z", ...args]).pipe(
+      Effect.map((stdout) => stdout.toString().split("\0").filter(Boolean)),
+    );
+  const ignored = ["--others", "--ignored", "--exclude-standard"];
+  // `--directory` hides a directory where the index has a file; `-k` lists those.
+  const [listed, replaced] = yield* Effect.all(
+    [list([...ignored, "--directory"]), list(["-k", "--directory"])],
+    { concurrency: 2 },
+  );
+  const entries = [...new Set([...listed, ...replaced])].sort();
+  // git lists an untracked directory whose contents are all ignored together with them;
+  // listing it again would walk its node_modules.
+  const directories = entries.filter(
+    (entry, index) =>
+      entry.endsWith("/") && !inNodeModules.test(entry) && !entries[index + 1]?.startsWith(entry),
+  );
+  const files = entries.filter((entry) => !entry.endsWith("/"));
+  // Calls fit Windows' 32,767-character command line: 16 covers `:(literal)`, quotes, a space.
+  // `.git/` matches nothing; it stops git starting its walk inside a nested repository.
+  const longest = directories.reduce((max, dir) => Math.max(max, dir.length), 0);
+  const size = Math.max(1, Math.floor(30_000 / (longest + 16)));
+  for (let start = 0; start < directories.length; start += size) {
+    const batch = directories.slice(start, start + size).map((dir) => `:(literal)${dir}`);
+    files.push(...(yield* list([...ignored, "--", ":(literal).git/", ...batch])));
+  }
+  // A nested repository is listed by its directory, as the old pathspecs listed it.
+  return files
+    .filter((file) => !inNodeModules.test(file) && (file.endsWith("/") || checkInput.test(file)))
+    .sort();
+});
 
 export const comparisonBase = Effect.fn("checkChanged.comparisonBase")(function* (
   root: string,
@@ -267,18 +315,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
         "--",
       ]),
     );
-    const ignored = yield* lines(
-      "ls-files",
-      "--others",
-      "--ignored",
-      "--exclude-standard",
-      "--",
-      ":(glob)**/.generated/**",
-      ":(glob)**/.astro/**",
-      ":(glob)**/*.d.ts",
-      ":(glob)**/.env*",
-      ":(exclude,glob)**/node_modules/**",
-    );
+    const ignored = yield* ignoredCheckInputs(root);
     for (const file of [
       // Raw bytes of changed files too: .gitattributes normalizes line endings in
       // the diff, but the formatter reads the file as it is on disk.
@@ -370,14 +407,16 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   const runKnip = files.some(
     (file) => CODE.test(file) || path.basename(file) === "package.json" || file === "knip.jsonc",
   );
-  // CI runs knip:check as one script of `knip ... && knip ...` passes. The passes
+  // CI runs knip:check as a task that depends on one script per pass. The passes
   // do not depend on each other, so they run side by side here.
   const rootPackage = yield* fs
     .readFileString(inRoot("package.json"))
     .pipe(Effect.flatMap(decodeRootPackageJson), Effect.orDie);
-  const knipCheck = rootPackage.scripts["knip:check"];
   const knipPasses: Array<Array<string>> = [];
-  for (const command of knipCheck.split(" && ")) {
+  for (const command of [
+    rootPackage.scripts["knip:check:files"],
+    rootPackage.scripts["knip:check:exports"],
+  ]) {
     const [bin, ...args] = command.trim().split(/\s+/);
     if (bin !== "knip" || /["'$\\|;&<>]/.test(command)) {
       return yield* Effect.fail(`check:changed cannot split knip:check: ${command}`);
@@ -394,6 +433,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       file === ".pnpmfile.cjs" ||
       file.startsWith("patches/") ||
       file.startsWith("apps/mobile/deps/") ||
+      file.startsWith("apps/web/deps/") ||
       path.basename(file) === "package.json",
   );
 
@@ -440,7 +480,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
           if (yield* fs.exists(inRoot(manifest))) yield* copy(manifest);
         }
       }
-      for (const extra of ["apps/mobile/deps", "patches", ".pnpmfile.cjs"]) {
+      for (const extra of ["apps/mobile/deps", "apps/web/deps", "patches", ".pnpmfile.cjs"]) {
         if (yield* fs.exists(inRoot(extra))) yield* copy(extra);
       }
       const result = yield* vp(["install", "--lockfile-only", "--ignore-scripts"], temp);
@@ -457,9 +497,11 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   ).pipe(Effect.catch((error) => Effect.succeed({ ok: false, output: error.message })));
 
   // CI's Lint job checks that generated GraphQL operations match their sources.
-  const graphql = ["apps/server", "packages/source-control-github"].filter((dir) =>
-    files.some((file) => file.startsWith(`${dir}/`)),
-  );
+  const graphql = [
+    "apps/server",
+    "packages/issue-tracker-linear",
+    "packages/source-control-github",
+  ].filter((dir) => files.some((file) => file.startsWith(`${dir}/`)));
   const filters = (names: ReadonlyArray<string>) => names.flatMap((name) => ["--filter", name]);
   const typecheckWorkers = Math.min(concurrency, affected.length);
   const command = (name: string, args: ReadonlyArray<string>) => ({ name, run: vp(args) });
@@ -482,7 +524,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     ...(affected.length > 0
       ? [
           {
-            // `tsc --noEmit` writes nothing another package reads, so dependency order
+            // `effect-tsgo tsrs --noEmit` writes nothing another package reads, so dependency order
             // only made dependents wait: --parallel cut a contracts change from 13 s to 9 s.
             ...command(`typecheck (${affected.length} packages)`, [
               "run",

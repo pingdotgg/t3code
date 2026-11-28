@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line extendsNativeError:off - vendored upstream code without Effect; kept as published.
 export class HttpError extends Error {
   constructor(
     public status: number,
@@ -27,16 +28,18 @@ export function errorResponse(error: unknown): Response {
     403: 'Write not permitted',
     404: 'Not found',
     413: 'Request too large',
-    429: 'Rate limit exceeded',
     500: 'Operation failed',
     503: 'Service unavailable',
   };
-  return new Response(messages[status] ?? messages[500], {
+  let message = messages[status] ?? messages[500];
+  // A 503 has many causes; name which one, so clients can tell them apart.
+  if (status === 503 && error instanceof HttpError) message += ` (${error.code})`;
+  return new Response(message, {
     status,
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',
       'Cache-Control': 'no-store',
-      ...(status === 429 || status === 503 ? { 'Retry-After': '60' } : {}),
+      ...(status === 503 ? { 'Retry-After': '60' } : {}),
     },
   });
 }
