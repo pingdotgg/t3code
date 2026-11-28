@@ -212,6 +212,17 @@ describe("hourly usage formatting", () => {
     expect(formatHourShort(instant, "UTC", false, "es")).toBe("18:00");
   });
 
+  it("formats 24-hour labels without locale hour suffixes", () => {
+    const instant = "2026-04-02T14:37:00.000Z";
+    for (const locale of ["de", "fr", "ja", "zh"]) {
+      expect(formatHourShort(instant, "UTC", false, locale)).toBe("14:00");
+      expect(formatDateTimeShort(instant, "UTC", false, locale)).toMatch(/14:00$/);
+    }
+    expect(formatHourShort("2026-08-11T12:37:00.000Z", "Asia/Kathmandu", false, "fr")).toBe(
+      "18:00",
+    );
+  });
+
   it("builds an exact minute-aligned 24-hour request", () => {
     const window = makeWindow(1, new Date("2026-08-11T12:37:42.123Z"), "hour");
 

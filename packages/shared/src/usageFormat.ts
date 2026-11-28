@@ -194,7 +194,9 @@ export function enumerateHourStarts(sinceTime: string, untilTime: string): reado
 }
 
 function hourOptions(hour12: boolean): Intl.DateTimeFormatOptions {
-  return hour12 ? { hour: "numeric", hour12: true } : { hour: "2-digit", hourCycle: "h23" };
+  return hour12
+    ? { hour: "numeric", hour12: true }
+    : { hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
 }
 
 function formatHour(formatter: Intl.DateTimeFormat, date: Date, hour12: boolean): string {
@@ -202,7 +204,7 @@ function formatHour(formatter: Intl.DateTimeFormat, date: Date, hour12: boolean)
   // Rolling buckets can start between whole hours, but their labels always name the hour.
   return formatter
     .formatToParts(date)
-    .map((part) => (part.type === "hour" ? `${part.value}:00` : part.value))
+    .map((part) => (part.type === "minute" ? "00" : part.value))
     .join("");
 }
 
