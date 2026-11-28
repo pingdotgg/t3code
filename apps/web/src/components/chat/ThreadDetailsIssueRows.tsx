@@ -82,24 +82,36 @@ function LinkedIssueRow({
         <span aria-hidden>{detail.commentCount}</span>
       </span>
     ) : null;
-  const visibleAssignees = detail?.assignees.slice(0, 3);
-  const assignees = visibleAssignees?.length ? (
+  const assignedActors = detail?.assignees ?? [];
+  const [firstAssignee] = assignedActors;
+  const singleAssignee = assignedActors.length === 1;
+  const assigneeLabel = firstAssignee
+    ? gt("Assignees: {names}", {
+        names: new Intl.ListFormat(locale).format(
+          assignedActors.map((assignee) => assignee.name || assignee.login),
+        ),
+      })
+    : undefined;
+  const assignees = firstAssignee ? (
     <span
       role="img"
-      aria-label={gt("Assignees: {names}", {
-        names: new Intl.ListFormat(locale).format(
-          visibleAssignees.map((assignee) => assignee.name || assignee.login),
-        ),
-      })}
-      className="flex shrink-0 items-center -space-x-1"
+      aria-label={assigneeLabel}
+      // oxlint-disable-next-line t3code/no-native-title-tooltip -- Overflow names stay available inside the linked row's own tooltip.
+      title={singleAssignee ? undefined : assigneeLabel}
+      className={cn("flex shrink-0 items-center", singleAssignee ? "max-w-24 gap-1" : "-space-x-1")}
     >
-      {visibleAssignees.map((assignee) => (
+      {assignedActors.slice(0, 3).map((assignee) => (
         <PullRequestActorAvatar
           key={assignee.login}
           actor={assignee}
           className="ring-1 ring-background"
         />
       ))}
+      {singleAssignee ? (
+        <span className="truncate text-xs font-medium text-foreground">
+          {firstAssignee.name || firstAssignee.login}
+        </span>
+      ) : null}
     </span>
   ) : null;
   const status =
