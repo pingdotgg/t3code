@@ -34,6 +34,7 @@ const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: 
           src={faviconUrl}
           alt=""
           loading="lazy"
+          referrerPolicy="no-referrer"
           draggable={false}
           className={cn(MARKDOWN_LINK_FAVICON_CLASS_NAME, "rounded-sm")}
           onError={() => {

@@ -563,6 +563,7 @@ it.layer(
         expect(response.headers["cache-control"]).toBe("no-cache");
         expect(response.headers["content-security-policy"]).toBe("frame-ancestors 'none'");
         expect(response.headers["x-frame-options"]).toBe("DENY");
+        expect(response.headers["referrer-policy"]).toBe("same-origin");
         expect(response.headers["etag"]).toBeUndefined();
         expect(response.headers["last-modified"]).toBeUndefined();
       }

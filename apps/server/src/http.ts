@@ -684,6 +684,9 @@ const streamStaticFile = (file: FileSystem.File, size: bigint) =>
 const SPA_FRAME_HEADERS = {
   "Content-Security-Policy": "frame-ancestors 'none'",
   "X-Frame-Options": "DENY",
+  // Not "no-referrer": browsers then send `Origin: null` on same-origin POSTs, which fails the
+  // cookie origin check on plain-HTTP LAN hosts (no Sec-Fetch-Site there).
+  "Referrer-Policy": "same-origin",
 };
 
 const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
