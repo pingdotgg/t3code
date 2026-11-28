@@ -1,5 +1,6 @@
 import type { AnyRouter } from "@tanstack/react-router";
-import { EnvironmentId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
@@ -85,6 +86,8 @@ vi.mock(import("../threadNotifications"), async (original) => ({
   setNotificationBadge: state.badge,
 }));
 
+import { createLayoutState, findLayoutTab } from "../layout/layoutModel";
+import { useLayoutStore } from "../layout/layoutStore";
 import { startThreadNotifications } from "./ThreadNotificationCoordinator";
 
 let registry: AtomRegistry.AtomRegistry;
@@ -466,4 +469,60 @@ it("opening a thread or removing its environment closes only its in-app toasts, 
   state.inApp = false;
   app.changeSettings();
   expect(state.closeToast.mock.calls.slice(3)).toEqual([["one-other"]]);
+});
+
+it("suppresses approval toasts for an on-screen sibling pane, but shows them when scrolled offscreen", async () => {
+  await using app = setup();
+  const previousLayout = useLayoutStore.getState().layout;
+  const previousScrolledOff = useLayoutStore.getState().scrolledOffTabIds;
+  using _restoreLayout = {
+    [Symbol.dispose]: () =>
+      useLayoutStore.setState({
+        layout: previousLayout,
+        scrolledOffTabIds: previousScrolledOff,
+      }),
+  };
+
+  state.inApp = true;
+  focused = true;
+  const envOne = EnvironmentId.make("one");
+  const chatA = {
+    kind: "chat" as const,
+    target: { kind: "server" as const, threadRef: scopeThreadRef(envOne, ThreadId.make("chat-a")) },
+  };
+  const chatB = {
+    kind: "chat" as const,
+    target: { kind: "server" as const, threadRef: scopeThreadRef(envOne, ThreadId.make("chat-b")) },
+  };
+  useLayoutStore.setState({ layout: createLayoutState(), scrolledOffTabIds: new Set() });
+  useLayoutStore.getState().openTab(chatA, { placement: "active-pane", position: "end" });
+  useLayoutStore.getState().openTab(chatB, { placement: "new-column", position: "end" });
+  const chatATab = findLayoutTab(useLayoutStore.getState().layout, (tab) => tab.content === chatA)!;
+  const chatBTab = findLayoutTab(useLayoutStore.getState().layout, (tab) => tab.content === chatB)!;
+  useLayoutStore.getState().focusTab(chatATab.tab.id);
+  app.openThread("one", "chat-a");
+
+  state.shells.set("one", shell({ id: "chat-a" }, { id: "chat-b" }));
+  app.start();
+
+  // On-screen sibling pane suppresses the in-app approval toast.
+  state.shells.set(
+    "one",
+    shell(
+      { id: "chat-a" },
+      { id: "chat-b", hasPendingApprovals: true, pendingRequestId: "req-onscreen" },
+    ),
+  );
+  expect(state.toast).not.toHaveBeenCalled();
+
+  // Once chat B scrolls offscreen, a new approval shows an in-app toast.
+  useLayoutStore.getState().setScrolledOffTabIds(new Set([chatBTab.tab.id]));
+  state.shells.set(
+    "one",
+    shell(
+      { id: "chat-a" },
+      { id: "chat-b", hasPendingApprovals: true, pendingRequestId: "req-offscreen" },
+    ),
+  );
+  expect(state.toast).toHaveBeenCalledTimes(1);
 });

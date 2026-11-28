@@ -149,10 +149,12 @@ export function startThreadNotifications(
       return;
     const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
     const active = activeThread();
+    const { layout, scrolledOffTabIds } = useLayoutStore.getState();
     const threadVisible =
       (active.threadId !== undefined || active.draftId !== undefined) &&
-      selectVisibleLayoutTabs(useLayoutStore.getState().layout).some(
+      selectVisibleLayoutTabs(layout).some(
         (tab) =>
+          !scrolledOffTabIds.has(tab.id) &&
           tab.content.kind === "chat" &&
           tab.content.target.kind === "server" &&
           tab.content.target.threadRef.environmentId === environmentId &&
