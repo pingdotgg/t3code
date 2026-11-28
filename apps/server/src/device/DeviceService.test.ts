@@ -1740,7 +1740,11 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
         expect(incomplete.hostStatusDetail).toBe(incomplete.hostStatuses[hostId]?.detail);
       }
 
-      enumeration = { code: 0, stdout: "Running_AVD\r\nStopped_AVD\nStopped_AVD\n", stderr: "" };
+      enumeration = {
+        code: 0,
+        stdout: "Running_AVD\r\nStopped_AVD\nStopped_AVD\nPixel\n",
+        stderr: "",
+      };
       const recovered = yield* service.retryHost(hostId);
       expect(recovered.devices).toEqual([
         ...hubDevices.map((device) => ({ ...device, hostId })),
@@ -1748,6 +1752,15 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
           hostId,
           id: "Stopped_AVD",
           name: "Stopped_AVD",
+          platform: "android",
+          version: "Android",
+          booted: false,
+          physical: false,
+        },
+        {
+          hostId,
+          id: "Pixel",
+          name: "Pixel",
           platform: "android",
           version: "Android",
           booted: false,
