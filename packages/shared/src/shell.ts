@@ -225,6 +225,20 @@ export function mergePathEntries(
   return merged.length > 0 ? merged.join(delimiter) : undefined;
 }
 
+// An empty POSIX PATH entry searches each child's own cwd, and probes run in the state dir.
+// Put the launch dir before it so commands found where T3 started are still found, while
+// sessions keep finding commands in their workspace.
+export function anchorCurrentDirectoryEntry(pathValue: string, cwd: string): string {
+  // POSIX PATH cannot encode a colon in an entry; retain cwd lookup rather than add directories.
+  if (cwd.includes(POSIX_PATH_DELIMITER)) return pathValue;
+  // A lone ":" is how mergePathEntries spells a PATH of just the current directory.
+  const entries = pathValue === POSIX_PATH_DELIMITER ? [""] : pathValue.split(POSIX_PATH_DELIMITER);
+  const emptyIndex = entries.indexOf("");
+  if (emptyIndex === -1 || entries.includes(cwd)) return pathValue;
+  entries.splice(emptyIndex, 0, cwd);
+  return entries.join(POSIX_PATH_DELIMITER);
+}
+
 function envCaptureStart(name: string): string {
   return `__T3CODE_ENV_${name}_START__`;
 }
