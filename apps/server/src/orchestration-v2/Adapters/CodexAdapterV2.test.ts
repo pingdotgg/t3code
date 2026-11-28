@@ -8000,6 +8000,61 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("wakes once the turn ends for a background command that exited mid-turn", () =>
+    Effect.gen(function* () {
+      const [started, answer, completed] = backgroundExecTranscript.entries.slice(-4, -1);
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "codex-bg-exit-mid-turn",
+          entries: [
+            ...backgroundExecTranscript.entries.slice(0, -4),
+            started!,
+            {
+              type: "emit_inbound",
+              label: "item/completed/command-mid-turn",
+              frame: {
+                method: "item/completed",
+                params: {
+                  item: {
+                    ...backgroundCommandItem("completed"),
+                    aggregatedOutput: "CODEX_BG_FAILED\n",
+                    exitCode: 1,
+                  },
+                  threadId: BG_NATIVE_THREAD,
+                  turnId: BG_NATIVE_TURN,
+                  completedAtMs: 1782622440900,
+                },
+              },
+            },
+            answer!,
+            completed!,
+          ],
+        }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-codex-bg-exit-mid-turn"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* harness.awaitTerminal(1);
+      assert.lengthOf(harness.continuationRequests, 1);
+      assert.include(harness.continuationRequests[0]?.detail, "(exit 1)");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("wakes with well-formed text when the cuts split an emoji", () =>
     Effect.gen(function* () {
       const harness = yield* makeCodexReplayHarness(
