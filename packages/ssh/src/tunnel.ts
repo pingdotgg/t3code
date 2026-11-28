@@ -52,6 +52,16 @@ import {
   SshPasswordPromptError,
   SshReadinessError,
 } from "./errors.ts";
+import {
+  buildWindowsRemoteLaunchScript,
+  buildWindowsRemoteLogTailScript,
+  buildWindowsRemotePairingScript,
+  buildWindowsRemoteStopScript,
+  isWindowsRemoteShellError,
+  type RemoteHostKind,
+  WINDOWS_CONTROL_MASTER_KEEPALIVE_ARGS,
+  WINDOWS_POWERSHELL_STDIN_ARGS,
+} from "./windowsRemote.ts";
 
 const DEFAULT_REMOTE_PORT = 3773;
 const REMOTE_PORT_SCAN_WINDOW = 200;
@@ -535,10 +545,15 @@ if ! t3_runtime_ready; then
     "Darwin arm64") T3_PLATFORM_KEY="darwin-arm64" ;;
     "Linux arm64" | "Linux aarch64") T3_PLATFORM_KEY="linux-arm64" ;;
     "Linux x86_64" | "Linux amd64") T3_PLATFORM_KEY="linux-x64" ;;
+    MINGW*" arm64" | MINGW*" aarch64" | MSYS*" arm64" | MSYS*" aarch64" | CYGWIN*" arm64" | CYGWIN*" aarch64") T3_PLATFORM_KEY="win32-arm64" ;;
+    MINGW*" x86_64" | MINGW*" amd64" | MSYS*" x86_64" | MSYS*" amd64" | CYGWIN*" x86_64" | CYGWIN*" amd64") T3_PLATFORM_KEY="win32-x64" ;;
     *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -s) $(uname -m)" >&2; exit 1 ;;
   esac
-  T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM_KEY.tar.gz"
-  if ! command -v tar >/dev/null 2>&1; then
+  case "$T3_PLATFORM_KEY" in
+    win32-*) T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM_KEY.zip" ;;
+    *) T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM_KEY.tar.gz" ;;
+  esac
+  if [ "$T3_ARCHIVE" = "t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM_KEY.tar.gz" ] && ! command -v tar >/dev/null 2>&1; then
     printf 'Remote host needs tar to unpack %s. Install tar on it and try again.\\n' "$T3_ARCHIVE" >&2
     exit 1
   fi
@@ -564,13 +579,39 @@ if ! t3_runtime_ready; then
   if [ -z "$T3_EXPECTED" ] || [ "$T3_ACTUAL" != "$T3_EXPECTED" ]; then
     printf 'Checksum mismatch for %s.\\n' "$T3_ARCHIVE" >&2; exit 1
   fi
-  if ! T3_TAR_ERROR="$(tar -xzf "$T3_STAGING/$T3_ARCHIVE" -C "$T3_STAGING" --strip-components=1 2>&1)"; then
-    # Some tars (BusyBox) gunzip internally, so gzip is only blamed once extraction fails.
-    if command -v gzip >/dev/null 2>&1; then printf '%s\\n' "$T3_TAR_ERROR" >&2
-    else printf 'Remote host needs gzip to unpack %s. Install gzip on it and try again.\\n' "$T3_ARCHIVE" >&2
-    fi
-    exit 1
-  fi
+  case "$T3_ARCHIVE" in
+    *.zip)
+      # Use Windows System32 bsdtar when available; Git-for-Windows GNU tar cannot open zip archives.
+      T3_WIN_TAR="\${SYSTEMROOT:-/c/Windows}/System32/tar.exe"
+      if [ -x "$T3_WIN_TAR" ]; then
+        if ! T3_TAR_ERROR="$("$T3_WIN_TAR" -xf "$T3_STAGING/$T3_ARCHIVE" -C "$T3_STAGING" --strip-components=1 2>&1)"; then
+          printf '%s\\n' "$T3_TAR_ERROR" >&2
+          exit 1
+        fi
+      elif command -v unzip >/dev/null 2>&1; then
+        T3_EXTRACT_TMP="$T3_STAGING/.extract"
+        mkdir -p "$T3_EXTRACT_TMP"
+        if ! T3_TAR_ERROR="$(unzip -qo "$T3_STAGING/$T3_ARCHIVE" -d "$T3_EXTRACT_TMP" 2>&1)"; then
+          printf '%s\\n' "$T3_TAR_ERROR" >&2
+          exit 1
+        fi
+        mv "$T3_EXTRACT_TMP"/*/* "$T3_STAGING"/ 2>/dev/null || mv "$T3_EXTRACT_TMP"/* "$T3_STAGING"/
+        rm -rf "$T3_EXTRACT_TMP"
+      else
+        printf 'Remote host needs tar.exe or unzip to unpack %s.\\n' "$T3_ARCHIVE" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      if ! T3_TAR_ERROR="$(tar -xzf "$T3_STAGING/$T3_ARCHIVE" -C "$T3_STAGING" --strip-components=1 2>&1)"; then
+        # Some tars (BusyBox) gunzip internally, so gzip is only blamed once extraction fails.
+        if command -v gzip >/dev/null 2>&1; then printf '%s\\n' "$T3_TAR_ERROR" >&2
+        else printf 'Remote host needs gzip to unpack %s. Install gzip on it and try again.\\n' "$T3_ARCHIVE" >&2
+        fi
+        exit 1
+      fi
+      ;;
+  esac
   rm -f "$T3_STAGING/$T3_ARCHIVE" "$T3_STAGING/SHA256SUMS"
   # Prove the binary runs here (libc, arch) before marking it ready, or every
   # later launch would exec a broken install instead of retrying.
@@ -1254,29 +1295,78 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
     input?: SshAuth.SshAuthOptions,
     runner?: RemoteT3RunnerOptions,
     launcherId?: string | null,
+    remoteHostKind: RemoteHostKind = "posix",
   ): Effect.fn.Return<
-    { readonly remotePort: number; readonly remoteServerKind: "external" | "managed" | null },
+    {
+      readonly remotePort: number;
+      readonly remoteServerKind: "external" | "managed" | null;
+      readonly remoteHostKind: RemoteHostKind;
+    },
     SshCommandError | SshInvalidTargetError | SshLaunchError,
     ChildProcessSpawner.ChildProcessSpawner | Digest.Digest | FileSystem.FileSystem | Path.Path
   > {
     const stateKey = yield* remoteStateKey(target);
     const validId = validLauncherId(launcherId);
     const launchArgs = validId === null ? stateKey : `${stateKey} ${validId}`;
+    const timeoutMs = isNodeScriptRunner(runner)
+      ? REMOTE_LAUNCH_TIMEOUT_MS
+      : REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS;
+    const authFields = {
+      ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
+      ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
+      ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
+    };
     yield* Effect.logInfo("ssh.remoteServer.launch.start", {
       ...sshTargetLogFields(target),
       ...sshRunnerLogFields(runner),
       stateKey,
+      remoteHostKind,
     });
-    const result = yield* runSshCommand(target, {
-      remoteCommandArgs: remoteLoginShellArgs(launchArgs),
-      stdin: buildRemoteLaunchScript(runner),
-      timeoutMs: isNodeScriptRunner(runner)
-        ? REMOTE_LAUNCH_TIMEOUT_MS
-        : REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS,
-      ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
-      ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
-      ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
-    });
+    const runWindowsLaunch = () =>
+      runSshCommand(target, {
+        remoteCommandArgs: WINDOWS_POWERSHELL_STDIN_ARGS,
+        stdin: buildWindowsRemoteLaunchScript({
+          stateKey,
+          launcherId: validId,
+          ...(runner === undefined ? {} : { runner }),
+          defaultRemotePort: DEFAULT_REMOTE_PORT,
+          remotePortScanWindow: REMOTE_PORT_SCAN_WINDOW,
+          readyTimeoutMs: REMOTE_READY_TIMEOUT_MS,
+          reuseReadyTimeoutMs: REMOTE_REUSE_READY_TIMEOUT_MS,
+          readyProbeTimeoutMs: SSH_READY_PROBE_TIMEOUT_MS,
+          archiveChecksumsSeconds: REMOTE_ARCHIVE_CHECKSUMS_SECONDS,
+          archiveDownloadSeconds: REMOTE_ARCHIVE_DOWNLOAD_SECONDS,
+          archiveLockWaitSeconds: REMOTE_ARCHIVE_LOCK_WAIT_SECONDS,
+          launchLockWaitSeconds: REMOTE_LAUNCH_LOCK_WAIT_SECONDS,
+          updateMarkerFile: DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
+          updateTtlMs: DESKTOP_UPDATE_IN_PROGRESS_TTL_MS,
+          runtimeRecordWaitSeconds: REMOTE_RUNTIME_RECORD_WAIT_SECONDS,
+        }),
+        timeoutMs,
+        ...authFields,
+      });
+    let resolvedHostKind: RemoteHostKind = remoteHostKind;
+    const result =
+      remoteHostKind === "windows"
+        ? yield* runWindowsLaunch()
+        : yield* runSshCommand(target, {
+            remoteCommandArgs: remoteLoginShellArgs(launchArgs),
+            stdin: buildRemoteLaunchScript(runner),
+            timeoutMs,
+            ...authFields,
+          }).pipe(
+            Effect.catchIf(
+              (error): error is SshCommandError =>
+                error._tag === "SshCommandError" && isWindowsRemoteShellError(error),
+              () => {
+                resolvedHostKind = "windows";
+                return Effect.logInfo("ssh.remoteServer.launch.windowsFallback", {
+                  ...sshTargetLogFields(target),
+                  stateKey,
+                }).pipe(Effect.andThen(runWindowsLaunch()));
+              },
+            ),
+          );
     if (!getLastNonEmptyOutputLine(result.stdout)) {
       return yield* new SshLaunchError({
         message: "SSH launch did not return a remote port.",
@@ -1303,11 +1393,13 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       ...sshTargetLogFields(target),
       remotePort: parsed.remotePort,
       remoteServerKind: parsed.serverKind ?? null,
+      remoteHostKind: resolvedHostKind,
       stateKey,
     });
     return {
       remotePort: parsed.remotePort,
       remoteServerKind: parsed.serverKind ?? null,
+      remoteHostKind: resolvedHostKind,
     };
   },
 );
@@ -1316,6 +1408,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
   target: DesktopSshEnvironmentTarget,
   input?: SshAuth.SshAuthOptions,
   runner?: RemoteT3RunnerOptions,
+  remoteHostKind: RemoteHostKind = "posix",
 ): Effect.fn.Return<
   {
     readonly credential: string;
@@ -1324,18 +1417,44 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
   ChildProcessSpawner.ChildProcessSpawner | Digest.Digest | FileSystem.FileSystem | Path.Path
 > {
   const stateKey = yield* remoteStateKey(target);
-  yield* Effect.logDebug("ssh.remoteServer.pairingToken.start", {
-    ...sshTargetLogFields(target),
-    stateKey,
-  });
-  const result = yield* runSshCommand(target, {
-    remoteCommandArgs: remoteLoginShellArgs(),
-    stdin: buildRemotePairingScript(stateKey, runner),
-    ...(isNodeScriptRunner(runner) ? {} : { timeoutMs: REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS }),
+  const authFields = {
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
+  };
+  yield* Effect.logDebug("ssh.remoteServer.pairingToken.start", {
+    ...sshTargetLogFields(target),
+    stateKey,
+    remoteHostKind,
   });
+  const runWindowsPairing = () =>
+    runSshCommand(target, {
+      remoteCommandArgs: WINDOWS_POWERSHELL_STDIN_ARGS,
+      stdin: buildWindowsRemotePairingScript({
+        stateKey,
+        ...(runner === undefined ? {} : { runner }),
+        archiveChecksumsSeconds: REMOTE_ARCHIVE_CHECKSUMS_SECONDS,
+        archiveDownloadSeconds: REMOTE_ARCHIVE_DOWNLOAD_SECONDS,
+        archiveLockWaitSeconds: REMOTE_ARCHIVE_LOCK_WAIT_SECONDS,
+      }),
+      ...(isNodeScriptRunner(runner) ? {} : { timeoutMs: REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS }),
+      ...authFields,
+    });
+  const result =
+    remoteHostKind === "windows"
+      ? yield* runWindowsPairing()
+      : yield* runSshCommand(target, {
+          remoteCommandArgs: remoteLoginShellArgs(),
+          stdin: buildRemotePairingScript(stateKey, runner),
+          ...(isNodeScriptRunner(runner) ? {} : { timeoutMs: REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS }),
+          ...authFields,
+        }).pipe(
+          Effect.catchIf(
+            (error): error is SshCommandError =>
+              error._tag === "SshCommandError" && isWindowsRemoteShellError(error),
+            () => runWindowsPairing(),
+          ),
+        );
   if (!getLastNonEmptyOutputLine(result.stdout)) {
     return yield* new SshPairingError({
       message: "SSH pairing did not return a credential.",
@@ -1371,23 +1490,45 @@ const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(function* (
   target: DesktopSshEnvironmentTarget,
   input?: SshAuth.SshAuthOptions,
   launcherId?: string | null,
+  remoteHostKind: RemoteHostKind = "posix",
 ): Effect.fn.Return<
   void,
   SshCommandError | SshInvalidTargetError,
   ChildProcessSpawner.ChildProcessSpawner | Digest.Digest | FileSystem.FileSystem | Path.Path
 > {
   const stateKey = yield* remoteStateKey(target);
-  yield* Effect.logInfo("ssh.remoteServer.stop.start", {
-    ...sshTargetLogFields(target),
-    stateKey,
-  });
-  yield* runSshCommand(target, {
-    remoteCommandArgs: ["sh", "-s"],
-    stdin: buildRemoteStopScript(stateKey, validLauncherId(launcherId)),
+  const validId = validLauncherId(launcherId);
+  const authFields = {
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
+  };
+  yield* Effect.logInfo("ssh.remoteServer.stop.start", {
+    ...sshTargetLogFields(target),
+    stateKey,
+    remoteHostKind,
   });
+  const runWindowsStop = () =>
+    runSshCommand(target, {
+      remoteCommandArgs: WINDOWS_POWERSHELL_STDIN_ARGS,
+      stdin: buildWindowsRemoteStopScript({ stateKey, launcherId: validId }),
+      ...authFields,
+    });
+  if (remoteHostKind === "windows") {
+    yield* runWindowsStop();
+  } else {
+    yield* runSshCommand(target, {
+      remoteCommandArgs: ["sh", "-s"],
+      stdin: buildRemoteStopScript(stateKey, validId),
+      ...authFields,
+    }).pipe(
+      Effect.catchIf(
+        (error): error is SshCommandError =>
+          error._tag === "SshCommandError" && isWindowsRemoteShellError(error),
+        () => runWindowsStop(),
+      ),
+    );
+  }
   yield* Effect.logInfo("ssh.remoteServer.stop.succeeded", {
     ...sshTargetLogFields(target),
     stateKey,
@@ -1397,19 +1538,32 @@ const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(function* (
 const readRemoteServerLogTail = Effect.fn("ssh/tunnel.readRemoteServerLogTail")(function* (
   target: DesktopSshEnvironmentTarget,
   input?: SshAuth.SshAuthOptions,
+  remoteHostKind: RemoteHostKind = "posix",
 ): Effect.fn.Return<
   string,
   SshCommandError | SshInvalidTargetError,
   ChildProcessSpawner.ChildProcessSpawner | Digest.Digest | FileSystem.FileSystem | Path.Path
 > {
-  const result = yield* runSshCommand(target, {
-    remoteCommandArgs: ["sh", "-s"],
-    stdin: buildRemoteLogTailScript(yield* remoteStateKey(target)),
-    timeoutMs: 10_000,
+  const stateKey = yield* remoteStateKey(target);
+  const authFields = {
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
-  });
+  };
+  const result =
+    remoteHostKind === "windows"
+      ? yield* runSshCommand(target, {
+          remoteCommandArgs: WINDOWS_POWERSHELL_STDIN_ARGS,
+          stdin: buildWindowsRemoteLogTailScript(stateKey),
+          timeoutMs: 10_000,
+          ...authFields,
+        })
+      : yield* runSshCommand(target, {
+          remoteCommandArgs: ["sh", "-s"],
+          stdin: buildRemoteLogTailScript(stateKey),
+          timeoutMs: 10_000,
+          ...authFields,
+        });
   return result.stdout.trim();
 });
 
@@ -1523,6 +1677,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   /** Forward through this live ControlMaster instead of signing in again. */
   readonly controlPath: string | null;
   readonly remoteServerKind: "external" | "managed" | null;
+  readonly remoteHostKind?: RemoteHostKind;
   readonly scope: Scope.Closeable;
 }): Effect.fn.Return<
   SshTunnelEntry,
@@ -1598,7 +1753,9 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
             controlMasterForward,
             "--",
             hostSpec,
-            "sh -c 'exec cat >/dev/null'",
+            ...(input.remoteHostKind === "windows"
+              ? WINDOWS_CONTROL_MASTER_KEEPALIVE_ARGS
+              : ["sh -c 'exec cat >/dev/null'"]),
           ],
           stdin: "pipe" as const,
         };
@@ -1760,7 +1917,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
           net.canListenOnHost(input.localPort, "127.0.0.1"),
         );
         const remoteLogTailExit = yield* Effect.exit(
-          readRemoteServerLogTail(input.resolvedTarget, input.authOptions),
+          readRemoteServerLogTail(input.resolvedTarget, input.authOptions, input.remoteHostKind),
         );
         const processRunning = Exit.isSuccess(processRunningExit) ? processRunningExit.value : null;
         const localPortAvailable = Exit.isSuccess(localPortAvailableExit)
@@ -1813,6 +1970,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const tunnels = new Map<string, SshTunnelEntry>();
   const targetLocks = yield* KeyedLock.make<string>();
   const authSecrets = new Map<string, string>();
+  const remoteHostKinds = new Map<string, RemoteHostKind>();
   const resolveLauncherId = options.resolveLauncherId ?? Effect.succeed(null);
 
   // Keep one lock per target so reconnect cannot reuse a server while stop is pending.
@@ -1976,12 +2134,20 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       key: input.key,
     });
     const launcherId = yield* resolveLauncherId;
+    const cachedHostKind = remoteHostKinds.get(input.key) ?? "posix";
     const remoteLaunch = yield* runWithSshAuth({
       key: input.key,
       target: input.resolvedTarget,
       operation: (authOptions) =>
-        launchOrReuseRemoteServer(input.resolvedTarget, authOptions, input.runner, launcherId),
+        launchOrReuseRemoteServer(
+          input.resolvedTarget,
+          authOptions,
+          input.runner,
+          launcherId,
+          cachedHostKind,
+        ),
     });
+    remoteHostKinds.set(input.key, remoteLaunch.remoteHostKind);
     const remotePort = remoteLaunch.remotePort;
     yield* Effect.logDebug("ssh.environment.remotePort.ready", {
       ...sshTargetLogFields(input.resolvedTarget),
@@ -2014,6 +2180,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
             authOptions,
             controlPath,
             remoteServerKind: remoteLaunch.remoteServerKind,
+            remoteHostKind: remoteLaunch.remoteHostKind,
             scope: entryScope,
           });
         // A fresh login cannot answer a second factor such as Duo, but the user's signed-in
@@ -2075,6 +2242,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
                 interactiveAuth: true,
               },
           launcherId,
+          remoteHostKinds.get(tunnelEntry.key) ?? "posix",
         ).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
           Effect.provideService(Digest.Digest, digestService),
@@ -2227,7 +2395,12 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
               key,
               target: entry.target,
               operation: (authOptions) =>
-                issueRemotePairingToken(entry.target, authOptions, runner),
+                issueRemotePairingToken(
+                  entry.target,
+                  authOptions,
+                  runner,
+                  remoteHostKinds.get(key) ?? "posix",
+                ),
             })
           : null;
         const pairingToken = pairingResult?.credential ?? null;
@@ -2284,7 +2457,13 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         yield* runWithSshAuth({
           key,
           target: resolvedTarget,
-          operation: (authOptions) => stopRemoteServer(resolvedTarget, authOptions, launcherId),
+          operation: (authOptions) =>
+            stopRemoteServer(
+              resolvedTarget,
+              authOptions,
+              launcherId,
+              remoteHostKinds.get(key) ?? "posix",
+            ),
         });
         yield* Effect.logInfo("ssh.environment.disconnect.succeeded", {
           ...sshTargetLogFields(resolvedTarget),
