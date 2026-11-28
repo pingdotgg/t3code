@@ -1053,6 +1053,7 @@ function ThreadRouteContent(
           props.inspectorPresentation ? null : (
             <ThreadHeader
               title={selectedThread.title}
+              threadRef={selectedThreadDetailRef}
               subtitle={threadStatusLabel ?? headerSubtitle}
               gitControls={threadGitControlProps}
               hasThreadCwd={selectedThreadCwd !== null}

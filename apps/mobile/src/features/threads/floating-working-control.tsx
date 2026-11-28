@@ -80,7 +80,7 @@ export function FloatingWorkingControl(props: {
   readonly lift?: SharedValue<number>;
 }) {
   const gt = useGT();
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, fontScale } = useWindowDimensions();
   const reducedMotion = useReducedMotion();
   const [overlayWidth, setOverlayWidth] = useState(windowWidth);
   const [queueWidth, setQueueWidth] = useState(0);
@@ -113,13 +113,15 @@ export function FloatingWorkingControl(props: {
       (actions.length > 0 ? actionWidth : 0) -
       (hasQueue ? queueWidth : 0) -
       (hasAgents ? agentsWidth : 0) -
-      (tasks === null ? 0 : tasksWidth) -
       (hasPreview ? previewWidth : 0),
   );
-  const labelWidth = Math.max(
+  const availableStatusWidth = Math.max(
     0,
     availableLabelWidth - (extensionStatus === null ? 0 : extensionWidth),
   );
+  const tasksVisible =
+    tasks !== null && availableStatusWidth >= Math.max(76 * fontScale, tasksWidth);
+  const labelWidth = Math.max(0, availableStatusWidth - (tasksVisible ? tasksWidth : 0));
   const separationProgress = useSharedValue(props.showScrollToEnd ? 1 : 0);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- animates the Reanimated separation value when scroll-to-end visibility changes
@@ -151,7 +153,7 @@ export function FloatingWorkingControl(props: {
     capsuleWidth.set(first ? width : withTiming(width, CONTROL_TIMING));
   };
   const hasStatus = props.status !== null;
-  const hasCapsule = hasStatus || hasQueue || hasAgents || hasPreview || tasks !== null;
+  const hasCapsule = hasStatus || hasQueue || hasAgents || hasPreview || tasksVisible;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the Reanimated capsule width value and measured width when the status goes away
   useEffect(() => {
     if (!hasStatus) {
@@ -184,7 +186,7 @@ export function FloatingWorkingControl(props: {
     statusInteractive ||
     extensionStatus !== null ||
     actions.length > 0 ||
-    tasks !== null ||
+    tasksVisible ||
     hasQueue ||
     hasAgents ||
     hasPreview;
@@ -286,7 +288,7 @@ export function FloatingWorkingControl(props: {
           </Text>
         </Pressable>
       ) : null}
-      {tasks !== null && taskProgress !== null ? (
+      {tasksVisible && tasks !== null && taskProgress !== null ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={gt("Open tasks, {done} of {total} completed", {
@@ -316,7 +318,7 @@ export function FloatingWorkingControl(props: {
           style={{ maxWidth: Math.min(overlayWidth, windowWidth) * 0.45 }}
           className="h-11 flex-row items-center gap-2 px-3 active:opacity-70"
         >
-          {hasStatus || hasPreview || hasAgents || tasks !== null ? (
+          {hasStatus || hasPreview || hasAgents || tasksVisible ? (
             <View className="absolute left-0 h-4 w-px bg-border" />
           ) : null}
           <SymbolView name="list.number" size={13} tintColorClassName="accent-foreground" />

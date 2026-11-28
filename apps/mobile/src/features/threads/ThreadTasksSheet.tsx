@@ -69,6 +69,7 @@ export function ThreadTasksSheet({
       <SheetHeader title={gt("Tasks")} onClose={() => navigation.goBack()} />
       <ScreenContent>
         <ScrollView
+          nestedScrollEnabled
           contentInsetAdjustmentBehavior="automatic"
           contentContainerClassName="px-5 pb-8"
         >
