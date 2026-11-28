@@ -128,7 +128,6 @@ const browserTestProject = {
       "parse5",
       "entities",
       "dompurify",
-      "heic-to/csp",
       "jszip",
       "pdfjs-dist",
       "sql.js",
