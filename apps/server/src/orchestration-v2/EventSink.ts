@@ -411,14 +411,30 @@ const layerBase: Layer.Layer<
       return Effect.forEach(
         events,
         (event): Effect.Effect<OrchestrationV2DomainEvent, unknown> =>
-          event.type === "turn-item.updated"
-            ? turnItemPositions
-                .normalize(
-                  event.payload,
-                  event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
-                )
-                .pipe(Effect.map((payload) => ({ ...event, payload })))
-            : Effect.succeed(event),
+          Effect.gen(function* () {
+            if (event.type === "runtime-request.updated") {
+              // Provider callbacks must retain the responder recorded by the server.
+              const current = yield* projectionStore
+                .getRuntimeRequest(event.threadId, event.payload.id)
+                .pipe(
+                  Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.undefined }),
+                );
+              return current?.responseProvenance === undefined
+                ? event
+                : {
+                    ...event,
+                    payload: { ...event.payload, responseProvenance: current.responseProvenance },
+                  };
+            }
+            return event.type === "turn-item.updated"
+              ? yield* turnItemPositions
+                  .normalize(
+                    event.payload,
+                    event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
+                  )
+                  .pipe(Effect.map((payload) => ({ ...event, payload })))
+              : event;
+          }),
         { concurrency: 1 },
       );
     };
