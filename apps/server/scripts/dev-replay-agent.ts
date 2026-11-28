@@ -65,6 +65,11 @@ export const SCENARIOS = [
     file: `${FIXTURES}/multi_turn/registry_transcript.ndjson`,
   },
   {
+    id: "grok-todo",
+    name: "Grok task list",
+    file: "./dev-replay/grok_todo_transcript.ndjson",
+  },
+  {
     id: "command-output",
     name: "Command output",
     file: "./dev-replay/command_output_transcript.ndjson",
