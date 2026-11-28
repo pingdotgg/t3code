@@ -33,7 +33,6 @@ import type { SettingsPageTarget } from "./components/settings-page-targets";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { filterSettingsSections } from "./settings-search";
-import { appLockSupported } from "../app-lock/appLock";
 import { usePaneRole } from "../../components/ui/Pane";
 import { useGT, useMessages } from "gt-react-native";
 
@@ -269,7 +268,6 @@ function useSettingsIndexSections(): SettingsListSection[] {
         page("SettingsOrganization", "gearshape", gt("General")),
         page("SettingsAppearance", "paintbrush", gt("Appearance")),
         page("SettingsFollowUp", "bubble.left.and.bubble.right", gt("Chat")),
-        ...(appLockSupported() ? [page("SettingsAppLock", "lock", gt("App Lock"))] : []),
         ...(navigationCustomizationAvailable()
           ? [page("SettingsNavigation", "line.3.horizontal", gt("Navigation tabs"))]
           : []),

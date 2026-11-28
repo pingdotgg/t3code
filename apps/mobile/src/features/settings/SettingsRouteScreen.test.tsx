@@ -32,7 +32,6 @@ vi.mock("@clerk/expo", () => ({
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({}) }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => flags.cloud }));
-vi.mock("../app-lock/appLock", () => ({ appLockSupported: () => false }));
 vi.mock("../layout/adaptive-workspace-context", () => ({
   useAdaptiveWorkspaceLayout: () => ({ layout: { usesSplitView: false } }),
 }));

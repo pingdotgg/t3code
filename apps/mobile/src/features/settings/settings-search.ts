@@ -129,16 +129,6 @@ const SETTINGS_SEARCH_TERMS = {
     msg("steer", { $context: "settings search keyword" }),
     msg("while the agent is running", { $context: "settings search keyword" }),
   ],
-  SettingsAppLock: [
-    msg("app lock", { $context: "settings search keyword" }),
-    msg("face id", { $context: "settings search keyword" }),
-    msg("touch id", { $context: "settings search keyword" }),
-    msg("passcode", { $context: "settings search keyword" }),
-    msg("biometrics", { $context: "settings search keyword" }),
-    msg("fingerprint", { $context: "settings search keyword" }),
-    msg("privacy", { $context: "settings search keyword" }),
-    msg("security", { $context: "settings search keyword" }),
-  ],
   SettingsArchive: [
     msg("archive", { $context: "settings search keyword" }),
     msg("archived", { $context: "settings search keyword" }),

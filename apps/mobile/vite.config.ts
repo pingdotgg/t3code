@@ -41,7 +41,6 @@ const reactTests = [
   "src/features/settings/SettingsServerControlsRouteScreen.test.tsx",
   "src/features/settings/SettingsRouteScreen.test.tsx",
   "src/features/settings/SettingsScheduledTasksRouteScreen.test.tsx",
-  "src/features/settings/SettingsAppLockRouteScreen.test.tsx",
   "src/features/settings/components/BranchNamingSettings.test.tsx",
   "src/features/settings/components/SettingsDragHandle.test.tsx",
   "src/features/threads/ThreadMarkdownImage.test.tsx",

@@ -324,7 +324,6 @@ const config: ExpoConfig = {
       // Built with the iOS 27 SDK, only view controllers can hide or style the status bar.
       UIViewControllerBasedStatusBarAppearance: true,
       NSPhotoLibraryAddUsageDescription: "Allow PseudoCode to save images to your photo library.",
-      NSFaceIDUsageDescription: "Use Face ID to unlock PseudoCode when App Lock is on.",
       // System picture in picture needs background audio to start and survive outside the app.
       UIBackgroundModes: ["audio"],
       ITSAppUsesNonExemptEncryption: false,
