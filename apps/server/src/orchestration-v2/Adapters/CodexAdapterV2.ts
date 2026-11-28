@@ -8988,10 +8988,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     ] as const;
                   }),
                 );
+              const directActiveTurn = activeTurnContexts.find(
+                (candidate) => candidate.providerTurnId === turnInput.providerTurnId,
+              );
+              const recoveredCompletedRoot =
+                directActiveTurn === undefined
+                  ? activeTurnContexts
+                      .map((context) => approvalOwnerCodexTurn(context).owner)
+                      .find((candidate) => candidate.providerTurnId === turnInput.providerTurnId)
+                  : undefined;
               const activeTurn =
-                activeTurnContexts.find(
-                  (candidate) => candidate.providerTurnId === turnInput.providerTurnId,
-                ) ??
+                directActiveTurn ??
+                recoveredCompletedRoot ??
                 (turnInput.requestRuntimeRestart === true
                   ? settledTurnContexts.find(
                       (candidate) => candidate.providerThread.id === turnInput.providerThread.id,
@@ -9026,6 +9034,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 return yield* toProtocolError(
                   `Provider turn ${turnInput.providerTurnId} is not active and cannot be interrupted.`,
                 );
+              }
+              if (recoveredCompletedRoot !== undefined) {
+                yield* Ref.update(terminalizedNonCompletedNativeTurns, (current) => {
+                  const updated = new Set(current);
+                  for (const turn of continuedRuns.get(recoveredCompletedRoot.providerTurnId) ?? [
+                    recoveredCompletedRoot,
+                  ]) {
+                    updated.add(turn.nativeTurnId);
+                  }
+                  return updated;
+                });
               }
               const interruptTargets: Array<{
                 readonly context: ActiveCodexTurnContext;
