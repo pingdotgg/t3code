@@ -5,6 +5,7 @@ import {
   OrchestrationV2StoredEvent,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2Run,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type ModelSelection,
@@ -394,13 +395,16 @@ export const layer: Layer.Layer<
     /**
      * A settled thread can run a background wake. A question or approval it raises after the
      * settle needs the user, so it reopens the thread. Locked like the model sync: a full-row write.
+     * It commits before the request, so a crash between them leaves no request hidden in Settled.
      */
     const reopenSettledForRequest = Effect.fn("ProviderEventIngestor.reopenSettledForRequest")(
-      function* (input: ProviderEventIngestInput, stored: OrchestrationV2DomainEvent) {
-        if (stored.type !== "runtime-request.updated") return [];
-        const request = stored.payload;
+      function* (
+        input: ProviderEventIngestInput,
+        threadId: ThreadId,
+        request: OrchestrationV2RuntimeRequest,
+      ) {
         if (request.status !== "pending" || request.kind === "dynamic_tool_call") return [];
-        const settledThread = projections.getThread(stored.threadId).pipe(
+        const settledThread = projections.getThread(threadId).pipe(
           Effect.map((thread) =>
             thread.settledOverride === "settled" &&
             (thread.settledAt === null ||
@@ -412,7 +416,7 @@ export const layer: Layer.Layer<
         );
         if ((yield* settledThread) === null) return [];
         return yield* threadCommands.withLock(
-          stored.threadId,
+          threadId,
           Effect.gen(function* () {
             const thread = yield* settledThread;
             if (thread === null) return [];
@@ -832,6 +836,14 @@ export const layer: Layer.Layer<
                 eventCount: events.length,
                 cause,
               });
+            const reopened =
+              input.event.type === "runtime_request.updated"
+                ? yield* reopenSettledForRequest(
+                    input,
+                    input.event.threadId ?? input.threadId,
+                    input.event.runtimeRequest,
+                  ).pipe(Effect.mapError(mapWriteError))
+                : [];
             if (input.writeIfProviderThreadOwner !== undefined) {
               const ownerResult = yield* eventSink
                 .writeIfProviderThreadOwner({
@@ -841,16 +853,17 @@ export const layer: Layer.Layer<
                   events,
                 })
                 .pipe(retryLockTimeout, Effect.mapError(mapWriteError));
-              return ownerResult.storedEvents;
+              return [...ownerResult.storedEvents, ...reopened];
             }
             if (input.writeIfRunCurrent === undefined) {
-              return yield* eventSink
+              const stored = yield* eventSink
                 .write({
                   guardPendingUserInputCancellations: true,
                   ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
                   events,
                 })
                 .pipe(retryLockTimeout, Effect.mapError(mapWriteError));
+              return [...stored, ...reopened];
             }
             const result = yield* eventSink
               .writeIfRunCurrent({
@@ -861,7 +874,7 @@ export const layer: Layer.Layer<
                 events,
               })
               .pipe(retryLockTimeout, Effect.mapError(mapWriteError));
-            return result.storedEvents;
+            return [...result.storedEvents, ...reopened];
           },
           (effect, input) =>
             effect.pipe(
@@ -932,24 +945,6 @@ export const layer: Layer.Layer<
                       ),
                     ),
               ),
-              Effect.flatMap((storedEvents) => {
-                const request = storedEvents.find(
-                  (stored) => stored.event.type === "runtime-request.updated",
-                );
-                return request === undefined
-                  ? Effect.succeed(storedEvents)
-                  : reopenSettledForRequest(input, request.event).pipe(
-                      Effect.map((reopened) => [...storedEvents, ...reopened]),
-                      Effect.mapError(
-                        (cause) =>
-                          new ProviderEventPublishError({
-                            providerSessionId: input.providerSessionId,
-                            eventCount: 1,
-                            cause,
-                          }),
-                      ),
-                    );
-              }),
               Effect.tap((storedEvents) =>
                 Effect.gen(function* () {
                   if (storedEvents.length === 0 || input.event.type !== "provider_turn.updated")

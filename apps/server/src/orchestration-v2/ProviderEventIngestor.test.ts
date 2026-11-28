@@ -656,6 +656,14 @@ layer("ProviderEventIngestorV2", (it) => {
 
         const thread = yield* projectionStore.getThread(threadId);
         assert.equal(thread.settledOverride, reopens ? null : "settled");
+        // The reopen commits first: a crash before the request then leaves nothing hidden.
+        const types = Array.from(
+          yield* (yield* EventStore.EventStoreV2).read({ threadId }).pipe(Stream.runCollect),
+        ).map((stored) => stored.event.type);
+        assert.deepEqual(
+          types.slice(2),
+          reopens ? ["thread.unsettled", "runtime-request.updated"] : ["runtime-request.updated"],
+        );
       }),
   );
 
