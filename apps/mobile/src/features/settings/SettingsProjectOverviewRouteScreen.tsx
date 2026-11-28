@@ -131,7 +131,7 @@ export function SettingsProjectOverviewRouteScreen() {
 
 function ProjectOverviewContent(props: {
   readonly members: readonly EnvironmentProject[];
-  /** Pin and archive belong to the whole project, even when the filter picks one machine. */
+  /** Name, pin and archive belong to the whole project, even when the filter picks one machine. */
   readonly group: ProjectGroup;
   readonly connectedTargets: readonly SettingsTarget[];
   readonly environments: readonly SettingsTarget[];
@@ -312,7 +312,7 @@ function ProjectOverviewContent(props: {
     setIsSaving(true);
     void (async () => {
       const results = await Promise.all(
-        props.members.map((member) =>
+        allMembers.map((member) =>
           updateProject({
             environmentId: member.environmentId,
             input: { projectId: member.id, title: nextName },
