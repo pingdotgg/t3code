@@ -13090,5 +13090,37 @@
   "c63d942911808821": "Verde",
   "75f923f6e3e41def": "Blanco",
   "04cabf0f2aa08368": "Negro",
-  "a992afd4cdaa1317": "Cancelar dibujo"
+  "a992afd4cdaa1317": "Cancelar dibujo",
+  "175fd48b1f788f46": "Permite el acceso al uso para mostrar los límites de este agente.",
+  "e69560805f86c879": "Configurar",
+  "ffbe05f2f405850a": "Acceso al uso",
+  "40b7d767de71d529": "Acceso al uso de {provider}",
+  "b1407315384f1c1b": "No se pudo guardar el acceso al uso",
+  "d0eb90f0a42166b7": "No permitir",
+  "c23c1f8ee3808edb": "Permitir",
+  "53d6f3510e1d2505": "Trae tus proyectos",
+  "f38cfff76578bff1": "Buscar mis proyectos",
+  "845c5d64893a2cd1": "Lee su historial de sesiones y su inicio de sesión para consultar a xAI tus créditos.",
+  "693a46777fff9c2c": "Lee su base de datos de uso y su clave de Go para consultar a OpenCode tus límites de Go.",
+  "53e3445f40979e50": "Lee su historial de conversaciones.",
+  "a7990527035b13c7": "Consulta a Cursor el uso de tu cuenta con la clave de API que diste a T3 Code.",
+  "dd05e52097323d6a": "Lee su historial de sesiones.",
+  "1c90379ba4454864": "Mostrar también mis estadísticas de uso de estos agentes, lo que puede leer su inicio de sesión para consultar límites",
+  "16d657e5243b12c1": [
+    "T3 Code puede leer tu historial de sesiones de ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " para encontrar las carpetas en las que trabajaste y sus remotos de git."
+  ],
+  "bdce0ad68690fdc1": "Lee su historial de sesiones y su inicio de sesión para asociar los límites a tu cuenta y consultar a Anthropic tus créditos de reinicio.",
+  "8d802467f2a7f93b": "¿Mostrar el uso de los agentes?",
+  "7722abfa18e471c0": "T3 Code lee esto de cada agente en todo el sistema. Elige qué agentes permitir.",
+  "0ef08693f1224444": "Historial de sesiones e inicio de sesión",
+  "bb9866823586b67a": "Base de datos de uso y clave de Go",
+  "8380d6f1828fe191": "Historial de conversaciones",
+  "1f2036cf25caaf16": "Uso de la cuenta desde Cursor",
+  "51aa7700c1f967d2": "Historial de sesiones"
 }
