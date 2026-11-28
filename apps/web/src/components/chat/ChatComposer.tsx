@@ -3017,7 +3017,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     localPathOf: (item: T) => string | null,
     target: Exclude<FolderDropTarget, "remote">,
     busyTitle: string,
-    draftKey: string = attachmentTargetKeyRef.current,
+    draftKey: string,
   ): Promise<{ linked: T[]; missing: T[] }> => {
     pendingDraftWork.begin(draftKey);
     return linkComposerPaths(items, localPathOf, target, busyTitle, draftKey).finally(() =>
@@ -3040,9 +3040,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const path =
         localPath === null || typeof target === "string"
           ? localPath
-          : ((await bridge
-              ?.toLocalBackendPath(target.wslBackendId, localPath)
-              .catch(() => null)) ?? null);
+          : ((await bridge?.toLocalBackendPath(target.wslBackendId, localPath).catch(() => null)) ??
+            null);
       // ChatView is reused across threads, so a slow conversion must not land in the next draft.
       if (!composerMountedRef.current || attachmentTargetKeyRef.current !== draftKey) {
         return { linked, missing };
@@ -3141,6 +3140,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         (file) => resolveDroppedFolderPath(file, getPathForFile),
         target,
         gt("Unable to add file"),
+        attachmentTargetKeyRef.current,
       );
   };
   const resolveLocalFileLinkerStable = useStableCallback(resolveLocalFileLinker);
