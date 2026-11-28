@@ -35,7 +35,7 @@ jobs:
         if: github.event.pull_request
         env:
           GITHUB_TOKEN: ${{ secrets.EFFECT_BOT_GH }}
-      - uses: Effect-TS/next-release-action@2c03239f3fa0d648a88eb6c5e4f266275f7658a8 # Restore automatic release branch rebasing
+      - uses: Effect-TS/next-release-action@c5e555f1bf3972c895980b9f3d888c5c8a75afc0 # Auto-rebase pull requests labelled rebase
         with:
           github_token: ${{ secrets.EFFECT_BOT_GH }}
           base_branch: main

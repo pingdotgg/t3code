@@ -11,17 +11,20 @@
  */
 import type { NonEmptyReadonlyArray } from "../Array.ts"
 import * as Context from "../Context.ts"
+import * as HttpMethod from "../http/HttpMethod.ts"
 import type { PathInput } from "../http/HttpRouter.ts"
 import * as InternalRecord from "../internal/record.ts"
 import { type Pipeable, pipeArguments } from "../Pipeable.ts"
 import * as Predicate from "../Predicate.ts"
 import * as Record from "../Record.ts"
+import * as RegExp_ from "../RegExp.ts"
 import type * as Schema from "../Schema.ts"
 import type * as SchemaAST from "../SchemaAST.ts"
 import * as HttpApiEndpoint from "./HttpApiEndpoint.ts"
 import type * as HttpApiGroup from "./HttpApiGroup.ts"
 import type * as HttpApiMiddleware from "./HttpApiMiddleware.ts"
 import * as HttpApiSchema from "./HttpApiSchema.ts"
+import { getRedactedKeys } from "./internal/redactedKeys.ts"
 
 const TypeId = "~effect/http-api/HttpApi"
 
@@ -485,6 +488,63 @@ export class ErrorParseOptions extends Context.Service<
 >()("effect/http-api/HttpApi/ErrorParseOptions") {}
 
 /**
+ * Declares query parameters, headers and path params whose values are only
+ * sometimes secret, so they are redacted in spans without being modelled as
+ * `Redacted`.
+ *
+ * **Details**
+ *
+ * Names are wire names after encoding, matched like `Headers.isRedactedName`:
+ * strings case-insensitively, regular expressions by test. A string query name
+ * also matches the bracketed keys of a nested parameter, such as
+ * `buildargs[NPM_TOKEN]` for `buildargs`. For the endpoint's client request and
+ * server span, they extend `UrlParams.CurrentRedactedNames` and
+ * `Headers.CurrentRedactedNames`. Names from the API, its groups and its
+ * endpoints are combined. Values sent and decoded are unchanged.
+ *
+ * `params` are path param names, matched exactly. On the server they become
+ * the route's `redactedParams`, so the server span and the
+ * `HttpMiddleware.logger` entry record the path with those values replaced by
+ * `REDACTED`. See `HttpRouter.route` for the requests this does not cover.
+ *
+ * **Gotchas**
+ *
+ * - `addHttpApi` copies the added API's annotations onto its groups like any
+ *   other annotation, so a group's own `RedactedNames` replaces them. Repeat
+ *   the names on the group to keep both.
+ * - Only URL and header attributes use these names. `user_agent.original` and
+ *   the messages of span errors are recorded as is.
+ * - `params` apply to client spans and error messages as well as server spans
+ *   and `HttpMiddleware.logger` entries.
+ * - `HttpApiBuilder.endpoint` returns a handler without a route, so set
+ *   `redactedParams` on the route it is mounted with.
+ *
+ * **Example** (Redacting Docker build arguments)
+ *
+ * ```ts
+ * import { Schema } from "effect"
+ * import { HttpApi, HttpApiEndpoint } from "effect/http-api"
+ *
+ * const Build = HttpApiEndpoint.post("build", "/build", {
+ *   query: { buildargs: Schema.optional(Schema.Record(Schema.String, Schema.String)) },
+ *   headers: { "x-registry-config": Schema.optional(Schema.String) }
+ * }).annotate(HttpApi.RedactedNames, {
+ *   query: ["buildargs"],
+ *   headers: ["x-registry-config"]
+ * })
+ * ```
+ *
+ * @stability unstable
+ * @category services
+ * @since 4.0.0
+ */
+export class RedactedNames extends Context.Service<RedactedNames, {
+  readonly query?: ReadonlyArray<string | RegExp> | undefined
+  readonly headers?: ReadonlyArray<string | RegExp> | undefined
+  readonly params?: ReadonlyArray<string> | undefined
+}>()("effect/http-api/HttpApi/RedactedNames") {}
+
+/**
  * @internal
  */
 export interface SlotParseOptions {
@@ -510,3 +570,67 @@ export const getSlotParseOptions = (annotations: Context.Context<never>): SlotPa
     error: Context.getOrUndefined(annotations, ErrorParseOptions) ?? fallback
   }
 }
+
+/**
+ * @internal
+ */
+export interface EndpointRedactedNames {
+  readonly query: ReadonlyArray<string | RegExp>
+  readonly headers: ReadonlyArray<string | RegExp>
+}
+
+/**
+ * Combines the `RedactedNames` of an API, group and endpoint. A string query
+ * name also matches the bracketed keys of a nested parameter.
+ *
+ * @internal
+ */
+export const getEndpointRedactedNames = (
+  api: Pick<Top, "annotations">,
+  group: HttpApiGroup.Top,
+  endpoint: HttpApiEndpoint.Top
+): EndpointRedactedNames | undefined => {
+  const query: Array<string | RegExp> = []
+  const headers: Array<string | RegExp> = []
+  const addQuery = (name: string | RegExp) => {
+    query.push(name)
+    if (typeof name === "string") query.push(new RegExp(`^${RegExp_.escape(name)}\\[`, "i"))
+  }
+  for (const annotations of [api.annotations, group.annotations, endpoint.annotations]) {
+    const options = Context.getOrUndefined(annotations, RedactedNames)
+    if (options === undefined) continue
+    options.query?.forEach(addQuery)
+    if (options.headers !== undefined) headers.push(...options.headers)
+  }
+  // Fields whose schema holds a `Redacted` are redacted without being listed.
+  // Payloads of methods without a body are sent as query parameters.
+  const querySchemas = HttpMethod.hasBody(endpoint.method)
+    ? [endpoint.query]
+    : [endpoint.query, ...HttpApiEndpoint.getPayloadSchemas(endpoint)]
+  for (const schema of querySchemas) (getRedactedKeys(schema) ?? redactAll).forEach(addQuery)
+  headers.push(...(getRedactedKeys(endpoint.headers) ?? redactAll))
+  return query.length === 0 && headers.length === 0 ? undefined : { query, headers }
+}
+
+/**
+ * Returns the path param names to redact and whether to redact every param in
+ * the endpoint path (when the schema holds a `Redacted` under unknown wire names).
+ *
+ * @internal
+ */
+export const getEndpointRedactedParams = (
+  api: Pick<Top, "annotations">,
+  group: HttpApiGroup.Top,
+  endpoint: HttpApiEndpoint.Top
+): { readonly names: ReadonlyArray<string>; readonly all: boolean } => {
+  const explicit = [api.annotations, group.annotations, endpoint.annotations].flatMap((annotations) =>
+    Context.getOrUndefined(annotations, RedactedNames)?.params ?? []
+  )
+  const keys = getRedactedKeys(endpoint.params)
+  return keys === undefined
+    ? { names: explicit, all: true }
+    : { names: [...explicit, ...keys], all: false }
+}
+
+// Matches every name, for a schema whose wire names are unknown.
+const redactAll: ReadonlyArray<RegExp> = [/^/]

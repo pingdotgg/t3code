@@ -26,6 +26,7 @@ export function markdownMathRanges(source: string, tree?: Root) {
     inTable: boolean;
   }> = [];
   if (!mayContainMath(source)) return ranges;
+  const sourceOffset = source.startsWith("\uFEFF") ? 1 : 0;
   const visit = (node: Root | Root["children"][number], inTable = false) => {
     const table = inTable || node.type === "tableCell";
     if (
@@ -33,9 +34,11 @@ export function markdownMathRanges(source: string, tree?: Root) {
       node.type === "inlineMath" ||
       (node.type === "code" && node.lang === "math")
     ) {
-      const start = node.position?.start.offset;
-      const end = node.position?.end.offset;
-      if (start === undefined || end === undefined) return;
+      const parserStart = node.position?.start.offset;
+      const parserEnd = node.position?.end.offset;
+      if (parserStart === undefined || parserEnd === undefined) return;
+      const start = parserStart + sourceOffset;
+      const end = parserEnd + sourceOffset;
       const authored = source.slice(start, end);
       if (node.type === "code") {
         const open = /^[ \t]*(`{3,}|~{3,})/.exec(authored)?.[1];
@@ -53,11 +56,30 @@ export function markdownMathRanges(source: string, tree?: Root) {
 /** Messages without these characters skip math parsing entirely. */
 function mayContainMath(text: string): boolean {
   return (
-    text.includes("$") ||
+    mayContainDollarMath(text) ||
     text.includes("\\(") ||
     text.includes("\\[") ||
     /(?:`{3,}|~{3,})[ \t]*math\b/.test(text)
   );
+}
+
+/**
+ * A `$` formula needs a closing `$` (or the second `$` of `$$`) after another `$` on its line and
+ * not right after a space (micromark reads a tab as virtual spaces, which still close). So `$skill`
+ * chips and prices skip the parser.
+ */
+function mayContainDollarMath(text: string): boolean {
+  let opened = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === "\n" || char === "\r") {
+      opened = false;
+    } else if (char === "$") {
+      if (opened && text[index - 1] !== " ") return true;
+      opened = true;
+    }
+  }
+  return false;
 }
 
 export function mathKind(className: string | undefined): "inline" | "display" | null {

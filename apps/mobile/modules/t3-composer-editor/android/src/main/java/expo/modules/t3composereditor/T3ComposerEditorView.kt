@@ -16,6 +16,7 @@ import android.text.Layout
 import android.text.Spanned
 import android.text.TextUtils
 import android.text.TextWatcher
+import android.text.method.Touch
 import android.text.style.ReplacementSpan
 import android.util.TypedValue
 import android.view.DragEvent
@@ -283,6 +284,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   fun setFontFamily(fontFamily: String) {
+    chipTypeface = T3ContextChip.typefaceFor(fontFamily)
     editor.typeface = if (fontFamily.contains("Mono", ignoreCase = true)) {
       Typeface.MONOSPACE
     } else {
@@ -290,6 +292,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     }
     applyLineHeight()
     editor.applyPlaceholder()
+    applyTokenSpans()
   }
 
   fun setFontSize(fontSize: Float) {
@@ -374,6 +377,9 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   fun blurEditor() {
+    // The IME belongs to the window: leave it alone when another text field holds focus.
+    val focused = editor.rootView.findFocus()
+    if (focused != null && focused !== editor && focused.onCheckIsTextEditor()) return
     editor.clearFocus()
     val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
     imm?.hideSoftInputFromWindow(editor.windowToken, 0)
@@ -485,6 +491,8 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
       x >= minOf(left, right) && x <= maxOf(left, right)
   }
 
+  private var chipTypeface = T3ContextChip.typefaceFor("DMSans-Regular")
+
   private fun applyTokenSpans() {
     val editable = editor.text ?: return
     editable.getSpans(
@@ -507,6 +515,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
               tintsIcon = token.tintsIcon
             ),
             fontSize = editor.textSize,
+            chipTypeface = chipTypeface,
             color = T3ContextChip.color(token.accent, editor.currentTextColor),
             maximumWidth = (
               editor.width.takeIf {
@@ -636,6 +645,9 @@ internal class SelectionAwareEditText(
   var textPasteThresholdBytes = 0
   var maxInputChars = Int.MAX_VALUE
   var clipboardFragment = ""
+  private var touchDownScrollX = 0
+  private var touchDownScrollY = 0
+  private var touchDownCaret = -1
 
   // Keeps autofill services such as SMS verification codes from writing into the draft.
   override fun getAutofillType(): Int = View.AUTOFILL_TYPE_NONE
@@ -807,6 +819,31 @@ internal class SelectionAwareEditText(
     }
   }
 
+  // Releasing a drag that scrolled the text makes ArrowKeyMovementMethod pull the caret into view.
+  // Finish Touch's drag and cancel the release instead, so the caret stays where it was.
+  override fun onTouchEvent(event: MotionEvent): Boolean {
+    if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+      touchDownScrollX = scrollX
+      touchDownScrollY = scrollY
+      touchDownCaret = if (selectionStart == selectionEnd) selectionStart else -1
+    }
+    val releasesScroll =
+      event.actionMasked == MotionEvent.ACTION_UP &&
+        event.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER &&
+        touchDownCaret >= 0 &&
+        selectionStart == touchDownCaret &&
+        selectionEnd == touchDownCaret &&
+        (scrollX != touchDownScrollX || scrollY != touchDownScrollY)
+    if (!releasesScroll) return super.onTouchEvent(event)
+    Touch.onTouchEvent(this, text, event)
+    val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+    return try {
+      super.onTouchEvent(cancel)
+    } finally {
+      cancel.recycle()
+    }
+  }
+
   override fun onSelectionChanged(selStart: Int, selEnd: Int) {
     super.onSelectionChanged(selStart, selEnd)
     selectionListener?.invoke(selStart, selEnd)
@@ -874,7 +911,8 @@ internal class SelectionAwareEditText(
   private fun pasteContextOrImages(): Boolean {
     val payload = T3ComposerClipboard.read(context)
     return when {
-      payload["html"]?.contains("data-t3-context-fragment=") == true -> pasteContext(payload)
+      !payload["fragment"].isNullOrEmpty() ||
+        payload["html"]?.contains("data-t3-context-fragment=") == true -> pasteContext(payload)
       pasteImagesOrInterceptedText() -> true
       isSingleItemClip() && T3ComposerClipboard.hasThreadLink(payload["text"].orEmpty()) ->
         pasteContext(payload)

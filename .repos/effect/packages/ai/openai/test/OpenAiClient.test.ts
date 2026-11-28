@@ -545,6 +545,63 @@ describe("OpenAiClient", () => {
   })
 
   describe("createResponseStream", () => {
+    it.effect("preserves the HTTP usage-limit error body", () =>
+      Effect.gen(function*() {
+        const client = yield* OpenAiClient.OpenAiClient
+        const result = yield* client.createResponseStream({ model: "gpt-4o", input: "test" }).pipe(Effect.flip)
+        assert.strictEqual(result.reason._tag, "RateLimitError")
+        if (result.reason._tag !== "RateLimitError") return
+        assert.deepStrictEqual(JSON.parse(result.reason.http!.body!), { error: usageLimitError })
+      }).pipe(Effect.provide(makeTestLayer(undefined, {
+        _tag: "Json",
+        status: 429,
+        body: { error: usageLimitError }
+      }))))
+
+    it.live.each([
+      { name: "explicit status", status: 429, error: usageLimitError, reason: "RateLimitError" },
+      { name: "no status", error: usageLimitError, reason: "InternalProviderError" },
+      {
+        name: "no message",
+        status: 429,
+        error: { type: "usage_limit_reached", plan_type: "pro" },
+        reason: "RateLimitError"
+      },
+      { name: "null code", status: 429, error: { ...usageLimitError, code: null }, reason: "RateLimitError" },
+      { name: "null type", status: 429, error: { ...usageLimitError, type: null }, reason: "RateLimitError" },
+      { name: "mapped type", error: { ...usageLimitError, type: "rate_limit_error" }, reason: "RateLimitError" },
+      { name: "api error without message", error: { type: "api_error" }, reason: "InternalProviderError" }
+    ])("preserves WebSocket error details with $name", (frame) =>
+      Effect.gen(function*() {
+        const server = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            new WS(`wss://errors.test/${encodeURIComponent(frame.name)}/responses`, { jsonProtocol: true })
+          ),
+          (server) => Effect.sync(() => server.close())
+        )
+        yield* OpenAiClient.withWebSocketMode(
+          Effect.gen(function*() {
+            const client = yield* OpenAiClient.OpenAiClient
+            const [, stream] = yield* client.createResponseStream({ model: "gpt-4o", input: "test" })
+            const [result] = yield* Effect.all([
+              Stream.runDrain(stream).pipe(Effect.flip),
+              nextWebSocketCreate(server).pipe(
+                Effect.tap(() => Effect.sync(() => server.send({ type: "error", ...frame })))
+              )
+            ], { concurrency: "unbounded" })
+            assert.strictEqual(result._tag, "AiError")
+            assert.strictEqual(result.reason._tag, frame.reason)
+            if (result.reason._tag !== "RateLimitError" && result.reason._tag !== "InternalProviderError") return
+            assert.deepStrictEqual(result.reason.metadata, frame.error)
+            assert.deepStrictEqual(JSON.parse(result.reason.http!.body!), frame.error)
+          })
+        ).pipe(
+          Effect.provide(makeTestLayer({ apiUrl: `https://errors.test/${encodeURIComponent(frame.name)}` })),
+          Effect.provideService(Socket.WebSocketConstructor, (url) => new globalThis.WebSocket(url)),
+          Effect.timeout("1 second")
+        )
+      }))
+
     it.effect("emits response.completed before [DONE] in the same SSE chunk", () =>
       Effect.gen(function*() {
         const client = yield* OpenAiClient.OpenAiClient
@@ -1375,4 +1432,12 @@ const makeResponse = (
       return typeof value === "function" ? value.bind(target) : value
     }
   })
+}
+
+const usageLimitError = {
+  type: "usage_limit_reached",
+  message: "Usage limit reached",
+  resets_at: 1800000000,
+  plan_type: "pro",
+  limit_window_minutes: 300
 }

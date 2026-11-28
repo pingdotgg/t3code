@@ -18,10 +18,10 @@
   note: "The name remains, but its constructor and fields changed in the v4 Base/check/context/encoding model."
 "effect/SchemaAST#BatchingAnnotation":
   replacement: "none"
-  note: "Per-schema batching annotations were removed. They have no direct replacement. ParseOptions.concurrency controls product child parsing only; configure request batching separately."
+  note: "Per-schema batching annotations were removed and have no direct replacement; Schema.annotate accepts the key but ignores it. A RequestResolver batches requests that are pending when its delay ends, so pass concurrency in runtime ParseOptions to let requests from sibling children share a batch. With sequential parsing, the default, children that each await one request send them in separate batches; requests started concurrently inside a transformation, or by other fibers using the same resolver, can still share a batch. Bound batch sizes with the resolver (for example RequestResolver.batchN), not with the parse option."
 "effect/SchemaAST#BatchingAnnotationId":
   replacement: "none"
-  note: "Symbol annotation IDs were removed and batching is no longer a schema annotation."
+  note: "Symbol annotation IDs were removed and batching is no longer a schema annotation. Requests from sibling children share a batch only when ParseOptions.concurrency lets them be pending together; requests started concurrently inside a transformation or by other fibers can still batch."
 "effect/SchemaAST#bigIntKeyword":
   replacement: "SchemaAST.bigInt"
   note: "The v4 SchemaAST redesign renamed this primitive, collection, or guard while preserving its role."
@@ -117,7 +117,7 @@
   note: "Resolve string-keyed annotations with resolveAt, or use resolveIdentifier, resolveTitle, and resolveDescription."
 "effect/SchemaAST#getBatchingAnnotation":
   replacement: "none"
-  note: "Batching annotations were removed. ParseOptions.concurrency controls product child parsing only; configure request batching separately."
+  note: "Batching annotations were removed. Requests from sibling children share a batch only when ParseOptions.concurrency lets them be pending together; with sequential parsing, children that each await one request send them in separate batches. Requests started concurrently inside a transformation or by other fibers using the same resolver can still batch."
 "effect/SchemaAST#getBrandAnnotation":
   replacement: "none"
   note: "Runtime brand inspection was removed because Schema.brand is type-only and does not store brand metadata in the AST."

@@ -1,3 +1,6 @@
+import { msg } from "gt-react";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import type {
   KeybindingCommand,
   ProjectId,
@@ -26,6 +29,7 @@ import {
   commandForProjectScript,
   nextProjectScriptId,
   projectScriptIdFromCommand,
+  projectScriptIdsInEnvironment,
   releaseClaimedRoles,
 } from "../../projectScripts";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -61,6 +65,7 @@ export function useProjectScriptEditing(input: {
     nextScripts: ReadonlyArray<ProjectScript>;
     keybinding: NewProjectScriptInput["keybinding"];
     keybindingCommand: KeybindingCommand | null;
+    onSettingsSaved?: () => void;
   }): Promise<AtomCommandResult<void, unknown>> => {
     const serverConfig = appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId));
     const previousKeybinding = keybindingValueForCommand(
@@ -79,7 +84,7 @@ export function useProjectScriptEditing(input: {
         Cause.fail(
           new EnvironmentAuthorizationError({
             requiredScope: AuthSettingsWriteScope,
-            message: "This connection cannot change keyboard shortcuts.",
+            message: m(msg("This connection cannot change keyboard shortcuts.")),
           }),
         ),
       );
@@ -117,6 +122,7 @@ export function useProjectScriptEditing(input: {
       return updateResult;
     }
 
+    input.onSettingsSaved?.();
     if (!changesKeybinding) return updateResult;
     if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
       return AsyncResult.failure(
@@ -124,8 +130,16 @@ export function useProjectScriptEditing(input: {
           new EnvironmentAuthorizationError({
             requiredScope: AuthSettingsWriteScope,
             message: isDeletingScript
-              ? "The script was deleted, but its keyboard shortcut could not be removed because permission changed."
-              : "The script was saved, but this connection can no longer change keyboard shortcuts.",
+              ? m(
+                  msg(
+                    "The script was deleted, but its keyboard shortcut could not be removed because permission changed.",
+                  ),
+                )
+              : m(
+                  msg(
+                    "The script was saved, but this connection can no longer change keyboard shortcuts.",
+                  ),
+                ),
           }),
         ),
       );
@@ -181,14 +195,18 @@ export function useProjectScriptEditing(input: {
   };
   const saveProjectScript = async (
     input: NewProjectScriptInput,
+    onActionCreated?: (scriptId: string) => void,
   ): Promise<AtomCommandResult<void, unknown>> => {
     if (!project) {
       return AsyncResult.success(undefined);
     }
-    const nextId = nextProjectScriptId(
-      input.name,
-      scripts.map((script) => script.id),
-    );
+    const nextId = nextProjectScriptId(input.name, [
+      ...scripts.map((script) => script.id),
+      ...projectScriptIdsInEnvironment(
+        settings,
+        allProjects.filter((other) => other.environmentId === environmentId),
+      ),
+    ]);
     const nextScript = buildProjectScript(nextId, input);
     const nextScripts = [
       ...scripts.map((script) => releaseClaimedRoles(script, input)),
@@ -202,29 +220,34 @@ export function useProjectScriptEditing(input: {
       nextScripts,
       keybinding: input.keybinding,
       keybindingCommand: commandForProjectScript(nextId),
+      // The editor needs the ID even if writing the shortcut fails.
+      onSettingsSaved: () => onActionCreated?.(nextId),
     });
   };
   const updateProjectScript = async (
     scriptId: string,
     input: NewProjectScriptInput,
+    retryingCreation = false,
   ): Promise<AtomCommandResult<void, unknown>> => {
     if (!project) {
       return AsyncResult.success(undefined);
     }
-    const existingScript = scripts.find((script) => script.id === scriptId);
-    if (!existingScript) {
-      return AsyncResult.failure(Cause.fail(new Error("Script not found.")));
+    const hasScript = scripts.some((script) => script.id === scriptId);
+    if (!hasScript && !retryingCreation) {
+      return AsyncResult.failure(Cause.fail(new Error(m(msg("Script not found.")))));
     }
 
-    const updatedScript = buildProjectScript(existingScript.id, input);
-    const nextScripts = scripts.map((script) =>
+    const updatedScript = buildProjectScript(scriptId, input);
+    // A retry has a confirmed ID even if the settings subscription is still behind.
+    const currentScripts = hasScript ? scripts : [...scripts, updatedScript];
+    const nextScripts = currentScripts.map((script) =>
       script.id === scriptId ? updatedScript : releaseClaimedRoles(script, input),
     );
 
     return persistProjectScripts({
       projectId: project.id,
       projectCwd: project.workspaceRoot,
-      previousScripts: scripts,
+      previousScripts: currentScripts,
       nextScripts,
       keybinding: input.keybinding,
       keybindingCommand: commandForProjectScript(scriptId),
@@ -251,15 +274,20 @@ export function useProjectScriptEditing(input: {
     if (result._tag === "Success") {
       toastManager.add({
         type: "success",
-        title: `Deleted action "${deletedName ?? "Unknown"}"`,
+        title: m(
+          msg('Deleted action "{name}"', {
+            name:
+              deletedName ?? m(msg("Unknown", { $context: "fallback name of a deleted action" })),
+          }),
+        ),
       });
     } else if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not delete action",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          title: m(msg("Could not delete action")),
+          description: thrownErrorMessage(error, m) ?? m(msg("An unexpected error occurred.")),
         }),
       );
     }

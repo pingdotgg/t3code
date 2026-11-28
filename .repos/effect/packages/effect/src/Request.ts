@@ -229,6 +229,8 @@ const requestVariance = Equal.byReferenceUnsafe({
  * created by `Request.of`, `Request.tagged`, `Request.Class`, and
  * `Request.TaggedClass`. Most users should use those constructors instead of
  * interacting with the prototype directly.
+ * Request equality and hashing use own enumerable string and symbol fields.
+ * Non-enumerable and inherited fields are ignored.
  *
  * @stability stable
  * @category prototypes
@@ -272,6 +274,12 @@ export const isRequest = (u: unknown): u is Request<unknown, unknown, unknown> =
 /**
  * Creates a constructor function for a specific Request type.
  *
+ * **Details**
+ *
+ * Copies own enumerable string and symbol properties from the constructor input.
+ * Request equality and hashing also use own enumerable string and symbol fields.
+ * Non-enumerable and inherited properties are ignored.
+ *
  * **Example** (Creating untagged request constructors)
  *
  * ```ts import.meta.vitest
@@ -308,6 +316,12 @@ export const of = <R extends Request<any, any, any>>(): Constructor<R> => (args)
 /**
  * Creates a constructor function for a tagged Request type. The tag is automatically
  * added to the request, making it useful for discriminated unions.
+ *
+ * **Details**
+ *
+ * Copies own enumerable string and symbol properties from the constructor input
+ * and adds `_tag`. Request equality and hashing use own enumerable string and
+ * symbol fields. Non-enumerable and inherited properties are ignored.
  *
  * **Example** (Creating tagged request constructors)
  *
@@ -361,6 +375,9 @@ export const tagged = <R extends Request<any, any, any> & { _tag: string }>(
  *
  * Subclasses pass their data fields to `super`, and instances are marked as
  * `Request` values while retaining the provided readonly fields.
+ * Copies own enumerable string and symbol properties from the constructor input.
+ * Request equality and hashing also use own enumerable string and symbol fields.
+ * Non-enumerable and inherited properties are ignored.
  *
  * **Example** (Defining request classes)
  *
@@ -401,6 +418,9 @@ export const Class: new<A extends Record<string, any>, Success, Error = never, C
  *
  * Use this when defining class-based request types that should participate in
  * tagged unions or tag-based request resolvers.
+ * Copies own enumerable string and symbol properties from the constructor input
+ * and adds `_tag`. Request equality and hashing use own enumerable string and
+ * symbol fields. Non-enumerable and inherited properties are ignored.
  *
  * **Example** (Defining tagged request classes)
  *

@@ -1,6 +1,5 @@
 // @effect-diagnostics globalDate:off globalTimers:off - This isolated Electron preload does not run inside an Effect runtime.
 import { ipcRenderer } from "electron";
-import { getElementContext } from "react-grab/primitives";
 import { matchesKeybindingShortcut } from "@t3tools/shared/keybindingMatching";
 import type {
   DesktopPreviewAnnotationTheme,
@@ -20,7 +19,16 @@ import type {
 
 import { createAnnotationIdSource } from "./AnnotationIds.ts";
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
+import {
+  addStrokePoint,
+  openStrokePath,
+  startStroke,
+  strokeBounds,
+  type StrokeGeometry,
+} from "./AnnotationStroke.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
+import { pageWorld } from "./PageWorldBridge.ts";
+import { pickElementAtPoint } from "./PickTarget.ts";
 import { installRecordingCursor } from "./RecordingCursor.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
 import {
@@ -32,7 +40,7 @@ import {
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
-  MOUSE_NAVIGATE_CHANNEL,
+  POINTER_DOWN_HOST_CHANNEL,
   PAGE_UNHANDLED_SHORTCUT_CHANNEL,
   RECORDING_CURSOR_CHANNEL,
   RECORDING_POINTER_CHANNEL,
@@ -40,6 +48,7 @@ import {
   RECORDING_INPUT_CHANNEL,
   RECORDING_CONTROLLER_CHANNEL,
   START_PICK_CHANNEL,
+  THUMB_PRESS_CHANNEL,
 } from "./GuestProtocol.ts";
 const OVERLAY_ATTRIBUTE = "data-t3code-annotation-ui";
 const INPUT_LAYER_ATTRIBUTE = "data-t3code-annotation-input";
@@ -143,12 +152,15 @@ interface SelectedElement {
   outline: HTMLDivElement;
   label: HTMLDivElement;
   baselineStyles: Map<string, string>;
+  // Last rect measured while connected; a detached node reports 0x0.
+  rect: PreviewAnnotationRect;
 }
 
 interface AnnotationSession {
   teardown: (notifyMain: boolean) => void;
   applyTheme: (theme: DesktopPreviewAnnotationTheme) => void;
   setSendEnabled: (enabled: boolean) => void;
+  handleOverlayKey: (event: KeyboardEvent) => void;
 }
 
 let activeSession: AnnotationSession | null = null;
@@ -185,6 +197,9 @@ const applyAnnotationTheme = (
 
 const reportHumanPointerInput = (event: PointerEvent): void => {
   if (!event.isTrusted) return;
+  // The guest does not always take focus on a click, so the host's webview
+  // `focus` event can't be relied on to dismiss open menus and popovers.
+  ipcRenderer.sendToHost(POINTER_DOWN_HOST_CHANNEL);
   ipcRenderer.send(HUMAN_INPUT_CHANNEL, {
     kind: "pointer",
     x: event.clientX,
@@ -225,34 +240,40 @@ const reportUnhandledShortcut = (event: KeyboardEvent): void => {
 
 window.addEventListener("keydown", reportUnhandledShortcut, true);
 
-const MOUSE_BUTTON_BACK = 3;
-const MOUSE_BUTTON_FORWARD = 4;
-
-const navigationDirectionForButton = (button: number): "back" | "forward" | null => {
-  if (button === MOUSE_BUTTON_BACK) return "back";
-  if (button === MOUSE_BUTTON_FORWARD) return "forward";
-  return null;
-};
-
-// Chromium routes thumb-button navigation to the focused WebContents; navigate this hovered guest explicitly.
-const suppressNavigationButton = (event: MouseEvent): void => {
-  if (!event.isTrusted || navigationDirectionForButton(event.button) === null) return;
-  event.preventDefault();
+// Registered before page scripts so their capture listeners never see keys typed into the
+// overlay; the closed shadow root retargets those to the host, hiding that they edit text.
+const isolateOverlayKey = (event: KeyboardEvent): void => {
+  if (!activeSession || !(event.target instanceof Element) || !isAnnotationNode(event.target))
+    return;
+  activeSession.handleOverlayKey(event);
   event.stopImmediatePropagation();
 };
 
-const requestNavigationForButton = (event: MouseEvent): void => {
-  if (!event.isTrusted) return;
-  const direction = navigationDirectionForButton(event.button);
-  if (direction === null) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  ipcRenderer.send(MOUSE_NAVIGATE_CHANNEL, { direction });
-};
+for (const type of ["keydown", "keypress", "keyup"] as const)
+  window.addEventListener(type, isolateOverlayKey, true);
 
-window.addEventListener("mousedown", suppressNavigationButton, true);
-window.addEventListener("mouseup", requestNavigationForButton, true);
-window.addEventListener("auxclick", suppressNavigationButton, true);
+let replayedThumbPress: { readonly x: number; readonly y: number } | null = null;
+ipcRenderer.on(
+  THUMB_PRESS_CHANNEL,
+  (_event, phase: unknown, x: unknown, y: unknown, button: unknown) => {
+    if (phase !== "down" && phase !== "up") return;
+    if (typeof x !== "number" || typeof y !== "number" || typeof button !== "number") return;
+    // Main reports presses inside a frame in that frame's coordinates.
+    const inFrame = document.querySelector("iframe:hover, frame:hover, object:hover, embed:hover");
+    if (phase === "up") {
+      const pressed = replayedThumbPress;
+      replayedThumbPress = null;
+      // A replayed press is always released, at its own point if the release lands in a frame.
+      if (pressed) recordingCursor?.press(inFrame ? pressed : { x, y }, "up");
+      return;
+    }
+    if (inFrame) return;
+    replayedThumbPress = { x, y };
+    ipcRenderer.sendToHost(POINTER_DOWN_HOST_CHANNEL);
+    ipcRenderer.send(HUMAN_INPUT_CHANNEL, { kind: "pointer", x, y, button });
+    recordingCursor?.press({ x, y }, "down");
+  },
+);
 
 const nextId = createAnnotationIdSource();
 
@@ -300,13 +321,16 @@ function isAnnotationNode(element: Element): boolean {
 }
 
 function pickFromPoint(clientX: number, clientY: number): Element | null {
-  for (const candidate of document.elementsFromPoint(clientX, clientY)) {
-    if (!(candidate instanceof Element)) continue;
-    if (isAnnotationNode(candidate) || candidate.hasAttribute(INPUT_LAYER_ATTRIBUTE)) continue;
-    if (candidate === document.documentElement || candidate === document.body) continue;
-    return candidate;
-  }
-  return null;
+  return pickElementAtPoint(
+    document,
+    clientX,
+    clientY,
+    (element) =>
+      isAnnotationNode(element) ||
+      element.hasAttribute(INPUT_LAYER_ATTRIBUTE) ||
+      element === document.documentElement ||
+      element === document.body,
+  );
 }
 
 function describeRawElement(element: Element): string {
@@ -399,6 +423,7 @@ function updateSelectedVisual(target: SelectedElement): void {
     target.label.style.display = "none";
     return;
   }
+  target.rect = rectFromDomRect(target.element.getBoundingClientRect());
   const rect = visibleElementRect(target.element);
   positionBox(target.outline, rect);
   if (rect.width === 0 || rect.height === 0) {
@@ -410,19 +435,24 @@ function updateSelectedVisual(target: SelectedElement): void {
   target.label.style.transform = `translate(${Math.max(4, rect.x)}px, ${Math.max(4, rect.y - 22)}px)`;
 }
 
-function toStackFrame(frame: {
-  functionName?: string;
-  fileName?: string;
-  lineNumber?: number;
-  columnNumber?: number;
-}): PickedElementStackFrame {
-  return {
-    functionName: frame.functionName ?? null,
-    fileName: frame.fileName ?? null,
-    lineNumber: frame.lineNumber ?? null,
-    columnNumber: frame.columnNumber ?? null,
-  };
-}
+// Everything the page's world returns is page-controlled, so each field is checked, not trusted.
+const pageField = (source: unknown, key: string): unknown =>
+  typeof source === "object" && source !== null ? Reflect.get(source, key) : undefined;
+const pageString = (source: unknown, key: string): string | null => {
+  const value = pageField(source, key);
+  return typeof value === "string" ? value : null;
+};
+const pageNumber = (source: unknown, key: string): number | null => {
+  const value = pageField(source, key);
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+};
+
+const toStackFrame = (frame: unknown): PickedElementStackFrame => ({
+  functionName: pageString(frame, "functionName"),
+  fileName: pageString(frame, "fileName"),
+  lineNumber: pageNumber(frame, "lineNumber"),
+  columnNumber: pageNumber(frame, "columnNumber"),
+});
 
 /** React-internals lookups can remain pending forever; bound them so submit cannot stall the overlay. */
 function withCaptureTimeout<A>(promise: Promise<A>, millis: number): Promise<A | null> {
@@ -446,27 +476,32 @@ async function captureElement(element: Element): Promise<PickedElementPayload> {
     pickedAt: new Date().toISOString(),
   };
   try {
-    const context = await withCaptureTimeout(
-      Promise.resolve(getElementContext(element)),
+    const context: unknown = await withCaptureTimeout(
+      Promise.resolve(pageWorld.elementContext(element)),
       ELEMENT_CONTEXT_TIMEOUT_MS,
     );
-    if (context) {
-      const stack = (context.stack ?? []).map(toStackFrame);
+    if (typeof context === "object" && context !== null) {
+      const frames = pageField(context, "stack");
+      const stack = Array.isArray(frames) ? frames.map(toStackFrame) : [];
       return {
         ...base,
-        selector: context.selector,
-        htmlPreview: context.htmlPreview ?? "",
-        componentName: context.componentName,
+        selector: pageString(context, "selector"),
+        htmlPreview: pageString(context, "htmlPreview") ?? "",
+        componentName: pageString(context, "componentName"),
         source: stack[0] ?? null,
         stack,
-        styles: context.styles ?? "",
+        styles: pageString(context, "styles") ?? "",
       };
     }
   } catch {}
+  const html = element.outerHTML;
+  const before = html.charCodeAt(HTML_PREVIEW_MAX_CHARS - 1);
+  const after = html.charCodeAt(HTML_PREVIEW_MAX_CHARS);
+  const splitPair = before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
   return {
     ...base,
     selector: null,
-    htmlPreview: element.outerHTML.slice(0, HTML_PREVIEW_MAX_CHARS),
+    htmlPreview: html.slice(0, splitPair ? HTML_PREVIEW_MAX_CHARS - 1 : HTML_PREVIEW_MAX_CHARS),
     componentName: null,
     source: null,
     stack: [],
@@ -533,34 +568,6 @@ function createUnitInput(unit: string, placeholder = "0"): HTMLInputElement {
   return input;
 }
 
-function pathFromPoints(points: ReadonlyArray<PreviewAnnotationPoint>): string {
-  if (points.length === 0) return "";
-  if (points.length === 1) return `M ${points[0]!.x} ${points[0]!.y} l 0.01 0.01`;
-  let path = `M ${points[0]!.x} ${points[0]!.y}`;
-  for (let index = 1; index < points.length - 1; index += 1) {
-    const current = points[index]!;
-    const next = points[index + 1]!;
-    path += ` Q ${current.x} ${current.y} ${(current.x + next.x) / 2} ${(current.y + next.y) / 2}`;
-  }
-  const last = points[points.length - 1]!;
-  path += ` L ${last.x} ${last.y}`;
-  return path;
-}
-
-function strokeBounds(
-  points: ReadonlyArray<PreviewAnnotationPoint>,
-  width: number,
-): PreviewAnnotationRect {
-  const xs = points.map((point) => point.x);
-  const ys = points.map((point) => point.y);
-  const padding = width + 3;
-  const left = Math.min(...xs) - padding;
-  const top = Math.min(...ys) - padding;
-  const right = Math.max(...xs) + padding;
-  const bottom = Math.max(...ys) + padding;
-  return { x: left, y: top, width: right - left, height: bottom - top };
-}
-
 function startAnnotation(
   sendEnabled: boolean,
   voice: DesktopPreviewAnnotationVoiceConfig | undefined,
@@ -570,22 +577,26 @@ function startAnnotation(
   const host = document.createElement("div");
   host.setAttribute(OVERLAY_ATTRIBUTE, "");
   host.setAttribute("dir", "ltr");
-  host.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX_OVERLAY};pointer-events:none`;
+  host.popover = "manual";
+  // Resets the UA popover box (fit-content size, auto margin, border, padding, Canvas background).
+  host.style.cssText = `position:fixed;inset:0;width:auto;height:auto;margin:0;border:0;padding:0;overflow:visible;background:transparent;color:inherit;z-index:${Z_INDEX_OVERLAY};pointer-events:none`;
   applyAnnotationTheme(host, annotationTheme);
   const shadowRoot = host.attachShadow({ mode: "closed" });
-  const themeStyle = document.createElement("style");
-  themeStyle.textContent = previewAnnotationStyles;
-  shadowRoot.appendChild(themeStyle);
+  // Constructed sheets are exempt from the page's CSP style-src; <style> elements are not.
+  const themeSheet = new CSSStyleSheet();
+  themeSheet.replaceSync(previewAnnotationStyles);
+  shadowRoot.adoptedStyleSheets = [themeSheet];
 
   const root = document.createElement("div");
   root.setAttribute(OVERLAY_ATTRIBUTE, "");
   root.setAttribute("dir", "ltr");
   root.className = "fixed inset-0 font-sans text-foreground";
   root.style.cssText = "pointer-events:none";
-  const cursorStyle = document.createElement("style");
-  cursorStyle.setAttribute(OVERLAY_ATTRIBUTE, "");
-  cursorStyle.textContent = `html[data-t3code-annotation-tool] body, html[data-t3code-annotation-tool] body * { cursor: crosshair !important; } [${OVERLAY_ATTRIBUTE}], [${OVERLAY_ATTRIBUTE}] * { cursor: default !important; } [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-inner-spin-button, [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-outer-spin-button { appearance:none; margin:0; }`;
-  document.documentElement.appendChild(cursorStyle);
+  const cursorSheet = new CSSStyleSheet();
+  cursorSheet.replaceSync(
+    `[${OVERLAY_ATTRIBUTE}]::backdrop { display:none !important; } html[data-t3code-annotation-tool] body, html[data-t3code-annotation-tool] body * { cursor: crosshair !important; } [${OVERLAY_ATTRIBUTE}], [${OVERLAY_ATTRIBUTE}] * { cursor: default !important; } [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-inner-spin-button, [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-outer-spin-button { appearance:none; margin:0; }`,
+  );
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, cursorSheet];
   shadowRoot.appendChild(root);
 
   const hoverOutline = createBox(PRIMARY, PRIMARY_FILL);
@@ -897,7 +908,12 @@ function startAnnotation(
   }
   let tool: AnnotationTool = isPdf ? "marquee" : "select";
   let dragStart: PreviewAnnotationPoint | null = null;
-  let activeStroke: { target: PreviewAnnotationStrokeTarget; path: SVGPathElement } | null = null;
+  let activeStroke: {
+    target: PreviewAnnotationStrokeTarget;
+    geometry: StrokeGeometry;
+    group: SVGGElement;
+    path: SVGPathElement;
+  } | null = null;
   let pendingCapture = false;
   let editorExpanded = false;
   let editorWasShown = false;
@@ -971,6 +987,7 @@ function startAnnotation(
       outline: createBox(PRIMARY, PRIMARY_FILL),
       label: createLabel(),
       baselineStyles: new Map(),
+      rect: rectFromDomRect(element.getBoundingClientRect()),
     };
     selected.set(element, target);
     root.append(target.outline, target.label);
@@ -1397,6 +1414,13 @@ function startAnnotation(
     for (const target of selected.values()) updateSelectedVisual(target);
     queueEditorLayout();
   };
+  const onScroll = (): void => {
+    // A detached element's last rect no longer matches what is on screen once the page scrolls.
+    for (const target of selected.values()) {
+      if (!target.element.isConnected) target.rect = { x: 0, y: 0, width: 0, height: 0 };
+    }
+    repaint();
+  };
   // A scrollbar appearing narrows the viewport without a window resize.
   const rootResizeObserver = new ResizeObserver(repaint);
 
@@ -1497,15 +1521,18 @@ function startAnnotation(
       return;
     }
     if (tool === "draw" && activeStroke) {
-      activeStroke.target.points = [
-        ...activeStroke.target.points,
-        { x: event.clientX, y: event.clientY },
-      ];
-      activeStroke.target.bounds = strokeBounds(
-        activeStroke.target.points,
-        activeStroke.target.width,
-      );
-      activeStroke.path.setAttribute("d", pathFromPoints(activeStroke.target.points));
+      const closedPath = addStrokePoint(activeStroke.geometry, {
+        x: event.clientX,
+        y: event.clientY,
+      });
+      activeStroke.target.bounds = strokeBounds(activeStroke.geometry, activeStroke.target.width);
+      if (closedPath !== null) {
+        activeStroke.path.setAttribute("d", closedPath);
+        activeStroke.path = activeStroke.group.appendChild(
+          document.createElementNS("http://www.w3.org/2000/svg", "path"),
+        );
+      }
+      activeStroke.path.setAttribute("d", openStrokePath(activeStroke.geometry));
     }
   };
 
@@ -1524,23 +1551,27 @@ function startAnnotation(
     }
     dragStart = { x: event.clientX, y: event.clientY };
     if (tool === "draw") {
+      const geometry = startStroke(dragStart);
       const stroke: PreviewAnnotationStrokeTarget = {
         id: nextId("stroke"),
         color: annotationTheme?.primary ?? "#2563eb",
         width: 4,
-        points: [dragStart],
+        points: geometry.points,
         bounds: { x: dragStart.x, y: dragStart.y, width: 1, height: 1 },
       };
-      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute(OVERLAY_ATTRIBUTE, "");
-      path.setAttribute("data-stroke-id", stroke.id);
-      path.setAttribute("fill", "none");
-      path.setAttribute("stroke", stroke.color);
-      path.setAttribute("stroke-width", String(stroke.width));
-      path.setAttribute("stroke-linecap", "round");
-      path.setAttribute("stroke-linejoin", "round");
-      svg.appendChild(path);
-      activeStroke = { target: stroke, path };
+      const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      group.setAttribute(OVERLAY_ATTRIBUTE, "");
+      group.setAttribute("data-stroke-id", stroke.id);
+      group.setAttribute("fill", "none");
+      group.setAttribute("stroke", stroke.color);
+      group.setAttribute("stroke-width", String(stroke.width));
+      group.setAttribute("stroke-linecap", "round");
+      group.setAttribute("stroke-linejoin", "round");
+      const path = group.appendChild(
+        document.createElementNS("http://www.w3.org/2000/svg", "path"),
+      );
+      svg.appendChild(group);
+      activeStroke = { target: stroke, geometry, group, path };
     }
   };
 
@@ -1567,7 +1598,7 @@ function startAnnotation(
       }
     } else if (tool === "draw" && activeStroke) {
       if (activeStroke.target.points.length > 1) strokes.push(activeStroke.target);
-      else activeStroke.path.remove();
+      else activeStroke.group.remove();
       activeStroke = null;
     }
     dragStart = null;
@@ -1586,6 +1617,38 @@ function startAnnotation(
     if (event.relatedTarget instanceof Element && isAnnotationNode(event.relatedTarget))
       event.stopPropagation();
   };
+
+  // Page popovers and modal dialogs sit in the top layer above any z-index, and a modal makes
+  // everything outside it inert, so the overlay is shown last and lives inside the topmost modal.
+  // Modals in the order they opened, since DOM order does not say which one blocks the rest.
+  const openedModals: Element[] = [];
+  const raiseOverlay = (): void => {
+    const focused = shadowRoot.activeElement;
+    const parent =
+      document.activeElement?.closest("dialog:modal") ??
+      openedModals.findLast((dialog) => dialog.matches(":modal")) ??
+      Array.from(document.querySelectorAll("dialog:modal")).at(-1) ??
+      document.documentElement;
+    if (host.parentElement !== parent) parent.appendChild(host);
+    if (host.matches(":popover-open")) host.hidePopover();
+    host.showPopover();
+    if (focused instanceof HTMLElement && !focused.matches(":focus"))
+      focused.focus({ preventScroll: true });
+  };
+  const onPageToggle = (event: Event): void => {
+    const target = event.target;
+    if (target === host) return;
+    if (target instanceof HTMLDialogElement) {
+      const index = openedModals.indexOf(target);
+      if (index !== -1) openedModals.splice(index, 1);
+      if (target.matches(":modal")) openedModals.push(target);
+    }
+    raiseOverlay();
+  };
+  // Removing an open dialog hides the overlay inside it without a toggle event.
+  const detachObserver = new MutationObserver(() => {
+    if (!host.isConnected || !host.matches(":popover-open")) raiseOverlay();
+  });
 
   const onPointerOut = (event: PointerEvent): void => {
     if (event.relatedTarget === null) clearHoverOutline();
@@ -1624,13 +1687,15 @@ function startAnnotation(
     window.removeEventListener("focus", onWindowFocus);
     window.removeEventListener("keydown", onKeyDown, true);
     window.removeEventListener("keyup", onVoiceKeyUp, true);
-    window.removeEventListener("scroll", repaint, true);
+    window.removeEventListener("scroll", onScroll, true);
     window.removeEventListener("resize", repaint);
     dragHandle.removeEventListener("pointerdown", onEditorPointerDown);
     dragHandle.removeEventListener("pointermove", onEditorPointerMove);
     dragHandle.removeEventListener("pointerup", onEditorPointerUp);
     dragHandle.removeEventListener("pointercancel", onEditorPointerUp);
     for (const type of PAGE_ISOLATED_EVENTS) host.removeEventListener(type, stopAtOverlay);
+    window.removeEventListener("toggle", onPageToggle, true);
+    detachObserver.disconnect();
     document.documentElement.removeEventListener("focusout", onFocusOutToOverlay);
     if (editorLayoutFrame !== null) window.cancelAnimationFrame(editorLayoutFrame);
     ipcRenderer.off(CANCEL_PICK_CHANNEL, onCancel);
@@ -1638,7 +1703,9 @@ function startAnnotation(
     ipcRenderer.off(ANNOTATION_VOICE_STATE_CHANNEL, onVoiceState);
     if (elapsedTimer !== null) clearInterval(elapsedTimer);
     document.documentElement.removeAttribute("data-t3code-annotation-tool");
-    cursorStyle.remove();
+    document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
+      (sheet) => sheet !== cursorSheet,
+    );
     inputLayer?.remove();
     host.remove();
     activeSession = null;
@@ -1673,13 +1740,13 @@ function startAnnotation(
         return;
       }
     }
-    if (isAnnotationNode(event.target as Element) && event.key !== "Escape") return;
-    if (event.key === "Escape") {
+    if (event.key === "Escape" && !event.isComposing) {
       event.preventDefault();
       event.stopPropagation();
       teardown(true);
       return;
     }
+    if (shadowRoot.activeElement?.matches("input, textarea, select")) return;
     if (event.key === "v") tool = "select";
     else if (event.key === "r") tool = "marquee";
     else if (event.key === "d") tool = "draw";
@@ -1721,7 +1788,9 @@ function startAnnotation(
         return {
           id: target.id,
           element,
-          rect: rectFromDomRect(target.element.getBoundingClientRect()),
+          rect: target.element.isConnected
+            ? rectFromDomRect(target.element.getBoundingClientRect())
+            : target.rect,
         };
       }),
     )
@@ -1761,16 +1830,20 @@ function startAnnotation(
         teardown(true);
       });
   };
-  submit.addEventListener("click", () => submitAnnotation("attach"));
-  root.addEventListener("keydown", (event) => {
+  submit.addEventListener("click", (event) => {
+    if (event.isTrusted) submitAnnotation("attach");
+  });
+  const handleOverlayKey = (event: KeyboardEvent): void => {
+    if (event.type === "keyup") onVoiceKeyUp(event);
+    if (event.type !== "keydown") return;
+    onKeyDown(event);
+    if (event.cancelBubble) return;
     const submission =
-      event.target === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
-    // Bubble phase lets editor inputs handle events before hiding them from the page.
-    event.stopImmediatePropagation();
+      shadowRoot.activeElement === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
     if (!submission) return;
     event.preventDefault();
     submitAnnotation(submission);
-  });
+  };
 
   window.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });
   window.addEventListener("pointerdown", onPointerDown, { capture: true, passive: false });
@@ -1781,7 +1854,7 @@ function startAnnotation(
   window.addEventListener("focus", onWindowFocus);
   window.addEventListener("keydown", onKeyDown, { capture: true });
   window.addEventListener("keyup", onVoiceKeyUp, { capture: true });
-  window.addEventListener("scroll", repaint, { capture: true, passive: true });
+  window.addEventListener("scroll", onScroll, { capture: true, passive: true });
   window.addEventListener("resize", repaint, { passive: true });
   // Bubble phase, so the overlay's own handlers still see these events.
   for (const type of PAGE_ISOLATED_EVENTS)
@@ -1794,7 +1867,9 @@ function startAnnotation(
     document.documentElement.appendChild(inputLayer);
     inputLayer.focus({ preventScroll: true });
   }
-  document.documentElement.appendChild(host);
+  raiseOverlay();
+  window.addEventListener("toggle", onPageToggle, true);
+  detachObserver.observe(document.documentElement, { childList: true, subtree: true });
   rootResizeObserver.observe(document.documentElement);
   refreshToolButtons();
   updateStatus();
@@ -1806,6 +1881,7 @@ function startAnnotation(
       sendEnabled = enabled;
       updateSendHint();
     },
+    handleOverlayKey,
   };
 }
 
