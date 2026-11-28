@@ -15,4 +15,12 @@ describe("grouped ripgrep line numbers", () => {
       previews.map((preview, index) => ({ fileName, line: index + 7, preview })),
     );
   });
+
+  it.each([
+    ["the second filename", "a.ts:1:first\n2026:0:notes.md:3:second"],
+    ["the first filename", "a:0:b.txt:1:first\n2026:3:second"],
+    ["a later filename", "a.ts:1:first\n2026:3:second\n2026:0:notes.md:004:third"],
+  ])("leaves ambiguous output with a zero in %s raw", (_name, output) => {
+    expect(parseGrepOutput(output, "/repo")).toBeUndefined();
+  });
 });
