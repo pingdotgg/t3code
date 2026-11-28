@@ -623,6 +623,66 @@ describe("releaseManagedTunnelOnShutdown", () => {
     );
   });
 
+  it.effect(
+    "dates a tunnel recovery proof with the relay clock when the host clock is behind",
+    () => {
+      const { store, values } = makeMemorySecretStore([
+        [
+          CLOUD_ENDPOINT_RUNTIME_CONFIG,
+          '{"providerKind":"cloudflare_tunnel","connectorToken":"existing-token","tunnelId":"existing-tunnel"}',
+        ],
+        [RELAY_URL_SECRET, "https://relay.example.test"],
+        [CLOUD_LINKED_USER_ID, "user-123"],
+        [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+      ]);
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+      const relayNow = 1_800_000_000;
+      const proofIssuedAt = (request: HttpClientRequest.HttpClientRequest | undefined) => {
+        if (request?.body._tag !== "Uint8Array")
+          throw new Error("Expected a JSON recovery request");
+        const { proof } = JSON.parse(new TextDecoder().decode(request.body.body)) as {
+          proof: string;
+        };
+        return (
+          JSON.parse(Buffer.from(proof.split(".")[1]!, "base64url").toString()) as {
+            iat: number;
+          }
+        ).iat;
+      };
+
+      return Effect.gen(function* () {
+        yield* TestClock.setTime((relayNow - 600) * 1_000);
+        const link = yield* CloudLink.CloudLink;
+        expect(yield* link.registerManagedTunnelRecovery("http://127.0.0.1:3773")).toMatchObject({
+          status: "ready",
+        });
+        expect(requests).toHaveLength(2);
+        expect(Math.abs(proofIssuedAt(requests[1]) - relayNow)).toBeLessThanOrEqual(1);
+        expect(values.has(CLOUD_LINK_REVOKED)).toBe(false);
+      }).pipe(
+        provideReleaseHarness({
+          store,
+          applyConfigCalls: [],
+          requests,
+          respond: () => {
+            const headers = { date: "Fri, 15 Jan 2027 08:00:00 GMT" };
+            return Math.abs(proofIssuedAt(requests.at(-1)) - relayNow) > 60
+              ? Response.json(
+                  {
+                    _tag: "RelayAuthInvalidError",
+                    code: "auth_invalid",
+                    reason: "not_authorized",
+                    traceId: "trace-skewed",
+                  },
+                  { status: 401, headers },
+                )
+              : Response.json({ status: "ready" }, { headers });
+          },
+        }),
+      );
+    },
+  );
+
   it.effect("marks a link the relay rejects as revoked without dropping or replacing it", () => {
     const { store, values } = makeMemorySecretStore([
       [
