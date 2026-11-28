@@ -8,6 +8,7 @@ import {
   normalizeDevinToolCall,
   extractDevinSubagentUpdate,
   devinAnswerablePermissionOptions,
+  rewriteDevinSkillMentions,
 } from "./devinAcp.ts";
 import { extractDroidElicitationForm } from "./droidAcp.ts";
 import { makeKimiPromptOutcomeWatch } from "./kimiAcp.ts";
@@ -357,6 +358,23 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
               options.instanceId,
               normalizeAcpRegistryCommands(commands),
             ),
+          ...(isDevin
+            ? {
+                rewriteUserText: (text) =>
+                  runtimeCoordinator.getAvailableCommands(options.instanceId).pipe(
+                    Effect.map(
+                      Option.match({
+                        onNone: () => text,
+                        onSome: ({ skills }) =>
+                          rewriteDevinSkillMentions(
+                            text,
+                            new Set(skills.map((skill) => skill.name)),
+                          ),
+                      }),
+                    ),
+                  ),
+              }
+            : {}),
           // A new Copilot session starts at its own effort, not the one the composer shows.
           ...(isCopilot
             ? {
