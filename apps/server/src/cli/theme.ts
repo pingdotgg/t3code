@@ -166,6 +166,15 @@ export class ThemeFileIdInvalidError extends Schema.TaggedError<ThemeFileIdInval
   }
 }
 
+export class ThemeIdFlagUnusedError extends Schema.TaggedError<ThemeIdFlagUnusedError>()(
+  "ThemeIdFlagUnusedError",
+  { themeId: Schema.String },
+) {
+  override get message(): string {
+    return `--id names a theme file's published id, but "${this.themeId}" is a theme id, not a file.`;
+  }
+}
+
 export class ThemeTargetMissingError extends Schema.TaggedError<ThemeTargetMissingError>()(
   "ThemeTargetMissingError",
   {},
@@ -515,6 +524,8 @@ const themeSetCommand = Command.make("set", {
         cleanupPublish = published.cleanup;
       } else if (looksLikePath) {
         return yield* new ThemeFileUnreadableError({ filePath: target });
+      } else if (Option.isSome(flags.id)) {
+        return yield* new ThemeIdFlagUnusedError({ themeId: target });
       } else if (isEnvironmentThemeId(target)) {
         const known = yield* resolvableThemeIds(paths.themesDir);
         if (!known.includes(target)) {

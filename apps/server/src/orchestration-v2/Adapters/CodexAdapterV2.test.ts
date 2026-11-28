@@ -3071,6 +3071,180 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  // regression: #40756 removing a stdio MCP server from a loaded chat must not break its next turn
+  it.effect("keeps a loaded thread usable after a stdio MCP server is removed", () =>
+    Effect.gen(function* () {
+      const scenario = "removed-stdio-mcp";
+      const nativeThreadId = `native-${scenario}`;
+      const threadId = ThreadId.make(`thread-${scenario}`);
+      const input = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+      const emit = (frame: unknown) =>
+        Queue.offer(input, new TextEncoder().encode(JSON.stringify(frame) + "\n"));
+
+      let configuredMcpServers: Record<string, unknown> = {
+        alpha: { command: "python3" },
+        beta: { command: "node" },
+      };
+      let loaded = false;
+      let loadedConfig: Record<string, unknown> = {};
+      let turnSeq = 0;
+      const preamble = codexReplayPreamble({
+        nativeThreadId,
+        nativeTurnId: "unused",
+        prompt: "unused",
+      });
+      const threadPayload =
+        preamble[4]?.type === "emit_inbound" &&
+        Predicate.isObject(preamble[4].frame) &&
+        Predicate.isObject(preamble[4].frame["result"])
+          ? preamble[4].frame["result"]
+          : {};
+      const loadConfig = (params: Record<string, unknown>) => {
+        loaded = true;
+        loadedConfig = Predicate.isObject(params["config"]) ? { ...params["config"] } : {};
+      };
+
+      const client = yield* CodexClient.make(
+        Stdio.make({
+          args: Effect.succeed([]),
+          stdin: Stream.fromQueue(input),
+          stdout: () =>
+            Sink.forEach((chunk: string | Uint8Array) =>
+              Effect.gen(function* () {
+                const frame = JSON.parse(
+                  typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk),
+                ) as {
+                  readonly id?: number;
+                  readonly method: string;
+                  readonly params?: Record<string, unknown>;
+                };
+                if (frame.id === undefined) return;
+                const params = frame.params ?? {};
+                switch (frame.method) {
+                  case "initialize":
+                    return yield* emit({
+                      id: frame.id,
+                      result: {
+                        userAgent: "T3 Code/0.172.0",
+                        codexHome: "/tmp/codex-home",
+                        platformFamily: "unix",
+                        platformOs: "linux",
+                      },
+                    });
+                  case "config/read":
+                    return yield* emit({
+                      id: frame.id,
+                      result: { config: { mcp_servers: configuredMcpServers }, origins: {} },
+                    });
+                  case "thread/start":
+                    loadConfig(params);
+                    return yield* emit({ id: frame.id, result: threadPayload });
+                  case "thread/unsubscribe":
+                    loaded = false;
+                    loadedConfig = {};
+                    return yield* emit({ id: frame.id, result: { status: "unsubscribed" } });
+                  case "thread/resume":
+                    // Codex keeps a loaded thread's config overrides on an in-place resume.
+                    if (!loaded) loadConfig(params);
+                    return yield* emit({
+                      id: frame.id,
+                      result: { thread: { id: nativeThreadId, updatedAt: 1782622441 } },
+                    });
+                  case "turn/start": {
+                    // Codex rejects an env override for a server the config no longer defines.
+                    const orphan = Object.keys(loadedConfig).some((key) => {
+                      const name = /^mcp_servers\.([^.]+)\.env\./.exec(key)?.[1];
+                      return name !== undefined && !(name in configuredMcpServers);
+                    });
+                    if (orphan) {
+                      return yield* emit({
+                        id: frame.id,
+                        error: {
+                          code: -32603,
+                          message: "failed to load workspace requirements: invalid data",
+                        },
+                      });
+                    }
+                    turnSeq += 1;
+                    const turnId = `turn-${turnSeq}`;
+                    yield* emit({
+                      id: frame.id,
+                      result: { turn: makeCodexReplayTurn({ id: turnId, status: "inProgress" }) },
+                    });
+                    return yield* emit({
+                      method: "turn/completed",
+                      params: {
+                        threadId: nativeThreadId,
+                        turn: makeCodexReplayTurn({ id: turnId, status: "completed" }),
+                      },
+                    });
+                  }
+                  default:
+                    return yield* emit({ id: frame.id, result: {} });
+                }
+              }),
+            ),
+          stderr: () => Sink.drain,
+        }),
+        {},
+        Effect.never,
+      );
+
+      const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
+        instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+        settings: DEFAULT_CODEX_SETTINGS,
+        environment: {},
+        clientFactory: { open: () => Effect.succeed(client) },
+        digest: yield* Digest.Digest,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ProviderReplayHarness.makeReplayServerConfig(scenario).pipe(
+          Effect.orDie,
+        ),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make(`session-${scenario}`),
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      const turn = (attempt: string) =>
+        Effect.gen(function* () {
+          return yield* runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId,
+              providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(attempt),
+              text: attempt,
+            }),
+          );
+        });
+
+      yield* turn("attempt-1");
+      configuredMcpServers = { alpha: { command: "python3" } };
+      yield* turn("attempt-2");
+
+      assert.equal(turnSeq, 2);
+      assert.equal(loadedConfig["mcp_servers.alpha.env.T3CODE_THREAD_ID"], threadId);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   // regression: #36520 MCP servers can tell a delegate_task child from a user thread
   it.effect("starts delegate_task children with the subagent thread source", () =>
     Effect.gen(function* () {
@@ -6515,6 +6689,100 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("marks a command Auto-review denied as declined with the reviewer's reason", () =>
+    Effect.gen(function* () {
+      const scenario = "codex-auto-review-denied";
+      const nativeThreadId = `native-${scenario}-thread`;
+      const nativeTurnId = `native-${scenario}-turn`;
+      const command = "/bin/bash -lc 'rm -rf /tmp/unknown'";
+      const action = { type: "command", source: "unifiedExec", command, cwd: "/workspace" };
+      const commandItem = (status: "inProgress" | "declined") => ({
+        type: "commandExecution",
+        id: "command-denied",
+        command,
+        cwd: "/workspace",
+        processId: null,
+        source: "unifiedExecStartup",
+        status,
+        commandActions: [{ type: "unknown", command }],
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null,
+      });
+      const frame = (method: string, params: Record<string, unknown>) => ({
+        type: "emit_inbound" as const,
+        label: method,
+        frame: { method, params: { threadId: nativeThreadId, turnId: nativeTurnId, ...params } },
+      });
+      const transcript = makeCodexReplayTranscript({
+        scenario,
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Delete it." }),
+          frame("item/started", { startedAtMs: 1782622445000, item: commandItem("inProgress") }),
+          frame("item/autoApprovalReview/completed", {
+            reviewId: "review-1",
+            targetItemId: "command-denied",
+            startedAtMs: 1782622445001,
+            completedAtMs: 1782622445002,
+            decisionSource: "agent",
+            action,
+            review: {
+              status: "denied",
+              riskLevel: "high",
+              userAuthorization: "low",
+              rationale: "Deletes a directory of unknown contents.",
+            },
+          }),
+          frame("item/completed", { completedAtMs: 1782622445003, item: commandItem("declined") }),
+          {
+            type: "emit_inbound",
+            label: "turn/completed",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`attempt-${scenario}`),
+          text: "Delete it.",
+        }),
+      );
+      yield* harness.awaitTerminal(1);
+
+      const declined = harness.events.findLast(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
+      );
+      assert.isTrue(declined?.type === "turn_item.updated");
+      if (declined?.type !== "turn_item.updated") return;
+      assert.strictEqual(declined.turnItem.status, "cancelled");
+      assert.strictEqual(declined.turnItem.toolNonExecutionKind, "declined");
+      assert.strictEqual(
+        declined.turnItem.type === "command_execution" ? declined.turnItem.output : undefined,
+        "Auto-review denied this command: Deletes a directory of unknown contents.",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   it.effect("fails a stalled 429 provider retry as a usage limit and stops the Codex turn", () =>

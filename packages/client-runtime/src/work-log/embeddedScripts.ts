@@ -97,7 +97,18 @@ const INTERPRETERS: Record<string, Interpreter> = {
   node: {
     language: "javascript",
     inline: flagIn("-e", "--eval", "-p", "--print", "-pe"),
-    valueOptions: new Set(["-r", "--require", "--import", "--loader", "-C", "--conditions"]),
+    valueOptions: new Set([
+      "-r",
+      "--require",
+      "--import",
+      "--loader",
+      "-C",
+      "--conditions",
+      "--input-type",
+      "--env-file",
+      "--env-file-if-exists",
+      "--experimental-loader",
+    ]),
     stdin: "without-script-file",
   },
   bun: { language: "typescript", inline: flagIn("-e", "--eval", "-p", "--print"), stdin: "never" },
@@ -163,7 +174,9 @@ const PROGRAM_WRAPPERS: Record<string, ReadonlySet<string>> = {
   exec: new Set(["-a"]),
   command: new Set(),
   builtin: new Set(),
+  timeout: new Set(["-k", "--kill-after", "-s", "--signal"]),
 };
+PROGRAM_WRAPPERS.gtimeout = PROGRAM_WRAPPERS.timeout!;
 
 const DELIMITER_LANGUAGES: Record<string, string> = {
   py: "python",
@@ -274,6 +287,7 @@ function programIndex(words: ReadonlyArray<Word>): number {
     const name = programName(words[index]!);
     if (!Object.hasOwn(PROGRAM_WRAPPERS, name)) return index;
     const valueOptions = PROGRAM_WRAPPERS[name]!;
+    const isTimeout = name === "timeout" || name === "gtimeout";
     index += 1;
     let optionsEnded = false;
     while (index < words.length) {
@@ -282,11 +296,14 @@ function programIndex(words: ReadonlyArray<Word>): number {
       if (isOption && value === "--") optionsEnded = true;
       // `env -- FOO=1 cmd` still takes assignments after the options end.
       if (isOption || /^[A-Za-z_]\w*=/u.test(value)) {
-        index += isOption && valueOptions.has(value) ? 2 : 1;
+        const takesValue =
+          isOption && (valueOptions.has(value) || (isTimeout && /^-[fpv]*[ks]$/u.test(value)));
+        index += takesValue ? 2 : 1;
       } else {
         break;
       }
     }
+    if (isTimeout) index += 1;
   }
   return index;
 }

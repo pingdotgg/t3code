@@ -28,6 +28,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
@@ -72,7 +73,7 @@ const adapter = {
 const layerDatabase = SqlitePersistence.layerMemory;
 const layerTest = Layer.mergeAll(
   layerDatabase,
-  ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest), Layer.provide(layerDatabase)),
   EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
   ProviderReplayHarness.layerWithRegistry(
     { name: "control-reads" },
@@ -246,7 +247,10 @@ it.effect.each(
     Effect.provide(
       Layer.mergeAll(
         layerDatabase,
-        ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+        ProjectionStore.layer.pipe(
+          Layer.provide(NodeCrypto.layerDigest),
+          Layer.provide(layerDatabase),
+        ),
         EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
         ProviderReplayHarness.layerWithRegistry(
           { name: "instance-switch" },

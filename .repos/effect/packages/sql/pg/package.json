@@ -1,6 +1,6 @@
 {
   "name": "@effect/sql-pg",
-  "version": "4.1.5",
+  "version": "4.1.6",
   "type": "module",
   "license": "MIT",
   "description": "A PostgreSQL toolkit for Effect",
@@ -63,12 +63,12 @@
     "check": "tsc -b tsconfig.json"
   },
   "devDependencies": {
-    "@testcontainers/postgresql": "^12.2.1",
+    "@testcontainers/postgresql": "^12.2.2",
     "@types/node": "^26.6.6",
     "effect": "workspace:^",
     "postgres": "^4.1.1",
-    "testcontainers": "^12.2.1",
-    "tinybench": "^6.2.3"
+    "testcontainers": "^12.2.2",
+    "tinybench": "^6.2.4"
   },
   "peerDependencies": {
     "effect": "workspace:^"

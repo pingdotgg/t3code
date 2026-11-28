@@ -35,6 +35,11 @@ const isErrnoExceptionWithCode = (
   Predicate.hasProperty(cause, "code") &&
   Predicate.isString(cause.code);
 
+const isOptionalIpv6ProbeHost = (host: string): boolean => {
+  const normalized = normalizeHostname(host);
+  return normalized === "::1" || normalized === "::";
+};
+
 const closeServer = (server: NodeNet.Server) => {
   try {
     server.close();
@@ -81,7 +86,10 @@ export const make = () => {
       server.once("error", (cause) => {
         const code = isErrnoExceptionWithCode(cause) ? cause.code : "UNKNOWN";
         // Missing IPv6 addresses or kernel support do not mean the port is occupied.
-        if (code === "EADDRNOTAVAIL" || code === "EAFNOSUPPORT") {
+        if (
+          (code === "EADDRNOTAVAIL" || code === "EAFNOSUPPORT") &&
+          isOptionalIpv6ProbeHost(host)
+        ) {
           settle(Effect.succeed(true));
           return;
         }
