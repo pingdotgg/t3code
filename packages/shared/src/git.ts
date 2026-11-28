@@ -240,23 +240,40 @@ function* gitConfigLines(configText: string) {
 
 function parseGitConfigValue(raw: string): string {
   let out = "";
+  let pendingWhitespace = "";
   let quoted = false;
+  let started = false;
   for (let index = 0; index < raw.length; index += 1) {
     const char = raw[index]!;
     if (char === "\\" && index + 1 < raw.length) {
       const next = raw[index + 1]!;
-      out += next === "n" ? "\n" : next === "t" ? "\t" : next === "b" ? "\b" : next;
+      out +=
+        pendingWhitespace +
+        (next === "n" ? "\n" : next === "t" ? "\t" : next === "b" ? "\b" : next);
+      pendingWhitespace = "";
+      started = true;
       index += 1;
       continue;
     }
     if (char === '"') {
+      if (started) {
+        out += pendingWhitespace;
+        pendingWhitespace = "";
+      }
       quoted = !quoted;
+      started = true;
       continue;
     }
     if (!quoted && (char === "#" || char === ";")) break;
-    out += char;
+    if (!quoted && /\s/.test(char)) {
+      if (started) pendingWhitespace += char;
+      continue;
+    }
+    out += pendingWhitespace + char;
+    pendingWhitespace = "";
+    started = true;
   }
-  return out.trim();
+  return out;
 }
 
 function isTrueGitConfigValue(value: string): boolean {

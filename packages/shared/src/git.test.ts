@@ -233,6 +233,12 @@ describe("parseOriginUrlFromGitConfig", () => {
         '[remote "origin"]\n\turl = "git@forge.example:team/a\\nb\\bc\\"d\\\\e\\\\tf.git"\n',
       ),
     ).toBe('git@forge.example:team/a\nb\bc"d\\e\\tf.git');
+    expect(
+      parseOriginUrlFromGitConfig('[remote "origin"]\n\turl = \\t/srv/repo\\t   # trailing\n'),
+    ).toBe("\t/srv/repo\t");
+    expect(
+      parseOriginUrlFromGitConfig('[remote "origin"]\n\turl = " /srv/repo "   # quoted\n'),
+    ).toBe(" /srv/repo ");
   });
 
   it("reads settings on the remote header line", () => {
