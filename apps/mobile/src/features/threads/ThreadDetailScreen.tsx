@@ -1711,16 +1711,20 @@ function ThreadDetailBody(
                     showScrollToEnd={showScrollToEndButton}
                     onScrollToEnd={handleScrollToEnd}
                     agents={agentsSegment}
-                    tasks={taskList === null ? null : {
-                      plan: taskList,
-                      onPress: () => {
-                        Keyboard.dismiss();
-                        navigation.navigate("ThreadTasks", {
-                          environmentId: props.environmentId,
-                          threadId: props.selectedThread.id,
-                        });
-                      },
-                    }}
+                    tasks={
+                      taskList === null
+                        ? null
+                        : {
+                            plan: taskList,
+                            onPress: () => {
+                              Keyboard.dismiss();
+                              navigation.navigate("ThreadTasks", {
+                                environmentId: props.environmentId,
+                                threadId: props.selectedThread.id,
+                              });
+                            },
+                          }
+                    }
                     onOpenAgents={() => {
                       Keyboard.dismiss();
                       navigation.navigate("ThreadAgents", {

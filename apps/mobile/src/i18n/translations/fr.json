@@ -5745,5 +5745,10 @@
   "bb9866823586b67a": "Base de données d’utilisation et clé Go",
   "8380d6f1828fe191": "Historique de conversations",
   "1f2036cf25caaf16": "Utilisation du compte depuis Cursor",
-  "51aa7700c1f967d2": "Historique de sessions"
+  "51aa7700c1f967d2": "Historique de sessions",
+  "fae3639874428042": "Tâches",
+  "7342bfc328008926": "En cours",
+  "353b08f4363dbb2c": "En attente",
+  "7ead7eba403ccf8d": "Aucune tâche dans ce fil.",
+  "ab790e733ad16c7e": "Ouvrir les tâches, {done} sur {total} terminées"
 }

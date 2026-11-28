@@ -1,5 +1,8 @@
 import type { SubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
-import { taskListProgress, type TaskListPlan } from "@t3tools/client-runtime/state/thread-execution";
+import {
+  taskListProgress,
+  type TaskListPlan,
+} from "@t3tools/client-runtime/state/thread-execution";
 import { GlassContainer, GlassView } from "expo-glass-effect";
 import { useGT } from "gt-react-native";
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";

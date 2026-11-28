@@ -43,15 +43,20 @@ export function TaskProgressRing({ percentage }: { readonly percentage: number }
     >
       <Circle cx={8} cy={8} r={6} opacity={0.2} />
       <Circle
-        cx={8} cy={8} r={6}
+        cx={8}
+        cy={8}
+        r={6}
         strokeDasharray={`${(percentage / 100) * 12 * Math.PI} ${12 * Math.PI}`}
-        rotation={-90} origin="8, 8"
+        rotation={-90}
+        origin="8, 8"
       />
     </ThemedSvg>
   );
 }
 
-export function ThreadTasksSheet({ route }: StaticScreenProps<{
+export function ThreadTasksSheet({
+  route,
+}: StaticScreenProps<{
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }>) {
@@ -63,7 +68,10 @@ export function ThreadTasksSheet({ route }: StaticScreenProps<{
     <View collapsable={false} className="flex-1 bg-sheet">
       <SheetHeader title={gt("Tasks")} onClose={() => navigation.goBack()} />
       <ScreenContent>
-        <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerClassName="px-5 pb-8">
+        <ScrollView
+          contentInsetAdjustmentBehavior="automatic"
+          contentContainerClassName="px-5 pb-8"
+        >
           {plan === null ? (
             <Text className="py-6 text-center text-sm text-foreground-muted">
               <T>No tasks in this thread.</T>
@@ -78,16 +86,33 @@ export function ThreadTasksSheet({ route }: StaticScreenProps<{
                 </Text>
               </View>
               {plan.steps.map((step) => (
-                <View key={step.id} className="flex-row items-start gap-3 border-b border-border py-3.5">
+                <View
+                  key={step.id}
+                  className="flex-row items-start gap-3 border-b border-border py-3.5"
+                >
                   <SymbolView
-                    name={step.status === "completed" ? "checkmark.circle" : step.status === "running" ? "circle.fill" : "circle"}
+                    name={
+                      step.status === "completed"
+                        ? "checkmark.circle"
+                        : step.status === "running"
+                          ? "circle.fill"
+                          : "circle"
+                    }
                     size={15}
-                    tintColorClassName={step.status === "completed" ? "accent-success-foreground" : "accent-foreground-muted"}
+                    tintColorClassName={
+                      step.status === "completed"
+                        ? "accent-success-foreground"
+                        : "accent-foreground-muted"
+                    }
                   />
                   <View className="min-w-0 flex-1">
                     <Text className="text-sm">{step.text}</Text>
                     <Text className="text-xs text-foreground-muted">
-                      {step.status === "completed" ? gt("Completed") : step.status === "running" ? gt("Running") : gt("Pending")}
+                      {step.status === "completed"
+                        ? gt("Completed")
+                        : step.status === "running"
+                          ? gt("Running")
+                          : gt("Pending")}
                     </Text>
                   </View>
                 </View>

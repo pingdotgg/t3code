@@ -5751,5 +5751,10 @@
   "bb9866823586b67a": "Användningsdatabas och Go-nyckel",
   "8380d6f1828fe191": "Konversationshistorik",
   "1f2036cf25caaf16": "Kontots användning från Cursor",
-  "51aa7700c1f967d2": "Sessionshistorik"
+  "51aa7700c1f967d2": "Sessionshistorik",
+  "fae3639874428042": "Uppgifter",
+  "7342bfc328008926": "Pågår",
+  "353b08f4363dbb2c": "Väntar",
+  "7ead7eba403ccf8d": "Inga uppgifter i den här tråden.",
+  "ab790e733ad16c7e": "Öppna uppgifter, {done} av {total} slutförda"
 }

@@ -239,7 +239,10 @@ export function derivePendingUserInputs(
   return [...inputs].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
-export { findLatestTaskList, type TaskListPlan } from "@t3tools/client-runtime/state/thread-execution";
+export {
+  findLatestTaskList,
+  type TaskListPlan,
+} from "@t3tools/client-runtime/state/thread-execution";
 
 const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"]["type"]>([
   "fork",

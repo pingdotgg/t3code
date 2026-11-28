@@ -54,7 +54,9 @@ export function ThreadDetailsTasks({
         <circle cx="8" cy="8" r="6" pathLength="100" strokeDasharray={`${percentage} 100`} />
       </svg>
       <span>{percentage}%</span>
-      <span className="text-muted-foreground">{done}/{plan.steps.length}</span>
+      <span>
+        {done}/{plan.steps.length}
+      </span>
     </span>
   );
 

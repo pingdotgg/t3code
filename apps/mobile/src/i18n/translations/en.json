@@ -5753,5 +5753,10 @@
   "bb9866823586b67a": "Usage database and Go key",
   "8380d6f1828fe191": "Conversation history",
   "1f2036cf25caaf16": "Account usage from Cursor",
-  "51aa7700c1f967d2": "Session history"
+  "51aa7700c1f967d2": "Session history",
+  "fae3639874428042": "Tasks",
+  "7342bfc328008926": "Running",
+  "353b08f4363dbb2c": "Pending",
+  "7ead7eba403ccf8d": "No tasks in this thread.",
+  "ab790e733ad16c7e": "Open tasks, {done} of {total} completed"
 }

@@ -5745,5 +5745,10 @@
   "bb9866823586b67a": "Base de datos de uso y clave de Go",
   "8380d6f1828fe191": "Historial de conversaciones",
   "1f2036cf25caaf16": "Uso de la cuenta desde Cursor",
-  "51aa7700c1f967d2": "Historial de sesiones"
+  "51aa7700c1f967d2": "Historial de sesiones",
+  "fae3639874428042": "Tareas",
+  "7342bfc328008926": "En curso",
+  "353b08f4363dbb2c": "Pendiente",
+  "7ead7eba403ccf8d": "No hay tareas en este hilo.",
+  "ab790e733ad16c7e": "Abrir tareas, {done} de {total} completadas"
 }

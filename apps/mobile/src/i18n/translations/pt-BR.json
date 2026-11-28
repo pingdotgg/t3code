@@ -5745,5 +5745,10 @@
   "bb9866823586b67a": "Banco de dados de uso e chave do Go",
   "8380d6f1828fe191": "Histórico de conversas",
   "1f2036cf25caaf16": "Uso da conta obtido da Cursor",
-  "51aa7700c1f967d2": "Histórico de sessões"
+  "51aa7700c1f967d2": "Histórico de sessões",
+  "fae3639874428042": "Tarefas",
+  "7342bfc328008926": "Em execução",
+  "353b08f4363dbb2c": "Pendente",
+  "7ead7eba403ccf8d": "Nenhuma tarefa nesta conversa.",
+  "ab790e733ad16c7e": "Abrir tarefas, {done} de {total} concluídas"
 }
