@@ -1,4 +1,9 @@
-import { EnvironmentId, type FilesystemEntryMetadata, type ProjectEntry } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type ProjectEntry,
+  type ProjectStatFileInput,
+  type ProjectStatFileResult,
+} from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { commands, page, userEvent } from "vite-plus/test/browser";
@@ -52,17 +57,24 @@ vi.mock("~/fileContextMenu", () => ({
 }));
 const downloadFile = vi.fn();
 vi.mock("./useFileDownload", () => ({ useFileDownload: () => downloadFile }));
-// Host path to the server's answer; a path left out never answers.
-const fileMetadata = new Map<string, FilesystemEntryMetadata>();
-const unansweredMetadata = Atom.make(
-  AsyncResult.initial<FilesystemEntryMetadata | null, never>(true),
-);
-vi.mock("~/hooks/useFileMetadata", () => ({
-  getFileMetadataQueryAtom: (_environmentId: EnvironmentId, path: string) => {
-    const metadata = fileMetadata.get(path);
-    return metadata ? Atom.make(AsyncResult.success(metadata)) : unansweredMetadata;
-  },
-}));
+// Workspace root and relative path to the server's answer; a file left out never answers.
+const fileSizes = new Map<string, number>();
+const unansweredStat = Atom.make(AsyncResult.initial<ProjectStatFileResult, never>(true));
+vi.mock("~/state/projects", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/state/projects")>();
+  return {
+    ...actual,
+    projectEnvironment: {
+      ...actual.projectEnvironment,
+      statFile: ({ input }: { input: ProjectStatFileInput }) => {
+        const byteLength = fileSizes.get(`${input.cwd}|${input.relativePath}`);
+        return byteLength === undefined
+          ? unansweredStat
+          : Atom.make(AsyncResult.success({ byteLength }));
+      },
+    },
+  };
+});
 vi.mock("~/state/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/state/session")>()),
   readEnvironmentScope: () => true,
@@ -211,13 +223,15 @@ describe("FileBrowserPanel", () => {
       { path: "small.md", kind: "file" },
       { path: "unanswered.md", kind: "file" },
     ]);
-    fileMetadata.set("/repo/huge.md", { kind: "file", byteLength: FULL_TEXT_MAX_BYTES + 1 });
-    fileMetadata.set("/repo/small.md", { kind: "file", byteLength: FULL_TEXT_MAX_BYTES });
-    using _metadata = { [Symbol.dispose]: () => fileMetadata.clear() };
+    // A network workspace: the generic metadata endpoint never stats one, the workspace stat does.
+    const cwd = "\\\\nas\\share\\project";
+    fileSizes.set(`${cwd}|huge.md`, FULL_TEXT_MAX_BYTES + 1);
+    fileSizes.set(`${cwd}|small.md`, FULL_TEXT_MAX_BYTES);
+    using _sizes = { [Symbol.dispose]: () => fileSizes.clear() };
     await using _screen = await render(
       <FileBrowserPanel
         environmentId={EnvironmentId.make("env-files")}
-        cwd="/repo"
+        cwd={cwd}
         projectName="repo"
         selectedPath={null}
         selectedPathRevealId={0}

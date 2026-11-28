@@ -222,6 +222,50 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     );
   });
 
+  describe("statFile", () => {
+    it.effect("reports the byte length of a workspace file", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "docs/notes.md", "héllo");
+
+        expect(yield* service.statFile({ cwd, relativePath: "docs/notes.md" })).toEqual({
+          byteLength: 6,
+        });
+      }),
+    );
+    // The generic metadata endpoint never stats a network path, so a workspace
+    // on a share gets its file sizes here.
+    it.effect("reports the byte length of a file in a network workspace", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const filePath = "\\\\nas.test\\share\\project\\large.md";
+        const service = yield* WorkspaceFileSystem.make.pipe(
+          Effect.provide(Layer.merge(layerKnownWorkspacesTest, NodePath.layerWin32)),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            stat: (target) =>
+              target === filePath
+                ? Effect.succeed({ type: "File", size: 70_000_000n } as FileSystem.File.Info)
+                : fileSystem.stat(target),
+          }),
+        );
+        // Answers without touching the filesystem, so a Windows runner never looks the share up.
+        vi.mocked(NodeFSP.realpath).mockImplementation(async (target) => String(target));
+        yield* Effect.addFinalizer(() =>
+          Effect.promise(async () => {
+            const native = await vi.importActual<typeof NodeFSP>("node:fs/promises");
+            vi.mocked(NodeFSP.realpath).mockImplementation(native.realpath);
+          }),
+        );
+        const input = { cwd: "\\\\nas.test\\share\\project", relativePath: filePath };
+
+        expect(yield* service.statFile(input)).toEqual({ byteLength: 70_000_000 });
+        expect((yield* service.getMetadata({ paths: [filePath] })).entries).toEqual([null]);
+      }),
+    );
+  });
+
   describe("readFile", () => {
     it.effect("reads UTF-8 files relative to the workspace root", () =>
       Effect.gen(function* () {
@@ -389,6 +433,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         ]) {
           const error = yield* workspaceFileSystem.readFile(input).pipe(Effect.flip);
           expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+          const statError = yield* workspaceFileSystem.statFile(input).pipe(Effect.flip);
+          expect(statError).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
         }
         const metadata = yield* workspaceFileSystem.getMetadata({
           paths: [

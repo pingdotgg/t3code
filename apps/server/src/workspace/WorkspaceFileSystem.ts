@@ -8,6 +8,8 @@ import type {
   FilesystemGetMetadataResult,
   ProjectReadFileInput,
   ProjectReadFileResult,
+  ProjectStatFileInput,
+  ProjectStatFileResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "@t3tools/contracts";
@@ -121,6 +123,12 @@ export class WorkspaceFileSystem extends Context.Service<
       input: ProjectReadFileInput,
     ) => Effect.Effect<
       ProjectReadFileResult,
+      WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+    >;
+    readonly statFile: (
+      input: ProjectStatFileInput,
+    ) => Effect.Effect<
+      ProjectStatFileResult,
       WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
     >;
     /** Writes inside a known workspace only. */
@@ -383,10 +391,55 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const resolveReadableTarget = Effect.fnUntraced(function* (input: ProjectReadFileInput) {
+    const target = yield* resolveReadTarget(input);
+    if (target.realTargetPath !== null && (yield* isServerInternalPath(target.realTargetPath))) {
+      return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+      });
+    }
+    return target;
+  });
+
+  const statFile: WorkspaceFileSystem["Service"]["statFile"] = Effect.fn(
+    "WorkspaceFileSystem.statFile",
+  )(function* (input) {
+    const { realTargetPath } = yield* resolveReadableTarget(input);
+    if (realTargetPath === null) {
+      return yield* new WorkspacePathNotFileError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: input.relativePath,
+      });
+    }
+    const stat = yield* fileSystem.stat(realTargetPath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WorkspaceFileSystemOperationError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            resolvedPath: realTargetPath,
+            operationPath: realTargetPath,
+            operation: "stat",
+            cause,
+          }),
+      ),
+    );
+    if (stat.type !== "File") {
+      return yield* new WorkspacePathNotFileError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: realTargetPath,
+      });
+    }
+    return { byteLength: Number(stat.size) };
+  });
+
   const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
     "WorkspaceFileSystem.readFile",
   )(function* (input) {
-    const target = yield* resolveReadTarget(input);
+    const target = yield* resolveReadableTarget(input);
     const absentResult = {
       relativePath: target.relativePath,
       contents: "",
@@ -396,12 +449,6 @@ export const make = Effect.gen(function* () {
     };
     const realTargetPath = target.realTargetPath;
     if (realTargetPath === null) return absentResult;
-    if (yield* isServerInternalPath(realTargetPath)) {
-      return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
-        workspaceRoot: input.cwd,
-        relativePath: input.relativePath,
-      });
-    }
 
     return yield* Effect.acquireUseRelease(
       Effect.tryPromise({
@@ -651,7 +698,7 @@ export const make = Effect.gen(function* () {
     return { relativePath: target.relativePath };
   });
 
-  return WorkspaceFileSystem.of({ getMetadata, readFile, writeFile });
+  return WorkspaceFileSystem.of({ getMetadata, readFile, statFile, writeFile });
 });
 
 export const layer = Layer.effect(WorkspaceFileSystem, make);
