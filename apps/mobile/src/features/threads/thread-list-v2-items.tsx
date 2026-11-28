@@ -74,6 +74,8 @@ import { threadCanArchive } from "../home/threadArchive";
 import { useCanShareWithGuest } from "./useCanShareWithGuest";
 import {
   threadListV2ShowMoreAccessibilityLabel,
+  type ThreadListV2ProjectFolderListItem,
+  type ThreadListV2ThreadListItem,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozePresets,
@@ -172,6 +174,16 @@ const DONE_STATUS_LABEL: StatusLabel = {
   className: "text-adaptive-emerald-700-300",
   iconTintClassName: "accent-adaptive-emerald-700-300",
 };
+
+const FOLDER_STATUS_DOT_CLASS = {
+  approval: "bg-warning-foreground",
+  input: "bg-warning-foreground",
+  request: "bg-warning-foreground",
+  limited: "bg-warning-foreground",
+  failed: "bg-danger-foreground",
+  unread: "bg-adaptive-emerald-600-400",
+  working: "bg-adaptive-sky-600-400",
+} satisfies Record<NonNullable<ThreadListV2ProjectFolderListItem["hiddenStatus"]>, string>;
 
 // DM Sans has no tabular figures, so a ticking timer in it reflows the row every second.
 const TABULAR_DURATION_STYLE = {
@@ -404,6 +416,72 @@ export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledS
   props: ThreadListV2ShelfHeaderProps,
 ) {
   return <ThreadListV2ShelfHeader {...props} kind="settled" />;
+});
+
+export const ThreadListV2ProjectFolder = memo(function ThreadListV2ProjectFolder(props: {
+  readonly item: ThreadListV2ProjectFolderListItem;
+  readonly pane: "screen" | "sidebar";
+  readonly onToggle: (projectKey: string) => void;
+}) {
+  const gt = useGT();
+  const m = useMessages();
+  const { count, expanded, hiddenStatus, project, projectKey, title } = props.item;
+  const sidebar = props.pane === "sidebar";
+  const tint = sidebar ? "accent-drawer-foreground-muted" : "accent-foreground-muted";
+  const label = expanded || count === 0 ? title : gt("{label} ({count})", { label: title, count });
+  const statusMessage =
+    hiddenStatus === "unread"
+      ? DONE_STATUS_LABEL.label
+      : hiddenStatus === null
+        ? null
+        : STATUS_LABEL_BY_STATUS[hiddenStatus]?.label;
+  const statusLabel =
+    hiddenStatus === "working"
+      ? gt("Working", { $context: "thread status" })
+      : statusMessage
+        ? m(statusMessage)
+        : null;
+  return (
+    <Pressable
+      accessibilityLabel={statusLabel === null ? label : `${label}, ${statusLabel}`}
+      accessibilityRole="button"
+      accessibilityState={{ expanded }}
+      className={cn(
+        "min-h-[44px] flex-row items-center gap-2 active:opacity-60",
+        sidebar ? "px-3" : "px-5",
+      )}
+      onPress={() => props.onToggle(projectKey)}
+    >
+      <ProjectFavicon
+        environmentId={project.environmentId}
+        faviconPath={project.faviconPath}
+        open={expanded}
+        projectIcon={project.projectIcon}
+        projectTitle={project.title}
+        size={16}
+        workspaceRoot={project.workspaceRoot}
+      />
+      <Text
+        className={cn(
+          "min-w-0 flex-1 text-sm font-t3-medium",
+          sidebar ? "text-drawer-foreground" : "text-foreground",
+        )}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+      {hiddenStatus !== null && (
+        <View
+          className={cn("size-1.5 shrink-0 rounded-full", FOLDER_STATUS_DOT_CLASS[hiddenStatus])}
+        />
+      )}
+      <SymbolView
+        name={expanded ? "chevron.down" : "chevron.right"}
+        size={10}
+        tintColorClassName={tint}
+      />
+    </Pressable>
+  );
 });
 
 export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(props: {
@@ -760,6 +838,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
 export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
+  readonly folderRow?: ThreadListV2ThreadListItem["folderRow"];
   readonly hasQueuedMessages?: boolean;
   readonly snoozed?: boolean;
   readonly pinned?: boolean;
@@ -829,6 +908,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const {
     thread,
     variant,
+    folderRow,
     onSelectThread,
     onOpenThreadPullRequests,
     onDeleteThread,
@@ -905,7 +985,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const hostPressure = useThreadHostPressureNote(thread.environmentId, thread.id);
   const baseAccessibilityLabel = threadListV2RowAccessibilityLabel(
     {
-      title: thread.title,
+      title:
+        folderRow === "two-line"
+          ? [thread.title, props.environmentLabel, thread.branch].filter(Boolean).join(", ")
+          : thread.title,
       variant,
       woke: showsWoke,
       // Working and waiting rows show only an icon and a duration, so name them for speech.
@@ -1391,11 +1474,53 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ? primaryAction.swipeHint
       : primaryAction.swipeSnoozeHint;
 
-  const titleTextInset = props.project ? projectIconSize + 8 : 0;
+  const titleTextInset = folderRow ? 18 : props.project ? projectIconSize + 8 : 0;
+  const pullRequestBadge = pr ? (
+    <Pressable
+      // Padding cancelled by negative margin grows the touch target into
+      // the row padding without moving the badge.
+      className="-m-2.5 flex-row items-center gap-1 p-2.5"
+      accessibilityRole="button"
+      accessibilityLabel={prBadgeLabel ?? undefined}
+      onPress={handleOpenPullRequests}
+      // Handle long-press so opening the iOS row menu cannot also open the PR on release.
+      onLongPress={() => undefined}
+      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+    >
+      <SymbolView
+        name={
+          pr.kind === "stack"
+            ? PullRequestGlyph.stack
+            : pr.state === null
+              ? PullRequestGlyph.pullRequest
+              : pullRequestStatus({ state: pr.state, isDraft: pr.isDraft }).icon
+        }
+        size={12}
+        tintColorClassName={
+          pr.state === null || pr.isDraft
+            ? rowAppearance.mutedIconTintClassName
+            : pr.state === "open"
+              ? "accent-adaptive-emerald-600-400"
+              : pr.state === "closed"
+                ? "accent-adaptive-rose-600-400"
+                : "accent-adaptive-violet-600-400"
+        }
+      />
+      <Text
+        accessibilityLabel={pr.accessibilityLabel}
+        className={cn("font-mono text-xs", pr.textClassName)}
+      >
+        {pr.label}
+      </Text>
+    </Pressable>
+  ) : null;
   const cardContent = (
     <>
-      <View className="flex-row items-start gap-2">
-        {props.project ? (
+      <View
+        className="flex-row items-start gap-2"
+        style={folderRow ? { paddingLeft: titleTextInset } : undefined}
+      >
+        {props.project && !folderRow ? (
           <View className="justify-center" style={{ height: titleLineHeight }}>
             <ProjectFavicon
               environmentId={thread.environmentId}
@@ -1416,7 +1541,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               : rowAppearance.foregroundClassName,
             isRegeneratingTitle && "opacity-55",
           )}
-          numberOfLines={2}
+          numberOfLines={folderRow ? 1 : 2}
           onTextLayout={
             Platform.OS === "android"
               ? ({ nativeEvent }) => {
@@ -1431,6 +1556,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           {thread.title}
         </Text>
         <View className="flex-row items-center gap-1.5" style={{ minHeight: titleLineHeight }}>
+          {folderRow === "single-line" ? pullRequestBadge : null}
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           {pinnedRow ? (
             <SymbolView
@@ -1536,8 +1662,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           />
         </View>
       ) : null}
+    </>
+  );
+  const cardMetadata = (
+    <>
       <View className="mt-1 flex-row items-center gap-2" style={{ paddingLeft: titleTextInset }}>
-        {(rawStatus === "failed" || rawStatus === "limited") && thread.runtime?.lastError ? (
+        {folderRow !== "two-line" &&
+        (rawStatus === "failed" || rawStatus === "limited") &&
+        thread.runtime?.lastError ? (
           <Text
             className={cn(
               "flex-1 text-xs",
@@ -1551,9 +1683,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           >
             {thread.runtime.lastError}
           </Text>
-        ) : props.environmentLabel ? (
+        ) : (
           <View className="min-w-0 flex-1 flex-row items-center gap-1">
-            {props.environmentMachine ? (
+            {props.environmentLabel && props.environmentMachine ? (
               <EnvironmentMachineSymbol
                 kind={props.environmentMachine}
                 size={machineIconSize}
@@ -1564,60 +1696,37 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 }
               />
             ) : null}
-            <Text
-              className={cn(
-                "shrink text-xs",
-                selected
-                  ? selectedThreadRowColors.mutedForegroundClassName
-                  : rowAppearance.tertiaryForegroundClassName,
-              )}
-              numberOfLines={1}
-            >
-              {props.environmentLabel}
-            </Text>
+            {props.environmentLabel ? (
+              <Text
+                className={cn(
+                  "shrink text-xs",
+                  folderRow === "two-line" && thread.branch && "max-w-[50%]",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : rowAppearance.tertiaryForegroundClassName,
+                )}
+                numberOfLines={1}
+              >
+                {props.environmentLabel}
+              </Text>
+            ) : null}
+            {folderRow === "two-line" && thread.branch ? (
+              <Text
+                className={cn(
+                  "min-w-0 flex-1 font-mono text-xs",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : rowAppearance.tertiaryForegroundClassName,
+                )}
+                numberOfLines={1}
+                ellipsizeMode="middle"
+              >
+                {thread.branch}
+              </Text>
+            ) : null}
           </View>
-        ) : (
-          <View className="flex-1" />
         )}
-        {pr ? (
-          <Pressable
-            // Padding cancelled by negative margin grows the touch target into
-            // the row padding without moving the badge.
-            className="-m-2.5 flex-row items-center gap-1 p-2.5"
-            accessibilityRole="button"
-            accessibilityLabel={prBadgeLabel ?? undefined}
-            onPress={handleOpenPullRequests}
-            // Handle long-press so opening the iOS row menu cannot also open the PR on release.
-            onLongPress={() => undefined}
-            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-          >
-            <SymbolView
-              name={
-                pr.kind === "stack"
-                  ? PullRequestGlyph.stack
-                  : pr.state === null
-                    ? PullRequestGlyph.pullRequest
-                    : pullRequestStatus({ state: pr.state, isDraft: pr.isDraft }).icon
-              }
-              size={12}
-              tintColorClassName={
-                pr.state === null || pr.isDraft
-                  ? rowAppearance.mutedIconTintClassName
-                  : pr.state === "open"
-                    ? "accent-adaptive-emerald-600-400"
-                    : pr.state === "closed"
-                      ? "accent-adaptive-rose-600-400"
-                      : "accent-adaptive-violet-600-400"
-              }
-            />
-            <Text
-              accessibilityLabel={pr.accessibilityLabel}
-              className={cn("font-mono text-xs", pr.textClassName)}
-            >
-              {pr.label}
-            </Text>
-          </Pressable>
-        ) : null}
+        {pullRequestBadge}
         {providerInstance ? (
           <View className="flex-row items-center">
             <ProviderInstanceIcon
@@ -1650,11 +1759,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     </>
   );
 
-  const fadedCardContent = recede ? (
-    <View style={{ opacity: 0.55 }}>{cardContent}</View>
-  ) : (
-    cardContent
+  const card = (
+    <>
+      {cardContent}
+      {folderRow === "single-line" ? null : cardMetadata}
+    </>
   );
+  const fadedCardContent = recede ? <View style={{ opacity: 0.55 }}>{card}</View> : card;
 
   const rowContent = (close: () => void) =>
     variant === "card" ? (
@@ -1682,10 +1793,21 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         style={rowAppearance.cardStyle}
       >
         {sidebarPane ? (
-          fadedCardContent
+          folderRow === "single-line" ? (
+            <View className="min-h-6 justify-center">{fadedCardContent}</View>
+          ) : (
+            fadedCardContent
+          )
         ) : (
           <View>
-            <View className={THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME}>{fadedCardContent}</View>
+            <View
+              className={cn(
+                THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
+                folderRow === "single-line" && "min-h-[44px] justify-center",
+              )}
+            >
+              {fadedCardContent}
+            </View>
             {THREAD_LIST_V2_ROW_DIVIDERS && props.showTrailingDivider !== false ? (
               <View className="ml-5 h-px bg-border-subtle" />
             ) : null}

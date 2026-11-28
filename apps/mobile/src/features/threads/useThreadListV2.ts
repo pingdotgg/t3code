@@ -5,6 +5,7 @@ import { useMemo, useSyncExternalStore } from "react";
 import { keepMarked } from "../../i18n/messages";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
+import { sortHomeProjectScopes } from "../home/homeThreadList";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   buildThreadListV2Items,
@@ -12,6 +13,7 @@ import {
   getThreadListV2OrderedSection,
   threadListInboxReturns,
   threadListV2LayoutTime,
+  type ThreadListV2ProjectFolders,
 } from "./threadListV2";
 import { computeThreadMoveAvailability } from "./threadOrder";
 
@@ -47,6 +49,7 @@ function observeInbox(
 export function useThreadListV2(input: {
   readonly threads: LayoutInput["threads"];
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
+  readonly projectFolders?: Omit<ThreadListV2ProjectFolders, "selectedThreadKey" | "scoped"> | null;
   readonly environmentId: EnvironmentId | null;
   readonly projectRefs: LayoutInput["projectRefs"];
   readonly searchQuery: string;
@@ -68,6 +71,8 @@ export function useThreadListV2(input: {
   readonly selectedThreadKey: string | null;
 }) {
   const { threads, workingShelfEnabled } = input;
+  // Folders own the active order, so active rows cannot be moved by hand.
+  const sortActiveBySend = input.projectFolders != null;
   const layoutTime = useMemo(
     () => threadListV2LayoutTime({ threads, now: input.now, searchQuery: input.searchQuery }),
     [threads, input.now, input.searchQuery],
@@ -102,7 +107,7 @@ export function useThreadListV2(input: {
       });
     return new Map([
       ...sectionAvailability("pinned"),
-      ...(workingShelfEnabled ? [] : sectionAvailability("active")),
+      ...(workingShelfEnabled || sortActiveBySend ? [] : sectionAvailability("active")),
     ]);
   }, [
     threads,
@@ -114,6 +119,7 @@ export function useThreadListV2(input: {
     input.snoozeEnvironmentIds,
     input.queuedThreadKeys,
     workingShelfEnabled,
+    sortActiveBySend,
   ]);
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const scopes = useMemo(
@@ -147,6 +153,7 @@ export function useThreadListV2(input: {
         settledLimit: input.settledLimit,
         now: layoutTime,
         workingShelfEnabled,
+        sortActiveBySend,
         workingShelfExpanded: input.workingShelfExpanded,
         inboxReturnAt: inbox.returnedAt,
         isWorking: inbox.isWorking,
@@ -179,6 +186,7 @@ export function useThreadListV2(input: {
       input.settledLimit,
       layoutTime,
       workingShelfEnabled,
+      sortActiveBySend,
       input.workingShelfExpanded,
       inbox.returnedAt,
       inbox.isWorking,
@@ -210,11 +218,36 @@ export function useThreadListV2(input: {
         (searchQuery.length === 0 || pendingTask.title.toLocaleLowerCase().includes(searchQuery)),
     );
   }, [input.projectRefs, input.searchQuery, input.pendingTasks, input.environmentId]);
+  const projectFolders = useMemo(() => {
+    if (!input.projectFolders || input.searchQuery.trim().length > 0) return null;
+    const scopes = sortHomeProjectScopes({
+      scopes: input.projectFolders.scopes,
+      threads,
+      pendingTasks: [],
+      projectSortOrder: "updated_at",
+    });
+    return {
+      ...input.projectFolders,
+      scopes: [
+        ...scopes.filter((scope) => !scope.archived),
+        ...scopes.filter((scope) => scope.archived),
+      ],
+      selectedThreadKey: input.selectedThreadKey,
+      scoped: input.projectRefs != null,
+    };
+  }, [
+    input.projectFolders,
+    input.projectRefs,
+    input.searchQuery,
+    input.selectedThreadKey,
+    threads,
+  ]);
   const items = useMemo(
     () =>
       buildThreadListV2ListItems({
         items: layout.items,
         pendingTasks,
+        projectFolders,
         workingCount: layout.workingCount,
         workingShelfExpanded: input.workingShelfExpanded,
         workingShelfHeaderIndex: layout.workingShelfHeaderIndex,
@@ -234,6 +267,7 @@ export function useThreadListV2(input: {
     [
       layout,
       pendingTasks,
+      projectFolders,
       input.workingShelfExpanded,
       input.snoozedShelfExpanded,
       input.settledShelfExpanded,
