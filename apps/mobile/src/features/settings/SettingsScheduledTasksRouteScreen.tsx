@@ -521,6 +521,8 @@ function TaskInteractionRow({
       </View>
       <SegmentedControl
         variant="card"
+        // Segments share the track's width, so without one the control collapses beside the text.
+        className="w-48 shrink-0"
         options={[
           { value: "default", label: gt("Build", { $context: "interaction mode" }) },
           { value: "plan", label: gt("Plan", { $context: "interaction mode" }) },
