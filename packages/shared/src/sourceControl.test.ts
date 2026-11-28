@@ -5,6 +5,9 @@ import { isSshRemoteUrl } from "./sourceControl.ts";
 describe("isSshRemoteUrl", () => {
   it.each([
     "git@github.com:owner/repo.git",
+    "alice+ci@github.com:owner/repo.git",
+    "alice+work@github-work:owner/repo.git",
+    "alice@corp.com@github.com:owner/repo.git",
     "ssh://git@github.com/owner/repo.git",
     "github.com:owner/repo.git",
     "github-work:owner/repo.git",
@@ -23,6 +26,11 @@ describe("isSshRemoteUrl", () => {
     "hg::owner/repo",
     "C:repo.git",
     "ssh.dev.azure.com :v3/Org/MyProject/MyRepo",
+    "-oProxyCommand=x@github.com:owner/repo.git",
+    "@github.com:owner/repo.git",
+    "-x@github.com:owner/repo.git",
+    "alice@corp.com@:owner/repo.git",
+    ".\\dir@github.com:owner/repo",
   ])("does not read %s as SSH", (remoteUrl) => {
     expect(isSshRemoteUrl(remoteUrl)).toBe(false);
   });

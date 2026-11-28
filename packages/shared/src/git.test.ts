@@ -84,6 +84,12 @@ describe("normalizeGitRemoteUrl", () => {
     );
     expect(normalizeGitRemoteUrl("C:/repos/project")).toBe("c:/repos/project");
     expect(normalizeGitRemoteUrl("git@x:team/project.git")).toBe("x/team/project");
+    expect(normalizeGitRemoteUrl("alice+ci@github.com:Owner/Repo.git")).toBe(
+      "github.com/owner/repo",
+    );
+    expect(normalizeGitRemoteUrl("alice@corp.com@github.com:Owner/Repo.git")).toBe(
+      "github.com/owner/repo",
+    );
   });
 
   it("keys a one-segment URL remote by what names the repository", () => {
