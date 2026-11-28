@@ -93,7 +93,8 @@ const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient, 
   OpenCodeDriver.create({
     instanceId: ProviderInstanceId.make("opencode-test"),
     displayName: undefined,
-    environment: [],
+    // Keep the usage probe off this host's real OpenCode credential store.
+    environment: [{ name: "OPENCODE_AUTH_CONTENT", value: "{}", sensitive: false }],
     enabled,
     usageAccess: Effect.succeed(true),
     config: { ...OpenCodeDriver.defaultConfig(), ...config },
