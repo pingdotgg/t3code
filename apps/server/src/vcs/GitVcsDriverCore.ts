@@ -106,6 +106,8 @@ const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const GIT_IDENT_KEYWORD = /\$Id:[^$\n]*\$/g;
 const REVIEW_BRANCH_COMMIT_LIMIT = 100;
 const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
+const REVIEW_REPOSITORY_LIMIT = 256;
+const REVIEW_REPOSITORY_SCAN_LIMIT = 4096;
 const truncateReviewSubject = (subject: string) =>
   subject.slice(
     0,
@@ -5390,9 +5392,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const seen = new Set<string>();
     let pending = [canonicalRoot];
     let truncated = false;
+    let inspected = 0;
     // Discovery is separate from diff/status refreshes and bounded for large umbrellas.
-    while (pending.length > 0) {
-      const batch = pending.splice(0, 8);
+    while (pending.length > 0 && repositories.length <= REVIEW_REPOSITORY_LIMIT) {
+      const batch = pending.splice(0, Math.min(8, REVIEW_REPOSITORY_SCAN_LIMIT - inspected));
+      inspected += batch.length;
       const found = yield* Effect.forEach(
         batch,
         (candidate) =>
@@ -5405,7 +5409,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             seen.add(real);
             const stat = yield* fileSystem.stat(real).pipe(Effect.orElseSucceed(() => null));
             if (stat?.type !== "Directory") return null;
-            const repo = yield* resolveRepositoryPathsUncached(real);
+            if (
+              real !== canonicalRoot &&
+              !(yield* fileSystem
+                .exists(path.join(real, ".git"))
+                .pipe(Effect.orElseSucceed(() => false)))
+            )
+              return null;
+            const resolve = resolveRepositoryPathsUncached(real);
+            const repo = yield* real === canonicalRoot
+              ? resolve
+              : resolve.pipe(Effect.orElseSucceed(() => null));
             if (!repo?.worktreeRoot) return null;
             const actualRoot = yield* fileSystem
               .realPath(repo.worktreeRoot)
@@ -5439,9 +5453,22 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                     { allowNonZeroExit: true, maxOutputBytes: 1024 * 1024 },
                   )
                 : null;
+            if (
+              manifest !== null &&
+              manifest.exitCode !== 0 &&
+              (manifest.exitCode !== 1 || manifest.stderr.trim() !== "")
+            ) {
+              return yield* new GitCommandError({
+                operation: "GitVcsDriver.review.repositories",
+                command: "git config",
+                cwd: real,
+                detail: "Could not read submodule paths from .gitmodules.",
+                exitCode: manifest.exitCode,
+              });
+            }
             const declaredPaths =
               manifest?.exitCode === 0
-                ? manifest.stdout.split("\0").flatMap((record) => {
+                ? splitNullSeparatedGitStdoutPaths(manifest).flatMap((record) => {
                     const separator = record.indexOf("\n");
                     if (separator < 0) return [];
                     const relative = record.slice(separator + 1);
@@ -5467,7 +5494,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                 { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES, appendTruncationMarker: true },
               );
               const requested = new Set(paths);
-              for (const entry of result.stdout.split("\0")) {
+              for (const entry of splitNullSeparatedGitStdoutPaths(result)) {
                 const separator = entry.indexOf("\t");
                 if (separator === -1 || !/^160000 [a-f0-9]+ 0$/.test(entry.slice(0, separator)))
                   continue;
@@ -5503,13 +5530,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                 branch: yield* readCurrentBranch("GitVcsDriver.review.repositories.branch", real),
               },
               children,
-              truncated: indexTruncated,
+              truncated: indexTruncated || (manifest?.stdoutTruncated ?? false),
             };
-          }).pipe(
-            Effect.catchCause((cause) =>
-              candidate === canonicalRoot ? Effect.failCause(cause) : Effect.succeed(null),
-            ),
-          ),
+          }),
         { concurrency: 8 },
       );
       for (const item of found) {
@@ -5518,12 +5541,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         truncated ||= item.truncated;
         pending.push(...new Set(item.children.filter((child) => !seen.has(child))));
       }
-      if (seen.size + pending.length > 256) {
-        pending = pending.slice(0, Math.max(0, 256 - seen.size));
+      const remaining = REVIEW_REPOSITORY_SCAN_LIMIT - inspected;
+      if (pending.length > remaining) {
+        pending = pending.slice(0, remaining);
         truncated = true;
       }
     }
-    return { repositories: repositories.sort((a, b) => a.path.localeCompare(b.path)), truncated };
+    return {
+      repositories: repositories
+        .slice(0, REVIEW_REPOSITORY_LIMIT)
+        .sort((a, b) => a.path.localeCompare(b.path)),
+      truncated: truncated || repositories.length > REVIEW_REPOSITORY_LIMIT,
+    };
   });
 
   const getReviewBranchCommits = Effect.fn("getReviewBranchCommits")(function* (

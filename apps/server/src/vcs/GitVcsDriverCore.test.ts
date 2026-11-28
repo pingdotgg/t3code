@@ -3673,6 +3673,53 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("review diff previews", () => {
+    it.effect("finds an initialized submodule after 255 uninitialized gitlinks", () =>
+      withGitFileProtocol(
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const remote = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          yield* initRepoWithCommit(remote);
+          yield* git(cwd, ["submodule", "add", remote, "zz-initialized"]);
+          const sha = yield* git(remote, ["rev-parse", "HEAD"]);
+          const paths = Array.from({ length: 255 }, (_, i) => `absent-${i}`);
+          yield* gitWithStdin(
+            cwd,
+            ["update-index", "--index-info"],
+            paths.map((name) => `160000 ${sha}\t${name}\n`).join(""),
+          );
+          const fs = yield* FileSystem.FileSystem;
+          const manifest = NodePath.join(cwd, ".gitmodules");
+          const declared = yield* fs.readFileString(manifest);
+          yield* fs.writeFileString(
+            manifest,
+            paths.map((name) => `[submodule "${name}"]\n\tpath = ${name}\n`).join("") + declared,
+          );
+
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const result = yield* driver.getReviewRepositories({ cwd });
+          assert.deepStrictEqual(
+            result.repositories.map(({ path }) => path),
+            ["", "zz-initialized"],
+          );
+          assert.isFalse(result.truncated);
+        }),
+      ),
+    );
+
+    it.effect("reports an invalid working tree manifest and accepts one with no paths", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, ".gitmodules", "# No submodules\n");
+        assert.lengthOf((yield* driver.getReviewRepositories({ cwd })).repositories, 1);
+        yield* writeTextFile(cwd, ".gitmodules", '[submodule "broken"\n');
+        const error = yield* driver.getReviewRepositories({ cwd }).pipe(Effect.flip);
+        assert.include(error.detail, ".gitmodules");
+      }),
+    );
+
     it.effect("lists initialized repositories and keeps each review inside its repository", () =>
       withGitFileProtocol(
         Effect.gen(function* () {

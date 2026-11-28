@@ -5722,5 +5722,7 @@
   "b45f0b467e9406d0": "Responder al cliente",
   "15e5597f8f93ce12": "{start} a {end}",
   "f1b3ae2ae2319a51": "Seleccionar repositorio Git",
-  "18ed3e1af363c529": "Repositorio del espacio de trabajo"
+  "18ed3e1af363c529": "Repositorio del espacio de trabajo",
+  "9bdaf65c667dedf2": "Revisar el repositorio del hilo",
+  "332d417f22d1e83e": "La detección alcanzó el límite de repositorios."
 }

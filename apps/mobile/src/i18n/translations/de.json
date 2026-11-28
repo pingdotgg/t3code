@@ -5728,5 +5728,7 @@
   "b45f0b467e9406d0": "Dem Kunden antworten",
   "15e5597f8f93ce12": "{start} bis {end}",
   "f1b3ae2ae2319a51": "Git-Repository auswählen",
-  "18ed3e1af363c529": "Repository des Arbeitsbereichs"
+  "18ed3e1af363c529": "Repository des Arbeitsbereichs",
+  "9bdaf65c667dedf2": "Repository des Threads prüfen",
+  "332d417f22d1e83e": "Die Suche hat ihr Limit für Repositorys erreicht."
 }

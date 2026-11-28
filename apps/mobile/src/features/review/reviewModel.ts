@@ -601,13 +601,14 @@ export function buildReviewSectionItems(input: {
   );
 
   const gitItems = GIT_SECTION_KINDS.flatMap<ReviewSectionItem>((kind) => {
+    const id = input.repositoryPath ? `git:${kind}:${input.repositoryPath}` : `git:${kind}`;
     const section = input.gitSections.find(
       (candidate): candidate is ReviewGitSource => candidate.kind === kind,
     );
     if (section) {
       return [
         {
-          id: input.repositoryPath ? `git:${kind}:${input.repositoryPath}` : `git:${kind}`,
+          id,
           kind,
           title: section.title,
           subtitle: gitSubtitle(section, resolve),
@@ -624,7 +625,7 @@ export function buildReviewSectionItems(input: {
       ? []
       : [
           {
-            id: input.repositoryPath ? `git:${kind}:${input.repositoryPath}` : `git:${kind}`,
+            id,
             kind,
             title: resolve(GIT_PLACEHOLDER_TITLES[kind]),
             subtitle: null,

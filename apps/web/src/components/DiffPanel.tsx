@@ -382,9 +382,12 @@ export default function DiffPanel({
     requestedRepositoryCwd !== undefined &&
     requestedRepositoryCwd !== activeCwd &&
     !gitRepositories.some((repository) => repository.cwd === requestedRepositoryCwd);
+  const repositoryTruncated = repositoryUnavailable && repositoriesQuery.data?.truncated === true;
   const repositoryMissing =
     repositoryUnavailable &&
-    repositoriesQuery.data !== null &&
+    repositoriesQuery.isSuccess &&
+    !repositoriesQuery.isPending &&
+    !repositoryTruncated &&
     (!readsTaskFolder || taskFolderQuery.data !== null) &&
     (!readsProjectFolders || projectFoldersQuery.data !== null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears a persisted checkout and refs after discovery confirms it is gone
@@ -400,8 +403,12 @@ export default function DiffPanel({
     (repositoriesQuery.isPending || taskFolderQuery.isPending || projectFoldersQuery.isPending);
   const repositoryError =
     repositoryUnresolved && !repositoryPending
-      ? (repositoriesQuery.error ?? taskFolderQuery.error ?? projectFoldersQuery.error)
+      ? (repositoriesQuery.error ??
+        taskFolderQuery.error ??
+        projectFoldersQuery.error ??
+        (repositoryTruncated ? gt("Repository discovery reached its limit.") : null))
       : null;
+  const repositoryNotice = repositoryError ?? repositoriesQuery.error;
   const refreshRepositories = () => {
     repositoriesQuery.refresh();
     taskFolderQuery.refresh();
@@ -642,7 +649,10 @@ export default function DiffPanel({
           ...gitRepositories,
         ]
       : gitRepositories;
-  const repositoryLabel = gitRepository?.name ?? repositoryOptions[0]?.name ?? threadFolderName;
+  const repositoryLabel =
+    (repositoryUnresolved ? requestedRepositoryCwd : gitRepository?.name) ??
+    repositoryOptions[0]?.name ??
+    threadFolderName;
   const preview = branchDiffPreview.data;
   const gitDiff = selectedGitSource?.diff;
 
@@ -692,7 +702,7 @@ export default function DiffPanel({
     ? toolCallDetail.error
     : selectedTurn
       ? activeCheckpointDiff.error
-      : (repositoryError ?? branchDiffPreview.error);
+      : branchDiffPreview.error;
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges =
     hasResolvedPatch &&
@@ -1090,6 +1100,12 @@ export default function DiffPanel({
     setOpenCommitMenu(null);
     setBaseRefQuery("");
   };
+  const onGitRepositoryOpenChange = (open: boolean) => {
+    if (open) refreshRepositories();
+    else setRepositoryQuery("");
+  };
+  const handleGitRepositoryOpenChange = useStableCallback(onGitRepositoryOpenChange);
+  const handleSelectGitRepository = useStableCallback(selectGitRepository);
   const selectedTurnValue = selectedTurn ? `turn:${selectedTurn.runId}` : "";
   const selectedCommitValue = selectedCommitSha !== null ? `commit:${selectedCommitSha}` : "";
   const selectedScopeValue = toolCallSelection
@@ -1334,11 +1350,8 @@ export default function DiffPanel({
               )
               .map((repo) => repo.cwd)}
             value={gitCwd ?? null}
-            onOpenChange={(open) => {
-              if (open) refreshRepositories();
-              else setRepositoryQuery("");
-            }}
-            onValueChange={selectGitRepository}
+            onOpenChange={handleGitRepositoryOpenChange}
+            onValueChange={handleSelectGitRepository}
           >
             <ComboboxTrigger
               render={<Button size="xs" variant="secondary" className="max-w-56 min-w-0" />}
@@ -1374,9 +1387,6 @@ export default function DiffPanel({
                 <p className="px-3 py-2 text-xs text-muted-foreground">
                   {gt("Repository discovery reached its limit.")}
                 </p>
-              )}
-              {repositoriesQuery.error && (
-                <p className="px-3 py-2 text-xs text-destructive">{repositoriesQuery.error}</p>
               )}
             </ComboboxPopup>
           </Combobox>
@@ -1743,6 +1753,25 @@ export default function DiffPanel({
       ) : (
         <>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+            {isGitSelection && repositoryNotice && (
+              <div className="shrink-0 border-b border-border/70 px-3 py-2">
+                <p className="mb-2 text-2xs text-error/80">{repositoryNotice}</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="xs" variant="secondary" onClick={refreshRepositories}>
+                    {gt("Retry")}
+                  </Button>
+                  {repositoryUnresolved && panelThreadRef && (
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      onClick={() => useDiffPanelStore.getState().clearRepository(panelThreadRef)}
+                    >
+                      {gt("Review the thread's repository")}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
             {preview?.incomplete && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
                 {selectedPatchError
@@ -1775,20 +1804,6 @@ export default function DiffPanel({
             {selectedPatchError && !renderablePatch && (
               <div className="px-3">
                 <p className="mb-2 text-2xs text-error/80">{selectedPatchError}</p>
-                {isGitSelection && repositoryError && panelThreadRef && (
-                  <div className="flex flex-wrap gap-2">
-                    <Button size="xs" variant="secondary" onClick={refreshRepositories}>
-                      {gt("Retry")}
-                    </Button>
-                    <Button
-                      size="xs"
-                      variant="secondary"
-                      onClick={() => useDiffPanelStore.getState().clearRepository(panelThreadRef)}
-                    >
-                      {gt("Review the thread's repository")}
-                    </Button>
-                  </div>
-                )}
               </div>
             )}
             {!renderablePatch && toolCallPreview && toolCallPreview.content.length > 0 ? (

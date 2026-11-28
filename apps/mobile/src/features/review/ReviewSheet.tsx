@@ -442,6 +442,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     repositories,
     selectedRepository: selectedGitRepository,
     selectRepository: selectGitRepository,
+    canReviewWorkspaceRepository,
     reviewCwd,
     repositoryPath,
   } = useReviewSections({
@@ -674,6 +675,13 @@ export function ReviewSheet(props: ReviewSheetProps) {
             <T>Review unavailable</T>
           </Text>
           <Text className="text-xs leading-normal text-foreground-muted">{error}</Text>
+          {canReviewWorkspaceRepository && (
+            <Button
+              label={gt("Review the thread's repository")}
+              tone="contrast"
+              onPress={() => selectGitRepository(null)}
+            />
+          )}
         </ContentBand>,
       );
     }

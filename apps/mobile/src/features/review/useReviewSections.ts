@@ -77,15 +77,18 @@ export function useReviewSections(input: {
   const requestedCwd =
     repositoryChoice?.threadKey === reviewCache.threadKey ? repositoryChoice.cwd : undefined;
   const requestedRepository = repositories.find((repo) => repo.cwd === requestedCwd);
-  const selectedRepository = requestedRepository ?? repositories[0];
   const repositoryUnavailable =
     requestedCwd !== undefined && requestedCwd !== selectedThreadCwd && !requestedRepository;
+  const repositoryTruncated = repositoryUnavailable && repositoriesQuery.data?.truncated === true;
   const repositoryMissing =
-    repositoryUnavailable && repositoriesQuery.isSuccess && !repositoriesQuery.isPending;
+    repositoryUnavailable && repositoriesQuery.successResult !== null && !repositoryTruncated;
   if (repositoryMissing) {
     setRepositoryChoice(null);
   }
   const repositoryUnresolved = repositoryUnavailable && !repositoryMissing;
+  const selectedRepository = repositoryUnresolved
+    ? undefined
+    : (requestedRepository ?? repositories[0]);
   const reviewCwd = repositoryUnresolved
     ? null
     : selectedRepository?.path
@@ -224,10 +227,14 @@ export function useReviewSections(input: {
     }
   };
 
-  const selectRepository = (cwd: string) => {
-    if (!repositories.some((repo) => repo.cwd === cwd)) return;
-    if ((requestedCwd ?? selectedThreadCwd) === cwd) return;
-    setRepositoryChoice({ threadKey: reviewCache.threadKey, cwd });
+  const selectRepository = (cwd: string | null) => {
+    if (
+      cwd !== null &&
+      ((requestedCwd ?? selectedThreadCwd) === cwd ||
+        !repositories.some((repo) => repo.cwd === cwd))
+    )
+      return;
+    setRepositoryChoice(cwd === null ? null : { threadKey: reviewCache.threadKey, cwd });
     if (reviewCache.threadKey) setReviewSelectedSectionId(reviewCache.threadKey, null);
   };
 
@@ -235,10 +242,14 @@ export function useReviewSections(input: {
     repositories,
     selectedRepository,
     selectRepository,
+    canReviewWorkspaceRepository: repositoryFailureVisible && selectedThreadCwd !== null,
     reviewCwd: selectedSection?.kind === "turn" ? selectedThreadCwd : reviewCwd,
     repositoryPath: selectedSection?.kind === "turn" ? "" : repositoryPath,
     error:
-      (repositoryFailureVisible ? repositoriesQuery.error : null) ??
+      (repositoryFailureVisible
+        ? (repositoriesQuery.error ??
+          (repositoryTruncated ? messages(msg("Repository discovery reached its limit.")) : null))
+        : null) ??
       (selectedSection?.kind === "turn"
         ? activeTurnDiff.error
         : (selectedGitPreview?.error ?? null)) ??
