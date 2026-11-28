@@ -44,7 +44,10 @@ export function useLinkedThreadOpener(
   const viaEnvironmentId = panelRef.environmentId;
   const own = useEnvironment(thread?.environmentId ?? null);
   const connected = own?.connection.phase === "connected";
-  const links = useLinkedEnvironments(thread === undefined || connected ? null : viaEnvironmentId);
+  const links = useLinkedEnvironments(
+    thread === undefined || connected ? null : viaEnvironmentId,
+    thread?.environmentId,
+  );
   if (thread === undefined) return null;
   const resolved = resolveLinkedThreadOpen({
     environmentId: thread.environmentId,

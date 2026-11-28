@@ -129,8 +129,8 @@ export interface SourceControlMediaUrl {
   readonly fetchUrl: string;
   /** A file name for the media, safe to put in a path or a download. */
   readonly fileName: string;
-  /** Set when the URL alone says what the media is, as an extensionless upload can. */
-  readonly kind?: "image" | "video";
+  /** How to preview a link to this URL. An opaque upload needs a content type check. */
+  readonly kind?: "image" | "video" | "unknown";
   /** Set when the bytes behind `fetchUrl` can never change, so a client may cache them by it. */
   readonly immutable?: true;
 }
@@ -567,14 +567,32 @@ export function isChangeRequestInProjectRepository(
   );
 }
 
-const SCP_REMOTE = /^[a-zA-Z0-9._-]+@([^:/]+):/;
+function hasBracketedHost(text: string): boolean {
+  const atBracket = text.indexOf("@[");
+  const hostStart = atBracket >= 0 ? atBracket + 1 : 0;
+  return text.startsWith("[", hostStart) && text.includes("]", hostStart + 1);
+}
+
+// Follows Git's connect.c split (brackets on remote and host part) and ssh's last-"@" split.
+function scpRemoteHost(remote: string): string | null {
+  const colon = remote.indexOf(":");
+  if (colon < 0 || remote.includes("://")) return null;
+  const slash = remote.indexOf("/");
+  if (slash >= 0 && slash < colon) return null;
+  const userHost = remote.slice(0, colon);
+  if (hasBracketedHost(remote) || hasBracketedHost(userHost)) return null;
+  if (userHost.startsWith("-") || remote.startsWith("-", colon + 1)) return null;
+  const at = userHost.lastIndexOf("@");
+  const host = at > 0 ? userHost.slice(at + 1) : "";
+  return host.trim().length > 0 ? host : null;
+}
 
 /** Null when the remote names no host, such as a local path. */
 export function parseGitRemoteHost(remoteUrl: string): GitRemoteHost | null {
   const trimmed = remoteUrl.trim();
   if (trimmed.length === 0) return null;
   let host: string;
-  const scpHost = SCP_REMOTE.exec(trimmed)?.[1] ?? userlessScpRemoteHost(trimmed);
+  const scpHost = scpRemoteHost(trimmed) ?? userlessScpRemoteHost(trimmed);
   if (scpHost) {
     host = scpHost.toLowerCase();
   } else {

@@ -1,10 +1,16 @@
+import { describe, expect, it, vi } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import { AtomRegistry } from "effect/reactivity";
 import type { Root, RootContent } from "mdast";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
-import { describe, expect, it } from "vite-plus/test";
 
-import { splitPullRequestBody, type PullRequestBodySegment } from "./pullRequestMarkdown.ts";
+import {
+  makePullRequestMediaKindAtom,
+  splitPullRequestBody,
+  type PullRequestBodySegment,
+} from "./pullRequestMarkdown.ts";
 import {
   changeRequestReferenceAutolinker,
   resolveChangeRequestMediaUrl,
@@ -32,9 +38,7 @@ const split = (body: string) =>
   });
 
 describe("pull request body segmentation", () => {
-  // GitHub writes a dropped image into the body as an `<img>` tag, so a bare attachment link on
-  // its own line is the shape it uses for a video — every one sampled in the wild was one.
-  it("lifts a dropped video out and keeps the prose around it", () => {
+  it("lifts a GitHub upload without guessing its type and keeps the prose around it", () => {
     expect(
       split(
         "Before\n\nhttps://github.com/user-attachments/assets/2f8c1a90-1b2c-4d5e-8f90-abcdef123456\n\nAfter",
@@ -45,9 +49,23 @@ describe("pull request body segmentation", () => {
         id: "attachment:1",
         kind: "attachment",
         url: "https://github.com/user-attachments/assets/2f8c1a90-1b2c-4d5e-8f90-abcdef123456",
-        media: "video",
+        media: "unknown",
       },
       { id: "markdown:2", kind: "markdown", text: "After", sourceOffset: 89 },
+    ]);
+  });
+
+  it("leaves the type of a linked GitHub upload unresolved", () => {
+    const upload =
+      "https://github.com/user-attachments/assets/f619ea9d-112c-400b-b1db-8c8d5d2357cc";
+    expect(split(`[Native iPhone caption playback](${upload})`)).toEqual([
+      {
+        id: "attachment:0",
+        kind: "attachment",
+        url: upload,
+        media: "unknown",
+        label: "Native iPhone caption playback",
+      },
     ]);
   });
 
@@ -87,6 +105,54 @@ describe("pull request body segmentation", () => {
         url: "https://example.com/a.webm",
         media: "video",
       },
+    ]);
+    for (const body of [
+      '<video src="https://example.org/right.mp4" data-src="https://example.org/wrong.mp4"></video>',
+      '<video data-src="https://example.org/wrong.mp4" src="https://example.org/right.mp4"></video>',
+    ]) {
+      expect(split(body)).toEqual([
+        {
+          id: "attachment:0",
+          kind: "attachment",
+          url: "https://example.org/right.mp4",
+          media: "video",
+        },
+      ]);
+    }
+    expect(split("<video src=https://example.org/demo.mp4?token=abc></video>")).toEqual([
+      {
+        id: "attachment:0",
+        kind: "attachment",
+        url: "https://example.org/demo.mp4?token=abc",
+        media: "video",
+      },
+    ]);
+    for (const [body, url] of [
+      [
+        '<video src="https://example.org/a.mp4?x=1&amp;y=2"></video>',
+        "https://example.org/a.mp4?x=1&y=2",
+      ],
+      [
+        '<video><source src="https://example.org/a.mp4?x=1&#38;y=2&#x26;z=3"></video>',
+        "https://example.org/a.mp4?x=1&y=2&z=3",
+      ],
+      [
+        '<video src="https://example.org/a.mp4?x=1&amp;amp;y=2"></video>',
+        "https://example.org/a.mp4?x=1&amp;y=2",
+      ],
+    ] as const) {
+      expect(split(body)).toEqual([
+        {
+          id: "attachment:0",
+          kind: "attachment",
+          url,
+          media: "video",
+        },
+      ]);
+    }
+    const dataSrcOnly = '<video data-src="https://example.org/wrong.mp4"></video>';
+    expect(split(dataSrcOnly)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: dataSrcOnly, sourceOffset: 0 },
     ]);
   });
 
@@ -133,6 +199,64 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
+  it("splits a lone-CR body into lines, so a video after its fence still lifts out", () => {
+    const crLines = ["```text", "https://example.com/sample.mp4", "```"];
+    const crBody = [...crLines, "", "https://example.com/actual.mp4", "", "- [ ] Done"].join("\r");
+    expect(split(crBody)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: crLines.join("\n"), sourceOffset: 0 },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/actual.mp4",
+        media: "video",
+      },
+      {
+        id: "markdown:2",
+        kind: "markdown",
+        text: "- [ ] Done",
+        sourceOffset: crBody.indexOf("- [ ] Done"),
+      },
+    ]);
+  });
+
+  it("keeps a fence opened on a list marker in the list, closing it on its close or dedent", () => {
+    const actual = {
+      id: "attachment:1",
+      kind: "attachment",
+      url: "https://example.com/actual.mp4",
+      media: "video",
+    };
+    const listCode = "- ```text\n  https://example.com/sample.mp4\n  ```";
+    expect(split(`${listCode}\n\nhttps://example.com/actual.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: listCode, sourceOffset: 0 },
+      actual,
+    ]);
+    const unclosed = "1. ```text\n   https://example.com/sample.mp4";
+    expect(split(`${unclosed}\nhttps://example.com/actual.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: unclosed, sourceOffset: 0 },
+      actual,
+    ]);
+    const tabbed = "- ```text\n\tcode()\n  https://example.com/sample.mp4\n  ```";
+    expect(split(`${tabbed}\n\nhttps://example.com/actual.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: tabbed, sourceOffset: 0 },
+      actual,
+    ]);
+    const deepCloser = "- ```text\n\t\t```\n  https://example.com/sample.mp4\n  ```";
+    expect(split(`${deepCloser}\n\nhttps://example.com/actual.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: deepCloser, sourceOffset: 0 },
+      actual,
+    ]);
+    expect(split("- ```js`x\n\n  https://example.com/actual.mp4")).toEqual([
+      { id: "markdown:0", kind: "markdown", text: "- ```js`x", sourceOffset: 0 },
+      actual,
+    ]);
+    const shown = "```markdown\n- ```\nhttps://example.com/sample.mp4\n```";
+    expect(split(`${shown}\n\nhttps://example.com/actual.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: shown, sourceOffset: 0 },
+      actual,
+    ]);
+  });
+
   it("does not let a different fence marker close an open fence", () => {
     const body = "```\n~~~\nhttps://example.com/demo.mp4\n```";
     expect(split(body)).toEqual([
@@ -140,10 +264,38 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
+  it("does not close a fence opened at the margin on a tab-indented marker", () => {
+    const code = "```\n\t```\nhttps://example.com/sample.mp4\n```";
+    expect(split(`${code}\n\nhttps://example.com/demo.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: code, sourceOffset: 0 },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/demo.mp4",
+        media: "video",
+      },
+    ]);
+    const listCode = "- List\n\n\t```md\n  https://example.com/sample.mp4\n\t```";
+    expect(split(`${listCode}\n\nhttps://example.com/demo.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: listCode, sourceOffset: 0 },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/demo.mp4",
+        media: "video",
+      },
+    ]);
+  });
+
   it("keeps a video tag that shares its line with prose as markdown", () => {
     const body = 'Before <video src="https://example.com/a.mp4"></video> after';
     expect(split(body)).toEqual([
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
+    const captioned = '<video src="https://example.com/a.mp4"></video> Before the fix\n\nIt opens.';
+    expect(split(`${captioned}\n\n<video src="https://example.com/b.mp4"></video>`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: captioned, sourceOffset: 0 },
+      { id: "attachment:1", kind: "attachment", url: "https://example.com/b.mp4", media: "video" },
     ]);
   });
 
@@ -181,10 +333,43 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
+  it("never lifts media out of an HTML comment, while lifting media after it", () => {
+    const visible = {
+      id: "attachment:1",
+      kind: "attachment",
+      url: "https://example.org/visible.mp4",
+      media: "video",
+    };
+    // A fence inside a comment is hidden too, so it must not open a code block.
+    const comment = [
+      "<!--",
+      "https://example.org/hidden.mp4",
+      '<video src="https://example.org/hidden-tag.mp4"></video>',
+      "```",
+      "-->",
+    ].join("\n");
+    for (const hidden of [comment, "<!-- template hint -->"]) {
+      expect(split(`${hidden}\n\nhttps://example.org/visible.mp4`)).toEqual([
+        { id: "markdown:0", kind: "markdown", text: hidden, sourceOffset: 0 },
+        visible,
+      ]);
+    }
+  });
+
   it("leaves an unclosed video tag as prose without eating the rest of the body", () => {
     const body = ['<video src="https://example.com/a.mp4">', "still prose", "more prose"].join(
       "\n",
     );
+    expect(split(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
+  });
+
+  it.each([
+    ["a whitespace run inside a line", `a${" ".repeat(1_000_000)}b`],
+    ["a run of unclosed video tags", `${"<video ".repeat(150_000)}</video>`],
+    ["a run of backticks before a line separator", `${"`".repeat(100_000)}\u2028x`],
+  ])("splits %s in one pass", (_case, body) => {
     expect(split(body)).toEqual([
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
@@ -196,6 +381,38 @@ describe("pull request body segmentation", () => {
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
   });
+});
+
+describe("extensionless pull request media", () => {
+  it.effect.each([
+    [206, "image/png", "image"],
+    [206, "video/mp4", "video"],
+    [200, "text/html", null],
+    [404, "image/png", null],
+  ] as const)("classifies HTTP %i with Content-Type %s", ([status, contentType, kind]) =>
+    Effect.gen(function* () {
+      const cancel = vi.fn();
+      const fetchMedia = vi.fn(
+        async () =>
+          new Response(new ReadableStream({ cancel }), {
+            status,
+            headers: { "content-type": contentType },
+          }),
+      );
+      const url = "https://environment.test/api/assets/signed/upload";
+      const registry = AtomRegistry.make();
+      yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+      const atom = makePullRequestMediaKindAtom(fetchMedia)(url);
+      expect(yield* AtomRegistry.getResult(registry, atom)).toBe(kind);
+      expect(fetchMedia).toHaveBeenCalledWith(
+        url,
+        expect.objectContaining({
+          headers: { Range: "bytes=0-0" },
+        }),
+      );
+      expect(cancel).toHaveBeenCalledOnce();
+    }),
+  );
 });
 
 describe("reference links around lifted media", () => {
@@ -260,6 +477,18 @@ describe("reference links around lifted media", () => {
     ).toEqual([["the docs", "https://example.com/first"]]);
   });
 
+  it("renders the body whole when its definitions would be repeated past the budget", () => {
+    const definitions = Array.from(
+      { length: 400 },
+      (_, index) => `[d${index}]: https://example.com/${"x".repeat(60)}${index}`,
+    ).join("\n");
+    const uses = Array.from({ length: 1200 }, () => `[use][d1]\n${recording}`).join("\n");
+    const body = `\n${definitions}\n\n${uses}\n`;
+    expect(split(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body.trim(), sourceOffset: 1 },
+    ]);
+  });
+
   it("leaves a definition shown in code as code", () => {
     expect(
       referenceLinks(
@@ -275,15 +504,78 @@ describe("reference links around lifted media", () => {
     const marker = segment.text.indexOf("[ ]");
     expect(body.slice(segment.sourceOffset + marker)).toBe("[ ] Read [the docs][guide]");
   });
+
+  it.each([
+    ["\uFEFF", "", 0],
+    ["intro\n\n\uFEFF", "intro\n\n\uFEFF", 0],
+    [`${recording}\n\n\uFEFF`, "\uFEFF", 1],
+  ])("preserves BOM meaning and task offsets after prefix %j", (prefix, kept, pick) => {
+    const definition = "[guide]: https://example.com/docs";
+    const task = "- [ ] Read [guide]";
+    const body = `${prefix}${task}\n\n${recording}\n\n${definition}`;
+    const segment = splitPullRequestBody(body, () => [definition])[pick]!;
+    if (segment.kind !== "markdown") throw new Error("expected prose");
+    expect(segment.text).toBe(`${definition}\n\n${kept}${task}`);
+    expect(segment.sourceOffset + segment.text.indexOf("[ ]")).toBe(body.indexOf("[ ]"));
+  });
 });
 
 describe("media on custom hosts", () => {
   it.each([
-    ["https://drop.example.com/capture.PNG?token=abc#preview", "image"],
-    ["[Recording](https://drop.example.com/recording.mov)", "video"],
-    ["<https://drop.example.com/shot.webp>", "image"],
-  ])("recognizes %s without a request", (body, media) => {
-    expect(split(body)).toEqual([expect.objectContaining({ kind: "attachment", media })]);
+    [
+      "https://drop.example.com/capture.PNG?token=abc#preview",
+      "https://drop.example.com/capture.PNG?token=abc#preview",
+      "image",
+      undefined,
+    ],
+    [
+      "[Recording](https://drop.example.com/recording.mov)",
+      "https://drop.example.com/recording.mov",
+      "video",
+      "Recording",
+    ],
+    ["[Demo](https://example.com/demo(1).mp4)", "https://example.com/demo(1).mp4", "video", "Demo"],
+    [
+      "[Demo](https://example.com/demo\\(1\\).mp4)",
+      "https://example.com/demo(1).mp4",
+      "video",
+      "Demo",
+    ],
+    [
+      "[Demo](https://example.com/demo(1).mp4?a=1\\&amp;b=2)",
+      "https://example.com/demo(1).mp4?a=1&amp;b=2",
+      "video",
+      "Demo",
+    ],
+    [
+      "[Screenshot](https://drop.example.com/shot.webp)",
+      "https://drop.example.com/shot.webp",
+      "image",
+      "Screenshot",
+    ],
+    [
+      "<https://drop.example.com/shot.webp>",
+      "https://drop.example.com/shot.webp",
+      "image",
+      undefined,
+    ],
+  ])("recognizes %s without a request and preserves its label", (body, url, media, label) => {
+    const segments = split(body);
+    expect(segments).toEqual([expect.objectContaining({ kind: "attachment", url, media })]);
+    const [segment] = segments;
+    expect(segment?.kind === "attachment" ? segment.label : null).toBe(label);
+  });
+
+  it.each([
+    "[Open report](https://example.com/report?file=demo.mp4)",
+    "https://example.com/report#demo.png",
+    "[Demo](https://example.com/demo(1).mp4) trailing",
+    "[Demo](https://example.com/demo(1.mp4)",
+    "[Demo](https://example.com/demo(1).mp4?a=1&amp;b=2)",
+  ])("keeps %s a link when not a standalone media link", (body) => {
+    expect(split(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
   });
 
   it("keeps inline links and media examples in code as prose", () => {

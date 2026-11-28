@@ -18,6 +18,30 @@ describe("V2 assistant streaming", () => {
       ready: "```a``` is inline.\n\n",
       rest: "```\ncode\n\nmore\n",
     });
+    expect(splitBufferedAssistantText("Intro\n\n- ```ts\n  x()\n\n  y()")).toEqual({
+      ready: "Intro\n\n",
+      rest: "- ```ts\n  x()\n\n  y()",
+    });
+    expect(splitBufferedAssistantText("Intro\n\n- ```ts\n  x()\n\n  ```\nrest")).toEqual({
+      ready: "Intro\n\n- ```ts\n  x()\n\n  ```\n",
+      rest: "rest",
+    });
+    expect(splitBufferedAssistantText("Intro\n\n1. ~~~ts\n   x()\n\n   y()")).toEqual({
+      ready: "Intro\n\n",
+      rest: "1. ~~~ts\n   x()\n\n   y()",
+    });
+    expect(splitBufferedAssistantText("Intro\n\n-\t```ts\n    x()\n\n\t```\nrest")).toEqual({
+      ready: "Intro\n\n-\t```ts\n    x()\n\n\t```\n",
+      rest: "rest",
+    });
+    expect(splitBufferedAssistantText("- ```\n  x\n```\n\nbody\n```\nafter")).toEqual({
+      ready: "- ```\n  x\n```\n\nbody\n```\n",
+      rest: "after",
+    });
+    expect(splitBufferedAssistantText("Intro\n\n    - ```\n    output\n\nAfter\n\n")).toEqual({
+      ready: "Intro\n\n    - ```\n    output\n\nAfter\n\n",
+      rest: "",
+    });
   });
 });
 
@@ -182,6 +206,25 @@ it.each<{ readonly name: string; readonly mode?: "turn"; readonly steps: Readonl
     steps: [
       { at: 0, text: "Intro\n\n```ts\nx()\n", shows: "Intro\n\n" },
       { at: 400, text: "Retry\n\n- a\n- b", shows: "Retry\n\n- a\n" },
+    ],
+  },
+  {
+    name: "paragraphs separated by carriage-return line endings",
+    steps: [
+      { at: 0, text: "Intro\r\rBody", shows: "Intro\r\r" },
+      { dueAt: 800 },
+      { idle: 800, shows: ["Intro\r\rBody"] },
+      { at: 1_200, text: "Intro\r\rBody\r\rNext", shows: "Intro\r\rBody\r\r" },
+    ],
+  },
+  {
+    name: "CRLF split across snapshots",
+    steps: [
+      { at: 0, text: "Intro\r", shows: null },
+      { at: 400, text: "Intro\r\nBody", shows: null },
+      { at: 800, text: "Intro\r\nBody\r\n\r", shows: "Intro\r\nBody\r\n\r" },
+      { at: 1_200, text: "Intro\r\nBody\r\n\r\nNext", shows: "Intro\r\nBody\r\n\r\n" },
+      { idle: 2_000, shows: ["Intro\r\nBody\r\n\r\nNext"] },
     ],
   },
   {

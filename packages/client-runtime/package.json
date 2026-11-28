@@ -147,6 +147,10 @@
       "types": "./src/authorization/index.ts",
       "default": "./src/authorization/index.ts"
     },
+    "./connect-device-notices": {
+      "types": "./src/connectDeviceNotices.ts",
+      "default": "./src/connectDeviceNotices.ts"
+    },
     "./environment": {
       "types": "./src/environment/index.ts",
       "default": "./src/environment/index.ts"
@@ -689,6 +693,7 @@
     "@t3tools/shared": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",
     "@t3tools/source-control-definitions": "workspace:*",
+    "@zip.js/zip.js": "2.25.0",
     "effect": "catalog:",
     "gt-i18n": "1.0.40",
     "jszip": "3.10.1",

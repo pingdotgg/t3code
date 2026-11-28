@@ -200,7 +200,7 @@ const createdSession = (
   }),
   ...(narrows ? [out("agent.list", "<any>"), reply("agent.list", agentList(directory))] : []),
 
-  out("session.create", { location: { directory }, model: "<any>", permissions, title: name }),
+  out("session.create", { location: { directory }, model: "<any>", permissions }),
   reply("session.create", sessionInfo(directory, permissions, name)),
 ];
 

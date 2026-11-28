@@ -5,6 +5,7 @@ import {
   ChatAttachmentId,
   CommandId,
   EventId,
+  GUEST_SHARE_TTL_MS,
   GuestShareId,
   type GuestStreamEvent,
   MessageId,
@@ -546,6 +547,52 @@ it.effect("gives the guest a command's detail and output, but no file diffs", ()
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("gives the guest a failed edit without the text it tried to write", () =>
+  Effect.gen(function* () {
+    const { orchestrator, guestShares, credential } = yield* shareThread;
+    const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
+    const failedEdit = (id: string) =>
+      writeItem(id, {
+        type: "file_change",
+        status: "failed",
+        fileName: "src/auth.ts",
+        diffStr: "-const token = 1;\n+const token = 2;\n",
+      });
+    const before = yield* failedEdit("item:failed-before");
+
+    const events = yield* guestShares.stream(session);
+    const during = yield* failedEdit("item:failed-during");
+    const detail = (yield* guestShares.item(session, before)).item;
+    yield* orchestrator.dispatch({
+      type: "thread.guest-share.close",
+      commandId: CommandId.make("close-after-failed-edit"),
+      threadId,
+    });
+    const received = Array.from(yield* Stream.runCollect(events));
+    const changes = received.flatMap((event) => {
+      if (event.type !== "thread") return [];
+      if (event.item.kind === "snapshot") {
+        return [
+          ...event.item.projection.turnItems,
+          ...event.item.projection.visibleTurnItems.map((row) => row.item),
+        ];
+      }
+      return event.item.kind === "event" && event.item.event.type === "turn-item.updated"
+        ? [event.item.event.payload]
+        : [];
+    });
+    const failed = changes.filter((item) => item.type === "file_change");
+    assert.includeMembers(
+      failed.map((item) => item.id),
+      [before, during],
+    );
+    for (const change of [...failed, detail]) {
+      assert.deepInclude(change, { status: "failed", fileName: "src/auth.ts" });
+      assert.doesNotHaveAnyKeys(change, ["diffStr", "oldStr", "newStr"]);
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("gives a fork's guest the commands the fork shows from its source thread", () =>
   Effect.gen(function* () {
     const { orchestrator, guestShares } = yield* shareThread;
@@ -656,13 +703,19 @@ it.effect("pages the guest back through turns older than the stream's snapshot",
     });
     yield* eventSink.write({
       events: [
-        turnItem("item:old-image", 1, {
+        turnItem("item:old-edit", 1, {
+          type: "file_change",
+          status: "failed",
+          fileName: "src/auth.ts",
+          diffStr: "-const token = 1;\n+const token = 2;\n",
+        }),
+        turnItem("item:old-image", 2, {
           type: "assistant_message",
           text: `![Old](${shot})`,
           streaming: false,
         }),
         ...Array.from({ length: 30 }, (_, index) =>
-          turnItem(`item:ask-${index}`, index + 2, {
+          turnItem(`item:ask-${index}`, index + 3, {
             type: "user_message",
             text: `Ask ${index}`,
             createdBy: "user",
@@ -694,9 +747,10 @@ it.effect("pages the guest back through turns older than the stream's snapshot",
     while (cursor !== null) {
       const page: OrchestrationV2ThreadHistoryPage = yield* guestShares.history(session, cursor);
       older.push(...ids(page.items));
+      for (const { item } of page.items) assert.notProperty(item, "diffStr");
       cursor = page.hasMoreHistory ? page.nextCursor : null;
     }
-    assert.include(older, "item:old-image");
+    assert.includeMembers(older, ["item:old-image", "item:old-edit"]);
     assert.deepStrictEqual(yield* guestShares.media(session, shot), {
       path: shot,
       mimeType: "image/png",
@@ -704,27 +758,70 @@ it.effect("pages the guest back through turns older than the stream's snapshot",
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 
-it.effect("ends a running command's output once the owner stops sharing", () =>
+it.effect.each(["thread.guest-share.close", "thread.archive", "thread.delete"] as const)(
+  "ends a running command's output on %s",
+  (type) =>
+    Effect.gen(function* () {
+      const { orchestrator, guestShares, credential } = yield* shareThread;
+      const commandOutputs = yield* CommandOutputHub.CommandOutputHub;
+      const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
+      const command = yield* writeItem("item:running", {
+        type: "command_execution",
+        status: "running",
+        input: "ls /work/src",
+        output: "before-close\n",
+      });
+      const opened = yield* Deferred.make<void>();
+      const collecting = yield* (yield* guestShares.commandOutput(session, command)).pipe(
+        Stream.tap(() => Deferred.succeed(opened, undefined)),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(opened);
+      // Let the periodic revocation fiber finish its initial open-share check and enter its 30s wait.
+      yield* TestClock.adjust("1 second");
+      yield* orchestrator.dispatch({
+        type,
+        commandId: CommandId.make(`${type}-during-command`),
+        threadId,
+      });
+      yield* commandOutputs.append({ threadId, itemId: command, chunk: "SECRET_AFTER_CLOSE\n" });
+      yield* TestClock.adjust("1 second");
+      const endedBeforeRecheck = collecting.pollUnsafe() !== undefined;
+      // Advance past the fallback poll so an unpatched server finishes cleanly and fails on the leak assertion.
+      yield* TestClock.adjust("30 seconds");
+      const frames = Array.from(yield* Fiber.join(collecting));
+      assert.isFalse(frames.some((frame) => frame.text.includes("SECRET_AFTER_CLOSE")));
+      assert.isTrue(endedBeforeRecheck);
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(guestShares.commandOutput(session, command))),
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("ends a running command's output when the link expires, before the next recheck", () =>
   Effect.gen(function* () {
-    const { orchestrator, guestShares, credential } = yield* shareThread;
+    const { guestShares, credential } = yield* shareThread;
     const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
     const command = yield* writeItem("item:running", {
       type: "command_execution",
       status: "running",
       input: "ls /work/src",
+      output: "before-expiry\n",
     });
-    const collecting = yield* Stream.runCollect(
-      yield* guestShares.commandOutput(session, command),
-    ).pipe(Effect.forkChild);
-    yield* orchestrator.dispatch({
-      type: "thread.guest-share.close",
-      commandId: CommandId.make("close-during-command"),
-      threadId,
-    });
-    yield* TestClock.adjust("30 seconds");
-    const frames = Array.from(yield* Fiber.join(collecting));
-    assert.isTrue(frames.every((frame) => frame.running));
-    assert.isTrue(Exit.isFailure(yield* Effect.exit(guestShares.commandOutput(session, command))));
+    // Opening 10s after the share puts the 30s rechecks at 10s past each half minute, off the expiry.
+    yield* TestClock.adjust("10 seconds");
+    const opened = yield* Deferred.make<void>();
+    const collecting = yield* (yield* guestShares.commandOutput(session, command)).pipe(
+      Stream.tap(() => Deferred.succeed(opened, undefined)),
+      Stream.runCollect,
+      Effect.forkChild,
+    );
+    yield* Deferred.await(opened);
+    yield* TestClock.adjust(GUEST_SHARE_TTL_MS - 10_000 - 1);
+    assert.isUndefined(collecting.pollUnsafe());
+    yield* TestClock.adjust(2);
+    assert.isDefined(collecting.pollUnsafe());
   }).pipe(Effect.provide(layerTest)),
 );
 

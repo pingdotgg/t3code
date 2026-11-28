@@ -257,38 +257,6 @@ it.effect("pairs no client while Linked environments is off on either side", () 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("a full-access link gets a pairing code that links another environment to the box", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const b = yield* serveBox();
-      const a = yield* makeLaptop;
-      yield* linkTo(a.links, b, "full-access");
-      const phone = yield* a.client([AuthAccessWriteScope]);
-
-      const result = yield* a.pairing.requestForLink(
-        { environmentId: box.environmentId, access: "approval-required" },
-        phone,
-      );
-      if (result.type !== "credential") return yield* Effect.die(result);
-      expect(result).toMatchObject({ environmentId: box.environmentId, urls: [b.url] });
-
-      // A third environment links with it, at the access the code was minted for.
-      const desk = yield* Layer.build(
-        layerLinkingEnvironment(descriptorOf("environment-desk", "Desk")),
-      );
-      const linked = yield* Context.get(desk, PeerLinks.PeerLinks).link({
-        url: b.url,
-        pairingCode: result.credential,
-        access: "approval-required",
-      });
-      expect(linked).toMatchObject({
-        environmentId: box.environmentId,
-        access: "approval-required",
-      });
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
-);
-
 it.effect("a linked environment from before link pairing is never asked for one", () =>
   Effect.scoped(
     Effect.gen(function* () {

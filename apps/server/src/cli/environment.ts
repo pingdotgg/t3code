@@ -29,6 +29,7 @@ import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { expandHomePath } from "../os-jank.ts";
 import { authLocationFlags, type CliAuthLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 /**
@@ -201,7 +202,7 @@ const readLinkBatch = Effect.fn("environment.readLinkBatch")(function* (from: st
     );
   }
   const fs = yield* FileSystem.FileSystem;
-  return yield* fs.readFileString(from);
+  return yield* fs.readFileString(yield* expandHomePath(from));
 });
 
 const environmentLinkCommand = Command.make("link", {
@@ -239,7 +240,11 @@ const environmentLinkCommand = Command.make("link", {
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       if (Option.isSome(flags.from)) {
-        if (Option.isSome(flags.url) || Option.isSome(flags.pairingCode)) {
+        if (
+          Option.isSome(flags.url) ||
+          Option.isSome(flags.pairingCode) ||
+          flags.alternateUrl.length > 0
+        ) {
           return yield* new EnvironmentLinkUsageError({
             detail: "--from takes its addresses and pairing codes from the file.",
           });

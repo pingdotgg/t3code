@@ -64,4 +64,37 @@ describe("TypographySection", () => {
     await userEvent.keyboard("{Escape}");
     await expect.element(input).toHaveValue(DEFAULT_UNIFIED_SETTINGS.fontFamilySans);
   });
+
+  it("only intercepts Escape when discarding a draft", async () => {
+    using _storage = setup(null);
+    await using screen = await render(<TypographySection />);
+    const input = screen.getByRole("textbox", { name: "Interface font family" });
+    const dispatchEscape = async () => {
+      const event = new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      });
+      let propagated = false;
+      const onDocumentKeyDown = (received: KeyboardEvent) => {
+        if (received === event) propagated = true;
+      };
+      document.addEventListener("keydown", onDocumentKeyDown);
+      try {
+        await act(() => input.element().dispatchEvent(event));
+      } finally {
+        document.removeEventListener("keydown", onDocumentKeyDown);
+      }
+      return { defaultPrevented: event.defaultPrevented, propagated };
+    };
+
+    await expect.element(input).toHaveValue(DEFAULT_UNIFIED_SETTINGS.fontFamilySans);
+    expect(await dispatchEscape()).toEqual({ defaultPrevented: false, propagated: true });
+
+    await input.fill("Noto Sans");
+    expect(await dispatchEscape()).toEqual({ defaultPrevented: true, propagated: false });
+    await expect.element(input).toHaveValue(DEFAULT_UNIFIED_SETTINGS.fontFamilySans);
+
+    expect(await dispatchEscape()).toEqual({ defaultPrevented: false, propagated: true });
+  });
 });

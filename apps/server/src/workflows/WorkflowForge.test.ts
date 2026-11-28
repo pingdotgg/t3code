@@ -85,6 +85,27 @@ it.effect("what a step does through the forge is kept against it, one key per th
   }).pipe(Effect.provide(forge)),
 );
 
+it.effect("a step can name its project by a Windows folder", () =>
+  Effect.gen(function* () {
+    const { pullRequests } = yield* WorkflowForge.WorkflowForge;
+    const noted: Array<ReferenceInput> = [];
+    const inStep = Context.make(StepReferences, {
+      note: (reference) => Effect.sync(() => void noted.push(reference)),
+    });
+    for (const project of ["C:\\Users\\me\\app", "C:/Users/me/app"]) {
+      yield* Effect.provideContext(
+        pullRequests.act({ project, url: "https://github.com/Me/App/pull/7" }, "merge"),
+        inStep,
+      );
+    }
+    const address = { projectId, host: "github.com", repository: "me/app", number: 7 };
+    assert.deepStrictEqual(
+      noted.map((reference) => reference.address),
+      [address, address],
+    );
+  }).pipe(Effect.provide(forge)),
+);
+
 it("a step's pull requests are the ones its thread was linked to while it ran", () => {
   const link = (number: number, linkedAt: string, source = "agent") => ({
     host: "github.com",

@@ -12,6 +12,7 @@ import "@formatjs/intl-pluralrules/locale-data/es";
 import "@formatjs/intl-pluralrules/locale-data/fr";
 import "@formatjs/intl-pluralrules/locale-data/ja";
 import "@formatjs/intl-pluralrules/locale-data/ko";
+import "@formatjs/intl-pluralrules/locale-data/pl";
 import "@formatjs/intl-pluralrules/locale-data/pt";
 import "@formatjs/intl-pluralrules/locale-data/ru";
 import "@formatjs/intl-pluralrules/locale-data/sv";

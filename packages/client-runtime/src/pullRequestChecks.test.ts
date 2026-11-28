@@ -35,19 +35,35 @@ describe("resolvePullRequestDetailChecks", () => {
       url: null,
       description: null,
     };
-    const cached = detail({ observedAt: 1_000, checks: [pending] });
+    const cached = detail({ observedAt: 1_000, checks: [pending], workflowApprovalsRequired: 1 });
     const checks = {
       state: "open" as const,
       checks: [{ ...pending, status: "success" as const }],
       observedAt: 2_000,
+      workflowApprovalsRequired: 0,
     };
     const resolved = resolvePullRequestDetailChecks(cached, checks, false);
     expect(resolved?.checks).toEqual(checks.checks);
+    expect(resolved?.workflowApprovalsRequired).toBe(0);
+    expect(
+      resolvePullRequestDetailChecks(cached, { ...checks, workflowApprovalsRequired: 2 }, false)
+        ?.workflowApprovalsRequired,
+    ).toBe(2);
     expect(resolved?.observedAt).toBe(1_000);
     expect(
       resolvePullRequestDetailChecks(cached, { state: checks.state, checks: checks.checks }, true)
-        ?.checks,
-    ).toEqual(checks.checks);
+        ?.workflowApprovalsRequired,
+    ).toBe(0);
+    expect(
+      resolvePullRequestDetailChecks(
+        cached,
+        {
+          state: checks.state,
+          checks: [{ ...pending, status: "action-required", placeholder: true }],
+        },
+        true,
+      )?.workflowApprovalsRequired,
+    ).toBe(1);
     const refreshed = detail({ observedAt: 3_000, checks: [pending] });
     expect(resolvePullRequestDetailChecks(refreshed, checks, true)).toBe(refreshed);
   });

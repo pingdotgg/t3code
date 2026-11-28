@@ -1603,6 +1603,8 @@ describe("AnthropicLanguageModel", () => {
         assert.strictEqual(toolResult.content, "PLAIN_TEXT_SENTINEL\n")
       }))
 
+    const plaintext = "Café ✓"
+    const plaintextBase64 = "Q2Fmw6kg4pyT"
     const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII="
     const pdf = "JVBERi0xLjcK"
     const modelOutputCases = [
@@ -1610,11 +1612,13 @@ describe("AnthropicLanguageModel", () => {
         label: "as native content blocks",
         modelOutput: [
           Prompt.textPart({ text: "Screenshot of /home" }),
+          Prompt.filePart({ mediaType: "text/plain", data: `data:text/plain;base64,${plaintextBase64}` }),
           Prompt.filePart({ mediaType: "image/png", data: png }),
           Prompt.filePart({ mediaType: "application/pdf", data: `data:application/pdf;base64,${pdf}` })
         ],
         content: [
           { type: "text", text: "Screenshot of /home" },
+          { type: "document", source: { type: "text", media_type: "text/plain", data: plaintext }, title: null },
           { type: "image", source: { type: "base64", media_type: "image/png", data: png } },
           { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdf }, title: null }
         ]
@@ -1994,6 +1998,89 @@ describe("AnthropicLanguageModel", () => {
             : []
         )
         assert.strictEqual(clientToolResults.length, 0)
+      }))
+
+    it.effect("decodes plaintext files from base64 data URLs", () =>
+      Effect.gen(function*() {
+        let capturedRequest: HttpClientRequest.HttpClientRequest | undefined
+        yield* LanguageModel.generateText({
+          prompt: Prompt.make([{
+            role: "user",
+            content: [
+              Prompt.filePart({
+                mediaType: "text/plain",
+                data: `data:text/plain;charset=utf-8;base64,${plaintextBase64}`,
+                fileName: "policy.txt",
+                options: {
+                  anthropic: {
+                    documentTitle: "Policy",
+                    documentContext: "Returns policy",
+                    citations: { enabled: true },
+                    cacheControl: { type: "ephemeral" }
+                  }
+                }
+              }),
+              Prompt.filePart({ mediaType: "text/plain", data: new URL(`data:text/plain;base64,${plaintextBase64}`) }),
+              Prompt.filePart({ mediaType: "text/plain", data: "plain text" })
+            ]
+          }])
+        }).pipe(
+          Effect.provide(AnthropicLanguageModel.model("claude-sonnet-4-20250514")),
+          Effect.provide(AnthropicClient.layer({ apiKey: Redacted.make("test") })),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            makeHttpClient((request) => {
+              capturedRequest = request
+              return Effect.succeed(jsonResponse(request, {
+                id: "msg_text",
+                type: "message",
+                role: "assistant",
+                model: "claude-sonnet-4-20250514",
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                stop_sequence: null,
+                usage: { input_tokens: 1, output_tokens: 1 }
+              }))
+            })
+          )
+        )
+
+        assertDefined(capturedRequest)
+        const body = yield* getRequestBody(capturedRequest)
+        assert.deepStrictEqual(body.messages[0].content[0], {
+          type: "document",
+          source: { type: "text", media_type: "text/plain", data: plaintext },
+          title: "Policy",
+          context: "Returns policy",
+          citations: { enabled: true },
+          cache_control: { type: "ephemeral" }
+        })
+        assert.deepStrictEqual(body.messages[0].content[1].source, {
+          type: "text",
+          media_type: "text/plain",
+          data: plaintext
+        })
+        assert.deepStrictEqual(body.messages[0].content[2].source, {
+          type: "text",
+          media_type: "text/plain",
+          data: "plain text"
+        })
+      }))
+
+    it.effect("rejects malformed base64 plaintext before sending a request", () =>
+      Effect.gen(function*() {
+        const error = yield* LanguageModel.generateText({
+          prompt: Prompt.make([{
+            role: "user",
+            content: [Prompt.filePart({ mediaType: "text/plain", data: "data:text/plain;base64,%%%%" })]
+          }])
+        }).pipe(
+          Effect.provide(AnthropicLanguageModel.model("claude-sonnet-4-20250514")),
+          Effect.provide(AnthropicClient.layer({ apiKey: Redacted.make("test") })),
+          Effect.provideService(HttpClient.HttpClient, makeHttpClient(() => Effect.die("unexpected request"))),
+          Effect.flip
+        )
+        assert.strictEqual(error.reason._tag, "InvalidUserInputError")
       }))
 
     it.effect("encodes plaintext bytes as UTF-8 text", () =>

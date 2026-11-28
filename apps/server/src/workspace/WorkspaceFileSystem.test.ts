@@ -153,11 +153,16 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           image,
           new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
         );
+        const archive = path.join(cwd, "archive");
+        const emptyZip = new Uint8Array(22);
+        emptyZip.set([0x50, 0x4b, 0x05, 0x06]);
+        yield* fs.writeFile(archive, emptyZip);
         expect(
-          (yield* service.getMetadata({ paths: [path.join(cwd, "run"), image] })).entries,
+          (yield* service.getMetadata({ paths: [path.join(cwd, "run"), image, archive] })).entries,
         ).toEqual([
           { kind: "file", byteLength: script.length, mimeType: "text/x-python" },
           { kind: "file", byteLength: 8, mimeType: "image/png" },
+          { kind: "file", byteLength: 22, mimeType: "application/zip" },
         ]);
       }),
     );
@@ -527,7 +532,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     );
 
     it.effect.skipIf(!symlinksSupported)(
-      "rejects symlinks that resolve outside the workspace root",
+      "reads through symlinks that resolve outside the workspace root as read-only",
       () =>
         Effect.gen(function* () {
           const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -535,39 +540,29 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           const path = yield* Path.Path;
           const cwd = yield* makeTempDir;
           const outsideDir = yield* makeTempDir;
-          yield* writeTextFile(outsideDir, "secret.txt", "outside\n");
-          yield* fileSystem.symlink(
-            path.join(outsideDir, "secret.txt"),
-            path.join(cwd, "linked-secret.txt"),
-          );
+          yield* writeTextFile(outsideDir, "specs/design.md", "outside\n");
+          yield* writeTextFile(cwd, "inside.md", "inside\n");
+          yield* fileSystem.symlink(outsideDir, path.join(cwd, "_files"));
 
-          const error = yield* workspaceFileSystem
-            .readFile({ cwd, relativePath: "linked-secret.txt" })
-            .pipe(Effect.flip);
-          const resolvedWorkspaceRoot = yield* fileSystem.realPath(cwd);
-          const resolvedPath = yield* fileSystem.realPath(path.join(outsideDir, "secret.txt"));
-
-          expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFilePathEscapeError);
-          expect(error).toMatchObject({
-            workspaceRoot: cwd,
-            relativePath: "linked-secret.txt",
-            resolvedWorkspaceRoot,
-            resolvedPath,
+          const result = yield* workspaceFileSystem.readFile({
+            cwd,
+            relativePath: "_files/specs/design.md",
           });
-          expect("cause" in error).toBe(false);
+          expect(result).toMatchObject({
+            relativePath: "_files/specs/design.md",
+            contents: "outside\n",
+            readOnly: true,
+          });
 
-          yield* fileSystem.symlink(outsideDir, path.join(cwd, "linked-dir"));
-          const missingChildError = yield* workspaceFileSystem
-            .readFile(
-              Object.assign(
-                { cwd, relativePath: "linked-dir/missing/t3.json" },
-                { allowMissing: true },
-              ),
-            )
-            .pipe(Effect.flip);
-          expect(missingChildError).toBeInstanceOf(
-            WorkspaceFileSystem.WorkspaceFilePathEscapeError,
-          );
+          const inside = yield* workspaceFileSystem.readFile({ cwd, relativePath: "inside.md" });
+          expect(inside.readOnly).toBeUndefined();
+
+          const missing = yield* workspaceFileSystem.readFile({
+            cwd,
+            relativePath: "_files/missing/t3.json",
+            allowMissing: true,
+          });
+          expect(missing.exists).toBe(false);
         }),
     );
 

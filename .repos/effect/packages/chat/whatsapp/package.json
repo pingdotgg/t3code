@@ -1,6 +1,6 @@
 {
   "name": "@effect/chat-whatsapp",
-  "version": "4.1.5",
+  "version": "4.1.6",
   "type": "module",
   "license": "MIT",
   "description": "The WhatsApp Cloud API adapter for effect/chat",

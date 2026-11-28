@@ -7,6 +7,11 @@ import {
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadWaitResult,
 } from "@t3tools/contracts";
+import {
+  fileBasename,
+  isWindowsDrivePath,
+  normalizeProjectPathForComparison,
+} from "@t3tools/shared/path";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -77,6 +82,7 @@ export const make = Effect.gen(function* () {
     environment: string,
     path: string,
   ) {
+    const target = normalizeProjectPathForComparison(path);
     let cursor: number | null = 0;
     while (cursor !== null) {
       const page: Schema.Schema.Type<typeof ProjectToolkit.tools.t3_project_list.successSchema> =
@@ -86,7 +92,9 @@ export const make = Effect.gen(function* () {
           ProjectToolkit.tools.t3_project_list.successSchema,
           { cursor, limit: 100 },
         );
-      const found = page.projects.find((project) => project.workspaceRoot === path);
+      const found = page.projects.find(
+        (project) => normalizeProjectPathForComparison(project.workspaceRoot) === target,
+      );
       if (found !== undefined) return found.id;
       cursor = page.nextCursor;
     }
@@ -104,7 +112,9 @@ export const make = Effect.gen(function* () {
   ) {
     const known = yield* listed(environment, path);
     if (known !== undefined) return known;
-    const title = path.split("/").findLast((part) => part.length > 0) ?? path;
+    const title = isWindowsDrivePath(path)
+      ? fileBasename(path)
+      : (path.split("/").findLast((part) => part.length > 0) ?? path);
     const created = yield* call(
       environment,
       "t3_project_create",
@@ -121,20 +131,33 @@ export const make = Effect.gen(function* () {
     environment: string,
   ) {
     let last: OrchestratorMcpThreadReadResult["items"][number] | undefined;
-    let afterPosition: number | undefined;
+    let cursor: { beforePosition?: number; afterPosition?: number } = {};
     while (true) {
       const read = yield* call(environment, "t3_thread_read", OrchestratorMcpThreadReadResult, {
         threadId: turn.threadId,
         view: "messages",
         limit: 100,
-        ...(afterPosition === undefined ? {} : { afterPosition }),
+        ...cursor,
       });
       last =
         read.items.findLast(
           (item) => item.type === "assistant_message" && item.runId === turn.turnId,
         ) ?? last;
-      if (!read.hasMore || read.nextPosition === null) break;
-      afterPosition = read.nextPosition;
+      const { earlierPosition, nextPosition, hasMore } = read;
+      // Backward pages are chronological too, and hasMore points toward newer items.
+      if (cursor.afterPosition === undefined && earlierPosition != null) {
+        if (last !== undefined || earlierPosition >= (cursor.beforePosition ?? Infinity)) break;
+        cursor = { beforePosition: earlierPosition };
+        continue;
+      }
+      if (
+        cursor.beforePosition !== undefined ||
+        !hasMore ||
+        nextPosition === null ||
+        nextPosition <= (cursor.afterPosition ?? -1)
+      )
+        break;
+      cursor = { afterPosition: nextPosition };
     }
     if (last === undefined) return "";
     let text = last.text ?? "";

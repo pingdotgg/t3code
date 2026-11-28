@@ -68,6 +68,7 @@ describe("projectAutoMonogram", () => {
       ["  Tagium  ", "TM", "lime"],
       ["Café Ünïcode", "CÜ", "fuchsia"],
       ["web2 app", "W2", "emerald"],
+      ["健康顾问", "健", "yellow"],
     ] as const;
     for (const [title, text, color] of desktop) {
       expect(projectAutoMonogram(title)).toEqual({ kind: "monogram", text, color });

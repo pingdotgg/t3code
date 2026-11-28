@@ -3,7 +3,11 @@ import type { Root } from "hast";
 import { defaultSchema, sanitize, type Schema } from "hast-util-sanitize";
 
 import { CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES } from "./codexArtifactTemplates.ts";
-import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
+import {
+  isWindowsDrivePathHref,
+  normalizeMarkdownLinkDestination,
+  parseMarkdownSandboxFileLink,
+} from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 
 type MarkdownImageHastNode = {
@@ -53,6 +57,11 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
 }
 
 const COLOR_SCHEME_MEDIA = /^\(\s*prefers-color-scheme\s*:\s*(dark|light)\s*\)$/i;
+const FIRST_SRCSET_URL = /^[\t\n\f\r ]*([^\t\n\f\r ]+)/;
+
+function normalizeUrlScheme(url: string): string {
+  return url.replace(/^(?:https?|file):/i, (scheme) => scheme.toLowerCase());
+}
 
 /**
  * The renderer resolves an `<img>`'s `src` (workspace files, host media) but never a `<source>`'s
@@ -68,9 +77,11 @@ function moveColorSchemeSourcesToImage(picture: MarkdownImageHastNode) {
     const scheme = typeof media === "string" ? COLOR_SCHEME_MEDIA.exec(media)?.[1] : undefined;
     const srcSet = source.properties?.srcSet;
     const candidate = Array.isArray(srcSet) ? srcSet[0] : srcSet;
-    // A candidate's URL runs to the first space (a descriptor such as `2x` may follow).
+    // HTML srcset splits URLs on ASCII whitespace only, so U+00A0 in filenames stays intact.
     const url =
-      typeof candidate === "string" ? candidate.trim().split(/\s/, 1)[0]?.replace(/,+$/, "") : "";
+      typeof candidate === "string"
+        ? (FIRST_SRCSET_URL.exec(candidate)?.[1]?.replace(/,+$/, "") ?? "")
+        : "";
     const key = scheme?.toLowerCase() === "dark" ? "dataDarkSrc" : "dataLightSrc";
     // As in a browser, the first source that matches a scheme is the one shown.
     if (scheme && url && image.properties?.[key] === undefined) {
@@ -96,6 +107,10 @@ export function rehypePreserveImageSourceMeta() {
           ...(typeof src === "string" && isWindowsDrivePathHref(src) ? { dataLocalSrc: src } : {}),
           ...(typeof title === "string" ? { dataMarkdownTitle: title } : {}),
         };
+        for (const key of ["src", "dataDarkSrc", "dataLightSrc"]) {
+          const value = node.properties[key];
+          if (typeof value === "string") node.properties[key] = normalizeUrlScheme(value);
+        }
       }
       node.children?.forEach(visit);
     };
@@ -107,8 +122,11 @@ export function rehypePreserveImageSourceMeta() {
 
 const IMAGE_SRC_PROTOCOLS = [...(defaultSchema.protocols?.src ?? []), "file", "t3-context"];
 
-// The sanitizer compares schemes case-sensitively, so lowercase accepted editor links first.
-function normalizeLocalEditorHref(href: string): string {
+// The sanitizer compares schemes case-sensitively, so lowercase accepted file link schemes first.
+function normalizeLocalFileHref(href: string): string {
+  if (/^sandbox:/i.test(href)) {
+    return parseMarkdownSandboxFileLink(href) ? href.replace(/^sandbox:/i, "sandbox:") : "";
+  }
   try {
     const url = new URL(href);
     return isLocalEditorFileUrl(url) ? url.href : href;
@@ -118,12 +136,12 @@ function normalizeLocalEditorHref(href: string): string {
   }
 }
 
-export function rehypeNormalizeLocalEditorLinks() {
+export function rehypeNormalizeLocalFileLinks() {
   return (tree: MarkdownImageHastNode) => {
     const visit = (node: MarkdownImageHastNode) => {
       const href = node.properties?.href;
       if (node.type === "element" && node.tagName === "a" && typeof href === "string") {
-        const normalized = normalizeLocalEditorHref(href);
+        const normalized = normalizeLocalFileHref(normalizeUrlScheme(href));
         if (normalized !== href) node.properties = { ...node.properties, href: normalized };
       }
       node.children?.forEach(visit);
@@ -163,6 +181,7 @@ export const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     href: [
       ...(defaultSchema.protocols?.href ?? []),
       "file",
+      "sandbox",
       "t3-citation",
       "t3-context",
       THREAD_LINK_PROTOCOL,

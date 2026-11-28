@@ -65,10 +65,12 @@ export function scheduleLabel(
       ? resolve(msg("Every {minutes} min", { minutes }))
       : resolve(msg("Every {seconds} sec", { seconds: Math.round(schedule.everyMs / 1000) }));
   }
-  const weekdays = schedule.weekdays ?? [];
+  const weekdays = [...new Set(schedule.weekdays ?? [])]
+    .filter((day) => day >= 0 && day <= 6)
+    .toSorted((a, b) => a - b);
   const time = formatTimeOfDay(schedule.timeOfDay, timestampFormat);
   const zone = scheduleTimeZoneLabel(timeZone, runAt);
-  if (weekdays.length === 0) {
+  if (weekdays.length === 0 || weekdays.length === 7) {
     return zone === undefined
       ? resolve(msg("Daily at {time}", { time }))
       : resolve(msg("Daily at {time} {zone}", { time, zone }));
@@ -78,9 +80,7 @@ export function scheduleLabel(
       ? resolve(msg("Weekdays at {time}", { time }))
       : resolve(msg("Weekdays at {time} {zone}", { time, zone }));
   }
-  const days = weekdays
-    .map((day) => (day >= 0 && day <= 6 ? weekdayShortLabel(day, locale) : ""))
-    .join(", ");
+  const days = weekdays.map((day) => weekdayShortLabel(day, locale)).join(", ");
   return zone === undefined
     ? resolve(msg("{days} at {time}", { days, time }))
     : resolve(msg("{days} at {time} {zone}", { days, time, zone }));
@@ -136,11 +136,9 @@ export interface DraftState {
   readonly baseRef: string;
   readonly startFromOrigin: boolean;
   readonly existingWorktreePath: string;
-  readonly modelKey: string;
+  readonly modelSelection: ModelSelection | null;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
-  /** Retain the source selection's provider options when the picker leaves instanceId:model unchanged. */
-  readonly baseModelSelection: ModelSelection | null;
   readonly signatureEnabled: boolean;
   readonly signatureHeader: string;
   readonly signatureEncoding: "hex" | "base64";
@@ -344,10 +342,9 @@ export function taskToDraft(task: ScheduledTask): DraftState {
       task.workspaceStrategy.type === "existing_worktree"
         ? task.workspaceStrategy.worktreePath
         : "",
-    modelKey: `${task.modelSelection.instanceId}:${task.modelSelection.model}`,
+    modelSelection: task.modelSelection,
     runtimeMode: task.runtimeMode,
     interactionMode: task.interactionMode,
-    baseModelSelection: task.modelSelection,
     ...(schedule.type === "webhook" && schedule.signature !== null
       ? {
           signatureEnabled: true,
@@ -398,7 +395,7 @@ export function unbindDraftFromThread(draft: DraftState): DraftState {
 
 export function changeDraftProject(draft: DraftState, projectId: string): DraftState {
   if (projectId === draft.projectId) return draft;
-  return { ...unbindDraftFromThread(draft), projectId };
+  return { ...unbindDraftFromThread(draft), projectId, baseRef: "", existingWorktreePath: "" };
 }
 
 /** Threads a task can move to. The current one is left out; the picker always shows it. */

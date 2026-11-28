@@ -1,6 +1,7 @@
 import { FILESYSTEM_METADATA_BATCH_LIMIT } from "@t3tools/contracts";
 import {
   isAbsolutePath,
+  isNetworkPath,
   isWindowsAbsolutePath,
   resolveWorkspaceFilePath,
 } from "@t3tools/shared/path";
@@ -188,7 +189,7 @@ export async function findAgentDirectoryMatch(
 
 // A quoted string or a comment is one token, so `cd` inside either is not read as a command.
 const SHELL_TOKEN = /(?<![^\s;&|()])#[^\n]*|"[^"]*"|'[^']*'|[;&|()\n]|[ \t]+|[^\s;&|()"']+/g;
-const SHELL_NAME = /(?:^|\/)(?:ba|z|da)?sh$/;
+const SHELL_NAME = /(?:^|\/)(?:ba|z|da|k|mk|a)?sh$/;
 const CD_OPTION = /^-[LPe@]*$|^--$/;
 
 /** The operands of the `cd` commands in `script`, in order, through `sh -c "<script>"`. */
@@ -202,7 +203,8 @@ function cdOperands(script: string): Array<string> {
       const operand = rest.find((word) => !CD_OPTION.test(word));
       if (operand !== undefined) operands.push(operand);
     } else if (SHELL_NAME.test(name)) {
-      const inner = rest[rest.findIndex((word) => /^-[a-z]*c$/.test(word)) + 1];
+      const flag = rest.findIndex((word) => /^-[a-zA-Z]*c$/.test(word));
+      const inner = flag < 0 ? undefined : rest[rest[flag + 1] === "--" ? flag + 2 : flag + 1];
       if (inner !== undefined && /^(["']).*\1$/s.test(inner)) {
         operands.push(...cdOperands(inner.slice(1, -1)));
       }
@@ -229,6 +231,8 @@ function literalDirectory(operand: string): string | null {
   const path = /^["']/.test(operand) ? operand.slice(1, -1) : operand;
   // The shell would expand these, and only it knows to what.
   if (!isAbsolutePath(path) || /[$`*?[\]{}"']/.test(path)) return null;
+  // Search roots are local directories; the server stats each one.
+  if (isNetworkPath(path)) return null;
   return path.includes("\\") && !isWindowsAbsolutePath(path) ? null : path;
 }
 

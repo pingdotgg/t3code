@@ -15,6 +15,7 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 });
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 const RUNTIME_MODEL_CATALOG_DRIVERS: ReadonlySet<string> = new Set([
+  "codex",
   "opencode",
   "antigravity",
   "cursor",

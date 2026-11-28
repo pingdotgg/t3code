@@ -5,6 +5,7 @@ import {
   resolveBrowserViewportLayout,
   resolveBrowserViewportTransform,
   resolveFittedBrowserViewport,
+  resolveHiddenBrowserViewportFitScale,
   resolveHiddenBrowserViewportSize,
 } from "./browserViewportLayout";
 
@@ -70,6 +71,18 @@ describe("resolveBrowserViewportLayout", () => {
       }),
     ).toEqual({ width: 1280, height: 800 });
   });
+
+  it.each([
+    { hidden: { width: 1440, height: 900 }, window: { width: 1840, height: 1016 }, scale: 1 },
+    { hidden: { width: 3440, height: 1440 }, window: { width: 1720, height: 1016 }, scale: 0.5 },
+    { hidden: { width: 1000, height: 2000 }, window: { width: 1840, height: 500 }, scale: 0.25 },
+    { hidden: { width: 3440, height: 1440 }, window: { width: 0, height: 0 }, scale: 1 },
+  ])(
+    "fits a $hidden.width x $hidden.height hidden guest in a $window.width x $window.height window",
+    ({ hidden, window, scale }) => {
+      expect(resolveHiddenBrowserViewportFitScale(hidden, window)).toBe(scale);
+    },
+  );
 });
 
 describe("resolveBrowserViewportTransform", () => {

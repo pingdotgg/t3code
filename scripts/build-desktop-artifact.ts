@@ -383,7 +383,7 @@ export class LinuxDesktopBuildPrerequisitesMissingError extends Schema.TaggedErr
         ? ["Add the requested Rust target with:", `  rustup target add ${this.rustTarget}`]
         : []),
       "",
-      "For other distributions, see docs/operations/development.md#linux-appimage-prerequisites.",
+      "For other distributions, see docs/operations/00_development.md#linux-appimage-prerequisites.",
       "Then rerun `vp run dist:desktop:linux`.",
     ].join("\n");
   }
@@ -455,7 +455,7 @@ export class WindowsDesktopBuildPrerequisitesMissingError extends Schema.TaggedE
       "Install Rust from https://rustup.rs and add the requested target:",
       `  rustup target add ${this.rustTarget}`,
       "Install Python 3 and the Visual Studio Build Tools components listed in",
-      "docs/operations/development.md#windows-installer-prerequisites.",
+      "docs/operations/00_development.md#windows-installer-prerequisites.",
       "",
       "Then rerun the desktop artifact command.",
     ].join("\n");
@@ -2825,6 +2825,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     productName: resolveDesktopProductName(version),
     artifactName: "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
+    // runAsNode stays on: the app starts its server, helpers and the `t3` shim by running this
+    // binary as Node, and that mode still accepts inspector flags.
+    electronFuses: {
+      enableNodeCliInspectArguments: false,
+      // Nothing signs an unsigned macOS build after the flip, which voids its ad hoc signature.
+      resetAdHocDarwinSignature: platform === "mac" && !signed,
+    },
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
       ...(platform === "mac"

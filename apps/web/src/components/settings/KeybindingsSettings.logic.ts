@@ -71,6 +71,7 @@ const CORE_WHEN_VARIABLES = [
   "terminalFocus",
   "terminalOpen",
   "previewOpen",
+  "composerEmpty",
   "isWeb",
   "isDesktop",
   "true",
@@ -173,9 +174,22 @@ function sourceForBinding(binding: ResolvedKeybindingRule): KeybindingSource {
 
 function defaultBindingForBinding(
   binding: ResolvedKeybindingRule,
+  keybindings: ResolvedKeybindingsConfig,
 ): ResolvedKeybindingRule | undefined {
   const bindingKey = shortcutToKeybindingInput(binding.shortcut);
   const bindingWhen = whenAstToExpression(binding.whenAst);
+  const isBound = (entry: ResolvedKeybindingRule) =>
+    keybindings.some(
+      (other) =>
+        other.command === entry.command &&
+        shortcutToKeybindingInput(other.shortcut) === shortcutToKeybindingInput(entry.shortcut) &&
+        [whenAstToExpression(entry.whenAst), "false"].includes(whenAstToExpression(other.whenAst)),
+    );
+  // An edited row does not record which default it replaced; a default the command still has,
+  // or that is unassigned, cannot be it.
+  const findDefault = (matches: (entry: ResolvedKeybindingRule) => boolean) =>
+    DEFAULT_RESOLVED_KEYBINDINGS.find((entry) => matches(entry) && !isBound(entry)) ??
+    DEFAULT_RESOLVED_KEYBINDINGS.find(matches);
 
   return (
     DEFAULT_RESOLVED_KEYBINDINGS.find(
@@ -191,11 +205,11 @@ function defaultBindingForBinding(
             shortcutToKeybindingInput(entry.shortcut) === bindingKey,
         )
       : undefined) ??
-    DEFAULT_RESOLVED_KEYBINDINGS.find(
+    findDefault(
       (entry) =>
         entry.command === binding.command && whenAstToExpression(entry.whenAst) === bindingWhen,
     ) ??
-    DEFAULT_RESOLVED_KEYBINDINGS.find((entry) => entry.command === binding.command)
+    findDefault((entry) => entry.command === binding.command)
   );
 }
 
@@ -205,7 +219,9 @@ function keybindingRowId(command: KeybindingCommand, key: string, when: string):
 
 function conflictsWithWhen(leftWhen: string, rightWhen: string): boolean {
   if (leftWhen === "false" || rightWhen === "false") return false;
-  return leftWhen.length === 0 || rightWhen.length === 0 || leftWhen === rightWhen;
+  // An empty condition and "true" are both always active.
+  const always = (when: string) => when.length === 0 || when === "true";
+  return always(leftWhen) || always(rightWhen) || leftWhen === rightWhen;
 }
 
 export function keybindingConflictLabels(
@@ -243,6 +259,7 @@ const KEYBINDING_GROUPS = [
     id: "navigation",
     title: msg("Navigation"),
     prefixes: [
+      "navigation",
       "sidebar",
       "rightPanel",
       "commandPalette",
@@ -320,7 +337,7 @@ export function buildKeybindingRows(
   }
   const rowsById = new Map<string, KeybindingRow>();
   for (const [index, binding] of keybindings.entries()) {
-    const defaultBinding = defaultBindingForBinding(binding);
+    const defaultBinding = defaultBindingForBinding(binding, keybindings);
     const key = shortcutToKeybindingInput(binding.shortcut);
     const when = whenAstToExpression(binding.whenAst);
     const id = keybindingRowId(binding.command, key, when);
@@ -372,6 +389,7 @@ export function filterKeybindingRows(
   rows: ReadonlyArray<KeybindingRow>,
   query: string,
   resolve: MessageResolver = m,
+  platform = navigator.platform,
 ): ReadonlyArray<KeybindingRow> {
   const normalizedQuery = query.trim().toLowerCase();
   if (normalizedQuery.length === 0) return rows;
@@ -380,6 +398,8 @@ export function filterKeybindingRows(
       row.command.toLowerCase().includes(normalizedQuery) ||
       commandLabel(row.command, resolve).toLowerCase().includes(normalizedQuery) ||
       row.key.toLowerCase().includes(normalizedQuery) ||
+      // The row shows the platform label ("Ctrl+K"), not the stored "mod+k".
+      formatShortcutLabel(row.binding.shortcut, platform).toLowerCase().includes(normalizedQuery) ||
       row.when.toLowerCase().includes(normalizedQuery) ||
       row.source.toLowerCase().includes(normalizedQuery)
     );
@@ -463,6 +483,8 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "terminal.splitVertical": msg("Terminal: Split Vertical"),
   "terminal.new": msg("Terminal: New"),
   "terminal.close": msg("Terminal: Close"),
+  "terminal.previous": msg("Terminal: Previous"),
+  "terminal.next": msg("Terminal: Next"),
   "rightPanel.toggle": msg("Right Panel: Toggle"),
   "rightPanel.new": msg("Right Panel: New"),
   "threadPanel.toggle": msg("Thread Panel: Toggle"),
@@ -478,7 +500,7 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "commandPalette.toggle": msg("Command Palette: Toggle"),
   "filePicker.toggle": msg("File Picker: Toggle"),
   "projectSearch.toggle": msg("Project Search: Toggle"),
-  "usage.open": msg("Usage: Open"),
+  "usage.open": msg("Usage: Toggle"),
   "theme.select": msg("Theme: Select"),
   "appearance.cycle": msg("Appearance: Cycle"),
   "themeEditor.toggle": msg("Theme Editor: Toggle"),
@@ -570,6 +592,10 @@ function recordedLayoutShortcutKey(
   const physicalKey = shortcutKeyFromEvent(event, platform);
   const layoutKey = event.key.toLowerCase();
   if (event.altKey || layoutKey.length !== 1) return physicalKey;
+  // A non-Latin letter (Cyrillic, Greek, ...) stops matching once the user switches to a Latin layout.
+  if (/^\p{L}$/u.test(layoutKey) && !/\p{Script=Latin}/u.test(layoutKey)) {
+    return /^Key[A-Z]$/.test(event.code) ? event.code.slice(3).toLowerCase() : physicalKey;
+  }
   // Normalize only US shifted glyphs at their US position. Other layouts can
   // produce the same glyph without Shift or at a different position.
   const unshiftedKey = event.shiftKey ? US_SHIFTED_TO_UNSHIFTED_KEYS.get(layoutKey) : undefined;

@@ -101,6 +101,7 @@ function session(client: WsRpcProtocolClient): RpcSession {
     ready: Effect.void,
     probe: Effect.void,
     inboundFrames: Effect.succeed(0),
+    awaitingReply: Effect.succeed(false),
     closed: Effect.never,
   };
 }
