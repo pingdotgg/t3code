@@ -2,6 +2,17 @@
 
 T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, GitCafe, Cursor Origin, Linear, and Jira Cloud to clone/publish repos, review and merge pull requests, manage issues, and watch CI.
 
+## Review a submodule
+
+The Diff pane starts with the thread's repository. Its changes include submodule commit
+pointers, as in Git. Use the repository picker to review an initialized submodule, including
+nested submodules, without opening another project. Detached checkouts appear as HEAD.
+
+Changes, Uncommitted, commit lists and comparison branches use the selected repository.
+Switching repositories resets the comparison branch to Automatic. File paths are relative to
+the selected repository. Turn diffs use the repositories recorded in that turn's checkpoints.
+Initialize a submodule with Git before selecting it.
+
 ## Connect an account
 
 Install Git and authenticate on the machine running your T3 Code server (for remote environments, do this on the remote machine), then click **Rescan** in **Settings → Source control & issues**.

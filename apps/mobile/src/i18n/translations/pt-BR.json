@@ -5720,5 +5720,9 @@
   "f6cf1627f4acc5ef": "Visibilidade do comentário",
   "eb1fd384ad5919dd": "Nota interna",
   "b45f0b467e9406d0": "Responder ao cliente",
-  "15e5597f8f93ce12": "{start} a {end}"
+  "15e5597f8f93ce12": "{start} a {end}",
+  "f1b3ae2ae2319a51": "Selecionar repositório Git",
+  "18ed3e1af363c529": "Repositório do espaço de trabalho",
+  "9bdaf65c667dedf2": "Revisar o repositório da conversa",
+  "332d417f22d1e83e": "A detecção atingiu o limite de repositórios."
 }

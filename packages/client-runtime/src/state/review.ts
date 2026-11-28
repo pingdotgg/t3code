@@ -111,6 +111,11 @@ export function createReviewEnvironmentAtoms<R, E>(
     });
   };
   return {
+    repositories: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:review:repositories",
+      tag: WS_METHODS.reviewGetRepositories,
+      staleTimeMs: 30_000,
+    }),
     branchCommits: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:review:branch-commits",
       tag: WS_METHODS.reviewGetBranchCommits,
@@ -158,6 +163,7 @@ export function createReviewEnvironmentAtoms<R, E>(
           JSON.stringify([
             environmentId,
             input.cwd,
+            input.requireRepositoryRoot === true,
             input.sourceKind,
             input.baseRef,
             input.headRef,

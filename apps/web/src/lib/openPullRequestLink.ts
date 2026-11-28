@@ -1,3 +1,5 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { parsePullRequestAnchor } from "@t3tools/shared/pullRequestAnchor";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
@@ -218,6 +220,17 @@ export function useOpenChangeRequestLink(
               (source) => source.kind === "commit" && source.headRef === commit.sha,
             )
           ) {
+            const selectedCwd =
+              useDiffPanelStore.getState().repositoryCwdByThreadKey[
+                scopedThreadKey(resolvedThreadRef)
+              ];
+            const workspaceCwd = commitThread.worktreePath ?? commitProject.workspaceRoot;
+            if (
+              selectedCwd &&
+              normalizeProjectPathForComparison(selectedCwd) !==
+                normalizeProjectPathForComparison(workspaceCwd)
+            )
+              useDiffPanelStore.getState().clearRepository(resolvedThreadRef);
             useDiffPanelStore.getState().selectCommit(resolvedThreadRef, commit.sha);
             useRightPanelStore.getState().open(resolvedThreadRef, "diff");
             return;

@@ -40,7 +40,9 @@ export function useReviewHeaderPresentation(props: {
   );
   // Selection-based git hooks apply only to reviews of the selected thread.
   const gitMenuAvailable =
-    selectedThread !== null && String(selectedThread.id) === String(props.threadId);
+    selectedThread !== null &&
+    String(selectedThread.id) === String(props.threadId) &&
+    props.selectedThreadCwd !== null;
   const gitMenu = useThreadGitMenuDefinition({
     environmentId: props.environmentId,
     threadId: props.threadId,

@@ -5720,5 +5720,9 @@
   "f6cf1627f4acc5ef": "Visibilité du commentaire",
   "eb1fd384ad5919dd": "Note interne",
   "b45f0b467e9406d0": "Répondre au client",
-  "15e5597f8f93ce12": "{start} à {end}"
+  "15e5597f8f93ce12": "{start} à {end}",
+  "f1b3ae2ae2319a51": "Choisir un dépôt Git",
+  "18ed3e1af363c529": "Dépôt de l’espace de travail",
+  "9bdaf65c667dedf2": "Examiner le dépôt du fil",
+  "332d417f22d1e83e": "La détection a atteint la limite de dépôts."
 }

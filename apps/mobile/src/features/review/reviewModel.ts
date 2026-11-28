@@ -15,7 +15,6 @@ export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
 export type ReviewGitSectionKind = Exclude<ReviewSectionKind, "turn">;
 type ReviewGitSource = ReviewDiffPreviewSource & { readonly kind: ReviewGitSectionKind };
 
-const CHANGES_SECTION_ID = "git:branch-range";
 const GIT_SECTION_KINDS = ["working-tree", "branch-range"] as const;
 const GIT_PLACEHOLDER_TITLES = {
   "working-tree": msg("Uncommitted", { $context: "diff section: working tree" }),
@@ -571,6 +570,7 @@ export function reviewTurnDiffsBySectionId(
 }
 
 export function buildReviewSectionItems(input: {
+  readonly repositoryPath?: string;
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
   readonly gitSections: ReadonlyArray<ReviewDiffPreviewSource>;
   readonly turnDiffById: Readonly<Record<string, string | undefined>>;
@@ -601,13 +601,14 @@ export function buildReviewSectionItems(input: {
   );
 
   const gitItems = GIT_SECTION_KINDS.flatMap<ReviewSectionItem>((kind) => {
+    const id = input.repositoryPath ? `git:${kind}:${input.repositoryPath}` : `git:${kind}`;
     const section = input.gitSections.find(
       (candidate): candidate is ReviewGitSource => candidate.kind === kind,
     );
     if (section) {
       return [
         {
-          id: `git:${kind}`,
+          id,
           kind,
           title: section.title,
           subtitle: gitSubtitle(section, resolve),
@@ -624,7 +625,7 @@ export function buildReviewSectionItems(input: {
       ? []
       : [
           {
-            id: `git:${kind}`,
+            id,
             kind,
             title: resolve(GIT_PLACEHOLDER_TITLES[kind]),
             subtitle: null,
@@ -640,7 +641,7 @@ export function buildReviewSectionItems(input: {
 export function getDefaultReviewSectionId(
   sections: ReadonlyArray<ReviewSectionItem>,
 ): string | null {
-  return (sections.find((section) => section.id === CHANGES_SECTION_ID) ?? sections[0])?.id ?? null;
+  return (sections.find((section) => section.kind === "branch-range") ?? sections[0])?.id ?? null;
 }
 
 /**

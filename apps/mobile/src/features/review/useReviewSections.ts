@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { Atom } from "effect/reactivity";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { msg, useMessages } from "gt-react-native";
 
 import { deriveThreadCheckpointSummaries } from "@t3tools/client-runtime/state/thread-checkpoints";
@@ -61,19 +61,56 @@ export function useReviewSections(input: {
   const { canReadFiles } = fileAccess;
   const selectedThread = useSelectedThreadProjection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const [repositoryChoice, setRepositoryChoice] = useState<{
+    threadKey: string | null;
+    cwd: string;
+  } | null>(null);
+  const repositoriesQuery = useEnvironmentQuery(
+    canReadFiles && enabled && environmentId && selectedThreadCwd
+      ? reviewEnvironment.repositories({ environmentId, input: { cwd: selectedThreadCwd } })
+      : null,
+  );
   const { selectedThreadProject } = useThreadSelection();
+  const repositories = (repositoriesQuery.data?.repositories ?? []).map((repo) =>
+    repo.path ? repo : { ...repo, name: selectedThreadProject?.title || repo.name },
+  );
+  const requestedCwd =
+    repositoryChoice?.threadKey === reviewCache.threadKey ? repositoryChoice.cwd : undefined;
+  const requestedRepository = repositories.find((repo) => repo.cwd === requestedCwd);
+  const repositoryUnavailable =
+    requestedCwd !== undefined && requestedCwd !== selectedThreadCwd && !requestedRepository;
+  const repositoryTruncated = repositoryUnavailable && repositoriesQuery.data?.truncated === true;
+  const repositoryMissing =
+    repositoryUnavailable && repositoriesQuery.successResult !== null && !repositoryTruncated;
+  if (repositoryMissing) {
+    setRepositoryChoice(null);
+  }
+  const repositoryUnresolved = repositoryUnavailable && !repositoryMissing;
+  const selectedRepository = repositoryUnresolved
+    ? undefined
+    : (requestedRepository ?? repositories[0]);
+  const reviewCwd = repositoryUnresolved
+    ? null
+    : selectedRepository?.path
+      ? selectedRepository.cwd
+      : selectedThreadCwd;
+  const repositoryPath = selectedRepository?.path ?? "";
   const diffPreviewQuery = (sourceKind: ReviewGitSectionKind) =>
-    canReadFiles && enabled && environmentId !== undefined && selectedThreadCwd !== null
+    canReadFiles && enabled && environmentId !== undefined && reviewCwd !== null
       ? reviewEnvironment.diffPreview({
           environmentId,
-          input: { cwd: selectedThreadCwd, sourceKind },
+          input: {
+            cwd: reviewCwd,
+            sourceKind,
+            ...(repositoryPath ? { requireRepositoryRoot: true } : {}),
+          },
         })
       : null;
   const workingTreePreview = useEnvironmentQuery(diffPreviewQuery("working-tree"));
   const branchPreview = useEnvironmentQuery(diffPreviewQuery("branch-range"));
   const lastGitSections = useAtomValue(
-    environmentId !== undefined && selectedThreadCwd !== null
-      ? lastReviewGitSectionsAtom(environmentId, selectedThreadCwd)
+    environmentId !== undefined && reviewCwd !== null
+      ? lastReviewGitSectionsAtom(environmentId, reviewCwd)
       : NO_GIT_SECTIONS_ATOM,
   );
 
@@ -107,6 +144,7 @@ export function useReviewSections(input: {
     checkpoints: readyCheckpoints,
     gitSections: canReadFiles || fileAccess.isPending ? gitSections : [],
     turnDiffById: reviewTurnDiffsBySectionId(readyCheckpoints, lastTurnDiffs),
+    repositoryPath,
     gitSectionStates: {
       "working-tree": gitSectionState(fileAccess.isPending, workingTreePreview),
       "branch-range": gitSectionState(fileAccess.isPending, branchPreview),
@@ -155,6 +193,10 @@ export function useReviewSections(input: {
   const selectedSection =
     reviewSections.find((section) => section.id === selectedSectionId) ?? null;
 
+  // With a child unresolved there are no Git sections, so a turn can be selected only as a fallback.
+  const repositoryFailureVisible =
+    repositoryUnresolved &&
+    !(selectedSection?.kind === "turn" && reviewCache.selectedSectionId === selectedSection.id);
   const selectedGitPreview =
     selectedSection?.kind === "working-tree"
       ? workingTreePreview
@@ -168,8 +210,9 @@ export function useReviewSections(input: {
     }
     if (selectedSection?.kind === "turn") {
       activeTurnDiff.refresh();
-      return;
+      if (!repositoryFailureVisible) return;
     }
+    repositoriesQuery.refresh();
     if (selectedGitPreview) {
       selectedGitPreview.refresh();
     } else {
@@ -184,8 +227,29 @@ export function useReviewSections(input: {
     }
   };
 
+  const selectRepository = (cwd: string | null) => {
+    if (
+      cwd !== null &&
+      ((requestedCwd ?? selectedThreadCwd) === cwd ||
+        !repositories.some((repo) => repo.cwd === cwd))
+    )
+      return;
+    setRepositoryChoice(cwd === null ? null : { threadKey: reviewCache.threadKey, cwd });
+    if (reviewCache.threadKey) setReviewSelectedSectionId(reviewCache.threadKey, null);
+  };
+
   return {
+    repositories,
+    selectedRepository,
+    selectRepository,
+    canReviewWorkspaceRepository: repositoryFailureVisible && selectedThreadCwd !== null,
+    reviewCwd: selectedSection?.kind === "turn" ? selectedThreadCwd : reviewCwd,
+    repositoryPath: selectedSection?.kind === "turn" ? "" : repositoryPath,
     error:
+      (repositoryFailureVisible
+        ? (repositoriesQuery.error ??
+          (repositoryTruncated ? messages(msg("Repository discovery reached its limit.")) : null))
+        : null) ??
       (selectedSection?.kind === "turn"
         ? activeTurnDiff.error
         : (selectedGitPreview?.error ?? null)) ??
@@ -193,9 +257,10 @@ export function useReviewSections(input: {
         ? (fileAccess.error ?? messages(msg("This connection cannot read local diffs.")))
         : null),
     isSelectedSectionPending:
-      selectedSection?.kind === "turn"
+      (repositoryFailureVisible && repositoriesQuery.isPending) ||
+      (selectedSection?.kind === "turn"
         ? activeTurnDiff.isPending
-        : (selectedGitPreview?.isPending ?? false),
+        : (selectedGitPreview?.isPending ?? false)),
     reviewSections,
     selectedSection,
     refreshSelectedSection,

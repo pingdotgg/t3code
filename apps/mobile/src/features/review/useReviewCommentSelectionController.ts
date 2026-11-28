@@ -28,6 +28,7 @@ export function useReviewCommentSelectionController(input: {
   readonly environmentId?: EnvironmentId;
   readonly threadId?: ThreadId;
   readonly selectedSection: ReviewSectionItem | null;
+  readonly repositoryPath?: string;
   readonly nativeReviewDiffData: NativeReviewDiffData;
 }) {
   const { environmentId, nativeReviewDiffData, selectedSection, threadId } = input;
@@ -108,11 +109,14 @@ export function useReviewCommentSelectionController(input: {
       return;
     }
 
+    const filePath = input.repositoryPath
+      ? input.repositoryPath + "/" + target.filePath
+      : target.filePath;
     if (gesture === "longPress") {
       startReviewCommentRange(scope, {
         sectionId: selectedSection.id,
         sectionTitle: selectedSection.title,
-        filePath: target.filePath,
+        filePath,
         lines: target.lines,
         lineIndex: target.lineIndex,
         rowId,
@@ -120,7 +124,7 @@ export function useReviewCommentSelectionController(input: {
       return;
     }
 
-    if (pendingRange && pendingRange.filePath === target.filePath) {
+    if (pendingRange && pendingRange.filePath === filePath) {
       completeReviewCommentRange(
         scope,
         buildReviewCommentTarget(pendingRange, pendingRange.lineIndex, target.lineIndex),
@@ -131,7 +135,7 @@ export function useReviewCommentSelectionController(input: {
     setReviewCommentTarget(scope, {
       sectionTitle: selectedSection.title,
       sectionId: selectedSection.id,
-      filePath: target.filePath,
+      filePath,
       lines: target.lines,
       startIndex: target.lineIndex,
       endIndex: target.lineIndex,

@@ -13049,5 +13049,10 @@
   "5807c08e225c6b3d": "Herunterladen",
   "0d50b5bfe7151ece": "Datei konnte nicht heruntergeladen werden",
   "eb1fd384ad5919dd": "Interne Notiz",
-  "b45f0b467e9406d0": "Dem Kunden antworten"
+  "b45f0b467e9406d0": "Dem Kunden antworten",
+  "e2e33c27c4a3af4c": "Repository suchen...",
+  "b781f558378592af": "Kein passendes Repository.",
+  "18ed3e1af363c529": "Repository des Arbeitsbereichs",
+  "332d417f22d1e83e": "Die Suche hat ihr Limit für Repositorys erreicht.",
+  "9bdaf65c667dedf2": "Repository des Threads prüfen"
 }

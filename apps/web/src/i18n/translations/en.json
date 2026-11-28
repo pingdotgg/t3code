@@ -13057,5 +13057,10 @@
   "5807c08e225c6b3d": "Download",
   "0d50b5bfe7151ece": "Could not download file",
   "eb1fd384ad5919dd": "Internal note",
-  "b45f0b467e9406d0": "Reply to customer"
+  "b45f0b467e9406d0": "Reply to customer",
+  "e2e33c27c4a3af4c": "Find repository...",
+  "b781f558378592af": "No matching repository.",
+  "18ed3e1af363c529": "Workspace repository",
+  "332d417f22d1e83e": "Repository discovery reached its limit.",
+  "9bdaf65c667dedf2": "Review the thread's repository"
 }

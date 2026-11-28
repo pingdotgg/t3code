@@ -148,6 +148,7 @@ export function useReviewDiffData(input: {
   readonly threadKey: string | null;
   readonly environmentId: EnvironmentId | undefined;
   readonly cwd: string | null;
+  readonly repositoryPath?: string;
   readonly selectedSection: ReviewSectionItem | null;
   readonly draftMessage: string;
   readonly draftContext: OrchestrationMessageContext | undefined;
@@ -183,7 +184,7 @@ export function useReviewDiffData(input: {
     [sectionDiff, repositoryFolder, repositoryFolders],
   );
   const registry = useContext(RegistryContext);
-  const { environmentId, cwd } = input;
+  const { environmentId, cwd, repositoryPath } = input;
   const scope = JSON.stringify([environmentId, cwd, lazySource?.kind, source?.baseRef]);
   const hideTestFilesPreference = useHideTestFilesPreference();
   const { hideTestFiles } = hideTestFilesPreference;
@@ -211,9 +212,14 @@ export function useReviewDiffData(input: {
                   input: {
                     cacheKey: scope,
                     // Newer preview revisions refresh patches read under an older one.
-                    preview: { cwd, sourceKind: lazySource.kind },
+                    preview: {
+                      cwd,
+                      sourceKind: lazySource.kind,
+                      ...(repositoryPath ? { requireRepositoryRoot: true } : {}),
+                    },
                     request: {
                       cwd,
+                      ...(repositoryPath ? { requireRepositoryRoot: true } : {}),
                       ...(lazySource.baseRef ? { baseRef: lazySource.baseRef } : {}),
                       ...(lazySource.mergeBase ? { mergeBase: lazySource.mergeBase } : {}),
                       file: {
@@ -227,7 +233,7 @@ export function useReviewDiffData(input: {
                 })
               : null,
           ),
-    [environmentId, cwd, lazySource, indices, scope],
+    [environmentId, cwd, lazySource, indices, scope, repositoryPath],
   );
   const parsedQuery = useMemo(
     () =>
@@ -288,8 +294,15 @@ export function useReviewDiffData(input: {
     if (!selectedSectionId || inlineReviewComments.length === 0) {
       return EMPTY_INLINE_REVIEW_COMMENTS;
     }
-    return inlineReviewComments.filter((comment) => comment.sectionId === selectedSectionId);
-  }, [inlineReviewComments, selectedSectionId]);
+    const prefix = input.repositoryPath ? input.repositoryPath + "/" : "";
+    return inlineReviewComments
+      .filter((comment) => comment.sectionId === selectedSectionId)
+      .map((comment) =>
+        prefix && comment.filePath.startsWith(prefix)
+          ? { ...comment, filePath: comment.filePath.slice(prefix.length) }
+          : comment,
+      );
+  }, [inlineReviewComments, selectedSectionId, input.repositoryPath]);
   const shownDiff = useMemo(
     () => filterPullRequestTestFiles(parsedDiff, hideTestFiles),
     [parsedDiff, hideTestFiles],

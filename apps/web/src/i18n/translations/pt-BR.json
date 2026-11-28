@@ -13049,5 +13049,10 @@
   "5807c08e225c6b3d": "Baixar",
   "0d50b5bfe7151ece": "Não foi possível baixar o arquivo",
   "eb1fd384ad5919dd": "Nota interna",
-  "b45f0b467e9406d0": "Responder ao cliente"
+  "b45f0b467e9406d0": "Responder ao cliente",
+  "e2e33c27c4a3af4c": "Buscar repositório...",
+  "b781f558378592af": "Nenhum repositório correspondente.",
+  "18ed3e1af363c529": "Repositório do espaço de trabalho",
+  "332d417f22d1e83e": "A detecção atingiu o limite de repositórios.",
+  "9bdaf65c667dedf2": "Revisar o repositório da conversa"
 }

@@ -13049,5 +13049,10 @@
   "5807c08e225c6b3d": "Télécharger",
   "0d50b5bfe7151ece": "Impossible de télécharger le fichier",
   "eb1fd384ad5919dd": "Note interne",
-  "b45f0b467e9406d0": "Répondre au client"
+  "b45f0b467e9406d0": "Répondre au client",
+  "e2e33c27c4a3af4c": "Rechercher un dépôt...",
+  "b781f558378592af": "Aucun dépôt correspondant.",
+  "18ed3e1af363c529": "Dépôt de l’espace de travail",
+  "332d417f22d1e83e": "La détection a atteint la limite de dépôts.",
+  "9bdaf65c667dedf2": "Examiner le dépôt du fil"
 }
