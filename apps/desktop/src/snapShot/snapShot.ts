@@ -23,6 +23,9 @@ interface AccessibilityTreeNode {
 }
 
 const MAX_ACCESSIBILITY_TREE_NODES = 10_000;
+// Some apps (seen in Microsoft Outlook) expose cyclic accessibility trees. xa11y's native tree()
+// recursion cannot be interrupted, and both walks recurse, so the depth must be capped.
+export const MAX_ACCESSIBILITY_TREE_DEPTH = 512;
 
 export const WINDOWS_MODIFIER_PAIR_VIRTUAL_KEYS: Record<
   SnapShotModifier,
@@ -370,6 +373,7 @@ export async function accessibleWindowElementTree(
   const visit = async (
     current: AccessibilityElement,
     required: boolean,
+    depth: number,
   ): Promise<MutableAccessibilityNode | undefined> => {
     if (!shouldContinue()) {
       truncated = true;
@@ -417,8 +421,12 @@ export async function accessibleWindowElementTree(
       truncated = true;
       return node;
     }
+    if (depth >= MAX_ACCESSIBILITY_TREE_DEPTH && children.length > 0) {
+      truncated = true;
+      return node;
+    }
     for (const child of children) {
-      const childNode = await visit(child, false);
+      const childNode = await visit(child, false, depth + 1);
       if (!childNode) break;
       node.children.push(childNode);
       options.onProgress?.(root, true, descendantLocationsReliable());
@@ -426,7 +434,7 @@ export async function accessibleWindowElementTree(
     return node;
   };
 
-  const completedRoot = await visit(element, true);
+  const completedRoot = await visit(element, true, 0);
   if (!completedRoot) return undefined;
   const locationsReliable = descendantLocationsReliable();
   const compacted = compactAccessibilityTree(completedRoot, {

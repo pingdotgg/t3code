@@ -118,10 +118,10 @@ export function SimlockDeviceHostEditor(props: {
         type="number"
         min={min}
         max={max}
-        value={draft[field]}
+        value={Number.isNaN(draft[field]) ? "" : draft[field]}
         disabled={props.busy}
         onChange={(event) => {
-          const value = Number(event.target.value);
+          const value = event.target.valueAsNumber;
           setDraft((current) => ({ ...current, [field]: value }));
         }}
       />

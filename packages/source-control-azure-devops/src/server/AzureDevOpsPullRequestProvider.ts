@@ -397,7 +397,12 @@ export const make = Effect.gen(function* () {
     viewerScope: ({ remoteUrl }) => azureDevOpsOrganizationKey(remoteUrl),
 
     getViewer: (input) =>
-      cli.getViewer({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
+      cli
+        .getViewer({
+          cwd: input.cwd,
+          ...(input.remoteUrl === undefined ? {} : { remoteUrl: input.remoteUrl }),
+        })
+        .pipe(Effect.mapError(fail("getViewer"))),
 
     listChangeRequests: (input) =>
       cli

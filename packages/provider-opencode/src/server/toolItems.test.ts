@@ -91,4 +91,41 @@ describe("openCodeToolTurnItem", () => {
     );
     expect(item).toMatchObject({ type: "file_change", fileName: "src/index.ts", ...expected });
   });
+
+  it("splits grep output into one result per matched line", () => {
+    const item = openCodeToolTurnItem(
+      {
+        id: TurnItemId.make("grep-item"),
+        threadId: ThreadId.make("thread"),
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status: "completed",
+        title: "grep",
+        startedAt: null,
+        completedAt: null,
+        updatedAt: DateTime.makeUnsafe("2026-11-04T00:00:00Z"),
+      },
+      {
+        name: "grep",
+        input: { pattern: "export const \\w+", path: "/repo/src" },
+        // Captured from OpenCode 2.4.1.
+        output:
+          'Found 2 matches\n/repo/src/one.ts:\n  Line 1: export const heading = "intro";\n\n\n/repo/src/two.ts:\n  Line 1: export const second = 2;',
+        completedMetadata: undefined,
+      },
+    );
+    expect(item).toMatchObject({
+      type: "file_search",
+      pattern: "export const \\w+",
+      results: [
+        { fileName: "/repo/src/one.ts", line: 1, preview: 'export const heading = "intro";' },
+        { fileName: "/repo/src/two.ts", line: 1, preview: "export const second = 2;" },
+      ],
+    });
+  });
 });

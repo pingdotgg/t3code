@@ -60,9 +60,8 @@ export function gitHubMediaUrl(url: URL): SourceControlMediaUrl | null {
   if (host === RAW_HOST) return rawFile(`https://${host}${url.pathname}${url.search}`);
   if (host === LFS_HOST) return media(`https://${host}${url.pathname}${url.search}`);
   if (!WEB_HOSTS.has(host)) return null;
-  // GitHub links an uploaded video bare, with no extension, and an image as markdown.
   if (ATTACHMENT_PATH_PATTERN.test(url.pathname)) {
-    return media(`https://github.com${url.pathname}`, { kind: "video", immutable: true });
+    return media(`https://github.com${url.pathname}`, { kind: "unknown", immutable: true });
   }
   if (LEGACY_ATTACHMENT_PATH_PATTERN.test(url.pathname)) {
     return media(`https://github.com${url.pathname}`, { immutable: true });

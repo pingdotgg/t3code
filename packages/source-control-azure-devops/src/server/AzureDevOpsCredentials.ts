@@ -15,12 +15,6 @@ import * as Redacted from "effect/Redacted";
 import * as AzureDevOpsClient from "../shared/definition.ts";
 import { azureDevOpsOrganizationKey } from "../shared/organization.ts";
 
-export interface SavedOrganizationToken {
-  /** `dev.azure.com/{organization}`. */
-  readonly organization: string;
-  readonly token: Redacted.Redacted<string>;
-}
-
 /**
  * Tokens the user saved per organization in Source Control settings. A saved token replaces
  * `AZURE_DEVOPS_EXT_PAT` and the `az login` accounts for its organization only.
@@ -34,10 +28,6 @@ export class AzureDevOpsCredentials extends Context.Service<
     readonly savedToken: (
       urlOrRemote: string,
     ) => Effect.Effect<Option.Option<Redacted.Redacted<string>>, SettingsSecretUnresolvedError>;
-    /** The token saved for the organization `az --detect` resolves in a checkout. */
-    readonly savedTokenForCheckout: (
-      cwd: string,
-    ) => Effect.Effect<Option.Option<SavedOrganizationToken>, SettingsSecretUnresolvedError>;
   }
 >()("@t3tools/source-control-azure-devops/server/AzureDevOpsCredentials") {}
 
@@ -55,43 +45,6 @@ const NO_SAVED_TOKENS: SavedTokens = {
   malformed: new Set(),
   secretProviders: {},
   required: new Set(),
-};
-
-/**
- * The push URL `az --detect` reads from `git remote -v`: origin's when it looks like Azure DevOps,
- * otherwise the first other remote's that does. Mirrors the extension's `get_remote_url`.
- */
-const azDetectedRemote = (remoteList: string): string | null => {
-  const remotes = new Map<string, string>();
-  for (const line of remoteList.split("\n")) {
-    const [name, url, kind, ...rest] = line.trim().split(/\s+/);
-    if (name && url && kind && rest.length === 0) remotes.set(name + kind, url);
-  }
-  const origin = remotes.get("origin(push)");
-  if (origin !== undefined && isAzCandidate(origin)) return origin;
-  for (const [key, url] of remotes) {
-    if (key !== "origin(push)" && key.endsWith("(push)") && isAzCandidate(url)) return url;
-  }
-  return null;
-};
-
-// The extension's `is_vsts_url_candidate`, with Python's `urlparse` reduced to what it checks.
-const isAzCandidate = (url: string): boolean => {
-  let lower = url.toLowerCase();
-  // `uri_parse` gives the newer SSH remotes, which lack a scheme, one.
-  if (
-    !lower.startsWith("ssh:") &&
-    (lower.includes("vs-ssh.visualstudio.com") || lower.includes("ssh.dev.azure.com"))
-  ) {
-    lower = `ssh://${lower}`;
-  }
-  const scheme = /^([a-z][a-z0-9+.-]*):/.exec(lower)?.[1] ?? "";
-  const rest = scheme.length === 0 ? lower : lower.slice(scheme.length + 1);
-  const authority = rest.startsWith("//") ? (/^\/\/([^/?#]*)/.exec(rest)?.[1] ?? "") : null;
-  if (authority === "github.com") return false;
-  const path =
-    (authority === null ? rest : rest.slice(authority.length + 2)).split(/[?#]/)[0] ?? "";
-  return path.includes("/_git/") || path.includes("/_ssh/") || scheme === "ssh";
 };
 
 /** @public */
@@ -164,31 +117,10 @@ export const make = Effect.gen(function* () {
           Effect.map((token) => (token ? Option.some(Redacted.make(token)) : Option.none())),
         );
 
-  const detectedRemote = (cwd: string) =>
-    host.git
-      .execute({ operation: "AzureDevOpsCredentials.remotes", cwd, args: ["remote", "-v"] })
-      .pipe(
-        Effect.map((output) => azDetectedRemote(output.stdout)),
-        Effect.orElseSucceed(() => null),
-      );
-
   return AzureDevOpsCredentials.of({
     savedToken: Effect.fn("AzureDevOpsCredentials.savedToken")(function* (urlOrRemote) {
       return yield* tokenFor(azureDevOpsOrganizationKey(urlOrRemote));
     }),
-    savedTokenForCheckout: Effect.fn("AzureDevOpsCredentials.savedTokenForCheckout")(
-      function* (cwd) {
-        const { tokens, malformed, required } = yield* savedTokens;
-        // Most setups save no token; they should not pay for a git lookup on every az run.
-        if (Object.keys(tokens).length === 0 && malformed.size === 0 && required.size === 0)
-          return Option.none();
-        const remote = yield* detectedRemote(cwd);
-        const organization = remote === null ? null : azureDevOpsOrganizationKey(remote);
-        if (organization === null) return Option.none();
-        const token = yield* tokenFor(organization);
-        return Option.map(token, (value) => ({ organization, token: value }));
-      },
-    ),
   });
 });
 

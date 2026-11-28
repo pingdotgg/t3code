@@ -161,8 +161,6 @@ const make = Effect.gen(function* () {
       const url = URL.parse(input.url);
       if (url === null || !isAzureDevOpsServicesUrl(url)) return Option.none();
       const organization = organizationKey(url);
-      yield* tokenLock.withPermit(followAccount);
-      const generation = accountGeneration;
       // A token saved for this organization is used instead of the az login account, chosen from
       // the URL as it will be sent. One that cannot be read sends nothing; the az path reports it.
       // Drop a refused token at the first read after its window, or once the organization uses
@@ -174,6 +172,10 @@ const make = Effect.gen(function* () {
       const saved = yield* credentials.savedToken(url.href).pipe(Effect.option);
       if (Option.isNone(saved)) return Option.none();
       const credential = Option.getOrNull(saved.value);
+      const generation =
+        credential === null
+          ? yield* tokenLock.withPermit(Effect.map(followAccount, () => accountGeneration))
+          : null;
       const refusal = refusals.get(organization);
       if (refusal !== undefined) {
         const same =
@@ -200,7 +202,7 @@ const make = Effect.gen(function* () {
           if (response.status === 401 || (response.status < 300 && !json)) {
             return Clock.currentTimeMillis.pipe(
               Effect.map((at) => {
-                if (credential !== null || generation === accountGeneration) {
+                if (generation === null || generation === accountGeneration) {
                   refusals.set(organization, { until: at + ORGANIZATION_RETRY_MS, by: credential });
                 }
                 return Option.none<string>();
@@ -225,8 +227,9 @@ const make = Effect.gen(function* () {
         Effect.orElseSucceed(() => Option.none<string>()),
       );
       // An account can change while the request or its body is in flight, without another read.
+      if (generation === null) return result;
       yield* tokenLock.withPermit(followAccount);
-      return credential !== null || generation === accountGeneration ? result : Option.none();
+      return generation === accountGeneration ? result : Option.none();
     },
   );
 

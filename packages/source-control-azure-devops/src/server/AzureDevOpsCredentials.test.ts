@@ -6,57 +6,60 @@ import {
   type SettingsSecretValue,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { PullRequestCheckoutRemote } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsCredentials from "./AzureDevOpsCredentials.ts";
 
 const savedTokens = { "dev.azure.com/acme": "acme-pat" };
 
-const remoteList = (remotes: ReadonlyArray<readonly [name: string, url: string]>) =>
-  remotes
-    .flatMap(([name, url]) => [`${name}\t${url} (fetch)`, `${name}\t${url} (push)`])
-    .join("\n");
+const ACME_REMOTE = "git@ssh.dev.azure.com:v3/acme/p1/r1";
+const GLOBEX_REMOTE = "https://dev.azure.com/globex/p1/_git/r1";
+const DETECT_PR_LIST = ["repos", "pr", "list", "--detect", "true"];
 
 function setup(
   input: {
-    readonly origin?: string | null;
-    readonly remotes?: ReadonlyArray<readonly [name: string, url: string]>;
-    readonly environment?: NodeJS.ProcessEnv;
+    readonly origin?: string;
+    readonly pushUrl?: string;
   } = {},
 ) {
-  const remotes = input.remotes ?? (input.origin ? [["origin", input.origin] as const] : []);
-  const execute = vi.fn<SourceControlHost.SourceControlHost["Service"]["git"]["execute"]>(() =>
-    Effect.succeed({ ...TestSourceControlHost.processOutput(remoteList(remotes)) }),
+  const gitOutput =
+    input.origin === undefined
+      ? ""
+      : `origin\t${input.origin} (fetch)\norigin\t${input.pushUrl ?? input.origin} (push)\n`;
+  const git = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>(() =>
+    Effect.succeed(TestSourceControlHost.processOutput(gitOutput)),
   );
   const run = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>(() =>
     Effect.succeed(TestSourceControlHost.processOutput("")),
   );
-  const host = TestSourceControlHost.layer({ process: { run }, git: { execute } });
+  const host = TestSourceControlHost.layer({
+    process: { run: (command) => (command.command === "git" ? git(command) : run(command)) },
+  });
   const layer = AzureDevOpsCli.layer.pipe(
     Layer.provideMerge(AzureDevOpsCredentials.layer),
     Layer.provideMerge(host),
     Layer.provide(NodeServices.layer),
-    Layer.provide(
-      Layer.succeed(HostProcess.Environment, input.environment ?? { AZURE_EXTENSION_DIR: "/ext" }),
-    ),
+    Layer.provide(Layer.succeed(HostProcess.Environment, { AZURE_EXTENSION_DIR: "/ext" })),
   );
   const save = (tokens: Record<string, SettingsSecretValue>) =>
     TestSourceControlHost.TestSourceControlHostSettings.use((settings) =>
       settings.update({ sourceControlHosts: { "azure-devops": { tokens } } }),
     );
-  return { execute, run, layer, save };
+  return { git, run, layer, save };
 }
 
-const savedTokenOrganization = Effect.gen(function* () {
+const savedAcmeToken = Effect.gen(function* () {
   const credentials = yield* AzureDevOpsCredentials.AzureDevOpsCredentials;
-  const token = yield* credentials.savedTokenForCheckout("/w");
-  return Option.map(token, (value) => value.organization).pipe(Option.getOrNull);
+  const token = yield* credentials.savedToken(ACME_REMOTE);
+  return Option.map(token, Redacted.value).pipe(Option.getOrNull);
 });
 
 describe("AzureDevOpsCredentials", () => {
@@ -72,41 +75,6 @@ describe("AzureDevOpsCredentials", () => {
       assert.isTrue(
         Option.isNone(yield* credentials.savedToken("https://dev.azure.com/globex/p1/_git/r1")),
       );
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("reads no remote when no token is saved", () => {
-    const { layer, execute } = setup({ origin: "git@ssh.dev.azure.com:v3/acme/p1/r1" });
-    return Effect.gen(function* () {
-      const credentials = yield* AzureDevOpsCredentials.AzureDevOpsCredentials;
-      assert.isTrue(Option.isNone(yield* credentials.savedTokenForCheckout("/w")));
-      expect(execute).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("uses another Azure DevOps remote when origin is not one, as az does", () => {
-    const { layer, save } = setup({
-      remotes: [
-        ["origin", "git@github.com:someone/web.git"],
-        ["upstream", "https://dev.azure.com/acme/p1/_git/r1"],
-      ],
-    });
-    return Effect.gen(function* () {
-      yield* save(savedTokens);
-      assert.strictEqual(yield* savedTokenOrganization, "dev.azure.com/acme");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("gives no token when az would pick an origin it has no key for", () => {
-    const { layer, save } = setup({
-      remotes: [
-        ["origin", "https://tfs.example.com/collection/p1/_git/r1"],
-        ["upstream", "https://dev.azure.com/acme/p1/_git/r1"],
-      ],
-    });
-    return Effect.gen(function* () {
-      yield* save(savedTokens);
-      assert.isNull(yield* savedTokenOrganization);
     }).pipe(Effect.provide(layer));
   });
 
@@ -142,7 +110,7 @@ describe("AzureDevOpsCredentials", () => {
       return Effect.gen(function* () {
         yield* save(savedTokens);
         const credentials = yield* withUnreadableSecrets(stored);
-        const error = yield* Effect.flip(credentials.savedTokenForCheckout("/w"));
+        const error = yield* Effect.flip(credentials.savedToken(ACME_REMOTE));
         assert.strictEqual(error._tag, "SettingsSecretUnresolvedError");
       }).pipe(Effect.provide(layer));
     },
@@ -152,7 +120,7 @@ describe("AzureDevOpsCredentials", () => {
     const { layer } = setup({ origin: "git@ssh.dev.azure.com:v3/acme/p1/r1" });
     return Effect.gen(function* () {
       const credentials = yield* withUnreadableSecrets();
-      assert.isTrue(Option.isNone(yield* credentials.savedTokenForCheckout("/w")));
+      assert.isTrue(Option.isNone(yield* credentials.savedToken(ACME_REMOTE)));
     }).pipe(Effect.provide(layer));
   });
 
@@ -182,11 +150,10 @@ describe("AzureDevOpsCredentials", () => {
             },
           }),
         );
-        if (stored === "")
-          assert.isTrue(Option.isNone(yield* credentials.savedTokenForCheckout("/w")));
+        if (stored === "") assert.isTrue(Option.isNone(yield* credentials.savedToken(ACME_REMOTE)));
         else
           assert.strictEqual(
-            (yield* Effect.flip(credentials.savedTokenForCheckout("/w")))._tag,
+            (yield* Effect.flip(credentials.savedToken(ACME_REMOTE)))._tag,
             "SettingsSecretUnresolvedError",
           );
       }).pipe(Effect.provide(layer));
@@ -200,25 +167,12 @@ describe("AzureDevOpsCredentials", () => {
         "dev.azure.com/acme": "acme-pat",
         "dev.azure.com/globex": 42 as unknown as SettingsSecretValue,
       });
-      assert.strictEqual(yield* savedTokenOrganization, "dev.azure.com/acme");
+      assert.strictEqual(yield* savedAcmeToken, "acme-pat");
       const credentials = yield* AzureDevOpsCredentials.AzureDevOpsCredentials;
       const error = yield* Effect.flip(
         credentials.savedToken("https://dev.azure.com/globex/p1/_git/r1"),
       );
       assert.strictEqual(error._tag, "SettingsSecretUnresolvedError");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("skips a GitHub SSH origin as az does, for the Azure DevOps remote after it", () => {
-    const { layer, save } = setup({
-      remotes: [
-        ["origin", "ssh://github.com/someone/web.git"],
-        ["upstream", "https://dev.azure.com/acme/p1/_git/r1"],
-      ],
-    });
-    return Effect.gen(function* () {
-      yield* save(savedTokens);
-      assert.strictEqual(yield* savedTokenOrganization, "dev.azure.com/acme");
     }).pipe(Effect.provide(layer));
   });
 });
@@ -231,44 +185,87 @@ describe("AzureDevOpsCli with a saved token", () => {
         "dev.azure.com/acme": { provider: SecretProviderId.make("missing"), reference: "acme-pat" },
       });
       const cli = yield* AzureDevOpsCli.AzureDevOpsCli;
-      const error = yield* Effect.flip(cli.execute({ cwd: "/w", args: ["repos", "pr", "list"] }));
+      const error = yield* Effect.flip(cli.execute({ cwd: "/w", args: DETECT_PR_LIST }));
       assert.strictEqual(error._tag, "AzureDevOpsSavedTokenUnreadableError");
       expect(run).not.toHaveBeenCalled();
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect.each(["checkout", "explicit remote"] as const)(
+  it.effect.each(["checkout", "explicit remote", "project remote"] as const)(
     "gives az the token for the %s organization",
     (source) => {
-      const { layer, run, save } = setup({ origin: "git@ssh.dev.azure.com:v3/acme/p1/r1" });
+      const { layer, git, run, save } = setup({ origin: ACME_REMOTE, pushUrl: GLOBEX_REMOTE });
       return Effect.gen(function* () {
         yield* save({ ...savedTokens, "dev.azure.com/globex": "globex-pat" });
         const cli = yield* AzureDevOpsCli.AzureDevOpsCli;
-        yield* cli.execute({
+        const execute = cli.execute({
           cwd: "/w",
-          args: ["repos", "pr", "list"],
-          ...(source === "explicit remote"
-            ? { remoteUrl: "https://dev.azure.com/globex/p1/_git/r1" }
-            : {}),
+          args: DETECT_PR_LIST,
+          ...(source === "explicit remote" ? { remoteUrl: GLOBEX_REMOTE } : {}),
         });
-        const env = run.mock.calls[0]?.[0].env;
+        yield* source === "project remote"
+          ? execute.pipe(Effect.provideService(PullRequestCheckoutRemote, GLOBEX_REMOTE))
+          : execute;
+        const command = run.mock.calls[0]?.[0];
+        const env = command?.env;
+        expect(command?.args).toEqual(
+          expect.arrayContaining([
+            "--detect",
+            "false",
+            "--organization",
+            source === "checkout" ? "https://dev.azure.com/acme" : "https://dev.azure.com/globex",
+          ]),
+        );
+        expect(git).toHaveBeenCalledTimes(source === "checkout" ? 1 : 0);
         // A config directory with no az login accounts, so the extension cannot prefer one.
         expect(env).toEqual({
           AZURE_CONFIG_DIR: expect.stringContaining("t3code-az-"),
           AZURE_EXTENSION_DIR: "/ext",
-          AZURE_DEVOPS_EXT_PAT: source === "explicit remote" ? "globex-pat" : "acme-pat",
+          AZURE_DEVOPS_EXT_PAT: source === "checkout" ? "acme-pat" : "globex-pat",
         });
         expect(env?.AZURE_CONFIG_DIR).not.toContain(".azure");
       }).pipe(Effect.provide(layer));
     },
   );
 
+  it.effect("stops before launching az if checkout remote discovery fails", () => {
+    const { git, layer, run, save } = setup({ origin: ACME_REMOTE });
+    git.mockReturnValueOnce(
+      Effect.succeed(
+        TestSourceControlHost.processOutput("", { exitCode: ChildProcessSpawner.ExitCode(128) }),
+      ),
+    );
+    return Effect.gen(function* () {
+      yield* save(savedTokens);
+      const cli = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const error = yield* Effect.flip(cli.execute({ cwd: "/w", args: DETECT_PR_LIST }));
+      assert.strictEqual(error._tag, "AzureDevOpsRemoteDiscoveryError");
+      expect(git).toHaveBeenCalledTimes(1);
+      expect(run).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("uses an explicit organization even when the checkout points elsewhere", () => {
+    const { git, layer, run, save } = setup({ origin: ACME_REMOTE });
+    return Effect.gen(function* () {
+      yield* save({ ...savedTokens, "dev.azure.com/globex": "globex-pat" });
+      const cli = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* cli.execute({
+        cwd: "/w",
+        remoteUrl: ACME_REMOTE,
+        args: [...DETECT_PR_LIST, "--org=https://dev.azure.com/globex"],
+      });
+      expect(git).not.toHaveBeenCalled();
+      expect(run.mock.calls[0]?.[0].env?.AZURE_DEVOPS_EXT_PAT).toBe("globex-pat");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("leaves az's own credentials alone in another organization", () => {
     const { layer, run, save } = setup({ origin: "https://dev.azure.com/globex/p1/_git/r1" });
     return Effect.gen(function* () {
       yield* save(savedTokens);
       const cli = yield* AzureDevOpsCli.AzureDevOpsCli;
-      yield* cli.execute({ cwd: "/w", args: ["repos", "pr", "list"] });
+      yield* cli.execute({ cwd: "/w", args: DETECT_PR_LIST });
       expect(run.mock.calls[0]?.[0].env).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });

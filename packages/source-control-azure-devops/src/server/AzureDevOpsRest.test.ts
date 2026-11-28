@@ -228,6 +228,31 @@ it.effect(
   },
 );
 
+it.effect("reads with a saved token while Entra token issuance is blocked", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const { layer, read, run, execute } = setup({
+      tokens: { "dev.azure.com/acme": "acme-pat" },
+      issue: () =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as(tokenJson("t1", 3600)),
+        ),
+      respond: () => ok({ value: [] }),
+    });
+    yield* Effect.gen(function* () {
+      const entraRead = yield* Effect.forkChild(read(GLOBEX));
+      yield* Deferred.await(started);
+      assert.isTrue(Option.isSome(yield* read(ACME)));
+      expect(execute.mock.calls[0]?.[0].headers.authorization).toMatch(/^Basic /);
+      expect(run).toHaveBeenCalledTimes(1);
+      yield* Deferred.succeed(release, undefined);
+      assert.isTrue(Option.isSome(yield* Fiber.join(entraRead)));
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 it.effect("asks az for a token again after the az login account changes", () => {
   const profile = { mtime: SIGNED_IN };
   const { run, layer, read } = setup({ respond: () => ok({ value: [] }), profile });

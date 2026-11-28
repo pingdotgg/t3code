@@ -20,9 +20,11 @@ const mockedExecute = vi.fn<AzureDevOpsCli.AzureDevOpsCli["Service"]["execute"]>
 const mockedGetJson = vi.fn<AzureDevOpsRest.AzureDevOpsRest["Service"]["getJson"]>(
   () => Effect.succeedNone,
 );
-const SAVED_ACME = { organization: "dev.azure.com/acme", token: Redacted.make("acme-pat") };
-const mockedSavedTokenForCheckout = vi.fn<
-  AzureDevOpsCredentials.AzureDevOpsCredentials["Service"]["savedTokenForCheckout"]
+const ACME_REMOTE = "https://dev.azure.com/acme/platform/_git/web";
+const SAVED_ACME = Redacted.make("acme-pat");
+const mockedResolveCheckoutRemote = vi.fn(() => Effect.succeed(ACME_REMOTE));
+const mockedSavedToken = vi.fn<
+  AzureDevOpsCredentials.AzureDevOpsCredentials["Service"]["savedToken"]
 >(() => Effect.succeedNone);
 
 const layer = it.layer(
@@ -30,12 +32,13 @@ const layer = it.layer(
     Layer.provide(
       Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
         execute: mockedExecute,
+        resolveCheckoutRemote: mockedResolveCheckoutRemote,
       }),
     ),
     Layer.provide(Layer.mock(AzureDevOpsRest.AzureDevOpsRest)({ getJson: mockedGetJson })),
     Layer.provide(
       Layer.mock(AzureDevOpsCredentials.AzureDevOpsCredentials)({
-        savedTokenForCheckout: mockedSavedTokenForCheckout,
+        savedToken: mockedSavedToken,
       }),
     ),
     Layer.provide(NodeServices.layer),
@@ -178,8 +181,9 @@ afterEach(() => {
   mockedExecute.mockReset();
   mockedGetJson.mockReset();
   mockedGetJson.mockImplementation(() => Effect.succeedNone);
-  mockedSavedTokenForCheckout.mockReset();
-  mockedSavedTokenForCheckout.mockImplementation(() => Effect.succeedNone);
+  mockedSavedToken.mockReset();
+  mockedResolveCheckoutRemote.mockClear();
+  mockedSavedToken.mockImplementation(() => Effect.succeedNone);
 });
 
 layer("AzureDevOpsPullRequestCli.layer", (it) => {
@@ -295,9 +299,47 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         author: "ana@acme.dev",
       });
 
-      const args = argsOfCall(0);
-      assert.strictEqual(args[args.indexOf("--creator") + 1], "ana@acme.dev");
-      assert.strictEqual(args[args.indexOf("--reviewer") + 1], "bilal@acme.dev");
+      expect(argsOfCall(0)).toContain("--creator=ana@acme.dev");
+      expect(argsOfCall(0)).toContain("--reviewer=bilal@acme.dev");
+    }),
+  );
+
+  it.effect("sends a repository, viewer and author that look like `@path` as text", () =>
+    Effect.gen(function* () {
+      // az has one stdin; it reads each further value from a file that holds the text.
+      const filed = new Map<string, string>();
+      mockedExecute.mockImplementationOnce((input) =>
+        Effect.sync(() => {
+          for (const arg of input.args) {
+            const match = /^(--\w+)=@(.+)$/u.exec(arg);
+            if (match?.[1] === undefined || match[2] === undefined || match[2] === "-") continue;
+            filed.set(match[1], NodeFS.readFileSync(match[2], "utf8"));
+          }
+          return output(pullRequests(1, 1));
+        }),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "@web",
+        state: "open",
+        involvement: "reviewing",
+        viewer: "@bilal",
+        limit: 10,
+        author: "@ana",
+      });
+
+      expect(argsOfCall(0)).toContain("--repository=@-");
+      assert.strictEqual(mockedExecute.mock.calls[0]?.[0].stdin, "@web");
+      assert.deepStrictEqual(
+        [...filed],
+        [
+          ["--reviewer", "@bilal"],
+          ["--creator", "@ana"],
+        ],
+      );
+      expect(argsOfCall(0).filter((arg) => arg.startsWith("@"))).toEqual([]);
     }),
   );
 
@@ -389,7 +431,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
   it.effect("names the saved token's account even when it has no pull requests of its own", () =>
     Effect.gen(function* () {
-      mockedSavedTokenForCheckout.mockReturnValue(Effect.succeedSome(SAVED_ACME));
+      mockedSavedToken.mockReturnValue(Effect.succeedSome(SAVED_ACME));
       mockedGetJson.mockReturnValue(
         Effect.succeedSome(
           JSON.stringify({
@@ -413,7 +455,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
   it.effect("names the saved token's account by its pull requests when Azure does not say", () =>
     Effect.gen(function* () {
-      mockedSavedTokenForCheckout.mockReturnValue(Effect.succeedSome(SAVED_ACME));
+      mockedSavedToken.mockReturnValue(Effect.succeedSome(SAVED_ACME));
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
           output(
@@ -425,13 +467,40 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
       assert.strictEqual(yield* cli.getViewer({ cwd: "/w" }), "pat@acme.dev");
       expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(mockedExecute.mock.calls[0]?.[0].remoteUrl).toBe(ACME_REMOTE);
       expect(argsOfCall(0)).toEqual(expect.arrayContaining(["--creator", "me"]));
     }),
   );
 
+  it.effect(
+    "uses the selected project remote for the viewer even when checkout detection selects another organization",
+    () =>
+      Effect.gen(function* () {
+        const remoteUrl = "https://dev.azure.com/globex/platform/_git/web";
+        mockedSavedToken.mockReturnValueOnce(Effect.succeedSome(Redacted.make("globex-pat")));
+        mockedGetJson.mockReturnValueOnce(
+          Effect.succeedSome(
+            JSON.stringify({
+              authenticatedUser: { properties: { Account: { $value: "pat@globex.dev" } } },
+            }),
+          ),
+        );
+        const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+        assert.strictEqual(yield* cli.getViewer({ cwd: "/w", remoteUrl }), "pat@globex.dev");
+        expect(mockedResolveCheckoutRemote).not.toHaveBeenCalled();
+        expect(mockedSavedToken).toHaveBeenCalledWith("dev.azure.com/globex");
+        expect(mockedGetJson).toHaveBeenCalledWith(
+          expect.objectContaining({
+            url: "https://dev.azure.com/globex/_apis/connectionData",
+          }),
+        );
+      }),
+  );
+
   it.effect("names no viewer when the organization's saved token cannot be read", () =>
     Effect.gen(function* () {
-      mockedSavedTokenForCheckout.mockReturnValue(
+      mockedSavedToken.mockReturnValue(
         Effect.fail(new SettingsSecretUnresolvedError({ provider: "Keychain" })),
       );
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;

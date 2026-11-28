@@ -56,8 +56,8 @@ it.effect("names the remote's repository when reading the default branch", () =>
     const provider = yield* AzureDevOpsSourceControlProvider.make;
     for (const [remoteUrl, repository, scoped] of [
       ["https://acme@dev.azure.com/acme/project/_git/My%20Repo", "My Repo", true],
-      ["https://dev.azure.com/acme/project/_git/My%20Repo?view=x#readme", "My Repo", false],
-      ["https://acme.visualstudio.com/DefaultCollection/project/_git/My%20Repo/", "My Repo", false],
+      ["https://dev.azure.com/acme/project/_git/My%20Repo?view=x#readme", "My Repo", true],
+      ["https://acme.visualstudio.com/DefaultCollection/project/_git/My%20Repo/", "My Repo", true],
       ["git@ssh.dev.azure.com:v3/acme/project/My%20Repo", "My Repo", true],
       ["ssh://git@ssh.dev.azure.com/v3/acme/project/My%20Repo", "My Repo", true],
       ["https://dev.azure.com/acme/project/_git/service.git", "service.git", true],

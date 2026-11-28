@@ -1,3 +1,4 @@
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as Stream from "effect/Stream";
@@ -345,6 +346,12 @@ export interface ProviderFilterOptionPage<A> {
   readonly truncated: boolean;
 }
 
+/** The selected project remote for provider operations that infer scope from the checkout. */
+export const PullRequestCheckoutRemote = Context.Reference<string | undefined>(
+  "@t3tools/source-control-core/server/PullRequestCheckoutRemote",
+  { defaultValue: () => undefined },
+);
+
 export interface ProviderRepositoryRef {
   readonly cwd: string;
   readonly repository: string;
@@ -403,6 +410,7 @@ export interface PullRequestProviderApi {
   readonly getViewer: (input: {
     readonly cwd: string;
     readonly host?: string;
+    readonly remoteUrl?: string;
   }) => Effect.Effect<string, PullRequestProviderError>;
 
   readonly listChangeRequests: (
@@ -444,7 +452,7 @@ export interface PullRequestProviderApi {
 
   readonly getChangeRequestChecks?: (
     input: ProviderRepositoryRef & { readonly number: number },
-  ) => Effect.Effect<Pick<PullRequestChecks, "state" | "checks">, PullRequestProviderError>;
+  ) => Effect.Effect<Omit<PullRequestChecks, "observedAt">, PullRequestProviderError>;
 
   readonly getChangeRequest: (
     input: ProviderRepositoryRef & { readonly number: number },
@@ -621,6 +629,8 @@ export interface PullRequestProviderApi {
       readonly verdict: PullRequestReviewVerdict;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;
+      /** Hosts that can pin a review to a head commit do; the caller has already checked it. */
+      readonly expectedHeadSha?: string;
     },
   ) => Effect.Effect<void, PullRequestProviderError>;
 
