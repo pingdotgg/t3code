@@ -226,7 +226,9 @@ export async function createMuseSdkHost(
       close,
     };
   } catch (error) {
-    await close();
+    await close().catch((shutdownError: unknown) => {
+      if (!isMuseInitializationTimeout(error)) throw shutdownError;
+    });
     throw error;
   } finally {
     clearTimeout(timer);

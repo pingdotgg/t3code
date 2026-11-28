@@ -786,6 +786,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       return yield* new OpenCodeRuntimeError({
         operation: "startOpenCodeServerProcess",
         detail: `Timed out waiting for OpenCode server start after ${timeoutMs}ms.`,
+        probeTimedOut: true,
       });
     }
 
