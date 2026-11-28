@@ -694,10 +694,6 @@
     "./assistantInsights": {
       "types": "./src/assistantInsights.ts",
       "import": "./src/assistantInsights.ts"
-    },
-    "./annotationStroke": {
-      "types": "./src/annotationStroke.ts",
-      "import": "./src/annotationStroke.ts"
     }
   },
   "scripts": {

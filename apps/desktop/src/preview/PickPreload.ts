@@ -25,7 +25,7 @@ import {
   startStroke,
   strokeBounds,
   type StrokeGeometry,
-} from "@t3tools/shared/annotationStroke";
+} from "./AnnotationStroke.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
 import { pageWorld } from "./PageWorldBridge.ts";
 import { pickElementAtPoint } from "./PickTarget.ts";

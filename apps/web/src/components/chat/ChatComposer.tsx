@@ -1515,6 +1515,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const annotateComposerImageStable = useStableCallback((imageId: string) =>
     setAnnotatingImageId(imageId),
   );
+  // The editor opens from the image preview, so closing it returns there, showing the current bytes.
+  const closeComposerImageAnnotation = (imageId: string) => {
+    setAnnotatingImageId(null);
+    const preview = buildExpandedImagePreview(
+      getComposerDraft(attachmentDraftTarget)?.images ?? [],
+      imageId,
+      copyComposerSnapshotStable,
+      annotateComposerImageStable,
+    );
+    if (preview) onExpandImage(preview);
+  };
   const saveAnnotatedComposerImage = async (imageId: string, file: File) => {
     if (questionAttachmentTarget && activePendingIsResponding) return false;
     const prepared = await prepareImageForAttachment(
@@ -1526,7 +1537,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // The edited bytes replace the old ones under the same id, so its finished upload is stale.
     releaseAttachmentUpload(imageId);
     if (!replaceComposerDraftImageFile(attachmentDraftTarget, imageId, prepared.file)) return false;
-    setAnnotatingImageId(null);
+    closeComposerImageAnnotation(imageId);
     return true;
   };
   const buildContextClipboardFragmentStable = useStableCallback(buildContextClipboardFragment);
@@ -3988,7 +3999,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   <ComposerImageAnnotationDialog
                     key={annotatingImage.id}
                     image={annotatingImage}
-                    onCancel={() => setAnnotatingImageId(null)}
+                    onCancel={() => closeComposerImageAnnotation(annotatingImage.id)}
                     onSave={(file) => saveAnnotatedComposerImage(annotatingImage.id, file)}
                   />
                 ) : null}

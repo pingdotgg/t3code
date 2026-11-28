@@ -4,7 +4,7 @@ import {
   startStroke,
   strokeBounds,
   type StrokeGeometry,
-} from "@t3tools/shared/annotationStroke";
+} from "~/lib/annotationStroke";
 import type { PreviewAnnotationRect } from "@t3tools/contracts";
 import { useGT } from "gt-react";
 import { EraserIcon, PencilIcon, Undo2Icon } from "lucide-react";
@@ -276,6 +276,7 @@ export function ComposerImageAnnotationDialog({
         {...composerFloatingLayerProps}
         variant="media"
         mediaControlsPlacement="inside"
+        solidBackdrop
         showCloseButton={false}
         bottomStickOnMobile={false}
         className="row-start-1 h-full max-h-[92vh] w-[92vw] max-w-[92vw] flex-col items-center justify-center overflow-visible [--media-width:92vw] [--media-height:min(calc((100vh-var(--native-titlebar-height,0px))*0.78),calc(100vh-var(--native-titlebar-height,0px)-200px))]"
