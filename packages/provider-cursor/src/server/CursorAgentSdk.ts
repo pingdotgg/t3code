@@ -194,6 +194,8 @@ export interface CursorAgentSdkSession {
   readonly rewindAfterRun?: (runId: string) => Effect.Effect<void, CursorAgentSdkRunnerError>;
   /** False once an out-of-process worker has terminated or started closing; absent on in-process sessions. */
   readonly isAlive?: () => boolean;
+  /** Completes once `isAlive` turns false; absent on in-process sessions. */
+  readonly ended?: Effect.Effect<void>;
   readonly close: Effect.Effect<void, CursorAgentSdkRunnerError>;
 }
 
