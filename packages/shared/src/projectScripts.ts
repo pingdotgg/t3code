@@ -1,4 +1,9 @@
-import { MAX_SCRIPT_ID_LENGTH, type ProjectId, type ProjectScript, type ServerSettings } from "@t3tools/contracts";
+import {
+  MAX_SCRIPT_ID_LENGTH,
+  type ProjectId,
+  type ProjectScript,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 
 const FILE_SCRIPT_RUNNERS: Readonly<Record<string, string>> = {
