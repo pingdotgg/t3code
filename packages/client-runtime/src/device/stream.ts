@@ -10,6 +10,8 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { createCanvasFrameSink, type DeviceFrameSink } from "./frame.ts";
 import { type DeviceHubAccess, withDeviceHubQuery } from "./hubAccess.ts";
+import { usKey, usKeyStrokes } from "./iosKeyboard.ts";
+import { isAltGraphText } from "@t3tools/shared/keybindingMatching";
 import type { DevicePlatform } from "@t3tools/contracts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -323,7 +325,11 @@ export interface DeviceStreamClient {
   readonly setMjpegImage: (image: HTMLImageElement | null) => void;
   /** Normalized 0..1 coordinates in the displayed frame. */
   readonly sendTouch: (phase: "begin" | "move" | "end", x: number, y: number) => void;
-  readonly sendKey: (event: KeyboardEvent, phase: "down" | "up") => void;
+  /**
+   * iOS only: `usLayout` says the simulator's hardware keyboard is US, so the character the
+   * user's own layout produced is typed through the US key for it. Otherwise the key place is sent.
+   */
+  readonly sendKey: (event: KeyboardEvent, phase: "down" | "up", usLayout?: boolean) => void;
   /** Android only: iOS input is HID key codes, which cannot carry arbitrary text. */
   readonly sendText: (text: string) => void;
   readonly pressButton: (button: DeviceHardwareButton) => void;
@@ -383,6 +389,24 @@ const HID_USAGE_BY_CODE: Readonly<Record<string, number>> = {
   MetaRight: 0xe7,
 };
 
+const HID_CONTROL_LEFT = 0xe0;
+const HID_SHIFT_LEFT = 0xe1;
+const HID_OPTION_LEFT = 0xe2;
+const HID_COMMAND_LEFT = 0xe3;
+const HID_FIRST_MODIFIER = HID_CONTROL_LEFT;
+const HID_RIGHT_MODIFIER_OFFSET = 4;
+const IOS_MODIFIER_FLAGS = [
+  ["shiftKey", HID_SHIFT_LEFT],
+  ["ctrlKey", HID_CONTROL_LEFT],
+  ["altKey", HID_OPTION_LEFT],
+  ["metaKey", HID_COMMAND_LEFT],
+] as const;
+
+function typedCharacter(event: KeyboardEvent): string | null {
+  if (event.metaKey || (event.ctrlKey && !isAltGraphText(event))) return null;
+  return [...event.key].length === 1 ? event.key : null;
+}
+
 function hidUsageForCode(code: string): number | null {
   if (/^Key[A-Z]$/.test(code)) return 0x04 + (code.charCodeAt(3) - 65);
   if (/^Digit[1-9]$/.test(code)) return 0x1e + (code.charCodeAt(5) - 49);
@@ -441,6 +465,137 @@ export function createDeviceStreamClient(
   let decodedVideoGeneration: number | null = null;
   let iosInputAdmitted = false;
   let iosInputUnavailable = false;
+  const inputOpen = () =>
+    !stopped &&
+    (!avcc || (iosInputAdmitted && !iosInputUnavailable)) &&
+    socket?.readyState === WebSocket.OPEN;
+  // The modifier keys the user holds, and the ones the simulator was last told are down. They
+  // differ while a typed character needs other modifiers on the US layout than on the user's.
+  const iosHeldModifiers = new Set<number>();
+  const iosSentModifiers = new Set<number>();
+  const iosPressedKeys = new Map<string, number>();
+  // Keys whose keyup came while input was closed: the simulator still holds them.
+  const iosUnreleasedKeys = new Set<number>();
+  const sendIosKey = (type: "down" | "up", usage: number) =>
+    send(taggedJson(IOS_MSG_KEY, { type, usage }));
+  const setIosModifiers = (wanted: Iterable<number>) => {
+    if (!inputOpen()) return;
+    const next = new Set(wanted);
+    for (const usage of iosSentModifiers) {
+      if (next.has(usage)) continue;
+      iosSentModifiers.delete(usage);
+      sendIosKey("up", usage);
+    }
+    for (const usage of next) {
+      if (iosSentModifiers.has(usage)) continue;
+      iosSentModifiers.add(usage);
+      sendIosKey("down", usage);
+    }
+  };
+  const iosInputReopened = () => {
+    for (const usage of iosUnreleasedKeys) sendIosKey("up", usage);
+    iosUnreleasedKeys.clear();
+    setIosModifiers(iosHeldModifiers);
+  };
+  // A modifier's own key events can be missing (a Mac browser keeps Cmd, focus moves while a key
+  // is down), so each key press also brings the held set in line with the event's flags.
+  const syncIosHeldModifiers = (event: KeyboardEvent) => {
+    const altGraph = event.getModifierState?.("AltGraph") === true;
+    // Windows reports AltGr as Ctrl+Alt. Option alone is the AltGr of Apple layouts.
+    const altGraphText = isAltGraphText(event);
+    for (const [flag, left] of IOS_MODIFIER_FLAGS) {
+      const right = left + HID_RIGHT_MODIFIER_OFFSET;
+      const held =
+        flag === "altKey"
+          ? event.altKey || altGraph
+          : event[flag] && !(altGraphText && flag === "ctrlKey");
+      if (!held) {
+        iosHeldModifiers.delete(left);
+        iosHeldModifiers.delete(right);
+      } else if (!iosHeldModifiers.has(left) && !iosHeldModifiers.has(right)) {
+        iosHeldModifiers.add(left);
+      }
+    }
+  };
+  // Keeps the side the user holds, so a held Shift is not swapped for the other one.
+  const heldOrLeft = (left: number) => {
+    const held = [left, left + HID_RIGHT_MODIFIER_OFFSET].filter((usage) =>
+      iosHeldModifiers.has(usage),
+    );
+    return held.length > 0 ? held : [left];
+  };
+  const sendIosKeyEvent = (event: KeyboardEvent, phase: "down" | "up", usLayout: boolean) => {
+    const usage = hidUsageForCode(event.code);
+    if (usage !== null && usage >= HID_FIRST_MODIFIER) {
+      if (phase === "down") iosHeldModifiers.add(usage);
+      else {
+        // Both sides: a modifier taken from a key press's flags is held as the left one.
+        const left =
+          usage >= HID_FIRST_MODIFIER + HID_RIGHT_MODIFIER_OFFSET
+            ? usage - HID_RIGHT_MODIFIER_OFFSET
+            : usage;
+        iosHeldModifiers.delete(left);
+        iosHeldModifiers.delete(left + HID_RIGHT_MODIFIER_OFFSET);
+      }
+      setIosModifiers(iosHeldModifiers);
+      return;
+    }
+    if (phase === "up") {
+      const pressed = iosPressedKeys.get(event.code);
+      if (pressed === undefined) return;
+      iosPressedKeys.delete(event.code);
+      if (!inputOpen()) {
+        iosUnreleasedKeys.add(pressed);
+        return;
+      }
+      sendIosKey("up", pressed);
+      setIosModifiers(iosHeldModifiers);
+      return;
+    }
+    if (!inputOpen()) return;
+    syncIosHeldModifiers(event);
+    const press = (modifiers: Iterable<number>, pressed: number, hold: boolean) => {
+      setIosModifiers(modifiers);
+      sendIosKey("down", pressed);
+      if (hold) iosPressedKeys.set(event.code, pressed);
+      else sendIosKey("up", pressed);
+    };
+    // Keypad keys and Space type the same character on every layout.
+    const byCharacter = usLayout && !event.code.startsWith("Numpad") && event.key !== " ";
+    if (byCharacter) {
+      // The next keydown carries the composed character.
+      if (event.key === "Dead") return;
+      const character = typedCharacter(event);
+      // Alt with a plain letter or digit is a shortcut; Option and AltGr text is another character.
+      const strokes =
+        character !== null && !(event.altKey && /^[a-z0-9]$/i.test(character))
+          ? usKeyStrokes(character)
+          : null;
+      if (strokes) {
+        for (const stroke of strokes) {
+          const strokeUsage = hidUsageForCode(stroke.code);
+          if (strokeUsage === null) continue;
+          press(
+            [
+              ...(stroke.shift ? heldOrLeft(HID_SHIFT_LEFT) : []),
+              ...(stroke.option ? heldOrLeft(HID_OPTION_LEFT) : []),
+            ],
+            strokeUsage,
+            // One key stays down until its keyup, as a key sent by place does. A dead-key
+            // sequence is tapped, so a browser auto-repeat types the whole character again.
+            strokes.length === 1,
+          );
+        }
+        if (strokes.length > 1) setIosModifiers(iosHeldModifiers);
+        return;
+      }
+    }
+    // A shortcut names its letter on the user's layout, which can sit on another US key.
+    const placed = hidUsageForCode((byCharacter && usKey(event.key)?.code) || event.code);
+    if (placed === null) return;
+    // macOS browsers fire no keyup for a key pressed while Cmd is held.
+    press(iosHeldModifiers, placed, !event.metaKey);
+  };
   let timestamp = 0;
   let awaitingKeyframe = true;
   let screen: DeviceScreenSize | null = null;
@@ -1204,6 +1359,7 @@ export function createDeviceStreamClient(
       if (socket !== ws || stopped || bytes.length < 1) return;
       if (bytes[0] === IOS_TAG_INPUT_ADMITTED) {
         iosInputAdmitted = true;
+        if (inputOpen()) iosInputReopened();
         events.onInputConnected(!iosInputUnavailable);
         return;
       }
@@ -1215,7 +1371,9 @@ export function createDeviceStreamClient(
         } else if (bytes[0] === IOS_TAG_SCREEN_CONFIG) {
           const config = decodeScreenConfig(payload);
           if (Option.isSome(config)) {
+            const wasOpen = inputOpen();
             iosInputUnavailable = config.value.inputUnavailable === true;
+            if (!wasOpen && inputOpen()) iosInputReopened();
             events.onInputConnected(
               iosInputAdmitted && !iosInputUnavailable,
               iosInputUnavailable ? resolve(msg("Simulator input is unavailable")) : undefined,
@@ -1395,6 +1553,10 @@ export function createDeviceStreamClient(
   const stop = () => {
     if (stopped) return;
     stopped = true;
+    iosHeldModifiers.clear();
+    iosSentModifiers.clear();
+    iosPressedKeys.clear();
+    iosUnreleasedKeys.clear();
     generation++;
     videoGeneration++;
     duoControl.clear();
@@ -1424,12 +1586,7 @@ export function createDeviceStreamClient(
   };
 
   const send = (payload: Uint8Array<ArrayBuffer> | string) => {
-    if (
-      !stopped &&
-      (!avcc || (iosInputAdmitted && !iosInputUnavailable)) &&
-      socket?.readyState === WebSocket.OPEN
-    )
-      socket.send(payload);
+    if (inputOpen()) socket?.send(payload);
   };
 
   const rawPoint = (x: number, y: number) => {
@@ -1489,7 +1646,8 @@ export function createDeviceStreamClient(
       const action = phase === "begin" ? "down" : phase === "move" ? "move" : "up";
       send(JSON.stringify({ type: "touch", action, x, y }));
     },
-    sendKey: (event, phase) => {
+    sendKey: (event, phase, usLayout = false) => {
+      if (platform === "ios") return sendIosKeyEvent(event, phase, usLayout);
       if (avcc) {
         const usage = hidUsageForCode(event.code);
         if (usage !== null) send(taggedJson(IOS_MSG_KEY, { type: phase, usage }));
@@ -1499,9 +1657,8 @@ export function createDeviceStreamClient(
       if (event.key === "Escape") return send(JSON.stringify({ type: "back" }));
       const keycode = ANDROID_KEYCODE_BY_KEY[event.key];
       if (keycode !== undefined) return send(JSON.stringify({ type: "key", keycode }));
-      if (event.key.length === 1 && !event.metaKey && !event.ctrlKey) {
-        send(JSON.stringify({ type: "text", text: event.key }));
-      }
+      const text = typedCharacter(event);
+      if (text !== null) send(JSON.stringify({ type: "text", text }));
     },
     sendText: (text) => {
       if (avcc) return;

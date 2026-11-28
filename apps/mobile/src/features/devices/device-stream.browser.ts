@@ -12,6 +12,12 @@ declare global {
 }
 
 let activeClient: ReturnType<typeof createDeviceStreamClient> | null = null;
+let usKeyboardLayout = false;
+
+/** See `DeviceStreamClient.sendKey`. Set after start, once React Native has read the layout. */
+export function keyboard(usLayout: boolean) {
+  usKeyboardLayout = usLayout;
+}
 
 // The WebView has no catalogs: status details leave marked, and React Native resolves them.
 const keepMarked = ((message: string) => message) as NonNullable<
@@ -186,9 +192,9 @@ export function start(configuration: DeviceStreamConfiguration) {
   frame.addEventListener("lostpointercapture", endTouch);
   frame.addEventListener("keydown", (event) => {
     event.preventDefault();
-    client.sendKey(event, "down");
+    client.sendKey(event, "down", usKeyboardLayout);
   });
-  frame.addEventListener("keyup", (event) => client.sendKey(event, "up"));
+  frame.addEventListener("keyup", (event) => client.sendKey(event, "up", usKeyboardLayout));
   window.addEventListener("pagehide", stop, { once: true });
   post({ type: "input", connected: false });
   client.start();

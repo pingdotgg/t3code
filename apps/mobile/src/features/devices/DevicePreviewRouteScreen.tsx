@@ -10,7 +10,7 @@ import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navi
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { msg, T, useGT } from "gt-react-native";
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
 import * as Haptics from "expo-haptics";
 import { Accelerometer } from "expo-sensors";
 import { Pressable, View } from "react-native";
@@ -410,6 +410,24 @@ function OpenDevicePreview({
   const [viewer] = useState(uuidv4);
   const { access, error, refresh } = useDeviceHubAccess(environmentId, session.hostId, viewer);
   const onUnauthorized = async () => refresh();
+  const readDetail = useAtomCommand(deviceEnvironment.detail, { reportFailure: false });
+  const [usKeyboardLayout, setUsKeyboardLayout] = useState(false);
+  // A layout the host could not work out counts as US, the simulator's default.
+  const readUsKeyboardLayout = useEffectEvent(async (hostId: string, deviceId: string) => {
+    const result = await readDetail({ environmentId, input: { hostId, deviceId } });
+    return result._tag === "Success" ? (result.value.settings.usKeyboardLayout ?? true) : true;
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the iOS simulator's keyboard layout from the host; keys go by key place until it answers
+  useEffect(() => {
+    if (session.platform !== "ios") return;
+    let current = true;
+    void readUsKeyboardLayout(session.hostId, session.deviceId).then((layout) => {
+      if (current) setUsKeyboardLayout(layout);
+    });
+    return () => {
+      current = false;
+    };
+  }, [session.platform, session.hostId, session.deviceId]);
   return access ? (
     <DeviceStreamWebView
       ref={streamRef}
@@ -417,6 +435,7 @@ function OpenDevicePreview({
       platform={session.platform}
       deviceId={session.deviceId}
       serveSimOnly={preview.serveSimOnly}
+      usKeyboardLayout={usKeyboardLayout}
       colors={{
         background: themeVariables["--color-sheet-solid"],
         foreground: themeVariables["--color-foreground"],
