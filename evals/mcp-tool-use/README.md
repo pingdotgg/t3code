@@ -274,6 +274,7 @@ Runner support:
 - `shellMustNot` and `shellMust` read the scripts the agent wrote and ran in every case, not only in secret cases.
 - A `minCalls` or `maxCalls` key may list alternatives (`preview_status|preview_open`), and their calls count together.
 - A `{"$sequence": [...]}` mock answers its nth call with the nth result, then repeats the last.
+- A `{"$byArgs": [{"args": {...}, "result": ...}]}` mock answers with the first entry whose `args` match the call, as `expect` matches them (`null` matches a missing key); with no match, the runner's default answers.
 
 From `evals/`:
 
