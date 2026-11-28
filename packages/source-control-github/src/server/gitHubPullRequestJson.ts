@@ -76,6 +76,7 @@ import type {
   ViewerPermissions,
 } from "./pullRequestReads.graphql.ts";
 import type {
+  GitActor,
   ReactionGroup,
   ReviewDismissals,
   ReviewThreadComments,
@@ -465,15 +466,15 @@ function toCommitActor(raw: {
   return login === null ? null : { login, name: trimmed(raw.name), avatarUrl: null };
 }
 
-function toGraphqlCommitActor(raw: {
-  readonly name?: string | null | undefined;
-  readonly avatarUrl?: string | null | undefined;
-  readonly user?: { readonly login?: string | null | undefined } | null | undefined;
-}): PullRequestActor | null {
+function toGraphqlCommitActor(raw: GitActor): PullRequestActor | null {
   const login = trimmed(raw.user?.login) ?? trimmed(raw.name);
   return login === null
     ? null
-    : { login, name: trimmed(raw.name), avatarUrl: trimmed(raw.avatarUrl) };
+    : {
+        login,
+        name: trimmed(raw.name),
+        avatarUrl: trimmed(raw.user?.avatarUrl) ?? trimmed(raw.avatarUrl),
+      };
 }
 
 function toState(raw: {
