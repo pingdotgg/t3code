@@ -47,7 +47,11 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import { ProviderInstanceIcon, providerInstanceNameLabel } from "../../components/ProviderIcon";
+import {
+  ProviderIcon,
+  ProviderInstanceIcon,
+  providerInstanceNameLabel,
+} from "../../components/ProviderIcon";
 import { useNowAfter } from "../../lib/clock";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
@@ -80,6 +84,7 @@ import {
   threadHasUnseenCompletion,
   resolveThreadListV2RowStatus,
   resolveThreadListV2Status,
+  resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
   layoutThreadListV2RowMenuActions,
   threadListV2RowAccessibilityLabel,
@@ -850,11 +855,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const dormant = useSwipeRowDormant(props.activationKey);
 
   const selectThread = () => onSelectThread(thread);
-  const providerIconUrl = props.providers?.find(
-    (candidate) =>
-      candidate.instanceId ===
-      (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
-  )?.iconUrl;
+  const { providerDrivers, providerIconUrl } = useMemo(() => {
+    const provider = props.providers?.find(
+      (candidate) =>
+        candidate.instanceId ===
+        (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
+    );
+    return {
+      providerDrivers: resolveThreadListV2ProviderDrivers(thread, props.providers),
+      providerIconUrl: provider?.iconUrl,
+    };
+  }, [thread, props.providers]);
 
   const providerInstance = props.providerInstance;
   const providerNameLabel = providerInstance
@@ -1620,15 +1631,38 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : null}
         {providerInstance ? (
           <View className="flex-row items-center">
-            <ProviderInstanceIcon
-              iconUrl={providerIconUrl}
-              provider={providerInstance.driverKind}
-              size={14}
-              displayName={providerInstance.displayName}
-              accentColor={providerInstance.accentColor}
-              showBadge={providerInstance.showBadge}
-              surfaceColor={rowAppearance.providerIconSurfaceColor}
-            />
+            {providerDrivers.slice(0, -1).map(
+              (driver, index) => (
+                /* oxlint-disable react/no-array-index-key -- Provider history can repeat a driver; these decorative icons have no local state. */ <View
+                  key={`${driver}:${index}`}
+                  // A disc in the row's surface color hides the part of the logo beneath it.
+                  className="-my-px -mr-[5px] -ml-px rounded-full p-px"
+                  style={{ backgroundColor: rowAppearance.providerIconSurfaceColor }}
+                >
+                  <View className="opacity-30">
+                    <ProviderIcon provider={driver} size={12} />
+                  </View>
+                </View>
+              ) /* oxlint-enable react/no-array-index-key */,
+            )}
+            <View
+              className={cn(providerDrivers.length > 1 && "-m-px rounded-full p-px")}
+              style={
+                providerDrivers.length > 1
+                  ? { backgroundColor: rowAppearance.providerIconSurfaceColor }
+                  : undefined
+              }
+            >
+              <ProviderInstanceIcon
+                iconUrl={providerIconUrl}
+                provider={providerInstance.driverKind}
+                size={14}
+                displayName={providerInstance.displayName}
+                accentColor={providerInstance.accentColor}
+                showBadge={providerInstance.showBadge}
+                surfaceColor={rowAppearance.providerIconSurfaceColor}
+              />
+            </View>
             {providerNameLabel ? (
               <Text
                 className={cn(
