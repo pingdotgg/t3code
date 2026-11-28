@@ -19,7 +19,7 @@ import {
   hydrateImagesFromPersisted,
   useComposerDraftStore,
 } from "../../composerDraftStore";
-import { showThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
+import { releaseThreadUndoShortcut, showThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { questionAttachmentDraftId } from "../../questionAttachments";
 import { readComposerImageBytes } from "./composerAttachmentFiles";
@@ -34,7 +34,10 @@ vi.mock("../../lib/imageCompression", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/imageCompression")>()),
   prepareImageForAttachment: compression.prepare,
 }));
-vi.mock("../../hooks/showThreadUndoNotice", () => ({ showThreadUndoNotice: vi.fn() }));
+vi.mock("../../hooks/showThreadUndoNotice", () => ({
+  showThreadUndoNotice: vi.fn(),
+  releaseThreadUndoShortcut: vi.fn(),
+}));
 
 type IntakeInput = Parameters<typeof useComposerAttachmentIntake>[0];
 type Intake = ReturnType<typeof useComposerAttachmentIntake>;
@@ -398,3 +401,96 @@ it.each(["thread", "session"] as const)(
     expect(restored?.images).toEqual([]);
   },
 );
+
+it("releases thread.undo on intake and records snapshotted draft indices for empty-prompt batches", async () => {
+  const target = DraftId.make("intake-empty-history");
+  const store = useComposerDraftStore.getState();
+  using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+  compression.prepare.mockReset().mockImplementation(compress);
+  vi.mocked(releaseThreadUndoShortcut).mockClear();
+
+  const existingFile = new File([new Uint8Array(20).fill(9)], "existing.png", {
+    type: "image/png",
+  });
+  await readComposerImageBytes(existingFile);
+  store.addImages(target, [
+    {
+      type: "image",
+      id: "existing",
+      name: "existing.png",
+      mimeType: "image/png",
+      sizeBytes: existingFile.size,
+      previewUrl: URL.createObjectURL(existingFile),
+      file: existingFile,
+    },
+  ]);
+
+  const recordImageHistory = vi.fn(() => true);
+  // Keep composerImagesRef stale at the pre-paste snapshot to prove intake reads current draft indices via readDraftImages.
+  const composerImagesRef = {
+    current: store.getComposerDraft(target)?.images ?? [],
+  };
+  const addImages = (images: ComposerImageAttachment[]) => store.addImages(target, images);
+  const input = {
+    activeThreadId: ThreadId.make("thread"),
+    activePendingProgress: null,
+    activePendingIsResponding: false,
+    pendingUserInputs: [],
+    supportsQuestionAttachments: false,
+    isLiteralPendingAnswer: false,
+    projectSelectionRequired: false,
+    questionAttachmentTarget: null,
+    attachmentTargetKey: target,
+    readDraftImages: () => useComposerDraftStore.getState().getComposerDraft(target)?.images ?? [],
+    fileStagingLimit: null,
+    promptRef: { current: "" },
+    composerImagesRef,
+    composerFilesRef: { current: [] },
+    composerEditorRef: {
+      current: {
+        focus: () => {},
+        focusAt: () => {},
+        focusAtEnd: () => {},
+        pasteAtCodeBlockEnd: () => false,
+        readSelectionRange: () => ({ start: 0, end: 0 }),
+        captureAttachmentInsertion: () => undefined,
+        insertAttachmentReferences: () => false,
+        recordImageHistory,
+        removeImageWithHistory: () => false,
+        requestCitationComment: () => {},
+        readSnapshot: () => ({ value: "", cursor: 0, expandedCursor: 0, contextIds: [] }),
+        isCaretOnVisualEdge: () => true,
+      },
+    },
+    isRevertingCheckpointRef: { current: false },
+    setThreadError: () => {},
+    countReservedAttachments: () =>
+      composerImagesRef.current.length + getPreparingComposerImages(target).length,
+    addComposerImage: (image) => addImages([image]),
+    addComposerImagesToDraft: addImages,
+    addComposerFilesToDraft: () => [],
+    removeComposerImageFromDraft: () => {},
+    insertAttachmentReferences: () => false,
+  } satisfies IntakeInput;
+
+  let intake!: Intake;
+  await using _screen = await render(
+    <Harness
+      input={input}
+      ready={(value) => {
+        intake = value;
+      }}
+    />,
+  );
+
+  await act(async () => {
+    await intake.addComposerAttachments([pastedImage(3), pastedImage(4)]);
+  });
+  expect(releaseThreadUndoShortcut).toHaveBeenCalledOnce();
+  const storedImages = useComposerDraftStore.getState().getComposerDraft(target)?.images ?? [];
+  expect(storedImages).toHaveLength(3);
+  expect(recordImageHistory).toHaveBeenCalledWith("add", target, [
+    expect.objectContaining({ id: storedImages[1]!.id, index: 1 }),
+    expect.objectContaining({ id: storedImages[2]!.id, index: 2 }),
+  ]);
+});

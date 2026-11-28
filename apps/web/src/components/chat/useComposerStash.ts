@@ -98,6 +98,7 @@ export function useComposerStash(input: {
   readonly pendingThreadImportsRef: RefObject<Map<string, number>>;
   readonly setComposerCursor: Dispatch<SetStateAction<number>>;
   readonly setComposerTrigger: ReturnType<typeof useComposerTriggerState>["setTrigger"];
+  readonly onDraftCleared?: () => void;
   readonly importContextRecords: (
     records: ReadonlyArray<ComposerContextRecord>,
     sourceEnvironmentId: EnvironmentId | null,
@@ -128,6 +129,7 @@ export function useComposerStash(input: {
     pendingThreadImportsRef,
     setComposerCursor,
     setComposerTrigger,
+    onDraftCleared,
     importContextRecords,
     expandMobileComposer,
   } = input;
@@ -658,6 +660,7 @@ export function useComposerStash(input: {
 
       promptRef.current = "";
       clearComposerDraftPromptAndImages(stashTarget);
+      onDraftCleared?.();
       clearComposerDraftTerminalContexts(stashTarget);
       setComposerDraftThreadContexts(stashTarget, []);
       setComposerDraftEnvironmentContexts(stashTarget, []);

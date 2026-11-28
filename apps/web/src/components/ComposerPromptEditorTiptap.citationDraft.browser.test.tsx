@@ -56,6 +56,7 @@ function Composer({
       </div>
       <output data-prompt={prompt} data-answer={answer} />
       <ComposerPromptEditor
+        draftKey={question ? "question-0" : "thread-draft"}
         editorRef={editorRef}
         value={question ? answer : prompt}
         cursor={0}

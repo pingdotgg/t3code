@@ -455,7 +455,7 @@ export function useComposerSend(input: ComposerSendInput) {
         setComposerDraftPrompt(composerDraftTarget, "");
         if (currentRouteThreadKeyRef.current === routeThreadKey) {
           promptRef.current = "";
-          composerRef.current?.resetCursorState();
+          composerRef.current?.resetCursorState({ clearHistory: true });
         }
       }
       return;
@@ -684,7 +684,7 @@ export function useComposerSend(input: ComposerSendInput) {
         clearComposerDraftContent(composerDraftTarget);
         if (currentRouteThreadKeyRef.current === routeThreadKey) {
           promptRef.current = "";
-          composerRef.current?.resetCursorState();
+          composerRef.current?.resetCursorState({ clearHistory: true });
         }
       }
       const started = await settlePromise(async () => {
@@ -744,11 +744,13 @@ export function useComposerSend(input: ComposerSendInput) {
       }
       // Answering a question, the composer shows the answer, which lives apart from this draft.
       if (startedOk && currentRouteThreadKeyRef.current === routeThreadKey) {
-        if (!sendCtx.answeringPendingUserInput && promptRef.current === promptAtSend) {
+        const clearedPrompt =
+          !sendCtx.answeringPendingUserInput && promptRef.current === promptAtSend;
+        if (clearedPrompt) {
           setComposerDraftPrompt(composerDraftTarget, "");
           promptRef.current = "";
         }
-        composerRef.current?.resetCursorState();
+        composerRef.current?.resetCursorState(clearedPrompt ? { clearHistory: true } : undefined);
       }
       return;
     }
@@ -917,7 +919,7 @@ export function useComposerSend(input: ComposerSendInput) {
             if (replyTo) useComposerDraftStore.getState().setReplyTo(composerDraftTarget, replyTo);
             if (currentRouteThreadKeyRef.current === routeThreadKey) {
               promptRef.current = "";
-              composerRef.current?.resetCursorState();
+              composerRef.current?.resetCursorState({ clearHistory: true });
             }
           },
           onUpdate: (submission) => {
@@ -959,7 +961,7 @@ export function useComposerSend(input: ComposerSendInput) {
       clearComposerDraftContent(composerDraftTarget);
       if (currentRouteThreadKeyRef.current === routeThreadKey) {
         promptRef.current = "";
-        composerRef.current?.resetCursorState();
+        composerRef.current?.resetCursorState({ clearHistory: true });
       }
       return;
     }
@@ -1338,7 +1340,7 @@ export function useComposerSend(input: ComposerSendInput) {
         ) {
           promptRef.current = "";
           clearComposerDraftContent(composerDraftTarget);
-          composerRef.current?.resetCursorState();
+          composerRef.current?.resetCursorState({ clearHistory: true });
         }
         return;
       }
@@ -1479,7 +1481,7 @@ export function useComposerSend(input: ComposerSendInput) {
     // The prompt ref and cursor belong to the thread on screen, which may no longer be this one.
     if (currentRouteThreadKeyRef.current === routeThreadKey) {
       promptRef.current = "";
-      composerRef.current?.resetCursorState();
+      composerRef.current?.resetCursorState({ clearHistory: true });
     }
 
     const title = deriveComposerSendTitle(sendSnapshot);

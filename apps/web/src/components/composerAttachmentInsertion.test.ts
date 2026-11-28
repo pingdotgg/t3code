@@ -5,7 +5,10 @@ import { expect, it, vi } from "vite-plus/test";
 
 import { serializeEditorDoc } from "../composer-rich-text-doc";
 import { formatInlineContextReference } from "../lib/composerContextReferences";
-import { captureComposerAttachmentInsertion } from "./composerAttachmentInsertion";
+import {
+  captureComposerAttachmentInsertion,
+  insertComposerContextReferencesInEditor,
+} from "./composerAttachmentInsertion";
 import { ComposerMarkdownSourceExtension } from "../composer-markdown-source";
 
 const image = { kind: "image", contextId: "image_pending", label: "picture.png" } as const;
@@ -177,3 +180,53 @@ it.each([
     }
   },
 );
+
+it("does not delete a later text selection when fallback insertion runs after capture loss", () => {
+  const editor = createEditor({
+    type: "doc",
+    content: [{ type: "paragraph", content: [{ type: "text", text: "original text" }] }],
+  });
+  try {
+    using _alive = vi.spyOn(editor, "isDestroyed", "get").mockReturnValue(false);
+    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 5)));
+    const insertion = captureComposerAttachmentInsertion(editor);
+    editor.commands.setContent(
+      {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "new text" }] }],
+      },
+      { emitUpdate: false },
+    );
+    // Select "new" after the original paragraph was replaced.
+    editor.view.dispatch(
+      editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 1, 4)),
+    );
+    expect(insertion.insert([image])).toBe(false);
+
+    const file = new File(["img"], "picture.png", { type: "image/png" });
+    expect(
+      insertComposerContextReferencesInEditor(editor, [image], {
+        imageHistory: {
+          targetKey: "draft-1",
+          images: [
+            {
+              id: "pending",
+              name: "picture.png",
+              mimeType: "image/png",
+              sizeBytes: file.size,
+              file,
+              index: 0,
+            },
+          ],
+        },
+      }),
+    ).toBe(true);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(
+      `${formatInlineContextReference(image)} new text`,
+    );
+    expect(editor.commands.undo()).toBe(true);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("new text");
+  } finally {
+    editor.destroy();
+  }
+});

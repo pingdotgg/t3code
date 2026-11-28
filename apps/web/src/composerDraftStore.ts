@@ -686,10 +686,15 @@ interface ComposerDraftStoreState {
     images: ComposerImageAttachment[],
     options?: {
       allowDuplicates?: boolean;
+      insertAt?: number | undefined;
       onCapacityExceeded?: (image: ComposerImageAttachment) => void;
     },
   ) => string[];
-  removeImage: (threadRef: ComposerThreadTarget, imageId: string) => void;
+  removeImage: (
+    threadRef: ComposerThreadTarget,
+    imageId: string,
+    options?: { stripReferences?: boolean },
+  ) => void;
   /** Returns the ids of files appended; a re-pick that replaces a marker is not listed. */
   addFiles: (
     threadRef: ComposerThreadTarget,
@@ -3673,12 +3678,26 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               return state;
             }
             acceptedIds = dedupedIncoming.map((image) => image.id);
+            const nextImages =
+              options?.insertAt === undefined
+                ? [...existing.images, ...dedupedIncoming]
+                : (() => {
+                    const insertAt = Math.max(
+                      0,
+                      Math.min(existing.images.length, Math.floor(options.insertAt)),
+                    );
+                    return [
+                      ...existing.images.slice(0, insertAt),
+                      ...dedupedIncoming,
+                      ...existing.images.slice(insertAt),
+                    ];
+                  })();
             return {
               draftsByThreadKey: {
                 ...state.draftsByThreadKey,
                 [threadKey]: {
                   ...existing,
-                  images: [...existing.images, ...dedupedIncoming],
+                  images: nextImages,
                 },
               },
             };
@@ -3686,7 +3705,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           capacityRejections.forEach((image) => options?.onCapacityExceeded?.(image));
           return acceptedIds;
         },
-        removeImage: (threadRef, imageId) => {
+        removeImage: (threadRef, imageId, options) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
             return;
@@ -3706,10 +3725,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const nextDraft: ComposerThreadDraftState = {
               ...current,
-              prompt: removeInlineContextReference(
-                current.prompt,
-                toKindScopedComposerContextId("image", imageId),
-              ).prompt,
+              prompt:
+                options?.stripReferences === false
+                  ? current.prompt
+                  : removeInlineContextReference(
+                      current.prompt,
+                      toKindScopedComposerContextId("image", imageId),
+                    ).prompt,
               images: current.images.filter((image) => image.id !== imageId),
               nonPersistedImageIds: current.nonPersistedImageIds.filter((id) => id !== imageId),
               persistedAttachments: current.persistedAttachments.filter(

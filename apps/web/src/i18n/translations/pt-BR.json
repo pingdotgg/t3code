@@ -4870,6 +4870,7 @@
   "247cd77b35ddb586": "Não foi possível ler ''{name}'' como imagem.",
   "7eccb44d5449e777": "''{name}'' é grande demais para anexar, mesmo após a compressão.",
   "d07dd6dfd269680a": "Não foi possível restaurar {names}: o editor de mensagens atingiu o limite de {limit} anexos.",
+  "3ab578c0c0bd5617": "Não foi possível restaurar {names}: uma imagem idêntica já está anexada.",
   "1d4059658a0ab500": "Remover {name} da mensagem?\nEle é referenciado no seu texto; removê-lo também remove todas as referências.",
   "86261d5bd0651358": "Remover esta imagem da mensagem?\nEla é referenciada no seu texto; removê-la também remove todas as referências.",
   "f70c49e9f30807a3": "O texto colado é grande demais para esta mensagem",

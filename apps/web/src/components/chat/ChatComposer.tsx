@@ -2,7 +2,15 @@ import { copySnapshot } from "./copySnapshot";
 import { VoiceInputSetup } from "./VoiceInputSetup";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
-import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion";
+import type {
+  ComposerAttachmentInsertion,
+  ComposerImageHistoryAttachment,
+} from "../composerAttachmentInsertion";
+import {
+  restoreRetainedComposerImage,
+  toRetainedComposerImage,
+  type ComposerImageHistoryChange,
+} from "~/composer-image-history";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { BackgroundThreadContext, HiddenThreadContext } from "./backgroundThread";
 import {
@@ -137,6 +145,7 @@ import { CollapsedComposerPromptPreview } from "./CollapsedComposerPromptPreview
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./ComposerBannerStack";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
+  composerImageDedupKey,
   composerOtherFilesForPresentation,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
@@ -191,6 +200,7 @@ import {
 } from "~/lib/composerContextReferences";
 import {
   attachmentContextRecord,
+  imageContextReference,
   uploadedAttachmentContextRecord,
   previewAnnotationContextId,
   previewAnnotationContextRecord,
@@ -361,6 +371,7 @@ export interface ChatComposerHandle {
     cursor?: number;
     prompt?: string;
     detectTrigger?: boolean;
+    clearHistory?: boolean;
   }) => void;
   addTerminalContext: (selection: TerminalContextSelection) => void;
   getSendContext: () => {
@@ -671,9 +682,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const applyThreadModelPick = useApplyThreadModelPick();
   const composerDraft = useComposerThreadDraft(composerDraftTarget);
   const composerDraftTargetKeyRef = useRef("");
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed draft target key to a ref read by async handlers
+  const committedCitationOwnerRef = useRef({
+    target: composerDraftTarget,
+    key: composerDraftTargetKey,
+    isQuestion: activePendingProgress !== null,
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed draft target and citation owner to refs read by async handlers and child draft-switch flushes
   useLayoutEffect(() => {
     composerDraftTargetKeyRef.current = composerDraftTargetKey;
+    committedCitationOwnerRef.current = {
+      target: composerDraftTarget,
+      key: composerDraftTargetKey,
+      isQuestion: activePendingProgress !== null,
+    };
   });
   const questionAttachmentTarget =
     pendingUserInputs[0] && activePendingProgress?.activeQuestion
@@ -1392,10 +1413,45 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       appendReference: questionAttachmentTarget === null,
     });
 
-  const removeComposerImageFromDraft = (imageId: string) => {
+  const [editorHistoryGeneration, setEditorHistoryGeneration] = useState(0);
+
+  const removeComposerImageFromDraft = (
+    imageId: string,
+    options?: { readonly recordHistory?: boolean; readonly stripReferences?: boolean },
+  ) => {
     if (questionAttachmentTarget && activePendingIsResponding) return;
+    const editorOwnsTarget = attachmentTargetKeyRef.current === attachmentTargetKey;
+    const currentImages =
+      getComposerDraft(attachmentDraftTarget)?.images ?? composerImagesRef.current;
+    const imageIndex = currentImages.findIndex((candidate) => candidate.id === imageId);
+    const image = imageIndex >= 0 ? currentImages[imageIndex] : undefined;
+    const shouldFocusEditor =
+      editorOwnsTarget &&
+      options?.recordHistory === true &&
+      !window.matchMedia?.("(pointer: coarse)").matches &&
+      !(
+        document.activeElement instanceof HTMLElement &&
+        document.activeElement.closest('[data-testid="composer-editor"]') !== null
+      );
+    const recordedInEditor =
+      editorOwnsTarget && options?.recordHistory === true && image !== undefined
+        ? (composerEditorRef.current?.removeImageWithHistory(
+            attachmentTargetKey,
+            toRetainedComposerImage(image, imageIndex),
+            imageContextReference(image).contextId,
+          ) ?? false)
+        : false;
     releaseAttachmentUpload(imageId);
-    removeComposerDraftImage(attachmentDraftTarget, imageId);
+    removeComposerDraftImage(attachmentDraftTarget, imageId, {
+      stripReferences: options?.stripReferences ?? (isLiteralPendingAnswer || !recordedInEditor),
+    });
+    if (shouldFocusEditor) {
+      window.requestAnimationFrame(() => {
+        if (attachmentTargetKeyRef.current === attachmentTargetKey) {
+          composerEditorRef.current?.focus();
+        }
+      });
+    }
   };
 
   const removeComposerFileFromDraft = (fileId: string) => {
@@ -1877,6 +1933,92 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     updateTrigger(trigger);
   };
   const onPromptChangeStable = useStableCallback(onPromptChange);
+
+  const canApplyImageHistoryChange = (
+    changes: ReadonlyArray<ComposerImageHistoryChange>,
+  ): boolean => {
+    if (questionAttachmentTarget && activePendingIsResponding) return false;
+    const existingImages =
+      getComposerDraft(attachmentDraftTarget)?.images ?? composerImagesRef.current;
+    // Walk the batch in the order onImageHistoryChange replays it, so capacity matches replay.
+    const dedupKeyById = new Map(
+      existingImages.map((image) => [image.id, composerImageDedupKey(image)]),
+    );
+    let reservedCount = countReservedAttachmentsStable();
+    const capacityRejectedNames: string[] = [];
+    const duplicateRejectedNames: string[] = [];
+    for (const change of changes) {
+      if (change.targetKey !== attachmentTargetKey) continue;
+      for (const retained of change.images) {
+        if (change.kind === "remove") {
+          if (dedupKeyById.delete(retained.id)) reservedCount = Math.max(0, reservedCount - 1);
+          continue;
+        }
+        if (dedupKeyById.has(retained.id)) continue;
+        const dedupKey = composerImageDedupKey(retained);
+        if ([...dedupKeyById.values()].includes(dedupKey)) {
+          duplicateRejectedNames.push(retained.name);
+          continue;
+        }
+        if (reservedCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+          capacityRejectedNames.push(retained.name);
+          continue;
+        }
+        dedupKeyById.set(retained.id, dedupKey);
+        reservedCount += 1;
+      }
+    }
+    if (capacityRejectedNames.length === 0 && duplicateRejectedNames.length === 0) return true;
+    if (activeThreadId) {
+      const messages: string[] = [];
+      if (capacityRejectedNames.length > 0) {
+        messages.push(
+          resolveMessage(
+            msg("{names} could not be restored: the composer is at its {limit}-attachment limit.", {
+              names: capacityRejectedNames.join(", "),
+              limit: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+            }),
+          ),
+        );
+      }
+      if (duplicateRejectedNames.length > 0) {
+        messages.push(
+          resolveMessage(
+            msg("{names} could not be restored: an identical image is already attached.", {
+              names: duplicateRejectedNames.join(", "),
+            }),
+          ),
+        );
+      }
+      setThreadError(activeThreadId, messages.join("\n"));
+    }
+    return false;
+  };
+  const canApplyImageHistoryChangeStable = useStableCallback(canApplyImageHistoryChange);
+
+  const onImageHistoryChange = (changes: ReadonlyArray<ComposerImageHistoryChange>) => {
+    if (questionAttachmentTarget && activePendingIsResponding) return;
+    for (const change of changes) {
+      if (change.targetKey !== attachmentTargetKey) continue;
+      if (change.kind === "remove") {
+        for (const image of change.images) {
+          removeComposerImageFromDraft(image.id, {
+            recordHistory: false,
+            stripReferences: false,
+          });
+        }
+        continue;
+      }
+      const toRestore = change.images.toSorted((left, right) => left.index - right.index);
+      for (const retained of toRestore) {
+        const restored = restoreRetainedComposerImage(retained);
+        addComposerDraftImages(attachmentDraftTarget, [restored], {
+          insertAt: retained.index,
+        });
+      }
+    }
+  };
+  const onImageHistoryChangeStable = useStableCallback(onImageHistoryChange);
 
   const applyPromptReplacement = (
     rangeStart: number,
@@ -2516,12 +2658,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
   };
   const submitCitationAndSendStable = useStableCallback(submitCitationAndSend);
-  // A question took the editor while a citation comment was
-  // unsaved. Keep the comment in the prompt that comes back afterward.
+  // Save an unsaved citation comment into the outgoing draft before a
+  // question takeover, thread switch, or queued-edit switch swaps the editor.
   const saveCitationDraftToPrompt = (replacedValue: string, savedValue: string) => {
-    if (replacedValue !== prompt) return;
-    if (promptRef.current === replacedValue) promptRef.current = savedValue;
-    setPrompt(savedValue);
+    const owner = committedCitationOwnerRef.current;
+    if (owner.isQuestion) return;
+    const livePrompt = getComposerDraft(owner.target)?.prompt ?? "";
+    if (replacedValue !== livePrompt) return;
+    if (owner.key === composerDraftTargetKey && promptRef.current === replacedValue) {
+      promptRef.current = savedValue;
+    }
+    setComposerDraftPrompt(owner.target, savedValue);
   };
   const saveCitationDraftToPromptStable = useStableCallback(saveCitationDraftToPrompt);
   const compactThreadContext = () => {
@@ -2666,6 +2813,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pendingThreadImportsRef,
     setComposerCursor,
     setComposerTrigger,
+    onDraftCleared: () => setEditorHistoryGeneration((generation) => generation + 1),
     importContextRecords,
     expandMobileComposer: expandMobileComposerStable,
   });
@@ -2907,6 +3055,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     references: ReadonlyArray<ComposerContextReference>,
     selection?: { start: number; end: number },
     pendingInsertion?: ComposerAttachmentInsertion,
+    imageHistory?: ComposerImageHistoryAttachment,
   ): boolean => {
     if (references.length === 0) return false;
     // Question answers carry attachments beside the answer, never as chips. Falling back to
@@ -2917,7 +3066,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       liveAttachmentTargetKey: attachmentTargetKeyRef.current,
       references,
       insertReferences: () => {
-        if (pendingInsertion?.insert(references)) return true;
+        if (pendingInsertion?.insert(references, { imageHistory })) return true;
+        if (
+          imageHistory &&
+          composerEditorRef.current?.insertAttachmentReferences(references, {
+            selection,
+            imageHistory,
+          })
+        ) {
+          return true;
+        }
         if (selection) {
           const edit = inlineContextReferenceReplacement(promptRef.current, selection, references);
           return applyPromptReplacementStable(edit.start, edit.end, edit.text);
@@ -2945,6 +3103,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       projectSelectionRequired,
       questionAttachmentTarget,
       attachmentTargetKey,
+      isAttachmentTargetActive: () => attachmentTargetKeyRef.current === attachmentTargetKey,
+      readDraftImages: () =>
+        getComposerDraft(attachmentDraftTarget)?.images ?? composerImagesRef.current,
       fileStagingLimit,
       promptRef,
       composerImagesRef,
@@ -3462,7 +3623,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         cursor?: number;
         prompt?: string;
         detectTrigger?: boolean;
+        clearHistory?: boolean;
       }) => {
+        if (options?.clearHistory && promptRef.current === "") {
+          setEditorHistoryGeneration((generation) => generation + 1);
+        }
         const promptForState = options?.prompt ?? promptRef.current;
         const cursor = clampCollapsedComposerCursor(
           promptForState,
@@ -3962,7 +4127,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 ) : null}
                 <ComposerContextActionsContext value={composerContextActions}>
                   <ComposerPromptEditor
-                    draftKey={composerDraftTargetKey}
+                    draftKey={attachmentTargetKey}
+                    historyResetKey={editorHistoryGeneration}
                     // Switching threads lands focus here, so the label names the thread.
                     ariaLabel={
                       activeThread
@@ -3996,6 +4162,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onPageScrollRelease={onPageScrollRelease}
                     onCitationSubmitAndSend={submitCitationAndSendStable}
                     onCitationDraftSave={saveCitationDraftToPromptStable}
+                    onBeforeImageHistoryChange={canApplyImageHistoryChangeStable}
+                    onImageHistoryChange={onImageHistoryChangeStable}
                     onPaste={onComposerPasteStable}
                     placeholder={
                       isComposerApprovalState

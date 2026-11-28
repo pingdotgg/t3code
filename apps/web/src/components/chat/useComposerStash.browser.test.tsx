@@ -1,4 +1,6 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { Editor } from "@tiptap/core";
+import { createRef, useLayoutEffect, useRef, useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
@@ -10,6 +12,10 @@ import {
   usePromptStashStore,
   writePromptStashStorageForTest,
 } from "../../promptStashStore";
+import {
+  ComposerPromptEditorTiptap as ComposerPromptEditor,
+  type ComposerPromptEditorHandle,
+} from "../ComposerPromptEditorTiptap";
 import {
   addPreparingComposerImages,
   countPreparingComposerImages,
@@ -152,4 +158,167 @@ it("stashes a side chat's prompt when Mod+S is pressed inside its pane", async (
       "Side chat question",
     ]);
   });
+});
+
+it("resets editor image history when stashing an image-only draft", async () => {
+  const target = DraftId.make("stash-image-only");
+  using _draft = {
+    [Symbol.dispose]: () => useComposerDraftStore.getState().clearComposerContent(target),
+  };
+  using _stash = {
+    [Symbol.dispose]: () => {
+      writePromptStashStorageForTest("");
+      removeLocalStorageItem(PROMPT_STASH_STORAGE_KEY);
+    },
+  };
+  // 1x1 transparent PNG so browser image compression succeeds during stash encoding.
+  const pngBytes = Uint8Array.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+    0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+    0x42, 0x60, 0x82,
+  ]);
+  const file = new File([pngBytes], "shot.png", { type: "image/png" });
+  const previewUrl = URL.createObjectURL(file);
+  using _url = {
+    [Symbol.dispose]: () => URL.revokeObjectURL(previewUrl),
+  };
+  useComposerDraftStore.getState().addImages(target, [
+    {
+      type: "image",
+      id: "img-stash-1",
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: file.size,
+      previewUrl,
+      file,
+    },
+  ]);
+
+  const environmentId = EnvironmentId.make("stash-env");
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  const onImageHistoryChange = vi.fn();
+  let restoreEntry:
+    | ((
+        entry: typeof usePromptStashStore.getState extends () => { entries: readonly (infer E)[] }
+          ? E
+          : never,
+      ) => Promise<void>)
+    | undefined;
+
+  function StashEditorHarness() {
+    const promptRef = useRef("");
+    const [historyResetKey, setHistoryResetKey] = useState(0);
+    const { restoreStashEntryStable } = useComposerStash({
+      environmentId,
+      composerDraftTarget: target,
+      promptRef,
+      readAttachmentDraft: () => ({
+        images: useComposerDraftStore.getState().getComposerDraft(target)?.images ?? [],
+        files: [],
+      }),
+      readTerminalContexts: () => [],
+      routeThreadRef: { environmentId, threadId: ThreadId.make("stash-image-thread") },
+      projectSelectionRequired: false,
+      pendingUserInputs: [],
+      activePendingProgress: null,
+      prompt: "",
+      composerMenuOpen: false,
+      isComposerCollapsedMobile: false,
+      composerPreviewAnnotations: [],
+      composerReviewComments: [],
+      composerThreadContexts: [],
+      attachmentTargetKey: target,
+      isComposerDraftTargetOpen: () => true,
+      composerEditorRef: editorRef,
+      isRevertingCheckpoint: () => false,
+      pendingThreadImportsRef: { current: new Map() },
+      setComposerCursor: vi.fn(),
+      setComposerTrigger: vi.fn(),
+      onDraftCleared: () => setHistoryResetKey((generation) => generation + 1),
+      importContextRecords: () => new Map(),
+      expandMobileComposer: vi.fn(),
+    });
+    useLayoutEffect(() => {
+      restoreEntry = restoreStashEntryStable;
+    });
+
+    return (
+      <ComposerPromptEditor
+        draftKey={target}
+        historyResetKey={historyResetKey}
+        editorRef={editorRef}
+        value=""
+        cursor={0}
+        richTextEnabled
+        contextRecords={new Map()}
+        skills={[]}
+        disabled={false}
+        placeholder=""
+        onChange={() => {}}
+        onImageHistoryChange={onImageHistoryChange}
+        onPaste={() => {}}
+      />
+    );
+  }
+
+  await using screen = await render(<StashEditorHarness />);
+  const currentEditor = (): Editor => {
+    const el = screen.container.querySelector(".tiptap") as
+      | (HTMLElement & { editor?: Editor })
+      | null;
+    if (!el?.editor) throw new Error("expected tiptap editor");
+    return el.editor;
+  };
+
+  await act(() => {
+    currentEditor().view.focus();
+    expect(
+      editorRef.current?.recordImageHistory("add", target, [
+        {
+          id: "img-stash-1",
+          name: "shot.png",
+          mimeType: "image/png",
+          sizeBytes: file.size,
+          file,
+          index: 0,
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  const mod = isMacPlatform(navigator.platform) ? { metaKey: true } : { ctrlKey: true };
+  await act(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "s", ...mod, bubbles: true, cancelable: true }),
+    );
+  });
+
+  await vi.waitFor(() => {
+    expect(useComposerDraftStore.getState().getComposerDraft(target)?.images ?? []).toHaveLength(0);
+    expect(usePromptStashStore.getState().entries).toHaveLength(1);
+    expect(usePromptStashStore.getState().entries[0]?.pendingImageCount).toBe(0);
+  });
+
+  // Focused Undo and Redo must not replay the stashed image into the emptied draft.
+  await act(() => {
+    currentEditor().view.focus();
+    currentEditor().commands.undo();
+    currentEditor().commands.redo();
+  });
+  expect(onImageHistoryChange).not.toHaveBeenCalled();
+  expect(useComposerDraftStore.getState().getComposerDraft(target)?.images ?? []).toHaveLength(0);
+
+  // Restoring the stashed entry brings the image back normally.
+  const entry = usePromptStashStore.getState().entries[0]!;
+  await act(async () => {
+    await restoreEntry?.(entry);
+  });
+  expect(
+    useComposerDraftStore
+      .getState()
+      .getComposerDraft(target)
+      ?.images.map((image) => image.name),
+  ).toEqual(["shot.png"]);
 });

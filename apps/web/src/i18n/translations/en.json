@@ -4872,6 +4872,7 @@
   "247cd77b35ddb586": "''{name}'' could not be read as an image.",
   "7eccb44d5449e777": "''{name}'' is too large to attach, even after compression.",
   "d07dd6dfd269680a": "{names} could not be restored: the composer is at its {limit}-attachment limit.",
+  "3ab578c0c0bd5617": "{names} could not be restored: an identical image is already attached.",
   "1d4059658a0ab500": "Remove {name} from the message?\nIt is referenced in your text; removing it also removes every reference.",
   "86261d5bd0651358": "Remove this image from the message?\nIt is referenced in your text; removing it also removes every reference.",
   "f70c49e9f30807a3": "Pasted text is too large for this message",

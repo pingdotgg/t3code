@@ -23,7 +23,12 @@ import {
 } from "../../composerDraftStore";
 import { type ComposerPromptEditorHandle } from "../ComposerPromptEditorTiptap";
 import type { PendingUserInputProgress } from "../../pendingUserInput";
-import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion";
+import type {
+  ComposerAttachmentInsertion,
+  ComposerImageHistoryAttachment,
+} from "../composerAttachmentInsertion";
+import { toRetainedComposerImage } from "../../composer-image-history";
+import { releaseThreadUndoShortcut } from "../../hooks/showThreadUndoNotice";
 import { type PendingUserInput } from "../../session-logic";
 import { changeQuestionAttachmentPreparation } from "../../questionAttachments";
 import {
@@ -76,6 +81,8 @@ export function useComposerAttachmentIntake(input: {
   readonly projectSelectionRequired: boolean;
   readonly questionAttachmentTarget: DraftId | null;
   readonly attachmentTargetKey: string;
+  readonly isAttachmentTargetActive?: () => boolean;
+  readonly readDraftImages?: () => ReadonlyArray<ComposerImageAttachment>;
   readonly fileStagingLimit: number | null;
   readonly promptRef: ChatComposerProps["promptRef"];
   readonly composerImagesRef: ChatComposerProps["composerImagesRef"];
@@ -87,11 +94,15 @@ export function useComposerAttachmentIntake(input: {
   readonly addComposerImage: (image: ComposerImageAttachment) => string[];
   readonly addComposerImagesToDraft: (images: ComposerImageAttachment[]) => string[];
   readonly addComposerFilesToDraft: (files: ComposerFileAttachment[]) => string[];
-  readonly removeComposerImageFromDraft: (imageId: string) => void;
+  readonly removeComposerImageFromDraft: (
+    imageId: string,
+    options?: { readonly recordHistory?: boolean },
+  ) => void;
   readonly insertAttachmentReferences: (
     references: ReadonlyArray<ComposerContextReference>,
     selection?: { start: number; end: number },
     pendingInsertion?: ComposerAttachmentInsertion,
+    imageHistory?: ComposerImageHistoryAttachment,
   ) => boolean;
 }) {
   const {
@@ -104,6 +115,8 @@ export function useComposerAttachmentIntake(input: {
     projectSelectionRequired,
     questionAttachmentTarget,
     attachmentTargetKey,
+    isAttachmentTargetActive,
+    readDraftImages,
     fileStagingLimit,
     promptRef,
     composerImagesRef,
@@ -237,6 +250,9 @@ export function useComposerAttachmentIntake(input: {
       }
     }
     setThreadError(threadId, error);
+    if (acceptedFiles.length > 0 || acceptedImages.length > 0) {
+      releaseThreadUndoShortcut();
+    }
     let insertedAny = false;
     if (acceptedFiles.length > 0) {
       const storedIds = new Set(addComposerFilesToDraft(acceptedFiles));
@@ -367,15 +383,32 @@ export function useComposerAttachmentIntake(input: {
     for (const image of nextImages) {
       if (!storedImageIds.has(image.id)) URL.revokeObjectURL(image.previewUrl);
     }
-    if (storedImages.length > 0 && imageAttachmentsGetChips && !movedThread) {
-      insertedAny =
-        joinPreparedImagesToDraft(() =>
-          insertAttachmentReferences(
-            storedImages.map(imageContextReference),
-            undefined,
-            pendingInsertion,
-          ),
-        ) || insertedAny;
+    if (storedImages.length > 0 && !movedThread) {
+      const draftImages = readDraftImages ? readDraftImages() : composerImagesRef.current;
+      const indexById = new Map(draftImages.map((image, index) => [image.id, index]));
+      const imageHistory: ComposerImageHistoryAttachment = {
+        targetKey: attachmentTargetKey,
+        images: storedImages.map((image, fallbackIndex) =>
+          toRetainedComposerImage(image, indexById.get(image.id) ?? fallbackIndex),
+        ),
+      };
+      if (imageAttachmentsGetChips && !questionAttachmentTarget) {
+        insertedAny =
+          joinPreparedImagesToDraft(() =>
+            insertAttachmentReferences(
+              storedImages.map(imageContextReference),
+              undefined,
+              pendingInsertion,
+              imageHistory,
+            ),
+          ) || insertedAny;
+      } else if (isAttachmentTargetActive ? isAttachmentTargetActive() : true) {
+        composerEditorRef.current?.recordImageHistory(
+          "add",
+          attachmentTargetKey,
+          imageHistory.images,
+        );
+      }
     }
     // Only failures are reported here. Success must not pass `null`: by
     // now other work (a failed send, an overlapping paste) may have set a
@@ -421,7 +454,7 @@ export function useComposerAttachmentIntake(input: {
       image ? imageContextReference(image).contextId : "",
     );
     if (!referenced) {
-      removeComposerImageFromDraft(imageId);
+      removeComposerImageFromDraft(imageId, { recordHistory: true });
       return;
     }
     const confirmation = requestConfirmDialog(
@@ -440,11 +473,11 @@ export function useComposerAttachmentIntake(input: {
       { variant: "destructive" },
     );
     if (!confirmation) {
-      removeComposerImageFromDraft(imageId);
+      removeComposerImageFromDraft(imageId, { recordHistory: true });
       return;
     }
     void confirmation.then((confirmed) => {
-      if (confirmed) removeComposerImageFromDraft(imageId);
+      if (confirmed) removeComposerImageFromDraft(imageId, { recordHistory: true });
     });
   };
 

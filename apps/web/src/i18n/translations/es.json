@@ -4870,6 +4870,7 @@
   "247cd77b35ddb586": "''{name}'' no se pudo leer como imagen.",
   "7eccb44d5449e777": "''{name}'' es demasiado grande para adjuntarlo, incluso después de comprimirlo.",
   "d07dd6dfd269680a": "No se pudo restaurar {names}: el cuadro de mensaje está en su límite de {limit} adjuntos.",
+  "3ab578c0c0bd5617": "No se pudo restaurar {names}: ya hay una imagen idéntica adjunta.",
   "1d4059658a0ab500": "¿Quitar {name} del mensaje?\nSe menciona en tu texto; al quitarlo también se quitan todas las referencias.",
   "86261d5bd0651358": "¿Quitar esta imagen del mensaje?\nSe menciona en tu texto; al quitarla también se quitan todas las referencias.",
   "f70c49e9f30807a3": "El texto pegado es demasiado grande para este mensaje",

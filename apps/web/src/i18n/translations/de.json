@@ -4873,6 +4873,7 @@
   "247cd77b35ddb586": "„{name}“ konnte nicht als Bild gelesen werden.",
   "7eccb44d5449e777": "„{name}“ ist zu groß zum Anhängen, selbst nach der Komprimierung.",
   "d07dd6dfd269680a": "{names} konnte nicht wiederhergestellt werden: Das Eingabefeld hat sein Limit von {limit} Anhängen erreicht.",
+  "3ab578c0c0bd5617": "{names} konnte nicht wiederhergestellt werden: Ein identisches Bild ist bereits angehängt.",
   "1d4059658a0ab500": "{name} aus der Nachricht entfernen?\nEs wird in deinem Text referenziert; beim Entfernen werden auch alle Referenzen entfernt.",
   "86261d5bd0651358": "Dieses Bild aus der Nachricht entfernen?\nEs wird in deinem Text referenziert; beim Entfernen werden auch alle Referenzen entfernt.",
   "f70c49e9f30807a3": "Der eingefügte Text ist zu groß für diese Nachricht",

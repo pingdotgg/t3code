@@ -124,7 +124,18 @@ import {
   markAsClipboardEdit,
   markAsCompositionReplace,
 } from "~/composer-undo-grouping";
-import { collectInlineContextIds } from "~/lib/composerContextReferences";
+import {
+  collectInlineContextIds,
+  type ComposerContextReference,
+} from "~/lib/composerContextReferences";
+import {
+  ComposerImageHistoryStep,
+  extractComposerImageHistoryChanges,
+  inlineContextReferenceRemovalRanges,
+  type ComposerImageHistoryChange,
+  type ComposerImageHistoryDirection,
+  type RetainedComposerImage,
+} from "~/composer-image-history";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { isRichTextFormattingShortcut } from "~/keybindings";
 import { cn, isMacPlatform } from "~/lib/utils";
@@ -158,7 +169,9 @@ import {
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import {
   captureComposerAttachmentInsertion,
+  insertComposerContextReferencesInEditor,
   type ComposerAttachmentInsertion,
+  type ComposerImageHistoryAttachment,
 } from "./composerAttachmentInsertion";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
 import { SharedTooltipTrigger } from "./ui/shared-tooltip";
@@ -170,6 +183,23 @@ export interface ComposerPromptEditorHandle {
   pasteAtCodeBlockEnd: (clipboardData: DataTransfer) => boolean;
   readSelectionRange: () => { start: number; end: number };
   captureAttachmentInsertion: () => ComposerAttachmentInsertion | undefined;
+  insertAttachmentReferences: (
+    references: ReadonlyArray<ComposerContextReference>,
+    options?: {
+      readonly selection?: { start: number; end: number } | undefined;
+      readonly imageHistory?: ComposerImageHistoryAttachment | undefined;
+    },
+  ) => boolean;
+  recordImageHistory: (
+    kind: ComposerImageHistoryDirection,
+    targetKey: string,
+    images: ReadonlyArray<RetainedComposerImage>,
+  ) => boolean;
+  removeImageWithHistory: (
+    targetKey: string,
+    image: RetainedComposerImage,
+    contextId: string,
+  ) => boolean;
   requestCitationComment: (request: ComposerCitationCommentRequest) => void;
   readSnapshot: () => {
     value: string;
@@ -182,6 +212,7 @@ export interface ComposerPromptEditorHandle {
 
 export interface ComposerPromptEditorProps {
   draftKey?: string;
+  historyResetKey?: number;
   value: string;
   cursor: number;
   richTextEnabled?: boolean;
@@ -222,8 +253,10 @@ export interface ComposerPromptEditorProps {
   onPageScrollKeyUp?: (key: string) => void;
   onPageScrollRelease?: () => void;
   onCitationSubmitAndSend?: () => boolean;
-  /** Saves unsaved citation text into replacedValue when a controlled rewrite replaces the document. */
+  /** Saves unsaved citation text into replacedValue when a controlled rewrite, draft switch, or remount replaces the document. */
   onCitationDraftSave?: (replacedValue: string, savedValue: string) => void;
+  onBeforeImageHistoryChange?: (changes: ReadonlyArray<ComposerImageHistoryChange>) => boolean;
+  onImageHistoryChange?: (changes: ReadonlyArray<ComposerImageHistoryChange>) => void;
   onPaste: (
     event: React.ClipboardEvent<HTMLElement>,
     readClipboard: (plainTextOnly: boolean) => PastedComposerClipboard,
@@ -558,8 +591,8 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     const trailingSpace =
       doc.textBetween(end, end + 1) === " " && doc.resolve(end).end() === end + 1;
     const caret = trailingSpace ? end + 1 : end;
-    // The send's controlled rewrite may still be pending; emitting this caret move would restore the old prompt.
-    editor.chain().setMeta(SILENT_SELECTION_META, sent).focus(caret).run();
+    // A controlled rewrite or draft switch may still be pending; emitting this caret move would restore the old prompt.
+    editor.chain().setMeta(SILENT_SELECTION_META, true).focus(caret).run();
   };
 
   return (
@@ -905,6 +938,37 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
   );
 }
 
+interface ComposerImageHistoryFilterStorage {
+  canApply: ((changes: ReadonlyArray<ComposerImageHistoryChange>) => boolean) | null;
+}
+
+declare module "@tiptap/core" {
+  interface Storage {
+    "composer-image-history-filter": ComposerImageHistoryFilterStorage;
+  }
+}
+
+/** Preflight history image restores before ProseMirror pops undo/redo or reinserts chips. */
+const ComposerImageHistoryFilterExtension = Extension.create<
+  Record<string, never>,
+  ComposerImageHistoryFilterStorage
+>({
+  name: "composer-image-history-filter",
+  priority: 200,
+  addStorage() {
+    return { canApply: null };
+  },
+  dispatchTransaction({ transaction, next }) {
+    if (isHistoryTransaction(transaction)) {
+      const changes = extractComposerImageHistoryChanges([transaction]);
+      if (changes.length > 0 && this.storage.canApply?.(changes) === false) {
+        return;
+      }
+    }
+    next(transaction);
+  },
+});
+
 /** Decide grouping in dispatch middleware before the history plugin applies the transaction. */
 const ComposerUndoGroupingExtension = Extension.create<
   Record<string, never>,
@@ -946,6 +1010,7 @@ function createComposerExtensions(richText: boolean) {
     }),
     // Ctrl/Cmd+click would node-select and outline the whole line (Wispr Flow holds Ctrl to dictate).
     Paragraph.extend({ selectable: false }),
+    ComposerImageHistoryFilterExtension,
     ComposerUndoGroupingExtension,
     ComposerTextDirectionExtension,
     ComposerMentionExtension,
@@ -1066,6 +1131,8 @@ function ComposerPromptEditorTiptapInner(
     onPageScrollRelease,
     onCitationSubmitAndSend,
     onCitationDraftSave,
+    onBeforeImageHistoryChange,
+    onImageHistoryChange,
     onPaste,
     editorRef,
     restoreFocusRef,
@@ -1089,6 +1156,8 @@ function ComposerPromptEditorTiptapInner(
     onCommandKeyDown,
     isPathQueryActive,
     importContextFragment,
+    onBeforeImageHistoryChange,
+    onImageHistoryChange,
   }));
 
   const { environmentId } = use(ComposerContextActionsContext);
@@ -1114,7 +1183,8 @@ function ComposerPromptEditorTiptapInner(
   const [openCitation, setOpenCitation] = useState<OpenCitationComment | null>(null);
   const citationDraftRef = useRef<{ key: string; comment: string } | null>(null);
   const [isEmpty, setIsEmpty] = useState(value.length === 0);
-  const draftKey = props.draftKey ?? "";
+  const baseDraftKey = props.draftKey ?? "";
+  const draftKey = `${baseDraftKey}:${props.historyResetKey ?? 0}`;
   const [renderedDraftKey, setRenderedDraftKey] = useState(draftKey);
   if (renderedDraftKey !== draftKey) {
     setRenderedDraftKey(draftKey);
@@ -1122,6 +1192,7 @@ function ComposerPromptEditorTiptapInner(
     setIsEmpty(value.length === 0);
   }
   const appliedDraftKeyRef = useRef(draftKey);
+  const appliedTargetKeyRef = useRef(baseDraftKey);
 
   const citationCommentActions = {
     openComment: openCitation,
@@ -1688,6 +1759,20 @@ function ComposerPromptEditorTiptapInner(
           );
         },
       },
+      onCreate: ({ editor: created }) => {
+        created.storage["composer-image-history-filter"].canApply = (changes) =>
+          readCallbacks().onBeforeImageHistoryChange?.(changes) ?? true;
+      },
+      onTransaction: ({ transaction, appendedTransactions }) => {
+        if (isApplyingControlledUpdateRef.current || !isHistoryTransaction(transaction)) return;
+        const historyChanges = extractComposerImageHistoryChanges([
+          transaction,
+          ...appendedTransactions,
+        ]);
+        if (historyChanges.length > 0) {
+          readCallbacks().onImageHistoryChange?.(historyChanges);
+        }
+      },
       onUpdate: ({ editor: updated, transaction }) => {
         // Undo can restore a chip for a skill or model the environment no longer offers.
         if (!literalText && isHistoryTransaction(transaction)) {
@@ -1780,7 +1865,7 @@ function ComposerPromptEditorTiptapInner(
     return next;
   };
 
-  // Save citation drafts before controlled rewrites unmount their node views.
+  // Save citation drafts before controlled rewrites, draft switches, or remounts unmount their node views.
   const saveCitationDraft = useEffectEvent((current: TiptapEditor, replacedValue: string) => {
     const draft = citationDraftRef.current;
     citationDraftRef.current = null;
@@ -1799,17 +1884,21 @@ function ComposerPromptEditorTiptapInner(
     });
     if (dismissal.kind !== "commit") return;
     const next = withAssistantCitationComment(citation, dismissal.comment);
-    current.view.dispatch(
-      current.state.tr
-        .setNodeMarkup(pos, undefined, {
-          ...node.attrs,
-          citation: next,
-          source: serializeAssistantCitation(next),
-        })
-        .setMeta("addToHistory", false),
-    );
-    onCitationDraftSave(replacedValue, serializeEditorDoc(current.state.doc).value);
+    const nextDoc = current.state.tr.setNodeMarkup(pos, undefined, {
+      ...node.attrs,
+      citation: next,
+      source: serializeAssistantCitation(next),
+    }).doc;
+    onCitationDraftSave(replacedValue, serializeEditorDoc(nextDoc).value);
   });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- flushes an open citation comment draft before a key-driven remount destroys the editor instance
+  useLayoutEffect(() => {
+    if (!editor) return;
+    return () => {
+      saveCitationDraft(editor, snapshotRef.current.value);
+    };
+  }, [editor]);
 
   // The one place the controlled value reaches the editor. Imperative handlers compare against
   // the committed value, so it is recorded here even before the editor exists.
@@ -1821,6 +1910,7 @@ function ComposerPromptEditorTiptapInner(
     // it. A fresh state keeps undo from reaching back into the previous thread's draft.
     const draftChanged = appliedDraftKeyRef.current !== draftKey;
     appliedDraftKeyRef.current = draftKey;
+    appliedTargetKeyRef.current = baseDraftKey;
     const initialSelection = !hasAppliedControlledSelectionRef.current || draftChanged;
     hasAppliedControlledSelectionRef.current = true;
     const normalizedCursor = clampEditorCursor(value, cursor);
@@ -1857,7 +1947,7 @@ function ComposerPromptEditorTiptapInner(
         : null;
     if (draftChanged) {
       citationRequestRef.current = null;
-      citationDraftRef.current = null;
+      saveCitationDraft(editor, previousSnapshot.value);
       editor.view.updateState(
         EditorState.create({
           doc: editor.schema.nodeFromJSON(
@@ -1908,6 +1998,7 @@ function ComposerPromptEditorTiptapInner(
       isApplyingControlledUpdateRef.current = false;
     });
   }, [
+    baseDraftKey,
     clampEditorCursor,
     cursor,
     draftKey,
@@ -2024,6 +2115,48 @@ function ComposerPromptEditorTiptapInner(
       },
       captureAttachmentInsertion: () =>
         editor ? captureComposerAttachmentInsertion(editor) : undefined,
+      insertAttachmentReferences: (references, options) => {
+        if (!editor || editor.isDestroyed || references.length === 0) return false;
+        let from: number | undefined;
+        let to: number | undefined;
+        if (options?.selection) {
+          const map = serializeEditorDoc(editor.state.doc);
+          from = flatToPm(map, markdownToFlat(map, options.selection.start));
+          to = flatToPm(map, markdownToFlat(map, options.selection.end));
+        }
+        return insertComposerContextReferencesInEditor(editor, references, {
+          ...(from !== undefined ? { from } : {}),
+          ...(to !== undefined ? { to } : {}),
+          imageHistory: options?.imageHistory,
+        });
+      },
+      recordImageHistory: (kind, targetKey, images) => {
+        if (!editor || editor.isDestroyed || images.length === 0) return false;
+        if (appliedTargetKeyRef.current && appliedTargetKeyRef.current !== targetKey) return false;
+        const tr = editor.state.tr.step(new ComposerImageHistoryStep(kind, targetKey, images));
+        editor.view.dispatch(markAsClipboardEdit(tr, kind === "add" ? "paste" : "cut"));
+        return true;
+      },
+      removeImageWithHistory: (targetKey, image, contextId) => {
+        if (!editor || editor.isDestroyed) return false;
+        if (appliedTargetKeyRef.current && appliedTargetKeyRef.current !== targetKey) return false;
+        const tr = editor.state.tr;
+        if (!literalText) {
+          const map = serializeEditorDoc(editor.state.doc);
+          const ranges = inlineContextReferenceRemovalRanges(map.value, contextId);
+          for (let index = ranges.length - 1; index >= 0; index -= 1) {
+            const range = ranges[index]!;
+            const from = flatToPm(map, markdownToFlat(map, range.start));
+            const to = flatToPm(map, markdownToFlat(map, range.end));
+            if (to > from) {
+              tr.delete(from, to);
+            }
+          }
+        }
+        tr.step(new ComposerImageHistoryStep("remove", targetKey, [image]));
+        editor.view.dispatch(markAsClipboardEdit(tr, "cut"));
+        return true;
+      },
       requestCitationComment: (request) => {
         citationRequestRef.current = request;
         if (!editor) return;
