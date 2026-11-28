@@ -1101,3 +1101,11 @@ it.each([
     expect(links(`\`\`\`\n${path}\n\`\`\``)).toEqual([]);
   },
 );
+
+it.each([
+  "-       ![a](/tmp/a.png)",
+  "1.      ![a](/tmp/a.png)",
+  "- a\n  -       ![a](/tmp/a.png)",
+])("collects images in over-indented list items: %j", (markdown) => {
+  expect(chatMarkdownImageSources(markdown)).toEqual(["/tmp/a.png"]);
+});

@@ -49,7 +49,7 @@ function unclosedBlockEnd(text: string): string | undefined {
 /** Appends an embed for each saved image the reply does not already show. */
 export function appendGeneratedImageEmbeds(text: string, savedPaths: Iterable<string>): string {
   const shown = new Set(
-    chatMarkdownImageSources(text).flatMap((source) => {
+    chatMarkdownImageSources(text, { overIndentedListItemsAsCode: true }).flatMap((source) => {
       const path = markdownDestinationHostPath(source);
       return path === null ? [] : [normalizeProjectPathForComparison(path)];
     }),

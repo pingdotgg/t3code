@@ -729,8 +729,12 @@ interface ImageSourceNode {
 
 /**
  * Collect the fallback and every theme variant so images are available to all viewers.
+ * `overIndentedListItemsAsCode` matches mobile, which still renders those items as code.
  */
-export function chatMarkdownImageSources(markdown: string): Array<string> {
+export function chatMarkdownImageSources(
+  markdown: string,
+  { overIndentedListItemsAsCode = false } = {},
+): Array<string> {
   const sources: Array<string> = [];
   const visit = (node: ImageSourceNode) => {
     if (node.type === "element" && node.tagName === "img") {
@@ -748,7 +752,11 @@ export function chatMarkdownImageSources(markdown: string): Array<string> {
     }
     node.children?.forEach(visit);
   };
-  visit(imageSourceProcessor.runSync(imageSourceProcessor.parse(markdown)) as ImageSourceNode);
+  // The list indentation normalizer only runs when it is given the source text.
+  const file = overIndentedListItemsAsCode ? undefined : markdown;
+  visit(
+    imageSourceProcessor.runSync(imageSourceProcessor.parse(markdown), file) as ImageSourceNode,
+  );
   return sources;
 }
 

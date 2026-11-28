@@ -35,6 +35,12 @@ it.each([
 ![](</tmp/C.png>)`,
   },
   {
+    name: "an over-indented list item still needs a preview on mobile",
+    text: "-       ![a](/tmp/a.png)",
+    saved: ["/tmp/a.png"],
+    expected: "-       ![a](/tmp/a.png)\n\n![](</tmp/a.png>)",
+  },
+  {
     name: "links, code and escaped embeds still need a preview",
     text: "[open](/tmp/a.png) `![](/tmp/a.png)`\n\n```md\n![](/tmp/a.png)\n```\n\\![](/tmp/a.png)",
     saved: ["/tmp/a.png"],
