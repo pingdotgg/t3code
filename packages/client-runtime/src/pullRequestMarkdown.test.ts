@@ -186,7 +186,7 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
-  it("closes a CRLF or CR fence, so a video after it still lifts out", () => {
+  it("closes a CRLF fence, so a video after it still lifts out", () => {
     const code = '```html\r\n<video src="https://example.com/example.mp4"></video>\r\n```';
     expect(split(`${code}\r\n\r\nhttps://example.com/demo.mp4\r\n`)).toEqual([
       { id: "markdown:0", kind: "markdown", text: code, sourceOffset: 0 },
@@ -197,6 +197,9 @@ describe("pull request body segmentation", () => {
         media: "video",
       },
     ]);
+  });
+
+  it("splits a lone-CR body into lines, so a video after its fence still lifts out", () => {
     const crLines = ["```text", "https://example.com/sample.mp4", "```"];
     const crBody = [...crLines, "", "https://example.com/actual.mp4", "", "- [ ] Done"].join("\r");
     expect(split(crBody)).toEqual([
