@@ -3,11 +3,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as TestClock from "effect/testing/TestClock";
 import * as Deferred from "effect/Deferred";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -362,6 +365,45 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
         yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("false"));
         const disabled = yield* serverEnvironment.getDescriptor;
         expect(disabled.capabilities.agentActivityPublishing).toBe(false);
+      }).pipe(Effect.provide(layerTest));
+    }),
+  );
+
+  it.effect("answers the descriptor while secret file reads are stalled", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-stalled-secrets-test-",
+      });
+      let stalled = false;
+      const layerStallableSecretStore = Layer.effect(
+        ServerSecretStore.ServerSecretStore,
+        Effect.map(ServerSecretStore.make, (secrets) =>
+          ServerSecretStore.ServerSecretStore.of({
+            ...secrets,
+            get: (name) => (stalled ? Effect.never : secrets.get(name)),
+          }),
+        ),
+      );
+      const layerTest = ServerEnvironment.layer.pipe(
+        Layer.provide(layerStallableSecretStore),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+      );
+
+      yield* Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        const healthy = yield* serverEnvironment.getDescriptor;
+        expect(healthy.capabilities.agentActivityPublishing).toBe(false);
+
+        // A saturated libuv pool or a stalled disk: reads never return.
+        stalled = true;
+        const probe = yield* serverEnvironment.getDescriptor.pipe(
+          Effect.timeoutOption("1 second"),
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("1 second");
+        const descriptor = yield* Fiber.join(probe);
+        expect(Option.isSome(descriptor)).toBe(true);
       }).pipe(Effect.provide(layerTest));
     }),
   );
