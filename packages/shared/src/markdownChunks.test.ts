@@ -422,6 +422,14 @@ describe("splitMarkdown", () => {
         "[code]: /inside-a-fence-after-a-comment",
         "```",
         "",
+        "<!-- Links",
+        "[hidden]: /inside-a-comment",
+        "-->",
+        "[html]: /after-an-html-block",
+        "",
+        "<pre></pre>",
+        "[pre]: /after-a-one-line-html-block",
+        "",
         "- ```md",
         "  ~~~",
         "  ~~~",
@@ -429,7 +437,7 @@ describe("splitMarkdown", () => {
         "  ```",
       ].join("\n");
       expect(splitMarkdown(text).definitions).toBe(
-        "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading\n[t]: /after-break\n[fence]: /after-fence\n[comment]: /after-a-closed-comment",
+        "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading\n[t]: /after-break\n[fence]: /after-fence\n[comment]: /after-a-closed-comment\n[html]: /after-an-html-block\n[pre]: /after-a-one-line-html-block",
       );
       const frontmatter = ["---", "title: x", "...", "[fm]: /after-frontmatter", "", "# A"];
       expect(splitMarkdown(frontmatter.join("\n")).definitions).toBe("[fm]: /after-frontmatter");
