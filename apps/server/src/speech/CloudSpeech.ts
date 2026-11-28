@@ -31,6 +31,10 @@ const endpoints = {
   openai: { url: "https://api.openai.com/v1/audio/transcriptions", model: "gpt-transcribe" },
   xai: { url: "https://api.x.ai/v1/stt", model: "grok-voice-transcribe-2.0" },
   openrouter: { url: "https://openrouter.ai/api/v1/audio/transcriptions" },
+  google: {
+    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent",
+    model: "gemini-3.5-transcribe",
+  },
 };
 const OPENROUTER_CATALOG_URL =
   "https://openrouter.ai/api/v1/models?output_modalities=transcription&zdr=true";
@@ -39,6 +43,21 @@ const isModelId = Schema.is(CloudSpeechModelId);
 const sameCredential = Schema.toEquivalence(SettingsSecretValue);
 const OpenRouterCatalog = Schema.Struct({
   data: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.optionalKey(Schema.String) })),
+});
+const GoogleTranscribeResponse = Schema.Struct({
+  candidates: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        content: Schema.optionalKey(
+          Schema.Struct({
+            parts: Schema.optionalKey(
+              Schema.Array(Schema.Struct({ text: Schema.optionalKey(Schema.String) })),
+            ),
+          }),
+        ),
+      }),
+    ),
+  ),
 });
 
 function wave(samples: Float32Array) {
@@ -104,6 +123,35 @@ function openRouterBody(model: string, audio: ArrayBuffer, language: string) {
   });
 }
 
+function googleBody(audio: ArrayBuffer, language: string, options: SpeechTranscriptionOptions) {
+  const hints: string[] = [];
+  if (language !== "auto") hints.push(`Spoken language: ${language}.`);
+  const words = speechRecognitionWords(
+    options.speechHints,
+    options.speechCustomWords.map(({ term }) => term),
+  );
+  if (words.length > 0) hints.push(`Vocabulary hints: ${words.join(", ")}.`);
+  const parts: Array<
+    | { readonly text: string }
+    | { readonly inlineData: { readonly mimeType: string; readonly data: string } }
+  > = [
+    ...(hints.length > 0
+      ? [
+          {
+            text: `Transcribe the following audio verbatim. Return only the transcript with no commentary. ${hints.join(" ")}`,
+          },
+        ]
+      : []),
+    {
+      inlineData: {
+        mimeType: "audio/wav",
+        data: Buffer.from(audio).toString("base64"),
+      },
+    },
+  ];
+  return HttpClientRequest.bodyJsonUnsafe({ contents: [{ parts }] });
+}
+
 export class CloudSpeech extends Context.Service<
   CloudSpeech,
   {
@@ -133,10 +181,11 @@ export const layer = Layer.effect(
       Effect.map((value) => value.cloudSpeechCredentials),
     );
     const configured = credentials.pipe(
-      Effect.map(({ openai, xai, openrouter }) => ({
+      Effect.map(({ openai, xai, openrouter, google }) => ({
         openai: Boolean(openai),
         xai: Boolean(xai),
         openrouter: Boolean(openrouter),
+        google: Boolean(google),
       })),
     );
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -212,10 +261,14 @@ export const layer = Layer.effect(
         if (!isApiKey(key)) return yield* unreadable();
         const audio = wave(samples);
         const request = HttpClientRequest.post(endpoints[provider].url).pipe(
-          HttpClientRequest.bearerToken(Redacted.make(key)),
+          provider === "google"
+            ? HttpClientRequest.setHeader("x-goog-api-key", key)
+            : HttpClientRequest.bearerToken(Redacted.make(key)),
           provider === "openrouter"
             ? openRouterBody(model!, audio, language)
-            : audioBody(provider, audio, language, options),
+            : provider === "google"
+              ? googleBody(audio, language, options)
+              : audioBody(provider, audio, language, options),
         );
         const unavailable = () => new CloudSpeechError({ provider, reason: "unavailable" });
         // A catalog fetch or vault lookup may have outlived the credential it started with.
@@ -238,9 +291,19 @@ export const layer = Layer.effect(
                     ? "model-unavailable"
                     : "unavailable",
           });
-        const { text } = yield* HttpClientResponse.schemaBodyJson(
-          EnvironmentSpeechTranscriptionResult,
-        )(response).pipe(Effect.mapError(unavailable));
+        const text =
+          provider === "google"
+            ? yield* HttpClientResponse.schemaBodyJson(GoogleTranscribeResponse)(response).pipe(
+                Effect.map(
+                  (body) =>
+                    body.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("") ??
+                    "",
+                ),
+                Effect.mapError(unavailable),
+              )
+            : (yield* HttpClientResponse.schemaBodyJson(EnvironmentSpeechTranscriptionResult)(
+                response,
+              ).pipe(Effect.mapError(unavailable))).text;
         const corrected = applySpeechAliases(text, options.speechCustomWords);
         return (
           options.speechRemoveFillerWords
