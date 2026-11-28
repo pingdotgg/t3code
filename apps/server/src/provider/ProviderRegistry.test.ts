@@ -863,6 +863,27 @@ it.layer(
       }),
     );
 
+    it.effect("does not adopt a version from a non-Codex binary's --version output (#40696)", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const { binaryPath } = yield* writeFakeCodexCli(
+          [
+            `if [ "$1" = "--version" ]; then echo "noop v1.2.3"; exit 0; fi`,
+            `echo "noop: a wrapper, not Codex"; cat > /dev/null`,
+          ].join("\n"),
+        );
+
+        const status = yield* checkCodexProviderStatus(decodeCodexSettings({ binaryPath }));
+
+        assert.strictEqual(
+          status.message,
+          `Codex app-server provider probe failed: \`${binaryPath}\` did not speak the Codex app-server protocol, so it may not be Codex.`,
+        );
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.version, null);
+      }),
+    );
+
     it.effect("keeps a prerelease --version unclassified instead of reading it as stable", () =>
       Effect.gen(function* () {
         if ((yield* HostProcess.Platform) === "win32") return;

@@ -64,6 +64,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import packageJson from "../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
+const isCodexAppServerProtocolParseError = Schema.is(CodexErrors.CodexAppServerProtocolParseError);
 
 type CodexRateLimitsProbe =
   | {
@@ -149,8 +150,9 @@ const CODEX_CLIENT_NAME = "T3 Code";
 const CODEX_AUTH_PROBE_TIMEOUT_MS = 20_000;
 const CODEX_DISCOVERY_MARGIN_MS = 250;
 // `codex-cli 0.159.0`, `codex-cli 0.160.0-alpha.1` or the npm CLI's bare `0.1.4161006`.
+// Matches a whole line, so another binary's `name v1.2.3` banner cannot supply a version.
 // Keep a prerelease suffix so compatibility stays unknown for it, as it does for `initialize`.
-const CODEX_CLI_VERSION_PATTERN = /(?:^|\s)v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?=\s|$)/u;
+const CODEX_CLI_VERSION_PATTERN = /^(?:codex-cli\s+)?v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\r?$/mu;
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",
@@ -1226,6 +1228,11 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   if (Result.isFailure(probeResult)) {
     const error = probeResult.failure;
     const installed = !isCodexAppServerSpawnError(error);
+    // Non-JSON stdout means the binary is not speaking app-server; a real Codex prints JSON lines.
+    const probeFailure =
+      isCodexAppServerProtocolParseError(error) && error.operation === "decode-wire-message"
+        ? `\`${codexSettings.binaryPath}\` did not speak the Codex app-server protocol, so it may not be Codex`
+        : error.message;
     const version = installed
       ? yield* probeCodexCliVersion({
           binaryPath: codexSettings.binaryPath,
@@ -1246,7 +1253,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         status: "error",
         auth: { status: "unknown" },
         message: installed
-          ? `Codex app-server provider probe failed: ${error.message}.`
+          ? `Codex app-server provider probe failed: ${probeFailure}.`
           : `Could not start Codex CLI (\`${codexSettings.binaryPath}\`). Check Settings → Providers → Codex → Binary path on the server.` +
             (codexSettings.binaryPath === "codex"
               ? " Installing ChatGPT or Codex desktop may not add codex to PATH."
