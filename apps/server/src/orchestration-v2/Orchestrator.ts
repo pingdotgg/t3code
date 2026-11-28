@@ -77,6 +77,7 @@ import {
   resolveProjectProviderInstanceEnabled,
   type ProviderSessionId,
   type ProviderThreadId,
+  type ProviderDriverKind,
   RunId,
   RuntimeMode,
   ThreadLinkedPullRequest,
@@ -4155,7 +4156,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const nativeImportProviderThreadId = (
     instanceId: ProviderInstanceId,
-    ref: NonNullable<OrchestrationV2ProviderThread["nativeThreadRef"]>,
+    ref: { readonly driver: ProviderDriverKind; readonly nativeId: string },
   ) =>
     idAllocator.derive.providerThread({
       driver: ref.driver,
