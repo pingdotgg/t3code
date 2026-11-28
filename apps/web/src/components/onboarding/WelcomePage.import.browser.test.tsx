@@ -53,6 +53,7 @@ const state = vi.hoisted(() => ({
   openTerminal: vi.fn(),
   writeTerminal: vi.fn(),
   closeTerminal: vi.fn(),
+  attachedTerminals: new Map<string, () => void>(),
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
@@ -177,7 +178,14 @@ vi.mock(import("../../state/terminalSessions"), async (original) => {
 });
 vi.mock(import("../ThreadTerminalDrawer"), async (original) => ({
   ...(await original()),
-  TerminalViewport: () => <div />,
+  TerminalViewport: ({ terminalId, onSessionExited }) => (
+    <div
+      ref={() => {
+        state.attachedTerminals.set(terminalId, onSessionExited);
+        return () => void state.attachedTerminals.delete(terminalId);
+      }}
+    />
+  ),
 }));
 vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
@@ -378,6 +386,12 @@ function setup() {
   for (const command of [state.openTerminal, state.writeTerminal, state.closeTerminal]) {
     command.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   }
+  // Closing a terminal whose viewport is still attached reports an exit, as in the real one.
+  state.attachedTerminals.clear();
+  state.closeTerminal.mockImplementation(async ({ input }: { input: { terminalId: string } }) => {
+    state.attachedTerminals.get(input.terminalId)?.();
+    return AsyncResult.success(undefined);
+  });
   localStorage.removeItem(welcomeImportSelectionKey(primaryId));
   return now;
 }
@@ -711,7 +725,7 @@ it("offers Update for a signed-in agent whose version is broken, and keeps Start
   expect(button("Import 2 projects and start").disabled).toBe(true);
 });
 
-it("checks an agent again once its install command finishes in the setup terminal", async () => {
+it("checks an agent again once its install command finishes, then replaces it with sign-in", async () => {
   using _now = setup();
   appAtomRegistry.set(
     sessionAtom(primaryId),
@@ -736,10 +750,35 @@ it("checks an agent again once its install command finishes in the setup termina
 
   await act(async () => appAtomRegistry.set(runningTerminalIds, [terminalId]));
   expect(state.refreshProviders).not.toHaveBeenCalledWith(recheck);
+  // Another check sees the new, signed-out binary before the installer exits.
+  await act(async () =>
+    appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, [
+      { ...readyClaude, status: "error", auth: { status: "unauthenticated" } },
+    ]),
+  );
+  await vi.waitFor(() => expect(button("Sign in").disabled).toBe(true));
   // The shell stays open at its prompt after the install, so only the command exits.
   await act(async () => appAtomRegistry.set(runningTerminalIds, []));
   expect(state.refreshProviders).toHaveBeenCalledWith(recheck);
   expect(state.closeTerminal).not.toHaveBeenCalled();
+
+  await click("Sign in");
+  await vi.waitFor(() =>
+    expect(state.writeTerminal).toHaveBeenLastCalledWith({
+      environmentId: primaryId,
+      input: {
+        threadId: expect.any(String),
+        terminalId: expect.any(String),
+        data: "claude auth login",
+      },
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(pageText()).toContain("Review the command, then press Enter to run it."),
+  );
+  expect(state.openTerminal.mock.calls[1]![0].input.terminalId).not.toBe(terminalId);
+  expect(state.closeTerminal).toHaveBeenCalledOnce();
+  expect(state.closeTerminal.mock.calls[0]![0].input.terminalId).toBe(terminalId);
 });
 
 it("keeps an import opt-out on the page when storage cannot save it", async () => {
