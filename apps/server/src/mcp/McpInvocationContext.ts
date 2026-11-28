@@ -232,6 +232,13 @@ export const hiddenFromThreads = (): boolean => {
   return scope?.thread === undefined;
 };
 
+/** `McpSchema.EnabledWhen` for tools only another environment's peer link calls, such as a moved thread's import. */
+export const onlyForLinkedClients = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.client?.linked === true && scope.linkedEnvironments !== false;
+};
+
 /** `McpSchema.EnabledWhen` for tools that only serve links, hidden while the beta is off. */
 export const hiddenWhileLinksOff = (): boolean => {
   const fiber = Fiber.getCurrent();

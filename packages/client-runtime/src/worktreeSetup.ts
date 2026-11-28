@@ -14,6 +14,10 @@ export function resolveVisibleWorktreeSetup(input: {
   if (snapshot.phase === "running") return snapshot;
   if (input.followUpSent) return null;
   if (snapshot.phase !== "done") return snapshot;
+  // A launch with no first message, such as a moved thread, hands off to no run.
+  if (snapshot.stages.some((stage) => stage.id === "agent" && stage.status === "skipped")) {
+    return null;
+  }
   if (!input.runs.some((run) => run.startedAt !== null)) return snapshot;
   return snapshot.stages.some((stage) => stage.status === "failed") ? snapshot : null;
 }

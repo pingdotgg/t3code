@@ -12926,6 +12926,67 @@
   ],
   "33d18dda74f6d7b3": "Avbryt automatisk merge för stacken",
   "012c67c7f1a99e33": "Merga stacken automatiskt",
+  "e1a4d76b436f0a6d": "Flytta tråd till {machine}…",
+  "f2f55891dfec0f40": "Stoppa tråden innan du flyttar den.",
+  "b4f34d34a929a521": "Det gick inte att läsa tråden.",
+  "9dc24b3101a84fa3": "den här datorn",
+  "5532093308617570": "den andra datorn",
+  "af227160f4ea1d2a": "Det gick inte att flytta tråden.",
+  "6ba4cfbd0c498161": "Flyttad till {machine}",
+  "5bd43a2a2b5d880b": "Den ursprungliga tråden kunde inte arkiveras",
+  "57e3105bb5c1327e": "Arkivera den på {machine} så att du inte arbetar i båda.",
+  "238ef13d10f080f7": "Projekt på {machine}",
+  "1d7d49af679074e0": "Lägg till projekt på {machine}",
+  "3b959d4d38e37b76": "{count, plural, one {{count} äldre meddelande lämnas kvar för att hålla den flyttade historiken under 1 MB.} other {{count} äldre meddelanden lämnas kvar för att hålla den flyttade historiken under 1 MB.}}",
+  "63739f23d55fa6a9": "Flyttar…",
+  "684c0370f07f4169": "Flytta",
+  "423fd60b8623e0b8": "{branch} är inte pushad, så koden stannar på {machine}. Den nya tråden startar i projektmappen.",
+  "c0a03023adb8f846": "Den nya tråden fortsätter på {branch}, utcheckad från dess fjärrförråd.",
+  "19c1372d36bc778d": "{count, plural, one {{count} commit är inte pushad och stannar på {machine}.} other {{count} commits är inte pushade och stannar på {machine}.}}",
+  "bfa699d61daa10b3": "{count, plural, one {{count} ej committad fil stannar på {machine}.} other {{count} ej committade filer stannar på {machine}.}}",
+  "7767027ae49ce4ea": [
+    "Flytta tråd till ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1c6227ffe39445e0": [
+    "Tråden fortsätter på ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " med sin konversation. Originalet arkiveras på ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "; avarkivera det för att få tillbaka det."
+  ],
+  "f4769e41b04c86ed": "Läser tråden…",
+  "6c8a9398e96a5885": "Den datorn är inte längre ansluten, eller så kan den här anslutningen inte starta trådar där.",
+  "0ee725c0c98825c1": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " har inte det här projektet än."
+  ],
+  "609fc7e2021ac799": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " har inga projekt att flytta tråden till."
+  ],
+  "b3baf8862c5b9280": "Den här tråden arbetar inte på en Git-gren, så den nya tråden startar i projektmappen.",
+  "2bb763e65649eb7b": "Flytta till…",
   "4a18481bea4b4ad5": "Ny enhet inloggad på {environmentLabel}",
   "4144ab6aa487528a": "{device} anslöt via {product}. Inte du? Granska den.",
   "a10cfdb27152c757": "{count, plural, one {{count} enhet} other {{count} enheter}} anslöt via {product}. Inte du? Granska dem.",

@@ -12919,6 +12919,67 @@
   ],
   "33d18dda74f6d7b3": "Annuler la fusion automatique de la pile",
   "012c67c7f1a99e33": "Fusion automatique de la pile",
+  "e1a4d76b436f0a6d": "Déplacer le fil vers {machine}…",
+  "f2f55891dfec0f40": "Arrêtez le fil avant de le déplacer.",
+  "b4f34d34a929a521": "Impossible de lire le fil.",
+  "9dc24b3101a84fa3": "cette machine",
+  "5532093308617570": "l’autre machine",
+  "af227160f4ea1d2a": "Impossible de déplacer le fil.",
+  "6ba4cfbd0c498161": "Déplacé vers {machine}",
+  "5bd43a2a2b5d880b": "Le fil d’origine n’a pas pu être archivé",
+  "57e3105bb5c1327e": "Archivez-le sur {machine} pour ne pas travailler dans les deux.",
+  "238ef13d10f080f7": "Projet sur {machine}",
+  "1d7d49af679074e0": "Ajouter le projet à {machine}",
+  "3b959d4d38e37b76": "{count, plural, one {{count} message plus ancien reste en arrière pour que l’historique déplacé ne dépasse pas 1 Mo.} other {{count} messages plus anciens restent en arrière pour que l’historique déplacé ne dépasse pas 1 Mo.}}",
+  "63739f23d55fa6a9": "Déplacement…",
+  "684c0370f07f4169": "Déplacer",
+  "423fd60b8623e0b8": "{branch} n’est pas poussée, son code reste donc sur {machine}. Le nouveau fil démarre dans le dossier du projet.",
+  "c0a03023adb8f846": "Le nouveau fil continue sur {branch}, récupérée depuis son dépôt distant.",
+  "19c1372d36bc778d": "{count, plural, one {{count} commit n’est pas poussé et reste sur {machine}.} other {{count} commits ne sont pas poussés et restent sur {machine}.}}",
+  "bfa699d61daa10b3": "{count, plural, one {{count} fichier non commité reste sur {machine}.} other {{count} fichiers non commités restent sur {machine}.}}",
+  "7767027ae49ce4ea": [
+    "Déplacer le fil vers ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1c6227ffe39445e0": [
+    "Le fil continue sur ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " avec sa conversation. L’original est archivé sur ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " ; désarchivez-le pour le récupérer."
+  ],
+  "f4769e41b04c86ed": "Lecture du fil…",
+  "6c8a9398e96a5885": "Cette machine n’est plus connectée, ou cette connexion ne peut pas y démarrer de fils.",
+  "0ee725c0c98825c1": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " n’a pas encore ce projet."
+  ],
+  "609fc7e2021ac799": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " n’a aucun projet vers lequel déplacer le fil."
+  ],
+  "b3baf8862c5b9280": "Ce fil ne travaille pas sur une branche Git, le nouveau fil démarre donc dans le dossier du projet.",
+  "2bb763e65649eb7b": "Déplacer vers…",
   "4a18481bea4b4ad5": "Nouvel appareil connecté à {environmentLabel}",
   "4144ab6aa487528a": "{device} s’est connecté via {product}. Ce n’était pas vous ? Vérifiez-le.",
   "a10cfdb27152c757": "{count, plural, one {{count} appareil s’est connecté} other {{count} appareils se sont connectés}} via {product}. Ce n’était pas vous ? Vérifiez-les.",

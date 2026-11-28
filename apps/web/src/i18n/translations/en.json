@@ -12927,6 +12927,67 @@
   ],
   "33d18dda74f6d7b3": "Cancel stack auto-merge",
   "012c67c7f1a99e33": "Auto-merge stack",
+  "e1a4d76b436f0a6d": "Move thread to {machine}…",
+  "f2f55891dfec0f40": "Stop the thread before moving it.",
+  "b4f34d34a929a521": "Could not read the thread.",
+  "9dc24b3101a84fa3": "this machine",
+  "5532093308617570": "the other machine",
+  "af227160f4ea1d2a": "Could not move the thread.",
+  "6ba4cfbd0c498161": "Moved to {machine}",
+  "5bd43a2a2b5d880b": "The original thread could not be archived",
+  "57e3105bb5c1327e": "Archive it on {machine} to avoid working in both.",
+  "238ef13d10f080f7": "Project on {machine}",
+  "1d7d49af679074e0": "Add project to {machine}",
+  "3b959d4d38e37b76": "{count, plural, one {{count} older message stays behind to keep the moved history under 1 MB.} other {{count} older messages stay behind to keep the moved history under 1 MB.}}",
+  "63739f23d55fa6a9": "Moving…",
+  "684c0370f07f4169": "Move",
+  "423fd60b8623e0b8": "{branch} is not pushed, so its code stays on {machine}. The new thread starts in the project folder.",
+  "c0a03023adb8f846": "The new thread continues on {branch}, checked out from its remote.",
+  "19c1372d36bc778d": "{count, plural, one {{count} commit is not pushed and stays on {machine}.} other {{count} commits are not pushed and stay on {machine}.}}",
+  "bfa699d61daa10b3": "{count, plural, one {{count} uncommitted file stays on {machine}.} other {{count} uncommitted files stay on {machine}.}}",
+  "7767027ae49ce4ea": [
+    "Move thread to ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1c6227ffe39445e0": [
+    "The thread continues on ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " with its conversation. The original is archived on ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "; unarchive it to bring it back."
+  ],
+  "f4769e41b04c86ed": "Reading the thread…",
+  "6c8a9398e96a5885": "That machine is no longer connected, or this connection cannot start threads on it.",
+  "0ee725c0c98825c1": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " does not have this project yet."
+  ],
+  "609fc7e2021ac799": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " has no projects to move the thread into."
+  ],
+  "b3baf8862c5b9280": "This thread is not on a Git branch, so the new thread starts in the project folder.",
+  "2bb763e65649eb7b": "Move to…",
   "4a18481bea4b4ad5": "New device signed in to {environmentLabel}",
   "4144ab6aa487528a": "{device} connected through {product}. Not you? Review it.",
   "a10cfdb27152c757": "{count, plural, one {{count} device} other {{count} devices}} connected through {product}. Not you? Review them.",

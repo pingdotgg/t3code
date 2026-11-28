@@ -66,14 +66,36 @@ describe("buildThreadActionMenuItems", () => {
     },
   );
 
-  it("disables archive and turning into a project while the thread is running", () => {
+  it("disables archive, turning into a project, and moving while the thread is running", () => {
     const items = buildThreadActionMenuItems({
       ...baseState,
       isRunning: true,
       canTurnIntoProject: true,
+      moveTargets: [{ environmentId: "laptop", label: "Laptop" }],
     });
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
+    expect(items.find((item) => item.id === "move")?.disabled).toBe(true);
+  });
+
+  it("lists one move item per target and leaves it out without targets", () => {
+    const targets = [
+      { environmentId: "laptop", label: "Laptop" },
+      { environmentId: "vps", label: "VPS" },
+    ];
+    const move = buildThreadActionMenuItems({ ...baseState, moveTargets: targets }).find(
+      (item) => item.id === "move",
+    );
+    expect(move?.children?.map((child) => child.id)).toEqual(["move:laptop", "move:vps"]);
+    const readOnly = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: false,
+      moveTargets: targets,
+    }).find((item) => item.id === "move");
+    expect(readOnly?.children?.every((child) => child.disabled)).toBe(true);
+    expect(
+      buildThreadActionMenuItems({ ...baseState, moveTargets: [] }).map((item) => item.id),
+    ).not.toContain("move");
   });
 
   it.each([

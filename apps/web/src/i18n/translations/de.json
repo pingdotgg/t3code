@@ -12919,6 +12919,67 @@
   ],
   "33d18dda74f6d7b3": "Auto-Merge für Stack abbrechen",
   "012c67c7f1a99e33": "Auto-Merge für Stack",
+  "e1a4d76b436f0a6d": "Thread auf {machine} verschieben…",
+  "f2f55891dfec0f40": "Stoppe den Thread, bevor du ihn verschiebst.",
+  "b4f34d34a929a521": "Der Thread konnte nicht gelesen werden.",
+  "9dc24b3101a84fa3": "diesem Rechner",
+  "5532093308617570": "den anderen Rechner",
+  "af227160f4ea1d2a": "Der Thread konnte nicht verschoben werden.",
+  "6ba4cfbd0c498161": "Auf {machine} verschoben",
+  "5bd43a2a2b5d880b": "Der ursprüngliche Thread konnte nicht archiviert werden",
+  "57e3105bb5c1327e": "Archiviere ihn auf {machine}, damit nicht in beiden gearbeitet wird.",
+  "238ef13d10f080f7": "Projekt auf {machine}",
+  "1d7d49af679074e0": "Projekt zu {machine} hinzufügen",
+  "3b959d4d38e37b76": "{count, plural, one {{count} ältere Nachricht bleibt zurück, damit der verschobene Verlauf unter 1 MB bleibt.} other {{count} ältere Nachrichten bleiben zurück, damit der verschobene Verlauf unter 1 MB bleibt.}}",
+  "63739f23d55fa6a9": "Wird verschoben…",
+  "684c0370f07f4169": "Verschieben",
+  "423fd60b8623e0b8": "{branch} ist nicht gepusht, daher bleibt sein Code auf {machine}. Der neue Thread startet im Projektordner.",
+  "c0a03023adb8f846": "Der neue Thread arbeitet auf {branch} weiter, ausgecheckt von dessen Remote.",
+  "19c1372d36bc778d": "{count, plural, one {{count} Commit ist nicht gepusht und bleibt auf {machine}.} other {{count} Commits sind nicht gepusht und bleiben auf {machine}.}}",
+  "bfa699d61daa10b3": "{count, plural, one {{count} nicht committete Datei bleibt auf {machine}.} other {{count} nicht committete Dateien bleiben auf {machine}.}}",
+  "7767027ae49ce4ea": [
+    "Thread verschieben auf ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1c6227ffe39445e0": [
+    "Der Thread läuft mit seiner Unterhaltung auf ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " weiter. Das Original wird auf ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " archiviert; hole es aus dem Archiv, um es zurückzubekommen."
+  ],
+  "f4769e41b04c86ed": "Thread wird gelesen…",
+  "6c8a9398e96a5885": "Dieser Rechner ist nicht mehr verbunden, oder diese Verbindung darf dort keine Threads starten.",
+  "0ee725c0c98825c1": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " hat dieses Projekt noch nicht."
+  ],
+  "609fc7e2021ac799": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " hat keine Projekte, in die der Thread verschoben werden kann."
+  ],
+  "b3baf8862c5b9280": "Dieser Thread arbeitet nicht auf einem Git-Branch, daher startet der neue Thread im Projektordner.",
+  "2bb763e65649eb7b": "Verschieben nach…",
   "4a18481bea4b4ad5": "Neues Gerät bei {environmentLabel} angemeldet",
   "4144ab6aa487528a": "{device} hat sich über {product} verbunden. Warst du das nicht? Prüfe es.",
   "a10cfdb27152c757": "{count, plural, one {{count} Gerät hat} other {{count} Geräte haben}} sich über {product} verbunden. Warst du das nicht? Prüfe sie.",

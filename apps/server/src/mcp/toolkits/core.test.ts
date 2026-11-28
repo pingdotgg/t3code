@@ -50,6 +50,7 @@ import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import type * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
+import * as ThreadMoveService from "../../orchestration-v2/ThreadMoveService.ts";
 import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
@@ -87,7 +88,12 @@ const decodeThreadSearchResult = Schema.decodeUnknownEffect(
 );
 
 const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
-  Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(ThreadSearch.ThreadSearch)({}),
+      Layer.mock(ThreadMoveService.ThreadMoveService)({}),
+    ),
+  ),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
   Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
   Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
@@ -942,6 +948,7 @@ it.effect("search names the calling thread, so an agent can tell its own match a
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
+        Layer.provide(Layer.mock(ThreadMoveService.ThreadMoveService)({})),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(
           Layer.mock(ThreadSearch.ThreadSearch)({
@@ -1261,7 +1268,12 @@ it.effect.each([
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
-        Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(ThreadSearch.ThreadSearch)({}),
+            Layer.mock(ThreadMoveService.ThreadMoveService)({}),
+          ),
+        ),
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
         Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
@@ -1301,7 +1313,12 @@ it.effect("run_scheduled_task_now reports why a started run failed to dispatch",
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
-        Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(ThreadSearch.ThreadSearch)({}),
+            Layer.mock(ThreadMoveService.ThreadMoveService)({}),
+          ),
+        ),
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
         Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),

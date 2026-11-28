@@ -10,7 +10,7 @@ import {
   type ShownOrder,
 } from "@t3tools/client-runtime/state/thread-search";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
-import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import {
   foldSearchQuery,
   PALETTE_MESSAGE_LIMIT,
@@ -55,6 +55,9 @@ import {
 import { useThreadSearch } from "../../state/queries";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import { useCanShareWithGuest } from "../threads/useCanShareWithGuest";
+import { threadCanArchive } from "../home/threadArchive";
+import { useEnvironmentScope } from "../../state/session";
+import { useHasThreadMoveTarget } from "../../state/threadMove";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "../../state/server";
@@ -292,6 +295,12 @@ export function CommandPalette(props: {
     triageEnvironmentId !== null &&
     serverConfigs.get(triageEnvironmentId)?.environment.capabilities.triage === true;
   const canShareWithGuest = useCanShareWithGuest(activeThreadRef?.environmentId ?? null);
+  const canOperateActiveThread = useEnvironmentScope(
+    activeThreadRef?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
+  );
+  const hasMoveTarget = useHasThreadMoveTarget(activeThreadRef?.environmentId ?? null);
+  const canMoveThread = canOperateActiveThread && hasMoveTarget;
   const contentMatchByKey = new Map(
     search.matches
       .filter((match) => match.source === "user" || match.source === "assistant")
@@ -422,6 +431,15 @@ export function CommandPalette(props: {
           run: () => navigation.navigate("ThreadGuestShare", activeThreadRef),
         });
       }
+      if (canMoveThread && (activeThread === null || threadCanArchive(activeThread.runtime))) {
+        actions.push({
+          key: "moveThread",
+          kind: "action",
+          title: gt("Move to another machine…"),
+          searchTerms: ["move", "machine", "environment", "transfer", "handoff"],
+          run: () => navigation.navigate("ThreadMove", activeThreadRef),
+        });
+      }
     }
     const openProjects = projects.filter((project) => project.archivedAt == null);
     const projectItems: CommandPaletteItem[] = [
@@ -500,6 +518,7 @@ export function CommandPalette(props: {
     environments.length,
     canTriage,
     canShareWithGuest,
+    canMoveThread,
     navigation,
     projects,
     runCommand,

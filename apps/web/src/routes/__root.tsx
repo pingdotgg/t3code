@@ -21,6 +21,7 @@ import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
 import { UseInAnotherAppDialogHost } from "../components/mcp/UseInAnotherAppDialog";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
+import { MoveThreadDialogHost } from "../components/MoveThreadDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { WorktreeLayoutApprovalDialogHost } from "../components/WorktreeLayoutApprovalDialogHost";
 import { DevReplayHost } from "../components/DevReplayHost";
@@ -211,6 +212,7 @@ function RootRouteBranch() {
       <ProjectCloneToastCoordinator />
       <ConnectDeviceApprovalCoordinator />
       <AddProjectToMachineDialogHost />
+      <MoveThreadDialogHost />
       <UseInAnotherAppDialogHost />
       {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
     </>

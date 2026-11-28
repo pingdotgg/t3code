@@ -12919,6 +12919,67 @@
   ],
   "33d18dda74f6d7b3": "Cancelar merge automático da pilha",
   "012c67c7f1a99e33": "Merge automático da pilha",
+  "e1a4d76b436f0a6d": "Mover thread para {machine}…",
+  "f2f55891dfec0f40": "Pare a thread antes de movê-la.",
+  "b4f34d34a929a521": "Não foi possível ler a thread.",
+  "9dc24b3101a84fa3": "esta máquina",
+  "5532093308617570": "a outra máquina",
+  "af227160f4ea1d2a": "Não foi possível mover a thread.",
+  "6ba4cfbd0c498161": "Movida para {machine}",
+  "5bd43a2a2b5d880b": "Não foi possível arquivar a thread original",
+  "57e3105bb5c1327e": "Arquive-a em {machine} para não trabalhar nas duas.",
+  "238ef13d10f080f7": "Projeto em {machine}",
+  "1d7d49af679074e0": "Adicionar projeto a {machine}",
+  "3b959d4d38e37b76": "{count, plural, one {{count} mensagem mais antiga fica para trás para manter o histórico movido abaixo de 1 MB.} other {{count} mensagens mais antigas ficam para trás para manter o histórico movido abaixo de 1 MB.}}",
+  "63739f23d55fa6a9": "Movendo…",
+  "684c0370f07f4169": "Mover",
+  "423fd60b8623e0b8": "{branch} não tem push, então o código fica em {machine}. A nova thread começa na pasta do projeto.",
+  "c0a03023adb8f846": "A nova thread continua em {branch}, obtida do remoto.",
+  "19c1372d36bc778d": "{count, plural, one {{count} commit sem push fica em {machine}.} other {{count} commits sem push ficam em {machine}.}}",
+  "bfa699d61daa10b3": "{count, plural, one {{count} arquivo sem commit fica em {machine}.} other {{count} arquivos sem commit ficam em {machine}.}}",
+  "7767027ae49ce4ea": [
+    "Mover thread para ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1c6227ffe39445e0": [
+    "A thread continua em ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " com a conversa. A original é arquivada em ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "; desarquive-a para trazê-la de volta."
+  ],
+  "f4769e41b04c86ed": "Lendo a thread…",
+  "6c8a9398e96a5885": "Essa máquina não está mais conectada, ou esta conexão não pode iniciar threads nela.",
+  "0ee725c0c98825c1": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ainda não tem este projeto."
+  ],
+  "609fc7e2021ac799": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " não tem projetos para onde mover a thread."
+  ],
+  "b3baf8862c5b9280": "Esta thread não trabalha em um branch do Git, então a nova thread começa na pasta do projeto.",
+  "2bb763e65649eb7b": "Mover para…",
   "4a18481bea4b4ad5": "Novo dispositivo conectado a {environmentLabel}",
   "4144ab6aa487528a": "{device} se conectou pelo {product}. Não foi você? Revise.",
   "a10cfdb27152c757": "{count, plural, one {{count} dispositivo se conectou} other {{count} dispositivos se conectaram}} pelo {product}. Não foi você? Revise.",

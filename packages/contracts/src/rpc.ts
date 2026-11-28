@@ -125,6 +125,14 @@ import {
   AgentSessionScanError,
 } from "./agentSessions.ts";
 import {
+  ThreadMoveCompleteInput,
+  ThreadMoveError,
+  ThreadMoveExportInput,
+  ThreadMoveImportInput,
+  ThreadMoveImportResult,
+  ThreadMoveSnapshot,
+} from "./threadMove.ts";
+import {
   AssetAccessError,
   AssetCreateUrlInput,
   AssetCreateUrlResult,
@@ -515,6 +523,9 @@ export const WS_METHODS = {
   filesystemGetMetadata: "filesystem.getMetadata",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
+  threadMoveExport: "threadMove.export",
+  threadMoveImport: "threadMove.import",
+  threadMoveComplete: "threadMove.complete",
   assetsCreateUrl: "assets.createUrl",
   assetsPersistChatAttachments: "assets.persistChatAttachments",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
@@ -1783,6 +1794,23 @@ const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
   ]),
 });
 
+const WsThreadMoveExportRpc = Rpc.make(WS_METHODS.threadMoveExport, {
+  payload: ThreadMoveExportInput,
+  success: ThreadMoveSnapshot,
+  error: Schema.Union([ThreadMoveError, EnvironmentAuthorizationError]),
+});
+
+const WsThreadMoveImportRpc = Rpc.make(WS_METHODS.threadMoveImport, {
+  payload: ThreadMoveImportInput,
+  success: ThreadMoveImportResult,
+  error: Schema.Union([ThreadMoveError, EnvironmentAuthorizationError]),
+});
+
+const WsThreadMoveCompleteRpc = Rpc.make(WS_METHODS.threadMoveComplete, {
+  payload: ThreadMoveCompleteInput,
+  error: Schema.Union([ThreadMoveError, EnvironmentAuthorizationError]),
+});
+
 const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
@@ -2678,6 +2706,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemGetMetadataRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
+  WsThreadMoveExportRpc,
+  WsThreadMoveImportRpc,
+  WsThreadMoveCompleteRpc,
   WsAssetsCreateUrlRpc,
   WsAssetsPersistChatAttachmentsRpc,
   WsAttachmentsCreateUploadUrlRpc,

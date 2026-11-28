@@ -393,6 +393,11 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Merge", "Merging", "Requested a merge of", "thread context"],
     "thread-merge",
   ),
+  t3_thread_move: tool(
+    ["Move", "Moving", "Moved", "a thread to another environment"],
+    "thread-create",
+  ),
+  t3_thread_import: tool(["Receive", "Receiving", "Received", "a moved thread"], "thread-create"),
   t3_thread_search: tool(["Search", "Searching", "Searched", "thread content"], "thread-search"),
   t3_thread_transfers: tool(["Read", "Reading", "Read", "thread transfers"], "thread-transfers"),
   t3_thread_organize: tool(["Organize", "Organizing", "Organized", "a thread"], "thread-organize"),

@@ -119,6 +119,10 @@
       "types": "./src/linkRequest.ts",
       "default": "./src/linkRequest.ts"
     },
+    "./thread-move": {
+      "types": "./src/threadMove.ts",
+      "default": "./src/threadMove.ts"
+    },
     "./linked-thread": {
       "types": "./src/linkedThread.ts",
       "default": "./src/linkedThread.ts"
@@ -358,6 +362,10 @@
     "./state/review": {
       "types": "./src/state/review.ts",
       "default": "./src/state/review.ts"
+    },
+    "./state/thread-move-commands": {
+      "types": "./src/state/threadMoveCommands.ts",
+      "default": "./src/state/threadMoveCommands.ts"
     },
     "./state/runtime": {
       "types": "./src/state/runtime.ts",

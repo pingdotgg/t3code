@@ -12914,6 +12914,67 @@
   ],
   "33d18dda74f6d7b3": "Cancelar la fusión automática de la pila",
   "012c67c7f1a99e33": "Fusión automática de la pila",
+  "e1a4d76b436f0a6d": "Mover hilo a {machine}…",
+  "f2f55891dfec0f40": "Detén el hilo antes de moverlo.",
+  "b4f34d34a929a521": "No se pudo leer el hilo.",
+  "9dc24b3101a84fa3": "esta máquina",
+  "5532093308617570": "la otra máquina",
+  "af227160f4ea1d2a": "No se pudo mover el hilo.",
+  "6ba4cfbd0c498161": "Movido a {machine}",
+  "5bd43a2a2b5d880b": "No se pudo archivar el hilo original",
+  "57e3105bb5c1327e": "Archívalo en {machine} para no trabajar en ambos.",
+  "238ef13d10f080f7": "Proyecto en {machine}",
+  "1d7d49af679074e0": "Añadir proyecto a {machine}",
+  "3b959d4d38e37b76": "{count, plural, one {{count} mensaje antiguo se queda atrás para que el historial movido no supere 1 MB.} other {{count} mensajes antiguos se quedan atrás para que el historial movido no supere 1 MB.}}",
+  "63739f23d55fa6a9": "Moviendo…",
+  "684c0370f07f4169": "Mover",
+  "423fd60b8623e0b8": "{branch} no tiene push, así que su código se queda en {machine}. El nuevo hilo empieza en la carpeta del proyecto.",
+  "c0a03023adb8f846": "El nuevo hilo continúa en {branch}, obtenida de su remoto.",
+  "19c1372d36bc778d": "{count, plural, one {{count} commit no tiene push y se queda en {machine}.} other {{count} commits no tienen push y se quedan en {machine}.}}",
+  "bfa699d61daa10b3": "{count, plural, one {{count} archivo sin commit se queda en {machine}.} other {{count} archivos sin commit se quedan en {machine}.}}",
+  "7767027ae49ce4ea": [
+    "Mover hilo a ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1c6227ffe39445e0": [
+    "El hilo continúa en ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " con su conversación. El original se archiva en ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "; desarchívalo para recuperarlo."
+  ],
+  "f4769e41b04c86ed": "Leyendo el hilo…",
+  "6c8a9398e96a5885": "Esa máquina ya no está conectada, o esta conexión no puede iniciar hilos en ella.",
+  "0ee725c0c98825c1": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " todavía no tiene este proyecto."
+  ],
+  "609fc7e2021ac799": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " no tiene proyectos a los que mover el hilo."
+  ],
+  "b3baf8862c5b9280": "Este hilo no trabaja en una rama de Git, así que el nuevo hilo empieza en la carpeta del proyecto.",
+  "2bb763e65649eb7b": "Mover a…",
   "4a18481bea4b4ad5": "Nuevo dispositivo conectado a {environmentLabel}",
   "4144ab6aa487528a": "{device} se conectó a través de {product}. ¿No fuiste tú? Revísalo.",
   "a10cfdb27152c757": "{count, plural, one {{count} dispositivo se conectó} other {{count} dispositivos se conectaron}} a través de {product}. ¿No fuiste tú? Revísalos.",
