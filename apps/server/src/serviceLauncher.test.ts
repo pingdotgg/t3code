@@ -1050,6 +1050,83 @@ process.exit(0);
     }),
   );
 
+  it.effect("names the other machine when the owner runs on another machine", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-foreign-owner-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const ownerPath = path.join(root, "userdata", "server-owner.sqlite");
+      yield* fs.makeDirectory(path.dirname(ownerPath), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(root, "userdata", "server-runtime.json"),
+        JSON.stringify({
+          version: 1,
+          pid: 1234,
+          hostname: "another-machine",
+          port: 3773,
+          origin: "http://127.0.0.1:3773",
+          startedAt: "2026-10-01T00:00:00.000Z",
+        }),
+      );
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.0.0"),
+        [
+          `const db = new (require("node:sqlite").DatabaseSync)(${JSON.stringify(ownerPath)});`,
+          `try { db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;"); }`,
+          `catch { process.exit(${SERVER_EXIT_CODE_STATE_DIR_OWNED}); }`,
+          'process.send("owner");',
+          "setInterval(() => {}, 1_000);",
+        ].join("\n"),
+      );
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+      using otherOwner = new NodeSqlite.DatabaseSync(ownerPath);
+      otherOwner.exec("BEGIN EXCLUSIVE;");
+      const lines: Array<string> = [];
+      const refused = Promise.withResolvers<void>();
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+            lines.push(String(chunk));
+            if (String(chunk).includes("owns this T3 home")) refused.resolve();
+            return true;
+          }),
+        ),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
+      const owned = Promise.withResolvers<void>();
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          spawnHook.current = (child) => child.once("message", () => owned.resolve());
+        }),
+        () =>
+          Effect.sync(() => {
+            spawnHook.current = undefined;
+          }),
+      );
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        { stateDirOwnerPollMs: 10 },
+      );
+      const running = launcher.run();
+      yield* Effect.promise(() => refused.promise);
+      assert.include(lines.join(""), "`another-machine`");
+      assert.include(lines.join(""), "Stop it on `another-machine`");
+      otherOwner.close();
+      yield* Effect.promise(() => owned.promise);
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+    }),
+  );
+
   it.effect(
     "keeps a pending update while owned and rolls a failed resumed trial back to the other owner's writes",
     () =>

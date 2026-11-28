@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - The ownership lock is a native SQLite handle held for the server's lifetime.
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
@@ -35,6 +36,7 @@ import * as ProcessRunner from "./processRunner.ts";
 import {
   clearPersistedServerRuntimeState,
   isProcessAlive,
+  isRuntimeStateFromAnotherMachine,
   persistServerRuntimeState,
   readPersistedServerRuntimeState,
   type PersistedServerRuntimeState,
@@ -42,24 +44,35 @@ import {
 
 export class ServerAlreadyRunningError extends Schema.TaggedError<ServerAlreadyRunningError>()(
   "ServerAlreadyRunningError",
-  { stateDir: Schema.String },
+  {
+    stateDir: Schema.String,
+    /** The machine recorded as owning the home, when it is another machine. */
+    hostname: Schema.optional(Schema.String),
+  },
 ) {
   // Distinct exit codes let supervisors stop restarting an already-owned server.
   override readonly [Runtime.errorExitCode] = SERVER_EXIT_CODE_STATE_DIR_OWNED;
 
   override get message(): string {
-    return `A T3 Code server already owns ${this.stateDir}. Stop that server, or use a separate T3 home and pair with it, then retry. No server was stopped. server-owner.sqlite is the ownership lock; do not delete it while a server is running.`;
+    return this.hostname === undefined
+      ? `A T3 Code server already owns ${this.stateDir}. Stop that server, or use a separate T3 home and pair with it, then retry. No server was stopped. server-owner.sqlite is the ownership lock; do not delete it while a server is running.`
+      : `A T3 Code server on \`${this.hostname}\` already owns ${this.stateDir}. Stop that server on \`${this.hostname}\`, or run \`t3 pair\` on \`${this.hostname}\` to use it, or use a separate T3 home, then retry. No server was stopped. server-owner.sqlite is the ownership lock; do not delete it while a server is running.`;
   }
 }
 
 export class OlderBootServiceError extends Schema.TaggedError<OlderBootServiceError>()(
   "OlderBootServiceError",
-  { baseDir: Schema.String },
+  {
+    baseDir: Schema.String,
+    /** The machine recorded as owning the home, when it is another machine. */
+    hostname: Schema.optional(Schema.String),
+  },
 ) {
   override readonly [Runtime.errorExitCode] = SERVER_EXIT_CODE_STATE_DIR_OWNED;
 
   override get message(): string {
-    return `A T3 Code background service set up for ${this.baseDir} may still run a release without the ownership lock. On that machine, try \`t3 update\` and let it restart (or run \`t3 service restart\` if the update is already installed). If the older launcher cannot update, run \`t3 service uninstall\`, then reinstall with \`t3 service install\` from a current CLI. You can also leave the service uninstalled. Pass \`--base-dir ${this.baseDir}\` to each command, and use \`npx t3@latest\` if \`t3\` is not installed or is outdated. Then retry. No server was stopped.`;
+    const machine = this.hostname === undefined ? "that machine" : `\`${this.hostname}\``;
+    return `A T3 Code background service set up for ${this.baseDir} may still run a release without the ownership lock. On ${machine}, try \`t3 update\` and let it restart (or run \`t3 service restart\` if the update is already installed). If the older launcher cannot update, run \`t3 service uninstall\`, then reinstall with \`t3 service install\` from a current CLI. You can also leave the service uninstalled. Pass \`--base-dir ${this.baseDir}\` to each command, and use \`npx t3@latest\` if \`t3\` is not installed or is outdated. Then retry. No server was stopped.`;
   }
 }
 
@@ -159,17 +172,41 @@ const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
       }
     }
     // A deferred update names the staged runtime, not the loaded service's runtime.
-    if (loaded && (yield* fs.exists(NodePath.join(runtimeDir, SERVICE_RESTART_PENDING_FILE)))) {
-      return baseDir;
-    }
+    const restartPending =
+      loaded && (yield* fs.exists(NodePath.join(runtimeDir, SERVICE_RESTART_PENDING_FILE)));
     // Stable 0.1.0 shipped the ownership lock. Earlier lock-aware prereleases
     // are conservatively refused because older runtimes expose no capability marker.
-    return compareExactServiceVersions(version, "0.1.0") < 0 ? baseDir : undefined;
+    if (!restartPending && compareExactServiceVersions(version, "0.1.0") >= 0) return undefined;
+    // The unit file is shared with the home, so the older service may run on
+    // another machine; its runtime record names that machine.
+    const record = yield* readPersistedServerRuntimeState(
+      NodePath.join(stateDir, "server-runtime.json"),
+    );
+    const hostname =
+      Option.isSome(record) && isRuntimeStateFromAnotherMachine(record.value)
+        ? record.value.hostname
+        : undefined;
+    return { baseDir, ...(hostname === undefined ? {} : { hostname }) };
   },
   Effect.orElseSucceed(() => undefined),
 );
 
 const ownershipLockPath = (stateDir: string) => NodePath.join(stateDir, "server-owner.sqlite");
+
+// The runtime record names the machine that wrote it; a foreign record means
+// the lock holder runs on another machine sharing this T3 home.
+const foreignOwnerHostname = (stateDir: string): string | undefined => {
+  try {
+    const record = JSON.parse(
+      NodeFS.readFileSync(NodePath.join(stateDir, "server-runtime.json"), "utf8"),
+    ) as unknown;
+    if (typeof record !== "object" || record === null) return undefined;
+    const hostname = "hostname" in record ? record.hostname : undefined;
+    return typeof hostname === "string" && hostname !== NodeOS.hostname() ? hostname : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 /**
  * The lock is an exclusive transaction on `server-owner.sqlite`, which never
@@ -201,10 +238,14 @@ const openOwnershipLock = (stateDir: string) =>
         throw cause;
       }
     },
-    catch: (cause) =>
-      isSqliteBusy(cause)
-        ? new ServerAlreadyRunningError({ stateDir })
-        : new ServerOwnershipError({ stateDir, cause }),
+    catch: (cause) => {
+      if (!isSqliteBusy(cause)) return new ServerOwnershipError({ stateDir, cause });
+      const hostname = foreignOwnerHostname(stateDir);
+      return new ServerAlreadyRunningError({
+        stateDir,
+        ...(hostname === undefined ? {} : { hostname }),
+      });
+    },
   });
 
 /** Whether a running server holds the ownership lock. Read-only, so it never creates the lock file. */
@@ -263,11 +304,17 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
     previous.value.ownerId === undefined &&
     (yield* legacyOwnerIsLive(previous.value))
   ) {
-    return yield* new ServerAlreadyRunningError({ stateDir });
+    const hostname = isRuntimeStateFromAnotherMachine(previous.value)
+      ? previous.value.hostname
+      : undefined;
+    return yield* new ServerAlreadyRunningError({
+      stateDir,
+      ...(hostname === undefined ? {} : { hostname }),
+    });
   }
   const olderServiceHome = yield* olderBootServiceHome(stateDir);
   if (olderServiceHome !== undefined) {
-    return yield* new OlderBootServiceError({ baseDir: olderServiceHome });
+    return yield* new OlderBootServiceError(olderServiceHome);
   }
 
   yield* Effect.gen(function* () {

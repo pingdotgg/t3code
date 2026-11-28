@@ -432,6 +432,39 @@ describe("t3 pair", () => {
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  // A shared $HOME makes another machine's record visible here. The server that
+  // owns the home still pairs, since a hostname can change while it runs.
+  it.effect("names the other machine unless the server that owns the home answers", () =>
+    withDescriptorServer((origin) =>
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-foreign-test-"));
+        const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
+        const state = yield* makePersistedServerRuntimeState({
+          config: { host: "127.0.0.1", devUrl: undefined },
+          port: Number(new URL(origin).port),
+        });
+        const hostname = `${NodeOS.hostname()}-peer`;
+
+        yield* persistServerRuntimeState({ path: statePath, state: { ...state, hostname } });
+        const environmentIdPath = NodePath.join(baseDir, "userdata", "environment-id");
+        NodeFS.writeFileSync(environmentIdPath, `${testDescriptor.environmentId}\n`);
+        const output = yield* captureStdout(runCli(["pair", "--base-dir", baseDir]));
+        assert.include(output, `Pairing URL: ${origin}/pair#token=`);
+
+        // The recorded PID and port answer here, but for a server of another home.
+        NodeFS.writeFileSync(environmentIdPath, "another-home-environment\n");
+        const error = yield* provideCliTestLayers(
+          runCli(["pair", "--base-dir", baseDir]).pipe(Effect.flip),
+        );
+        const rendered = String(
+          typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
+        );
+        assert.include(rendered, "running on another machine");
+        assert.include(rendered, hostname);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   // regression: #10516 minting opens the target database with this checkout's
   // migrations, so a worktree must never fall back to the live install.
   it.effect("does not fall back to the shared home from a linked worktree", () =>

@@ -261,7 +261,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     {
       label: "a service for another home is refused without a restart",
       installed: true,
-      status: { current: false, otherBaseDir: "/srv/t3 home" },
+      status: { current: false, otherBaseDir: "/srv/t3 home", otherBaseDirHostname: "peer" },
       fails: true,
       answer: "y",
       env: "T3CODE_LAN=false\n",
@@ -273,14 +273,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     {
       label: "another home's service supplies no local network default",
       installed: true,
-      status: { current: false, otherBaseDir: "/srv/t3 home" },
+      status: { current: false, otherBaseDir: "/srv/t3 home", otherBaseDirHostname: "peer" },
       reportStatus: true,
       json: {
-        service: { otherBaseDir: "/srv/t3 home" },
+        service: { otherBaseDir: "/srv/t3 home", otherBaseDirHostname: "peer" },
         lan: { enabled: false, inheritedDefault: false },
       },
       env: "",
       args: ["--json"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "",
+    },
+    {
+      label: "status names the machine running another home's service",
+      installed: true,
+      status: { current: false, otherBaseDir: "/srv/t3 home", otherBaseDirHostname: "peer" },
+      reportStatus: true,
+      prints: ["installed for another T3 home · /srv/t3 home on `peer`", "Manage it on `peer`"],
+      env: "",
+      args: [],
       installs: 0,
       restarts: 0,
       envAfter: "",
@@ -362,6 +374,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
                     new BootService.BootServiceOtherBaseDirError({
                       installedBaseDir: status.otherBaseDir,
                       baseDir,
+                      ...(status.otherBaseDirHostname === undefined
+                        ? {}
+                        : { hostname: status.otherBaseDirHostname }),
                     }),
                   )
                 : input.installFails === true
