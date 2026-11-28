@@ -18,6 +18,22 @@ import {
 } from "./git.ts";
 
 describe("normalizeGitRemoteUrl", () => {
+  it.each([
+    ["/home/me/project/.git", "/home/me/project/.git"],
+    ["/home/me/project/.git/", "/home/me/project/%2Egit"],
+    ["/project/.git", "/project/.git"],
+  ])("matches SCP checkout path %s to SSH URL path %s", (scpPath, sshPath) => {
+    expect(normalizeGitRemoteUrl(`git@forge.example:${scpPath}`)).toBe(
+      normalizeGitRemoteUrl(`ssh://git@forge.example${sshPath}`),
+    );
+  });
+
+  it("decodes percent-encoded SCP paths like their ssh:// spelling", () => {
+    expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v3/Org/My%20Project/My%20Repo")).toBe(
+      normalizeGitRemoteUrl("ssh://git@ssh.dev.azure.com/v3/Org/My%20Project/My%20Repo"),
+    );
+  });
+
   it("canonicalizes equivalent GitHub remotes across protocol variants", () => {
     expect(normalizeGitRemoteUrl("git@github.com:T3Tools/T3Code.git")).toBe(
       "github.com/t3tools/t3code",
