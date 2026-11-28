@@ -37,6 +37,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   Columns2Icon,
+  FlaskConicalIcon,
   FlaskConicalOffIcon,
   FolderTreeIcon,
   InfoIcon,
@@ -1813,7 +1814,11 @@ function PullRequestCodeTab({
             }
             label={hideTestFiles ? gt("Show test files") : gt("Hide test files")}
           >
-            <FlaskConicalOffIcon className="size-3.5" />
+            {hideTestFiles ? (
+              <FlaskConicalOffIcon className="size-3.5" />
+            ) : (
+              <FlaskConicalIcon className="size-3.5" />
+            )}
           </SharedTooltipTrigger>
         ) : null}
         {fileKeys.length > 0 ? (

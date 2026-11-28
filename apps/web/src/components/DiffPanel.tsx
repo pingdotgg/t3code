@@ -19,6 +19,7 @@ import {
   CheckIcon,
   ChevronDownIcon,
   Columns2Icon,
+  FlaskConicalIcon,
   FlaskConicalOffIcon,
   FolderTreeIcon,
   PilcrowIcon,
@@ -1583,7 +1584,11 @@ export default function DiffPanel({
                 : gt("Hide test files")
             }
           >
-            <FlaskConicalOffIcon className="size-3.5" />
+            {hideTestFiles ? (
+              <FlaskConicalOffIcon className="size-3.5" />
+            ) : (
+              <FlaskConicalIcon className="size-3.5" />
+            )}
           </SharedTooltipTrigger>
         )}
         {diffFileKeys.length > 0 && (
