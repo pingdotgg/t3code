@@ -30,15 +30,37 @@ describe("gitHubReferenceAutolinks", () => {
     ]);
   });
 
-  it("leaves URLs, escapes, emails, words and plain numbers alone", () => {
-    expect(linked("https://example.com/#123 user@example.com \\#123 1234567 issue#x a#1b")).toEqual(
-      [],
-    );
+  it("links case-insensitive GH- issue references against the repository", () => {
+    expect(linked("GH-26")).toEqual([
+      ["GH-26", "https://github.com/team/repo/issues/26", "reference"],
+    ]);
+    expect(linked("Fixes gh-27, Gh-18, (GH-32), GH-017 and GH-26-foo.")).toEqual([
+      ["gh-27", "https://github.com/team/repo/issues/27", "reference"],
+      ["Gh-18", "https://github.com/team/repo/issues/18", "reference"],
+      ["GH-32", "https://github.com/team/repo/issues/32", "reference"],
+      ["GH-017", "https://github.com/team/repo/issues/17", "reference"],
+      ["GH-26", "https://github.com/team/repo/issues/26", "reference"],
+    ]);
+    expect(linked("GH-26#12 GH-26@abcdef1")).toEqual([
+      ["GH-26#12", "https://github.com/GH-26/repo/issues/12", "reference"],
+      ["GH-26@abcdef1", "https://github.com/GH-26/repo/commit/abcdef1", "commit"],
+    ]);
   });
 
-  it("scans long runs of periods and dashes in linear time", () => {
+  it("leaves URLs, escapes, emails, words and plain numbers alone", () => {
+    expect(
+      linked(
+        "https://example.com/#123 https://example.com/GH-26 user@example.com \\#123 \\GH-26 1234567 issue#x a#1b xGH-31 foo-GH-31 GH-0 GH-00 GH-26x GH-26_ owner/repoGH-26",
+      ),
+    ).toEqual([]);
+  });
+
+  it("scans long runs of periods, dashes and leading zeros in linear time", () => {
     expect(linked(`${".".repeat(50_000)} ${".-".repeat(25_000)} #1`)).toEqual([
       ["#1", "https://github.com/team/repo/issues/1", "reference"],
+    ]);
+    expect(linked(`GH-${"0".repeat(50_000)} GH-1`)).toEqual([
+      ["GH-1", "https://github.com/team/repo/issues/1", "reference"],
     ]);
   });
 
@@ -51,7 +73,12 @@ describe("gitHubReferenceAutolinks", () => {
 
   it("links against the repository's own host", () => {
     expect(
-      gitHubReferenceAutolinks("See #5", "https://ghe.example.com/acme/web").map(({ url }) => url),
-    ).toEqual(["https://ghe.example.com/acme/web/issues/5"]);
+      gitHubReferenceAutolinks("See #5 and GH-6", "https://ghe.example.com/acme/web").map(
+        ({ url }) => url,
+      ),
+    ).toEqual([
+      "https://ghe.example.com/acme/web/issues/5",
+      "https://ghe.example.com/acme/web/issues/6",
+    ]);
   });
 });
