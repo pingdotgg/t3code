@@ -1,9 +1,5 @@
 import type { ServerDirectEndpoint } from "@t3tools/contracts";
-import {
-  buildTailscaleHttpsBaseUrl,
-  probeTailscaleHttpsEndpoint,
-  readTailscaleStatus,
-} from "@t3tools/tailscale";
+import { buildTailscaleHttpsBaseUrl, probeTailscaleHttpsEndpoint } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -12,7 +8,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import { HttpClient } from "effect/http";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
@@ -25,6 +20,7 @@ import {
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
+import * as TailnetDiscovery from "./TailnetDiscovery.ts";
 import {
   isLoopbackHost,
   isPrivateNetworkAddress,
@@ -50,14 +46,6 @@ export class DirectEndpoints extends Context.Service<
 const isAdvertisableAddress = (address: string): boolean =>
   NodeNet.isIPv4(address) && !address.startsWith("127.") && isPrivateNetworkAddress(address);
 
-// macOS utun names need Tailscale's IPv6 range to identify them; WARP shares its IPv4 range.
-const isTailscaleInterface = (
-  name: string,
-  entries: ReadonlyArray<NodeOS.NetworkInterfaceInfo>,
-): boolean =>
-  /^tailscale/i.test(name) ||
-  entries.some((entry) => entry.family === "IPv6" && isTailnetHost(entry.address));
-
 export function resolveBoundEndpoints(input: {
   readonly platform: NodeJS.Platform;
   readonly host: string | undefined;
@@ -70,7 +58,9 @@ export function resolveBoundEndpoints(input: {
   if (isLoopbackHost(input.host)) return [];
   const tailscaleAddresses = new Set(
     Object.entries(input.interfaces).flatMap(([name, entries = []]) =>
-      isTailscaleInterface(name, entries) ? entries.map((entry) => entry.address) : [],
+      TailnetDiscovery.isTailscaleInterface(name, entries)
+        ? entries.map((entry) => entry.address)
+        : [],
     ),
   );
   const addresses = isWildcardHost(input.host)
@@ -171,7 +161,7 @@ const probeCloudMetadata = Effect.callback<boolean>((resume) => {
 /** @public */
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const readTailnet = yield* TailnetDiscovery.makeReadTailnet;
   const httpClient = yield* HttpClient.HttpClient;
   const platform = yield* HostProcess.Platform;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -211,8 +201,8 @@ export const make = Effect.gen(function* () {
   const resolve = Effect.gen(function* () {
     // Serve setup can fail without stopping startup; advertise only after it answers as this server.
     if (config.tailscaleServeEnabled) {
-      const servedUrl = yield* readTailscaleStatus.pipe(
-        Effect.map((status) => status.magicDnsName),
+      const servedUrl = yield* readTailnet.pipe(
+        Effect.map((tailnet) => tailnet?.magicDnsName ?? null),
         Effect.flatMap((magicDnsName) => {
           if (magicDnsName === null) return Effect.succeed(null);
           const httpBaseUrl = buildTailscaleHttpsBaseUrl({
@@ -226,7 +216,6 @@ export const make = Effect.gen(function* () {
         Effect.timeoutOption(TAILSCALE_ENDPOINT_TIMEOUT),
         Effect.map(Option.flatMap(Option.fromNullishOr)),
         Effect.orElseSucceed(() => Option.none<string>()),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(HttpClient.HttpClient, httpClient),
       );
       yield* Ref.set(servedEndpoint, servedUrl);

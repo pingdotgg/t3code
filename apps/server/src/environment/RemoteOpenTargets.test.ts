@@ -4,11 +4,14 @@ import { it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type * as NodeDns from "node:dns";
+import type * as NodeOS from "node:os";
 import { afterEach, describe, expect, vi } from "vite-plus/test";
 
 import * as RemoteOpenTargets from "./RemoteOpenTargets.ts";
@@ -19,6 +22,50 @@ afterEach(() => {
 });
 
 const encoder = new TextEncoder();
+const requireBuiltin = NodeModule.createRequire(import.meta.url);
+const nodeOs: typeof NodeOS = requireBuiltin("node:os");
+const nodeDns: typeof NodeDns = requireBuiltin("node:dns");
+
+const useMacTailnet = (input: { readonly ipv4?: boolean } = {}) => {
+  vi.spyOn(nodeOs, "networkInterfaces").mockReturnValue({
+    // Another VPN on the shared CGNAT range, listed before Tailscale.
+    utun3: [
+      {
+        address: "100.85.0.1",
+        netmask: "255.255.255.255",
+        family: "IPv4",
+        mac: "00:00:00:00:00:00",
+        internal: false,
+        cidr: "100.85.0.1/32",
+      },
+    ],
+    utun4: [
+      ...(input.ipv4 === false
+        ? []
+        : [
+            {
+              address: "100.64.1.2",
+              netmask: "255.255.255.255",
+              family: "IPv4" as const,
+              mac: "00:00:00:00:00:00",
+              internal: false,
+              cidr: "100.64.1.2/32",
+            },
+          ]),
+      {
+        address: "fd7a:115c:a1e0::1",
+        netmask: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+        family: "IPv6",
+        mac: "00:00:00:00:00:00",
+        internal: false,
+        cidr: "fd7a:115c:a1e0::1/128",
+        scopeid: 0,
+      },
+    ],
+  });
+  NodeModule.syncBuiltinESMExports();
+  return vi.spyOn(nodeDns.promises.Resolver.prototype, "reverse");
+};
 
 const TAILSCALE_STATUS_JSON = JSON.stringify({
   Self: { DNSName: "bb-1.tail1234.ts.net.", TailscaleIPs: ["100.64.1.2"] },
@@ -29,11 +76,15 @@ interface CommandResult {
   readonly stdout: string;
 }
 
-const layerSpawner = (input: { readonly status: CommandResult; readonly prefs: CommandResult }) =>
+const layerSpawner = (
+  input: { readonly status: CommandResult; readonly prefs: CommandResult },
+  spawned?: Array<unknown>,
+) =>
   Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
       const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+      spawned?.push(args);
       const result = args[0] === "debug" ? input.prefs : input.status;
       return Effect.succeed(
         ChildProcessSpawner.makeHandle({
@@ -79,6 +130,9 @@ const resolveTargets = (input: {
   readonly tailscale: { readonly status: CommandResult; readonly prefs: CommandResult };
   readonly hostname: string;
   readonly username?: string | null;
+  readonly platform?: NodeJS.Platform;
+  readonly spawned?: Array<unknown>;
+  readonly openSourceTailscaled?: boolean;
 }) => {
   const resolve = Effect.flatMap(RemoteOpenTargets.RemoteOpenTargets, (service) =>
     service.resolveTargets(),
@@ -86,9 +140,21 @@ const resolveTargets = (input: {
     Effect.provideService(HostProcess.Hostname, input.hostname),
     Effect.provide(
       RemoteOpenTargets.layer.pipe(
-        Layer.provide(Layer.mergeAll(layerNet(input.sshd), layerSpawner(input.tailscale))),
+        Layer.provide(
+          Layer.mergeAll(
+            layerNet(input.sshd),
+            layerSpawner(input.tailscale, input.spawned),
+            FileSystem.layerNoop({
+              exists: (path) =>
+                Effect.succeed(
+                  path === "/var/run/tailscaled.socket" && input.openSourceTailscaled === true,
+                ),
+            }),
+          ),
+        ),
       ),
     ),
+    Effect.provideService(HostProcess.Platform, input.platform ?? "linux"),
   );
 
   return input.username === undefined
@@ -160,6 +226,91 @@ describe("RemoteOpenTargets", () => {
         username: null,
       });
       expect(targets).toEqual([]);
+    }),
+  );
+
+  it.effect("with a macOS Tailscale app, resolves the tailnet host without the CLI", () =>
+    Effect.gen(function* () {
+      const reverseLookup = useMacTailnet();
+      // Tailscale's resolver also names peers; the other VPN's address may match one.
+      const reverseNames = (tailnetName: string | null) =>
+        reverseLookup.mockImplementation((address) =>
+          address === "100.64.1.2" && tailnetName !== null
+            ? Promise.resolve([tailnetName])
+            : address === "100.85.0.1"
+              ? Promise.resolve(["peer.tail1234.ts.net"])
+              : Promise.reject(Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" })),
+        );
+      reverseNames("renamed.tail1234.ts.net.");
+      const spawned: Array<unknown> = [];
+      const resolve = (sshd: {
+        readonly ipv4: boolean;
+        readonly ipv6: boolean;
+        readonly tailnet?: boolean;
+      }) =>
+        resolveTargets({
+          sshd,
+          tailscale: TAILSCALE_SSH,
+          hostname: "bb-1",
+          username: "t3-user",
+          platform: "darwin",
+          spawned,
+        });
+
+      expect(yield* resolve({ ipv4: true, ipv6: false })).toEqual([
+        { kind: "tailscale", host: "renamed.tail1234.ts.net", username: "t3-user" },
+        { kind: "mdns", host: "bb-1.local", username: "t3-user" },
+      ]);
+      // No MagicDNS answer for this host's own address: no tailnet target.
+      reverseNames(null);
+      expect(yield* resolve({ ipv4: true, ipv6: false })).toEqual([
+        { kind: "mdns", host: "bb-1.local", username: "t3-user" },
+      ]);
+      // sshd bound only to the tailnet address (ListenAddress).
+      reverseNames("bb-1.tail1234.ts.net.");
+      expect(yield* resolve({ ipv4: false, ipv6: false, tailnet: true })).toEqual([
+        { kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "t3-user" },
+      ]);
+      expect(reverseLookup).toHaveBeenCalledWith("100.64.1.2");
+      expect(spawned).toEqual([]);
+    }),
+  );
+
+  it.effect("with a macOS Tailscale app on an IPv6-only tailnet, resolves from IPv6", () =>
+    Effect.gen(function* () {
+      const reverseLookup = useMacTailnet({ ipv4: false }).mockResolvedValue([
+        "bb-1.tail1234.ts.net.",
+      ]);
+      const targets = yield* resolveTargets({
+        sshd: { ipv4: true, ipv6: false },
+        tailscale: TAILSCALE_SSH,
+        hostname: "bb-1",
+        username: "t3-user",
+        platform: "darwin",
+      });
+      expect(targets).toEqual([
+        { kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "t3-user" },
+        { kind: "mdns", host: "bb-1.local", username: "t3-user" },
+      ]);
+      expect(reverseLookup).toHaveBeenCalledWith("fd7a:115c:a1e0::1");
+    }),
+  );
+
+  it.effect("with open-source tailscaled on macOS, keeps the Tailscale SSH target", () =>
+    Effect.gen(function* () {
+      const reverseLookup = useMacTailnet();
+      const targets = yield* resolveTargets({
+        sshd: { ipv4: false, ipv6: false },
+        tailscale: TAILSCALE_SSH,
+        hostname: "bb-1",
+        username: "t3-user",
+        platform: "darwin",
+        openSourceTailscaled: true,
+      });
+      expect(targets).toEqual([
+        { kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "t3-user" },
+      ]);
+      expect(reverseLookup).not.toHaveBeenCalled();
     }),
   );
 

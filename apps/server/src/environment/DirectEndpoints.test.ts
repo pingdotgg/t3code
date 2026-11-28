@@ -2,11 +2,15 @@ import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId } from "@t3tools/contracts";
 import { it as effectIt } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeModule from "node:module";
+import type * as NodeDns from "node:dns";
 import type * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Ref from "effect/Ref";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
@@ -15,7 +19,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as DirectEndpoints from "./DirectEndpoints.ts";
@@ -329,7 +333,7 @@ const layerTailscaleUp = Layer.succeed(
       }),
     ),
   ),
-);
+).pipe(Layer.merge(FileSystem.layerNoop({})));
 
 const T3_DESCRIPTOR_BODY = JSON.stringify({
   environmentId: "serve-test",
@@ -372,7 +376,7 @@ const layerServeConfig = (host = "127.0.0.1") =>
     ),
   );
 
-const resolveWithServe = (probeStatus: number) =>
+const resolveWithServe = (probeStatus: number, platform: NodeJS.Platform = "linux") =>
   Effect.flatMap(DirectEndpoints.DirectEndpoints, (service) => service.resolve()).pipe(
     Effect.provide(
       DirectEndpoints.layer.pipe(
@@ -386,6 +390,7 @@ const resolveWithServe = (probeStatus: number) =>
         ),
       ),
     ),
+    Effect.provideService(HostProcess.Platform, platform),
   );
 
 describe("DirectEndpoints Tailscale Serve", () => {
@@ -407,6 +412,7 @@ describe("DirectEndpoints Tailscale Serve", () => {
         const revalidationStarted = yield* Deferred.make<void>();
         const finishRevalidation = yield* Deferred.make<void>();
         const service = yield* DirectEndpoints.make.pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
           Effect.provide(
             Layer.mergeAll(
               layerServeConfig("192.168.1.10"),
@@ -458,4 +464,49 @@ describe("DirectEndpoints Tailscale Serve", () => {
       expect(yield* resolveWithServe(502)).toEqual([]);
     }),
   );
+
+  effectIt.effect("on macOS, finds the Serve name without running the Tailscale CLI", () => {
+    const requireBuiltin = NodeModule.createRequire(import.meta.url);
+    const nodeOs: typeof NodeOS = requireBuiltin("node:os");
+    const nodeDns: typeof NodeDns = requireBuiltin("node:dns");
+    const interfaces = vi.spyOn(nodeOs, "networkInterfaces").mockReturnValue({
+      utun4: [
+        {
+          address: "100.64.1.2",
+          netmask: "255.255.255.255",
+          family: "IPv4",
+          mac: "00:00:00:00:00:00",
+          internal: false,
+          cidr: "100.64.1.2/32",
+        },
+        {
+          address: "fd7a:115c:a1e0::1",
+          netmask: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+          family: "IPv6",
+          mac: "00:00:00:00:00:00",
+          internal: false,
+          cidr: "fd7a:115c:a1e0::1/128",
+          scopeid: 0,
+        },
+      ],
+    });
+    NodeModule.syncBuiltinESMExports();
+    // The CLI would answer bb-1; the renamed reverse name proves it was not run.
+    const reverseLookup = vi
+      .spyOn(nodeDns.promises.Resolver.prototype, "reverse")
+      .mockResolvedValue(["renamed.tail1234.ts.net"]);
+    return Effect.gen(function* () {
+      expect(yield* resolveWithServe(200, "darwin")).toEqual([
+        { kind: "tailnet", httpBaseUrl: "https://renamed.tail1234.ts.net/" },
+      ]);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          interfaces.mockRestore();
+          reverseLookup.mockRestore();
+          NodeModule.syncBuiltinESMExports();
+        }),
+      ),
+    );
+  });
 });
