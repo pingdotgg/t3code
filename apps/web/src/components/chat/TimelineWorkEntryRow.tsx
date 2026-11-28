@@ -721,7 +721,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   environmentId={ctx.activeThreadEnvironmentId}
                   onImageExpand={expandImage}
                   source={ctx.turnItemSource}
-                  showImages={toolGroupAction(workEntry) !== "read"}
+                  showImages={viewedImage === null}
                 />
               ) : null}
             </>
