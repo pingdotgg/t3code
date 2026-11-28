@@ -230,4 +230,20 @@ describe("cloneUrlRepositoryPath", () => {
       "host.example/team/repo%20name",
     );
   });
+
+  it("derives ghq folders for absolute SCP paths like ssh:// URIs", () => {
+    expect(cloneUrlRepositoryPath("git@forge.example:/team/repo.git")).toBe(
+      "forge.example/team/repo",
+    );
+    expect(cloneUrlRepositoryPath("ssh://git@forge.example/team/repo.git")).toBe(
+      "forge.example/team/repo",
+    );
+    expect(cloneUrlRepositoryPath("forge.example:/team/repo.git")).toBe("forge.example/team/repo");
+    expect(cloneUrlRepositoryPath("git@forge.example:/team#1/spec#2026.git")).toBe(
+      "forge.example/team#1/spec#2026",
+    );
+    expect(cloneUrlRepositoryPath("git@forge.example:/")).toBeNull();
+    expect(cloneUrlRepositoryPath("git@forge.example:/team/../repo.git")).toBeNull();
+    expect(cloneUrlRepositoryPath("C:\\repos\\project.git")).toBeNull();
+  });
 });
