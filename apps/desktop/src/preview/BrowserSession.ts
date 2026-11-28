@@ -63,10 +63,17 @@ const externalProtocolPromptUrl = (rawUrl: string | undefined): string | null =>
   }
 };
 
-// Teams sends Electron User-Agents to an error page before sign-in. Electron allows one listener per session.
-const isTeamsUrl = (url: string): boolean =>
-  url.startsWith("https://teams.cloud.microsoft/") ||
-  url.startsWith("https://teams.microsoft.com/");
+// Teams sends Electron User-Agents to an error page before sign-in, and Microsoft sign-in hides
+// passkeys from them. Electron allows one listener per session.
+const ELECTRON_TOKEN_STRIPPED_URL_PREFIXES = [
+  "https://teams.cloud.microsoft/",
+  "https://teams.microsoft.com/",
+  "https://login.microsoftonline.com/",
+  "https://login.microsoft.com/",
+  "https://login.live.com/",
+];
+const isElectronTokenStrippedUrl = (url: string): boolean =>
+  ELECTRON_TOKEN_STRIPPED_URL_PREFIXES.some((prefix) => url.startsWith(prefix));
 
 const GREASE_CHARS = [" ", "(", ":", "-", ".", "/", ")", ";", "=", "?", "_"];
 const GREASE_VERSIONS = ["8", "99", "24"];
@@ -924,7 +931,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               ) {
                 next = { ...next, ...clientHints };
               }
-              if (isTeamsUrl(url)) {
+              if (isElectronTokenStrippedUrl(url)) {
                 const userAgent = Object.entries(next).find(
                   ([name]) => name.toLowerCase() === "user-agent",
                 );
