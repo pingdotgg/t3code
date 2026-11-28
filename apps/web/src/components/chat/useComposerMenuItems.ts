@@ -4,6 +4,7 @@ import {
   threadPullRequestKeyOf,
 } from "@t3tools/client-runtime/thread-pull-requests";
 import {
+  composerThreadQuery,
   matchComposerEnvironmentItems,
   matchComposerThreadItems,
 } from "@t3tools/client-runtime/composerThreadItems";
@@ -128,11 +129,14 @@ export function useComposerMenuItems({
   const environmentThreadShells = useVisibleThreadShells(isPathTrigger);
   // Mounts older settled threads matching the mention, here and on linked machines, which shells
   // may leave out.
-  useThreadSearch(
-    isPathTrigger ? [environmentId, ...linkedEnvironments.keys()] : [],
-    pathTriggerQuery,
-    { titlesOnly: true },
-  );
+  const threadSearchEnvironmentIds = isPathTrigger
+    ? [environmentId, ...linkedEnvironments.keys()]
+    : [];
+  useThreadSearch(threadSearchEnvironmentIds, pathTriggerQuery, { titlesOnly: true });
+  const threadQuery = composerThreadQuery(pathTriggerQuery);
+  useThreadSearch(threadQuery !== pathTriggerQuery ? threadSearchEnvironmentIds : [], threadQuery, {
+    titlesOnly: true,
+  });
   // The user's machines feed `@` machine matches; the catalog summary is cheap and stable.
   const environmentIdentities = useEnvironmentIdentities();
   const environmentMachines = useEnvironmentMachines();

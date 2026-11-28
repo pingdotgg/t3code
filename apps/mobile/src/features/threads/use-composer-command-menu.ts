@@ -8,6 +8,7 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import {
+  composerThreadQuery,
   type ComposerEnvironmentCandidate,
   matchComposerEnvironmentItems,
   matchComposerThreadItems,
@@ -358,9 +359,15 @@ export function useComposerCommandMenu({
   });
   // Mounts older settled threads matching the mention, here and on linked machines, which shells
   // may leave out.
+  const threadSearchEnvironmentIds =
+    trigger?.kind === "path" && environmentId ? [environmentId, ...linkedEnvironments.keys()] : [];
+  useThreadSearch(threadSearchEnvironmentIds, trigger?.kind === "path" ? trigger.query : "", {
+    titlesOnly: true,
+  });
+  const threadQuery = trigger?.kind === "path" ? composerThreadQuery(trigger.query) : "";
   useThreadSearch(
-    trigger?.kind === "path" && environmentId ? [environmentId, ...linkedEnvironments.keys()] : [],
-    trigger?.kind === "path" ? trigger.query : "",
+    trigger?.kind === "path" && threadQuery !== trigger.query ? threadSearchEnvironmentIds : [],
+    threadQuery,
     { titlesOnly: true },
   );
   const pullRequestSearch = useComposerPullRequestSearch({
