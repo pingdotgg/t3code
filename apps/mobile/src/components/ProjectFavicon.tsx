@@ -2,7 +2,7 @@ import { useGT } from "gt-react-native";
 import { SymbolView } from "./ui/AppSymbol";
 import { AppText } from "./ui/AppText";
 import { Image } from "expo-image";
-import { memo, useLayoutEffect, useMemo, useState } from "react";
+import { lazy, memo, Suspense, useLayoutEffect, useMemo, useState } from "react";
 import { View } from "react-native";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId, ProjectIconOverride } from "@t3tools/contracts";
@@ -20,7 +20,6 @@ import {
   projectAutoMonogram,
   projectIconColorClassNames,
   resolveProjectIconGlyph,
-  resolveProjectIconSymbol,
   type ProjectIconGlyph,
 } from "../lib/projectIcon";
 import { resolveProjectFaviconColorScheme } from "../lib/projectFaviconColorScheme";
@@ -34,6 +33,7 @@ import {
 } from "../lib/projectFaviconRequests";
 
 const EMPTY_FAVICON_URL = Atom.make<string | null>(null);
+const LucideProjectIcon = lazy(() => import("./LucideProjectIcon"));
 
 export const ProjectFavicon = memo(function ProjectFavicon(props: {
   readonly environmentId: EnvironmentId;
@@ -47,7 +47,6 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
   readonly fallbackProjects?: ReadonlyArray<ProjectFaviconSource>;
 }) {
   const size = props.size ?? 42;
-  const symbol = resolveProjectIconSymbol(props.projectIcon);
   const glyph = resolveProjectIconGlyph(props.projectIcon, props.projectTitle);
   const faviconUrl = useAtomValue(
     props.workspaceRoot == null || glyph !== null
@@ -67,19 +66,16 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
         : getProjectFaviconCacheKey(props.environmentId, props.workspaceRoot, renderableFaviconUrl)
       : null;
 
-  if (symbol !== null) {
-    return (
-      <SymbolView
-        name={symbol.name}
-        size={size}
-        tintColorClassName={projectIconColorClassNames(symbol.color).tint}
-        type="monochrome"
-      />
-    );
-  }
-
   if (glyph !== null) {
-    return <ProjectIconGlyphView glyph={glyph} size={size} />;
+    const glyphView = <ProjectIconGlyphView glyph={glyph} size={size} />;
+    if (props.projectIcon?.kind === "lucide") {
+      return (
+        <Suspense fallback={glyphView}>
+          <LucideProjectIcon icon={props.projectIcon} size={size} fallback={glyphView} />
+        </Suspense>
+      );
+    }
+    return glyphView;
   }
 
   if (renderableFaviconUrl === null && props.fallbackProjects?.length) {

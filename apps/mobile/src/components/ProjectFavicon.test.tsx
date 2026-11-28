@@ -11,6 +11,16 @@ vi.mock("react-native", () => ({ View: harness.Passthrough }));
 vi.mock("expo-image", () => ({
   Image: (props: { source: { uri: string } }) => <img alt="" src={props.source.uri} />,
 }));
+vi.mock("lucide-react-native", () => ({
+  LucideAlarmCheck: ({ color, size }: { color: string; size: number }) => (
+    <svg data-icon="alarm-check" stroke={color} width={size} />
+  ),
+}));
+vi.mock("uniwind", () => ({
+  useResolveClassNames: (className: string) => ({
+    color: className === "text-violet-500" ? "#8b5cf6" : undefined,
+  }),
+}));
 vi.mock("./ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("./ui/AppText", () => ({
   AppText: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
@@ -82,6 +92,32 @@ it("shows the next project's icon when a group's own project has none", async ()
     expect(container.querySelector("img")?.getAttribute("src")).toBe(
       "https://example.test/favicon.png",
     );
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+it("renders the saved Lucide icon with its configured color", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  try {
+    await act(async () => {
+      root.render(
+        <ProjectFavicon
+          environmentId={EnvironmentId.make("env-1")}
+          projectTitle="Project"
+          projectIcon={{ kind: "lucide", name: "alarm-check", color: "violet" }}
+          size={18}
+        />,
+      );
+    });
+    await act(async () => {
+      await import("./LucideProjectIcon");
+    });
+    const icon = container.querySelector('svg[data-icon="alarm-check"]');
+    expect(icon?.getAttribute("stroke")).toBe("#8b5cf6");
+    expect(icon?.getAttribute("width")).toBe("18");
   } finally {
     await act(async () => root.unmount());
   }
