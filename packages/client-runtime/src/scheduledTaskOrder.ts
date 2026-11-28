@@ -1,10 +1,10 @@
-import { ScheduledTaskId, type ScheduledTask } from "@t3tools/contracts";
+import { ScheduledTaskId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 export const ScheduledTaskOrder = Schema.Array(ScheduledTaskId);
 
-export function orderScheduledTasks(
-  tasks: readonly ScheduledTask[],
+export function orderScheduledTasks<Task extends { readonly id: ScheduledTaskId }>(
+  tasks: readonly Task[],
   savedOrder: readonly ScheduledTaskId[] | undefined,
 ) {
   if (!savedOrder?.length) return tasks;
@@ -13,7 +13,7 @@ export function orderScheduledTasks(
 }
 
 export function moveScheduledTask(
-  orderedTasks: readonly ScheduledTask[],
+  orderedTasks: readonly { readonly id: ScheduledTaskId }[],
   visibleIds: ReadonlySet<ScheduledTaskId>,
   fromId: ScheduledTaskId,
   toId: ScheduledTaskId,
