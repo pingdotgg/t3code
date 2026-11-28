@@ -9,7 +9,7 @@ import {
   Trash2Icon,
   UploadIcon,
 } from "lucide-react";
-import { useRef, useState, type ReactElement } from "react";
+import { useState, type ReactElement } from "react";
 import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme";
 import { readThemeHalvesRaw } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
@@ -127,7 +127,6 @@ function ThemeLibraryCard({
   const gt = useGT();
   const cardModes = theme.previews.map((preview) => preview.mode);
   const [radialModeOpen, setRadialModeOpen] = useState<ThemeAppearance | null>(null);
-  const suppressFocusOpenRef = useRef(false);
   const radialModeGroups = (["light", "dark"] as const).map((mode) => {
     const options =
       variantNavigation?.options.flatMap((option) => {
@@ -174,15 +173,9 @@ function ThemeLibraryCard({
                   const trigger = event.currentTarget.querySelector<HTMLButtonElement>(
                     `[data-radial-trigger="${radialModeOpen}"]`,
                   );
+                  // Focus first: the trigger's onFocus reopen is batched before this close.
+                  if (event.target !== trigger) trigger?.focus();
                   setRadialModeOpen(null);
-                  if (
-                    trigger &&
-                    !(event.target instanceof Node && trigger.contains(event.target))
-                  ) {
-                    suppressFocusOpenRef.current = true;
-                    trigger.focus();
-                    suppressFocusOpenRef.current = false;
-                  }
                 }}
                 onMouseLeave={() => setRadialModeOpen(null)}
               >
@@ -226,9 +219,7 @@ function ThemeLibraryCard({
                             event.stopPropagation();
                             variantNavigation.onSelectAndUse(selected.option.themeIndex, mode);
                           }}
-                          onFocus={() => {
-                            if (!suppressFocusOpenRef.current) setRadialModeOpen(mode);
-                          }}
+                          onFocus={() => setRadialModeOpen(mode)}
                           onMouseEnter={() => setRadialModeOpen(mode)}
                         >
                           <ThemePreviewCircle
