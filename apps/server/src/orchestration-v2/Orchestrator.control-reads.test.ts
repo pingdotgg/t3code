@@ -1944,8 +1944,12 @@ it.effect.each(["after deletion", "concurrently"] as const)(
             importedNativeThread: { ref },
           });
 
+        let originalProviderThreadId: ProviderThreadId | undefined;
         if (scenario === "after deletion") {
           yield* create(original);
+          const beforeDeletion = yield* projections.getThreadRecords(original, ["providerThreads"]);
+          originalProviderThreadId = beforeDeletion.providerThreads[0]?.id;
+          assert.isDefined(originalProviderThreadId);
           yield* orchestrator.dispatch({
             type: "thread.delete",
             commandId: CommandId.make("delete:native-import-original"),
@@ -1967,6 +1971,9 @@ it.effect.each(["after deletion", "concurrently"] as const)(
         const imported = yield* projections.getThreadRecords(replacement, ["providerThreads"]);
         assert.lengthOf(retained.providerThreads, 1);
         assert.lengthOf(imported.providerThreads, 1);
+        if (scenario === "after deletion") {
+          assert.equal(retained.providerThreads[0]?.id, originalProviderThreadId);
+        }
         assert.equal(retained.thread.activeProviderThreadId, retained.providerThreads[0]?.id);
         assert.notEqual(imported.providerThreads[0]?.id, retained.providerThreads[0]?.id);
         assert.equal(imported.thread.activeProviderThreadId, imported.providerThreads[0]?.id);
