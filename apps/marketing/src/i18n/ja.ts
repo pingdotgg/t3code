@@ -31,6 +31,7 @@ export const ja: Messages = {
     downloadForAndroid: "Android 版をダウンロード",
     sourceLink: "コードを盗もう（合法的に）",
     alsoOnPhone: "スマホでも使えます：",
+    alsoOnDesktop: "デスクトップでも使えます",
     screenshotAlt:
       "ひとつのスレッドで Claude、Codex、Muse、Gemini のサブエージェントを動かす T3 Code",
     endorsementsTitle: "{users}人以上の開発者たちが「悪くない」と言っています",

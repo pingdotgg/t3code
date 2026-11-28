@@ -104,6 +104,9 @@ const mobileEndorsementRows = [
           <span aria-hidden="true">·</span>
           <a href={ANDROID_PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">Android</a>
         </p>
+        <p class="hero-desktop-line">
+          <a href={localizedHref(locale, "/download")}>{t.alsoOnDesktop}</a>
+        </p>
       </div>
 
       <!-- The rise wrapper is separate so its animated transform does not override the preview tilt. -->
@@ -621,7 +624,8 @@ const mobileEndorsementRows = [
     opacity: 1;
   }
 
-  .hero-mobile-line {
+  .hero-mobile-line,
+  .hero-desktop-line {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -630,7 +634,8 @@ const mobileEndorsementRows = [
     letter-spacing: -0.005em;
   }
 
-  .hero-mobile-line a {
+  .hero-mobile-line a,
+  .hero-desktop-line a {
     color: var(--fg-muted);
     text-decoration: underline;
     text-decoration-color: rgba(163, 163, 163, 0.4);
@@ -638,10 +643,17 @@ const mobileEndorsementRows = [
     transition: color 0.18s ease, text-decoration-color 0.18s ease;
   }
 
-  .hero-mobile-line a:hover {
+  .hero-mobile-line a:hover,
+  .hero-desktop-line a:hover {
     color: var(--fg);
     text-decoration-color: var(--fg);
   }
+
+  .hero-desktop-line,
+  :global([data-platform="ios"]) .hero-mobile-line,
+  :global([data-platform="android"]) .hero-mobile-line { display: none; }
+  :global([data-platform="ios"]) .hero-desktop-line,
+  :global([data-platform="android"]) .hero-desktop-line { display: inline-flex; }
 
   .dl-icon {
     display: none;

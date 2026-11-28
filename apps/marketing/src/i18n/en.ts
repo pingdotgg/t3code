@@ -31,6 +31,7 @@ export const en = {
     downloadForAndroid: "Download for Android",
     sourceLink: "Steal our code (legally)",
     alsoOnPhone: "Also on your phone:",
+    alsoOnDesktop: "Also on desktop",
     screenshotAlt: "T3 Code running Claude, Codex, Muse, and Gemini subagents in one thread",
     endorsementsTitle: "Tolerated by over {users} devs",
     endorsementsSub: "Some of them even tweeted about it.",
