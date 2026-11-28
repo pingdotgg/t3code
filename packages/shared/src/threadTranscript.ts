@@ -6,12 +6,14 @@ export function threadTranscriptMarkdown(transcript: OrchestrationV2ThreadTransc
   for (const { item } of transcript.items) {
     if (
       item.parentItemId !== null ||
-      (item.type !== "user_message" && item.type !== "assistant_message")
+      (item.type !== "user_message" &&
+        item.type !== "assistant_message" &&
+        item.type !== "proposed_plan")
     )
       continue;
     const body = [
-      item.text,
-      ...(item.attachments ?? []).map(
+      item.type === "proposed_plan" ? item.markdown : item.text,
+      ...(item.type === "proposed_plan" ? [] : (item.attachments ?? [])).map(
         (attachment) => `Attachment: ${JSON.stringify(attachment.name)}`,
       ),
     ]
