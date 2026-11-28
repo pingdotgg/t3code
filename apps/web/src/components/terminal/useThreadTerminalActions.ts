@@ -158,9 +158,9 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     readonly location?: TerminalLaunchLocation;
   }) => {
     if (!threadRef) return null;
-    const { direction, surfaceId, location } = input;
+    const { direction, surfaceId } = input;
     return launchTerminal({
-      ...(location === undefined ? {} : { location }),
+      location: input.location ?? null,
       place: (terminalId) => {
         // Mount the new pane immediately. Keep the surviving panes' layout until the open succeeds.
         if (surfaceId !== undefined) {
