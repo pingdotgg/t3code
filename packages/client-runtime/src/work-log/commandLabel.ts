@@ -236,6 +236,7 @@ function shellCommandArgumentIndex(
   tokens: ReadonlyArray<string>,
   start: number,
 ): number | null {
+  // `-n` / `noexec` only parses the script, so there is no inner command to label.
   let noexec = false;
   for (let index = start; index < tokens.length; index += 1) {
     const option = tokens[index]!;
