@@ -23,7 +23,12 @@ import * as LiveActivities from "./LiveActivities.ts";
 import * as FcmDeliveryQueueSender from "./FcmDeliveryQueueSender.ts";
 import * as FcmClient from "./FcmClient.ts";
 import { androidActivityData, androidRecipientData, fitFcmData } from "./fcmPayloads.ts";
-import { makeAggregateState, statusForPhase } from "./agentActivityAggregate.ts";
+import { makeAggregateState } from "./agentActivityAggregate.ts";
+import {
+  type AgentActivityCopy,
+  ENGLISH_AGENT_ACTIVITY_COPY,
+  agentActivityCopy,
+} from "./agentActivityCopy.ts";
 import { isExpiredAgentActivityState, notificationForActivity } from "./agentActivityPayloads.ts";
 import {
   alertForActivityRows,
@@ -62,9 +67,10 @@ export function androidAlertForState(
   state: RelayAgentActivityState,
   preferences: RelayAgentAwarenessPreferences,
   nowMs: number,
+  copy: AgentActivityCopy = ENGLISH_AGENT_ACTIVITY_COPY,
 ) {
   if (!shouldAlertForActivity({ ...state, preferences, nowMs })) return null;
-  const notification = notificationForActivity({ ...state, status: statusForPhase(state.phase) });
+  const notification = notificationForActivity(state, copy);
   return {
     alert_id: JSON.stringify([state.environmentId, state.threadId, state.phase, state.updatedAt]),
     alert_group: JSON.stringify([state.environmentId, state.threadId]),
@@ -79,6 +85,7 @@ export function androidAlertForAggregate(input: {
   readonly nextAggregate: RelayAgentActivityAggregateState;
   readonly preferences: RelayAgentAwarenessPreferences;
   readonly nowMs: number;
+  readonly copy?: AgentActivityCopy;
 }) {
   if (!input.preferences.notificationsEnabled) return null;
   const attention = attentionTransitionRows(input);
@@ -87,10 +94,10 @@ export function androidAlertForAggregate(input: {
       ? attention
       : terminalTransitionRows({ ...input, includeUnobserved: true });
   const first = activities[0];
-  const alert = alertForActivityRows(activities);
+  const alert = alertForActivityRows(activities, input.copy);
   if (!first || !alert) return null;
   if (activities.length === 1) {
-    const notification = notificationForActivity(first);
+    const notification = notificationForActivity(first, input.copy);
     return {
       alert_id: JSON.stringify([first.environmentId, first.threadId, first.phase, first.updatedAt]),
       alert_group: JSON.stringify([first.environmentId, first.threadId]),
@@ -271,6 +278,7 @@ const make = Effect.gen(function* () {
             },
             preferences: preferences.value,
             nowMs: now.epochMilliseconds,
+            copy: agentActivityCopy(target.locale),
           });
         } else if (
           deliveryUser?.notificationsEnabled &&
@@ -278,7 +286,12 @@ const make = Effect.gen(function* () {
           state.updatedAt === job.state.updatedAt &&
           !isExpiredAgentActivityState(state, now.epochMilliseconds)
         ) {
-          alert = androidAlertForState(state, preferences.value, now.epochMilliseconds);
+          alert = androidAlertForState(
+            state,
+            preferences.value,
+            now.epochMilliseconds,
+            agentActivityCopy(target.locale),
+          );
         }
       }
       const displayedAggregate = preferences.value.liveActivitiesEnabled ? aggregate : null;
@@ -329,6 +342,7 @@ const make = Effect.gen(function* () {
           // Retain terminal rows as the baseline so finished-card replays cannot alert again.
           aggregate: preferences.value.liveActivitiesEnabled ? aggregate : null,
           deliveredAt: DateTime.formatIso(now),
+          locale: target.locale,
         });
       }
     }),

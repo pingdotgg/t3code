@@ -9,6 +9,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { ApnsEnvironment, type ApnsCredentials } from "../Config.ts";
+import { type AgentActivityCopy, localizeAggregateState } from "./agentActivityCopy.ts";
 import { MAX_SUMMARY_TEXT_LENGTH, truncateText } from "./agentActivityPayloads.ts";
 import type { ApnsLiveActivityAlert, ApnsNotificationPayload } from "./apnsDeliveryJobs.ts";
 import type { ApnsJwtEncodingError, ApnsJwtSigningError } from "./apnsJwt.ts";
@@ -79,10 +80,16 @@ const decodeApnsErrorResponseJson = Schema.decodeUnknownOption(
     }),
   ),
 );
-function contentState(state: RelayAgentActivityAggregateState) {
+// Pushed props replace the ones the app started the activity with, translated text included.
+function contentState(
+  state: RelayAgentActivityAggregateState,
+  copy: AgentActivityCopy | undefined,
+) {
   return {
     name: LIVE_ACTIVITY_NAME,
-    props: JSON.stringify(state),
+    props: JSON.stringify(
+      copy ? { ...localizeAggregateState(state, copy), text: copy.text(state) } : state,
+    ),
   };
 }
 
@@ -90,6 +97,7 @@ interface LiveActivityRequestBase {
   readonly token: string;
   readonly nowEpochSeconds: number;
   readonly nowIso: string;
+  readonly copy?: AgentActivityCopy | undefined;
 }
 
 type MakeLiveActivityRequestInput =
@@ -179,7 +187,7 @@ function buildLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLive
         aps: {
           timestamp,
           event: "end",
-          ...(input.state ? { "content-state": contentState(input.state) } : {}),
+          ...(input.state ? { "content-state": contentState(input.state, input.copy) } : {}),
           ...(input.alert ? liveActivityAlertPayload(input.alert) : {}),
           "dismissal-date":
             timestamp + (input.state ? DISMISS_AFTER_SECONDS : CONTENTLESS_DISMISS_AFTER_SECONDS),
@@ -198,7 +206,7 @@ function buildLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLive
         timestamp,
         event: input.event,
         ...(input.event === "update" && input.alert ? liveActivityAlertPayload(input.alert) : {}),
-        "content-state": contentState(state),
+        "content-state": contentState(state, input.copy),
         "stale-date": timestamp + STALE_AFTER_SECONDS,
       },
     },

@@ -5,10 +5,23 @@ import { DEFAULT_LOCALE } from "./locales";
 export type MessageResolver = ReturnType<typeof useMessages>;
 
 let activeLocale = DEFAULT_LOCALE;
+const activeLocaleListeners = new Set<() => void>();
 
 /** I18nProvider calls this once the locale's catalog is in GT's cache. */
 export function setActiveLocale(locale: string): void {
+  if (locale === activeLocale) return;
   activeLocale = locale;
+  for (const listener of activeLocaleListeners) listener();
+}
+
+/** The language `m()` resolves in, for text written outside the app such as relay pushes. */
+export function getActiveLocale(): string {
+  return activeLocale;
+}
+
+export function subscribeActiveLocale(listener: () => void): () => void {
+  activeLocaleListeners.add(listener);
+  return () => activeLocaleListeners.delete(listener);
 }
 
 function resolve(message: string, variables: Parameters<MessageResolver>[1] = {}): string {

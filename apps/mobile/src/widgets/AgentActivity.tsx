@@ -1,4 +1,5 @@
 import { HStack, Image, Spacer, Text, VStack, ZStack } from "@expo/ui/swift-ui";
+import type { RelayAgentActivityText } from "@t3tools/contracts/relay";
 import type { ComponentProps } from "react";
 import {
   accessibilityElement,
@@ -44,24 +45,10 @@ export interface AgentActivityRowProps {
 }
 
 /**
- * Copy for the widget extension, which runs without the app's catalogs. Count-keyed tables hold
- * one string per count. Live Activities updated by push have none and fall back to English.
+ * Copy for the widget extension, which runs without the app's catalogs. Relay pushes replace the
+ * props, so the relay sends its own translation. Pushes from older relays have none: English.
  */
-export interface AgentActivityText {
-  readonly outOfDate: string;
-  readonly failed: string;
-  readonly done: string;
-  readonly workFailed: string;
-  readonly workCompleted: string;
-  readonly statusOutOfDate: string;
-  readonly approval: string;
-  readonly input: string;
-  readonly noActiveAgents: string;
-  readonly activeAgents: Readonly<Record<string, string>>;
-  readonly active: Readonly<Record<string, string>>;
-  readonly needAttention: Readonly<Record<string, string>>;
-  readonly needYou: Readonly<Record<string, string>>;
-}
+export type AgentActivityText = RelayAgentActivityText;
 
 export interface AgentActivityProps {
   readonly text?: AgentActivityText;

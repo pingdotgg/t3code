@@ -34,6 +34,7 @@ import {
 } from "../../persistence/mobile-preferences";
 import { MobileSecureStorageError } from "../../persistence/mobile-secure-storage";
 import * as MobileStorage from "../../persistence/mobile-storage";
+import { setActiveLocale } from "../../i18n/messages";
 import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
 import {
   __resetAgentAwarenessRemoteRegistrationForTest,
@@ -637,6 +638,63 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       ).toMatchObject({ ok: true });
       expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
     }).pipe(Effect.provide(layerRelayTest));
+  });
+
+  it.effect("re-registers in a language switched while a registration is in flight", () => {
+    const fetchMock = stubRelayFetch();
+    Constants.expoConfig!.extra = {
+      relay: {
+        url: "https://relay.example.test/",
+      },
+    };
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+    const registeredLocales = () =>
+      Effect.promise(() =>
+        Promise.all(
+          fetchMock.mock.calls
+            .map((call) => call as unknown as [unknown, RequestInit | undefined])
+            .filter(([request]) =>
+              (request instanceof Request ? request.url : String(request)).endsWith(
+                "/v1/mobile/devices",
+              ),
+            )
+            .map(async ([request, init]) => {
+              const body =
+                request instanceof Request
+                  ? await request.clone().text()
+                  : (init?.body as string | undefined);
+              return (JSON.parse(body ?? "{}") as { locale?: string }).locale;
+            }),
+        ),
+      );
+
+    const isDeviceRequest = (request: RequestInfo | URL) =>
+      (request instanceof Request ? request.url : String(request)).endsWith("/v1/mobile/devices");
+    const stubbed = fetchMock.getMockImplementation()!;
+    let releaseFirst: (() => void) | undefined;
+    const firstStarted = Promise.withResolvers<void>();
+    fetchMock.mockImplementation((request: RequestInfo | URL) => {
+      if (!isDeviceRequest(request) || releaseFirst) return stubbed(request);
+      const held = Promise.withResolvers<void>();
+      releaseFirst = held.resolve;
+      firstStarted.resolve();
+      return held.promise.then(() => stubbed(request));
+    });
+
+    return Effect.gen(function* () {
+      const background = yield* Effect.forkChild(runBackgroundOperations());
+      yield* Effect.promise(() => firstStarted.promise);
+      // The switch lands while the English registration is still in flight.
+      setActiveLocale("zh");
+      releaseFirst!();
+      yield* Fiber.join(background);
+      yield* runBackgroundOperations();
+      expect(yield* registeredLocales()).toEqual(["en", "zh"]);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => setActiveLocale("en"))),
+      Effect.provide(layerRelayTest),
+    );
   });
 
   it.effect("keeps a registered status when a later refresh fails", () => {

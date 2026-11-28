@@ -114,6 +114,7 @@ describe("LiveActivities", () => {
         kind: "live_activity_update",
         aggregate,
         deliveredAt: "2026-05-25T00:00:10.000Z",
+        locale: "zh",
       });
 
       expect(insertedValues).toEqual([
@@ -127,6 +128,7 @@ describe("LiveActivities", () => {
         expect.objectContaining({
           endedAt: relayLiveActivities.endedAt,
           lastLiveActivityDeliveryAt: "2026-05-25T00:00:10.000Z",
+          lastDeliveredLocale: "zh",
         }),
       );
     }).pipe(

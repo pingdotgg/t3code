@@ -134,12 +134,14 @@ const target: LiveActivities.TargetRow = {
   push_token: null,
   push_to_start_token: "start-token",
   preferences_json: enabledPreferences,
+  locale: null,
   activity_push_token: "activity-token",
   remote_start_queued_at: null,
   remote_started_at: "1970-01-01T00:00:00.000Z",
   ended_at: null,
   last_aggregate_json: null,
   last_live_activity_delivery_at: null,
+  last_delivered_locale: null,
 };
 
 function layerFor(input: {
@@ -591,6 +593,30 @@ describe("ApnsDeliveries", () => {
     }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
   });
 
+  it.effect("queues alert notifications in the device's language", () => {
+    const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.sendForTarget({
+        target: {
+          ...target,
+          locale: "zh",
+          push_token: "apns-device-token",
+          push_to_start_token: null,
+          activity_push_token: null,
+          remote_started_at: null,
+        },
+        aggregate,
+        state: { ...state, phase: "waiting_for_input" },
+        nowMs: 5_000,
+      });
+      expect(queuedJobs[0]?.payload.notification).toMatchObject({
+        title: "Thread",
+        body: "待输入：Project",
+      });
+    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+  });
+
   it.effect("queues bounded alert notification payloads", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     const queuedJobs: Array<SignedApnsDeliveryJob> = [];
@@ -636,6 +662,51 @@ describe("ApnsDeliveries", () => {
       expect(notification?.deepLink).toBe("/");
       expect(attempts).toEqual([]);
     }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
+  });
+
+  it.effect("writes Live Activity content in the device's language", () => {
+    const requests: HttpClientRequest.HttpClientRequest[] = [];
+    const signedUpdate = signApnsDeliveryJob({
+      secret: config.apnsDeliveryJobSigningSecret,
+      payload: makeApnsDeliveryJobPayload({
+        kind: "live_activity_update",
+        userId: target.user_id,
+        deviceId: target.device_id,
+        token: "activity-token",
+        aggregate,
+        createdAt: state.updatedAt,
+        expiresAt: "1970-01-01T00:10:00.000Z",
+        jobId: "job-update-zh",
+      }),
+    });
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      expect((yield* deliveries.processSignedJob(yield* signedUpdate)).ok).toBe(true);
+      const request = requests[0]!;
+      expect(request.body._tag).toBe("Uint8Array");
+      if (request.body._tag === "Uint8Array") {
+        const { aps } = JSON.parse(new TextDecoder().decode(request.body.body));
+        const props = JSON.parse(aps["content-state"].props);
+        expect(props.activities[0].status).toBe("运行中");
+        expect(props.text).toMatchObject({
+          workCompleted: "智能体工作已完成",
+          activeAgents: { "1": "1 个活跃智能体" },
+        });
+      }
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts: [],
+          config: signingConfig,
+          currentTargets: [{ ...target, locale: "zh" }],
+          execute: (request) =>
+            Effect.sync(() => {
+              requests.push(request);
+              return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+            }),
+        }),
+      ),
+    );
   });
 
   it.effect.each([
@@ -1334,6 +1405,34 @@ describe("fast completion delivery", () => {
       ).toBe(true);
     }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs, currentTargets: [device] })));
   });
+  it.effect("repaints an unchanged card once after the device switches language", () => {
+    const queuedJobs: SignedApnsDeliveryJob[] = [];
+    const painted = {
+      ...target,
+      last_aggregate_json: JSON.stringify(aggregate),
+      last_live_activity_delivery_at: "1970-01-01T00:00:00.000Z",
+      last_delivered_locale: "en",
+    };
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.sendForTarget({
+        target: { ...painted, locale: "en" },
+        aggregate,
+        nowMs: 0,
+        replay: true,
+      });
+      expect(queuedJobs).toHaveLength(0);
+      yield* deliveries.sendForTarget({
+        target: { ...painted, locale: "zh" },
+        aggregate,
+        nowMs: 0,
+        replay: true,
+      });
+      expect(queuedJobs).toHaveLength(1);
+      expect(queuedJobs[0]?.payload.alert).toBeUndefined();
+    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+  });
+
   it.effect("replays a newly visible completion without alerting", () => {
     const queuedJobs: SignedApnsDeliveryJob[] = [];
     const done = {

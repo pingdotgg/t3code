@@ -56,12 +56,14 @@ const target: LiveActivities.TargetRow = {
   push_token: "fcm-token",
   push_to_start_token: null,
   preferences_json: encodeJson(preferences),
+  locale: null,
   activity_push_token: null,
   remote_start_queued_at: null,
   remote_started_at: null,
   ended_at: null,
   last_aggregate_json: null,
   last_live_activity_delivery_at: null,
+  last_delivered_locale: null,
 };
 const config = {
   relayIssuer: "https://relay.test",
@@ -455,6 +457,22 @@ describe("Android delivery routing", () => {
       }).pipe(Effect.provide(h.layer));
     },
   );
+
+  it.effect("writes alerts in the device's language but keeps English row keys", () => {
+    const h = harness();
+    h.current.target.locale = "zh";
+    h.current.state = { ...state, phase: "completed" };
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process({ ...h.job, state: h.current.state });
+      expect(h.sent[0]?.data).toMatchObject({
+        alert_title: "Fix notifications",
+        alert_body: "完成：Project",
+      });
+      // The Android client parses the row status, so it stays English.
+      expect(h.sent[0]?.data.activity_line_0?.split("\t")[0]).toBe("Done");
+    }).pipe(Effect.provide(h.layer));
+  });
 
   it.effect("keeps completion alerts working with ongoing activity disabled", () => {
     const h = harness();

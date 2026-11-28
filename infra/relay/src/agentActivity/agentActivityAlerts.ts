@@ -6,6 +6,8 @@ import type {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
+import { type AgentActivityCopy, ENGLISH_AGENT_ACTIVITY_COPY } from "./agentActivityCopy.ts";
+
 export interface AgentActivityAlert {
   readonly title: string;
   readonly body: string;
@@ -115,35 +117,50 @@ export function terminalTransitionRows(
 
 export function alertForActivityRows(
   rows: ReadonlyArray<RelayAgentActivityAggregateRow>,
+  copy: AgentActivityCopy = ENGLISH_AGENT_ACTIVITY_COPY,
 ): AgentActivityAlert | null {
   const first = rows[0];
   if (!first) return null;
   if (rows.length === 1) {
-    return { title: first.threadTitle, body: `${first.status}: ${first.projectTitle}` };
+    return {
+      title: first.threadTitle,
+      body: copy.statusLine(copy.status(first.phase), first.projectTitle),
+    };
   }
   return {
-    title: `${rows.length} agents ${isAttentionPhase(first.phase) ? "need attention" : "finished"}`,
+    title: isAttentionPhase(first.phase)
+      ? copy.agentsNeedAttention(rows.length)
+      : copy.agentsFinished(rows.length),
     body: rows.map((row) => row.threadTitle).join(", "),
   };
 }
 
-export function alertForAttentionTransition(input: TransitionInput): AgentActivityAlert | null {
-  return alertForActivityRows(attentionTransitionRows(input));
+export function alertForAttentionTransition(
+  input: TransitionInput & { readonly copy?: AgentActivityCopy },
+): AgentActivityAlert | null {
+  return alertForActivityRows(attentionTransitionRows(input), input.copy);
 }
 
 export function alertForNewlyTerminal(
-  input: TransitionInput & { readonly nowMs: number; readonly includeUnobserved?: boolean },
+  input: TransitionInput & {
+    readonly nowMs: number;
+    readonly includeUnobserved?: boolean;
+    readonly copy?: AgentActivityCopy;
+  },
 ): AgentActivityAlert | null {
-  return alertForActivityRows(terminalTransitionRows(input));
+  return alertForActivityRows(terminalTransitionRows(input), input.copy);
 }
 
 export function alertForTerminalAggregate(input: {
   readonly aggregate: RelayAgentActivityAggregateState | null;
   readonly preferences: RelayAgentAwarenessPreferences | null;
+  readonly copy?: AgentActivityCopy;
 }): AgentActivityAlert | null {
   const row = input.aggregate?.activities[0];
   if (!row || (row.phase !== "completed" && row.phase !== "failed")) return null;
-  return alertAllowedForPhase(input.preferences, row.phase) ? alertForActivityRows([row]) : null;
+  return alertAllowedForPhase(input.preferences, row.phase)
+    ? alertForActivityRows([row], input.copy)
+    : null;
 }
 
 export function shouldAlertForActivity(input: {

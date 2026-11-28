@@ -25,7 +25,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
-import { m } from "../../i18n/messages";
+import { getActiveLocale, m, subscribeActiveLocale } from "../../i18n/messages";
 import { runtime } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -37,6 +37,7 @@ import {
 } from "../../persistence/imperative";
 import type { AgentActivityProps } from "../../widgets/AgentActivity";
 import {
+  agentActivityProps,
   agentActivityText,
   type AgentActivityWidgetSource,
 } from "../../widgets/agentActivityWidgetTimeline";
@@ -157,6 +158,8 @@ let pendingDeviceRegistration: {
 
 interface DeviceRegistrationInput {
   readonly observedPushToken?: string;
+  // A registration already in flight may have read the previous language.
+  readonly locale?: string;
 }
 
 interface RegisterDeviceInput extends DeviceRegistrationInput {
@@ -383,6 +386,7 @@ function registrationSignature(body: RelayDeviceRegistrationRequest): string {
     body.preferences.notifyOnInput,
     body.preferences.notifyOnCompletion,
     body.preferences.notifyOnFailure,
+    body.locale ?? "",
   ].join("|");
 }
 
@@ -629,7 +633,8 @@ function mergeDeviceRegistrationInput(
   next: DeviceRegistrationInput,
 ): DeviceRegistrationInput {
   const observedPushToken = next.observedPushToken ?? current.observedPushToken;
-  return observedPushToken ? { observedPushToken } : {};
+  const locale = next.locale ?? current.locale;
+  return { ...(observedPushToken ? { observedPushToken } : {}), ...(locale ? { locale } : {}) };
 }
 
 function registrationAddsInformation(
@@ -637,7 +642,9 @@ function registrationAddsInformation(
   next: DeviceRegistrationInput,
 ): boolean {
   return (
-    next.observedPushToken !== undefined && next.observedPushToken !== current.observedPushToken
+    (next.observedPushToken !== undefined &&
+      next.observedPushToken !== current.observedPushToken) ||
+    (next.locale !== undefined && next.locale !== current.locale)
   );
 }
 
@@ -762,6 +769,7 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
       ...(pushTokenRegistration.pushToken ? { pushToken: pushTokenRegistration.pushToken } : {}),
       notificationsEnabled: pushTokenRegistration.notificationsEnabled,
       preferences,
+      locale: getActiveLocale(),
     }),
     expectedGeneration,
   );
@@ -791,7 +799,7 @@ function ensureAppStateListener(): void {
     return;
   }
 
-  appStateSubscription = AppState.addEventListener("change", (state) => {
+  const appState = AppState.addEventListener("change", (state) => {
     if (state !== "active") {
       return;
     }
@@ -801,6 +809,19 @@ function ensureAppStateListener(): void {
       "active live activity reconciliation after app foreground failed",
     );
   });
+  // The relay writes pushes in the registered language, so a switch must reach it right away.
+  const unsubscribeLocale = subscribeActiveLocale(() =>
+    enqueueDeviceRegistration(
+      { locale: getActiveLocale() },
+      "device registration after language change failed",
+    ),
+  );
+  appStateSubscription = {
+    remove: () => {
+      appState.remove();
+      unsubscribeLocale();
+    },
+  };
 }
 
 function publishWidget(source: AgentActivityWidgetSource): void {
@@ -1124,20 +1145,7 @@ export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
         const aggregate = snapshot.aggregate;
         const primed = yield* Effect.try({
           try: () =>
-            startAgentLiveActivity(
-              {
-                text: agentActivityText(
-                  Math.max(aggregate.activeCount, aggregate.activities.length),
-                  m,
-                ),
-                title: aggregate.title,
-                subtitle: aggregate.subtitle,
-                activeCount: aggregate.activeCount,
-                updatedAt: aggregate.updatedAt,
-                activities: aggregate.activities,
-              },
-              liveActivityStaleDate(),
-            ),
+            startAgentLiveActivity(agentActivityProps(aggregate, m), liveActivityStaleDate()),
           catch: (cause) =>
             new AgentAwarenessOperationError({
               operation: "prime-live-activity",
