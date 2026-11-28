@@ -1,7 +1,7 @@
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { T, useGT, useLocale, useMessages } from "gt-react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, type PointerEvent } from "react";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 import {
@@ -12,7 +12,10 @@ import {
 } from "@t3tools/shared/usageFormat";
 import { formatRelativeHourShort } from "@t3tools/shared/usageFormatCopy";
 import { cn } from "~/lib/utils";
+import { InlineButton } from "../ui/button";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
+import { usageRange, type UsageChartRange } from "./usageChartRange";
 import { observeResize } from "~/lib/observeResize";
 
 const VIEW_WIDTH = 960;
@@ -35,6 +38,8 @@ interface UsageProviderChartProps {
   readonly resolution: "day" | "hour";
   readonly timeZone: string;
   readonly hour12: boolean;
+  readonly range?: UsageChartRange | null;
+  readonly onRangeChange?: ((range: UsageChartRange | null) => void) | undefined;
 }
 
 export interface DayColumn {
@@ -291,6 +296,8 @@ function UsageChartPlot({
   loadingProviders,
   format,
   formatTooltipPeriod,
+  range,
+  onSelectRange,
   children,
 }: {
   readonly periods: readonly string[];
@@ -300,9 +307,13 @@ function UsageChartPlot({
   readonly loadingProviders: ReadonlySet<UsageProviderKind>;
   readonly format: (value: number) => string;
   readonly formatTooltipPeriod: (period: string) => string;
+  readonly range: UsageChartRange | null;
+  readonly onSelectRange: ((first: string, second: string) => void) | undefined;
   readonly children: React.ReactNode;
 }) {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const [draftRange, setDraftRange] = useState<UsageChartRange | null>(null);
+  const dragRef = useRef<{ pointerId: number; x: number; start: string } | null>(null);
   const plotRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const hoverPositionRef = useRef<{ x: number; y: number } | null>(null);
@@ -344,28 +355,81 @@ function UsageChartPlot({
     return observeResize([plot, tooltip], positionTooltip);
   }, [hoverIndex, positionTooltip]);
 
-  const handleMove = (event: React.MouseEvent<HTMLDivElement>) => {
-    const plot = plotRef.current;
-    if (plot === null || periods.length === 0) return;
-    const bounds = plot.getBoundingClientRect();
-    if (bounds.width === 0) return;
+  const pointerPosition = (event: PointerEvent<HTMLDivElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
     const localX = Math.min(bounds.width, Math.max(0, event.clientX - bounds.left));
     const localY = Math.min(bounds.height, Math.max(0, event.clientY - bounds.top));
-    const fraction = localX / bounds.width;
-    const index = Math.round(fraction * (periods.length - 1));
-    hoverPositionRef.current = { x: localX, y: localY };
+    const index =
+      bounds.width === 0 ? 0 : Math.round((localX / bounds.width) * (periods.length - 1));
+    return { x: localX, y: localY, index };
+  };
+
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (onSelectRange === undefined || !event.isPrimary || event.button !== 0) return;
+    const { index } = pointerPosition(event);
+    const period = periods[index];
+    if (period === undefined) return;
+    const start =
+      range?.start === period ? range.end : range?.end === period ? range.start : period;
+    dragRef.current = { pointerId: event.pointerId, x: event.clientX, start };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handleMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (!event.isPrimary) return;
+    const { x, y, index } = pointerPosition(event);
+    const period = periods[index];
+    if (period === undefined) return;
+    const drag = dragRef.current;
+    if (drag?.pointerId === event.pointerId && Math.abs(event.clientX - drag.x) >= 4) {
+      const next = usageRange(drag.start, period);
+      setDraftRange((current) =>
+        current?.start === next.start && current.end === next.end ? current : next,
+      );
+      setHoverIndex(null);
+      return;
+    }
+    setDraftRange(null);
+    if (event.pointerType === "touch") return;
+    hoverPositionRef.current = { x, y };
     positionTooltip();
-    setHoverIndex(Math.min(periods.length - 1, Math.max(0, index)));
+    setHoverIndex(index);
+  };
+
+  const clearDrag = (event: PointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    setDraftRange(null);
+  };
+
+  const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (drag?.pointerId !== event.pointerId) return;
+    const period = periods[pointerPosition(event).index];
+    if (period !== undefined && Math.abs(event.clientX - drag.x) >= 4) {
+      onSelectRange?.(drag.start, period);
+    }
+    clearDrag(event);
   };
 
   const hoveredPeriod = hoverIndex === null ? undefined : periods[hoverIndex];
+  const displayedRange = draftRange ?? range;
+  const rangeStart = displayedRange === null ? -1 : periods.indexOf(displayedRange.start);
+  const rangeEnd = displayedRange === null ? -1 : periods.indexOf(displayedRange.end);
 
   return (
     <div
       ref={plotRef}
-      className="relative h-56 flex-1"
-      onMouseMove={handleMove}
-      onMouseLeave={() => {
+      className={cn(
+        "relative h-56 flex-1",
+        onSelectRange && "cursor-crosshair touch-pan-y select-none",
+      )}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handleMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={clearDrag}
+      onLostPointerCapture={clearDrag}
+      onPointerLeave={() => {
         hoverPositionRef.current = null;
         setHoverIndex(null);
       }}
@@ -376,7 +440,32 @@ function UsageChartPlot({
         preserveAspectRatio="none"
         aria-hidden
       >
+        {rangeStart >= 0 && rangeEnd >= 0 && (
+          <rect
+            x={rangeStart * stepX}
+            y={PLOT_TOP}
+            width={(rangeEnd - rangeStart) * stepX}
+            height={VIEW_HEIGHT - PLOT_TOP}
+            fill="currentColor"
+            className="text-foreground/10"
+          />
+        )}
         {children}
+        {rangeStart >= 0 &&
+          rangeEnd >= 0 &&
+          (rangeStart === rangeEnd ? [rangeStart] : [rangeStart, rangeEnd]).map((index) => (
+            <line
+              key={index}
+              x1={index * stepX}
+              x2={index * stepX}
+              y1={PLOT_TOP}
+              y2={VIEW_HEIGHT}
+              stroke="currentColor"
+              strokeWidth={1.5}
+              className="text-foreground/65"
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
         {hoverIndex === null ? null : (
           <line
             x1={hoverIndex * stepX}
@@ -417,6 +506,8 @@ export function UsageProviderChart({
   resolution,
   timeZone,
   hour12,
+  range = null,
+  onRangeChange,
 }: UsageProviderChartProps) {
   const gt = useGT();
   const locale = useLocale();
@@ -446,6 +537,15 @@ export function UsageProviderChart({
     resolution === "hour" && referenceTime !== undefined
       ? formatRelativeHourShort(period, referenceTime, timeZone, hour12, m, locale)
       : formatPeriod(period);
+  const first = periods[0];
+  const last = periods.at(-1);
+  const selectRange =
+    onRangeChange === undefined || first === undefined || last === undefined || first === last
+      ? undefined
+      : (a: string, b: string) => {
+          const next = usageRange(a, b);
+          onRangeChange(next.start === first && next.end === last ? null : next);
+        };
 
   return (
     <div className="flex flex-col gap-1">
@@ -465,6 +565,7 @@ export function UsageProviderChart({
         </div>
 
         <UsageChartPlot
+          key={`${resolution}:${first}:${last}`}
           periods={periods}
           columns={columns}
           stepX={stepX}
@@ -472,6 +573,8 @@ export function UsageProviderChart({
           loadingProviders={loadingProviders}
           format={format}
           formatTooltipPeriod={formatTooltipPeriod}
+          range={range}
+          onSelectRange={selectRange}
         >
           {scale.ticks.map((tick) => {
             const y = toY(tick);
@@ -510,6 +613,22 @@ export function UsageProviderChart({
               vectorEffect="non-scaling-stroke"
             />
           ))}
+          {periods.length === 1 &&
+            paths
+              .filter(({ total }) => total > 0)
+              .map(({ provider, loading, total }) => (
+                <line
+                  key={provider}
+                  x1={0}
+                  x2={VIEW_WIDTH}
+                  y1={toY(total)}
+                  y2={toY(total)}
+                  className={seriesClassName(loading)}
+                  stroke={PROVIDER_PRESENTATION[provider].color}
+                  strokeWidth={2}
+                  vectorEffect="non-scaling-stroke"
+                />
+              ))}
         </UsageChartPlot>
       </div>
 
@@ -518,19 +637,72 @@ export function UsageProviderChart({
         className="flex justify-between pl-16 text-3xs text-muted-foreground uppercase"
       >
         <span>{periods[0] === undefined ? "" : formatPeriod(periods[0])}</span>
-        <span>
-          {periods[Math.floor(periods.length / 2)] === undefined
-            ? ""
-            : formatPeriod(periods[Math.floor(periods.length / 2)] ?? "")}
-        </span>
-        <span>
-          {periods[periods.length - 1] === undefined
-            ? ""
-            : formatPeriod(periods[periods.length - 1] ?? "")}
-        </span>
+        {periods.length > 2 && (
+          <span>
+            {periods[Math.floor(periods.length / 2)] === undefined
+              ? ""
+              : formatPeriod(periods[Math.floor(periods.length / 2)] ?? "")}
+          </span>
+        )}
+        <span>{periods.length > 1 && last !== undefined ? formatPeriod(last) : ""}</span>
       </div>
 
-      {/* The plot and its axes are hover-only; this carries the same figures for screen readers.
+      {selectRange !== undefined && first !== undefined && last !== undefined && (
+        <div className="flex flex-wrap items-center gap-x-2 pl-16 text-xs">
+          <span className="text-muted-foreground">
+            <T>Drag to select a range</T>
+          </span>
+          <Select
+            value={range?.start ?? first}
+            onValueChange={(period) => {
+              if (period !== null) selectRange(period, range?.end ?? last);
+            }}
+          >
+            <SelectTrigger size="compact" variant="ghost" aria-label={gt("Range start")}>
+              <SelectValue>
+                {gt("From {date}", { date: formatTooltipPeriod(range?.start ?? first) })}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup alignItemWithTrigger={false}>
+              {periods
+                .filter((period) => period <= (range?.end ?? last))
+                .map((period) => (
+                  <SelectItem key={period} value={period}>
+                    {formatTooltipPeriod(period)}
+                  </SelectItem>
+                ))}
+            </SelectPopup>
+          </Select>
+          <Select
+            value={range?.end ?? last}
+            onValueChange={(period) => {
+              if (period !== null) selectRange(range?.start ?? first, period);
+            }}
+          >
+            <SelectTrigger size="compact" variant="ghost" aria-label={gt("Range end")}>
+              <SelectValue>
+                {gt("To {date}", { date: formatTooltipPeriod(range?.end ?? last) })}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup alignItemWithTrigger={false}>
+              {periods
+                .filter((period) => period >= (range?.start ?? first))
+                .map((period) => (
+                  <SelectItem key={period} value={period}>
+                    {formatTooltipPeriod(period)}
+                  </SelectItem>
+                ))}
+            </SelectPopup>
+          </Select>
+          {range !== null && (
+            <InlineButton tone="muted" touchTarget="padded" onClick={() => onRangeChange?.(null)}>
+              <T>Clear range</T>
+            </InlineButton>
+          )}
+        </div>
+      )}
+
+      {/* The plot and its axes are visual; this carries the same figures for screen readers.
           sr-only sits on a wrapper: Firefox does not clip a table's caption by the table's own box. */}
       <div className="sr-only">
         <table>

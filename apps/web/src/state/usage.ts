@@ -128,6 +128,7 @@ export function mergeAnsweredUsage(
 }
 
 const NO_HIDDEN_PROVIDERS: ReadonlySet<UsageProviderKind> = new Set();
+const NO_USAGE_ATOM = Atom.make<readonly EnvironmentUsageStatus[]>([]);
 
 function withoutProviders(
   environments: readonly EnvironmentUsageStatus[],
@@ -171,19 +172,23 @@ function deriveSelection(
 }
 
 export function useUsage(
-  input: UsageSummaryInput,
+  input: UsageSummaryInput | null,
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
   hiddenProviders: ReadonlySet<UsageProviderKind> = NO_HIDDEN_PROVIDERS,
 ): UsageView {
-  const windowKey = JSON.stringify({
-    sinceDay: input.sinceDay,
-    untilDay: input.untilDay,
-    timeZone: input.timeZone,
-    resolution: input.resolution,
-    sinceTime: input.sinceTime,
-    untilTime: input.untilTime,
-  });
-  const atom = usageByWindowAtom(windowKey);
+  const atom =
+    input === null
+      ? NO_USAGE_ATOM
+      : usageByWindowAtom(
+          JSON.stringify({
+            sinceDay: input.sinceDay,
+            untilDay: input.untilDay,
+            timeZone: input.timeZone,
+            resolution: input.resolution,
+            sinceTime: input.sinceTime,
+            untilTime: input.untilTime,
+          }),
+        );
   const environments = useAtomValue(atom);
   // Identity-based render sync needs a derivation retained by inputs across renders.
   const [derived, setDerived] = useState(() =>
@@ -200,8 +205,9 @@ export function useUsage(
   }
   const { selectedEnvironments, merged } = current;
 
-  const refresh = (nextInput?: UsageSummaryInput) =>
-    refreshUsage({
+  const refresh = async (nextInput = input) => {
+    if (nextInput === null) return;
+    await refreshUsage({
       registry: appAtomRegistry,
       server: serverEnvironment,
       presentations: environmentPresentations,
@@ -212,8 +218,9 @@ export function useUsage(
             readEnvironmentScope(environment.environmentId, AuthDiagnosticsReadScope),
         )
         .map(({ environmentId }) => environmentId),
-      input: nextInput ?? (JSON.parse(windowKey) as UsageSummaryInput),
+      input: nextInput,
     });
+  };
 
   const answeredCount = selectedEnvironments.filter(
     (environment) => environment.summary !== null,
@@ -231,6 +238,7 @@ export function useUsage(
     | null
   >(null);
   if (
+    input !== null &&
     answeredCount > 0 &&
     (lastAnswered?.merged !== merged ||
       lastAnswered.window !== input ||
@@ -249,9 +257,11 @@ export function useUsage(
       ? lastAnswered
       : null;
   const shown =
-    answeredCount > 0
-      ? { window: input, merged }
-      : (kept ?? (isPending ? null : { window: input, merged }));
+    input === null
+      ? null
+      : answeredCount > 0
+        ? { window: input, merged }
+        : (kept ?? (isPending ? null : { window: input, merged }));
 
   return {
     merged,
