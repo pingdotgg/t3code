@@ -7,9 +7,9 @@ import { cn } from "~/lib/utils";
 
 // Each kind uses a theme tint role so its fill and label remain readable in both themes.
 const contextChipVariants = cva(
-  "context-chip inline-flex h-[1.41em] max-w-full items-center gap-[0.33em] border align-middle font-medium leading-none [&_svg]:block [&_svg]:size-[1.17em] [&_svg]:shrink-0 [&_svg]:self-center [button&,a&,[data-popup-open]&]:cursor-pointer [button&,a&]:transition-colors [button&,a&]:motion-reduce:transition-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-foreground disabled:cursor-default",
+  "context-chip inline-flex max-w-full items-center gap-[0.33em] border align-middle font-medium leading-none [&_svg]:block [&_svg]:size-[1.17em] [&_svg]:shrink-0 [&_svg]:self-center [button&,a&,[data-popup-open]&]:cursor-pointer [button&,a&]:transition-colors [button&,a&]:motion-reduce:transition-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-foreground disabled:cursor-default",
   {
-    defaultVariants: { kind: "neutral" },
+    defaultVariants: { kind: "neutral", shape: "inline" },
     variants: {
       kind: {
         neutral: "border-transparent bg-muted text-foreground",
@@ -40,7 +40,7 @@ const contextChipVariants = cva(
         citation: "[--context-chip-accent:var(--info-foreground)]",
       },
       shape: {
-        inline: "",
+        inline: "h-[1.41em]",
         bubble: "w-64 gap-2 rounded-2xl bg-message px-3 py-2 text-label text-message-foreground",
       },
       state: {
