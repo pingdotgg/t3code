@@ -148,6 +148,9 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const cwd = yield* makeTempDir;
         const script = "#!/usr/bin/env python3\nprint('hello')\n";
         yield* writeTextFile(cwd, "run", script);
+        const nodeScript =
+          "#!/opt/python-tools\u00a0sdk/bin/node --conditions=python\nconsole.log('hello')\n";
+        yield* writeTextFile(cwd, "run-node", nodeScript);
         const image = path.join(cwd, "image");
         yield* fs.writeFile(
           image,
@@ -158,9 +161,12 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         emptyZip.set([0x50, 0x4b, 0x05, 0x06]);
         yield* fs.writeFile(archive, emptyZip);
         expect(
-          (yield* service.getMetadata({ paths: [path.join(cwd, "run"), image, archive] })).entries,
+          (yield* service.getMetadata({
+            paths: [path.join(cwd, "run"), path.join(cwd, "run-node"), image, archive],
+          })).entries,
         ).toEqual([
           { kind: "file", byteLength: script.length, mimeType: "text/x-python" },
+          { kind: "file", byteLength: Buffer.byteLength(nodeScript), mimeType: "text/javascript" },
           { kind: "file", byteLength: 8, mimeType: "image/png" },
           { kind: "file", byteLength: 22, mimeType: "application/zip" },
         ]);
