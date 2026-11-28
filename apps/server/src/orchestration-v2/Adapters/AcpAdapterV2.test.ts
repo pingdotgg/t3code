@@ -7459,6 +7459,100 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live("Stop ends a client terminal the agent never kills or releases", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let createTerminal: Parameters<RuntimeService["handleCreateTerminal"]>[0] | undefined;
+      let readTerminalOutput: Parameters<RuntimeService["handleTerminalOutput"]>[0] | undefined;
+      const instanceId = ProviderInstanceId.make("acp-test-stop-client-terminal");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          interruptPromptOnCancel: true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+            environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleCreateTerminal: (handler) =>
+                Effect.sync(() => {
+                  createTerminal = handler;
+                }).pipe(Effect.andThen(runtime.handleCreateTerminal(handler))),
+              handleTerminalOutput: (handler) =>
+                Effect.sync(() => {
+                  readTerminalOutput = handler;
+                }).pipe(Effect.andThen(runtime.handleTerminalOutput(handler))),
+            }),
+          }),
+        },
+        selfInvocation: yield* resolveSelfInvocation(),
+        clientTerminals: {},
+      });
+      const threadId = ThreadId.make("thread-acp-stop-client-terminal");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-stop-client-terminal"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const turnFiber = yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      if (createTerminal === undefined || readTerminalOutput === undefined) {
+        return yield* Effect.die("ACP runtime must register terminal handlers");
+      }
+      // A foreground command the agent is running when the user presses Stop.
+      const { terminalId } = yield* createTerminal(
+        {
+          sessionId: "mock-session-1",
+          command: process.execPath,
+          args: ["-e", "setInterval(() => {}, 1000)"],
+        },
+        { requestId: "stop-client-terminal-create", method: "terminal/create" },
+      );
+
+      // Like Devin, the agent answers session/cancel and never sends terminal/kill or release.
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+        }),
+      });
+      yield* Fiber.join(turnFiber);
+
+      const afterStop = yield* readTerminalOutput(
+        { sessionId: "mock-session-1", terminalId },
+        { requestId: "stop-client-terminal-output", method: "terminal/output" },
+      );
+      assert.isDefined(afterStop.exitStatus);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live("Stop closes an MCP-over-ACP call stalled on its SSE response", () =>
     Effect.gen(function* () {
       const responseStarted = yield* Deferred.make<void>();
