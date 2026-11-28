@@ -74,9 +74,13 @@ export const writeFileStringAtomically = (input: {
               batch.push(chunk);
               batchLength += chunk.length;
               if (batchLength < CHUNK_WRITE_LENGTH) continue;
-              yield* file.writeAll(encoder.encode(batch.join("")));
-              batch = [];
-              batchLength = 0;
+              const text = batch.join("");
+              // A surrogate pair may span chunks just as this batch fills up.
+              const carry = /[\uD800-\uDBFF]/u.test(text.slice(-1)) ? 1 : 0;
+              const writeEnd = text.length - carry;
+              yield* file.writeAll(encoder.encode(text.slice(0, writeEnd)));
+              batch = [text.slice(writeEnd)];
+              batchLength = carry;
             }
             if (batchLength > 0) yield* file.writeAll(encoder.encode(batch.join("")));
           }
