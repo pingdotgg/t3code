@@ -299,9 +299,31 @@ export function TeamForkThreadDialogHost() {
         </DialogHeader>
         <DialogPanel>
           {options.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              <T>No accessible environments with this project are available.</T>
-            </p>
+            <div className="space-y-3 rounded-lg border border-border/70 bg-muted/20 p-3 text-sm">
+              <p className="font-medium text-foreground">
+                <T>No accessible environments with this project are available.</T>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                <T>
+                  To fork this thread, add or clone this repository on your local machine or ask a
+                  team admin to grant you access to a remote environment that has the project. You
+                  can also leave a thread note instead.
+                </T>
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  onClick={() => {
+                    closeTeamForkDialog();
+                    void navigate({ to: "/settings/teams", hash: "teams-environments" });
+                  }}
+                >
+                  <T>View team environments</T>
+                </Button>
+              </div>
+            </div>
           ) : (
             <div className="space-y-2" data-testid="team-fork-env-options">
               {options.map((option) => (

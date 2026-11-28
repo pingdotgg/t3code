@@ -233,6 +233,9 @@ export function applyTeamStreamEvent(
     case "snapshot":
       return buildStateFromSnapshot(event.payload);
 
+    case "teamDeleted":
+      return EMPTY_TEAM_ENVIRONMENT_STATE;
+
     case "teamUpdated": {
       const nextTeam = event.payload;
       const attributionByThreadId = new Map(current.attributionByThreadId);
@@ -743,6 +746,14 @@ export function createTeamEnvironmentAtoms<R, E>(
     initialize: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:initialize",
       tag: TEAM_WS_METHODS.teamInitialize,
+    }),
+    leave: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:leave",
+      tag: TEAM_WS_METHODS.teamLeave,
+    }),
+    deleteTeam: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:delete",
+      tag: TEAM_WS_METHODS.teamDelete,
     }),
     updateDisplayName: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:update-display-name",

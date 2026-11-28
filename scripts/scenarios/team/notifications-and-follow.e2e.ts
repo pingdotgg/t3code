@@ -2,6 +2,7 @@ import { test } from "@e2e-dev/web";
 import { expect } from "e2e";
 
 import { startTeamTopology } from "./topology.ts";
+import { openTeamInviteForm } from "./ui-helpers.ts";
 
 test("team notifications stay silent for unfollowed colleague threads, fire while followed, and silence again after unfollow", async ({
   app,
@@ -34,6 +35,7 @@ test("team notifications stay silent for unfollowed colleague threads, fire whil
   await alice.page.getByTestId("team-init-submit").click();
   await alice.page.getByTestId("team-member-alice").waitFor({ state: "visible", timeout: 15_000 });
 
+  await openTeamInviteForm(alice.page);
   await alice.page.getByTestId("team-invite-pseudo-input").fill("bob");
   await alice.page.getByTestId("team-invite-create").click();
   await alice.page

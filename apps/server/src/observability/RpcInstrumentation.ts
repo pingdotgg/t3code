@@ -336,6 +336,8 @@ const RPC_AGGREGATES = {
   [TEAM_WS_METHODS.teamStartGitHubDeviceFlow]: "team",
   [TEAM_WS_METHODS.teamPollGitHubDeviceFlow]: "team",
   [TEAM_WS_METHODS.teamCancelGitHubDeviceFlow]: "team",
+  [TEAM_WS_METHODS.teamLeave]: "team",
+  [TEAM_WS_METHODS.teamDelete]: "team",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

@@ -20,6 +20,7 @@ import {
   type TerminalMetadataStreamEvent,
 } from "@t3tools/contracts";
 import { derive as deriveOrchestrationId } from "@t3tools/provider-core/server/IdAllocator";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
@@ -30,6 +31,7 @@ import type { ThreadLaunchResult } from "../orchestration-v2/ThreadLaunchService
 import type * as PeerClientPairing from "../peer/PeerClientPairing.ts";
 import type * as PeerLinks from "../peer/PeerLinks.ts";
 import type * as ProjectService from "../project/ProjectService.ts";
+import type * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import type * as TeamProviderManager from "./TeamProviderManager.ts";
 import * as TeamService from "./TeamService.ts";
 import {
@@ -50,6 +52,8 @@ export interface TeamWsHandlerDeps {
   readonly eventSink?: EventSink.EventSinkV2["Service"];
   readonly projectionStore?: ProjectionStore.ProjectionStoreV2["Service"];
   readonly teamProviderManager?: TeamProviderManager.TeamProviderManager["Service"];
+  readonly scheduledTaskService?: ScheduledTasks.ScheduledTaskService["Service"];
+  readonly awaitSocketDisconnect?: Effect.Effect<void>;
 }
 
 export function makeTeamWsRpcHandlers(
@@ -63,6 +67,38 @@ export function makeTeamWsRpcHandlers(
     [TEAM_WS_METHODS.teamInitialize]: (
       payload: Parameters<typeof teamService.initializeTeam>[0]["payload"],
     ) => teamService.initializeTeam({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamLeave]: () =>
+      teamService.leaveTeam({
+        sessionId,
+        deferCallerSessionRevocation:
+          deps?.awaitSocketDisconnect !== undefined
+            ? {
+                awaitDisconnect: deps.awaitSocketDisconnect,
+                fallbackDelay: Duration.millis(500),
+              }
+            : true,
+        ...(deps?.peerClientPairing !== undefined
+          ? { peerClientPairing: deps.peerClientPairing }
+          : {}),
+        ...(deps?.peerLinks !== undefined ? { peerLinks: deps.peerLinks } : {}),
+      }),
+    [TEAM_WS_METHODS.teamDelete]: (
+      payload: Parameters<typeof teamService.deleteTeam>[0]["payload"],
+    ) =>
+      teamService.deleteTeam({
+        sessionId,
+        payload,
+        ...(deps?.peerClientPairing !== undefined
+          ? { peerClientPairing: deps.peerClientPairing }
+          : {}),
+        ...(deps?.peerLinks !== undefined ? { peerLinks: deps.peerLinks } : {}),
+        ...(deps?.teamProviderManager !== undefined
+          ? { teamProviderManager: deps.teamProviderManager }
+          : {}),
+        ...(deps?.scheduledTaskService !== undefined
+          ? { scheduledTaskService: deps.scheduledTaskService }
+          : {}),
+      }),
     [TEAM_WS_METHODS.teamUpdateDisplayName]: (
       payload: Parameters<typeof teamService.updateDisplayName>[0]["payload"],
     ) => teamService.updateDisplayName({ sessionId, payload }),

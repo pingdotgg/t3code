@@ -35,6 +35,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } fr
 
 import { runPromise } from "../t3.ts";
 import { startTeamTopology, type TeamMemberHandle } from "./topology.ts";
+import { openTeamInviteForm, selectTeamSettingsTab } from "./ui-helpers.ts";
 
 async function waitForAssistantTurnSettled(
   page: TeamMemberHandle["page"],
@@ -179,6 +180,7 @@ test("unmodified upstream mobile client inherits member identity via standard pa
   await alice.page.getByTestId("team-member-alice").waitFor({ state: "visible", timeout: 15_000 });
 
   // Create Admin Only View (regular members cannot read or post).
+  await selectTeamSettingsTab(alice.page, "access");
   await alice.page.getByTestId("team-view-create-open").click();
   await alice.page.getByTestId("team-view-name-input").fill("Exec Only");
   await alice.page.getByTestId("team-view-read-role-regular").click();
@@ -191,6 +193,7 @@ test("unmodified upstream mobile client inherits member identity via standard pa
     .waitFor({ state: "visible", timeout: 15_000 });
 
   // Invite Bob as regular.
+  await openTeamInviteForm(alice.page);
   await alice.page.getByTestId("team-invite-role-select").click();
   await alice.page.getByRole("option", { name: "Regular" }).click();
   await alice.page.getByTestId("team-invite-pseudo-input").fill("bob");

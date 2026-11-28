@@ -28,6 +28,7 @@ import { Socket } from "effect/socket";
 import { TEAM_APP_DIR } from "../../e2e.team.config.ts";
 import { rpcClient, runPromise } from "../t3.ts";
 import { startTeamTopology, type TeamMemberHandle } from "./topology.ts";
+import { openTeamInviteForm, selectTeamSettingsTab } from "./ui-helpers.ts";
 
 // Minimal ACP agent that captures its injected member-bound T3 MCP endpoint and bearer token
 // so we can invoke real /mcp tools as a regular member against Team Server.
@@ -239,6 +240,7 @@ async function createInviteLink(input: {
   readonly pseudo: string;
 }): Promise<string> {
   const { inviter, roleLabel, pseudo } = input;
+  await openTeamInviteForm(inviter.page);
   await inviter.page.getByTestId("team-invite-role-select").click();
   await inviter.page.getByRole("option", { name: roleLabel }).click();
   await inviter.page.getByTestId("team-invite-pseudo-input").fill(pseudo);
@@ -480,6 +482,7 @@ test("enforces Milestone 5 team projects, local-to-team sync, absolute local bou
   }
 
   // 3. Alice attaches extra remote environment ("GPU Runner") restricted to owner & admin ONLY via Settings -> Teams -> Environments.
+  await selectTeamSettingsTab(alice.page, "access");
   await alice.page
     .getByTestId("team-env-attach-open")
     .waitFor({ state: "visible", timeout: 15_000 });
@@ -497,6 +500,7 @@ test("enforces Milestone 5 team projects, local-to-team sync, absolute local bou
 
   // Verify regular Bob does NOT see GPU Runner in Settings -> Teams -> Environments.
   await bob.open("/settings/teams");
+  await selectTeamSettingsTab(bob.page, "access");
   await bob.page
     .getByTestId("team-environments-list")
     .waitFor({ state: "visible", timeout: 15_000 });

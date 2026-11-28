@@ -4219,7 +4219,11 @@ export default function ChatView(props: ChatViewProps) {
                                 onCancelTeamNoteMode={() =>
                                   setTeamThreadNoteMode(routeThreadKey, false)
                                 }
-                                composerInputDisabled={teamEnvDisabledReason !== null}
+                                composerInputDisabled={
+                                  (teamEnvDisabledReason !== null ||
+                                    teamPostDisabledReason !== null) &&
+                                  !effectiveTeamNoteMode
+                                }
                                 isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                                 bannerItems={
                                   isDraftHeroState || composerBannerItems.length === 0

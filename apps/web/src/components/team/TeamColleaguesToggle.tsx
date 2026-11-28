@@ -8,8 +8,7 @@ import { primaryServerKeybindingsAtom } from "~/state/server";
 import {
   toggleShowColleaguesThreads,
   toggleShowFollowedThreadsOnly,
-  useShowColleaguesThreads,
-  useShowFollowedThreadsOnly,
+  useTeamSidebarFilterMode,
   useTeamStatesByEnvironment,
 } from "~/state/team";
 import { SidebarHeaderIconButton } from "../sidebar/SidebarThreadHeader";
@@ -17,24 +16,25 @@ import { SidebarHeaderIconButton } from "../sidebar/SidebarThreadHeader";
 export function TeamColleaguesToggle() {
   const gt = useGT();
   const teamStates = useTeamStatesByEnvironment();
-  const showColleagues = useShowColleaguesThreads();
-  const showFollowedOnly = useShowFollowedThreadsOnly();
+  const filterMode = useTeamSidebarFilterMode();
+  const showColleagues = filterMode === "all";
+  const showFollowedOnly = filterMode === "followed";
   const followedCount = countFollowedTeamThreads(teamStates);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
 
   if (!hasActiveTeamEnvironment(teamStates)) return null;
 
   const shortcut = shortcutLabelForCommand(keybindings, "team.toggleColleagues");
-  const baseLabel = showColleagues
-    ? gt("Hide colleagues' threads")
-    : gt("Show colleagues' threads");
-  const tooltip = shortcut ? `${baseLabel} (${shortcut})` : baseLabel;
+  const allTeamLabel = showColleagues
+    ? gt("Show my threads only (currently: All team)")
+    : gt("Show all team threads");
+  const allTeamTooltip = shortcut ? `${allTeamLabel} (${shortcut})` : allTeamLabel;
 
   const followedLabel = showFollowedOnly
-    ? gt("Show all visible team threads")
+    ? gt("Show my threads only (currently: Followed)")
     : followedCount > 0
-      ? gt("Filter to followed threads ({count})", { count: followedCount })
-      : gt("Filter to followed threads");
+      ? gt("Show followed threads only ({count})", { count: followedCount })
+      : gt("Show followed threads only");
 
   return (
     <>
@@ -63,8 +63,8 @@ export function TeamColleaguesToggle() {
         data-testid="team-colleagues-toggle"
         aria-pressed={showColleagues}
         variant={showColleagues ? "outline" : "default"}
-        label={baseLabel}
-        tooltip={tooltip}
+        label={allTeamLabel}
+        tooltip={allTeamTooltip}
         onClick={() => {
           toggleShowColleaguesThreads();
         }}

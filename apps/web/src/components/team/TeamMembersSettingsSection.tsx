@@ -19,7 +19,6 @@ import { ShieldIcon } from "lucide-react";
 import { useState } from "react";
 
 import { m } from "~/i18n/messages";
-import { readLocalApi } from "~/localApi";
 import { teamEnvironment } from "~/state/team";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { SettingsSection } from "../settings/settingsLayout";
@@ -27,6 +26,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
+import { confirmTeamDestructiveAction } from "./confirmTeamDestructiveAction";
 import { formatTeamRoleLabel } from "./TeamJoinForm";
 
 export function TeamMembersSettingsSection({
@@ -99,10 +99,7 @@ export function TeamMembersSettingsSection({
         gt('Remove "{pseudo}" from the team?', { pseudo: member.pseudo }),
         gt("This revokes all their sessions. Removed members cannot be reactivated."),
       ].join("\n");
-      const api = readLocalApi();
-      const confirmed = api
-        ? await api.dialogs.confirm(confirmMessage, { variant: "destructive" })
-        : typeof window === "undefined" || window.confirm(confirmMessage);
+      const confirmed = await confirmTeamDestructiveAction(confirmMessage);
       if (!confirmed) return;
     }
     setBusyMemberId(member.id);

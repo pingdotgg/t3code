@@ -114,6 +114,7 @@ import {
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import {
   HttpRouter,
   HttpServerRequest,
@@ -1548,6 +1549,7 @@ export const layerWsRpc = (
   reportProfiles: ServerBrowser.ProfileReporter,
   settingsClient: ServerSettings.SettingsClient,
   upstreamCompat = false,
+  awaitSocketDisconnect?: Effect.Effect<void>,
 ) =>
   Layer.effectContext(
     Effect.gen(function* () {
@@ -5221,6 +5223,7 @@ export const layerWsRpc = (
           peerLinks,
           peerClientPairing,
           projectService,
+          scheduledTaskService: scheduledTasks,
           ...(Option.isSome(eventSinkOption) ? { eventSink: eventSinkOption.value } : {}),
           ...(Option.isSome(projectionStoreOption)
             ? { projectionStore: projectionStoreOption.value }
@@ -5228,6 +5231,7 @@ export const layerWsRpc = (
           ...(Option.isSome(teamProviderManagerOption)
             ? { teamProviderManager: teamProviderManagerOption.value }
             : {}),
+          ...(awaitSocketDisconnect !== undefined ? { awaitSocketDisconnect } : {}),
         }),
       });
       const splitHandlers: Pick<typeof handlers, SplitWsRpc["_tag"]> = handlers;
@@ -5302,6 +5306,7 @@ export const layer = Layer.unwrap(
         const clientAnalyticsProps = readClientAnalyticsProps(request);
         yield* analytics.recordOwners(readClientOwners(request), "client");
         const reportProfiles = yield* serverBrowser.profileReporter;
+        const socketClosed = yield* Deferred.make<void>();
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
           const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
           yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(
@@ -5338,6 +5343,7 @@ export const layer = Layer.unwrap(
               reportProfiles,
               readSettingsClient(url.value),
               !isTeamAwareClientRequest(request, url.value),
+              Deferred.await(socketClosed),
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Handler-context reporters see only request defects, not server-wide defects.
@@ -5418,7 +5424,10 @@ export const layer = Layer.unwrap(
                   }),
                 ),
             ),
-          () => sessions.markDisconnected(session.sessionId),
+          () =>
+            Deferred.succeed(socketClosed, undefined).pipe(
+              Effect.andThen(sessions.markDisconnected(session.sessionId)),
+            ),
         );
       }).pipe(
         Effect.catchTags({

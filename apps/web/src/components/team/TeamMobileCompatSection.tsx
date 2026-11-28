@@ -24,6 +24,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { formatExpiresInLabel } from "~/timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "../settings/pairingUrls";
 import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
+import { confirmTeamDestructiveAction } from "./confirmTeamDestructiveAction";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -236,6 +237,12 @@ export function TeamMobileCompatSection({
 
   const handleRevokePairing = async (id: string) => {
     if (!canRevokePairing) return;
+    const confirmed = await confirmTeamDestructiveAction(
+      gt(
+        "Revoke this mobile pairing code?\nDevices using this pending code will no longer be able to pair.",
+      ),
+    );
+    if (!confirmed) return;
     const targetEnvironmentId = environmentId;
     setRevokingId(id);
     const result = await runRevokePairing({ environmentId: targetEnvironmentId, input: { id } });

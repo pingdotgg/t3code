@@ -7,6 +7,7 @@ import {
 import {
   ALL_TEAM_ROLES,
   canManageTeamEnvironments,
+  canMemberAccessTeamEnvironment,
   type EnvironmentId,
   type TeamAccessRule,
   type TeamEnvironment,
@@ -14,11 +15,23 @@ import {
   type TeamMemberId,
   type TeamRole,
 } from "@t3tools/contracts";
-import { T, useGT } from "gt-react";
-import { PencilIcon, PlusIcon, ServerIcon, Trash2Icon } from "lucide-react";
+import { readPairingAppLink, resolveRemotePairingTarget } from "@t3tools/shared/remote";
+import { T, useGT, useMessages } from "gt-react";
+import {
+  AlertTriangleIcon,
+  EyeIcon,
+  EyeOffIcon,
+  PencilIcon,
+  PlusIcon,
+  ServerIcon,
+  Trash2Icon,
+  UnlinkIcon,
+} from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { m } from "~/i18n/messages";
+import { peerLinkEnvironment } from "~/state/peerLinks";
+import { useEnvironmentQuery } from "~/state/query";
 import { teamEnvironment } from "~/state/team";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
@@ -26,8 +39,10 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
+import { confirmTeamDestructiveAction } from "./confirmTeamDestructiveAction";
 import { formatTeamRoleLabel } from "./TeamJoinForm";
 
 function toggleItem<T>(list: ReadonlyArray<T>, item: T, checked: boolean): ReadonlyArray<T> {
@@ -58,6 +73,24 @@ function formatEnvRuleSummary(
   return parts.join(" · ");
 }
 
+function tryExtractPairingUrl(
+  raw: string,
+): { readonly url: string; readonly pairingCode: string } | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const candidate = readPairingAppLink(trimmed) ?? trimmed;
+  if (!candidate.includes("://") && !candidate.includes("token=")) return null;
+  try {
+    const resolved = resolveRemotePairingTarget({ pairingUrl: candidate });
+    return {
+      url: resolved.httpBaseUrl.replace(/\/+$/, ""),
+      pairingCode: resolved.credential,
+    };
+  } catch {
+    return null;
+  }
+}
+
 interface EnvAccessDraft {
   readonly environmentId: EnvironmentId;
   readonly isDefault: boolean;
@@ -65,6 +98,8 @@ interface EnvAccessDraft {
   readonly roles: ReadonlyArray<TeamRole>;
   readonly memberIds: ReadonlyArray<TeamMemberId>;
 }
+
+const NEW_PEER_SENTINEL = "__new_peer__";
 
 export function TeamEnvironmentsSettingsSection({
   environmentId,
@@ -80,6 +115,7 @@ export function TeamEnvironmentsSettingsSection({
   readonly environments: ReadonlyArray<TeamEnvironment>;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const canAttachScope = useAtomValue(
     teamEnvironment.attachEnvironment.permissionAtom(environmentId),
   );
@@ -99,9 +135,20 @@ export function TeamEnvironmentsSettingsSection({
     canManageTeamEnvironments(currentMember.role);
   const activeMembers = members.filter((member) => member.status === "active");
 
+  const peerLinksQuery = useEnvironmentQuery(
+    canManage ? peerLinkEnvironment.list({ environmentId, input: {} }) : null,
+    messages,
+  );
+  const attachedEnvironmentIds = new Set(environments.map((env) => env.environmentId));
+  const unattachedPeers = (peerLinksQuery.data?.links ?? []).filter(
+    (peer) => !attachedEnvironmentIds.has(peer.environmentId),
+  );
+
   const [showAttachForm, setShowAttachForm] = useState(false);
+  const [selectedExistingPeerId, setSelectedExistingPeerId] = useState<string>(NEW_PEER_SENTINEL);
   const [attachUrl, setAttachUrl] = useState("");
   const [attachCode, setAttachCode] = useState("");
+  const [showAttachCode, setShowAttachCode] = useState(false);
   const [attachName, setAttachName] = useState("");
   const [attachRoles, setAttachRoles] = useState<ReadonlyArray<TeamRole>>([...ALL_TEAM_ROLES]);
   const [attachMemberIds, setAttachMemberIds] = useState<ReadonlyArray<TeamMemberId>>([]);
@@ -111,6 +158,24 @@ export function TeamEnvironmentsSettingsSection({
   const [savingEdit, setSavingEdit] = useState(false);
   const [detachingId, setDetachingId] = useState<EnvironmentId | null>(null);
 
+  const selectedExistingPeer =
+    selectedExistingPeerId === NEW_PEER_SENTINEL
+      ? null
+      : (unattachedPeers.find((peer) => peer.environmentId === selectedExistingPeerId) ?? null);
+
+  const attachWouldLockSelfOut =
+    currentMember !== null &&
+    !canMemberAccessTeamEnvironment(currentMember, {
+      accessRule: { roles: [...attachRoles], memberIds: [...attachMemberIds] },
+    });
+
+  const editWouldLockSelfOut =
+    currentMember !== null &&
+    editDraft !== null &&
+    !canMemberAccessTeamEnvironment(currentMember, {
+      accessRule: { roles: [...editDraft.roles], memberIds: [...editDraft.memberIds] },
+    });
+
   const reportError = (title: string, error: unknown) => {
     toastManager.add({
       type: "error",
@@ -119,11 +184,37 @@ export function TeamEnvironmentsSettingsSection({
     });
   };
 
+  const applyPairingPasteIfPresent = (value: string, field: "url" | "code") => {
+    const parsed = tryExtractPairingUrl(value);
+    if (parsed !== null) {
+      setAttachUrl(parsed.url);
+      setAttachCode(parsed.pairingCode);
+      return;
+    }
+    if (field === "url") {
+      setAttachUrl(value);
+    } else {
+      setAttachCode(value);
+    }
+  };
+
+  const resetAttachForm = () => {
+    setShowAttachForm(false);
+    setAttachName("");
+    setAttachUrl("");
+    setAttachCode("");
+    setShowAttachCode(false);
+    setAttachRoles([...ALL_TEAM_ROLES]);
+    setAttachMemberIds([]);
+    setSelectedExistingPeerId(NEW_PEER_SENTINEL);
+  };
+
   const handleAttach = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const isExistingPeer = selectedExistingPeer !== null;
     const url = attachUrl.trim();
     const pairingCode = attachCode.trim();
-    if (!url || !pairingCode) {
+    if (!isExistingPeer && (!url || !pairingCode)) {
       reportError(
         gt("Could not attach environment"),
         new Error(gt("Enter both the remote server URL and pairing code.")),
@@ -134,23 +225,20 @@ export function TeamEnvironmentsSettingsSection({
     const result = await runAttach({
       environmentId,
       input: {
-        url,
-        pairingCode,
+        ...(isExistingPeer
+          ? { environmentId: selectedExistingPeer.environmentId }
+          : { url, pairingCode }),
         ...(attachName.trim().length > 0 ? { name: attachName.trim() } : {}),
         accessRule: {
           roles: [...attachRoles],
-          memberIds: [...attachMemberIds],
+          memberIds: attachMemberIds.filter((id) => memberById.get(id)?.status !== "removed"),
         },
       },
     });
     setAttaching(false);
     if (result._tag === "Success") {
-      setShowAttachForm(false);
-      setAttachUrl("");
-      setAttachCode("");
-      setAttachName("");
-      setAttachRoles([...ALL_TEAM_ROLES]);
-      setAttachMemberIds([]);
+      resetAttachForm();
+      peerLinksQuery.refresh();
       toastManager.add({
         type: "success",
         title: gt("Remote environment attached"),
@@ -174,7 +262,7 @@ export function TeamEnvironmentsSettingsSection({
         ...(editDraft.name.trim().length > 0 ? { name: editDraft.name.trim() } : {}),
         accessRule: {
           roles: [...editDraft.roles],
-          memberIds: [...editDraft.memberIds],
+          memberIds: editDraft.memberIds.filter((id) => memberById.get(id)?.status !== "removed"),
         },
       },
     });
@@ -192,17 +280,37 @@ export function TeamEnvironmentsSettingsSection({
     }
   };
 
-  const handleDetach = async (targetEnvironmentId: EnvironmentId) => {
-    setDetachingId(targetEnvironmentId);
+  const handleDetach = async (env: TeamEnvironment, unlinkPeer: boolean) => {
+    const confirmed = await confirmTeamDestructiveAction(
+      unlinkPeer
+        ? [
+            gt('Detach and unlink "{name}" from this team?', { name: env.name }),
+            gt(
+              "Team members will lose access to this environment and the Team Server's peer link to it will be removed.",
+            ),
+          ].join("\n")
+        : [
+            gt('Detach "{name}" from this team (keep peer link)?', { name: env.name }),
+            gt(
+              "Team members will lose access to this environment, while keeping the underlying peer link configured on this server.",
+            ),
+          ].join("\n"),
+    );
+    if (!confirmed) return;
+
+    setDetachingId(env.environmentId);
     const result = await runDetach({
       environmentId,
-      input: { environmentId: targetEnvironmentId },
+      input: { environmentId: env.environmentId, unlinkPeer },
     });
     setDetachingId(null);
     if (result._tag === "Success") {
+      peerLinksQuery.refresh();
       toastManager.add({
         type: "success",
-        title: gt("Environment detached"),
+        title: unlinkPeer
+          ? gt("Environment detached and unlinked")
+          : gt("Environment detached (peer link kept)"),
       });
       return;
     }
@@ -220,7 +328,7 @@ export function TeamEnvironmentsSettingsSection({
         canManage && canAttachScope && !showAttachForm ? (
           <Button
             type="button"
-            size="sm"
+            size="xs"
             variant="outline"
             data-testid="team-env-attach-open"
             onClick={() => {
@@ -268,7 +376,7 @@ export function TeamEnvironmentsSettingsSection({
                   </p>
                 </div>
                 {canManage ? (
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     {canUpdateScope ? (
                       <Button
                         type="button"
@@ -276,7 +384,7 @@ export function TeamEnvironmentsSettingsSection({
                         variant="ghost"
                         data-testid={`team-env-edit-${env.environmentId}`}
                         onClick={() => {
-                          setShowAttachForm(false);
+                          resetAttachForm();
                           setEditDraft({
                             environmentId: env.environmentId,
                             isDefault: env.isDefault,
@@ -291,17 +399,32 @@ export function TeamEnvironmentsSettingsSection({
                       </Button>
                     ) : null}
                     {!env.isDefault && canDetachScope ? (
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="ghost"
-                        disabled={detachingId === env.environmentId}
-                        data-testid={`team-env-detach-${env.environmentId}`}
-                        onClick={() => void handleDetach(env.environmentId)}
-                      >
-                        <Trash2Icon />
-                        <T>Detach</T>
-                      </Button>
+                      <>
+                        {env.peerLinkId ? (
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="ghost"
+                            disabled={detachingId === env.environmentId}
+                            data-testid={`team-env-detach-keep-peer-${env.environmentId}`}
+                            onClick={() => void handleDetach(env, false)}
+                          >
+                            <UnlinkIcon />
+                            <T>Detach only</T>
+                          </Button>
+                        ) : null}
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="ghost"
+                          disabled={detachingId === env.environmentId}
+                          data-testid={`team-env-detach-${env.environmentId}`}
+                          onClick={() => void handleDetach(env, true)}
+                        >
+                          <Trash2Icon />
+                          {env.peerLinkId ? <T>Detach &amp; unlink</T> : <T>Detach</T>}
+                        </Button>
+                      </>
                     ) : null}
                   </div>
                 ) : null}
@@ -315,7 +438,7 @@ export function TeamEnvironmentsSettingsSection({
         <SettingsRow
           title={gt("Attach remote environment")}
           description={gt(
-            "Link a remote T3 Code server by URL and pairing code, then choose which team roles or members may run threads on it.",
+            "Attach an already-linked peer environment or link a new remote T3 Code server by URL and pairing code (or paste a full pairing link).",
           )}
         >
           <form
@@ -323,29 +446,123 @@ export function TeamEnvironmentsSettingsSection({
             data-testid="team-env-attach-form"
             onSubmit={handleAttach}
           >
-            <div className="grid gap-2 sm:grid-cols-2">
+            {unattachedPeers.length > 0 ? (
+              <div className="space-y-1">
+                <label
+                  className="block text-xs font-medium text-foreground"
+                  htmlFor="team-env-existing-peer"
+                >
+                  <T>Peer source</T>
+                </label>
+                <Select
+                  value={selectedExistingPeerId}
+                  onValueChange={(value) => {
+                    if (typeof value === "string") {
+                      setSelectedExistingPeerId(value);
+                    }
+                  }}
+                >
+                  <SelectTrigger
+                    id="team-env-existing-peer"
+                    data-testid="team-env-existing-peer-select"
+                  >
+                    <SelectValue>
+                      {selectedExistingPeer
+                        ? gt("Linked peer: {label}", { label: selectedExistingPeer.label })
+                        : gt("Link a new remote server")}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    <SelectItem value={NEW_PEER_SENTINEL}>
+                      {gt("Link a new remote server")}
+                    </SelectItem>
+                    {unattachedPeers.map((peer) => (
+                      <SelectItem key={peer.environmentId} value={peer.environmentId}>
+                        {gt("Linked peer: {label}", { label: peer.label })}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </div>
+            ) : null}
+
+            {selectedExistingPeer === null ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <label
+                    className="block text-xs font-medium text-foreground"
+                    htmlFor="team-env-attach-url"
+                  >
+                    <T>Remote server URL or pairing link</T>
+                  </label>
+                  <Input
+                    id="team-env-attach-url"
+                    data-testid="team-env-attach-url"
+                    value={attachUrl}
+                    onChange={(event) =>
+                      applyPairingPasteIfPresent(event.currentTarget.value, "url")
+                    }
+                    placeholder="https://runner.example.com"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label
+                    className="block text-xs font-medium text-foreground"
+                    htmlFor="team-env-attach-code"
+                  >
+                    <T>Pairing code</T>
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <div className="min-w-0 flex-1">
+                      <Input
+                        id="team-env-attach-code"
+                        data-testid="team-env-attach-code"
+                        type={showAttachCode ? "text" : "password"}
+                        autoComplete="off"
+                        value={attachCode}
+                        onChange={(event) =>
+                          applyPairingPasteIfPresent(event.currentTarget.value, "code")
+                        }
+                        placeholder={gt("Pairing code")}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      aria-label={
+                        showAttachCode ? gt("Hide pairing code") : gt("Reveal pairing code")
+                      }
+                      data-testid="team-env-attach-code-toggle"
+                      onClick={() => setShowAttachCode((visible) => !visible)}
+                    >
+                      {showAttachCode ? (
+                        <EyeOffIcon className="size-3.5" />
+                      ) : (
+                        <EyeIcon className="size-3.5" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="space-y-1">
+              <label
+                className="block text-xs font-medium text-foreground"
+                htmlFor="team-env-attach-name"
+              >
+                <T>Display name (optional)</T>
+              </label>
               <Input
-                data-testid="team-env-attach-url"
-                value={attachUrl}
-                onChange={(event) => setAttachUrl(event.currentTarget.value)}
-                placeholder="https://runner.example.com"
-                aria-label={gt("Remote server URL")}
-              />
-              <Input
-                data-testid="team-env-attach-code"
-                value={attachCode}
-                onChange={(event) => setAttachCode(event.currentTarget.value)}
-                placeholder={gt("Pairing code")}
-                aria-label={gt("Pairing code")}
+                id="team-env-attach-name"
+                data-testid="team-env-attach-name"
+                value={attachName}
+                onChange={(event) => setAttachName(event.currentTarget.value)}
+                placeholder={selectedExistingPeer?.label ?? gt("e.g. GPU Runner")}
               />
             </div>
-            <Input
-              data-testid="team-env-attach-name"
-              value={attachName}
-              onChange={(event) => setAttachName(event.currentTarget.value)}
-              placeholder={gt("Display name (optional)")}
-              aria-label={gt("Display name")}
-            />
+
             <div className="space-y-2 rounded-lg border border-border/60 p-3">
               <p className="text-xs font-medium text-foreground">
                 <T>Allowed roles</T>
@@ -386,6 +603,23 @@ export function TeamEnvironmentsSettingsSection({
                 </div>
               ) : null}
             </div>
+
+            {attachWouldLockSelfOut ? (
+              <p
+                className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-xs text-warning-foreground"
+                role="alert"
+                data-testid="team-env-attach-lockout-warning"
+              >
+                <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
+                <span>
+                  <T>
+                    Warning: this access rule excludes your own account. You will not be able to
+                    launch threads on this environment until you re-add your role or pseudo.
+                  </T>
+                </span>
+              </p>
+            ) : null}
+
             <div className="flex items-center gap-2">
               <Button
                 type="submit"
@@ -396,12 +630,7 @@ export function TeamEnvironmentsSettingsSection({
                 {attaching ? <Spinner size="xs" /> : null}
                 <T>Attach</T>
               </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => setShowAttachForm(false)}
-              >
+              <Button type="button" size="sm" variant="ghost" onClick={resetAttachForm}>
                 <T>Cancel</T>
               </Button>
             </div>
@@ -421,15 +650,23 @@ export function TeamEnvironmentsSettingsSection({
             data-testid="team-env-edit-form"
             onSubmit={handleSaveEdit}
           >
-            <Input
-              data-testid="team-env-edit-name"
-              value={editDraft.name}
-              onChange={(event) => {
-                const value = event.currentTarget.value;
-                setEditDraft((prev) => (prev ? { ...prev, name: value } : null));
-              }}
-              aria-label={gt("Environment display name")}
-            />
+            <div className="space-y-1">
+              <label
+                className="block text-xs font-medium text-foreground"
+                htmlFor="team-env-edit-name"
+              >
+                <T>Environment display name</T>
+              </label>
+              <Input
+                id="team-env-edit-name"
+                data-testid="team-env-edit-name"
+                value={editDraft.name}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  setEditDraft((prev) => (prev ? { ...prev, name: value } : null));
+                }}
+              />
+            </div>
             <div className="space-y-2 rounded-lg border border-border/60 p-3">
               <p className="text-xs font-medium text-foreground">
                 <T>Allowed roles</T>
@@ -483,6 +720,23 @@ export function TeamEnvironmentsSettingsSection({
                 </div>
               ) : null}
             </div>
+
+            {editWouldLockSelfOut ? (
+              <p
+                className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-xs text-warning-foreground"
+                role="alert"
+                data-testid="team-env-edit-lockout-warning"
+              >
+                <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
+                <span>
+                  <T>
+                    Warning: this access rule excludes your own account. You will lose execution
+                    access to this environment until you re-add your role or pseudo.
+                  </T>
+                </span>
+              </p>
+            ) : null}
+
             <div className="flex items-center gap-2">
               <Button
                 type="submit"

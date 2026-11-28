@@ -25,12 +25,17 @@ import {
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
 import { requestUrl } from "../requestUrl.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as TeamAssetsRepository from "./TeamAssetsRepository.ts";
 import {
   issueEphemeralTeamProviderLease,
+  readLinkedServerInstanceIdFromConfig,
   readTeamProviderSecret,
+  resolveLinkedServerProviderProfileDir,
+  teamProviderSecretKey,
 } from "./TeamProviderLeaseService.ts";
 import * as TeamProviderManager from "./TeamProviderManager.ts";
 import * as TeamRepository from "./TeamRepository.ts";
@@ -590,7 +595,25 @@ const handleProviderLease = Effect.fn("TeamProviderProxyHttp.lease")(function* (
     );
   }
   const provider = providerOpt.value;
-  if (provider.deliveryStrategy !== "token-lease" || !provider.secretKey) {
+  const linkedServerInstanceId = readLinkedServerInstanceIdFromConfig(provider.config);
+  const serverConfigOpt = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+  const serverSettingsOpt = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  const resolvedServerSettings = Option.isSome(serverSettingsOpt)
+    ? yield* serverSettingsOpt.value.getSettings.pipe(Effect.orElseSucceed(() => null))
+    : null;
+  const fallbackProfileDir =
+    linkedServerInstanceId !== null && Option.isSome(serverConfigOpt)
+      ? resolveLinkedServerProviderProfileDir({
+          stateDir: serverConfigOpt.value.stateDir,
+          driver: provider.driver,
+          linkedServerInstanceId,
+          ...(Option.isSome(serverSettingsOpt) ? { serverSettings: resolvedServerSettings } : {}),
+        })
+      : null;
+  if (
+    provider.deliveryStrategy !== "token-lease" ||
+    (!provider.secretKey && fallbackProfileDir === null)
+  ) {
     return jsonErrorResponse(
       400,
       "invalid_input",
@@ -606,10 +629,11 @@ const handleProviderLease = Effect.fn("TeamProviderProxyHttp.lease")(function* (
     issueEphemeralTeamProviderLease({
       secrets,
       httpClient,
-      secretKey: provider.secretKey,
+      secretKey: provider.secretKey ?? teamProviderSecretKey(auth.team.id, providerInstanceId),
       providerInstanceId,
       driver: provider.driver,
       forceRefresh,
+      ...(fallbackProfileDir !== null ? { fallbackProfileDir } : {}),
     }),
   );
 

@@ -105,6 +105,42 @@ export function toggleShowColleaguesThreads(): boolean {
   return next;
 }
 
+export type TeamSidebarFilterMode = "mine" | "followed" | "all";
+
+export function resolveTeamSidebarFilterMode(
+  showColleagues: boolean,
+  showFollowedOnly: boolean,
+): TeamSidebarFilterMode {
+  if (showFollowedOnly) return "followed";
+  if (showColleagues) return "all";
+  return "mine";
+}
+
+export function useTeamSidebarFilterMode(): TeamSidebarFilterMode {
+  const showColleagues = useShowColleaguesThreads();
+  const showFollowedOnly = useShowFollowedThreadsOnly();
+  return resolveTeamSidebarFilterMode(showColleagues, showFollowedOnly);
+}
+
+export function setTeamSidebarFilterMode(mode: TeamSidebarFilterMode): void {
+  if (mode === "followed") {
+    setShowFollowedThreadsOnly(true);
+    return;
+  }
+  setShowColleaguesThreads(mode === "all");
+}
+
+export function cycleTeamSidebarFilterMode(): TeamSidebarFilterMode {
+  const current = resolveTeamSidebarFilterMode(
+    appAtomRegistry.get(showColleaguesThreadsAtom),
+    appAtomRegistry.get(showFollowedThreadsOnlyAtom),
+  );
+  const next: TeamSidebarFilterMode =
+    current === "mine" ? "followed" : current === "followed" ? "all" : "mine";
+  setTeamSidebarFilterMode(next);
+  return next;
+}
+
 export function useShowFollowedThreadsOnly(): boolean {
   return useAtomValue(showFollowedThreadsOnlyAtom);
 }

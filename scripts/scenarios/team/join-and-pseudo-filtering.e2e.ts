@@ -2,6 +2,7 @@ import { test } from "@e2e-dev/web";
 import { expect } from "e2e";
 
 import { startTeamTopology } from "./topology.ts";
+import { openTeamInviteForm } from "./ui-helpers.ts";
 
 test("deep-link invite with prefilled pseudo, pseudo prefixing, and colleagues thread filter across two live apps", async ({
   app,
@@ -36,6 +37,7 @@ test("deep-link invite with prefilled pseudo, pseudo prefixing, and colleagues t
   await alice.page.getByTestId("team-member-alice").waitFor({ state: "visible", timeout: 15_000 });
 
   // 2. Alice generates an invite for Bob with prefilled pseudo "bob".
+  await openTeamInviteForm(alice.page);
   await alice.page.getByTestId("team-invite-pseudo-input").fill("bob");
   await alice.page.getByTestId("team-invite-create").click();
   await alice.page

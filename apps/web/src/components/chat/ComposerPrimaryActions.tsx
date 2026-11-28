@@ -195,7 +195,7 @@ function StopGenerationButton({
         stopPhase === "pending"
           ? gt("Stopping…")
           : isExplicitAdminInterrupt
-            ? gt("Interrupt this member's active turn")
+            ? gt("Interrupt active turn")
             : gt("Interrupt", { $context: "verb, stops the running agent" })
       }
     >

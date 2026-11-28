@@ -54,6 +54,7 @@ import {
   type DesktopWslState,
   type EnvironmentId,
   type FilesystemBrowseResult,
+  type ProjectId,
   SourceControlProviderKind,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
@@ -87,8 +88,10 @@ import {
   UserPlusIcon,
   WorkflowIcon,
 } from "lucide-react";
+import { extractProjectRepoIdentityKey } from "@t3tools/client-runtime/team";
 import { useTeamCommandPaletteActions } from "./team/useTeamCommandPaletteActions";
-import { useTeamEnvironmentState } from "../state/team";
+import { waitForCloneAndAssignProject } from "./team/waitForCloneAndAssignProject";
+import { teamEnvironment, useTeamEnvironmentState } from "../state/team";
 import { canManageTeamProjects } from "@t3tools/contracts";
 import { UsersIcon } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
@@ -587,14 +590,34 @@ function OpenCommandPaletteDialog(props: {
     readonly sourcesEnvironmentId: EnvironmentId | null;
   } | null>(null);
   const [newProjectPublishes, setNewProjectPublishes] = useState(false);
-  const [newProjectAssignsToTeam, setNewProjectAssignsToTeam] = useState(true);
+  const [newProjectAssignsToTeam, setNewProjectAssignsToTeam] = useState(false);
+  const [browseAssignsToTeam, setBrowseAssignsToTeam] = useState(false);
+  const assignProjectToTeam = useAtomCommand(teamEnvironment.assignProject, {
+    reportFailure: false,
+  });
   const newProjectTeamState = useTeamEnvironmentState(newProjectFlow?.environmentId ?? null);
+  const canAssignNewProjectScope = useAtomValue(
+    teamEnvironment.assignProject.permissionAtom(newProjectFlow?.environmentId ?? null),
+  );
   const canAssignNewProjectToTeam =
     newProjectFlow !== null &&
     newProjectTeamState.team !== null &&
     newProjectTeamState.currentMember !== null &&
     newProjectTeamState.currentMember.status === "active" &&
-    canManageTeamProjects(newProjectTeamState.currentMember.role);
+    canManageTeamProjects(newProjectTeamState.currentMember.role) &&
+    canAssignNewProjectScope;
+  const browseTeamEnvironmentId = addProjectCloneFlow?.environmentId ?? addProjectEnvironmentId;
+  const browseTeamState = useTeamEnvironmentState(browseTeamEnvironmentId);
+  const canAssignBrowseProjectScope = useAtomValue(
+    teamEnvironment.assignProject.permissionAtom(browseTeamEnvironmentId),
+  );
+  const canAssignBrowseProjectToTeam =
+    browseTeamEnvironmentId !== null &&
+    browseTeamState.team !== null &&
+    browseTeamState.currentMember !== null &&
+    browseTeamState.currentMember.status === "active" &&
+    canManageTeamProjects(browseTeamState.currentMember.role) &&
+    canAssignBrowseProjectScope;
   const [newProjectPublishKind, setNewProjectPublishKind] =
     useState<SourceControlProviderKind | null>(null);
   const [isCreatingNewProject, setIsCreatingNewProject] = useState(false);
@@ -1090,6 +1113,7 @@ function OpenCommandPaletteDialog(props: {
       () => {
         setAddProjectEnvironmentId(environmentId);
         setAddProjectCloneFlow(null);
+        setBrowseAssignsToTeam(false);
         pushPaletteView(view);
       },
     );
@@ -1101,6 +1125,7 @@ function OpenCommandPaletteDialog(props: {
   ): void => {
     setAddProjectEnvironmentId(environmentId);
     setAddProjectCloneFlow({ step: "repository", environmentId, source });
+    setBrowseAssignsToTeam(false);
     pushPaletteView({
       addonIcon: remoteProjectSourceIcon(source, ADDON_ICON_CLASS),
       groups: [],
@@ -1124,6 +1149,7 @@ function OpenCommandPaletteDialog(props: {
     setAddProjectCloneFlow(null);
     setNewProjectFlow({ environmentId, sourcesEnvironmentId });
     setNewProjectPublishes(false);
+    setNewProjectAssignsToTeam(false);
     setNewProjectPublishKind(null);
     pushPaletteView({
       addonIcon: <FolderGit2Icon className={ADDON_ICON_CLASS} />,
@@ -2002,11 +2028,40 @@ function OpenCommandPaletteDialog(props: {
     return { ...group, items: group.items.map((item) => jumpItems.get(item.value) ?? item) };
   });
 
+  const assignAddedProjectToTeam = async (
+    environmentId: EnvironmentId,
+    projectId: ProjectId,
+    project: EnvironmentProject | null,
+  ): Promise<void> => {
+    const repoIdentityKey = project
+      ? extractProjectRepoIdentityKey(project.repositoryIdentity)
+      : null;
+    const assignResult = await assignProjectToTeam({
+      environmentId,
+      input: {
+        projectId,
+        defaultViewId: null,
+        ...(repoIdentityKey ? { repoIdentityKey } : {}),
+      },
+    });
+    if (assignResult._tag === "Failure" && !isAtomCommandInterrupted(assignResult)) {
+      const error = squashAtomCommandFailure(assignResult);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: gt("Could not assign project to team"),
+          description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
+        }),
+      );
+    }
+  };
+
   const handleAddProjectForEnvironment = async (input: {
     readonly environmentId: EnvironmentId;
     readonly rawCwd: string;
     readonly platform: string;
     readonly currentProjectCwd: string | null;
+    readonly assignToTeam?: boolean;
   }) => {
     const environment = environments.find(
       (candidate) => candidate.environmentId === input.environmentId,
@@ -2061,6 +2116,9 @@ function OpenCommandPaletteDialog(props: {
           environmentId: existing.environmentId,
           input: { projectId: existing.id, archived: false },
         }).then((result) => reportProjectFailure(gt("Failed to unarchive project"), result));
+      }
+      if (input.assignToTeam) {
+        await assignAddedProjectToTeam(existing.environmentId, existing.id, existing);
       }
       if (await moveDraftToAddedProject(existing)) {
         setOpen(false);
@@ -2133,9 +2191,13 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    const navigationResult = await settlePromise(() =>
-      openAddedProject(scopeProjectRef(input.environmentId, projectId)),
-    );
+    const projectRef = scopeProjectRef(input.environmentId, projectId);
+    if (input.assignToTeam) {
+      const createdProject = await waitForProject(projectRef, 3_000).catch(() => null);
+      await assignAddedProjectToTeam(input.environmentId, projectId, createdProject);
+    }
+
+    const navigationResult = await settlePromise(() => openAddedProject(projectRef));
     if (navigationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(navigationResult);
       toastManager.add(
@@ -2157,6 +2219,7 @@ function OpenCommandPaletteDialog(props: {
       rawCwd,
       platform: browseEnvironmentPlatform,
       currentProjectCwd: currentProjectCwdForBrowse,
+      assignToTeam: canAssignBrowseProjectToTeam && browseAssignsToTeam,
     });
   };
 
@@ -2390,6 +2453,7 @@ function OpenCommandPaletteDialog(props: {
       }
       return;
     }
+    const shouldAssignToTeam = canAssignBrowseProjectToTeam && browseAssignsToTeam;
     setOpen(false);
     void suggestAppAccessForRemote(
       addProjectCloneFlow.environmentId,
@@ -2400,6 +2464,14 @@ function OpenCommandPaletteDialog(props: {
       startResult.value.projectId,
     );
     await waitForProject(projectRef, 3_000).catch(() => null);
+    if (shouldAssignToTeam) {
+      // Wait for the clone to succeed and populate repositoryIdentity before assigning to the team.
+      void waitForCloneAndAssignProject({
+        environmentId: addProjectCloneFlow.environmentId,
+        projectId: startResult.value.projectId,
+        assign: assignAddedProjectToTeam,
+      });
+    }
     const navigationResult = await settlePromise(() => openAddedProject(projectRef));
     if (navigationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(navigationResult);
@@ -3049,6 +3121,10 @@ function OpenCommandPaletteDialog(props: {
         rawCwd: selection.linuxPath,
         platform: "Linux",
         currentProjectCwd: null,
+        assignToTeam:
+          selection.environmentId === browseTeamEnvironmentId &&
+          canAssignBrowseProjectToTeam &&
+          browseAssignsToTeam,
       });
       return;
     }
@@ -3127,7 +3203,8 @@ function OpenCommandPaletteDialog(props: {
     newProjectFlow !== null
       ? highlightedItemValue === null
         ? gt("Create")
-        : highlightedItemValue === newProjectPublishToggleValue
+        : highlightedItemValue === newProjectPublishToggleValue ||
+            highlightedItemValue === "new-project:assign-to-team"
           ? gt("Toggle")
           : gt("Select")
       : addProjectCloneFlow?.step === "repository"
@@ -3229,6 +3306,21 @@ function OpenCommandPaletteDialog(props: {
           }
           description={addProjectCloneFlow.repository?.url ?? addProjectCloneFlow.remoteUrl}
         />
+      ) : null}
+      {isBrowsing && canAssignBrowseProjectToTeam && browseTeamState.team !== null ? (
+        <label className="flex cursor-pointer items-center justify-between gap-3 border-b border-border/60 px-4 py-2 text-xs">
+          <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
+            <UsersIcon className="size-3.5 shrink-0" />
+            <span className="truncate text-foreground">
+              {gt("Assign to team {teamName}", { teamName: browseTeamState.team.name })}
+            </span>
+          </span>
+          <Checkbox
+            data-testid="command-palette-browse-assign-to-team"
+            checked={browseAssignsToTeam}
+            onCheckedChange={(checked) => setBrowseAssignsToTeam(Boolean(checked))}
+          />
+        </label>
       ) : null}
       {browseAccessError ? (
         <div role="alert" className="px-4 py-3 text-sm text-muted-foreground">

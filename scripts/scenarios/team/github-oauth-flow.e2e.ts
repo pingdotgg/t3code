@@ -10,6 +10,11 @@ import * as Effect from "effect/Effect";
 
 import { rpcClient, runPromise } from "../t3.ts";
 import { startTeamTopology, type TeamMemberHandle } from "./topology.ts";
+import {
+  confirmDestructiveActionDialog,
+  openTeamInviteForm,
+  selectTeamSettingsTab,
+} from "./ui-helpers.ts";
 
 const GITHUB_OAUTH_PROBE_ACP = `
 import { spawnSync } from "node:child_process";
@@ -190,6 +195,7 @@ async function createInviteAndJoin(input: {
   readonly pseudo: string;
 }) {
   const { inviter, invitee, roleLabel, pseudo } = input;
+  await openTeamInviteForm(inviter.page);
   await inviter.page.getByTestId("team-invite-role-select").click();
   await inviter.page.getByRole("option", { name: roleLabel }).click();
   await inviter.page.getByTestId("team-invite-pseudo-input").fill(pseudo);
@@ -327,7 +333,9 @@ test("Milestone 7 Phase 7b: GitHub App OAuth + PKCE, RFC 8628 device flow, autom
   await alice.page.getByTestId("team-init-name").fill("Acme OAuth M7b");
   await alice.page.getByTestId("team-init-pseudo").fill("alice");
   await alice.page.getByTestId("team-init-submit").click();
-  await alice.page.getByTestId("team-invite-create").waitFor({ state: "visible", timeout: 20_000 });
+  await alice.page
+    .getByTestId("teams-settings-tabs")
+    .waitFor({ state: "visible", timeout: 20_000 });
 
   await createInviteAndJoin({
     inviter: alice,
@@ -337,6 +345,7 @@ test("Milestone 7 Phase 7b: GitHub App OAuth + PKCE, RFC 8628 device flow, autom
   });
 
   // 2. Owner (Alice) configures Team GitHub App OAuth pointing at Fake GitHub.
+  await selectTeamSettingsTab(alice.page, "providers");
   await alice.page.getByTestId("team-github-app-client-id-input").fill("Iv1.e2eacme");
   await alice.page
     .getByTestId("team-github-app-client-secret-input")
@@ -405,6 +414,7 @@ test("Milestone 7 Phase 7b: GitHub App OAuth + PKCE, RFC 8628 device flow, autom
 
   // 4. Bob (regular) opens Settings -> does NOT see admin OAuth config form, signs in via RFC 8628 Device Flow!
   await bob.open("/settings/teams");
+  await selectTeamSettingsTab(bob.page, "providers");
   await bob.page
     .getByTestId("team-my-github-device-signin")
     .waitFor({ state: "visible", timeout: 20_000 });
@@ -484,6 +494,7 @@ test("Milestone 7 Phase 7b: GitHub App OAuth + PKCE, RFC 8628 device flow, autom
   fakeGitHub.oauth.setNextTokenExpiresIn(60);
   const reauthTab = await alice.context.newPage();
   await reauthTab.goto(`${alice.origin}/settings/teams`, { waitUntil: "domcontentloaded" });
+  await selectTeamSettingsTab(reauthTab, "providers");
   await reauthTab
     .getByTestId("team-my-github-oauth-signin")
     .waitFor({ state: "visible", timeout: 15_000 });
@@ -517,6 +528,7 @@ test("Milestone 7 Phase 7b: GitHub App OAuth + PKCE, RFC 8628 device flow, autom
   expect(turn2.ghPrStatus).not.toBe(0);
 
   await alice.open("/settings/teams");
+  await selectTeamSettingsTab(alice.page, "providers");
   await expect
     .poll(
       async () =>
@@ -567,10 +579,12 @@ test("Milestone 7 Phase 7b: GitHub App OAuth + PKCE, RFC 8628 device flow, autom
   // Open a second tab in Alice's browser to disconnect while Turn 3 is still actively held.
   const settingsTab = await alice.context.newPage();
   await settingsTab.goto(`${alice.origin}/settings/teams`, { waitUntil: "domcontentloaded" });
+  await selectTeamSettingsTab(settingsTab, "providers");
   await settingsTab
     .getByTestId("team-my-github-disconnect")
     .waitFor({ state: "visible", timeout: 20_000 });
   await settingsTab.getByTestId("team-my-github-disconnect").click();
+  await confirmDestructiveActionDialog(settingsTab);
 
   await expect
     .poll(

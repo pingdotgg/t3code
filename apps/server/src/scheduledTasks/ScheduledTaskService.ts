@@ -1698,7 +1698,7 @@ export const layer = Layer.effect(
         lastRunError: existingTask?.lastRunError ?? null,
         runCount: existingTask?.runCount ?? 0,
       };
-      const savedTeamMeta = yield* sql
+      const persistTransaction = sql
         .withTransaction(
           Effect.gen(function* () {
             yield* saveTask(
@@ -1735,6 +1735,12 @@ export const layer = Layer.effect(
               : taskError("Could not save schedule task.", { taskId: task.id, cause }),
           ),
         );
+      // Serialize team schedule writes against TeamService.deleteTeam so an upsert cannot
+      // commit between deleteTeam's cleanup snapshot and team_workspaces removal.
+      const savedTeamMeta =
+        options?.teamMeta !== undefined && Option.isSome(teamServiceOption)
+          ? yield* teamServiceOption.value.withScheduledTaskWorkspaceGate(persistTransaction)
+          : yield* persistTransaction;
       if (savedTeamMeta !== null && Option.isSome(teamServiceOption)) {
         yield* teamServiceOption.value.publishScheduledTaskMeta(savedTeamMeta);
       }

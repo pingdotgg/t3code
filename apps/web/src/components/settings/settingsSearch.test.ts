@@ -255,7 +255,7 @@ describe("searchSettings", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("finds team notification sound settings and gates the General entry on connected teams", () => {
+  it("hides team-only settings in personal mode while keeping Team workspace discoverable, and exposes all team settings when connected", () => {
     const baseAvailability = {
       hasCloudPublicConfig: false,
       hasEnvironment: true,
@@ -269,12 +269,24 @@ describe("searchSettings", () => {
       ...baseAvailability,
       hasConnectedTeam: false,
     });
-    expect(searchSettings("team sound", personalItems).map((item) => item.id)).toContain(
-      "teams-notification-sound",
-    );
-    expect(searchSettings("team sound", personalItems).map((item) => item.id)).not.toContain(
+    const personalIds = new Set(personalItems.map((item) => item.id));
+    expect(personalIds.has("teams-workspace")).toBe(true);
+    for (const teamsOnlyId of [
       "team-notification-sounds",
-    );
+      "teams-notification-sound",
+      "teams-display-name",
+      "teams-members",
+      "teams-invites",
+      "teams-mobile",
+      "teams-views",
+      "teams-environments",
+      "teams-github",
+      "teams-providers",
+      "teams-skills-preprompts",
+    ]) {
+      expect(personalIds.has(teamsOnlyId), teamsOnlyId).toBe(false);
+    }
+    expect(searchSettings("team sound", personalItems)).toEqual([]);
 
     const teamItems = filterAvailableSettingsSearchItems({
       ...baseAvailability,
@@ -285,6 +297,26 @@ describe("searchSettings", () => {
     );
     expect(searchSettings("notification sound", teamItems).map((item) => item.id)).toEqual(
       expect.arrayContaining(["team-notification-sounds", "teams-notification-sound"]),
+    );
+    expect(searchSettings("oauth", teamItems).map((item) => item.id)).toContain("teams-github");
+    expect(searchSettings("device code", teamItems).map((item) => item.id)).toContain(
+      "teams-github",
+    );
+    expect(searchSettings("team views", teamItems).map((item) => item.id)).toContain("teams-views");
+    expect(searchSettings("team environments", teamItems).map((item) => item.id)).toContain(
+      "teams-environments",
+    );
+    expect(searchSettings("team members", teamItems).map((item) => item.id)).toContain(
+      "teams-members",
+    );
+    expect(searchSettings("team invites", teamItems).map((item) => item.id)).toContain(
+      "teams-invites",
+    );
+    expect(searchSettings("mobile compatibility", teamItems).map((item) => item.id)).toContain(
+      "teams-mobile",
+    );
+    expect(searchSettings("display name", teamItems).map((item) => item.id)).toContain(
+      "teams-display-name",
     );
   });
 });

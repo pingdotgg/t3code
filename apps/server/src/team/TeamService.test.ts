@@ -35,12 +35,14 @@ import {
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "@effect/vitest";
 
 import * as ServerConfig from "../config.ts";
@@ -4319,6 +4321,542 @@ describe("TeamService", () => {
             team.assertActorCanPostInThread(ownedMinActor, memberLaterLockedThreadId),
           ))._tag,
         ).toBe("Failure");
+      }).pipe(Effect.scoped, Effect.provide(makeTestLayer())),
+  );
+
+  it.effect(
+    "supports leaving a team (blocking last active owner, revoking sessions/credentials) and deleting a team (owner-only with name confirmation)",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const sessions = yield* SessionStore.SessionStore;
+
+        const aliceSession = yield* sessions.issue({ subject: "alice-owner" });
+        const init = yield* team.initializeTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { name: "Acme Engineering", ownerPseudo: "alice" },
+        });
+
+        // Sole active owner cannot leave the team before transferring ownership.
+        const lastOwnerLeaveExit = yield* Effect.exit(
+          team.leaveTeam({ sessionId: aliceSession.sessionId }),
+        );
+        expect(lastOwnerLeaveExit._tag).toBe("Failure");
+        if (lastOwnerLeaveExit._tag === "Failure") {
+          expect(Cause.squash(lastOwnerLeaveExit.cause)).toMatchObject({
+            _tag: "TeamOperationError",
+            code: "last_owner",
+          });
+        }
+
+        // Invite Bob as regular member and Carol as second owner.
+        const bobInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "regular", prefilledPseudo: "bob" },
+        });
+        const bobJoined = yield* team.redeemInvite({
+          token: bobInvite.token,
+          pseudo: "bob",
+          client: testClient,
+        });
+        const bobSession = yield* sessions.verify(bobJoined.accessToken);
+
+        const carolInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "owner", prefilledPseudo: "carol" },
+        });
+        const carolJoined = yield* team.redeemInvite({
+          token: carolInvite.token,
+          pseudo: "carol",
+          client: testClient,
+        });
+        const carolSession = yield* sessions.verify(carolJoined.accessToken);
+
+        // Create a custom view referencing Bob in memberIds to verify cleanup when Bob leaves.
+        const customView = yield* team.createView({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            name: "Restricted",
+            readRule: { roles: ["owner"], memberIds: [bobJoined.member.id] },
+            postRule: { roles: ["owner"], memberIds: [bobJoined.member.id] },
+          },
+        });
+
+        // Non-owner cannot delete the team.
+        const bobDeleteExit = yield* Effect.exit(
+          team.deleteTeam({
+            sessionId: bobSession.sessionId,
+            payload: { confirmTeamName: "Acme Engineering" },
+          }),
+        );
+        expect(bobDeleteExit._tag).toBe("Failure");
+        if (bobDeleteExit._tag === "Failure") {
+          expect(Cause.squash(bobDeleteExit.cause)).toMatchObject({
+            _tag: "TeamOperationError",
+            code: "forbidden",
+          });
+        }
+
+        // Subscribe Alice's stream BEFORE Bob leaves to verify live memberUpserted + viewUpserted broadcast.
+        const bobLeaveEventsFiber = yield* team
+          .streamState(aliceSession.sessionId)
+          .pipe(Stream.take(3), Stream.runCollect, Effect.forkChild);
+        yield* Effect.yieldNow;
+
+        // Bob leaves the team: his session is revoked, status becomes removed, and view memberIds cleaned up.
+        const bobLeft = yield* team.leaveTeam({ sessionId: bobSession.sessionId });
+        expect(bobLeft).toEqual({
+          left: true,
+          teamId: init.team.id,
+          memberId: bobJoined.member.id,
+        });
+        const bobLeaveEvents = yield* Fiber.join(bobLeaveEventsFiber);
+        expect(bobLeaveEvents.map((e) => e.type)).toEqual([
+          "snapshot",
+          "memberUpserted",
+          "snapshot",
+        ]);
+        expect((yield* Effect.exit(sessions.verify(bobJoined.accessToken)))._tag).toBe("Failure");
+        const stateAfterBobLeft = yield* team.getState(aliceSession.sessionId);
+        expect(stateAfterBobLeft.members.find((m) => m.id === bobJoined.member.id)?.status).toBe(
+          "removed",
+        );
+        const refreshedView = stateAfterBobLeft.views.find((v) => v.id === customView.id);
+        expect(refreshedView?.readRule.memberIds).not.toContain(bobJoined.member.id);
+        expect(refreshedView?.postRule.memberIds).not.toContain(bobJoined.member.id);
+
+        // With Carol as a second active owner, Carol can leave while Alice remains owner.
+        // Verify disconnect-driven revocation is armed BEFORE async peer cleanup so disconnecting
+        // mid-cleanup revokes Carol's session immediately while cleanup still runs uninterruptibly.
+        const carolDisconnected = yield* Deferred.make<void>();
+        const carolPeerCleanupEntered = yield* Deferred.make<void>();
+        const releaseCarolPeerCleanup = yield* Deferred.make<void>();
+        const carolRevokedPeers: Array<EnvironmentId> = [];
+        const carolLeaveFiber = yield* team
+          .leaveTeam({
+            sessionId: carolSession.sessionId,
+            deferCallerSessionRevocation: {
+              awaitDisconnect: Deferred.await(carolDisconnected),
+              fallbackDelay: Duration.millis(500),
+            },
+            peerLinks: {
+              list: Effect.succeed([{ environmentId: EnvironmentId.make("env-carol-peer") }]),
+            } as never,
+            peerClientPairing: {
+              revokeSubject: (envId: EnvironmentId) =>
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(carolPeerCleanupEntered, undefined);
+                  yield* Deferred.await(releaseCarolPeerCleanup);
+                  carolRevokedPeers.push(envId);
+                  return { ok: true as const };
+                }),
+            } as never,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(carolPeerCleanupEntered);
+        // Mid-cleanup: Carol is already marked removed, and her session is still valid until disconnect.
+        const stateMidCarolLeave = yield* team.getState(aliceSession.sessionId);
+        expect(stateMidCarolLeave.members.find((m) => m.id === carolJoined.member.id)?.status).toBe(
+          "removed",
+        );
+        expect((yield* Effect.exit(sessions.verify(carolJoined.accessToken)))._tag).toBe("Success");
+        // Disconnect mid-cleanup -> session revokes immediately even before peer cleanup unblocks.
+        yield* Deferred.succeed(carolDisconnected, undefined);
+        yield* TestClock.adjust(Duration.millis(1));
+        expect((yield* Effect.exit(sessions.verify(carolJoined.accessToken)))._tag).toBe("Failure");
+        yield* Deferred.succeed(releaseCarolPeerCleanup, undefined);
+        const carolLeft = yield* Fiber.join(carolLeaveFiber);
+        expect(carolLeft).toEqual({
+          left: true,
+          teamId: init.team.id,
+          memberId: carolJoined.member.id,
+        });
+        expect(carolRevokedPeers).toEqual([EnvironmentId.make("env-carol-peer")]);
+
+        // Invite Dana so we can verify deleteTeam revokes other active members' sessions & emits teamDeleted.
+        const danaInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "admin", prefilledPseudo: "dana" },
+        });
+        const danaJoined = yield* team.redeemInvite({
+          token: danaInvite.token,
+          pseudo: "dana",
+          client: testClient,
+        });
+        const danaSession = yield* sessions.verify(danaJoined.accessToken);
+
+        // Mismatched confirmation name is rejected.
+        const wrongNameExit = yield* Effect.exit(
+          team.deleteTeam({
+            sessionId: aliceSession.sessionId,
+            payload: { confirmTeamName: "Wrong Name" },
+          }),
+        );
+        expect(wrongNameExit._tag).toBe("Failure");
+        if (wrongNameExit._tag === "Failure") {
+          expect(Cause.squash(wrongNameExit.cause)).toMatchObject({
+            _tag: "TeamOperationError",
+            code: "invalid_input",
+          });
+        }
+
+        // Record a team scheduled task and a server-hosted team provider to verify deleteTeam cleans up both.
+        const teamTaskId = ScheduledTaskId.make("sched-team-delete-1");
+        yield* team.saveScheduledTaskMeta({
+          taskId: teamTaskId,
+          teamId: init.team.id,
+          environmentId: EnvironmentId.make("env-delete-1"),
+          viewId: init.team.defaultViewId,
+          actorMemberId: init.owner.id,
+          mcpAccessLevel: "minimal",
+          locked: false,
+        });
+        yield* team.upsertProvider({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            providerInstanceId: ProviderInstanceId.make("team-claude-del"),
+            driver: ProviderDriverKind.make("claudeAgent"),
+            displayName: "Team Claude",
+            deliveryStrategy: "proxy",
+            upstreamBaseUrl: "https://api.anthropic.com",
+            apiKey: "sk-ant-test",
+            enabled: true,
+          },
+        });
+        // Reject virtual team: instance IDs via config.linkedServerInstanceId and conflicting clearSecret + link.
+        const badConfigLinkExit = yield* Effect.exit(
+          team.upsertProvider({
+            sessionId: aliceSession.sessionId,
+            payload: {
+              providerInstanceId: ProviderInstanceId.make("team-bad-link"),
+              driver: ProviderDriverKind.make("claudeAgent"),
+              deliveryStrategy: "token-lease",
+              config: { linkedServerInstanceId: `team:${init.team.id}:claude` },
+              enabled: true,
+            },
+          }),
+        );
+        expect(badConfigLinkExit._tag).toBe("Failure");
+        const conflictClearLinkExit = yield* Effect.exit(
+          team.upsertProvider({
+            sessionId: aliceSession.sessionId,
+            payload: {
+              providerInstanceId: ProviderInstanceId.make("team-bad-link"),
+              driver: ProviderDriverKind.make("claudeAgent"),
+              deliveryStrategy: "token-lease",
+              clearSecret: true,
+              sourceServerProviderInstanceId: ProviderInstanceId.make("claudeAgent"),
+              enabled: true,
+            },
+          }),
+        );
+        expect(conflictClearLinkExit._tag).toBe("Failure");
+
+        const deletedTaskIds: Array<ScheduledTaskId> = [];
+        const purgedWorkspaceCalls: Array<{
+          readonly teamId: string;
+          readonly count: number;
+        }> = [];
+        const fakeScheduledTaskService = {
+          delete: ({ id }: { readonly id: ScheduledTaskId }) =>
+            Effect.sync(() => {
+              deletedTaskIds.push(id);
+              return { deleted: true, id };
+            }),
+        } as never;
+        const fakeProviderManager = {
+          removeLocalTeamBinding: () => Effect.succeed(false),
+          purgeTeamWorkspaceProfiles: (args: {
+            readonly teamId: string;
+            readonly providers: ReadonlyArray<unknown>;
+          }) =>
+            Effect.sync(() => {
+              purgedWorkspaceCalls.push({ teamId: args.teamId, count: args.providers.length });
+            }),
+        } as never;
+
+        // Departed member IDs must be rejected by attachEnvironment ACL validation, and
+        // admin removal (updateMemberStatus -> removed) must also scrub existing view ACLs.
+        const departedMemberAttachExit = yield* Effect.exit(
+          team.attachEnvironment({
+            sessionId: aliceSession.sessionId,
+            payload: {
+              environmentId: EnvironmentId.make("env-departed-acl-test"),
+              name: "Departed ACL Runner",
+              accessRule: { roles: ["owner"], memberIds: [bobJoined.member.id] },
+            },
+          }),
+        );
+        expect(departedMemberAttachExit._tag).toBe("Failure");
+        if (departedMemberAttachExit._tag === "Failure") {
+          expect(Cause.squash(departedMemberAttachExit.cause)).toMatchObject({
+            _tag: "TeamOperationError",
+            code: "invalid_input",
+          });
+        }
+        const eveInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "regular", prefilledPseudo: "eve" },
+        });
+        const eveJoined = yield* team.redeemInvite({
+          token: eveInvite.token,
+          pseudo: "eve",
+          client: testClient,
+        });
+        const eveSession = yield* sessions.verify(eveJoined.accessToken);
+        const eveEnvId = EnvironmentId.make("env-eve-acl-test");
+        yield* team.attachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            environmentId: eveEnvId,
+            name: "Eve ACL Runner",
+            accessRule: { roles: ["owner"], memberIds: [eveJoined.member.id] },
+          },
+        });
+        yield* team.updateView({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            viewId: customView.id,
+            readRule: { roles: ["owner"], memberIds: [eveJoined.member.id] },
+            postRule: { roles: ["owner"], memberIds: [eveJoined.member.id] },
+          },
+        });
+        // Subscribe both Alice (active) and Eve (removed) and use a distinct memberUpserted
+        // sentinel (updateMyPseudo) to prove Alice gets one coalesced ACL snapshot and Eve
+        // skips the redundant ACL snapshot refresh once marked inactive.
+        const aliceInitialSeen = yield* Deferred.make<void>();
+        const aliceRemovalSnapshotSeen = yield* Deferred.make<void>();
+        let aliceEventCount = 0;
+        const aliceRemovalEventsFiber = yield* team.streamState(aliceSession.sessionId).pipe(
+          Stream.tap(() =>
+            Effect.gen(function* () {
+              aliceEventCount += 1;
+              if (aliceEventCount === 1) {
+                yield* Deferred.succeed(aliceInitialSeen, undefined);
+              } else if (aliceEventCount === 3) {
+                yield* Deferred.succeed(aliceRemovalSnapshotSeen, undefined);
+              }
+            }),
+          ),
+          Stream.take(4),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        const eveInitialSeen = yield* Deferred.make<void>();
+        const eveRevokedSnapshotSeen = yield* Deferred.make<void>();
+        let eveEventCount = 0;
+        const eveRemovalEventsFiber = yield* team.streamState(eveSession.sessionId).pipe(
+          Stream.tap(() =>
+            Effect.gen(function* () {
+              eveEventCount += 1;
+              if (eveEventCount === 1) {
+                yield* Deferred.succeed(eveInitialSeen, undefined);
+              } else if (eveEventCount === 2) {
+                yield* Deferred.succeed(eveRevokedSnapshotSeen, undefined);
+              }
+            }),
+          ),
+          Stream.take(3),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* Deferred.await(aliceInitialSeen);
+        yield* Deferred.await(eveInitialSeen);
+        yield* team.updateMemberStatus({
+          sessionId: aliceSession.sessionId,
+          payload: { memberId: eveJoined.member.id, status: "removed" },
+        });
+        yield* Deferred.await(aliceRemovalSnapshotSeen);
+        yield* Deferred.await(eveRevokedSnapshotSeen);
+        yield* team.updateMyPseudo({
+          sessionId: aliceSession.sessionId,
+          payload: { pseudo: "alice-sentinel" },
+        });
+        const aliceRemovalEvents = yield* Fiber.join(aliceRemovalEventsFiber);
+        expect(aliceRemovalEvents.map((e) => e.type)).toEqual([
+          "snapshot",
+          "memberUpserted",
+          "snapshot",
+          "memberUpserted",
+        ]);
+        const streamedAfterEveRemoved = aliceRemovalEvents[2];
+        expect(streamedAfterEveRemoved?.type).toBe("snapshot");
+        if (streamedAfterEveRemoved?.type === "snapshot") {
+          const streamedView = streamedAfterEveRemoved.payload.views.find(
+            (v) => v.id === customView.id,
+          );
+          const streamedEnv = streamedAfterEveRemoved.payload.environments?.find(
+            (e) => e.environmentId === eveEnvId,
+          );
+          expect(streamedEnv).toBeDefined();
+          expect(streamedView?.readRule.memberIds).not.toContain(eveJoined.member.id);
+          expect(streamedView?.postRule.memberIds).not.toContain(eveJoined.member.id);
+          expect(streamedEnv?.accessRule.memberIds).not.toContain(eveJoined.member.id);
+        }
+        const aliceSentinel = aliceRemovalEvents[3];
+        expect(aliceSentinel?.type).toBe("memberUpserted");
+        if (aliceSentinel?.type === "memberUpserted") {
+          expect(aliceSentinel.payload.pseudo).toBe("alice-sentinel");
+        }
+        const eveRemovalEvents = yield* Fiber.join(eveRemovalEventsFiber);
+        expect(eveRemovalEvents.map((e) => e.type)).toEqual([
+          "snapshot",
+          "snapshot",
+          "memberUpserted",
+        ]);
+        const eveSentinel = eveRemovalEvents[2];
+        expect(eveSentinel?.type).toBe("memberUpserted");
+        if (eveSentinel?.type === "memberUpserted") {
+          expect(eveSentinel.payload.pseudo).toBe("alice-sentinel");
+        }
+        const stateAfterEveRemoved = yield* team.getState(aliceSession.sessionId);
+        const viewAfterEveRemoved = stateAfterEveRemoved.views.find((v) => v.id === customView.id);
+        const envAfterEveRemoved = stateAfterEveRemoved.environments?.find(
+          (e) => e.environmentId === eveEnvId,
+        );
+        expect(viewAfterEveRemoved?.readRule.memberIds).not.toContain(eveJoined.member.id);
+        expect(viewAfterEveRemoved?.postRule.memberIds).not.toContain(eveJoined.member.id);
+        expect(envAfterEveRemoved?.accessRule.memberIds).not.toContain(eveJoined.member.id);
+        yield* team.detachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: { environmentId: eveEnvId, unlinkPeer: false },
+        });
+
+        // Simulate an offline peer link during deleteTeam so we verify pending remote revocations
+        // survive workspace deletion and still drain once the peer comes back online.
+        const offlinePeerEnvId = EnvironmentId.make("env-offline-peer-1");
+        let peerOnline = false;
+        const revokedRemoteSubjects: Array<{
+          readonly environmentId: EnvironmentId;
+          readonly subjectPrefix: string;
+        }> = [];
+        const fakePeerClientPairing = {
+          revokeSubject: (environmentId: EnvironmentId, subjectPrefix: string) =>
+            Effect.sync(() => {
+              if (!peerOnline) {
+                return { ok: false as const, reason: "offline" as const };
+              }
+              revokedRemoteSubjects.push({ environmentId, subjectPrefix });
+              return { ok: true as const };
+            }),
+        } as never;
+        const fakePeerLinks = {
+          list: Effect.succeed([{ environmentId: offlinePeerEnvId }]),
+        } as never;
+
+        // Fail closed when team scheduled tasks exist and scheduledTaskService is omitted.
+        const missingSchedulerExit = yield* Effect.exit(
+          team.deleteTeam({
+            sessionId: aliceSession.sessionId,
+            payload: { confirmTeamName: "Acme Engineering" },
+          }),
+        );
+        expect(missingSchedulerExit._tag).toBe("Failure");
+
+        // Fail closed when peerLinks.list fails during deleteTeam rather than skipping peer revocation.
+        const peerDiscoveryFailExit = yield* Effect.exit(
+          team.deleteTeam({
+            sessionId: aliceSession.sessionId,
+            payload: { confirmTeamName: "Acme Engineering" },
+            scheduledTaskService: fakeScheduledTaskService,
+            peerClientPairing: fakePeerClientPairing,
+            peerLinks: {
+              list: Effect.fail({ _tag: "PeerStoreUnavailableError" } as const),
+            } as never,
+          }),
+        );
+        expect(peerDiscoveryFailExit._tag).toBe("Failure");
+        expect(deletedTaskIds).toEqual([]);
+        // Verify team still exists after peer discovery failure.
+        expect((yield* team.getState(aliceSession.sessionId)).team?.id).toBe(init.team.id);
+
+        // Subscribe Alice's stream to verify `teamDeleted` event broadcast.
+        const aliceStreamFiber = yield* team
+          .streamState(aliceSession.sessionId)
+          .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
+        yield* Effect.yieldNow;
+
+        const deleted = yield* team.deleteTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { confirmTeamName: "Acme Engineering" },
+          peerClientPairing: fakePeerClientPairing,
+          peerLinks: fakePeerLinks,
+          scheduledTaskService: fakeScheduledTaskService,
+          teamProviderManager: fakeProviderManager,
+        });
+        expect(deleted).toEqual({ deleted: true, teamId: init.team.id });
+        expect(deletedTaskIds).toEqual([teamTaskId]);
+        expect(purgedWorkspaceCalls).toEqual([{ teamId: init.team.id, count: 1 }]);
+        expect(revokedRemoteSubjects).toEqual([]);
+
+        const aliceEvents = yield* Fiber.join(aliceStreamFiber);
+        expect(aliceEvents.map((e) => e.type)).toEqual(["snapshot", "teamDeleted"]);
+
+        // Other members' sessions are revoked; team is now unconfigured.
+        expect((yield* Effect.exit(sessions.verify(danaJoined.accessToken)))._tag).toBe("Failure");
+        const emptyState = yield* team.getState(aliceSession.sessionId);
+        expect(emptyState.team).toBeNull();
+        expect(emptyState.members).toEqual([]);
+        expect(emptyState.views).toEqual([]);
+
+        // Once the offline peer reconnects in personal mode, pending revocation still drains.
+        peerOnline = true;
+        yield* team.drainPendingRemoteRevocations({
+          peerClientPairing: fakePeerClientPairing,
+          peerLinks: fakePeerLinks,
+        });
+        expect(revokedRemoteSubjects).toEqual([
+          {
+            environmentId: offlinePeerEnvId,
+            subjectPrefix: `team-member:${init.team.id}:`,
+          },
+        ]);
+
+        // Dana's session ID was revoked (unused variable silence check).
+        expect(danaSession.sessionId).toBeTruthy();
+
+        // Verify initializeTeam serializes against in-flight personal-mode remote pairing so a
+        // workspace cannot be initialized mid-pairing under withRemotePairingPermit.
+        const pairingEntered = yield* Deferred.make<void>();
+        const releasePairing = yield* Deferred.make<void>();
+        const raceEnvId = EnvironmentId.make("env-race-peer-1");
+        let sawWorkspaceDuringPairing = false;
+        const racePeerClientPairing = {
+          revokeSubject: () => Effect.succeed({ ok: true as const }),
+          request: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(pairingEntered, undefined);
+              yield* Deferred.await(releasePairing);
+              const wsNow = yield* team.getState(aliceSession.sessionId);
+              sawWorkspaceDuringPairing = wsNow.team !== null;
+              return { type: "credential" as const };
+            }),
+        } as never;
+        const pairingFiber = yield* team
+          .pairRemoteEnvironmentForSession({
+            sessionId: aliceSession.sessionId,
+            scopes: AuthStandardClientScopes,
+            pairingInput: { environmentId: raceEnvId } as never,
+            peerClientPairing: racePeerClientPairing,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(pairingEntered);
+        // Attempt to initialize a replacement team while personal-mode pairing holds the permit;
+        // initializeTeam must wait for the remote revocation barrier until pairing finishes.
+        const replacementInitFiber = yield* team
+          .initializeTeam({
+            sessionId: aliceSession.sessionId,
+            payload: { name: "Replacement Team", ownerPseudo: "alice" },
+          })
+          .pipe(Effect.forkChild);
+        yield* TestClock.adjust(Duration.millis(10));
+        expect((yield* team.getState(aliceSession.sessionId)).team).toBeNull();
+        yield* Deferred.succeed(releasePairing, undefined);
+        const pairingResult = yield* Fiber.join(pairingFiber);
+        expect(pairingResult).toEqual({ type: "credential" });
+        expect(sawWorkspaceDuringPairing).toBe(false);
+        const replacementInit = yield* Fiber.join(replacementInitFiber);
+        expect(replacementInit.team.name).toBe("Replacement Team");
       }).pipe(Effect.scoped, Effect.provide(makeTestLayer())),
   );
 });

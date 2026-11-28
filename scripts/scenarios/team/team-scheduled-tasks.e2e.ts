@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 
 import { rpcClient, runPromise } from "../t3.ts";
 import { startTeamTopology, type TeamMemberHandle } from "./topology.ts";
+import { openTeamInviteForm, selectTeamSettingsTab } from "./ui-helpers.ts";
 
 // Dual-purpose ACP probe for Milestone 8: logs PID, injected T3 MCP credentials, and
 // GitHub broker state on every turn, optionally commits+pushes to Fake GitHub when prompted
@@ -268,6 +269,7 @@ async function createInviteAndJoin(input: {
   readonly pseudo: string;
 }) {
   const { inviter, invitee, roleLabel, pseudo } = input;
+  await openTeamInviteForm(inviter.page);
   await inviter.page.getByTestId("team-invite-role-select").click();
   await inviter.page.getByRole("option", { name: roleLabel }).click();
   await inviter.page.getByTestId("team-invite-pseudo-input").fill(pseudo);
@@ -404,6 +406,7 @@ test("Milestone 8: team displayName, (team, env) scheduled-task RBAC, team-owned
 
   // 2. Alice connects her personal GitHub PAT (leaving Team Automation GitHub UNCONFIGURED)
   //    and creates an admin-only View + secret thread to test minimal vs elevated MCP containment.
+  await selectTeamSettingsTab(alice.page, "providers");
   await alice.page.getByTestId("team-my-github-advanced-toggle").click();
   await alice.page.getByTestId("team-my-github-api-url-input").fill(fakeGitHub.origin);
   await alice.page.getByTestId("team-my-github-token-input").fill(fakeGitHub.tokens.alice);
@@ -419,6 +422,7 @@ test("Milestone 8: team displayName, (team, env) scheduled-task RBAC, team-owned
     )
     .toContain("@alice-gh");
 
+  await selectTeamSettingsTab(alice.page, "access");
   await alice.page.getByTestId("team-view-create-open").click();
   await alice.page.getByTestId("team-view-name-input").fill("Admin Secret");
   await alice.page.getByTestId("team-view-read-role-modo").click();
@@ -582,6 +586,7 @@ test("Milestone 8: team displayName, (team, env) scheduled-task RBAC, team-owned
 
   // 7. Alice configures the dedicated Team Automation GitHub account (@acme-bot) in Settings -> Teams.
   await alice.open("/settings/teams");
+  await selectTeamSettingsTab(alice.page, "providers");
   await alice.page.getByTestId("team-automation-github-advanced-toggle").click();
   await alice.page.getByTestId("team-automation-github-api-url-input").fill(fakeGitHub.origin);
   await alice.page
