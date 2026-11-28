@@ -71,6 +71,11 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { antigravityPermissionDisposition } from "../../provider/acp/AntigravityAcpSupport.ts";
+import {
+  antigravityApprovalOptions,
+  antigravityPermissionGrantKey,
+} from "../../provider/acp/AntigravityProtocol.ts";
 import {
   ACP_EMPTY_OPTION_VALUE,
   ACP_SESSION_MODE_OPTION_ID,
@@ -7649,6 +7654,150 @@ describe("AcpAdapterV2", () => {
       });
       yield* Fiber.join(turnFiber);
       assert.deepEqual(outcome, { outcome: "selected", optionId });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  // https://github.com/pingdotgg/t3code/issues/44466
+  it.effect("remembers Allow for this thread on agy MCP calls that offer only allow_once", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let requestPermission: Parameters<RuntimeService["handleRequestPermission"]>[0] | undefined;
+      let runtimeInput: AcpAdapterV2RuntimeInput | undefined;
+      const makeRuntime = makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath,
+        environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+        wrapRuntime: (runtime) => ({
+          ...runtime,
+          handleRequestPermission: (handler) =>
+            Effect.sync(() => {
+              requestPermission = handler;
+            }).pipe(Effect.andThen(runtime.handleRequestPermission(handler))),
+        }),
+      });
+      const instanceId = ProviderInstanceId.make("acp-test-mcp-thread-grant");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          interruptPromptOnCancel: true,
+          permissionDisposition: antigravityPermissionDisposition,
+          approvalOptions: antigravityApprovalOptions,
+          permissionGrantKey: antigravityPermissionGrantKey,
+          makeRuntime: (input) =>
+            Effect.sync(() => {
+              runtimeInput = input;
+            }).pipe(Effect.andThen(makeRuntime(input))),
+        },
+        selfInvocation,
+        clientTerminals: {},
+      });
+      const threadId = ThreadId.make("thread-acp-mcp-thread-grant");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "auto",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-mcp-thread-grant"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const turnFiber = yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      if (requestPermission === undefined) {
+        return yield* Effect.die("ACP runtime must register a permission handler");
+      }
+      const handler = requestPermission;
+      const mcpRequest = (toolCallId: string, ToolName: string) =>
+        handler(
+          {
+            sessionId: "mock-session-1",
+            toolCall: {
+              toolCallId,
+              title: `MCP Tool ${ToolName}`,
+              kind: "execute",
+              rawInput: { ServerName: "linear", ToolName, Arguments: { id: "ENG-1" } },
+            },
+            options: [
+              { optionId: "allow", name: "Allow", kind: "allow_once" },
+              { optionId: "reject", name: "Deny", kind: "reject_once" },
+            ],
+          },
+          { requestId: `request-${toolCallId}`, method: "session/request_permission" },
+        );
+      const nextPending = runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+        ),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+
+      const firstFiber = yield* mcpRequest("call-1", "get_issue").pipe(Effect.forkScoped);
+      const pending = yield* nextPending;
+      if (
+        pending.type !== "runtime_request.updated" ||
+        pending.runtimeRequest.providerTurnId === null
+      ) {
+        return yield* Effect.die("Expected an ACP approval request");
+      }
+      const responseFiber = yield* runtime
+        .respondToRuntimeRequest({
+          requestId: pending.runtimeRequest.id,
+          decision: "acceptForSession",
+        })
+        .pipe(Effect.forkScoped);
+      assert.deepEqual(yield* Fiber.join(firstFiber), {
+        outcome: { outcome: "selected", optionId: "allow" },
+      });
+      if (runtimeInput?.onOutgoingResponse === undefined) {
+        return yield* Effect.die("ACP runtime must expose native response acknowledgements");
+      }
+      yield* runtimeInput.onOutgoingResponse("request-call-1");
+      yield* Fiber.join(responseFiber);
+
+      const secondFiber = yield* mcpRequest("call-2", "get_issue").pipe(Effect.forkScoped);
+      yield* runtimeInput.onOutgoingResponse("request-call-2");
+      assert.deepEqual(yield* Fiber.join(secondFiber), {
+        outcome: { outcome: "selected", optionId: "allow" },
+      });
+
+      const otherToolFiber = yield* mcpRequest("call-3", "save_issue").pipe(Effect.forkScoped);
+      const otherPending = yield* nextPending;
+      assert.notEqual(
+        otherPending.type === "runtime_request.updated" && otherPending.runtimeRequest.id,
+        pending.runtimeRequest.id,
+        "a grant covers only the tool it was given for",
+      );
+      yield* Fiber.interrupt(otherToolFiber);
+
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: pending.runtimeRequest.providerTurnId,
+      });
+      yield* Fiber.join(turnFiber);
     }).pipe(Effect.provide(layerTest)),
   );
 

@@ -108,6 +108,23 @@ function antigravitySecurityWarning(option: EffectAcpSchema.PermissionOption): s
     : text;
 }
 
+/**
+ * agy asks before every unconfigured MCP call and never offers allow_always over ACP, so T3
+ * remembers "Allow for this thread" itself, per server and tool of a call_mcp_tool request.
+ */
+export function antigravityPermissionGrantKey(
+  request: EffectAcpSchema.RequestPermissionRequest,
+): string | undefined {
+  if (isAntigravityUserInputRequest(request)) return undefined;
+  const title = /^MCP Tool (?<tool>\S+?)\??$/.exec(request.toolCall.title?.trim() ?? "");
+  const rawInput = request.toolCall.rawInput;
+  if (!title?.groups || !Predicate.isObject(rawInput)) return undefined;
+  const server = typeof rawInput.ServerName === "string" ? rawInput.ServerName.trim() : "";
+  const tool = typeof rawInput.ToolName === "string" ? rawInput.ToolName.trim() : "";
+  if (!server || tool !== title.groups.tool) return undefined;
+  return JSON.stringify(["mcp", server, tool]);
+}
+
 export function antigravityApprovalOptions(
   request: EffectAcpSchema.RequestPermissionRequest,
 ): ReadonlyArray<ProviderApprovalOption> {
@@ -120,7 +137,9 @@ export function antigravityApprovalOptions(
     options.push({ decision: "accept", label: "Allow once" });
   }
   const always = optionWithKind("allow_always");
-  if (always) {
+  if (!always && once && antigravityPermissionGrantKey(request) !== undefined) {
+    options.push({ decision: "acceptForSession", label: "Allow for this thread" });
+  } else if (always) {
     const warning = antigravitySecurityWarning(always);
     options.push({
       decision: "acceptForSession",

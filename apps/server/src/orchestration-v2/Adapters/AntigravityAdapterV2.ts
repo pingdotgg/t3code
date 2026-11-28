@@ -42,6 +42,7 @@ import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityCli
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
+  antigravityPermissionGrantKey,
   antigravitySwarmAddChildSessionId,
   antigravitySwarmAddModel,
   antigravityToolOutlivesPrompt,
@@ -297,6 +298,7 @@ export function makeAntigravityAcpAdapterFlavor(
     },
     permissionDisposition: antigravityPermissionDisposition,
     approvalOptions: antigravityApprovalOptions,
+    permissionGrantKey: antigravityPermissionGrantKey,
     extractPermissionQuestion: (request) => {
       const question = extractAntigravityUserInputQuestion(request);
       if (question === undefined) return undefined;

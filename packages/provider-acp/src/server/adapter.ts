@@ -598,6 +598,13 @@ export interface AcpAdapterV2Flavor {
   readonly approvalOptions?: (
     request: EffectAcpSchema.RequestPermissionRequest,
   ) => ReadonlyArray<ProviderApprovalOption>;
+  /**
+   * Identifies requests whose "Allow for this thread" T3 remembers itself, for agents that offer
+   * no allow_always; later asks with the same key are answered with allow_once.
+   */
+  readonly permissionGrantKey?: (
+    request: EffectAcpSchema.RequestPermissionRequest,
+  ) => string | undefined;
   /** Options T3 may answer with; the rest (e.g. Devin's bypass-permissions plan exit) are never sent. */
   readonly answerablePermissionOptions?: (
     request: EffectAcpSchema.RequestPermissionRequest,
@@ -2657,6 +2664,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
         // Client terminals run with server privileges; apply turn policy and prior user approvals.
         const clientPolicyGrants = makeAcpClientPolicyGrants();
+        const sessionPermissionGrants = new Set<string>();
         let latestRuntimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy =
           input.runtimePolicy;
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
@@ -8325,7 +8333,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const dispositionFor = (
                 policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
                 request: EffectAcpSchema.RequestPermissionRequest,
-              ) => (flavor.permissionDisposition ?? acpPermissionDisposition)(policy, request);
+              ) => {
+                const disposition = (flavor.permissionDisposition ?? acpPermissionDisposition)(
+                  policy,
+                  request,
+                );
+                const grantKey = flavor.permissionGrantKey?.(request);
+                return disposition === "ask" &&
+                  grantKey !== undefined &&
+                  sessionPermissionGrants.has(grantKey)
+                  ? "allow"
+                  : disposition;
+              };
               // Kiro leaves the kind off the permission request for a `tool_call` it already
               // sent, so policy takes it and the call's changed paths from that tool. Tool ids
               // are only unique within a session and these are the root session's tools, so
@@ -8447,6 +8466,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 !offeredOptions.some((option) => option.decision === "acceptForSession")
                   ? "accept"
                   : answered;
+              if (decision === "acceptForSession") {
+                const grantKey = flavor.permissionGrantKey?.(params);
+                if (grantKey !== undefined) sessionPermissionGrants.add(grantKey);
+              }
               if (decision === "accept" || decision === "acceptForSession") {
                 clientPolicyGrants.recordApproval({
                   toolKind: parsedPermission.kind,
