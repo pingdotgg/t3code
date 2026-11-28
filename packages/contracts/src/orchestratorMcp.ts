@@ -668,6 +668,8 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
       /** Omitted when it only restates the id. */
       label: Schema.optional(Schema.String),
       options: Schema.optional(Schema.Array(OrchestratorMcpModelOption)),
+      /** Set only on the user's favorite models. */
+      favorite: Schema.optional(Schema.Literal(true)),
     }),
   ),
   /** Models left out of `models`: unlisted visible models, or matches past the cap with `search`. */

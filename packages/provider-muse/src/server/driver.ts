@@ -133,6 +133,7 @@ export const MuseDriver: ProviderDriver<
       resolveProviderMaintenanceCapabilitiesEffect(museMaintenance, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnvironment,
+        npmCacheDir: path.join(host.paths.providerStatusCacheDir, "npm"),
       }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),

@@ -16,6 +16,7 @@
  * @stability unstable
  * @since 4.1.1
  */
+import type * as CryptoError from "../crypto/CryptoError.ts"
 import * as Data from "../Data.ts"
 import * as Predicate from "../Predicate.ts"
 
@@ -66,6 +67,38 @@ export class InvalidKey extends Data.TaggedError("InvalidKey")<{
 
   override get message(): string {
     return this.description
+  }
+}
+
+/**
+ * Reason for a crypto backend failure other than a rejected key, such as an
+ * algorithm the provider does not support.
+ *
+ * **Details**
+ *
+ * `module`, `method`, and `reason` identify the failed backend operation and
+ * reason tag. The backend description and cause are omitted because they may
+ * contain secret material.
+ *
+ * @stability unstable
+ * @category errors
+ * @since 4.1.6
+ */
+export class CryptoFailed extends Data.TaggedError("CryptoFailed")<{
+  readonly description: string
+  readonly module: string
+  readonly method: string
+  readonly reason: CryptoError.CryptoErrorReason["_tag"]
+}> {
+  /**
+   * Marks this value as a `JoseError` reason for runtime guards.
+   *
+   * @since 4.1.6
+   */
+  readonly [ReasonTypeId] = ReasonTypeId
+
+  override get message(): string {
+    return `${this.description} (${this.module}.${this.method}: ${this.reason})`
   }
 }
 
@@ -253,6 +286,7 @@ export class ClaimValidationFailed extends Data.TaggedError("ClaimValidationFail
 export type JoseErrorReason =
   | InvalidToken
   | InvalidKey
+  | CryptoFailed
   | InvalidArgument
   | AlgorithmNotAllowed
   | SignatureVerificationFailed

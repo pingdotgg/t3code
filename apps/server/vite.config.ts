@@ -110,7 +110,7 @@ export default mergeConfig(
           },
         },
       ],
-      // SEA embeds one entry; expose the history worker as a hidden subcommand.
+      // SEA embeds one entry; expose the workers as hidden subcommands.
       entry: packBootstrap
         ? ["src/bin.ts"]
         : packExecutable

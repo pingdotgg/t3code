@@ -1,5 +1,57 @@
 # @effect/openapi-generator
 
+## 4.1.6
+
+### Patch Changes
+
+- [#10799](https://github.com/Effect-TS/effect/pull/10799) [`66ab992`](https://github.com/Effect-TS/effect/commit/66ab9920271ee7fec3be3f4e3b4438d9222578b1) Thanks @gcanti! - Generated client method comments now show the OpenAPI operation summary above the description, with identical text appearing only once.
+
+- [#10921](https://github.com/Effect-TS/effect/pull/10921) [`60ae98e`](https://github.com/Effect-TS/effect/commit/60ae98eed32ec80625bb9a54008f74f10ab8f329) Thanks @CheckPickerUpper! - Generated HttpApi groups now drop the group prefix from endpoint names (`balance.read` becomes `read`) while keeping the qualified OpenAPI operation id, reject operations whose names collide within a group, and only emit the parameter schemas grouped endpoints use.
+
+- [#10839](https://github.com/Effect-TS/effect/pull/10839) [`cf50541`](https://github.com/Effect-TS/effect/commit/cf50541d0deaa1f21df91e938b94eadbe10dd274) Thanks @Marve10s! - Fix generated `multipart/form-data` payloads rejecting `format: binary` files in open object schemas while preserving undeclared form fields.
+
+- [#10797](https://github.com/Effect-TS/effect/pull/10797) [`f90a026`](https://github.com/Effect-TS/effect/commit/f90a026c0b8acfc062c40b553025d226eba670a2) Thanks @gcanti! - A response with no body can still have a description in the API documentation. For example, an OpenAPI file can describe a `404` as "Order not found". The generator used to copy the status code into the `HttpApi` and drop that text.
+  
+  ```ts
+  // Before
+  HttpApiSchema.Empty(404)
+  
+  // After
+  HttpApiSchema.Empty(404).annotate({ description: "Order not found" })
+  ```
+  
+  Exporting the generated `HttpApi` back to OpenAPI now produces the original "Order not found" description.
+  
+  ### A shared `404` with its own description
+  
+  In this OpenAPI 3.1 example, `$ref` points to a shared response whose description is "Resource not found". The line below it gives this particular `404` a more specific description.
+  
+  ```yaml
+  responses:
+    "404":
+      $ref: "#/components/responses/NotFound"
+      description: Order not found
+  ```
+  
+  The generator writes `HttpApiSchema.Empty(404).annotate({ description: "Order not found" })`. If you omit the `description` line, it uses "Resource not found" from the shared response.
+  
+  ### An explicit `500` and a fallback
+  
+  ```yaml
+  responses:
+    "200":
+      description: OK
+    "500":
+      description: Server error
+    default:
+      description: Other errors
+  ```
+  
+  For this input, the generated endpoint has one error response, `HttpApiSchema.Empty(500).annotate({ description: "Server error" })`. The generator skips `default` and emits a warning because it would assign "Other errors" to the same status. If you remove the explicit `500` from this example, the generator uses `default` to produce a `500` described as "Other errors".
+- Updated dependencies [[`dd5f2f3`](https://github.com/Effect-TS/effect/commit/dd5f2f322fbad042a3a186cef593bf42affe5ce9), [`1d65846`](https://github.com/Effect-TS/effect/commit/1d65846308a6a18c4a95af543988ad30b72ff2b3), [`694c28f`](https://github.com/Effect-TS/effect/commit/694c28f0cfc3eac33f71160d18dda95cb670f506), [`5aaa2cd`](https://github.com/Effect-TS/effect/commit/5aaa2cd216e5e55f92d06db98d4b54946a396eed), [`55814bf`](https://github.com/Effect-TS/effect/commit/55814bf0a780f05ed0a51c82c8affda5d539bb0e), [`92c40a1`](https://github.com/Effect-TS/effect/commit/92c40a1f96a59f9edcacee6c0d6f6fb80397ee17), [`9f415a7`](https://github.com/Effect-TS/effect/commit/9f415a7733cdf8aed7efadbed3b5db22890e164a), [`e367afd`](https://github.com/Effect-TS/effect/commit/e367afdacfa3041a694a67e4670e98a20e41d45c), [`d5d2112`](https://github.com/Effect-TS/effect/commit/d5d21120ff591fcf8da006ce340010812cc91f16), [`fa2e5af`](https://github.com/Effect-TS/effect/commit/fa2e5af4ccc8f3650d97049707be82eab098c168), [`6bf6427`](https://github.com/Effect-TS/effect/commit/6bf6427d195539c387c13156aff79db077929c8f), [`10bc4a4`](https://github.com/Effect-TS/effect/commit/10bc4a47c0ce5bc50ba1998d63a803e3887d1d2b), [`a9540d3`](https://github.com/Effect-TS/effect/commit/a9540d3d50fbe65ade7f9b2f478cdd34a888161e), [`3a250d7`](https://github.com/Effect-TS/effect/commit/3a250d7eb8c310bf4751b3eca0038cf50e1629d8), [`ce44141`](https://github.com/Effect-TS/effect/commit/ce44141ad1bc8d05f3f7399bfa1e87772573205d), [`9318e5b`](https://github.com/Effect-TS/effect/commit/9318e5bafb144ddff65a0bff0148ec4f7ba77b5c), [`c9ecebf`](https://github.com/Effect-TS/effect/commit/c9ecebf7ede8a98895552fd20223d6573bd846fe), [`32f8fbe`](https://github.com/Effect-TS/effect/commit/32f8fbe1a5985aea41754e87531e9a1d0fbf78ec), [`41d6af1`](https://github.com/Effect-TS/effect/commit/41d6af14b7f36e06ade3bf7333b710e73de1e1c2), [`c33fd59`](https://github.com/Effect-TS/effect/commit/c33fd599cb7d49117f77f7bd8f05cb4209112a34), [`1f9e9d3`](https://github.com/Effect-TS/effect/commit/1f9e9d3de552435de6b8f4e1166515d0964c3999), [`594fa71`](https://github.com/Effect-TS/effect/commit/594fa71da417bf94fa6c9be2d3d36c808197e9fe), [`b378c38`](https://github.com/Effect-TS/effect/commit/b378c383cdb29e819e24da5dc725479a2ba4fdf1), [`a9ec9a6`](https://github.com/Effect-TS/effect/commit/a9ec9a60bbe1309960e00527ab62342dce1a86fc), [`310a81b`](https://github.com/Effect-TS/effect/commit/310a81b391e24d42b6608b5e3d641eca63e0d4c0), [`2576bbc`](https://github.com/Effect-TS/effect/commit/2576bbcbe89fec2362240280e4db2bc371f978e3), [`aab2135`](https://github.com/Effect-TS/effect/commit/aab2135d3fe43d4d86c4e486ed378797314fb212), [`6744a72`](https://github.com/Effect-TS/effect/commit/6744a724869539fc2d733929df871ef523bf82e8), [`848d042`](https://github.com/Effect-TS/effect/commit/848d0426f287b3e7ff970219d980a4c66fa441ad), [`077a93e`](https://github.com/Effect-TS/effect/commit/077a93e5db3adbc42e531539cb12b8bdbdfe5328), [`aef50fb`](https://github.com/Effect-TS/effect/commit/aef50fb8b56ec9ff8116f157635579fefd995f26), [`2e4de86`](https://github.com/Effect-TS/effect/commit/2e4de8634431f3da08ca2a90ab1024ee08e216f3), [`482b104`](https://github.com/Effect-TS/effect/commit/482b104caf712a8d5f99aafc64e55b6ea38eb809), [`753e1ed`](https://github.com/Effect-TS/effect/commit/753e1ed88069f73103d136dcdc58188fd10efdf1), [`0d2bb4a`](https://github.com/Effect-TS/effect/commit/0d2bb4a4b6526e1767b81101ee6e8da88ba1de55), [`8161e03`](https://github.com/Effect-TS/effect/commit/8161e03c26d691502afeddcf7e2ee75e6931637f), [`bb02f33`](https://github.com/Effect-TS/effect/commit/bb02f33a66309e62999d16fb87a3278157dd2e79), [`49f5391`](https://github.com/Effect-TS/effect/commit/49f53918a150aa2ea0ce2d444400cec1d6097400), [`3d59bdf`](https://github.com/Effect-TS/effect/commit/3d59bdf6f8f95ceea2091e5b8f375b834a14b3b1), [`8866608`](https://github.com/Effect-TS/effect/commit/88666082f2b6296bb7115bd4a2546151039f64db), [`69fd4b1`](https://github.com/Effect-TS/effect/commit/69fd4b1fba9e2ec5e7c16058ff8d9a1f9a38d90e), [`7d97626`](https://github.com/Effect-TS/effect/commit/7d9762658e515807c2b98678e7abd3ebe94e41ec), [`0e79436`](https://github.com/Effect-TS/effect/commit/0e794366658bd067a2212ea2ac7ed0223904ed31), [`2f8a4e9`](https://github.com/Effect-TS/effect/commit/2f8a4e9b90822d9facfef59027b35819c42d7b48), [`800b753`](https://github.com/Effect-TS/effect/commit/800b7535b4e37a24ac458cae78231054dae0b0f5)]:
+  - effect@4.1.6
+  - @effect/platform-node@4.1.6
+
 ## 4.1.5
 
 ### Patch Changes
