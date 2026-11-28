@@ -111,7 +111,6 @@ function createTimelineFollowStore() {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    snapshot: () => snapshot,
     read,
     /** Ref callback for the composer overlay. */
     attachComposerOverlay: (element: HTMLElement | null) => {
@@ -203,10 +202,11 @@ export function useTimelineFollow(input: TimelineFollowInput) {
       current.visit === visit && current.show === show ? current : { visit, show },
     );
   const [followStore] = useState(createTimelineFollowStore);
-  const followSnapshot = useSyncExternalStore(followStore.subscribe, followStore.snapshot);
-  const follow =
-    followSnapshot.visit === visit ? followSnapshot.follow : initialTimelineFollow(visit.followEnd);
-  const timelineLiveFollowEnabled = follow.mode === "following";
+  // Only the mode is rendered; the whole state would re-render ChatView on every atEnd flip while scrolling.
+  const timelineLiveFollowEnabled = useSyncExternalStore(
+    followStore.subscribe,
+    () => followStore.read(visit).mode === "following",
+  );
   const readFollow = () => followStore.read(visit);
   // Async settles outlive their render; this reads the visit shown now.
   const readCurrentFollow = useStableCallback(readFollow);
@@ -536,7 +536,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     onComposerPageScrollKeyDownStable,
     onComposerPageScrollKeyUpStable,
     onComposerPageScrollReleaseStable,
-    scrollToEnd,
+    scrollToEnd: scrollToEndStable,
     onTimelineAnchorReadyStable,
     onTimelineAnchorSizeChangedStable,
     onTimelineFooterGrowStable,

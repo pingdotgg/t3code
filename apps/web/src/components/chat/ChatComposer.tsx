@@ -3755,6 +3755,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       onPickFolder={canPickLocalFolder ? pickComposerFolderStable : undefined}
     />
   ) : null;
+  // Resolved outside the footer's JSX: inline, the prompt becomes a dependency of the whole footer and every typed character rebuilds it.
+  const alternateSendShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "composer.sendAlternate",
+    {
+      context: {
+        composerFocus: true,
+        draftThreadRoute: routeKind === "draft",
+        turnRunning: true,
+        composerRequiresModifier: composerRequiresModifier(settings.sendShortcut, prompt),
+      },
+    },
+  );
   return (
     <form
       ref={composerFormRef}
@@ -4217,21 +4230,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     runId={activeThread?.runtime?.activeRunId ?? null}
                     followUpBehavior={followUpBehavior}
                     canSteer={canSteer}
-                    alternateShortcutLabel={shortcutLabelForCommand(
-                      keybindings,
-                      "composer.sendAlternate",
-                      {
-                        context: {
-                          composerFocus: true,
-                          draftThreadRoute: routeKind === "draft",
-                          turnRunning: true,
-                          composerRequiresModifier: composerRequiresModifier(
-                            settings.sendShortcut,
-                            prompt,
-                          ),
-                        },
-                      },
-                    )}
+                    alternateShortcutLabel={alternateSendShortcutLabel}
                     voiceInputActive={voiceInputActive}
                     isSendBusy={isSendBusy}
                     isSendHeld={composerSendHeld}

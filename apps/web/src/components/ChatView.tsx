@@ -2401,6 +2401,8 @@ export default function ChatView(props: ChatViewProps) {
   const setPendingServerThreadBranch = (branch: string | null) => {
     if (activeThread) setPendingServerThreadBranchEntry({ threadId: activeThread.id, branch });
   };
+  // The details panel and overlay hosts share a memo scope with it, so a new function per render rebuilds them all.
+  const setPendingServerThreadBranchStable = useStableCallback(setPendingServerThreadBranch);
   const envMode: DraftThreadEnvMode = canOverrideServerThreadEnvMode
     ? (pendingServerThreadEnvMode ?? draftThread?.envMode ?? derivedEnvMode)
     : derivedEnvMode;
@@ -4074,7 +4076,7 @@ export default function ChatView(props: ChatViewProps) {
                                     ? {
                                         activeThreadBranchOverride: activeThreadBranch,
                                         onActiveThreadBranchOverrideChange:
-                                          setPendingServerThreadBranch,
+                                          setPendingServerThreadBranchStable,
                                       }
                                     : {})}
                                   envLocked={envLocked}
@@ -4208,7 +4210,7 @@ export default function ChatView(props: ChatViewProps) {
                   {...(canOverrideServerThreadEnvMode
                     ? {
                         activeThreadBranchOverride: activeThreadBranch,
-                        onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
+                        onActiveThreadBranchOverrideChange: setPendingServerThreadBranchStable,
                       }
                     : {})}
                   startFromOrigin={startFromOrigin}
