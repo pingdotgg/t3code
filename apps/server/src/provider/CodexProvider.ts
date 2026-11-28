@@ -35,6 +35,7 @@ import type {
 } from "@t3tools/contracts";
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
 
+import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import {
   codexModelFamily,
   createModelCapabilities,
@@ -43,7 +44,6 @@ import {
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   codexAppServerArgs,
-  codexSqliteHomeOverride,
   codexUsesStrictConfig,
   resolveCodexLaunchArgs,
 } from "./codexLaunchArgs.ts";
@@ -657,7 +657,41 @@ const resolveCodexHomePath = Effect.fn("resolveCodexHomePath")(function* (input:
     : path.join(homeDir, ".codex");
 });
 
+const CODEX_SQLITE_HOME_VALUE_PATTERN = /^sqlite_home\s*=\s*(.*)$/s;
 const CODEX_SQLITE_HOME_TOML_PATTERN = /^\s*sqlite_home\s*=\s*(?:"([^"]+)"|'([^']+)')\s*(?:#.*)?$/;
+
+function extractCodexSqliteHomeOverride(assignment: string | undefined): string | undefined {
+  if (!assignment) return undefined;
+  const match = CODEX_SQLITE_HOME_VALUE_PATTERN.exec(assignment);
+  const candidate = match?.[1]
+    ?.trim()
+    .replace(/^(["'])(.*)\1$/s, "$2")
+    .trim();
+  return candidate || undefined;
+}
+
+function parseCodexSqliteHomeFromLaunchArgs(launchArgs: string | undefined): string | undefined {
+  const tokens = tokenizeCliArgs(launchArgs);
+  let value: string | undefined;
+  for (let index = 0; index < tokens.length; index++) {
+    const rawToken = tokens[index];
+    if (rawToken === undefined) continue;
+    let assignment: string | undefined;
+    if (rawToken === "-c" || rawToken === "--config") {
+      assignment = tokens[index + 1];
+      index++;
+    } else if (rawToken.startsWith("--config=")) {
+      assignment = rawToken.slice("--config=".length);
+    } else if (rawToken.startsWith("-c=")) {
+      assignment = rawToken.slice("-c=".length);
+    } else if (rawToken.startsWith("-c") && rawToken.length > 2) {
+      assignment = rawToken.slice(2);
+    }
+    const candidate = extractCodexSqliteHomeOverride(assignment);
+    if (candidate) value = candidate;
+  }
+  return value;
+}
 
 function parseCodexSqliteHomeFromConfigToml(content: string): string | undefined {
   for (const line of content.split(/\r?\n/)) {
@@ -673,24 +707,29 @@ function parseCodexSqliteHomeFromConfigToml(content: string): string | undefined
 const resolveCodexSqliteHomePath = Effect.fn("resolveCodexSqliteHomePath")(function* (input: {
   readonly homePath?: string | undefined;
   readonly launchArgs?: string | undefined;
+  readonly cwd: string;
   readonly environment?: NodeJS.ProcessEnv | undefined;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const homeDir = yield* HostProcess.HomeDirectory;
   const codexHome = yield* resolveCodexHomePath(input);
-  const resolve = (value: string, base = "") => path.resolve(base, expandHomePath(value, homeDir));
-  // Codex's own precedence: a launch override, then config.toml, then CODEX_SQLITE_HOME.
-  const fromLaunchArgs = codexSqliteHomeOverride(input.launchArgs);
-  if (fromLaunchArgs) return resolve(fromLaunchArgs);
+  const fromLaunchArgs = parseCodexSqliteHomeFromLaunchArgs(input.launchArgs);
+  if (fromLaunchArgs) {
+    return path.resolve(input.cwd, expandHomePath(fromLaunchArgs, homeDir));
+  }
   const fromConfig = yield* fs.readFileString(path.join(codexHome, "config.toml")).pipe(
     Effect.map(parseCodexSqliteHomeFromConfigToml),
     Effect.orElseSucceed(() => undefined),
   );
-  // Codex resolves config-file paths against the file's directory.
-  if (fromConfig) return resolve(fromConfig, codexHome);
+  if (fromConfig) {
+    return path.resolve(codexHome, expandHomePath(fromConfig, homeDir));
+  }
   const fromEnv = input.environment?.CODEX_SQLITE_HOME?.trim();
-  return fromEnv ? resolve(fromEnv) : codexHome;
+  if (fromEnv) {
+    return path.resolve(input.cwd, expandHomePath(fromEnv, homeDir));
+  }
+  return codexHome;
 });
 
 const CODEX_STATE_DB_PATTERN = /^state_(\d+)\.sqlite$/;
@@ -731,7 +770,11 @@ const readCodexBackfillState = Effect.fn("readCodexBackfillState")(function* (co
     } catch {
       return undefined;
     } finally {
-      db?.close();
+      try {
+        db?.close();
+      } catch {
+        // ignore close errors on read-only inspection
+      }
     }
   });
 });
@@ -750,7 +793,9 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   readonly launchArgs?: string | undefined;
   readonly cwd: string;
   readonly environment?: NodeJS.ProcessEnv | undefined;
-  readonly onSpawn?: (child: ChildProcessSpawner.ChildProcessHandle) => void;
+  readonly onSpawn?: (
+    child: Pick<ChildProcessSpawner.ChildProcessHandle, "pid" | "isRunning">,
+  ) => void;
 }) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const environment = yield* codexProcessEnvironment(input);
@@ -880,7 +925,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const path = yield* Path.Path;
   const processScope = yield* Scope.make();
   let pid: number | undefined;
-  let childIsRunning: ChildProcessSpawner.ChildProcessHandle["isRunning"] | undefined;
+  let spawnedChild: Pick<ChildProcessSpawner.ChildProcessHandle, "pid" | "isRunning"> | undefined;
   // Returning the snapshot must not wait for Codex's own startup work.
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
@@ -892,12 +937,14 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
         );
       }
       if (
-        childIsRunning !== undefined &&
+        spawnedChild !== undefined &&
         !activeCodexBackfillHomes.has(sqliteHome) &&
         (yield* isOwnedCodexBackfillRunning(sqliteHome, spawnedAtSec))
       ) {
         activeCodexBackfillHomes.add(sqliteHome);
-        return yield* stopCodexAfterBackfill(sqliteHome, childIsRunning, processScope).pipe(
+        return yield* stopCodexAfterBackfill(sqliteHome, spawnedChild.isRunning, processScope).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
           Effect.forkDetach,
           Effect.asVoid,
         );
@@ -911,7 +958,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const opened = yield* withCodexAppServerClient({
     ...input,
     onSpawn: (child) => {
-      childIsRunning = child.isRunning;
+      spawnedChild = child;
     },
   }).pipe(Scope.provide(processScope));
   pid = opened.pid;
@@ -1419,6 +1466,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     const sqliteHome = yield* resolveCodexSqliteHomePath({
       homePath: codexSettings.homePath,
       launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
+      cwd: process.cwd(),
       environment: resolvedEnvironment,
     });
     const backfillRunning = (yield* readCodexBackfillState(sqliteHome))?.status === "running";

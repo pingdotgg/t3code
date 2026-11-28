@@ -494,6 +494,42 @@ it.effect(
     ),
 );
 
+it.effect(
+  "closes a hung probe immediately with the default message when no backfill is running",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(TEST_EPOCH_SEC * 1000);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-hung-probe-" });
+      writeCodexBackfillState(path.join(tempHome, "state_5.sqlite"), "complete", TEST_EPOCH_SEC);
+
+      const { spawner, started, isClosed } = makeHangingCodexProbeSpawner();
+      const fiber = yield* checkCodexProviderStatus(
+        decodeCodexSettings({ homePath: tempHome }),
+        undefined,
+        {},
+      ).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.forkChild,
+      );
+
+      yield* started;
+      yield* TestClock.adjust("20 seconds");
+      const status = yield* Fiber.join(fiber);
+
+      assert.strictEqual(status.status, "error");
+      assert.strictEqual(
+        status.message,
+        "Timed out while checking Codex app-server provider status.",
+      );
+      assert.strictEqual(isClosed(), true);
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(HostProcess.Platform, "linux"),
+    ),
+);
+
 it.effect("inspects CODEX_SQLITE_HOME when the state database lives outside CODEX_HOME", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(TEST_EPOCH_SEC * 1000);
@@ -511,6 +547,95 @@ it.effect("inspects CODEX_SQLITE_HOME when the state database lives outside CODE
       decodeCodexSettings({ homePath: codexHome }),
       undefined,
       { CODEX_SQLITE_HOME: sqliteHome },
+    ).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.forkChild,
+    );
+
+    yield* started;
+    yield* TestClock.adjust("20 seconds");
+    const status = yield* Fiber.join(fiber);
+
+    assert.strictEqual(status.status, "error");
+    assert.match(status.message ?? "", /backfilling its local state database/);
+    assert.strictEqual(isClosed(), false);
+
+    writeCodexBackfillState(dbPath, "complete", TEST_EPOCH_SEC + 25);
+    yield* TestClock.adjust("1 second");
+    yield* awaitClosed;
+    assert.strictEqual(isClosed(), true);
+  }).pipe(Effect.provide(NodeServices.layer), Effect.provideService(HostProcess.Platform, "linux")),
+);
+
+it.effect("prefers config.toml sqlite_home over CODEX_SQLITE_HOME", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(TEST_EPOCH_SEC * 1000);
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const codexHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-home-" });
+    const configSqliteHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-cfg-sqlite-" });
+    const envSqliteHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-env-sqlite-" });
+    yield* fs.writeFileString(
+      path.join(codexHome, "config.toml"),
+      `sqlite_home = ${JSON.stringify(configSqliteHome)}\n`,
+    );
+    const dbPath = path.join(configSqliteHome, "state_5.sqlite");
+
+    const { spawner, started, awaitClosed, isClosed } = makeHangingCodexProbeSpawner(() => {
+      writeCodexBackfillState(dbPath, "running", TEST_EPOCH_SEC);
+    });
+
+    const fiber = yield* checkCodexProviderStatus(
+      decodeCodexSettings({ homePath: codexHome }),
+      undefined,
+      { CODEX_SQLITE_HOME: envSqliteHome },
+    ).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.forkChild,
+    );
+
+    yield* started;
+    yield* TestClock.adjust("20 seconds");
+    const status = yield* Fiber.join(fiber);
+
+    assert.strictEqual(status.status, "error");
+    assert.match(status.message ?? "", /backfilling its local state database/);
+    assert.strictEqual(isClosed(), false);
+
+    writeCodexBackfillState(dbPath, "complete", TEST_EPOCH_SEC + 25);
+    yield* TestClock.adjust("1 second");
+    yield* awaitClosed;
+    assert.strictEqual(isClosed(), true);
+  }).pipe(Effect.provide(NodeServices.layer), Effect.provideService(HostProcess.Platform, "linux")),
+);
+
+it.effect("parses quoted sqlite_home launch args with spaces", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(TEST_EPOCH_SEC * 1000);
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const codexHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-home-" });
+    const configSqliteHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-cfg-sqlite-" });
+    const parentDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-cli-sqlite-" });
+    const cliSqliteHome = path.join(parentDir, "codex state dir");
+    yield* fs.makeDirectory(cliSqliteHome, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(codexHome, "config.toml"),
+      `sqlite_home = ${JSON.stringify(configSqliteHome)}\n`,
+    );
+    const dbPath = path.join(cliSqliteHome, "state_5.sqlite");
+
+    const { spawner, started, awaitClosed, isClosed } = makeHangingCodexProbeSpawner(() => {
+      writeCodexBackfillState(dbPath, "running", TEST_EPOCH_SEC);
+    });
+
+    const fiber = yield* checkCodexProviderStatus(
+      decodeCodexSettings({
+        homePath: codexHome,
+        launchArgs: `-c "sqlite_home=${cliSqliteHome}"`,
+      }),
+      undefined,
+      { CODEX_SQLITE_HOME: configSqliteHome },
     ).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.forkChild,
