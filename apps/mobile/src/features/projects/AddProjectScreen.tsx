@@ -16,6 +16,7 @@ import {
   canCreateProjectInEnvironment,
   findExistingAddProject,
   getAddProjectInitialQuery,
+  getAddProjectPathExample,
   getCloneDestinationBrowsePath,
   getCloneDestinationPath,
   getCloneDirectoryPath,
@@ -316,6 +317,7 @@ function PrimaryActionButton(props: {
 }
 
 function ProjectPathInput(props: {
+  readonly platform: string;
   readonly value: string;
   readonly onChangeText: (value: string) => void;
   readonly onSubmit: () => void;
@@ -327,7 +329,7 @@ function ProjectPathInput(props: {
       onChangeText={(text) => props.onChangeText(resolvePastedPath(props.value, text))}
       autoCapitalize="none"
       autoCorrect={false}
-      placeholder="~/projects/my-app"
+      placeholder={getAddProjectPathExample(props.platform)}
       returnKeyType="done"
       onSubmitEditing={props.onSubmit}
     />
@@ -1539,7 +1541,12 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
           {!canCreateProject ? (
             <ErrorBanner message={gt("This connection cannot add projects.")} />
           ) : null}
-          <ProjectPathInput value={pathInput} onChangeText={setPathInput} onSubmit={submitPath} />
+          <ProjectPathInput
+            platform={environment.platform}
+            value={pathInput}
+            onChangeText={setPathInput}
+            onSubmit={submitPath}
+          />
           <PrimaryActionButton
             label={gt("Add project")}
             disabled={!canCreateProject || isBrowseNavigating || isSubmitting}
@@ -1701,7 +1708,12 @@ export function AddProjectDestinationScreen(props: {
       ) : null}
       {environment ? (
         <>
-          <ProjectPathInput value={pathInput} onChangeText={setPathInput} onSubmit={submitPath} />
+          <ProjectPathInput
+            platform={environment.platform}
+            value={pathInput}
+            onChangeText={setPathInput}
+            onSubmit={submitPath}
+          />
           <PrimaryActionButton
             label={gt("Clone project")}
             disabled={!canCloneProject || isBrowseNavigating || isSubmitting || !remoteUrl}

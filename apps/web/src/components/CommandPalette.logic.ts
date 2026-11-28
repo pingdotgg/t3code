@@ -17,6 +17,7 @@ import {
   addProjectRemoteSourceLabel,
   addProjectRemoteSourcePathHint,
   buildAddProjectRemoteSourceReadiness,
+  getAddProjectPathExample,
   type AddProjectRemoteSource,
   type AddProjectRemoteSourceReadiness,
 } from "@t3tools/client-runtime/operations/projects";
@@ -845,17 +846,22 @@ export function buildRootGroups(
 
 export function getCommandPaletteInputPlaceholder(
   mode: CommandPaletteMode,
+  platform: string,
   resolve: MessageResolver = m,
 ): string {
   switch (mode) {
     case "root":
       return resolve(msg("Search commands, projects, and threads..."));
     case "root-browse":
-      return resolve(msg("Enter project path (e.g. ~/projects/my-app)"));
+      return resolve(
+        msg("Enter project path (e.g. {example})", { example: getAddProjectPathExample(platform) }),
+      );
     case "submenu":
       return resolve(msg("Search..."));
     case "submenu-browse":
-      return resolve(msg("Enter path (e.g. ~/projects/my-app)"));
+      return resolve(
+        msg("Enter path (e.g. {example})", { example: getAddProjectPathExample(platform) }),
+      );
   }
 }
 

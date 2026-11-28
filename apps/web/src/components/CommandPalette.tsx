@@ -2648,11 +2648,16 @@ function OpenCommandPaletteDialog(props: {
   const autoHighlightsFirstRow =
     !isBrowsing && !isRemoteProjectCloneFlow && newProjectFlow === null;
 
+  const isCloneDestinationStep = addProjectCloneFlow?.step === "confirm";
   const inputPlaceholder =
     newProjectFlow !== null
       ? gt("Project name")
       : (remoteProjectInputPlaceholder(addProjectCloneFlow, messages) ??
-        getCommandPaletteInputPlaceholder(paletteMode, messages));
+        getCommandPaletteInputPlaceholder(
+          isCloneDestinationStep ? "submenu-browse" : paletteMode,
+          browseEnvironmentPlatform,
+          messages,
+        ));
   const isSubmenu = paletteMode === "submenu" || paletteMode === "submenu-browse";
   const hasHighlightedBrowseItem = highlightedItemValue?.startsWith("browse:") ?? false;
   const canWriteSourceControl = useEnvironmentScope(
@@ -2664,7 +2669,6 @@ function OpenCommandPaletteDialog(props: {
     AuthOrchestrationOperateScope,
   );
   const canCloneProject = canWriteSourceControl && canCreateClonedProject;
-  const isCloneDestinationStep = addProjectCloneFlow?.step === "confirm";
   const canSubmitBrowsePath =
     isBrowsing &&
     !relativePathNeedsActiveProject &&

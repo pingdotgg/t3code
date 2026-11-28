@@ -11,12 +11,30 @@ import {
   buildLinkedThreadActionItems,
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
+  getCommandPaletteInputPlaceholder,
+  getEnvironmentBrowsePlatform,
   reduceCommandPaletteUiState,
   resolveAddProjectEntry,
   createCommandPaletteSearchState,
   reduceCommandPaletteSearchState,
   type CommandPaletteUiState,
 } from "./CommandPalette.logic";
+
+describe("Add Project path examples", () => {
+  it.each([
+    ["windows", "C:\\Projects\\my-app"],
+    ["linux", "~/projects/my-app"],
+    ["darwin", "~/projects/my-app"],
+  ])("uses the %s browse platform in the path prompts", (os, example) => {
+    const platform = getEnvironmentBrowsePlatform(os);
+    expect(getCommandPaletteInputPlaceholder("root-browse", platform)).toBe(
+      `Enter project path (e.g. ${example})`,
+    );
+    expect(getCommandPaletteInputPlaceholder("submenu-browse", platform)).toBe(
+      `Enter path (e.g. ${example})`,
+    );
+  });
+});
 
 describe("linked pull request thread navigation", () => {
   it("keeps archived relations searchable and routes them through the PR environment", async () => {
