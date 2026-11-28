@@ -77,6 +77,9 @@ function makeFakeBrowserWindow() {
     id: 1,
     session: {
       setPermissionRequestHandler: vi.fn(),
+      availableSpellCheckerLanguages: ["en-GB", "en-US"],
+      getSpellCheckerLanguages: vi.fn(() => ["en-US"]),
+      setSpellCheckerLanguages: vi.fn(),
       webRequest: {
         onBeforeSendHeaders: vi.fn(),
       },
