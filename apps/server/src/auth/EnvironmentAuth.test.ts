@@ -424,17 +424,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 
-    it.effect("renews a pairing-link DPoP session in place while its device keeps using it", () =>
-      Effect.gen(function* () {
-        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-        const sessions = yield* SessionStore.SessionStore;
-        const admin = yield* serverAuth.issueSession({ label: "Owner" });
-        const key = makeDpopKey();
-        const other = makeDpopKey();
-        const pair = (proofKeyThumbprint?: string) =>
-          serverAuth
-            .issuePairingCredential({ scopes: ["orchestration:read"] })
-            .pipe(
+    it.effect.each(["pairing link", "startup link"] as const)(
+      "renews a DPoP session issued by a %s in place while its device keeps using it",
+      (issuer) =>
+        Effect.gen(function* () {
+          const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+          const sessions = yield* SessionStore.SessionStore;
+          const admin = yield* serverAuth.issueSession({ label: "Owner" });
+          const key = makeDpopKey();
+          const other = makeDpopKey();
+          const pairingScopes = ["orchestration:read"] as const;
+          const expectedScopes =
+            issuer === "startup link" ? AuthAdministrativeClientScopes : pairingScopes;
+          const pair = (proofKeyThumbprint?: string) =>
+            (issuer === "startup link"
+              ? serverAuth.issueStartupPairingCredential()
+              : serverAuth.issuePairingCredential({ scopes: pairingScopes })
+            ).pipe(
               Effect.flatMap((pairing) =>
                 serverAuth.exchangeBootstrapCredentialForAccessToken(
                   pairing.credential,
@@ -444,90 +450,111 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
                 ),
               ),
             );
-        const sessionExpiry = (sessionId: string) =>
-          serverAuth
-            .listClientSessions(admin.sessionId)
-            .pipe(
-              Effect.map(
-                (sessions) =>
-                  sessions.find((session) => session.sessionId === sessionId)?.expiresAt
-                    .epochMilliseconds,
-              ),
-            );
+          const sessionExpiry = (sessionId: string) =>
+            serverAuth
+              .listClientSessions(admin.sessionId)
+              .pipe(
+                Effect.map(
+                  (sessions) =>
+                    sessions.find((session) => session.sessionId === sessionId)?.expiresAt
+                      .epochMilliseconds,
+                ),
+              );
 
-        const paired = yield* pair(key.thumbprint);
-        expect(paired.expires_in).toBe(60 * 60);
-        const { sessionId } = yield* sessions.verify(paired.access_token);
-        const pairedAt = (yield* DateTime.now).epochMilliseconds;
-        // Listed for the whole renewal window, so an idle device can still be revoked.
-        expect(yield* sessionExpiry(sessionId)).toBe(pairedAt + 30 * 24 * 60 * 60 * 1000);
+          const refused = (token: string, thumbprint: string) =>
+            serverAuth
+              .renewAccessToken(
+                token,
+                thumbprint,
+                Effect.die("Invalid credentials cannot consume a proof."),
+              )
+              .pipe(
+                Effect.flip,
+                Effect.map((error) => error._tag),
+              );
+          // Desktop sessions never self-renew; checked before the seeded token expires.
+          const desktop = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+            "desktop-bootstrap-token",
+            undefined,
+            requestMetadata,
+            { proofKeyThumbprint: key.thumbprint },
+          );
+          expect(desktop.expires_in).toBe(60 * 60);
+          expect(yield* refused(desktop.access_token, key.thumbprint)).toBe(
+            "ServerAuthInvalidCredentialError",
+          );
 
-        yield* TestClock.adjust("20 days");
-        const replay = new EnvironmentAuth.ServerAuthInvalidCredentialError({
-          dpopFailureReason: "replay",
-        });
-        const rejected = yield* serverAuth
-          .renewAccessToken(paired.access_token, key.thumbprint, Effect.fail(replay))
-          .pipe(Effect.flip);
-        expect(rejected).toBe(replay);
-        expect(yield* sessionExpiry(sessionId)).toBe(pairedAt + 30 * 24 * 60 * 60 * 1000);
+          const paired = yield* pair(key.thumbprint);
+          expect(paired.expires_in).toBe(60 * 60);
+          const { sessionId } = yield* sessions.verify(paired.access_token);
+          const pairedAt = (yield* DateTime.now).epochMilliseconds;
+          // Listed for the whole renewal window, so an idle device can still be revoked.
+          expect(yield* sessionExpiry(sessionId)).toBe(pairedAt + 30 * 24 * 60 * 60 * 1000);
 
-        const renewed = yield* serverAuth.renewAccessToken(
-          paired.access_token,
-          key.thumbprint,
-          Effect.void,
-        );
-        expect(renewed.scope).toBe("orchestration:read");
-        const verified = yield* sessions.verify(renewed.access_token);
-        expect(verified.sessionId).toBe(sessionId);
-        expect(yield* sessionExpiry(sessionId)).toBe(pairedAt + 50 * 24 * 60 * 60 * 1000);
+          yield* TestClock.adjust("20 days");
+          const replay = new EnvironmentAuth.ServerAuthInvalidCredentialError({
+            dpopFailureReason: "replay",
+          });
+          const rejected = yield* serverAuth
+            .renewAccessToken(paired.access_token, key.thumbprint, Effect.fail(replay))
+            .pipe(Effect.flip);
+          expect(rejected).toBe(replay);
+          expect(yield* sessionExpiry(sessionId)).toBe(pairedAt + 30 * 24 * 60 * 60 * 1000);
 
-        const refused = (token: string, thumbprint: string) =>
-          serverAuth
-            .renewAccessToken(
-              token,
-              thumbprint,
-              Effect.die("Invalid credentials cannot consume a proof."),
-            )
-            .pipe(
-              Effect.flip,
-              Effect.map((error) => error._tag),
-            );
-        expect(yield* refused(renewed.access_token, other.thumbprint)).toBe(
-          "ServerAuthInvalidCredentialError",
-        );
-        // Bearer and T3 Connect sessions keep their fixed lifetimes, so unlinking still cuts off.
-        const bearer = yield* pair();
-        expect(yield* refused(bearer.access_token, key.thumbprint)).toBe(
-          "ServerAuthInvalidCredentialError",
-        );
-        const connect = yield* serverAuth.issueConnectCredential({
-          proofKeyThumbprint: key.thumbprint,
-          requireApproval: false,
-        });
-        const connected = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
-          connect.credential,
-          undefined,
-          requestMetadata,
-          { proofKeyThumbprint: key.thumbprint },
-        );
-        expect(yield* refused(connected.access_token, key.thumbprint)).toBe(
-          "ServerAuthInvalidCredentialError",
-        );
+          const renewed = yield* serverAuth.renewAccessToken(
+            paired.access_token,
+            key.thumbprint,
+            Effect.void,
+          );
+          expect(renewed.scope).toBe(expectedScopes.join(" "));
+          const verified = yield* sessions.verify(renewed.access_token);
+          expect(verified.sessionId).toBe(sessionId);
+          expect(yield* sessionExpiry(sessionId)).toBe(pairedAt + 50 * 24 * 60 * 60 * 1000);
 
-        // Inside the renewed window, so only the revocation can refuse it.
-        expect(yield* serverAuth.revokeClientSession(admin.sessionId, sessionId)).toBe(true);
-        expect(yield* refused(renewed.access_token, key.thumbprint)).toBe(
-          "ServerAuthInvalidCredentialError",
-        );
+          expect(yield* refused(renewed.access_token, other.thumbprint)).toBe(
+            "ServerAuthInvalidCredentialError",
+          );
+          // Bearer and T3 Connect sessions keep their fixed lifetimes, so unlinking still cuts off.
+          const bearer = yield* pair();
+          expect(bearer.expires_in).toBe(30 * 24 * 60 * 60);
+          expect(yield* refused(bearer.access_token, key.thumbprint)).toBe(
+            "ServerAuthInvalidCredentialError",
+          );
+          const connect = yield* serverAuth.issueConnectCredential({
+            proofKeyThumbprint: key.thumbprint,
+            requireApproval: false,
+          });
+          const connected = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+            connect.credential,
+            undefined,
+            requestMetadata,
+            { proofKeyThumbprint: key.thumbprint },
+          );
+          expect(yield* refused(connected.access_token, key.thumbprint)).toBe(
+            "ServerAuthInvalidCredentialError",
+          );
 
-        // Idle past the window, the device pairs again.
-        const idle = yield* pair(key.thumbprint);
-        yield* TestClock.adjust("31 days");
-        expect(yield* refused(idle.access_token, key.thumbprint)).toBe(
-          "ServerAuthInvalidCredentialError",
-        );
-      }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
+          // Inside the renewed window, so only the revocation can refuse it.
+          expect(yield* serverAuth.revokeClientSession(admin.sessionId, sessionId)).toBe(true);
+          expect(yield* refused(renewed.access_token, key.thumbprint)).toBe(
+            "ServerAuthInvalidCredentialError",
+          );
+
+          // Idle past the window, the device pairs again.
+          const idle = yield* pair(key.thumbprint);
+          yield* TestClock.adjust("31 days");
+          expect(yield* refused(idle.access_token, key.thumbprint)).toBe(
+            "ServerAuthInvalidCredentialError",
+          );
+        }).pipe(
+          Effect.provide(
+            layerEnvironmentAuth({
+              mode: "web",
+              host: "192.168.1.50",
+              desktopBootstrapToken: "desktop-bootstrap-token",
+            }),
+          ),
+        ),
     );
 
     it.effect("renews a peer link's session while it is used, and no other MCP client's", () =>
