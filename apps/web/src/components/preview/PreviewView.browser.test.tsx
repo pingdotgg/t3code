@@ -5,6 +5,7 @@ import {
   DEFAULT_PREVIEW_ZOOM_FACTOR,
   EnvironmentId,
   FILL_PREVIEW_VIEWPORT,
+  INCOGNITO_BROWSER_PROFILE_ID,
   ThreadId,
 } from "@t3tools/contracts";
 import { type ComponentProps } from "react";
@@ -40,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   servers: [] as PreviewableServer[],
   recordingTabIds: new Set<string>(),
   recordingRuntimeTabId: null as string | null,
+  profileId: undefined as string | undefined,
   recordVisitForThread: vi.fn(),
 }));
 
@@ -140,6 +142,7 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
               tabId: "tab-1",
               runtime: mocks.nativeServerTab || mocks.streamedServerTab ? "server" : "desktop",
               navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
+              ...(mocks.profileId !== undefined ? { profileId: mocks.profileId } : {}),
               canGoBack: false,
               canGoForward: false,
               updatedAt: "2026-07-13T00:00:00.000Z",
@@ -192,6 +195,7 @@ import { PreviewView } from "./PreviewView";
 import { ToastProvider } from "~/components/ui/toast";
 import { useLayoutStore } from "~/layout/layoutStore";
 import { createLayoutState } from "~/layout/layoutModel";
+import { useRightPanelStore } from "~/rightPanelStore";
 
 const TEST_THREAD_REF = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -244,6 +248,7 @@ function setup() {
   mocks.servers = [];
   mocks.recordingTabIds = new Set();
   mocks.recordingRuntimeTabId = null;
+  mocks.profileId = undefined;
   useComposerDraftStore.setState({
     addPreviewAnnotation: mocks.addPreviewAnnotation,
     addImage: mocks.addImage,
@@ -508,5 +513,21 @@ describe("PreviewView", () => {
     await expect.element(findBar).not.toBeInTheDocument();
     await screen.rerender(tabView("tab-1"));
     await expect.element(findBar).not.toBeInTheDocument();
+  });
+
+  it("does not persist the URL of an incognito browser tab", async () => {
+    setup();
+    mocks.profileId = INCOGNITO_BROWSER_PROFILE_ID;
+    const rememberSpy = vi.spyOn(useRightPanelStore.getState(), "rememberBrowserUrl");
+    using _restore = { [Symbol.dispose]: () => rememberSpy.mockRestore() };
+
+    await using _screen = await render(view());
+    expect(rememberSpy).not.toHaveBeenCalled();
+
+    mocks.profileId = DEFAULT_BROWSER_PROFILE_ID;
+    await using _normal = await render(
+      <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />,
+    );
+    expect(rememberSpy).toHaveBeenCalledWith(TEST_THREAD_REF, "tab-1", "http://example.com/");
   });
 });

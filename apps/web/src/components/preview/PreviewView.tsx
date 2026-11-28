@@ -310,12 +310,17 @@ export function PreviewView({
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Persist browser navigation reported by the external preview runtime for later session restoration.
   useEffect(() => {
-    if (requestedTabId && navUrl) {
+    if (
+      requestedTabId &&
+      navUrl &&
+      snapshot !== null &&
+      activeProfileId !== INCOGNITO_BROWSER_PROFILE_ID
+    ) {
       useRightPanelStore
         .getState()
         .rememberBrowserUrl(scopeThreadRef(threadEnvironmentId, threadId), requestedTabId, navUrl);
     }
-  }, [navUrl, requestedTabId, threadEnvironmentId, threadId]);
+  }, [activeProfileId, navUrl, requestedTabId, snapshot, threadEnvironmentId, threadId]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reopen a restored browser surface when its prior server runtime no longer exists.
   useEffect(() => {
