@@ -220,6 +220,13 @@ export const ChatHeader = memo(function ChatHeader({
     onFind: onFindInThread,
     canShareWithGuest,
   });
+  // The Bot's part of a worker's breadcrumb opens the Bot's own menu.
+  const botMenu = useThreadActionMenu({
+    threadRef:
+      workerOfBot === null ? null : scopeThreadRef(activeThreadEnvironmentId, workerOfBot.id),
+    projectCwd: null,
+    canShareWithGuest: false,
+  });
   const openMenuFromTitle = (event: ReactMouseEvent<HTMLButtonElement>) => {
     if (isTrailingDoubleClick(event.detail)) return;
     const rect = event.currentTarget.getBoundingClientRect();
@@ -285,6 +292,14 @@ export const ChatHeader = memo(function ChatHeader({
                     type="button"
                     aria-label={gt("Open {bot}", { bot: workerOfBot.title })}
                     onClick={() => onOpenThread(workerOfBot.id)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      botMenu.openMenu(
+                        { x: event.clientX, y: event.clientY },
+                        contextMenuSourceOf(event),
+                      );
+                    }}
                     className="inline-flex min-w-0 max-w-full cursor-pointer items-center gap-2 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                   />
                 }

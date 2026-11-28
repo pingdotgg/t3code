@@ -320,7 +320,8 @@ export function buildThreadActionMenuItems(
         ...(state.grouping === undefined
           ? []
           : [
-              ...(state.grouping.isBot
+              // A worker already belongs to a group, and a Bot is one.
+              ...(state.grouping.isBot || state.grouping.isGrouped
                 ? []
                 : [
                     {
