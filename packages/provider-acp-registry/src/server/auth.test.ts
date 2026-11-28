@@ -326,6 +326,25 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+it.effect("runs the invocation a legacy agent advertises in _meta terminal-auth", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness({
+      id: "login",
+      name: "Login",
+      _meta: {
+        "terminal-auth": { command: "/venv/bin/python3", args: ["-m", "kimi", "login"] },
+      },
+    });
+    yield* h.controller.start("owner", Effect.void, "login");
+    yield* h.phase("waiting");
+    assert.deepInclude(h.terminalSpawn(), {
+      shell: "/venv/bin/python3",
+      args: ["-m", "kimi", "login"],
+    });
+    assert.deepEqual(h.authenticated, []);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect("cancels the login PTY and rejects further terminal input", () =>
   Effect.gen(function* () {
     const h = yield* makeHarness(terminalMethod);

@@ -137,6 +137,17 @@ function normalizeModels(
   return models;
 }
 
+export function acpRegistrySetupClientCapabilities(terminalAuth: boolean) {
+  return {
+    auth: { terminal: terminalAuth },
+    elicitation: { url: {} },
+    fs: { readTextFile: false, writeTextFile: false },
+    terminal: false,
+    // Older agents gate terminal sign-in discovery on this legacy capability.
+    ...(terminalAuth ? { _meta: { "terminal-auth": true } } : {}),
+  };
+}
+
 export interface AcpRegistryAuthSpawnContext {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -148,14 +159,51 @@ function shellDisplayToken(token: string): string {
   return SHELL_SAFE_TOKEN.test(token) ? token : `'${token.replaceAll("'", `'\\''`)}'`;
 }
 
-function terminalAuthCommand(
-  method: Extract<EffectAcpSchema.AuthMethod, { readonly type: "terminal" }>,
+const decodeLegacyTerminalAuth = Schema.decodeUnknownOption(
+  Schema.Struct({
+    command: Schema.NonEmptyString,
+    args: Schema.optional(Schema.Array(Schema.String)),
+    env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  }),
+);
+
+export interface AcpRegistryTerminalAuthInvocation {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly env: Readonly<Record<string, string>>;
+}
+
+function isAcpRegistryTerminalAuthMethod(method: EffectAcpSchema.AuthMethod): boolean {
+  return (
+    method.type === "terminal" ||
+    Option.isSome(decodeLegacyTerminalAuth(method._meta?.["terminal-auth"]))
+  );
+}
+
+export function acpRegistryTerminalAuthInvocation(
+  method: EffectAcpSchema.AuthMethod,
   spawn: AcpRegistryAuthSpawnContext,
-): string | undefined {
-  const environmentPrefix = Object.entries(method.env ?? {}).map(
+): AcpRegistryTerminalAuthInvocation | undefined {
+  // Legacy agents advertise terminal login only as a complete invocation in
+  // `_meta`, often on an untyped (agent-shaped) method.
+  const legacy = decodeLegacyTerminalAuth(method._meta?.["terminal-auth"]);
+  if (Option.isSome(legacy)) {
+    const { command, args = [], env = {} } = legacy.value;
+    return { command, args, env };
+  }
+  if (method.type !== "terminal") return undefined;
+  return {
+    command: spawn.command,
+    args: [...spawn.args, ...(method.args ?? [])],
+    env: method.env ?? {},
+  };
+}
+
+function terminalAuthCommand(invocation: AcpRegistryTerminalAuthInvocation): string | undefined {
+  const environmentPrefix = Object.entries(invocation.env).map(
     ([name, value]) => `${name}=${shellDisplayToken(value)}`,
   );
-  const command = [spawn.command, ...spawn.args, ...(method.args ?? [])].map(shellDisplayToken);
+  const command = [invocation.command, ...invocation.args].map(shellDisplayToken);
   const displayCommand = [...environmentPrefix, ...command].join(" ");
   return displayCommand.length <= MAX_COMMAND_LINE_LENGTH ? displayCommand : undefined;
 }
@@ -168,7 +216,9 @@ export function normalizeAcpRegistryAuthMethods(
   for (const method of methods ?? []) {
     const id = boundedOpaqueValue(method.id, MAX_ID_LENGTH);
     if (id === undefined) continue;
-    const type = method.type ?? "agent";
+    const type = isAcpRegistryTerminalAuthMethod(method) ? "terminal" : (method.type ?? "agent");
+    const invocation =
+      spawn === undefined ? undefined : acpRegistryTerminalAuthInvocation(method, spawn);
     const envVarNames =
       type === "env_var" && "vars" in method
         ? method.vars
@@ -178,10 +228,7 @@ export function normalizeAcpRegistryAuthMethods(
             })
             .slice(0, 16)
         : [];
-    const command =
-      spawn !== undefined && "type" in method && method.type === "terminal"
-        ? terminalAuthCommand(method, spawn)
-        : undefined;
+    const command = invocation === undefined ? undefined : terminalAuthCommand(invocation);
     const link =
       type === "env_var" && "link" in method && method.link
         ? normalizeAcpRegistryWebUrl(method.link)
@@ -553,12 +600,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
         AcpSessionRuntime.layer({
           spawn,
           cwd: input.cwd,
-          clientCapabilities: {
-            auth: { terminal: Option.isSome(pty) },
-            elicitation: { url: {} },
-            fs: { readTextFile: false, writeTextFile: false },
-            terminal: false,
-          },
+          clientCapabilities: acpRegistrySetupClientCapabilities(Option.isSome(pty)),
           clientInfo: { name: "t3-code-provider-test", version: "0.0.0" },
           authenticateOnAuthRequired: false,
           onInitialized: (initializeResult) =>
