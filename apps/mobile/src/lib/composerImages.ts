@@ -433,6 +433,8 @@ export async function pickComposerImages(input: { readonly existingCount: number
 export async function pickComposerMedia(input: {
   readonly existingCount: number;
   readonly maxVideoBytes?: number;
+  /** Receives placeholders over the picker's local copies before processing; each keeps its attachment's id. */
+  readonly onPicked?: (placeholders: ReadonlyArray<DraftComposerAttachment>) => void;
   readonly acceptSelection?: () => boolean;
 }): Promise<{
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
@@ -488,11 +490,28 @@ export async function pickComposerMedia(input: {
       error: null,
     };
   }
+  const ids = result.assets.map(() => uuidv4());
+  input.onPicked?.(
+    result.assets.flatMap((asset, index): DraftComposerAttachment[] => {
+      const common = {
+        id: ids[index]!,
+        name: asset.fileName ?? "",
+        mimeType: asset.mimeType ?? "",
+        sizeBytes: asset.fileSize ?? 0,
+      };
+      if (asset.type === "image" || asset.mimeType?.startsWith("image/")) {
+        return [{ ...common, type: "image", previewUri: asset.uri }];
+      }
+      return input.maxVideoBytes === undefined
+        ? []
+        : [{ ...common, type: "file", fileUri: asset.uri }];
+    }),
+  );
 
   const attachments: DraftComposerAttachment[] = [];
   let error: string | null = null;
 
-  for (const asset of result.assets) {
+  for (const [index, asset] of result.assets.entries()) {
     if (attachments.length >= remainingSlots) {
       error = m(
         msg("You can attach up to {max} attachments per message.", {
@@ -510,15 +529,16 @@ export async function pickComposerMedia(input: {
       try {
         const { File } = await import("expo-file-system");
         const file = new File(asset.uri);
-        attachments.push(
-          await createComposerFileAttachment({
+        attachments.push({
+          ...(await createComposerFileAttachment({
             uri: asset.uri,
             name: asset.fileName?.trim() || file.name || "video",
             mimeType: mimeType || file.type || "application/octet-stream",
             sizeBytes: asset.fileSize ?? null,
             maxBytes: clampFileAttachmentUploadBytes(input.maxVideoBytes),
-          }),
-        );
+          })),
+          id: ids[index]!,
+        });
       } catch (cause) {
         error =
           errorDisplayMessage(cause, m) ??
@@ -592,9 +612,14 @@ export async function pickComposerMedia(input: {
         image.name,
         PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
       );
-      attachments.push(
-        await ownedComposerImageAttachment({ fileUri, name: image.name, mimeType: image.mimeType }),
-      );
+      attachments.push({
+        ...(await ownedComposerImageAttachment({
+          fileUri,
+          name: image.name,
+          mimeType: image.mimeType,
+        })),
+        id: ids[index]!,
+      });
     } catch (cause) {
       error = errorDisplayMessage(cause, m) ?? m(msg("Failed to read ''{name}''.", { name }));
     }

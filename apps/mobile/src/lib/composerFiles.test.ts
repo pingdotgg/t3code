@@ -385,8 +385,17 @@ describe("composer file attachments", () => {
         uri.endsWith("clip.mov") ? video.fileSize : 3,
       );
 
-      const result = await pickComposerMedia({ existingCount: 0, maxVideoBytes: 50 * 1024 * 1024 });
+      const onPicked = vi.fn();
+      const result = await pickComposerMedia({
+        existingCount: 0,
+        maxVideoBytes: 50 * 1024 * 1024,
+        onPicked,
+      });
 
+      expect(onPicked).toHaveBeenCalledWith([
+        expect.objectContaining({ id: "attachment-id", type: "image", previewUri: image.uri }),
+        expect.objectContaining({ id: "attachment-id", type: "file", fileUri: video.uri }),
+      ]);
       expect(mocks.pickMedia).toHaveBeenCalledWith(
         expect.objectContaining({
           mediaTypes: ["images", "videos"],
