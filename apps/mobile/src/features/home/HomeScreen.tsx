@@ -352,13 +352,15 @@ export function HomeScreen(props: HomeScreenProps) {
     pickableProjectGroups(projectScopes),
     v2ProjectScopeKey,
   );
-  const projectFilterRefs = homeProjectFilterRefs(projectScopes, v2ScopedProjectGroup, props.excludedProjectKey);
+  const projectFilterRefs = homeProjectFilterRefs(
+    projectScopes,
+    v2ScopedProjectGroup,
+    props.excludedProjectKey,
+  );
   const threadSearch = useThreadSearch(
     searchEnvironmentIds,
     props.searchQuery,
-    projectFilterRefs === null
-      ? {}
-      : { projectIds: projectFilterRefs.map((ref) => ref.projectId) },
+    projectFilterRefs === null ? {} : { projectIds: projectFilterRefs.map((ref) => ref.projectId) },
   );
   const threadSearchMatchByKey = useThreadListSearchMatches(props.threads, threadSearch);
   const v2ProjectTitleByProjectKey = new Map(

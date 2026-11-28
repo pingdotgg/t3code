@@ -216,13 +216,18 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     [projectScopes],
   );
   const selectedProjectScope = resolveHomeProjectFilterScope(projectScopes, projects, options);
-  const projectFilterRefs = homeProjectFilterRefs(projectScopes, selectedProjectScope, options.excludedProjectKey);
+  const excludedProjectKey = projectFilterOptions.some((project) => project.key === options.excludedProjectKey)
+    ? options.excludedProjectKey
+    : undefined;
+  const projectFilterRefs = homeProjectFilterRefs(
+    projectScopes,
+    selectedProjectScope,
+    excludedProjectKey,
+  );
   const threadSearch = useThreadSearch(
     searchEnvironmentIds,
     props.searchQuery,
-    projectFilterRefs === null
-      ? {}
-      : { projectIds: projectFilterRefs.map((ref) => ref.projectId) },
+    projectFilterRefs === null ? {} : { projectIds: projectFilterRefs.map((ref) => ref.projectId) },
   );
   // This map reaches LegendList's extraData, which re-renders every row whenever it changes
   // identity; the hook keeps it stable.
@@ -548,14 +553,17 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
         accessibilityLabel: gt("Search threads"),
       }}
       filter={{
-        customized: options.selectedEnvironmentId !== null || selectedProjectKey !== null || !!options.excludedProjectKey,
+        customized:
+          options.selectedEnvironmentId !== null ||
+          selectedProjectKey !== null ||
+          !!excludedProjectKey,
         items: buildHomeListFilterMenuItems(
           {
             environments,
             projects: projectFilterOptions,
             selectedEnvironmentId: options.selectedEnvironmentId,
             selectedProjectKey,
-            excludedProjectKey: options.excludedProjectKey,
+            excludedProjectKey,
             onExcludeProject: setExcludedProjectKey,
             onEnvironmentChange: setSelectedEnvironmentId,
             onProjectChange: setSelectedProjectKey,
@@ -593,11 +601,11 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 : threadSearch.failed
                   ? gt("Couldn't search thread messages")
                   : gt("No matching threads")
-              : options.excludedProjectKey
+              : excludedProjectKey
                 ? gt("No threads match this filter.")
                 : selectedProjectScope !== null
-                ? gt("No threads in {project}", { project: selectedProjectScope.title })
-                : gt("No threads yet")}
+                  ? gt("No threads in {project}", { project: selectedProjectScope.title })
+                  : gt("No threads yet")}
       </Text>
       {showAddEnvironment ? (
         <View className={Platform.OS === "android" ? "self-center" : "px-2"}>

@@ -1050,7 +1050,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const projectGroupsRef = useRef(projectGroups);
   const persistedProjectScopeKeys = useUiStateStore((store) => store.sidebarProjectScopeKeys);
   const setPersistedProjectScopeKeys = useUiStateStore((store) => store.setSidebarProjectScopeKeys);
-  const persistedExcludedProjectKey = useUiStateStore((store) => store.sidebarExcludedProjectScopeKey);
+  const persistedExcludedProjectKey = useUiStateStore(
+    (store) => store.sidebarExcludedProjectScopeKey,
+  );
   const setExcludedProjectKey = useUiStateStore((store) => store.setSidebarExcludedProjectScopeKey);
   const [projectScopeMenuState, dispatchProjectScopeMenu] = useReducer(
     reduceSidebarProjectScopeMenuState,
@@ -1140,13 +1142,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
   }).filter((key) => !archivedProjectKeys.has(key));
   const excludedProjectKeys = resolveSidebarProjectScopeKeys({
-      groups: projectGroups,
-      keys: persistedExcludedProjectKey ? [persistedExcludedProjectKey] : [],
-      settings: projectGroupingSettings,
-      canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
-    });
-  const excludedProject = scopeGroups.find((project) => excludedProjectKeys.includes(project.projectKey));
-  const chosenProjectGroups = scopeGroups.filter((project) =>
+    groups: projectGroups,
+    keys: persistedExcludedProjectKey ? [persistedExcludedProjectKey] : [],
+    settings: projectGroupingSettings,
+    canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
+  });
+  const excludedProject = scopeGroups.find((project) =>
+    excludedProjectKeys.includes(project.projectKey),
+  );
+  const chosenProjectGroups = (excludedProject
+    ? [...scopeGroups, ...projectGroups.filter((project) => project.archived)]
+    : scopeGroups).filter((project) =>
     excludedProject
       ? project.projectKey !== excludedProject.projectKey
       : chosenProjectScopeKeys.includes(project.projectKey),
@@ -1189,13 +1195,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     routeKey: routeRowThreadKey,
     routeKeyInPlace,
     isSearching: isSearchingThreads,
-    scopedProjectKeys: chosenScopeProjectKeys,
+    scopedProjectKeys: excludedProject ? null : chosenScopeProjectKeys,
     delegatedUnderParent,
     findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
   });
-  const projectScopeKeys = revealWidensScope ? [] : excludedProject
-    ? chosenProjectGroups.map((project) => project.projectKey)
-    : chosenProjectScopeKeys;
+  const projectScopeKeys = revealWidensScope
+    ? []
+    : excludedProject
+      ? chosenProjectGroups.map((project) => project.projectKey)
+      : chosenProjectScopeKeys;
   const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");
   const excludeProject = (key: string) => {
     clearSelection();
@@ -1429,7 +1437,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         : scopedProjectGroups
       : null,
     keepEmptyFolders: (group) =>
-      scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
+      (!excludedProject && scopedProjectGroups.length > 0) || (group.pinned && !group.archived),
   });
 
   // Ranked across environments as the palette ranks them, so one
@@ -3200,12 +3208,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           excludedProject && !revealWidensScope
                             ? gt("All except {project}", { project: excludedProject.displayName })
                             : scopedProjectGroups.length > 0
-                            ? gt("Projects: {projects}", {
-                                projects: scopedProjectGroups
-                                  .map((project) => project.displayName)
-                                  .join(", "),
-                              })
-                            : gt("Projects")
+                              ? gt("Projects: {projects}", {
+                                  projects: scopedProjectGroups
+                                    .map((project) => project.displayName)
+                                    .join(", "),
+                                })
+                              : gt("Projects")
                         }
                       />
                     }
@@ -3279,7 +3287,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           toggleProjectGroupPin(project);
                           return;
                         }
-                        if (project && event.altKey && !event.ctrlKey && !event.metaKey && event.key === "Enter") {
+                        if (
+                          project &&
+                          event.altKey &&
+                          !event.ctrlKey &&
+                          !event.metaKey &&
+                          event.key === "Enter"
+                        ) {
                           event.preventDefault();
                           excludeProject(project.projectKey);
                           return;
@@ -3324,7 +3338,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         const project = projectGroupByScopeKey.get(item.value) ?? null;
                         const isSelected = project
                           ? projectScopeKeys.includes(item.value)
-                          : projectScopeKeys.length === 0 && (!excludedProject || revealWidensScope);
+                          : projectScopeKeys.length === 0 &&
+                            (!excludedProject || revealWidensScope);
                         return (
                           <ComboboxItem
                             key={item.value}
@@ -3378,36 +3393,48 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 }
                                 settings={
                                   <>
-                                  <Button
-                                    size="icon-xs"
-                                    variant="ghost-muted"
-                                    tabIndex={-1}
-                                    aria-label={excludedProject?.projectKey === project.projectKey ? gt("Show all projects") : gt("Exclude {project}", { project: project.displayName })}
-                                    title={excludedProject?.projectKey === project.projectKey ? gt("Show all projects") : gt("Exclude {project}", { project: project.displayName })}
-                                    onPointerDown={(event) => event.stopPropagation()}
-                                    onClick={(event) => {
-                                      event.preventDefault();
-                                      event.stopPropagation();
-                                      excludeProject(project.projectKey);
-                                    }}
-                                  >
-                                    <EyeOffIcon className="size-3.5" />
-                                  </Button>
-                                  <Button
-                                    size="icon-xs"
-                                    variant="ghost-muted"
-                                    tabIndex={-1}
-                                    aria-hidden="true"
-                                    title={gt("Project settings for {project}", {
-                                      project: project.displayName,
-                                    })}
-                                    onPointerDown={(event) => event.stopPropagation()}
-                                    onClick={(event) => {
-                                      void handleProjectSettings(event, project);
-                                    }}
-                                  >
-                                    <SettingsIcon className="size-3.5" />
-                                  </Button>
+                                    <Button
+                                      size="icon-xs"
+                                      variant="ghost-muted"
+                                      tabIndex={-1}
+                                      aria-label={
+                                        excludedProject?.projectKey === project.projectKey
+                                          ? gt("Show all projects")
+                                          : gt("Exclude {project}", {
+                                              project: project.displayName,
+                                            })
+                                      }
+                                      title={
+                                        excludedProject?.projectKey === project.projectKey
+                                          ? gt("Show all projects")
+                                          : gt("Exclude {project}", {
+                                              project: project.displayName,
+                                            })
+                                      }
+                                      onPointerDown={(event) => event.stopPropagation()}
+                                      onClick={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        excludeProject(project.projectKey);
+                                      }}
+                                    >
+                                      <EyeOffIcon className="size-3.5" />
+                                    </Button>
+                                    <Button
+                                      size="icon-xs"
+                                      variant="ghost-muted"
+                                      tabIndex={-1}
+                                      aria-hidden="true"
+                                      title={gt("Project settings for {project}", {
+                                        project: project.displayName,
+                                      })}
+                                      onPointerDown={(event) => event.stopPropagation()}
+                                      onClick={(event) => {
+                                        void handleProjectSettings(event, project);
+                                      }}
+                                    >
+                                      <SettingsIcon className="size-3.5" />
+                                    </Button>
                                   </>
                                 }
                               />
@@ -3553,17 +3580,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               ) : scopedProjectGroups.length > 0 || excludedProject ? (
                 <>
                   <span>
-                    {excludedProject ? gt("No threads match this filter.") : settledCount > 0
-                      ? scopedProjectGroups.length > 1
-                        ? gt("No active threads in these projects")
-                        : gt("No active threads in {project}", {
-                            project: scopedProjectGroups[0]!.displayName,
-                          })
-                      : scopedProjectGroups.length > 1
-                        ? gt("No threads in these projects yet")
-                        : gt("No threads in {project} yet", {
-                            project: scopedProjectGroups[0]!.displayName,
-                          })}
+                    {excludedProject
+                      ? gt("No threads match this filter.")
+                      : settledCount > 0
+                        ? scopedProjectGroups.length > 1
+                          ? gt("No active threads in these projects")
+                          : gt("No active threads in {project}", {
+                              project: scopedProjectGroups[0]!.displayName,
+                            })
+                        : scopedProjectGroups.length > 1
+                          ? gt("No threads in these projects yet")
+                          : gt("No threads in {project} yet", {
+                              project: scopedProjectGroups[0]!.displayName,
+                            })}
                   </span>
                   <button
                     type="button"

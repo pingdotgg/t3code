@@ -150,6 +150,9 @@ export function HomeRouteScreen() {
   );
   const selectedProjectKey =
     resolveHomeProjectFilterScope(projectScopes, projects, listOptions)?.key ?? null;
+  const excludedProjectKey = projectFilterOptions.some((project) => project.key === listOptions.excludedProjectKey)
+    ? listOptions.excludedProjectKey
+    : undefined;
 
   if (layout.usesSplitView && !nativePrimaryColumn) {
     return (
@@ -174,14 +177,17 @@ export function HomeRouteScreen() {
             accessibilityLabel: gt("Search threads"),
           }}
           filter={{
-            customized: selectedEnvironmentId !== null || selectedProjectKey !== null || !!listOptions.excludedProjectKey,
+            customized:
+              selectedEnvironmentId !== null ||
+              selectedProjectKey !== null ||
+              !!excludedProjectKey,
             items: buildHomeListFilterMenuItems(
               {
                 environments,
                 projects: projectFilterOptions,
                 selectedEnvironmentId,
                 selectedProjectKey,
-                excludedProjectKey: listOptions.excludedProjectKey,
+                excludedProjectKey,
                 onExcludeProject: setExcludedProjectKey,
                 onEnvironmentChange: setSelectedEnvironmentId,
                 onProjectChange: setSelectedProjectKey,
@@ -210,7 +216,7 @@ export function HomeRouteScreen() {
           onEnvironmentChange={setSelectedEnvironmentId}
           onProjectChange={setSelectedProjectKey}
           onExcludeProject={setExcludedProjectKey}
-          excludedProjectKey={listOptions.excludedProjectKey}
+          excludedProjectKey={excludedProjectKey}
           onOpenSettings={() => selectTab("settings")}
           onSearchQueryChange={setSearchQuery}
           onSelectThread={handleSelectThread}

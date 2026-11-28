@@ -5,7 +5,11 @@ import type {
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildHomeProjectScopes, findHomeProjectScope, homeProjectFilterRefs } from "./homeThreadList";
+import {
+  buildHomeProjectScopes,
+  findHomeProjectScope,
+  homeProjectFilterRefs,
+} from "./homeThreadList";
 import { makeThreadShellFixture } from "../../test-fixtures";
 import { buildThreadListV2Items } from "../threads/threadListV2";
 
@@ -85,7 +89,9 @@ describe("home project scopes", () => {
     expect(scopes).toHaveLength(2);
     const scratchScope = scopes.find((scope) => scope.representative.isScratch)!;
     const excludeScratchRefs = homeProjectFilterRefs(scopes, null, scratchScope.key);
-    expect(excludeScratchRefs).toEqual([{ environmentId: remoteEnvironmentId, projectId: projects[2]!.id }]);
+    expect(excludeScratchRefs).toEqual([
+      { environmentId: remoteEnvironmentId, projectId: projects[2]!.id },
+    ]);
     expect(homeProjectFilterRefs([scratchScope], null, scratchScope.key)).toEqual([]);
     expect(homeProjectFilterRefs(scopes, null, "missing-project")).toBeNull();
     const filtered = buildThreadListV2Items({

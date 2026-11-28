@@ -225,7 +225,9 @@ describe("uiStateStore persistence", () => {
 
     expect(parsePersistedState(persisted).sidebarProjectScopeKeys).toEqual(keys);
     persistState(makeUiState({ sidebarExcludedProjectScopeKey: keys[0]! }));
-    const excluded = JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}") as PersistedUiState;
+    const excluded = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
     expect(parsePersistedState(excluded).sidebarExcludedProjectScopeKey).toBe(keys[0]);
   });
 

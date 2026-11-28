@@ -125,7 +125,7 @@ export function homeProjectFilterRefs(
   const excluded = findHomeProjectScope(pickableProjectGroups(scopes), excludedProjectKey ?? null);
   return excluded
     ? scopes.filter((scope) => scope.key !== excluded.key).flatMap((scope) => scope.projectRefs)
-    : selected?.projectRefs ?? null;
+    : (selected?.projectRefs ?? null);
 }
 
 export function sortHomeProjectScopes(input: {

@@ -27,7 +27,9 @@ export function ThreadListFilters(props: {
   const selectedProject = props.projects.find(
     (project) => project.key === props.selectedProjectKey,
   );
-  const excludedProject = props.projects.find((project) => project.key === props.excludedProjectKey);
+  const excludedProject = props.projects.find(
+    (project) => project.key === props.excludedProjectKey,
+  );
   return (
     <ScrollView
       horizontal
@@ -65,7 +67,11 @@ export function ThreadListFilters(props: {
         }}
       />
       <ListFilterMenu
-        label={excludedProject ? gt("All except {project}", { project: excludedProject.label }) : selectedProject?.label ?? gt("All projects")}
+        label={
+          excludedProject
+            ? gt("All except {project}", { project: excludedProject.label })
+            : (selectedProject?.label ?? gt("All projects"))
+        }
         accessibilityLabel={gt("Filter threads by project")}
         active={selectedProject !== undefined || excludedProject !== undefined}
         actions={[
@@ -79,15 +85,20 @@ export function ThreadListFilters(props: {
             title: project.label,
             state: project.key === props.selectedProjectKey ? ("on" as const) : ("off" as const),
           })),
-          ...(props.onExcludeProject ? [{
-            id: "exclude",
-            title: gt("Exclude project"),
-            subactions: props.projects.map((project) => ({
-              id: `exclude:${project.key}`,
-              title: project.label,
-              state: project.key === excludedProject?.key ? ("on" as const) : ("off" as const),
-            })),
-          }] : []),
+          ...(props.onExcludeProject
+            ? [
+                {
+                  id: "exclude",
+                  title: gt("Exclude project"),
+                  subactions: props.projects.map((project) => ({
+                    id: `exclude:${project.key}`,
+                    title: project.label,
+                    state:
+                      project.key === excludedProject?.key ? ("on" as const) : ("off" as const),
+                  })),
+                },
+              ]
+            : []),
         ]}
         onSelect={(id) => {
           if (id === "all") props.onProjectChange(null);
@@ -100,7 +111,9 @@ export function ThreadListFilters(props: {
           }
         }}
       />
-      {props.selectedEnvironmentId !== null || props.selectedProjectKey !== null || excludedProject ? (
+      {props.selectedEnvironmentId !== null ||
+      props.selectedProjectKey !== null ||
+      excludedProject ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={gt("Reset thread filters")}

@@ -44,7 +44,9 @@ export function buildHomeListFilterMenuItems(
   },
   resolve: MessageResolver = m,
 ): AppBarMenuItem[] {
-  const excludedProject = props.projects.find((project) => project.key === props.excludedProjectKey);
+  const excludedProject = props.projects.find(
+    (project) => project.key === props.excludedProjectKey,
+  );
   const items: AppBarMenuItem[] = [
     {
       id: "environment",
@@ -87,16 +89,20 @@ export function buildHomeListFilterMenuItems(
           selected: props.selectedProjectKey === project.key,
           onPress: () => props.onProjectChange(project.key),
         })),
-        ...(props.onExcludeProject ? [{
-          id: "project:exclude",
-          title: resolve(msg("Exclude project")),
-          items: props.projects.map((project) => ({
-            id: `exclude:${project.key}`,
-            title: project.label,
-            selected: props.excludedProjectKey === project.key,
-            onPress: () => props.onExcludeProject?.(project.key),
-          })),
-        }] : []),
+        ...(props.onExcludeProject
+          ? [
+              {
+                id: "project:exclude",
+                title: resolve(msg("Exclude project")),
+                items: props.projects.map((project) => ({
+                  id: `exclude:${project.key}`,
+                  title: project.label,
+                  selected: props.excludedProjectKey === project.key,
+                  onPress: () => props.onExcludeProject?.(project.key),
+                })),
+              },
+            ]
+          : []),
       ],
     });
   }
