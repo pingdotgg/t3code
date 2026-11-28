@@ -313,14 +313,14 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           extractSubagentSessionEvent: extractClaudeSubagentSessionEvent,
         }
       : {}),
-    // Hermes replies on the root session when a background process it started exits; no
-    // prompt response follows, so the continuation ends on the deferred-finalize debounce.
+    // Hermes, agy and Kimi Code reply on the root session when work they left running ends;
+    // no prompt response follows, so the continuation ends on the deferred-finalize debounce.
     // Hermes is not in the public registry and may run through a wrapper, so only its
-    // initialize reply identifies it. agy does the same and is known by its command.
+    // initialize reply identifies it.
     enablePostSettleContinuation: (initializeResult) =>
-      isAntigravityCli || isHermes(initializeResult),
+      isAntigravityCli || isKimi || isHermes(initializeResult),
     deferFinalizeForBackgroundWork: (initializeResult) =>
-      isAntigravityCli || isHermes(initializeResult),
+      isAntigravityCli || isKimi || isHermes(initializeResult),
     ...(isDevin
       ? {
           clientCapabilitiesMeta: {

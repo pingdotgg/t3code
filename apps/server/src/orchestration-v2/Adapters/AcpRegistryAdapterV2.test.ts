@@ -452,11 +452,14 @@ const claudeUnrelatedChildren = [
 ];
 
 describe("AcpRegistryAdapterV2", () => {
+  // Kimi Code answers `session/prompt` while a detached shell task runs, then starts a turn of
+  // its own when that task ends.
   it.effect.each([
-    { commandPath: "/root/.local/bin/agy", offers: 1 },
-    { commandPath: "C:\\tools\\agy.exe", offers: 1 },
-    { commandPath: "/opt/bin/other-agent", offers: 0 },
-  ])("continues late output only for agy ($commandPath)", ({ commandPath, offers }) =>
+    { name: "agy", agent: { source: "local", commandPath: "/root/.local/bin/agy" }, offers: 1 },
+    { name: "agy.exe", agent: { source: "local", commandPath: "C:\\tools\\agy.exe" }, offers: 1 },
+    { name: "kimi-code", agent: "kimi-code", offers: 1 },
+    { name: "other", agent: { source: "local", commandPath: "/opt/bin/other-agent" }, offers: 0 },
+  ])("continues late output only for self-resuming agents ($name)", ({ agent, offers }) =>
     Effect.gen(function* () {
       const gate = makeProviderReplayGate(["wake"]);
       const update = (sessionUpdate: Record<string, unknown>) =>
@@ -504,13 +507,13 @@ describe("AcpRegistryAdapterV2", () => {
         ],
         gate,
         true,
-        { source: "local", commandPath, commandArgs: ["acp"] },
+        agent,
       );
       yield* session.runtime.startTurn(session.turnInput(1));
       assert.equal((yield* session.terminal).status, "completed");
       gate.release("wake");
       yield* session.throughMarker("late output received");
-      assert.lengthOf(session.offers, offers, "late output must only wake agy");
+      assert.lengthOf(session.offers, offers, "late output must only wake self-resuming agents");
       if (offers === 0) return;
       yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
       yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
