@@ -16,7 +16,10 @@ import { McpAppFrame } from "./McpAppFrame";
 import { readResponseSubagents, useAssistantMessageText } from "../../state/entities";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { AssistantCitationSource } from "./AssistantCitationSource";
-import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
+import {
+  isQuotableAssistantMessage,
+  resolveAssistantMessageCopyState,
+} from "./MessagesTimeline.logic";
 import { cn } from "~/lib/utils";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { readThreadTurnItems } from "../../state/entities";
@@ -48,6 +51,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             itemKey={row.id}
             request={ctx.citationRequest}
             listRef={ctx.listRef}
+            quotable={isQuotableAssistantMessage(row.projectedItem?.item.nativeItemRef)}
           >
             <ChatMarkdown
               text={messageText}
@@ -108,6 +112,7 @@ export function SentMessageTimelineRow({
         itemKey={row.id}
         request={ctx.citationRequest}
         listRef={ctx.listRef}
+        quotable
       >
         <ChatMarkdown
           text={row.text}
@@ -234,7 +239,9 @@ function AssistantMessageMeta({
       {projectedItem?.item.type === "assistant_message" ? (
         <AssistantForkButton projectedItem={projectedItem} />
       ) : null}
-      {!message.streaming && projectedItem ? (
+      {!message.streaming &&
+      projectedItem &&
+      isQuotableAssistantMessage(projectedItem.item.nativeItemRef) ? (
         <AssistantReplyButton message={message} itemId={projectedItem.sourceItemId} />
       ) : null}
       {!message.streaming && (
