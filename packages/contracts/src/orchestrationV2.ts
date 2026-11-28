@@ -655,6 +655,7 @@ export function withMessageSenderNote(
     readonly scheduledTaskId?: ScheduledTaskId | undefined;
     readonly senderThreadId?: ThreadId | undefined;
     readonly linkedSender?: OrchestrationV2LinkedSender | undefined;
+    readonly sentFrom?: string | undefined;
   },
   text: string,
 ): string {
@@ -668,7 +669,9 @@ export function withMessageSenderNote(
           ? `[T3 Code: scheduled task ${JSON.stringify(message.scheduledTaskId)} sent this prompt, not the user typing in this chat.]`
           : agent && message.creationSource === "mcp"
             ? "[T3 Code: this message came through T3 Code's tools, not from the user typing in this chat.]"
-            : undefined;
+            : message.createdBy === "user" && message.sentFrom !== undefined
+              ? `[T3 Code: ${message.sentFrom}]`
+              : undefined;
   if (note === undefined || LEADING_COMMAND.test(text)) return text;
   return text === "" ? note : `${note}\n\n${text}`;
 }
@@ -1537,6 +1540,8 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
   followsThreadSelection: Schema.optional(Schema.Literal(true)),
   senderThreadId: Schema.optional(ThreadId),
   linkedSender: Schema.optional(OrchestrationV2LinkedSender),
+  /** Server-stamped summary of the client connection that sent this message; stripped on wire. */
+  sentFrom: Schema.optional(TrimmedNonEmptyString),
   idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
   /**
    * The message is the script a provider-native workflow run executes, not prose. Clients show
@@ -3372,6 +3377,7 @@ export const OrchestrationV2Command = Schema.Union([
         titleSeed: Schema.optional(TrimmedNonEmptyString),
         scheduledTaskId: Schema.optional(ScheduledTaskId),
         senderThreadId: Schema.optional(ThreadId),
+        sentFrom: Schema.optional(TrimmedNonEmptyString),
         outputSchema: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
         workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
       }),
@@ -3625,6 +3631,8 @@ export const OrchestrationV2Command = Schema.Union([
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
     linkedSender: Schema.optional(OrchestrationV2LinkedSender),
+    /** Server-stamped for client connections; client-supplied values are stripped. */
+    sentFrom: Schema.optional(TrimmedNonEmptyString),
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     /** Start a new provider session without the thread's earlier context. Never steers. */
     freshContext: Schema.optional(Schema.Boolean),

@@ -23,8 +23,10 @@ import { ChildProcessSpawner } from "effect/process";
 import { vi } from "vite-plus/test";
 
 import {
+  buildDevRunnerState,
   checkPortAvailabilityOnHosts,
   createDevRunnerEnv,
+  DEV_RUNNER_STATE_FILE,
   findFirstAvailableOffset,
   resolveModePortOffsets,
   runDevRunnerWithInput,
@@ -79,6 +81,51 @@ const devServerInput = {
 } as const;
 
 it.layer(NodeServices.layer)("dev-runner", (it) => {
+  describe("buildDevRunnerState", () => {
+    const env = { PORT: "5760", T3CODE_PORT: "13800", T3CODE_DEV_AUTH_TOKEN: "secret-token" };
+
+    it("records ports and URLs without persisting auth tokens", () => {
+      const state = buildDevRunnerState({
+        mode: "dev",
+        pid: 42,
+        env,
+        tailnetUrl: "https://box.example.ts.net:5760/",
+      });
+      assert.deepEqual(state, {
+        pid: 42,
+        mode: "dev",
+        serverPort: 13800,
+        webPort: 5760,
+        localUrl: "http://localhost:5760/",
+        tailnetUrl: "https://box.example.ts.net:5760/",
+      });
+      assert.notInclude(JSON.stringify(state), "secret-token");
+    });
+
+    it("points localUrl at the backend port in --built mode and omits web fields for dev:server", () => {
+      const built = buildDevRunnerState({
+        mode: "dev",
+        pid: 42,
+        env,
+        tailnetUrl: "https://box.example.ts.net:5760/",
+        built: true,
+      });
+      assert.equal(built.webPort, null);
+      assert.equal(built.localUrl, "http://localhost:13800/");
+      assert.equal(built.tailnetUrl, "https://box.example.ts.net:5760/");
+
+      const serverOnly = buildDevRunnerState({
+        mode: "dev:server",
+        pid: 42,
+        env,
+        tailnetUrl: undefined,
+      });
+      assert.equal(serverOnly.webPort, null);
+      assert.equal(serverOnly.localUrl, null);
+      assert.equal(serverOnly.tailnetUrl, null);
+    });
+  });
+
   describe("createDevRunnerEnv", () => {
     it.effect("forwards the reusable auth token to web dev and removes it for desktop", () =>
       Effect.gen(function* () {
@@ -535,6 +582,49 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           // A failed build never blocks dev.
           assert.equal(spawned.at(-1)?.command, "vp");
         }),
+    );
+
+    it.effect("writes dev-runner.json while running and removes it on exit", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const t3Home = yield* fs.makeTempDirectoryScoped({ prefix: "dev-runner-state-" });
+        const stateFile = NodePath.join(t3Home, DEV_RUNNER_STATE_FILE);
+        let observedDuringRun: string | undefined;
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const spawn = command as unknown as { readonly command: string };
+            if (spawn.command === "vp") {
+              observedDuringRun = NodeFS.readFileSync(stateFile, "utf8");
+            }
+            return Effect.succeed(mockProcess(0));
+          }),
+        );
+
+        yield* runDevRunnerWithInput({ ...devServerInput, t3Home }).pipe(
+          Effect.scoped,
+          Effect.provide([emptyConfigLayer, netServiceLayer, spawnerLayer]),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            exists: (file) =>
+              NodePath.basename(file) === "t3-resource-monitor"
+                ? Effect.succeed(true)
+                : fs.exists(file),
+          }),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        );
+
+        assert.isDefined(observedDuringRun);
+        const parsed = JSON.parse(observedDuringRun!) as {
+          mode: string;
+          pid: number;
+          serverPort: number;
+        };
+        assert.equal(parsed.mode, "dev:server");
+        assert.equal(parsed.pid, process.pid);
+        assert.isNumber(parsed.serverPort);
+        assert.isFalse(yield* fs.exists(stateFile));
+      }),
     );
 
     it.effect("ignores an ambient T3CODE_HOME when no home is resolved", () =>

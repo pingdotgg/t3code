@@ -737,6 +737,72 @@ interface DevRunnerCliInput {
   readonly runArgs: ReadonlyArray<string>;
 }
 
+export const DEV_RUNNER_STATE_FILE = "dev-runner.json";
+
+export interface DevRunnerState {
+  readonly pid: number;
+  readonly mode: DevMode;
+  readonly serverPort: number;
+  readonly webPort: number | null;
+  readonly localUrl: string | null;
+  readonly tailnetUrl: string | null;
+}
+
+export function buildDevRunnerState(input: {
+  readonly mode: DevMode;
+  readonly pid: number;
+  readonly env: NodeJS.ProcessEnv;
+  readonly tailnetUrl: string | undefined;
+  readonly built?: boolean;
+}): DevRunnerState {
+  const serverPort = Number(input.env.T3CODE_PORT);
+  const runsVite = (input.mode === "dev" && input.built !== true) || input.mode === "dev:web";
+  const webPort = runsVite ? Number(input.env.PORT) : null;
+  const localUrl =
+    webPort !== null
+      ? `http://localhost:${String(webPort)}/`
+      : input.mode === "dev" && input.built === true
+        ? `http://localhost:${String(serverPort)}/`
+        : null;
+  const tailnetUrl =
+    input.mode === "dev" || input.mode === "dev:web" ? (input.tailnetUrl ?? null) : null;
+  return {
+    pid: input.pid,
+    mode: input.mode,
+    serverPort,
+    webPort,
+    localUrl,
+    tailnetUrl,
+  };
+}
+
+const encodeDevRunnerState = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Unknown, { space: 2 }),
+);
+
+const writeDevRunnerState = Effect.fn("dev-runner.writeDevRunnerState")(function* (
+  dir: string,
+  state: DevRunnerState,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const file = path.join(dir, DEV_RUNNER_STATE_FILE);
+  yield* Effect.acquireRelease(
+    encodeDevRunnerState(state).pipe(
+      Effect.flatMap((json) =>
+        fs
+          .makeDirectory(dir, { recursive: true })
+          .pipe(Effect.andThen(fs.writeFileString(file, `${json}\n`))),
+      ),
+    ),
+    () => fs.remove(file, { force: true }).pipe(Effect.ignore),
+  ).pipe(
+    Effect.catch((error) =>
+      Effect.logWarning(`[dev-runner] could not write ${file}: ${error.message}`),
+    ),
+  );
+});
+
 export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput")(function* (
   input: DevRunnerCliInput,
 ) {
@@ -832,6 +898,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
 
   const sharedWebPort = BASE_WEB_PORT + webOffset;
   let built = false;
+  let tailnetUrl: string | undefined;
   if (input.share) {
     if (input.mode === "dev:server") {
       yield* Effect.logInfo("[dev-runner] --share has no effect for dev:server (no web server).");
@@ -906,6 +973,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
           // few chunk requests.
           env.T3CODE_BUNDLED_DEV = "1";
         }
+        tailnetUrl = shared.url;
         yield* Effect.logInfo(`[dev-runner] shared on tailnet: ${shared.url}`);
       } else if (input.built) {
         yield* Effect.logWarning(
@@ -913,6 +981,22 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
         );
       }
     }
+  }
+
+  // Only runners that hold the state-dir lock write dev-runner.json, never into ~/.t3 root.
+  if (input.mode !== "dev:web") {
+    const path = yield* Path.Path;
+    const stateFileDir = env.T3CODE_HOME ?? path.join(baseDir, "dev");
+    yield* writeDevRunnerState(
+      stateFileDir,
+      buildDevRunnerState({
+        mode: input.mode,
+        pid: process.pid,
+        env,
+        tailnetUrl,
+        built,
+      }),
+    );
   }
 
   // After sharing, so the warm step sees the same bundled-dev env as Vite.

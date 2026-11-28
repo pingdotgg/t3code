@@ -748,6 +748,35 @@ describe("withMessageSenderNote", () => {
       "Hi",
       "[T3 Code: this message came through T3 Code's tools, not from the user typing in this chat.]\n\nHi",
     ],
+    [
+      {
+        createdBy: "user",
+        creationSource: "mobile",
+        sentFrom: "User sent this message from T3 Code mobile on iOS via T3 Connect.",
+      },
+      "Hi",
+      "[T3 Code: User sent this message from T3 Code mobile on iOS via T3 Connect.]\n\nHi",
+    ],
+    [
+      {
+        createdBy: "user",
+        creationSource: "mobile",
+        sentFrom: "User sent this message from T3 Code mobile on iOS via T3 Connect.",
+      },
+      "/compact",
+      "/compact",
+    ],
+    [
+      {
+        createdBy: "user",
+        creationSource: "web",
+        scheduledTaskId: ScheduledTaskId.make("s"),
+        sentFrom: "ignored for scheduled tasks",
+      },
+      "Hi",
+      '[T3 Code: scheduled task "s" sent this prompt, not the user typing in this chat.]\n\nHi',
+    ],
+    [{ createdBy: "system", creationSource: "server", sentFrom: "ignored for system" }, "Hi", "Hi"],
     [{ createdBy: "user", creationSource: "web" }, "Hi", "Hi"],
     [{ createdBy: "agent", creationSource: "server" }, "Hi", "Hi"],
   ] as const)("labels %j's message %j for the provider", (message, text, expected) => {

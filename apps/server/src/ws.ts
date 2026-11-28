@@ -810,6 +810,106 @@ const isClientWebDeployment = Schema.is(ClientWebDeployment);
 const MAX_CLIENT_APP_VERSION_LENGTH = 64;
 const MAX_CLIENT_BROWSER_LENGTH = 64;
 const MAX_CLIENT_DEVICE_MODEL_LENGTH = 80;
+const MAX_HOST_HEADER_LENGTH = 255;
+const MAX_SERVER_LABEL_LENGTH = 64;
+const SAFE_HOST_HEADER = /^(?:\[[0-9a-fA-F:]+\]|[a-zA-Z0-9._-]+)(?::\d{1,5})?$/;
+const LOOPBACK_HOSTNAME = /^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])$/i;
+const CLIENT_SURFACE_LABELS = {
+  desktop: "T3 Code desktop",
+  web: "a web browser",
+  mobile: "T3 Code mobile",
+  cli: "T3 Code CLI",
+} as const;
+
+export interface ClientSentFrom {
+  readonly surface?: ClientSurface;
+  readonly os?: Exclude<ClientOs, "unknown">;
+  readonly deviceType?: Exclude<ClientDeviceType, "unknown">;
+  readonly connectionMethod?: Exclude<ClientConnectionMethod, "unknown">;
+  readonly host?: string;
+}
+
+/**
+ * Extracts connection metadata from a WebSocket upgrade request. Uses `Host`
+ * rather than peer IP because Tailscale Serve and the Vite dev proxy keep
+ * `Host` while connecting on loopback.
+ */
+export function readClientSentFrom(
+  request: HttpServerRequest.HttpServerRequest,
+): ClientSentFrom | undefined {
+  const url = requestUrl(request);
+  const params = Option.isSome(url) ? url.value.searchParams : new URLSearchParams();
+  const surface = params.get("clientSurface");
+  const os = params.get("clientOs");
+  const deviceType = params.get("clientDeviceType");
+  const connectionMethod = params.get("connectionMethod");
+  const rawHost = request.headers["host"]?.trim() ?? "";
+  const host =
+    rawHost !== "" && rawHost.length <= MAX_HOST_HEADER_LENGTH && SAFE_HOST_HEADER.test(rawHost)
+      ? rawHost
+      : undefined;
+  const info: ClientSentFrom = {
+    ...(isClientSurface(surface) ? { surface } : {}),
+    ...(isClientOs(os) && os !== "unknown" ? { os } : {}),
+    ...(isClientDeviceType(deviceType) && deviceType !== "unknown" ? { deviceType } : {}),
+    ...(isClientConnectionMethod(connectionMethod) && connectionMethod !== "unknown"
+      ? { connectionMethod }
+      : {}),
+    ...(host === undefined ? {} : { host }),
+  };
+  return Object.keys(info).length === 0 ? undefined : info;
+}
+
+function sanitizeServerLabel(label: string | undefined): string {
+  if (label === undefined) return "";
+  const cleaned = label
+    .replaceAll(/[\p{Cc}\p{Zl}\p{Zp}[\]]/gu, " ")
+    .replaceAll(/\s+/g, " ")
+    .trim();
+  return cleaned.length > MAX_SERVER_LABEL_LENGTH
+    ? `${cleaned.slice(0, MAX_SERVER_LABEL_LENGTH - 1).trimEnd()}…`
+    : cleaned;
+}
+
+export function formatClientSentFrom(
+  client: ClientSentFrom,
+  serverLabel?: string,
+): string | undefined {
+  const label = sanitizeServerLabel(serverLabel);
+  if (
+    client.surface === undefined &&
+    client.connectionMethod === undefined &&
+    client.host === undefined &&
+    label === ""
+  ) {
+    return undefined;
+  }
+  const surface =
+    client.surface === undefined ? "a T3 Code client" : CLIENT_SURFACE_LABELS[client.surface];
+  const os = client.os === undefined || client.os === "other" ? "" : ` on ${client.os}`;
+  const device =
+    client.deviceType === "phone" || client.deviceType === "tablet"
+      ? ` (${client.deviceType})`
+      : "";
+  const machine = label === "" ? "this machine" : `this machine (${label})`;
+  // Relay and SSH tunnels reach the server on loopback, so their route outranks `Host`.
+  let routeAndReach = ".";
+  if (client.connectionMethod === "relay") {
+    routeAndReach =
+      " via T3 Connect. The user is remote, so localhost URLs will not work for them.";
+  } else if (client.connectionMethod === "ssh") {
+    routeAndReach =
+      " via an SSH tunnel. The user is remote, so localhost URLs will not work for them.";
+  } else if (client.host !== undefined) {
+    const hostname = client.host.startsWith("[")
+      ? client.host.slice(0, client.host.indexOf("]") + 1)
+      : client.host.replace(/:\d+$/, "");
+    routeAndReach = LOOPBACK_HOSTNAME.test(hostname)
+      ? ` at ${client.host}. The user is at this machine, so localhost URLs work.`
+      : ` at ${client.host}. The user is remote; use ${hostname} instead of localhost in URLs for them.`;
+  }
+  return `User sent this message from ${surface}${os}${device} to ${machine}${routeAndReach}`;
+}
 
 function hasCompatibleOrchestrationProtocol(url: URL): boolean {
   return (
@@ -1461,6 +1561,7 @@ export const layerWsRpc = (
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
   reportProfiles: ServerBrowser.ProfileReporter,
   settingsClient: ServerSettings.SettingsClient,
+  clientSentFrom?: ClientSentFrom,
 ) =>
   Layer.effectContext(
     Effect.gen(function* () {
@@ -1604,6 +1705,12 @@ export const layerWsRpc = (
         yield* LayoutCommandApprovalWrites.LayoutCommandApprovalWrites;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+      const resolveMessageSentFrom =
+        clientSentFrom === undefined
+          ? Effect.undefined
+          : serverEnvironment.getDescriptor.pipe(
+              Effect.map(({ label }) => formatClientSentFrom(clientSentFrom, label)),
+            );
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
       yield* Effect.addFinalizer(() =>
@@ -2078,16 +2185,24 @@ export const layerWsRpc = (
                 .enqueueCommand(
                   (command.type === "prepared-run.retry"
                     ? threadLaunch.retryPreparation(command)
-                    : ThreadMessageIntake.dispatchCommand(
-                        ThreadManagementService.withCreationProvenance(command, {
-                          createdBy: "user",
-                          creationSource:
-                            "creationSource" in command ? command.creationSource : "web",
-                        }),
-                        {
-                          managesProviders:
-                            currentSession.scopes.includes(AuthProvidersManageScope),
-                        },
+                    : (command.type === "message.dispatch"
+                        ? resolveMessageSentFrom
+                        : Effect.undefined
+                      ).pipe(
+                        Effect.flatMap((sentFrom) =>
+                          ThreadMessageIntake.dispatchCommand(
+                            ThreadManagementService.withCreationProvenance(command, {
+                              createdBy: "user",
+                              creationSource:
+                                "creationSource" in command ? command.creationSource : "web",
+                              sentFrom,
+                            }),
+                            {
+                              managesProviders:
+                                currentSession.scopes.includes(AuthProvidersManageScope),
+                            },
+                          ),
+                        ),
                       )
                   ).pipe(Effect.provide(intakeContext)),
                 )
@@ -2262,6 +2377,11 @@ export const layerWsRpc = (
                     })
                     .pipe(
                       Effect.andThen(
+                        input.initialMessage === undefined
+                          ? Effect.undefined
+                          : resolveMessageSentFrom,
+                      ),
+                      Effect.flatMap((sentFrom) =>
                         ThreadMessageIntake.launchThread({
                           commandId: input.commandId,
                           ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
@@ -2289,6 +2409,7 @@ export const layerWsRpc = (
                                   ...(input.initialMessage.context === undefined
                                     ? {}
                                     : { context: input.initialMessage.context }),
+                                  ...(sentFrom === undefined ? {} : { sentFrom }),
                                 },
                               }),
                           createdBy: "user",
@@ -3922,6 +4043,7 @@ export const layer = Layer.unwrap(
               serverBrowser,
               reportProfiles,
               readSettingsClient(url.value),
+              readClientSentFrom(request),
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Handler-context reporters see only request defects, not server-wide defects.
