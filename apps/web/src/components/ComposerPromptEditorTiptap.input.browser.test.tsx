@@ -1294,6 +1294,27 @@ describe("Markdown markers around styled text", () => {
     );
     expect(textWithMark(editor, "bold")).toEqual(["hello", "world"]);
   });
+
+  it("leaves the text in place while a mouse drag selects into bold", async () => {
+    // Inserting markers mid-drag reflows the lines under a held pointer.
+    await using screen = await mountEditor("start **bold** after");
+    const { editor } = screen;
+    await focusAt(editor, "end");
+    expect(editor.state.doc.textContent).toBe("start bold after");
+    const { left, top } = editor.view.coordsAtPos(1);
+    using _release = {
+      [Symbol.dispose]: () =>
+        document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 })),
+    };
+    await act(async () => {
+      editor.view.dom.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, button: 0, clientX: left, clientY: top + 2 }),
+      );
+      editor.commands.setTextSelection({ from: 1, to: "start bo".length + 1 });
+    });
+    expect(editor.state.doc.textContent).toBe("start bold after");
+    expect(textWithMark(editor, "bold")).toEqual(["bold"]);
+  });
 });
 
 const file = {
