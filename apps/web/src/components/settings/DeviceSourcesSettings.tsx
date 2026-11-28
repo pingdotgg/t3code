@@ -1,6 +1,6 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useAtomValue } from "@effect/atom-react";
-import { Fragment, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m as resolveNow, type MessageResolver } from "../../i18n/messages";
 import * as Cause from "effect/Cause";
@@ -770,7 +770,7 @@ function PlatformIcon(props: {
                             : undefined;
                         return (
                           <dd key={environment.environmentId}>
-                            <span className="block truncate">{environment.label}</span>
+                            <span className="block break-words">{environment.label}</span>
                             {reason ? (
                               <span className="block text-muted-foreground">{reason}</span>
                             ) : null}
@@ -784,18 +784,18 @@ function PlatformIcon(props: {
             ) : null}
           </>
         ) : several ? (
-          <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+          <dl className="mt-2 space-y-1.5 text-xs">
             {props.known.map((environment) => {
               const entry = availability(environment);
               return (
-                <Fragment key={environment.environmentId}>
-                  <dt className="text-muted-foreground">{environment.label}</dt>
-                  <dd className={entry?.available ? "" : "text-muted-foreground"}>
+                <div key={environment.environmentId}>
+                  <dt className="break-words text-muted-foreground">{environment.label}</dt>
+                  <dd className={cn("break-words", !entry?.available && "text-muted-foreground")}>
                     {entry?.available
                       ? gt("Available", { $context: "device platform status" })
                       : (entry?.reason ?? gt("Not available"))}
                   </dd>
-                </Fragment>
+                </div>
               );
             })}
           </dl>
