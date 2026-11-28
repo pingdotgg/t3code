@@ -855,6 +855,13 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect(before.auth.workspaceId).toBeUndefined();
         expect(usageReads()).toBe(0);
 
+        // The limits-only refresh waits for usage access too.
+        yield* instance!.snapshot.refreshUsage!;
+        const limitsOnly = yield* instance!.snapshot.getSnapshot;
+        expect(limitsOnly.usageLimits?.resetCredits).toBeUndefined();
+        expect(limitsOnly.auth.workspaceId).toBeUndefined();
+        expect(usageReads()).toBe(0);
+
         yield* mutator.reconcile({ [instanceId]: { ...entry, usageAccess: "allowed" } });
         // Granting access keeps the running instance, so its sessions survive.
         expect(yield* registry.getInstance(instanceId)).toBe(instance);

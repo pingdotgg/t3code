@@ -286,7 +286,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       stateDir,
       processEnv,
     );
-    const resolveCapabilities = Cache.get(capabilitiesProbeCache, capabilitiesCacheKey).pipe(
+    // A probe holds the organization ID only if access was allowed, so a changed answer probes again.
+    const resolveCapabilities = usageAccess.pipe(
+      Effect.flatMap((allowed) =>
+        Cache.get(capabilitiesProbeCache, `${capabilitiesCacheKey}\0${allowed}`),
+      ),
       Effect.map((result) => result.capabilities),
     );
 
@@ -350,9 +354,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         Boolean(capabilities.subscriptionType) &&
         !capabilities.apiKeySource &&
         !processEnv.CLAUDE_CODE_OAUTH_TOKEN?.trim();
-      const workspaceId = usesSavedOAuth
-        ? yield* ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath)
-        : undefined;
+      const workspaceId = usesSavedOAuth ? yield* readOrganizationId : undefined;
       const auth =
         capabilities.email || workspaceId
           ? {
@@ -381,8 +383,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         response: capabilities.usage,
         checkedAt: capabilities.usageCheckedAt ?? checkedAt,
       });
+      // Reset credits need Claude's sign-in token, which T3 reads only with usage access.
       const resetCredits =
-        usesSavedOAuth && !usageLimits.unavailable && version
+        usesSavedOAuth && !usageLimits.unavailable && version && (yield* usageAccess)
           ? yield* ClaudeResetCredits.readClaudeResetCredits(configDir, version)
           : undefined;
       return {
