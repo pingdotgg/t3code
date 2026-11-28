@@ -1366,6 +1366,45 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  // A socket stalls in the foreground (no wakeup, retry or network
+  // change) while its host keeps answering fresh requests.
+  it.effect(
+    "replaces a tailnet socket that goes silent while connected, before the ping timeout",
+    () =>
+      Effect.gen(function* () {
+        const tailnetTarget = new BearerConnectionTarget({
+          environmentId: TARGET.environmentId,
+          label: TARGET.label,
+          connectionId: "bearer:tailnet",
+        });
+        const entry: ConnectionCatalogEntry = {
+          target: tailnetTarget,
+          profile: Option.some(
+            new BearerConnectionProfile({
+              connectionId: tailnetTarget.connectionId,
+              environmentId: TARGET.environmentId,
+              label: TARGET.label,
+              httpBaseUrl: "http://100.100.1.2:3773/",
+              wsBaseUrl: "ws://100.100.1.2:3773/",
+              network: "tailscale",
+            }),
+          ),
+          enabled: true,
+        };
+        const harness = yield* makeSilentSocketHarness();
+        const supervisor = yield* EnvironmentSupervisor.make(entry, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        // Well under PING_TIMEOUT (15 s), which is all that catches it today.
+        yield* TestClock.adjust("10 seconds");
+
+        expect(yield* Ref.get(harness.hostChecks)).toContain("BearerConnectionTarget");
+        expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("replaces a silent remote socket without the wait after a long resume", () =>
     Effect.gen(function* () {
       const harness = yield* makeSilentSocketHarness();
