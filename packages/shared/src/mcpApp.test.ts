@@ -33,8 +33,16 @@ describe("mcpAppContentSecurityPolicy", () => {
       resourceDomains: ["https://*.cdn.test"],
     });
     expect(policy).toContain("connect-src https://api.weather.test");
-    expect(policy).toContain("script-src 'unsafe-inline' https://*.cdn.test");
+    expect(policy).toContain("script-src 'unsafe-inline' 'wasm-unsafe-eval' https://*.cdn.test");
     expect(policy).toContain("img-src data: blob: https://*.cdn.test");
+  });
+
+  it("lets apps compile WebAssembly without allowing eval", () => {
+    const scriptSrc = mcpAppContentSecurityPolicy(undefined)
+      .split("; ")
+      .find((directive) => directive.startsWith("script-src "));
+    expect(scriptSrc?.split(" ")).toContain("'wasm-unsafe-eval'");
+    expect(scriptSrc?.split(" ")).not.toContain("'unsafe-eval'");
   });
 });
 
