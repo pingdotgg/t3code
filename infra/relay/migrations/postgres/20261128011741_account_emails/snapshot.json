@@ -1,0 +1,76 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "c03aea89-cf0b-4dc3-a594-1081cf331a6c",
+  "prevIds": ["c58e2276-0d00-42cd-a1aa-ea505a1be53e"],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": ["table", "public", "relay_account_emails"],
+      "writes": [
+        "s|tbl|public.relay_account_emails",
+        "n|tbl|public.relay_account_emails",
+        "e|tbl|public.relay_account_emails",
+        "n|rel|public.relay_account_emails",
+        "n|type|public.relay_account_emails",
+        "n|rel|public.relay_account_emails_pkey"
+      ],
+      "reads": ["n|sch|public"]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "relay_account_emails",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_account_emails",
+        "name": "user_id",
+        "type": "varchar(255)",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_account_emails",
+        "name": "email",
+        "type": "varchar(320)",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_account_emails",
+        "name": "relay_account_emails_pkey",
+        "columns": ["user_id"],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    }
+  ]
+}

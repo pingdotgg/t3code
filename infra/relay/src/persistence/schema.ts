@@ -202,6 +202,13 @@ export const relayDpopProofs = pgTable(
   ],
 );
 
+// Each Connect account's primary email, kept from Clerk's `user.created` and `user.updated`
+// webhooks because `user.deleted` carries no address. A deletion moves it to `notify_email`.
+export const relayAccountEmails = pgTable("relay_account_emails", {
+  userId: varchar("user_id", { length: 255 }).primaryKey(),
+  email: varchar("email", { length: 320 }).notNull(),
+});
+
 // Clerk account deletions: pending until a pass succeeds after every relay token issued before
 // the request has expired, then kept as the record of what was deleted and when. Re-run after a
 // backup restore by clearing completed_at.

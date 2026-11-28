@@ -56,7 +56,7 @@ const clerkRequest = Effect.fn(function* (
 });
 
 describe("Clerk webhook", () => {
-  it.effect("records a deletion only for a signed user.deleted event", () => {
+  it.effect("keeps the primary email from user events and records signed deletions", () => {
     const requested: Array<string> = [];
     const respond = (request: ReturnType<typeof clerkRequest>) =>
       request.pipe(
@@ -71,18 +71,29 @@ describe("Clerk webhook", () => {
           clerkRequest(userDeleted, { key: new TextEncoder().encode("some-other-signing-key") }),
         ),
       ).toBe(401);
-      expect(yield* respond(clerkRequest({ type: "user.created", data: { id: "user_2" } }))).toBe(
-        204,
-      );
       expect(requested).toEqual([]);
+      const userUpdated = {
+        type: "user.updated",
+        data: {
+          id: "user_1",
+          primary_email_address_id: "idn_2",
+          email_addresses: [
+            { id: "idn_1", email_address: "old@example.com" },
+            { id: "idn_2", email_address: "primary@example.com" },
+          ],
+        },
+      };
+      expect(yield* respond(clerkRequest(userUpdated))).toBe(200);
       expect(yield* respond(clerkRequest(userDeleted))).toBe(200);
-      expect(requested).toEqual(["user_1"]);
+      expect(requested).toEqual(["email user_1 primary@example.com", "delete user_1"]);
     }).pipe(
       Effect.provideService(RelayConfiguration.RelayConfiguration, config),
       Effect.provide(
         Layer.mergeAll(
           Layer.mock(AccountDeletion.AccountDeletion, {
-            request: ({ userId }) => Effect.sync(() => void requested.push(userId)),
+            recordEmail: ({ userId, email }) =>
+              Effect.sync(() => void requested.push(`email ${userId} ${email}`)),
+            request: ({ userId }) => Effect.sync(() => void requested.push(`delete ${userId}`)),
           }),
           Mac.layerWebCrypto.pipe(Layer.provide(SecureRandom.layerWebCrypto)),
         ),
@@ -210,6 +221,7 @@ describe("AccountDeletion", () => {
           "delete relay_mobile_devices user_1",
           "delete relay_delivery_attempts user_1",
           "delete relay_managed_tunnel_limits user_1",
+          "delete relay_account_emails user_1",
           "unlink-t3chat user_1",
         ]);
 

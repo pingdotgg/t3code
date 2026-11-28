@@ -24,6 +24,7 @@ import * as HookInbox from "../hooks/HookInbox.ts";
 import { unlinkEnvironmentRecord } from "../http/Api.ts";
 import {
   relayAccountDeletions,
+  relayAccountEmails,
   relayAgentActivityRows,
   relayDeliveryAttempts,
   relayEnvironmentCredentials,
@@ -41,6 +42,7 @@ export class AccountDeletionFailed extends Schema.TaggedError<AccountDeletionFai
     userId: Schema.String,
     stage: Schema.Literals([
       "record-request",
+      "record-email",
       "list-environments",
       "clear-held-webhooks",
       "deprovision",
@@ -81,10 +83,14 @@ const identityKey = (identity: {
 export class AccountDeletion extends Context.Service<
   AccountDeletion,
   {
+    /** Keeps the address the deletion notice goes to; ignored once the account is deleted. */
+    readonly recordEmail: (input: {
+      readonly userId: string;
+      readonly email: string;
+    }) => Effect.Effect<void, AccountDeletionFailed>;
     /** Durably records a deletion; `processPending` carries it out. */
     readonly request: (input: {
       readonly userId: string;
-      readonly notifyEmail?: string;
     }) => Effect.Effect<void, AccountDeletionFailed>;
     readonly deleteAccount: (input: {
       readonly userId: string;
@@ -237,6 +243,8 @@ const make = Effect.gen(function* () {
           yield* db
             .delete(relayManagedTunnelLimits)
             .where(eq(relayManagedTunnelLimits.userId, userId));
+          // A `user.updated` delivered after the deletion can write the address back.
+          yield* db.delete(relayAccountEmails).where(eq(relayAccountEmails.userId, userId));
         }),
       )
       .pipe(
@@ -254,20 +262,58 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const request = Effect.fn("relay.account_deletion.request")(function* (input: {
+  const recordEmail = Effect.fn("relay.account_deletion.record_email")(function* (input: {
     readonly userId: string;
-    readonly notifyEmail?: string;
+    readonly email: string;
   }) {
-    yield* Effect.annotateCurrentSpan({ "relay.user_id": input.userId });
-    const now = DateTime.formatIso(yield* DateTime.now);
-    yield* db
-      .insert(relayAccountDeletions)
-      .values({ userId: input.userId, requestedAt: now, notifyEmail: input.notifyEmail ?? null })
-      .onConflictDoNothing()
+    const { userId, email } = input;
+    yield* Effect.annotateCurrentSpan({ "relay.user_id": userId });
+    yield* transactions
+      .withTransaction(
+        Effect.gen(function* () {
+          const deleted = yield* db
+            .select({ userId: relayAccountDeletions.userId })
+            .from(relayAccountDeletions)
+            .where(eq(relayAccountDeletions.userId, userId))
+            .limit(1);
+          if (deleted.length > 0) return;
+          yield* db
+            .insert(relayAccountEmails)
+            .values({ userId, email })
+            .onConflictDoUpdate({ target: relayAccountEmails.userId, set: { email } });
+        }),
+      )
       .pipe(
         Effect.mapError(
-          (cause) =>
-            new AccountDeletionFailed({ userId: input.userId, stage: "record-request", cause }),
+          (cause) => new AccountDeletionFailed({ userId, stage: "record-email", cause }),
+        ),
+      );
+  });
+
+  const request = Effect.fn("relay.account_deletion.request")(function* (input: {
+    readonly userId: string;
+  }) {
+    const { userId } = input;
+    yield* Effect.annotateCurrentSpan({ "relay.user_id": userId });
+    const now = DateTime.formatIso(yield* DateTime.now);
+    yield* transactions
+      .withTransaction(
+        Effect.gen(function* () {
+          const [known] = yield* db
+            .select({ email: relayAccountEmails.email })
+            .from(relayAccountEmails)
+            .where(eq(relayAccountEmails.userId, userId))
+            .limit(1);
+          yield* db
+            .insert(relayAccountDeletions)
+            .values({ userId, requestedAt: now, notifyEmail: known?.email ?? null })
+            .onConflictDoNothing();
+          yield* db.delete(relayAccountEmails).where(eq(relayAccountEmails.userId, userId));
+        }),
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) => new AccountDeletionFailed({ userId, stage: "record-request", cause }),
         ),
       );
   });
@@ -364,7 +410,7 @@ const make = Effect.gen(function* () {
     return { completed, failed };
   }).pipe(Effect.withSpan("relay.account_deletion.process_pending"));
 
-  return AccountDeletion.of({ request, deleteAccount, processPending });
+  return AccountDeletion.of({ recordEmail, request, deleteAccount, processPending });
 });
 
 export const layer = Layer.effect(AccountDeletion, make);
@@ -414,6 +460,25 @@ const ClerkEvent = Schema.fromJsonString(
 const decodeClerkEvent = Schema.decodeUnknownEffect(ClerkEvent);
 const ClerkDeletedUser = Schema.Struct({ id: Schema.String.check(Schema.isNonEmpty()) });
 const decodeClerkDeletedUser = Schema.decodeUnknownEffect(ClerkDeletedUser);
+const ClerkUser = Schema.Struct({
+  id: Schema.String.check(Schema.isNonEmpty()),
+  primary_email_address_id: Schema.NullOr(Schema.String),
+  email_addresses: Schema.Array(Schema.Struct({ id: Schema.String, email_address: Schema.String })),
+});
+const decodeClerkUser = Schema.decodeUnknownEffect(ClerkUser);
+
+const respondTo = <E extends { readonly cause: unknown }, R>(
+  recorded: Effect.Effect<void, E, R>,
+  message: string,
+) =>
+  recorded.pipe(
+    Effect.as(HttpServerResponse.empty({ status: 200 })),
+    Effect.catch((error) =>
+      Effect.logError(message, { cause: error.cause }).pipe(
+        Effect.as(HttpServerResponse.empty({ status: 500 })),
+      ),
+    ),
+  );
 
 export const handleClerkWebhook = Effect.fn("relay.account_deletion.clerk_webhook")(function* (
   request: HttpServerRequest.HttpServerRequest,
@@ -436,25 +501,38 @@ export const handleClerkWebhook = Effect.fn("relay.account_deletion.clerk_webhoo
     return HttpServerResponse.empty({ status: 400 });
   }
   yield* Effect.annotateCurrentSpan({ "relay.clerk_webhook.type": event.value.type });
-  if (event.value.type !== "user.deleted") {
-    return HttpServerResponse.empty({ status: 204 });
-  }
-  const user = yield* decodeClerkDeletedUser(event.value.data).pipe(Effect.option);
-  if (user._tag === "None") {
-    return HttpServerResponse.empty({ status: 400 });
-  }
   const accounts = yield* AccountDeletion;
-  // Once recorded, the deletion is ours to retry. Clerk retries only if recording fails.
-  // `user.deleted` carries no email address, so no notice is requested yet; pass `notifyEmail`
-  // here once the deletion flow can supply one.
-  return yield* accounts.request({ userId: user.value.id }).pipe(
-    Effect.as(HttpServerResponse.empty({ status: 200 })),
-    Effect.catch((error) =>
-      Effect.logError("Could not record account deletion", { cause: error.cause }).pipe(
-        Effect.as(HttpServerResponse.empty({ status: 500 })),
-      ),
-    ),
-  );
+  switch (event.value.type) {
+    case "user.created":
+    case "user.updated": {
+      const user = yield* decodeClerkUser(event.value.data).pipe(Effect.option);
+      if (user._tag === "None") {
+        return HttpServerResponse.empty({ status: 400 });
+      }
+      const { id, primary_email_address_id, email_addresses } = user.value;
+      const primary = email_addresses.find((address) => address.id === primary_email_address_id);
+      if (primary === undefined) {
+        return HttpServerResponse.empty({ status: 204 });
+      }
+      return yield* respondTo(
+        accounts.recordEmail({ userId: id, email: primary.email_address }),
+        "Could not record account email",
+      );
+    }
+    case "user.deleted": {
+      const user = yield* decodeClerkDeletedUser(event.value.data).pipe(Effect.option);
+      if (user._tag === "None") {
+        return HttpServerResponse.empty({ status: 400 });
+      }
+      // Once recorded, the deletion is ours to retry. Clerk retries only if recording fails.
+      return yield* respondTo(
+        accounts.request({ userId: user.value.id }),
+        "Could not record account deletion",
+      );
+    }
+    default:
+      return HttpServerResponse.empty({ status: 204 });
+  }
 });
 
 export const layerApi = HttpApiBuilder.group(
