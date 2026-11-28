@@ -162,7 +162,7 @@ export function parseGitRemoteRepository(
   options?: { readonly keepGitSuffix?: boolean },
 ): { readonly host: string; readonly path: string } | null {
   const dropSuffix = options?.keepGitSuffix ? (path: string) => path : stripGitSuffix;
-  const normalized = lowerCaseRemote(value, dropSuffix);
+  const normalized = lowerCaseRemote(value, (remote) => remote);
 
   if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
     try {
@@ -187,7 +187,8 @@ export function parseGitRemoteRepository(
   const scpHost = scpStyleHostAndPath?.[1];
   const scpPath = scpStyleHostAndPath?.[2];
   if (!scpHost || !scpPath) return null;
-  const path = canonicalRepositoryPath(scpPath);
+  const path = dropSuffix(canonicalRepositoryPath(scpPath)).replace(/\/+$/, "");
+  if (!path.includes("/")) return null;
   if (!scpHost.startsWith("[")) return { host: scpHost, path };
   try {
     // Spell an IPv6 host as the URL branch does, so `[::1]:a/b` and `ssh://[::1]/a/b` share a key.
