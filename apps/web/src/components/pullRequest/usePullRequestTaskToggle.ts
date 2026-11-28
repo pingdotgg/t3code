@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 
-import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskEdits";
 
 /**
  * Shows toggled tasks at once and saves each rewritten body in click order. The optimistic body
