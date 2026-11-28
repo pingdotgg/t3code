@@ -3285,6 +3285,7 @@ describe("v2 run and attempt history", () => {
           label: "Old command",
           tone: "tool" as const,
           projectedItem: {
+            sourceThreadId: "fork-source",
             sourceItemId: "old-work-anchor",
             item: {
               type: "command_execution",
@@ -3363,7 +3364,7 @@ describe("v2 run and attempt history", () => {
       runId,
       label: "Superseded attempt",
       expanded: false,
-      deferredWorkItemIds: ["old-work-anchor"],
+      deferredWorkAnchorKeys: ["fork-source\u001fold-work-anchor"],
     });
 
     const expandedRows = deriveMessagesTimelineRows({
@@ -3391,13 +3392,13 @@ describe("v2 run and attempt history", () => {
       expandedRunIds: new Set([runId]),
     });
     expect(settledRows.find((row) => row.kind === "attempt-fold")).toMatchObject({
-      deferredWorkItemIds: ["old-work-anchor"],
+      deferredWorkAnchorKeys: ["fork-source\u001fold-work-anchor"],
     });
     expect(
       settledRows
         .filter((row) => row.kind === "turn-fold")
-        .flatMap((row) => row.deferredWorkItemIds ?? []),
-    ).not.toContain("old-work-anchor");
+        .flatMap((row) => row.deferredWorkAnchorKeys ?? []),
+    ).not.toContain("fork-source\u001fold-work-anchor");
     const deferredTailRows = deriveMessagesTimelineRows({
       ...common,
       timelineEntries: [
@@ -3696,15 +3697,15 @@ it.each([
     createdAt: "2026-01-01T00:00:00Z",
     label: "Worked for 1m",
     expanded: true,
-    ...(before === undefined ? {} : { deferredWorkItemIds: before }),
+    ...(before === undefined ? {} : { deferredWorkAnchorKeys: before }),
   };
   const previous = computeStableMessagesTimelineRows([row], { result: [], byId: new Map() });
-  const nextRow = { ...row, deferredWorkItemIds: after };
+  const nextRow = { ...row, deferredWorkAnchorKeys: after };
   const next = computeStableMessagesTimelineRows([nextRow], previous);
   const fold = next.result[0];
-  expect(fold?.kind === "turn-fold" ? (fold.deferredWorkItemIds ?? []) : null).toEqual(after);
+  expect(fold?.kind === "turn-fold" ? (fold.deferredWorkAnchorKeys ?? []) : null).toEqual(after);
   expect(
-    computeStableMessagesTimelineRows([{ ...nextRow, deferredWorkItemIds: [...after] }], next),
+    computeStableMessagesTimelineRows([{ ...nextRow, deferredWorkAnchorKeys: [...after] }], next),
   ).toBe(next);
 });
 

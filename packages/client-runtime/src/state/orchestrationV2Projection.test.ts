@@ -607,13 +607,13 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(visibleIds(apply(bounded, [failed], partial))).toEqual([reply.id]);
   });
 
-  it("removes only hidden local items while preserving inherited rows", () => {
-    const inherited = commandItem("item-inherited");
-    const local = commandItem("item-local");
+  it("removes only hidden local items while preserving inherited rows with the same item id", () => {
+    const local = commandItem("item-shared");
+    const inherited = { ...local, threadId: ThreadId.make("thread-source") };
     const inheritedRow = {
       position: 0,
       visibility: "inherited" as const,
-      sourceThreadId: ThreadId.make("thread-source"),
+      sourceThreadId: inherited.threadId,
       sourceItemId: inherited.id,
       item: inherited,
     };
@@ -642,6 +642,29 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     const next = applyOrchestrationV2ProjectionEvent(projection, event);
     expect(next?.visibleTurnItems).toEqual([inheritedRow]);
     expect(next?.visibleTurnItems[0]).toBe(inheritedRow);
+
+    const itemEvent = (item: OrchestrationV2TurnItem) =>
+      ({
+        id: `event-${item.status}`,
+        type: "turn-item.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: item,
+      }) as OrchestrationV2DomainEvent;
+    // The first local item streamed next to the inherited row adds its own row.
+    const inheritedOnly = { ...projection, turnItems: [], visibleTurnItems: [inheritedRow] };
+    expect(
+      applyOrchestrationV2ProjectionEvent(inheritedOnly, itemEvent(local))?.visibleTurnItems.map(
+        (row) => row.sourceThreadId,
+      ),
+    ).toEqual([inherited.threadId, threadId]);
+    // A hidden update for the local item removes its row, not the inherited one.
+    const hidden = applyOrchestrationV2ProjectionEvent(
+      { ...projection, runs: [{ ...run, status: "rolled_back" }] },
+      itemEvent({ ...local, status: "failed" }),
+    );
+    expect(hidden?.visibleTurnItems).toEqual([inheritedRow]);
   });
 });
 

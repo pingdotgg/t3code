@@ -1932,14 +1932,14 @@ function RunFoldButton({
 }) {
   const gt = useGT();
   const loadWork = useAtomCommand(threadEnvironment.loadEarlierHistory, { reportFailure: false });
-  const anchorsKey = entry.deferredWorkItemIds?.join("\n") ?? "";
+  const anchorsKey = entry.deferredWorkAnchorKeys?.join("\n") ?? "";
   const [failed, setFailed] = useState(false);
   const load = () => {
     if (!anchorsKey) return;
     void Promise.all(
       anchorsKey
         .split("\n")
-        .map((workAnchorId) => loadWork({ environmentId, input: { threadId, workAnchorId } })),
+        .map((workAnchorKey) => loadWork({ environmentId, input: { threadId, workAnchorKey } })),
     ).then((results) =>
       setFailed(
         results.some((result) => result._tag === "Failure" || result.value._tag === "error"),

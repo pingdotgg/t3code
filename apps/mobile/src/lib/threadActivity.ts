@@ -73,6 +73,7 @@ import {
 } from "@t3tools/shared/toolActivityCopy";
 import { claudeResumeCompactionAge } from "@t3tools/shared/claudeCompaction";
 import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
+import { orchestrationV2ProjectedTurnItemKey } from "@t3tools/shared/orchestrationV2Timeline";
 import { truncate } from "@t3tools/shared/String";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
@@ -250,7 +251,7 @@ type ThreadFeedEntryContent =
     }
   | {
       readonly type: "run-fold";
-      readonly deferredWorkItemIds?: ReadonlyArray<string>;
+      readonly deferredWorkAnchorKeys?: ReadonlyArray<string>;
       /** Set while the run works: the row shows a live timer and does not toggle. */
       readonly workingSince?: string;
       readonly id: string;
@@ -1122,7 +1123,7 @@ function threadFeedActivityIsVisible(
 }
 
 interface ThreadFeedRunFold {
-  readonly deferredWorkItemIds?: ReadonlyArray<string>;
+  readonly deferredWorkAnchorKeys?: ReadonlyArray<string>;
   readonly runId: RunId;
   readonly createdAt: string;
   readonly hiddenEntryIds: ReadonlySet<string>;
@@ -1398,17 +1399,17 @@ function deriveThreadFeedRunFolds(
     for (const segment of segments) {
       const firstHiddenEntry = segment.entries.find((entry) => hiddenEntryIds.has(entry.id));
       if (!firstHiddenEntry || !hidesNonCompactionWork(segment.entries)) continue;
-      const deferredWorkItemIds = segment.entries.flatMap((entry) =>
+      const deferredWorkAnchorKeys = segment.entries.flatMap((entry) =>
         entry.type === "activity-group"
           ? entry.activities.flatMap((activity) =>
               activity.projectedItem.item.deferredWork
-                ? [String(activity.projectedItem.sourceItemId)]
+                ? [orchestrationV2ProjectedTurnItemKey(activity.projectedItem)]
                 : [],
             )
           : [],
       );
       foldsByAnchorId.set(firstHiddenEntry.id, {
-        ...(deferredWorkItemIds.length > 0 ? { deferredWorkItemIds } : {}),
+        ...(deferredWorkAnchorKeys.length > 0 ? { deferredWorkAnchorKeys } : {}),
         runId: segment.runId,
         createdAt: firstHiddenEntry.createdAt,
         hiddenEntryIds: new Set(
@@ -1423,16 +1424,18 @@ function deriveThreadFeedRunFolds(
   );
   for (const entry of feed) {
     if (entry.type !== "activity-group" || covered.has(entry.id)) continue;
-    const deferredWorkItemIds = entry.activities.flatMap((activity) =>
-      activity.projectedItem.item.deferredWork ? [String(activity.projectedItem.sourceItemId)] : [],
+    const deferredWorkAnchorKeys = entry.activities.flatMap((activity) =>
+      activity.projectedItem.item.deferredWork
+        ? [orchestrationV2ProjectedTurnItemKey(activity.projectedItem)]
+        : [],
     );
-    if (deferredWorkItemIds.length === 0) continue;
+    if (deferredWorkAnchorKeys.length === 0) continue;
     foldsByAnchorId.set(entry.id, {
       runId: RunId.make(`deferred-work:${entry.id}`),
       createdAt: entry.createdAt,
       hiddenEntryIds: new Set([entry.id]),
       label: resolve(msg("Earlier work")),
-      deferredWorkItemIds,
+      deferredWorkAnchorKeys,
     });
   }
   return foldsByAnchorId;
@@ -1895,12 +1898,14 @@ export function deriveThreadFeedPresentation(
         row.createdAt !== fold.createdAt ||
         row.label !== fold.label ||
         row.expanded !== expanded ||
-        row.deferredWorkItemIds?.join("|") !== fold.deferredWorkItemIds?.join("|")
+        row.deferredWorkAnchorKeys?.join("|") !== fold.deferredWorkAnchorKeys?.join("|")
       ) {
         row = {
           type: "run-fold",
           id: `run-fold:${fold.runId}`,
-          ...(fold.deferredWorkItemIds ? { deferredWorkItemIds: fold.deferredWorkItemIds } : {}),
+          ...(fold.deferredWorkAnchorKeys
+            ? { deferredWorkAnchorKeys: fold.deferredWorkAnchorKeys }
+            : {}),
           createdAt: fold.createdAt,
           runId: fold.runId,
           label: fold.label,

@@ -75,11 +75,19 @@ function latestBodies(projection: OrchestrationV2ThreadProjection): DedupedBodyS
   };
 }
 
+// A fork shows inherited parent rows beside its own, so an item id alone does not name a row.
+function isRowForItem(
+  row: OrchestrationV2ThreadProjection["visibleTurnItems"][number],
+  item: OrchestrationV2TurnItem,
+): boolean {
+  return row.sourceItemId === item.id && row.sourceThreadId === item.threadId;
+}
+
 function removeVisibleItem(
   rows: OrchestrationV2ThreadProjection["visibleTurnItems"],
-  sourceItemId: OrchestrationV2TurnItem["id"],
+  item: OrchestrationV2TurnItem,
 ): OrchestrationV2ThreadProjection["visibleTurnItems"] {
-  const index = rows.findIndex((row) => row.sourceItemId === sourceItemId);
+  const index = rows.findIndex((row) => isRowForItem(row, item));
   if (index === -1) return rows;
   return renumberVisibleItems([...rows.slice(0, index), ...rows.slice(index + 1)]);
 }
@@ -150,7 +158,7 @@ function shouldDropMissingPartialTurnItem(
   item: OrchestrationV2TurnItem,
   latestLocalTurnOrdinal: number | null | undefined,
 ): boolean {
-  if (projection.visibleTurnItems.some((row) => row.sourceItemId === item.id)) {
+  if (projection.visibleTurnItems.some((row) => isRowForItem(row, item))) {
     return false;
   }
   if (item.runId === null) {
@@ -201,10 +209,9 @@ function upsertVisibleTurnItem(
   latestLocalTurnOrdinal: number | null | undefined,
 ): OrchestrationV2ThreadProjection["visibleTurnItems"] {
   const rows = projection.visibleTurnItems;
-  // Streamed updates land on the newest rows. Item ids are unique, so the
-  // search can start there.
+  // Streamed updates land on the newest rows, so the search can start there.
   let index = rows.length - 1;
-  while (index >= 0 && rows[index]!.sourceItemId !== item.id) index -= 1;
+  while (index >= 0 && !isRowForItem(rows[index]!, item)) index -= 1;
   const next = {
     position: 0,
     visibility: "local" as const,
@@ -464,7 +471,7 @@ export function applyOrchestrationV2ProjectionEvent(
         ...next,
         visibleTurnItems: shouldShowLocalTurnItem(next, payload)
           ? upsertVisibleTurnItem(visible, payload, partialTimeline, latestLocalTurnOrdinal)
-          : removeVisibleItem(visible.visibleTurnItems, payload.id),
+          : removeVisibleItem(visible.visibleTurnItems, payload),
       };
     }
     case "checkpoint-scope.created":

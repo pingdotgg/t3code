@@ -837,6 +837,39 @@ const layerBase: Layer.Layer<
             }
           }
 
+          // Message and turn item ids are global keys, so upserting another thread's id would move
+          // its row. Checked here so two threads sending the same id at once cannot both pass.
+          if (input.commandType === "message.dispatch") {
+            for (const event of input.events) {
+              if (event.type !== "message.updated" && event.type !== "turn-item.updated") continue;
+              const owner =
+                event.type === "message.updated"
+                  ? yield* sql<{ thread_id: string }>`
+                      SELECT thread_id FROM orchestration_v2_projection_messages
+                      WHERE message_id = ${event.payload.id}`
+                  : yield* sql<{ thread_id: string }>`
+                      SELECT thread_id FROM orchestration_v2_projection_turn_items
+                      WHERE turn_item_id = ${event.payload.id}`;
+              if (owner[0] === undefined || owner[0].thread_id === event.payload.threadId) continue;
+              const receipt: CommandReceiptStore.CommandReceiptV2 = {
+                commandId: input.commandId,
+                threadId: input.threadId,
+                commandType: input.commandType,
+                acceptedAt: input.acceptedAt,
+                resultSequence: yield* eventStore.latestSequence({ threadId: input.threadId }),
+                status: "rejected",
+                error: `${event.payload.id} already belongs to another thread.`,
+              };
+              yield* commandReceipts.upsert(receipt);
+              return {
+                receipt,
+                storedEvents: [],
+                committed: false as const,
+                cancelledEffectIds: [],
+              };
+            }
+          }
+
           const runId = input.updateDelegatedCompletionOnlyRunId;
           const normalized = yield* normalizeEvents(
             runId === undefined

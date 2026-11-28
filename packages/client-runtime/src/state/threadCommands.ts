@@ -75,7 +75,8 @@ import * as ThreadHistoryController from "./threadHistoryController.ts";
 export type LoadEarlierThreadHistoryInput = {
   readonly threadId: ThreadId;
   readonly throughEntryId?: string;
-  readonly workAnchorId?: string;
+  /** `orchestrationV2ProjectedTurnItemKey` of the visible row whose deferred work to load. */
+  readonly workAnchorKey?: string;
 };
 
 function applySettle(
@@ -146,7 +147,7 @@ export function createThreadEnvironmentAtoms<R, E>(
       supervisor.target.environmentId,
       input.threadId,
       input.throughEntryId,
-      input.workAnchorId,
+      input.workAnchorKey,
     );
   });
 

@@ -383,7 +383,7 @@ function launchInput(input: {
       ? {}
       : {
           initialMessage: {
-            messageId: MessageId.make(`${input.message}:id`),
+            messageId: MessageId.make(`${input.thread}:${input.message}:id`),
             text: input.message,
             attachments: [],
           },
@@ -1008,14 +1008,20 @@ it.effect("arms durable title generation after accepting the first message", () 
         [
           {
             type: "thread-title.generate",
-            kind: { type: "initial", messageId: MessageId.make("Generate my title:id") },
+            kind: {
+              type: "initial",
+              messageId: MessageId.make("thread:launch:title-generation:Generate my title:id"),
+            },
           },
         ],
       );
       yield* titleRegeneration.execute({
         threadId: launched.threadId,
         requestId: generationCommandId,
-        kind: { type: "initial", messageId: MessageId.make("Generate my title:id") },
+        kind: {
+          type: "initial",
+          messageId: MessageId.make("thread:launch:title-generation:Generate my title:id"),
+        },
       });
       const generated = yield* threads.getThreadProjection(launched.threadId);
       assert.equal(generated.thread.title, "Generated title");

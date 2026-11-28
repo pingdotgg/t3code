@@ -612,6 +612,27 @@ describe("threadHistoryPaging", () => {
       work.slice(0, 75).map((row) => row.sourceItemId),
     );
     expect(deferred.nextCursor).toBeNull();
+    // A fork's inherited work can reuse the local anchor's item id.
+    const inherited = work.slice(0, 2).map((row) => ({
+      ...row,
+      visibility: "inherited" as const,
+      sourceThreadId: ThreadId.make("thread-parent"),
+    }));
+    const forked = selectDeferredWorkPage({
+      items: [...inherited, ...work.slice(0, 3)].map((row, position) => ({ ...row, position })),
+      cursor: encodeThreadHistoryCursor({
+        snapshotSequence: 3,
+        sourceThreadId: THREAD,
+        sourceItemId: work[2]!.sourceItemId,
+        position: work[2]!.item.ordinal,
+        inclusive: true,
+      }),
+      throughEntryId: work[0]!.sourceItemId,
+      snapshotSequence: 3,
+    });
+    expect(forked.items.map((row) => [row.sourceThreadId, row.sourceItemId])).toEqual(
+      work.slice(0, 3).map((row) => [THREAD, row.sourceItemId]),
+    );
   });
 
   it("keeps cursor resolution stable when newer items append", () => {

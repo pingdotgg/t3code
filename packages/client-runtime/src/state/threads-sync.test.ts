@@ -34,6 +34,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { orchestrationV2ProjectedTurnItemKey } from "@t3tools/shared/orchestrationV2Timeline";
 
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
@@ -300,7 +301,15 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   return {
     threadState,
     loadWork: (anchorId: string) =>
-      historyController.loadEarlier(TARGET.environmentId, THREAD_ID, undefined, anchorId),
+      historyController.loadEarlier(
+        TARGET.environmentId,
+        THREAD_ID,
+        undefined,
+        orchestrationV2ProjectedTurnItemKey({
+          sourceThreadId: THREAD_ID,
+          sourceItemId: anchorId as never,
+        }),
+      ),
     loadEarlier: (throughEntryId?: string) =>
       historyController.loadEarlier(TARGET.environmentId, THREAD_ID, throughEntryId),
     reconcilePendingWork: historyController.reconcilePendingWork(TARGET.environmentId, THREAD_ID),
@@ -1215,6 +1224,7 @@ describe("EnvironmentThreads", () => {
           cachedHistory: { historyCursor: "older", hasMoreHistory: true },
           historyHttpClient: HttpClient.make((request, url) => {
             expect(url.searchParams.get("view")).toBe("work");
+            expect(url.searchParams.get("throughEntryId")).toBe(anchor.id);
             const cursor = url.searchParams.get("cursor")!;
             requests.push(cursor);
             if (cursor === "second" && !failed) {

@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2ProjectedTurnItem,
   OrchestrationV2Run,
   OrchestrationV2RunAttempt,
   OrchestrationV2TurnItem,
@@ -11,6 +12,13 @@ type TimelineRunAttempt = Pick<OrchestrationV2RunAttempt, "runId" | "rootNodeId"
 type TimelineTurnItem = Pick<OrchestrationV2TurnItem, "type" | "runId" | "nodeId"> & {
   readonly inputIntent?: OrchestrationV2UserMessageInputIntent;
 };
+
+// A fork shows inherited parent rows beside its own, so an item id alone does not name a row.
+export function orchestrationV2ProjectedTurnItemKey(
+  row: Pick<OrchestrationV2ProjectedTurnItem, "sourceThreadId" | "sourceItemId">,
+): string {
+  return `${row.sourceThreadId}\u001f${row.sourceItemId}`;
+}
 
 function isOrchestrationV2SupersededInterrupt(input: {
   readonly item: TimelineTurnItem;

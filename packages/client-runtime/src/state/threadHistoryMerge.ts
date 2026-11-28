@@ -3,7 +3,10 @@ import type {
   OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import { isOrchestrationV2TurnItemVisible } from "@t3tools/shared/orchestrationV2Timeline";
+import {
+  isOrchestrationV2TurnItemVisible,
+  orchestrationV2ProjectedTurnItemKey as projectedItemKey,
+} from "@t3tools/shared/orchestrationV2Timeline";
 
 export type ThreadHistoryMeta = {
   readonly historyCursor: string | null;
@@ -38,10 +41,6 @@ export function clearActiveHistoryLoading(
     return history;
   }
   return { ...history, loading: false };
-}
-
-function projectedItemKey(row: OrchestrationV2ProjectedTurnItem): string {
-  return `${row.sourceThreadId}:${row.sourceItemId}`;
 }
 
 function renumberVisible(
@@ -83,10 +82,18 @@ function interleavePage(
   return merged;
 }
 
+/** The visible row whose deferred work `anchorKey` (a projected turn item key) names. */
+export function findDeferredWorkAnchorIndex(
+  rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  anchorKey: string,
+): number {
+  return rows.findIndex((row) => projectedItemKey(row) === anchorKey);
+}
+
 export function mergeOlderHistoryIntoProjection(
   projection: OrchestrationV2ThreadProjection,
   olderItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
-  work?: { readonly anchorId: string; readonly nextCursor: string | null },
+  work?: { readonly anchorKey: string; readonly nextCursor: string | null },
 ): OrchestrationV2ThreadProjection {
   if (olderItems.length === 0 && work === undefined) {
     return projection;
@@ -95,7 +102,7 @@ export function mergeOlderHistoryIntoProjection(
   const start =
     work === undefined
       ? -1
-      : projection.visibleTurnItems.findIndex((row) => row.sourceItemId === work.anchorId);
+      : findDeferredWorkAnchorIndex(projection.visibleTurnItems, work.anchorKey);
   const anchor = projection.visibleTurnItems[start];
   const deferred = anchor?.item.deferredWork;
   if (work !== undefined && deferred === undefined) return projection;
@@ -179,8 +186,17 @@ export function mergeOlderHistoryIntoProjection(
         .filter((row) => !pageKeys.has(projectedItemKey(row))),
     ];
     const ordered = section
-      .map((row) => (row.sourceItemId === anchor.sourceItemId ? updated : row))
-      .sort((left, right) => left.item.ordinal - right.item.ordinal);
+      .map((row) => (projectedItemKey(row) === work.anchorKey ? updated : row))
+      // Ties follow the server's `ORDER BY ordinal, turn_item_id`.
+      .sort(
+        (left, right) =>
+          left.item.ordinal - right.item.ordinal ||
+          (left.sourceItemId < right.sourceItemId
+            ? -1
+            : left.sourceItemId > right.sourceItemId
+              ? 1
+              : 0),
+      );
     visible = [
       ...projection.visibleTurnItems.slice(0, start),
       ...ordered,
