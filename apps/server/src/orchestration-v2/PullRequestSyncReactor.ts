@@ -85,8 +85,10 @@ const PUSH_COMMAND = new RegExp(
 const SHELL_WRAPPER = /^\s*(?:\S*\/)?(?:ba|z|da|k)?sh\s+-l?c\s+(?=["'])([\s\S]*)$/u;
 const SHELL_WORD_PIECE = /"((?:\\[\s\S]|[^"\\])*)"|'([^']*)'|\\([\s\S])|(\S)/gu;
 // Heredoc bodies, quoted strings and comments are text a command carries, not commands it runs.
+// One left-to-right pass, so whichever starts first wins, as in the shell. A comment's separator is
+// matched (not looked behind) so an escaped space, already consumed, cannot open one.
 const SHELL_NON_CODE =
-  /\\[\s\S]|'[^']*'|"(?:\\[\s\S]|[^"\\])*"|(?<=^|[\s;&|(])#[^\n]*|<<-?[ \t]*(['"]?)(\w+)\1[^\n]*\n(?:(?:[\s\S]*?\n)?[ \t]*\2[ \t]*(?=\n|$)|[\s\S]*$)/gu;
+  /\\[\s\S]|\$'(?:\\[\s\S]|[^'\\])*'|'[^']*'|"(?:\\[\s\S]|[^"\\])*"|(?<sep>^|[\s;&|(])#[^\n]*|<<-?[ \t]*(?<q>['"]?)(?<tag>\w+)\k<q>[^\n]*\n(?:(?:[\s\S]*?\n)?[ \t]*\k<tag>[ \t]*(?=\n|$)|[\s\S]*$)/gu;
 const COMMAND_SEPARATOR = /&&|\|\||[;|\n]/u;
 // Commands that print other change requests' URLs, so output beside them proves nothing.
 const LISTS_CHANGE_REQUESTS =
@@ -138,9 +140,11 @@ function shellSegments(script: string): ReadonlyArray<string> {
 
 /** The commands a script runs, without the text it carries. */
 const shellCode = (script: string) =>
-  script.replace(SHELL_NON_CODE, (match) =>
-    match.startsWith("\\") ? match : match.startsWith("<<") ? "<<" : "''",
-  );
+  script.replace(SHELL_NON_CODE, (match, ...args: ReadonlyArray<unknown>) => {
+    const { sep } = args.at(-1) as { readonly sep: string | undefined };
+    if (sep !== undefined) return `${sep}''`;
+    return match.startsWith("\\") ? match : match.startsWith("<<") ? "<<" : "''";
+  });
 
 const isPushCommand = (input: string) => PUSH_COMMAND.test(shellCode(shellScript(input)));
 

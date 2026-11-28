@@ -2267,13 +2267,13 @@ describe("PullRequestSyncReactor", () => {
     {
       name: "a create after quoted heredoc text",
       input: "echo '<<EOF'; gh pr create --fill\ntrue",
-      output: "<<EOF\nhttps://github.com/owner/repo/pull/31",
+      output: "<<EOF\nhttps://github.com/owner/repository/pull/31",
       linked: [31],
     },
     {
       name: "a create after a comment mentioning a heredoc",
       input: "# <<EOF\ngh pr create --fill\ntrue",
-      output: "https://github.com/owner/repo/pull/32",
+      output: "https://github.com/owner/repository/pull/32",
       linked: [32],
     },
     {
@@ -2311,7 +2311,20 @@ describe("PullRequestSyncReactor", () => {
     {
       name: "a create command in heredoc text beside escaped quotes",
       input: "echo \\' <<EOF \\'\ngh pr create --fill\nEOF\ngh pr view --json url --jq .url",
-      output: "' '\nhttps://github.com/owner/repo/pull/31",
+      output: "' '\nhttps://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
+      name: "a create command in heredoc text after an ANSI-C quote",
+      input:
+        "printf '%s\\n' $'it\\'s'; cat <<EOF\n'\ngh pr create --fill\nEOF\ngh pr view --json url --jq .url",
+      output: "it's\nhttps://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create command in heredoc text after an escaped space before #",
+      input: "echo \\ # <<EOF\ngh pr create --fill\nEOF\ngh pr view --json url --jq .url",
+      output: " #\nhttps://github.com/owner/repository/pull/124",
       linked: [],
     },
     {
