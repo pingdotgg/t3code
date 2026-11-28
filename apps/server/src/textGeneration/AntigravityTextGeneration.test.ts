@@ -16,6 +16,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { type AcpError, AcpRequestError } from "effect-acp/errors";
 import type * as AcpSchema from "effect-acp/compat";
 import { expect } from "vite-plus/test";
@@ -64,6 +65,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
     readonly startupSkills?: boolean;
     readonly initialModel?: string;
     readonly rejectThinkingUpdate?: boolean;
+    readonly releaseRuntime?: Effect.Effect<void>;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -131,6 +133,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
       expect(yield* fs.readDirectory(cwd).pipe(Effect.orDie)).toEqual([]);
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
+          yield* options.releaseRuntime ?? Effect.void;
           state.nativeFilesAtClose.push(yield* fs.exists(`${sessionBase}.db`).pipe(Effect.orDie));
           state.closed.push(cwd);
         }),
@@ -471,6 +474,21 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         .pipe(Effect.flip);
       expect(error.detail).toContain(detail);
       yield* fixture.assertCleaned;
+    }),
+  );
+
+  it.effect("keeps a completed title when runtime cleanup outlasts the timeout", () =>
+    Effect.gen(function* () {
+      // Deleting the runtime temp directory can take minutes on Windows.
+      const fixture = yield* makeFixture({
+        outputs: ['{"title":"Repair Google login"}'],
+        releaseRuntime: Effect.sleep("181 seconds"),
+      });
+      const fiber = yield* fixture.textGeneration
+        .generateThreadTitle(fixture.titleInput)
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("181 seconds");
+      expect(yield* Fiber.join(fiber)).toEqual({ title: "Repair Google login" });
     }),
   );
 
