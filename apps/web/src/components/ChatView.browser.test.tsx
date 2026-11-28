@@ -529,7 +529,7 @@ it("imports Pi conversations through the environment RPC and can retry a changed
     container: appContainer(),
     router: false,
   });
-  // Agent history is read only after "Find my projects" (#43948).
+  // Agent history is read only after "Find my projects".
   await page.getByRole("button", { name: "Find my projects", exact: true }).click();
   await expect
     .element(page.getByRole("button", { name: "Review all 1", exact: true }))
