@@ -236,6 +236,28 @@ describe("agentWorkingDirectories", () => {
     ).toEqual(["/work/e", "/work/d", "/work/c", "/work/b", "/work/a"]);
   });
 
+  it.each([
+    { command: String.raw`echo marker \; cd /other`, expected: [] },
+    { command: "echo marker ; cd /other", expected: ["/other"] },
+    { command: String.raw`echo marker \\; cd /other`, expected: ["/other"] },
+  ])("distinguishes escaped shell separators in $command", ({ command, expected }) => {
+    expect(directories(command)).toEqual(expected);
+  });
+
+  it.each([
+    { command: "cd C:\\ && dir", expected: ["C:\\"] },
+    {
+      command: String.raw`cd C:\work\; cd D:\other`,
+      expected: [String.raw`D:\other`, "C:\\work\\"],
+    },
+    {
+      command: "cd C:\\work\\\ncd D:\\other",
+      expected: [String.raw`D:\other`, "C:\\work\\"],
+    },
+  ])("preserves Windows trailing backslashes in $command", ({ command, expected }) => {
+    expect(directories(command)).toEqual(expected);
+  });
+
   it("leaves network shares out of the search roots", () => {
     expect(
       directories(

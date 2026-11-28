@@ -188,7 +188,8 @@ export async function findAgentDirectoryMatch(
 }
 
 // A quoted string or a comment is one token, so `cd` inside either is not read as a command.
-const SHELL_TOKEN = /(?<![^\s;&|()])#[^\n]*|"[^"]*"|'[^']*'|[;&|()\n]|[ \t]+|[^\s;&|()"']+/g;
+const SHELL_TOKEN =
+  /(?<![^\s;&|()])#[^\n]*|"[^"]*"|'[^']*'|[;&|()\n]|[ \t]+|[a-zA-Z]:\\[^\s;&|()"']*|(?:\\[\s\S]?|[^\s;&|()"'\\])+/g;
 const SHELL_NAME = /(?:^|\/)(?:ba|z|da|k|mk|a)?sh$/;
 const CD_OPTION = /^-[LPe@]*$|^--$/;
 
