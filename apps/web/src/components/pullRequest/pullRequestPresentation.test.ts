@@ -1,7 +1,7 @@
 import type { PullRequestCheck } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { pullRequestChecksCountLabel } from "./pullRequestPresentation";
+import { pullRequestChecksCountLabel, pullRequestChecksState } from "./pullRequestPresentation";
 
 const checks = (...statuses: ReadonlyArray<PullRequestCheck["status"]>): PullRequestCheck[] =>
   statuses.map((status) => ({ name: "ci", status, description: null, url: null }));
@@ -24,5 +24,18 @@ describe("pullRequestChecksCountLabel", () => {
   it("shows nothing once no check is failed, waiting or running", () => {
     expect(pullRequestChecksCountLabel(checks("success", "skipped", "neutral"))).toBeNull();
     expect(pullRequestChecksCountLabel([])).toBeNull();
+  });
+});
+
+describe("pullRequestChecksState", () => {
+  const mixed: ReadonlyArray<PullRequestCheck> = [
+    { name: "build", status: "success", description: null, url: null, required: true },
+    { name: "style", status: "failure", description: null, url: null },
+  ];
+
+  it("gates Forgejo on required checks and other providers on every check", () => {
+    expect(pullRequestChecksState(mixed, "forgejo")).toBe("passing");
+    expect(pullRequestChecksState(mixed, "github")).toBe("failing");
+    expect(pullRequestChecksState(mixed)).toBe("failing");
   });
 });

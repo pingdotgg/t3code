@@ -32,7 +32,7 @@ import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { InlineButton } from "../ui/button";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
-import type { PullRequestReviewOutcome } from "./pullRequestDetail.logic";
+import { gatingPullRequestChecks, type PullRequestReviewOutcome } from "./pullRequestDetail.logic";
 import { pullRequestLabelColor } from "./pullRequestList.logic";
 import {
   PULL_REQUEST_STATE_PRESENTATION,
@@ -314,9 +314,10 @@ export function pullRequestChecksStatePresentation(
 
 export function pullRequestChecksState(
   checks: ReadonlyArray<PullRequestCheck>,
+  provider?: string,
 ): PullRequestChecksState | null {
   if (checks.length === 0) return null;
-  const statuses = new Set(checks.map((check) => check.status));
+  const statuses = new Set(gatingPullRequestChecks(checks, provider).map((check) => check.status));
   if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
   if (statuses.has("pending") || statuses.has("action-required")) return "pending";
   return statuses.has("success") ? "passing" : null;
