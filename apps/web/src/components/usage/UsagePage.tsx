@@ -82,6 +82,7 @@ import { UsageAccessQuestion, type UsageAccessPrompt } from "./UsageAccessDialog
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
+import { usageRangeWindow, type UsageChartRange } from "./usageChartRange";
 import { SpeedPremium, UsageModelDialog } from "./UsageModelDialog";
 import { UsageShareBar } from "./UsageShareBar";
 import {
@@ -210,6 +211,7 @@ export function UsagePage() {
   const [priceDialog, setPriceDialog] = useState<{ readonly model?: string } | null>(null);
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
+  const [chartRange, setChartRange] = useState<UsageChartRange | null>(null);
   const hiddenProviders = new Set(preferences.hiddenProviders);
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
@@ -224,6 +226,14 @@ export function UsagePage() {
   const merged = shown?.merged ?? answeredUsage;
   const shownWindow = shown?.window ?? window;
   const shownHourly = shownWindow.resolution === "hour";
+  const rangeWindow =
+    showingLimits || chartRange === null ? null : usageRangeWindow(window, chartRange);
+  const rangeUsage = useUsage(rangeWindow, selectedEnvironmentIds, hiddenProviders);
+  const report = rangeWindow === null ? merged : (rangeUsage.shown?.merged ?? merged);
+  const reportEnvironments =
+    rangeWindow === null ? selectedEnvironments : rangeUsage.selectedEnvironments;
+  const reportWindow = rangeUsage.shown?.window ?? shownWindow;
+  const reportPending = rangeWindow !== null && rangeUsage.shown?.window !== rangeWindow;
   const refreshingUsage = isRefreshing && !showingLimits;
   const showingKept = shown !== null && shown.window !== window;
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
@@ -254,6 +264,7 @@ export function UsagePage() {
   };
   const selectWindow = (days: number) => {
     if (!isUsageWindowDays(days)) return;
+    setChartRange(null);
     updatePreferences({ windowDays: days });
     setWindowSelection({
       days,
@@ -328,7 +339,10 @@ export function UsagePage() {
       });
       return;
     }
-    const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
+    const nextWindow =
+      rangeWindow === null
+        ? makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day")
+        : window;
     if (
       nextWindow.sinceDay !== window.sinceDay ||
       nextWindow.untilDay !== window.untilDay ||
@@ -339,7 +353,7 @@ export function UsagePage() {
     }
     refreshingRef.current = true;
     setIsRefreshing(true);
-    void refresh(nextWindow).finally(() => {
+    void Promise.all([refresh(nextWindow), rangeUsage.refresh()]).finally(() => {
       refreshingRef.current = false;
       setIsRefreshing(false);
     });
@@ -375,15 +389,16 @@ export function UsagePage() {
         (presentation.serverConfig?.providers ?? []).some(usesChatGptSharing),
     );
 
+  const labelWindow = rangeWindow ?? shownWindow;
   const windowLabel =
-    shownHourly && shownWindow.sinceTime !== undefined && shownWindow.untilTime !== undefined
+    shownHourly && labelWindow.sinceTime !== undefined && labelWindow.untilTime !== undefined
       ? gt("{start} to {end}", {
-          start: formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone, hour12, locale),
-          end: formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone, hour12, locale),
+          start: formatDateTimeShort(labelWindow.sinceTime, labelWindow.timeZone, hour12, locale),
+          end: formatDateTimeShort(labelWindow.untilTime, labelWindow.timeZone, hour12, locale),
         })
       : gt("{start} to {end}", {
-          start: formatDayShort(shownWindow.sinceDay, locale),
-          end: formatDayShort(shownWindow.untilDay, locale),
+          start: formatDayShort(labelWindow.sinceDay, locale),
+          end: formatDayShort(labelWindow.untilDay, locale),
         });
   const windowOptionLabel = WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label;
   const metricOptionLabel = METRIC_OPTIONS.find((option) => option.value === metric)?.label;
@@ -399,12 +414,12 @@ export function UsagePage() {
         <WorkspaceBreadcrumbItem className="min-w-10 shrink">
           <UsageEnvironmentFilter
             environments={environments}
-            selectedEnvironments={selectedEnvironments}
+            selectedEnvironments={reportEnvironments}
             selectedEnvironmentIds={selectedEnvironmentIds}
             onSelectionChange={setSelectedEnvironmentIds}
             showUsageStatus={!showingLimits}
             refreshing={refreshingUsage}
-            isPartial={isPartial}
+            isPartial={rangeWindow === null ? isPartial : rangeUsage.isPartial}
             duplicateSources={merged.duplicateSources}
             contractMismatches={merged.contractMismatches}
             onOpenModelPrices={() => setPriceDialog({})}
@@ -574,18 +589,23 @@ export function UsagePage() {
               </div>
             ) : (
               <UsageOverview
-                merged={merged}
+                merged={report}
+                chartMerged={merged}
+                chartRange={chartRange}
+                onChartRangeChange={showingKept ? undefined : setChartRange}
                 shownWindow={shownWindow}
                 hour12={hour12}
                 days={days}
                 hours={hours}
                 showingKept={showingKept}
+                reportPending={reportPending}
                 metric={metric === "tokens" ? "tokens" : "cost"}
-                selectedEnvironments={selectedEnvironments}
+                chartEnvironments={selectedEnvironments}
+                selectedEnvironments={reportEnvironments}
                 hiddenProviders={hiddenProviders}
                 refreshingUsage={refreshingUsage}
                 showChatGptSharing={showChatGptSharing}
-                onSelectModel={selectUsageModel}
+                onSelectModel={reportPending ? undefined : selectUsageModel}
               />
             )}
           </WorkspacePageContainer>
@@ -593,15 +613,23 @@ export function UsagePage() {
       </div>
       {showingLimits ? null : (
         <UsageModelDialogHost
-          models={merged.models}
-          environments={selectedEnvironments}
+          models={reportPending ? [] : report.models}
+          environments={reportEnvironments}
           metric={metric === "tokens" ? "tokens" : "cost"}
           chartWindow={{
-            days,
-            hours,
+            days:
+              rangeWindow === null
+                ? days
+                : enumerateDays(reportWindow.sinceDay, reportWindow.untilDay),
+            hours:
+              rangeWindow === null ||
+              reportWindow.sinceTime === undefined ||
+              reportWindow.untilTime === undefined
+                ? hours
+                : enumerateHourStarts(reportWindow.sinceTime, reportWindow.untilTime),
             resolution: shownHourly ? "hour" : "day",
             timeZone: shownWindow.timeZone,
-            referenceTime: shownWindow.untilTime,
+            referenceTime: reportWindow.untilTime,
             hour12,
           }}
           onSetPrice={(model) => setPriceDialog({ model })}
@@ -623,12 +651,17 @@ export function UsagePage() {
 
 function UsageOverview({
   merged,
+  chartMerged,
+  chartRange,
+  onChartRangeChange,
   shownWindow,
   hour12,
   days,
   hours,
   showingKept,
+  reportPending,
   metric,
+  chartEnvironments,
   selectedEnvironments,
   hiddenProviders,
   refreshingUsage,
@@ -636,24 +669,34 @@ function UsageOverview({
   onSelectModel,
 }: {
   readonly merged: MergedUsage;
+  readonly chartMerged: MergedUsage;
+  readonly chartRange: UsageChartRange | null;
+  readonly onChartRangeChange: ((range: UsageChartRange | null) => void) | undefined;
   readonly shownWindow: UsageSummaryInput;
   readonly hour12: boolean;
   readonly days: readonly string[];
   readonly hours: readonly string[];
   readonly showingKept: boolean;
+  readonly reportPending: boolean;
   readonly metric: "tokens" | "cost";
+  readonly chartEnvironments: readonly EnvironmentUsageStatus[];
   readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
   readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
   readonly refreshingUsage: boolean;
   readonly showChatGptSharing: boolean;
-  readonly onSelectModel: (key: string) => void;
+  readonly onSelectModel: ((key: string) => void) | undefined;
 }) {
   const gt = useGT();
   const locale = useLocale();
   const m = useMessages();
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const shownHourly = shownWindow.resolution === "hour";
-  const loading = usageLoading(showingKept, selectedEnvironments, refreshingUsage, hiddenProviders);
+  const loading = usageLoading(
+    showingKept || reportPending,
+    selectedEnvironments,
+    refreshingUsage,
+    hiddenProviders,
+  );
   // Copy the primitive; JSX reads of loading.partial would merge all derivations into one compiler cache
   // scope.
   const loadingPartial = loading.partial === true;
@@ -666,8 +709,20 @@ function UsageOverview({
   const activeProviders = [...PROVIDER_ORDER].filter(
     (provider) => providersWithData.has(provider) || loading.providers.has(provider),
   );
+  const chartLoading = usageLoading(
+    showingKept,
+    chartEnvironments,
+    refreshingUsage,
+    hiddenProviders,
+  );
+  const chartProvidersWithData = new Set(providersWithUsage(chartMerged.providers));
+  const chartProviders = PROVIDER_ORDER.filter(
+    (provider) => chartProvidersWithData.has(provider) || chartLoading.providers.has(provider),
+  );
   const chartLoadingProviders = new Set(
-    activeProviders.filter((provider) => loadingProviders.has(provider)),
+    chartProviders.filter(
+      (provider) => chartLoading.everyProvider || chartLoading.providers.has(provider),
+    ),
   );
   const sourceMessages = usageSourceMessages(
     selectedEnvironments.flatMap(
@@ -831,17 +886,19 @@ function UsageOverview({
                 : gt("Daily cost")}
           </h2>
           <UsageProviderChart
-            providers={activeProviders}
+            providers={chartProviders}
             loadingProviders={chartLoadingProviders}
             days={days}
-            daily={merged.daily}
+            daily={chartMerged.daily}
             hours={hours}
-            hourly={merged.hourly}
+            hourly={chartMerged.hourly}
             metric={metric}
             referenceTime={shownWindow.untilTime}
             resolution={shownHourly ? "hour" : "day"}
             timeZone={shownWindow.timeZone}
             hour12={hour12}
+            range={chartRange}
+            onRangeChange={onChartRangeChange}
           />
         </div>
       </section>
@@ -978,7 +1035,8 @@ function UsageOverview({
                       <td className="py-2.5 text-left whitespace-normal">
                         <button
                           type="button"
-                          onClick={() => onSelectModel(key)}
+                          disabled={onSelectModel === undefined}
+                          onClick={() => onSelectModel?.(key)}
                           className={cn(
                             "flex items-center gap-2 text-left text-foreground outline-none after:absolute after:inset-0",
                             !hasBar && "py-1",

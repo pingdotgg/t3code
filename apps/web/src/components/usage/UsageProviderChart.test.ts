@@ -1,6 +1,45 @@
 import { describe, expect, it } from "vite-plus/test";
+import { UsageDay } from "@t3tools/contracts";
 
 import { buildPeriodColumns } from "./UsageProviderChart";
+import { usageRange, usageRangeWindow } from "./usageChartRange";
+
+describe("usageRangeWindow", () => {
+  const window = {
+    sinceDay: UsageDay.make("2026-10-14"),
+    untilDay: UsageDay.make("2026-10-15"),
+    timeZone: "Asia/Kolkata",
+  };
+
+  it("includes both selected dates when dragging backwards", () => {
+    const range = usageRange("2026-10-15", "2026-10-14");
+    expect(usageRangeWindow({ ...window, resolution: "day" }, range)).toEqual({
+      ...window,
+      resolution: "day",
+    });
+  });
+
+  it("includes the selected hourly bucket across local midnight", () => {
+    const bucket = "2026-10-14T18:08:00.000Z";
+    const range = usageRange(bucket, bucket);
+    expect(
+      usageRangeWindow(
+        {
+          ...window,
+          resolution: "hour",
+          sinceTime: "2026-10-14T10:08:00.000Z",
+          untilTime: "2026-10-15T10:08:00.000Z",
+        },
+        range,
+      ),
+    ).toEqual({
+      ...window,
+      resolution: "hour",
+      sinceTime: bucket,
+      untilTime: "2026-10-14T19:08:00.000Z",
+    });
+  });
+});
 
 describe("buildPeriodColumns", () => {
   const days = ["2026-08-01", "2026-08-02", "2026-08-03"];
