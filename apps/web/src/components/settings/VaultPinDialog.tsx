@@ -97,13 +97,13 @@ export function VaultPinSetupDialog({
               setPin("");
               setConfirm("");
               setOldPin("");
-              try {
+              await (async () => {
                 const error = await onSave(next, current);
                 if (error) setError(error);
                 else onClose();
-              } finally {
+              })().finally(() => {
                 setPending(false);
-              }
+              });
             }}
           >
             {configured ? (
@@ -193,13 +193,13 @@ export function VaultPinConfirmDialog({
               setError(null);
               const entered = pin;
               setPin("");
-              try {
+              await (async () => {
                 const error = await onConfirm(entered);
                 if (error) setError(error);
                 else onClose();
-              } finally {
+              })().finally(() => {
                 setPending(false);
-              }
+              });
             }}
           >
             <VaultPinField value={pin} onChange={setPin} disabled={pending} />

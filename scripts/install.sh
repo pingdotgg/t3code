@@ -19,7 +19,7 @@ set -eu
 
 repo="Ryoku-dev/hyakki"
 base_url="${HYAKKI_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
-t3_home="${HYAKKI_HOME:-$HOME/.t3}"
+t3_home="${HYAKKI_HOME:-$HOME/.hyakki}"
 case "$t3_home" in
   /*) ;;
   *)

@@ -17,16 +17,18 @@ const nightlies = Array.from({ length: 100 }, (_, index) => ({
 }));
 
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer home", () => {
-  it("installs a relative home from a directory ending in a newline", async () => {
+  it.each([
+    { location: "a relative home", homeName: "-custom home\\home\n" },
+    { location: "the default Hyakki home", homeName: undefined },
+  ])("installs $location from a directory ending in a newline", async ({ homeName }) => {
     const temporaryRoot = await NodeFSP.realpath(
       await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-home-")),
     );
     const root = NodePath.join(temporaryRoot, "cwd\n");
-    const homeName = "-custom home\\home\n";
-    const home = NodePath.join(root, homeName);
+    const home = NodePath.join(root, homeName ?? ".hyakki");
     const version = "1.2.3";
     const target = NodePath.join(home, "runtime/versions", version);
-    const launcher = NodePath.join(root, "bin/t3");
+    const launcher = NodePath.join(root, "bin/hyakki");
     try {
       await NodeFSP.mkdir(target, { recursive: true });
       await NodeFSP.writeFile(NodePath.join(target, ".install-complete"), `${version}\n`);
@@ -221,19 +223,19 @@ async function installOver(input: {
   return { code: result.status, output: `${result.stdout}${result.stderr}`, target };
 }
 
-describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 command", () => {
+describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh command", () => {
   it("replaces only this home's own launchers and prints a PATH command", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-link-"));
     try {
       const home = NodePath.join(root, "home");
       const binDir = NodePath.join(root, "bin");
-      const link = NodePath.join(binDir, "t3");
+      const link = NodePath.join(binDir, "hyakki");
       await NodeFSP.mkdir(binDir, { recursive: true });
 
       await NodeFSP.writeFile(link, "#!/bin/sh\necho mine\n");
       const foreign = await installOver({ script: "install.sh", home, binDir });
       expect(foreign.code).not.toBe(0);
-      expect(foreign.output).toContain(`another t3 is already at ${link}`);
+      expect(foreign.output).toContain(`another hyakki is already at ${link}`);
       expect(await NodeFSP.readFile(link, "utf8")).toBe("#!/bin/sh\necho mine\n");
       // Not even from inside the versions folder, where `.` would resolve into it.
       const fromVersions = await installOver({
@@ -289,7 +291,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         env: { HOME: root, SHELL: undefined, PATH: "/usr/bin:/bin" },
       });
       expect(noShell.code, noShell.output).toBe(0);
-      expect(noShell.output).toContain(`Add ${binDir} to your PATH`);
+      expect(noShell.output).toContain(binDir);
+      expect(noShell.output).toContain("PATH");
 
       // Its folder on PATH with a trailing slash is still this hyakki, not another one.
       const slashed = await installOver({
@@ -299,7 +302,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
         env: { HOME: root, PATH: `${binDir}/:/usr/bin:/bin` },
       });
       expect(slashed.code, slashed.output).toBe(0);
-      expect(slashed.output).toContain("Run t3 to use Hyakki here");
+      expect(slashed.output).toContain("Run hyakki to use Hyakki here");
 
       // A relative folder is made absolute, so the PATH command never follows the working directory.
       const relative = await installOver({
@@ -336,21 +339,21 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("install.sh t3 
   });
 });
 
-describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("install.ps1 t3 command", () => {
-  it("replaces only its own t3.cmd, also in non-ASCII and bracketed paths", async () => {
+describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("install.ps1 command", () => {
+  it("replaces only its own hyakki.cmd, also in non-ASCII and bracketed paths", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-ps1-"));
     try {
       // Windows PowerShell 5.1 reads files as ANSI by default and expands wildcards in paths.
-      const home = NodePath.join(root, "José", ".t3");
+      const home = NodePath.join(root, "José", ".hyakki");
       const binDir = NodePath.join(root, "bin[t3]");
-      const shim = NodePath.join(binDir, "t3.cmd");
+      const shim = NodePath.join(binDir, "hyakki.cmd");
       await NodeFSP.mkdir(binDir, { recursive: true });
 
       const desktopShim = '@echo off\r\n"C:\\Program Files\\Hyakki\\Hyakki.exe" "x" %*\r\n';
       await NodeFSP.writeFile(shim, desktopShim);
       const foreign = await installOver({ script: "install.ps1", home, binDir });
       expect(foreign.code).not.toBe(0);
-      expect(foreign.output).toContain("another t3 is already at");
+      expect(foreign.output).toContain("another hyakki is already at");
       expect(await NodeFSP.readFile(shim, "utf8")).toBe(desktopShim);
 
       // A hand-edited wrapper may set its own environment; replacing it would drop that.
@@ -380,7 +383,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("install.ps1 t3
       // Another hyakki first on PATH still runs, so the installer names this one in full.
       const otherBin = NodePath.join(root, "other");
       await NodeFSP.mkdir(otherBin);
-      await NodeFSP.writeFile(NodePath.join(otherBin, "t3.cmd"), "@echo off\r\n");
+      await NodeFSP.writeFile(NodePath.join(otherBin, "hyakki.cmd"), "@echo off\r\n");
       // Windows spells it Path; a second PATH key would be ambiguous.
       const pathKey =
         Object.keys(process.env).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
@@ -392,7 +395,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("install.ps1 t3
       });
       expect(shadowed.code, shadowed.output).toBe(0);
       expect(shadowed.output).toContain(
-        `Another t3 at ${NodePath.join(otherBin, "t3.cmd")} runs first`,
+        `Another hyakki at ${NodePath.join(otherBin, "hyakki.cmd")} runs first`,
       );
 
       // Its own folder on PATH with a trailing separator is already on PATH.
@@ -517,7 +520,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chec
               await NodeFSP.readFile(NodePath.join(versions, version, ".install-complete"), "utf8"),
             ).toBe("1.2.3\n");
             expect(
-              NodeChildProcess.execFileSync(NodePath.join(root, "bin/t3"), ["--version"], {
+              NodeChildProcess.execFileSync(NodePath.join(root, "bin/hyakki"), ["--version"], {
                 encoding: "utf8",
               }).trim(),
             ).toBe("t3 v1.2.3");

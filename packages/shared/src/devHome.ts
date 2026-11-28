@@ -1,4 +1,4 @@
-/** Worktrees use isolated .hyakki state; ambient HYAKKI_HOME could otherwise select the live userdata database. */
+/** Worktrees use isolated .t3 state; ambient HYAKKI_HOME could otherwise select the live userdata database. */
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -62,5 +62,5 @@ export const resolveWorktreeT3Home = Effect.fn("devHome.resolveWorktreeT3Home")(
     return undefined;
   }
   const path = yield* Path.Path;
-  return path.join(worktreePath, ".hyakki");
+  return path.join(worktreePath, ".t3");
 });

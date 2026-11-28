@@ -529,15 +529,13 @@ export function LocalVaultSettings({
           onClose={() => setDisconnecting(null)}
           onConfirm={async (pin) => {
             const secret = Redacted.make(pin);
-            try {
-              return await run({
-                action: "gmail-disconnect",
-                name: disconnecting.name,
-                pin: secret,
-              });
-            } finally {
+            return run({
+              action: "gmail-disconnect",
+              name: disconnecting.name,
+              pin: secret,
+            }).finally(() => {
               Redacted.wipeUnsafe(secret);
-            }
+            });
           }}
         />
       ) : null}

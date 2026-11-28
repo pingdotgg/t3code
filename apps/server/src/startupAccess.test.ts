@@ -240,7 +240,7 @@ describe("headlessServeOutput", () => {
         [
           "Hyakki server is ready.",
           "Connection string: http://127.0.0.1:3773",
-          "Run `t3 pair` on this machine to connect a device.",
+          "Run `hyakki pair` on this machine to connect a device.",
           "",
         ].join("\n"),
       );

@@ -7,7 +7,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeTimersPromises from "node:timers/promises";
 import * as NodeUtil from "node:util";
-import { _electron, type ElectronApplication } from "playwright-core";
+import { _electron, type ElectronApplication, type Page } from "playwright-core";
 
 // A snapshot from an older build on purpose: the packaged server must migrate it forward, as it
 // does for every upgrading user. It holds one project and two threads, nothing else.
@@ -55,10 +55,13 @@ try {
     },
     timeout: STEP_TIMEOUT_MS,
   });
-  // A backend that never starts leaves no window, or only the "could not start" window, so the
-  // thread wait below fails either way and its screenshot shows the startup error.
-  step = "waiting for the first window";
-  const page = await app.firstWindow({ timeout: STEP_TIMEOUT_MS });
+  // The data: startup splash closes when the main renderer is ready. Window events arrive after
+  // loading, but fast startups may already have loaded the main window before launch returns.
+  step = "waiting for the main app window";
+  const isMainWindow = (window: Page) => window.url().startsWith("t3code://app/");
+  const page =
+    app.windows().find(isMainWindow) ??
+    (await app.waitForEvent("window", { predicate: isMainWindow, timeout: STEP_TIMEOUT_MS }));
   try {
     step = `finding "${THREAD_TITLE}" in the sidebar`;
     const thread = page.locator("li[data-thread-item]", { hasText: THREAD_TITLE });

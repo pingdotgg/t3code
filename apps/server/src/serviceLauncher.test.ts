@@ -451,7 +451,7 @@ setInterval(() => {}, 1_000);
             "PATH=/bad",
             "Path=/bad",
             "HYAKKI_HOME=/bad",
-            "t3code_home=/bad",
+            "hyakki_home=/bad",
             "T3_BOOT_SERVICE_UNIT=bad",
             "t3_boot_service_unit=bad",
             "T3_SERVICE_LAUNCHER_CONTEXT=bad",
@@ -787,7 +787,7 @@ process.exit(0);
 
       yield* Effect.promise(() =>
         expect(runLauncher(root)).rejects.toThrow(
-          "Selected t3@1.0.0 runtime is missing or incomplete.",
+          "Selected hyakki@1.0.0 runtime is missing or incomplete.",
         ),
       );
       assert.equal(yield* fs.readFileString(statePath), contents);

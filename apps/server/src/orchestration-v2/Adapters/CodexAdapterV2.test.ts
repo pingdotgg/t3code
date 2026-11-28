@@ -4660,8 +4660,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const appContext = Object.values(params.additionalContext ?? {})
         .map((entry) => entry.value)
         .join("\n");
-      assert.include(appContext, "Hyakki tools coexist with the harness's native tools");
-      assert.include(appContext, "not Hyakki's vault PIN");
+      assert.include(
+        appContext,
+        "Subagents: use your native tool when the child uses your provider",
+      );
+      assert.include(appContext, "Never request the vault PIN itself.");
       const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
       const transcript = makeCodexReplayTranscript({
         scenario: "restore-context",

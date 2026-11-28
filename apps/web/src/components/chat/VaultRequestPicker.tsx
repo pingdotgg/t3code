@@ -266,7 +266,7 @@ export function VaultRequestPicker({
             setError(null);
             const approval = requiresPin ? Redacted.make(pin) : undefined;
             setPin("");
-            try {
+            await (async () => {
               const result = await answer({
                 environmentId,
                 input: {
@@ -285,10 +285,10 @@ export function VaultRequestPicker({
                 setError(secretRequestFailureMessage(squashAtomCommandFailure(result), messages));
                 query.refresh();
               }
-            } finally {
+            })().finally(() => {
               if (approval) Redacted.wipeUnsafe(approval);
               setPending(false);
-            }
+            });
           }}
         >
           {pending
