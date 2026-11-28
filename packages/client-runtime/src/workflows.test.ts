@@ -262,6 +262,7 @@ describe("the list of runs", () => {
     expect(picked("triage", deploy(20))).toBeNull();
     expect(picked("triage", deploy(5))).toBe("Older runs may be missing.");
     expect(workflowListLimitNotice(both, "running", false)).toBe("Older runs may be missing.");
+    expect(workflowListLimitNotice(both, "all", true)).toBe("Older runs may be missing.");
 
     const skippedOnly = { truncated: false, skippedTruncated: true };
     expect(workflowListLimitNotice(skippedOnly, "all", false)).toBeNull();
