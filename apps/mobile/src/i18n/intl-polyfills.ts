@@ -17,3 +17,6 @@ import "@formatjs/intl-pluralrules/locale-data/pt";
 import "@formatjs/intl-pluralrules/locale-data/ru";
 import "@formatjs/intl-pluralrules/locale-data/sv";
 import "@formatjs/intl-pluralrules/locale-data/zh";
+import { installIntlPolyfillCache } from "./intl-polyfill-cache";
+
+installIntlPolyfillCache();
