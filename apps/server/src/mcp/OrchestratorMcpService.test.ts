@@ -2530,6 +2530,17 @@ describe("OrchestratorMcpService provider resolution", () => {
         ]);
       }),
     );
+
+    it.effect("marks the user's favorite models among the listed ones", () =>
+      Effect.gen(function* () {
+        const favorites = (yield* capabilitiesWith()).providers.map((provider) =>
+          provider.models
+            .filter((entry) => (entry as { readonly favorite?: boolean }).favorite === true)
+            .map((entry) => entry.id),
+        );
+        assert.deepEqual(favorites, [["gpt-4"], ["oc/m10"]]);
+      }),
+    );
   });
 
   it.effect.each(["already advertised", "newly advertised", "still unavailable"] as const)(
