@@ -256,7 +256,10 @@ describe("extractInlineCodeSpans", () => {
     ["Step\n2. ~~~\n   `./a/shared.ts`", ["./a/shared.ts"]],
     ["1. Step\n    ```\r\n    `./a/shared.ts`\r\n    ```\r\n`./b/shared.ts`", ["./b/shared.ts"]],
     ["    ```\n    `./a/shared.ts`\n    ```\n\n`./b/shared.ts`", ["./b/shared.ts"]],
-  ])("skips only fenced code in %j", (markdown, spans) => {
+    ["Example\n\n    `src/a/index.ts`\n\nOpen `src/b/index.ts`", ["src/b/index.ts"]],
+    ["\r\t`src/a/index.ts`\r\rOpen `src/b/index.ts`", ["src/b/index.ts"]],
+    ["Example\n    `src/a/index.ts`\n\n    `src/b/index.ts`", ["src/a/index.ts"]],
+  ])("skips code spans inside code blocks in %j", (markdown, spans) => {
     expect(extractInlineCodeSpans(markdown)).toEqual(spans);
   });
 });
@@ -293,6 +296,47 @@ describe("extractMarkdownLinkHrefs", () => {
     ["> ```\n> [a](./a/README.md)\n> ```\n\n[b](./b/README.md)", ["./b/README.md"]],
     ["- ```\n  [a](./a/README.md)\n\n[b](./b/README.md)", ["./b/README.md"]],
   ])("skips links inside code in %s", (markdown, hrefs) => {
+    expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
+  });
+
+  it.each([
+    ["\t[a](src/a.ts)\r\n\r\n    [b](src/b.ts)\r\n[c](src/c.ts)", ["src/c.ts"]],
+    ["- Item\n\n      [a](src/a.ts)\n\n  [b](src/b.ts)", ["src/b.ts"]],
+    [">     [a](src/a.ts)\n>\n> [b](src/b.ts)", ["src/b.ts"]],
+    ["Paragraph\n    [a](src/a.ts)\n\n    [b](src/b.ts)", ["src/a.ts"]],
+    ["    [a](src/a.ts)\r\rOpen [b](src/b.ts)", ["src/b.ts"]],
+    ["Intro\r\r    [a](src/a.ts)\r\nOpen [b](src/b.ts)", ["src/b.ts"]],
+    [
+      "[^n]: Intro\n\n    [a](src/a.ts)\n\n        [code](src/code.ts)\n\nSee [^n] and [b](src/b.ts)",
+      ["src/a.ts", "src/b.ts"],
+    ],
+    ["a | b\n-- | --\n    [a](src/a.ts) | hi\n\n[b](src/b.ts)", ["src/b.ts"]],
+    ["a | b\n-- | --\nrow | row\n    [a](src/a.ts) | hi\n\n[b](src/b.ts)", ["src/b.ts"]],
+    [
+      "-     [code](src/code.ts)\n-      [a](src/a.ts)\n- \t\t[b](src/b.ts)",
+      ["src/a.ts", "src/b.ts"],
+    ],
+    [
+      "-      Example\n\n      [a](src/a.ts)\n\n          [code](src/code.ts)\n- [b](src/b.ts)",
+      ["src/a.ts", "src/b.ts"],
+    ],
+    [
+      "-      [index.ts](src/a/index.ts) | heading\n      -- | --\n\n[index.ts](src/b/index.ts)\n\n-      [notes](src/notes.ts)",
+      ["src/b/index.ts", "src/notes.ts"],
+    ],
+    [
+      "-       first\n\n        -      [index.ts](src/a/index.ts) | heading\n              -- | --\n\n[index.ts](src/b/index.ts)",
+      ["src/b/index.ts"],
+    ],
+    [
+      "> -      [index.ts](src/a/index.ts)\n>       heading continuation\n>       ===\n\n[index.ts](src/b/index.ts)",
+      ["src/b/index.ts"],
+    ],
+    [
+      "[^a\u00a0b]: Intro\n\n    [index.ts](src/a/index.ts)\n\nSee [^a\u00a0b] and [index.ts](src/b/index.ts)",
+      ["src/a/index.ts", "src/b/index.ts"],
+    ],
+  ])("excludes indented code destinations in %j", (markdown, hrefs) => {
     expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
   });
 

@@ -81,15 +81,18 @@ const modelSelection = {
 } as const;
 
 it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
-  it.effect.each(["first run", "ref lookup fails", "shifted predecessor"] as const)(
-    "captures without decoding history or losing newer delegated completion (%s)",
-    (scenario) =>
+  it.effect.each([
+    { ordinal: 1, refLookupFails: false, shifted: false },
+    { ordinal: 1, refLookupFails: true, shifted: false },
+    { ordinal: 4, refLookupFails: false, shifted: true },
+    { ordinal: 128, refLookupFails: false, shifted: false },
+  ])(
+    "captures without decoding history or losing newer delegated completion, ordinal=$ordinal, ref lookup fails=$refLookupFails",
+    ({ ordinal, refLookupFails, shifted }) =>
       Effect.gen(function* () {
         const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
         const now = yield* DateTime.now;
         const later = DateTime.add(now, { seconds: 1 });
-        const refLookupFails = scenario === "ref lookup fails";
-        const shifted = scenario === "shifted predecessor";
 
         const staleDelegatedCompletion = {
           disposition: "open" as const,
@@ -108,7 +111,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         const staleRun: OrchestrationV2Run = {
           id: runId,
           threadId,
-          ordinal: shifted ? 4 : 1,
+          ordinal,
           providerInstanceId,
           modelSelection,
           providerThreadId,
@@ -191,8 +194,8 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           runId,
           nodeId: rootNodeId,
           parentCheckpointId: readyBaseline.id,
-          ordinalWithinScope: 1,
-          appRunOrdinal: 1,
+          ordinalWithinScope: ordinal,
+          appRunOrdinal: ordinal,
           ref: CheckpointRef.make("checkpoint-ref:captured-1"),
           status: "ready" as const,
           files: [],
@@ -292,6 +295,19 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         });
         if (shifted) {
           yield* projectionStore.apply({
+            id: EventId.make("event:checkpoint-capture:previous-run-updated"),
+            type: "run.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              ...staleRun,
+              id: previousCheckpoint.runId,
+              ordinal: previousCheckpoint.appRunOrdinal,
+              userMessageId: MessageId.make("message:checkpoint-capture-previous"),
+              checkpointId: previousCheckpoint.id,
+            },
+          });
+          yield* projectionStore.apply({
             id: EventId.make("event:checkpoint-capture:previous-run"),
             type: "checkpoint.captured",
             threadId,
@@ -300,6 +316,25 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           });
         }
         const sql = yield* SqlClient.SqlClient;
+        if (ordinal > 1 && !shifted) {
+          yield* sql`WITH RECURSIVE history(ordinal) AS (
+            SELECT 1 UNION ALL SELECT ordinal + 1 FROM history WHERE ordinal < ${ordinal - 1}
+          )
+          INSERT INTO orchestration_v2_projection_checkpoints
+            (checkpoint_id, thread_id, scope_id, node_id, ordinal_within_scope, status,
+              captured_at, payload_json)
+          SELECT 'checkpoint:history:' || ordinal, ${threadId}, ${scopeId}, ${rootNodeId},
+            ordinal, 'ready', ${DateTime.formatIso(now)}, '{}' FROM history`;
+        }
+        const baselineContext = yield* projectionStore.getCheckpointCaptureContext(
+          threadId,
+          { runId, scopeId },
+          { preservedCheckpoints: "baselines" },
+        );
+        assert.deepEqual(
+          [...baselineContext.preservedCheckpointOrdinals].toSorted((a, b) => a - b),
+          shifted ? [0, 2] : ordinal === 1 ? [0] : [0, ordinal - 1],
+        );
         yield* sql`INSERT OR REPLACE INTO orchestration_v2_projection_turn_items
           (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
             parent_item_id, ordinal, type, status, updated_at, payload_json)
@@ -444,7 +479,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           yield* service.execute({ threadId, runId, scopeId });
           assert.deepEqual(yield* Ref.get(committed), []);
         }).pipe(Effect.provide(layerCapture));
-      }),
+      }).pipe(Effect.provide(Layer.fresh(layerProjectionStoreTest))),
   );
 
   it.effect("does not capture a stopped run that a rollback already discarded", () =>

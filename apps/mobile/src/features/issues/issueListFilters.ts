@@ -1,3 +1,4 @@
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { Atom } from "effect/reactivity";
 
 export interface IssueListFilters {
@@ -25,4 +26,10 @@ export function unofferedIssueFilters(
     labels: filters.labels.filter((name) => !offered.labels.some((label) => label.name === name)),
     assignee: offered.assignees.some((actor) => actor.login === login) ? null : filters.assignee,
   };
+}
+
+/** A pasted wall of text searches by its start rather than failing the server's 200-unit limit. */
+export function issueSearchQuery(typed: string): string {
+  const trimmed = typed.trim();
+  return trimmed.slice(0, splitsSurrogatePair(trimmed, 200) ? 199 : 200).trim();
 }

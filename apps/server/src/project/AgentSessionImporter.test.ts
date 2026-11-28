@@ -637,7 +637,7 @@ it.effect("appends new Codex messages to the existing import exactly once", () =
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
-it.effect("refreshes completed Codex turns in order, including gaps after a failed read", () =>
+it.effect("refreshes shared Codex history after a provider switch and a failed read", () =>
   Effect.gen(function* () {
     const sink = yield* EventSink.EventSinkV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -740,6 +740,7 @@ it.effect("refreshes completed Codex turns in order, including gaps after a fail
       nativeTurn("outside-2", "Next Codex message", "inProgress"),
     ];
     const readAnchors: Array<string> = [];
+    const requestedInstances: Array<ProviderInstanceId> = [];
     let failRead = false;
     const session = {
       readHistoryAfter: ({ nativeTurnId, providerThread }) =>
@@ -760,7 +761,12 @@ it.effect("refreshes completed Codex turns in order, including gaps after a fail
     const adapter = {
       openSession: () => Effect.succeed(session),
     } as unknown as ProviderAdapter.ProviderAdapterV2["Service"];
-    const importer = yield* makeImporter([], Effect.void, () => Effect.succeed(adapter));
+    const getAdapter = (instanceId: ProviderInstanceId) =>
+      Effect.sync(() => {
+        requestedInstances.push(instanceId);
+        return adapter;
+      });
+    const importer = yield* makeImporter([], Effect.void, getAdapter);
     const refresh = importer.refreshCodexHistory({ threadId });
 
     expect(yield* refresh).toBe(0);
@@ -779,6 +785,7 @@ it.effect("refreshes completed Codex turns in order, including gaps after a fail
     const copies = yield* Effect.all([refresh, refresh], { concurrency: 2 });
     expect(copies.toSorted()).toEqual([0, 1]);
     expect(readAnchors).toEqual(["local-turn", "outside-1"]);
+    expect(requestedInstances.at(-1)).toBe(nativeThread.providerInstanceId);
     nativeHistory[3] = nativeTurn("outside-2", "Next Codex message");
     expect(yield* refresh).toBe(1);
 
@@ -790,10 +797,13 @@ it.effect("refreshes completed Codex turns in order, including gaps after a fail
     const continuedNodeId = NodeId.make(`${continuedId}:root`);
     const checkpointId = CheckpointId.make(`${continuedId}:checkpoint`);
     const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/continued");
+    const alternateInstanceId = ProviderInstanceId.make("codex-shared-home");
     const continuedRun: OrchestrationV2Run = {
       ...localRun,
       id: continuedId,
       ordinal: 5,
+      providerInstanceId: alternateInstanceId,
+      modelSelection: { ...localRun.modelSelection, instanceId: alternateInstanceId },
       rootNodeId: continuedNodeId,
       activeAttemptId: continuedAttemptId,
       checkpointId,
@@ -818,6 +828,18 @@ it.effect("refreshes completed Codex turns in order, including gaps after a fail
     };
     yield* sink.write({
       events: [
+        // Resuming in a Codex instance with the same home retains the native thread and its turns.
+        {
+          id: EventId.make(`${continuedId}:shared-home-switch`),
+          type: "provider-thread.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            ...nativeThread,
+            providerInstanceId: alternateInstanceId,
+            lastRunOrdinal: continuedRun.ordinal,
+          },
+        },
         {
           id: EventId.make(`${continuedId}:created`),
           type: "run.created",
@@ -926,11 +948,12 @@ it.effect("refreshes completed Codex turns in order, including gaps after a fail
           ],
         })
         .pipe(Effect.orDie, Effect.asVoid),
-      () => Effect.succeed(adapter),
+      getAdapter,
     );
     expect(yield* restarted.refreshCodexHistory({ threadId })).toBe(1);
     expect(yield* refresh).toBe(0);
     expect(readAnchors.slice(-3)).toEqual(["outside-2", "outside-2", "continued"]);
+    expect(requestedInstances.slice(-2)).toEqual([alternateInstanceId, alternateInstanceId]);
 
     const after = yield* projections.getThreadRecords(threadId, [
       "runs",

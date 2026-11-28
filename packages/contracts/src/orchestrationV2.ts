@@ -2534,14 +2534,19 @@ export function isLiveSubagentShell(
 
 /**
  * A settled top-level thread settled before `beforeMs`. Shells that omit older settled threads
- * count every such thread, so the server and clients share this one rule.
+ * count every such thread, so the server and clients share this one rule. A task delegated from a
+ * linked environment never is: only the client knows whether it lists it under its parent.
  */
 export function isOlderSettledThreadShell(
-  thread: Pick<OrchestrationV2ThreadShell, "lineage" | "settledOverride" | "settledAt">,
+  thread: Pick<
+    OrchestrationV2ThreadShell,
+    "lineage" | "delegatedFrom" | "settledOverride" | "settledAt"
+  >,
   beforeMs: number,
 ): boolean {
   return (
     isListedThreadLineage(thread.lineage) &&
+    thread.delegatedFrom == null &&
     thread.settledOverride === "settled" &&
     thread.settledAt !== null &&
     DateTime.toEpochMillis(thread.settledAt) < beforeMs
@@ -4285,10 +4290,10 @@ export type OrchestrationV2GetWorktreeThreadIdsInput =
   typeof OrchestrationV2GetWorktreeThreadIdsInput.Type;
 
 /**
- * The client's thread search. With `olderSettledBefore`, the result also carries the rows of the
- * best matching threads settled before it, which shells that omit older settled threads leave out:
- * title, branch, pull request and project matches (in `projectIds` when given), then message hits.
- * Send the extra keys only to servers that advertise `shellOlderSettled`.
+ * The client's thread search, limited to `projectIds` when given (older servers ignore it). With
+ * `olderSettledBefore`, the result also carries the rows of the best matching threads settled
+ * before it, which shells that omit older settled threads leave out. Send that and the other extra
+ * keys only to servers that advertise `shellOlderSettled`.
  */
 export const OrchestrationV2SearchThreadsInput = Schema.Struct({
   ...OrchestrationSearchThreadsInput.fields,

@@ -172,6 +172,7 @@ import {
   derivePhase,
   deriveActiveWorkStartedAt,
   deriveCanInterruptRunningThread,
+  findLatestTaskList,
   findRevertCheckpoint,
   isLatestRunSettled,
 } from "../session-logic";
@@ -3536,6 +3537,10 @@ export default function ChatView(props: ChatViewProps) {
     onToggleThreadPanel: toggleThreadPanelStable,
     onToggleRightPanel: toggleRightPanelStable,
   } satisfies PanelLayoutControlsProps;
+  const rightPanelMaximizeShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "rightPanel.toggleMaximized",
+  );
   const panelToggleControls = (
     <PanelLayoutControls
       {...panelToggleControlProps}
@@ -3550,6 +3555,7 @@ export default function ChatView(props: ChatViewProps) {
       animationsActive={panelAnimationsActive}
       maximized={rightPanelMaximized}
       onToggleMaximized={toggleRightPanelMaximizedStable}
+      maximizeShortcutLabel={rightPanelMaximizeShortcutLabel}
     >
       {panelToggleControls}
     </WorkspaceTitlebarControls>
@@ -4038,6 +4044,10 @@ export default function ChatView(props: ChatViewProps) {
                                 onRestoreEditingQueuedAttachment={
                                   queuedRunEdit.restoreEditingAttachment
                                 }
+                                canMoveEditingQueuedMessageToStash={
+                                  queuedRunEdit.canMoveEditToStash
+                                }
+                                onMoveEditingQueuedMessageToStash={queuedRunEdit.removeEditedRun}
                               />
                             )}
                           </div>
@@ -4223,6 +4233,7 @@ export default function ChatView(props: ChatViewProps) {
                     sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
                     contextWindow: activeContextWindow,
                   }}
+                  taskList={findLatestTaskList(serverProjection)}
                 />
 
                 <PullRequestThreadDialogHost
@@ -4271,6 +4282,7 @@ export default function ChatView(props: ChatViewProps) {
                 <RightPanelMaximizeControl
                   maximized={rightPanelMaximized}
                   onToggle={toggleRightPanelMaximizedStable}
+                  shortcutLabel={rightPanelMaximizeShortcutLabel}
                 />
                 {panelToggleControls}
               </div>

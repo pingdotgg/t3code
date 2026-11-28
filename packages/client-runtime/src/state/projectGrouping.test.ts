@@ -6,6 +6,7 @@ import { chooseLoadBalancedEnvironment } from "../load-balancing.ts";
 import {
   buildProjectGroups,
   deriveLogicalProjectKeyFromSettings,
+  groupIconFallbacks,
   pickableProjectGroups,
   derivePhysicalProjectKey,
   resolveGroupDefaultProject,
@@ -461,6 +462,30 @@ describe("buildProjectGroups", () => {
     expect(groups.map((group) => group.key)).toEqual([`${key}::app`, key]);
   });
 
+  it("keeps literal POSIX backslashes distinct from repository path separators", () => {
+    const identity = { ...repositoryIdentity, canonicalKey: "host/org/repo", rootPath: "/repo" };
+    const groups = buildProjectGroups({
+      projects: [
+        makeProject("literal", String.raw`/repo/a\b`, { repositoryIdentity: identity }),
+        makeProject("nested", "/repo/a/b", { repositoryIdentity: identity }),
+        makeProject("windows", String.raw`C:\repo\a\b`, {
+          environmentId: EnvironmentId.make("windows"),
+          repositoryIdentity: { ...identity, rootPath: String.raw`C:\repo` },
+        }),
+      ],
+      settings: settings("repository_path"),
+    });
+
+    expect(groups.map((group) => group.key)).toEqual([
+      String.raw`host/org/repo::a\b`,
+      "host/org/repo::a/b",
+    ]);
+    expect(groups.map((group) => group.members.map(({ project }) => project.id))).toEqual([
+      ["literal"],
+      ["nested", "windows"],
+    ]);
+  });
+
   it("applies a physical-project override without dropping its siblings", () => {
     const first = makeProject("t3code", "/work/t3code");
     const second = makeProject("t3code-2", "/work/t3code-2");
@@ -606,5 +631,15 @@ describe("sortProjectsByGroupOrder", () => {
       ],
     );
     expect(sorted.map((entry) => entry.id)).toEqual(["pinned", "recent", "archived", "unlisted"]);
+  });
+});
+
+describe("groupIconFallbacks", () => {
+  it("lists the group's other members in order, leaving out its representative", () => {
+    const remote = EnvironmentId.make("remote");
+    const root = makeProject("root", "/work/t3code");
+    const web = makeProject("web", "/work/t3code/apps/web");
+    const remoteRoot = makeProject("root", "/work/t3code", { environmentId: remote });
+    expect(groupIconFallbacks([web, root, remoteRoot], root)).toEqual([web, remoteRoot]);
   });
 });

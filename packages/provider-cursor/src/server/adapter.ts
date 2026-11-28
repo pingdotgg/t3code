@@ -9,6 +9,7 @@ import type {
   SettingSource,
   ToolCall,
 } from "@cursor/sdk";
+import { imageMimeTypeFromBytes } from "@t3tools/shared/image";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
@@ -3006,7 +3007,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 );
                 return {
                   data: Buffer.from(bytes).toString("base64"),
-                  mimeType: attachment.mimeType,
+                  mimeType: imageMimeTypeFromBytes(bytes) ?? attachment.mimeType,
                 };
               }),
             { concurrency: 1 },

@@ -74,7 +74,9 @@ export const layer: Layer.Layer<
       readonly runId: RunId;
       readonly scopeId: CheckpointScopeId;
     }) {
-      const context = yield* projections.getCheckpointCaptureContext(input.threadId, input);
+      const context = yield* projections.getCheckpointCaptureContext(input.threadId, input, {
+        preservedCheckpoints: "baselines",
+      });
       const {
         run,
         rootNode,
