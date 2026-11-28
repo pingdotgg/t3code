@@ -287,4 +287,123 @@ describe("Expo API", () => {
       ]).toEqual([true, true, true, true, false, false, false, false, false]);
     }),
   );
+
+  const sessionInput = {
+    appId: "app-1",
+    platform: "ios" as const,
+    name: "eas-ios",
+    maxRunTimeMinutes: 25,
+    maxIdleTimeMinutes: 5,
+  };
+
+  const readVariables = (request: {
+    readonly body: { readonly _tag: string; readonly body?: Uint8Array };
+  }) =>
+    request.body._tag === "Uint8Array"
+      ? (
+          JSON.parse(new TextDecoder().decode(request.body.body)) as {
+            variables: { input: Record<string, unknown> };
+          }
+        ).variables
+      : null;
+
+  it.effect("sends corsOrigins when Expo accepts the start", () =>
+    Effect.gen(function* () {
+      const requests: Array<{ input: Record<string, unknown> }> = [];
+      const http = HttpClient.make((request) =>
+        Effect.sync(() => {
+          const variables = readVariables(request);
+          if (variables !== null) requests.push(variables);
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              data: { deviceRunSession: { createDeviceRunSession: { id: "session-1" } } },
+            }),
+          );
+        }),
+      );
+      expect(yield* makeExpoApi(http, credential).create(sessionInput)).toBe("session-1");
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.input).toMatchObject({
+        appId: "app-1",
+        platform: "IOS",
+        type: "AGENT_DEVICE",
+        corsOrigins: ["http://localhost"],
+      });
+    }),
+  );
+
+  it.effect(
+    "retries a plan-restricted start without corsOrigins so Starter accounts can open a session",
+    () =>
+      Effect.gen(function* () {
+        const requests: Array<{ input: Record<string, unknown> }> = [];
+        const http = HttpClient.make((request) =>
+          Effect.sync(() => {
+            const variables = readVariables(request);
+            if (variables !== null) requests.push(variables);
+            if (requests.length === 1) {
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  errors: [
+                    {
+                      message:
+                        "frameAncestors and corsOrigins are supported on Production and Enterprise plans. This account currently has a subscription to the Starter plan.",
+                      extensions: { errorType: "USER", errorCode: "FORBIDDEN" },
+                    },
+                  ],
+                  data: null,
+                }),
+              );
+            }
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                data: { deviceRunSession: { createDeviceRunSession: { id: "session-1" } } },
+              }),
+            );
+          }),
+        );
+        expect(yield* makeExpoApi(http, credential).create(sessionInput)).toBe("session-1");
+        expect(requests).toHaveLength(2);
+        expect(requests[0]?.input.corsOrigins).toEqual(["http://localhost"]);
+        expect(requests[1]?.input.corsOrigins).toBeUndefined();
+        expect(requests[1]?.input).toMatchObject({
+          appId: "app-1",
+          platform: "IOS",
+          type: "AGENT_DEVICE",
+        });
+      }),
+  );
+
+  it.effect("does not retry an unrelated refused start without corsOrigins", () =>
+    Effect.gen(function* () {
+      let starts = 0;
+      const http = HttpClient.make((request) =>
+        Effect.sync(() => {
+          starts += 1;
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              errors: [
+                {
+                  message: "Experience with id app-1 does not exist.",
+                  extensions: {
+                    errorType: "USER",
+                    errorCode: "EXPERIENCE_NOT_FOUND",
+                  },
+                },
+              ],
+              data: null,
+            }),
+          );
+        }),
+      );
+      const error = yield* makeExpoApi(http, credential).create(sessionInput).pipe(Effect.flip);
+      expect(starts).toBe(1);
+      expect(error.rejected).toBe(true);
+      expect(error.message).toContain("Experience with id app-1 does not exist.");
+    }),
+  );
 });
