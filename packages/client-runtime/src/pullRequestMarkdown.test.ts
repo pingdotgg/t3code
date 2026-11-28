@@ -140,7 +140,6 @@ describe("pull request body segmentation", () => {
         '<video src="https://example.org/a.mp4?x=1&amp;amp;y=2"></video>',
         "https://example.org/a.mp4?x=1&amp;y=2",
       ],
-      ["https://example.org/a.mp4?x=1&amp;y=2", "https://example.org/a.mp4?x=1&amp;y=2"],
     ] as const) {
       expect(split(body)).toEqual([
         {
