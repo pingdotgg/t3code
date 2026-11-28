@@ -145,6 +145,48 @@ export function toggleThreadSidePane(threadRef: ScopedThreadRef, openDefault: ()
 }
 
 /**
+ * mod+alt+E for a thread: its side pane fills the window, opening first when it is hidden.
+ * Pressed on the filled side pane, the other panes come back.
+ */
+export function toggleThreadSidePaneFill(
+  threadRef: ScopedThreadRef,
+  openDefault: () => boolean,
+): void {
+  const besideTab = () => {
+    const layout = useLayoutStore.getState().layout;
+    const chat = findThreadChat(layout, threadRef);
+    if (!chat) return null;
+    return (
+      findLayoutSurfaceTabs(layout, threadRef).find(
+        (location) =>
+          location.tab.content.kind === "surface" &&
+          location.tab.content.surfaceId !== THREAD_TERMINAL_SURFACE_ID &&
+          onScreen(layout, location) &&
+          atDestination(location, chat, false),
+      ) ?? null
+    );
+  };
+  const fill = (tabId: string) => {
+    const store = useLayoutStore.getState();
+    store.focusTab(tabId);
+    store.toggleMaximizedTab(tabId);
+  };
+  const shown = besideTab();
+  if (shown) return fill(shown.tab.id);
+  toggleThreadSidePane(threadRef, openDefault);
+  const opened = besideTab();
+  if (opened) return fill(opened.tab.id);
+  // Surface tabs can land in a later store commit than the one that showed them.
+  const unsubscribe = useLayoutStore.subscribe(() => {
+    const next = besideTab();
+    if (!next) return;
+    unsubscribe();
+    fill(next.tab.id);
+  });
+  window.setTimeout(unsubscribe, 1000);
+}
+
+/**
  * cmd+D and cmd+L for a thread: the diff or linked pull requests tab hidden behind another
  * tab comes forward; otherwise `toggle` opens it where the side pane goes or hides it.
  */

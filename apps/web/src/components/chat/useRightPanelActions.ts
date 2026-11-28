@@ -9,7 +9,11 @@ import { useLayoutPane, useLayoutPaneOwnsThreadRef } from "../../layout/layoutPa
 import { registerLayoutOpenBesideAction, type LayoutBesideKind } from "../../layout/layoutActions";
 import { requestLayoutSurfacePlacement } from "../../layout/surfaceSync";
 import { getLayoutBehavior } from "../../layout/layoutBehavior";
-import { toggleThreadSidePane, toggleThreadSurfaceTab } from "../../layout/openRules";
+import {
+  toggleThreadSidePane,
+  toggleThreadSidePaneFill,
+  toggleThreadSurfaceTab,
+} from "../../layout/openRules";
 import type { useChatTerminalActions } from "./useChatTerminalActions";
 import { isPreviewSupportedInRuntime } from "../../previewStateStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -321,6 +325,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   };
   const shortcuts = {
     "rightPanel.toggle": () => toggleSidePane(),
+    "rightPanel.toggleMaximized": ({ event }) => {
+      if (!event.repeat && activeThreadRef !== null) {
+        toggleThreadSidePaneFill(activeThreadRef, openSidePaneDefaultStable);
+      }
+    },
     "threadPanel.toggle": () => toggleThreadPanel(),
     "diff.toggle": () => onToggleDiff(),
     "pullRequests.toggle": () => onTogglePullRequests(),
