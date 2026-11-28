@@ -6,6 +6,7 @@ import {
   insertPullRequestCompletion,
   narrowPullRequestMentions,
   narrowPullRequestReferences,
+  pullRequestCompletionKey,
 } from "./pullRequestComposerTrigger.ts";
 
 const GITLAB = { mentions: true, referenceSigils: ["#", "!"] } as const;
@@ -79,6 +80,24 @@ describe("insertPullRequestCompletion", () => {
     const inserted = insertPullRequestCompletion(text, trigger, "#123");
     expect(inserted).toEqual({ text: "#123 please look", cursor: "#123 ".length });
     expect(detectPullRequestComposerTrigger(inserted.text, inserted.cursor, GITLAB)).toBeNull();
+  });
+});
+
+describe("pullRequestCompletionKey", () => {
+  it("backs up one code unit when the 100-unit cap splits a surrogate pair", () => {
+    const query = `${"界".repeat(99)}𠀀`;
+    const trigger = detectPullRequestComposerTrigger(`!${query}`, query.length + 1, {
+      referenceSigils: ["!"],
+    })!;
+    const key = pullRequestCompletionKey(trigger);
+    expect(key).toBe(`!${"界".repeat(99)}`);
+    expect(debouncedPullRequestCompletionSearch(trigger, key)).toBe("界".repeat(99));
+    expect(trigger.query).toBe(query);
+  });
+
+  it("keeps a surrogate pair that ends at the 100-unit cap", () => {
+    const prefix = `${"界".repeat(98)}𠀀`;
+    expect(pullRequestCompletionKey({ sigil: "!", query: `${prefix}界` })).toBe(`!${prefix}`);
   });
 });
 
