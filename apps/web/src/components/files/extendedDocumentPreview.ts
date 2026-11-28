@@ -121,7 +121,16 @@ async function odfHtml(
     if (value !== undefined) return hidden ? "" : pipe(value, escape, boundedMarkup);
   }
   if (node.name === "text:p" || node.name === "text:h") {
-    const fields = find(node, "text:hidden-paragraph");
+    // A frame or note anchored here holds its own paragraphs, whose fields do not hide this one.
+    const ownFields = (parent: XmlNode): XmlNode[] =>
+      parent.children.flatMap((child) =>
+        child.name === "text:hidden-paragraph"
+          ? [child]
+          : child.name === "text:p" || child.name === "text:h"
+            ? []
+            : ownFields(child),
+      );
+    const fields = ownFields(node);
     if (fields.length && fields.every(fieldHidden)) return "";
   }
   if (node.name === "text:note") {

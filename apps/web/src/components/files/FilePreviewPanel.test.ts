@@ -827,16 +827,17 @@ Third}`;
     // Field markup as LibreOffice Writer saves it: a visible hidden-text field keeps no content, only
     // its text:string-value.
     const xml =
-      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text>' +
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"><office:body><office:text>' +
       '<text:p>Gate code <text:hidden-text text:condition="ooow:1" text:string-value="4471 (staff only)" text:is-hidden="true">4471 (staff only)</text:hidden-text>is posted.</text:p>' +
       '<text:p>Shown field <text:hidden-text text:condition="ooow:0" text:string-value="visible note"/><text:s/>end.</text:p>' +
       '<text:p><text:hidden-paragraph text:condition="ooow:1" text:is-hidden="true"/>Internal margin is 42%.</text:p>' +
       '<text:p><text:hidden-paragraph text:condition="ooow:0"/>Kept paragraph.</text:p>' +
+      '<text:p>Outer <draw:frame><draw:text-box><text:p><text:hidden-paragraph text:condition="ooow:1" text:is-hidden="true"/>Boxed.</text:p></draw:text-box></draw:frame>stays.</text:p>' +
       "</office:text></office:body></office:document-content>";
     const result = await openDocument(new JSZip().file("content.xml", xml), "odt");
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html).toBe(
-      "<p>Gate code is posted.</p><p>Shown field visible note<span data-odf-whitespace> </span>end.</p><p>Kept paragraph.</p>",
+      "<p>Gate code is posted.</p><p>Shown field visible note<span data-odf-whitespace> </span>end.</p><p>Kept paragraph.</p><p>Outer stays.</p>",
     );
   });
 
