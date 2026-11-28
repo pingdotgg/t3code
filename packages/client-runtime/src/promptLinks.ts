@@ -109,20 +109,28 @@ export function resolvePromptLinkModelSelection(
       provider.enabled &&
       provider.availability !== "unavailable",
   );
-  const instance =
-    usable.find((provider) => provider.status === "ready") ??
-    usable.find((provider) => provider.status === "warning");
-  if (instance === undefined) return null;
-  const requested =
-    request.model === null
-      ? null
-      : resolveSelectableModel(instance.driver, request.model, instance.models);
-  const model =
-    requested ??
-    (instance.models.find((candidate) => candidate.isDefault) ?? instance.models[0])?.slug;
+  const candidates = [
+    ...usable.filter((provider) => provider.status === "ready"),
+    ...usable.filter((provider) => provider.status === "warning"),
+  ];
+  const fallback = candidates[0];
+  if (fallback === undefined) return null;
+  if (request.model !== null) {
+    for (const candidate of candidates) {
+      const requested = resolveSelectableModel(candidate.driver, request.model, candidate.models);
+      if (requested !== null) {
+        return {
+          selection: { instanceId: candidate.instanceId, model: requested },
+          exact: true,
+        };
+      }
+    }
+  }
+  const model = (fallback.models.find((candidate) => candidate.isDefault) ?? fallback.models[0])
+    ?.slug;
   if (model === undefined) return null;
   return {
-    selection: { instanceId: instance.instanceId, model },
-    exact: request.model === null || requested !== null,
+    selection: { instanceId: fallback.instanceId, model },
+    exact: request.model === null,
   };
 }
