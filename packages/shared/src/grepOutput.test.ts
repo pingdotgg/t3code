@@ -3,9 +3,13 @@ import { describe, expect, it } from "vite-plus/test";
 import { parseGrepOutput } from "./grepOutput.ts";
 
 describe("parseGrepOutput", () => {
-  it("reads OpenCode's grep output", () => {
+  it.each([
+    "Found 3 matches",
+    "Found 3 matches (showing first 100)",
+    "Found 3 matches (more matches available)",
+  ])("reads OpenCode's grep output after %s", (summary) => {
     const output = [
-      "Found 3 matches",
+      summary,
       "/repo/src/one.ts:",
       '  Line 1: export const heading = "intro";',
       "",
@@ -32,6 +36,14 @@ describe("parseGrepOutput", () => {
   });
 
   it("reads ripgrep's inline and heading forms", () => {
+    expect(parseGrepOutput("normal\n1:needle\n\nFound 1 match\n2:needle", ".")).toEqual([
+      { fileName: "normal", line: 1, preview: "needle" },
+      { fileName: "Found 1 match", line: 2, preview: "needle" },
+    ]);
+    expect(parseGrepOutput("normal:1:needle\nFound 1 match.txt:1:needle\n", ".")).toEqual([
+      { fileName: "normal", line: 1, preview: "needle" },
+      { fileName: "Found 1 match.txt", line: 1, preview: "needle" },
+    ]);
     expect(parseGrepOutput("src/a.ts:4:const a = 1;\nC:\\w\\b.ts:9:b: 2", ".")).toEqual([
       { fileName: "src/a.ts", line: 4, preview: "const a = 1;" },
       { fileName: "C:\\w\\b.ts", line: 9, preview: "b: 2" },
@@ -84,20 +96,25 @@ describe("parseGrepOutput", () => {
     ]);
   });
 
-  it("reads Gemini's File and L-numbered form", () => {
+  it.each([
+    'Found 2 matches for pattern "foo:12:bar" in path "src":',
+    'Found 2 matches for pattern "foo:12:bar" in path "." (filter: "*.ts"):',
+    'Found 2 matches for pattern "foo:12:bar" in the workspace directory:',
+    'Found 2 matches for pattern "foo:12:bar" across 2 workspace directories (results limited to 2 matches for performance):',
+  ])("reads Gemini's File and L-numbered form after %s", (summary) => {
     const output = [
-      'Found 2 matches for pattern "needle" in path "src":',
+      summary,
       "---",
       "File: one.ts",
-      "L2: const needle = 1;",
+      "L2: const first = 'foo:12:bar';",
       "---",
       "File: two.ts",
-      "L7: needle();",
+      "L7: log('foo:12:bar');",
       "---",
     ].join("\n");
     expect(parseGrepOutput(output, "src")).toEqual([
-      { fileName: "one.ts", line: 2, preview: "const needle = 1;" },
-      { fileName: "two.ts", line: 7, preview: "needle();" },
+      { fileName: "one.ts", line: 2, preview: "const first = 'foo:12:bar';" },
+      { fileName: "two.ts", line: 7, preview: "log('foo:12:bar');" },
     ]);
   });
 
@@ -107,6 +124,18 @@ describe("parseGrepOutput", () => {
     ["prose before a tool-specific numbered line", "Text output\n  Line 2: not a grep match"],
     ["a file list", "/repo/a.ts\n/repo/b.ts"],
     ["no matches", "No files found"],
+    [
+      "Gemini's no-match summary",
+      'No matches found for pattern "foo:12:bar" in the workspace directory (filter: "*.ts").',
+    ],
+    [
+      "a summary-shaped inline row",
+      'normal:1:needle\nFound 1 matches for pattern "foo:12:bar" in path "src":',
+    ],
+    [
+      "a summary-shaped first inline row",
+      'Found 1 matches for pattern "foo:12:bar" in path "src":\nnormal:1:needle',
+    ],
     ["ripgrep context lines", "a.ts\n1-before\n2:needle"],
     ["a line zero", "a.ts:0:needle"],
     ["grouped text starts with digits and a colon", "docs/notes:12:draft.md\n2:10:needle"],

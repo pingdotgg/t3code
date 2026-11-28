@@ -11,7 +11,8 @@ export interface GrepOutputResult {
 const PREVIEW_BUDGET_CHARS = 8_000;
 const NOTE_MAX_CHARS = 500;
 
-const SUMMARY_LINE = /^(?:Found \d+ (?:match|file)|No (?:files|matches) found)/i;
+const SUMMARY_LINE =
+  /^(?:Found \d+ (?:match(?:es)?|files?)(?: \((?:showing first \d+|more matches available)\))?|No (?:files|matches) found)(?: for pattern ".*" (?:in (?:path ".*"|the workspace directory)|across \d+ workspace directories)(?: \(filter: ".*"\))?(?: \(results limited to \d+ matches for performance\))?[:.])?$/i;
 const NOTE_LINE = /^\(.*\)$/;
 const FILE_HEADING = /^File: (.+)$/;
 // OpenCode and Gemini put a space after the colon; ripgrep's `--heading` lines start right after it.
@@ -36,6 +37,7 @@ export function parseGrepOutput(
   const notes: string[] = [];
   let file: string | undefined;
   let ripgrepFormat: "heading" | "inline" | undefined;
+  let sawInlineSummary = false;
   const lines = output.split(/\r?\n/);
   for (const [index, line] of lines.entries()) {
     const trimmed = line.trim();
@@ -44,7 +46,18 @@ export function parseGrepOutput(
       if (ripgrepFormat === "heading") file = undefined;
       continue;
     }
-    if (trimmed === "--" || trimmed === "---" || SUMMARY_LINE.test(trimmed)) continue;
+    if (trimmed === "--" || trimmed === "---") continue;
+    const nextLine = lines[index + 1] ?? "";
+    if (
+      SUMMARY_LINE.test(trimmed) &&
+      !(ripgrepFormat !== "inline" && RIPGREP_NUMBERED_LINE.test(nextLine))
+    ) {
+      if (PATH_LINE_TEXT.test(line)) {
+        if (ripgrepFormat === "inline") return undefined;
+        sawInlineSummary = true;
+      }
+      continue;
+    }
     const heading = FILE_HEADING.exec(trimmed);
     if (heading) {
       file = heading[1];
@@ -59,7 +72,6 @@ export function parseGrepOutput(
     }
     // ripgrep context lines (`N-text`) can't be told apart from a file named like one.
     if (file !== undefined && CONTEXT_LINE.test(line)) return undefined;
-    const nextLine = lines[index + 1] ?? "";
     // `dir/a:12:b.txt:` is both an inline match and an OpenCode heading; an indented `Line N:` next decides.
     const colonHeading = COLON_HEADING.exec(line.trimEnd());
     const inline =
@@ -78,6 +90,7 @@ export function parseGrepOutput(
       continue;
     }
     if (inline) {
+      if (sawInlineSummary) return undefined;
       ripgrepFormat = "inline";
       matches.push({ fileName: inline[1] ?? "", line: Number(inline[2]), text: inline[3] ?? "" });
       continue;
