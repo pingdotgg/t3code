@@ -1,4 +1,5 @@
 import {
+  type IssueTrackerKind,
   type PullRequestAction,
   type PullRequestReviewVerdict,
   type RepositoryIdentity,
@@ -42,6 +43,22 @@ export interface IssueLink {
   /** An equivalent binding scope when the provider allows another spelling in URLs. */
   readonly scopeAlias?: string;
   readonly key: string;
+}
+
+/** A standalone tracker's issue link keeps its workspace, because scope keys repeat across them. */
+export interface StandaloneIssueLink extends IssueLink {
+  readonly workspace: string;
+}
+
+/**
+ * How a client recognizes a standalone tracker's issue links without loading its server driver.
+ * Each tracker exports one from its `shared/issueUrl`, and the definitions package lists them.
+ */
+export interface StandaloneIssueLinkDefinition {
+  readonly tracker: IssueTrackerKind;
+  readonly parseIssueUrl: (url: URL) => StandaloneIssueLink | null;
+  /** A cheap pre-check, so text without such a link never asks for the bindings. */
+  readonly mayContainIssueUrl: (text: string) => boolean;
 }
 
 export interface ParsedChangeRequestUrl extends ChangeRequestLink {

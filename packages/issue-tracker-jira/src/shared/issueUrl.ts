@@ -1,4 +1,5 @@
 import { IssueTrackerKind } from "@t3tools/contracts";
+import type { StandaloneIssueLinkDefinition } from "@t3tools/source-control-core/shared/definition";
 
 export const JIRA_KIND = IssueTrackerKind.make("jira");
 export const JIRA_HOST = "atlassian.net";
@@ -13,9 +14,8 @@ export function parseJiraIssueUrl(url: URL) {
   return scope === undefined ? null : { host: JIRA_HOST, workspace: site, scope, key };
 }
 
-export const issueLinkDefinition = {
+export const issueLinkDefinition: StandaloneIssueLinkDefinition = {
   tracker: JIRA_KIND,
   parseIssueUrl: parseJiraIssueUrl,
   mayContainIssueUrl: (text: string) => /\.atlassian\.net\/browse\//i.test(text),
-  canUseUnboundProject: true,
 };

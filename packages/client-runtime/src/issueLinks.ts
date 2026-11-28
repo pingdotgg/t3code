@@ -71,6 +71,7 @@ function parseStandaloneIssueLink(url: string) {
   return null;
 }
 
+/** Whether `url` is a standalone tracker's issue link, which only bindings can resolve. */
 export function isStandaloneIssueLink(url: string): boolean {
   return parseStandaloneIssueLink(url) !== null;
 }
@@ -84,8 +85,8 @@ export function mayContainStandaloneIssueLink(text: string): boolean {
 
 /**
  * A standalone tracker link resolves through the project bound to its scope, else any bound to
- * the tracker, and only through an account whose credential reaches the workspace it names: team
- * keys repeat across workspaces, so a link elsewhere stays an ordinary link.
+ * the tracker, else the caller's unbound project. Every route needs an account that reaches the
+ * link's workspace, because team keys repeat across workspaces.
  */
 function resolveStandaloneIssueLink<Project extends LinkProject>(
   url: string,
@@ -95,8 +96,8 @@ function resolveStandaloneIssueLink<Project extends LinkProject>(
 ): { readonly project: Project; readonly ref: IssueRef } | null {
   const parsed = trackers === undefined ? null : parseStandaloneIssueLink(url);
   if (parsed === null || trackers === undefined) return null;
-  const { definition, link } = parsed;
-  const { tracker, canUseUnboundProject } = definition;
+  const { link } = parsed;
+  const { tracker } = parsed.definition;
   const accounts = new Set(
     [...trackers.trackers, ...(trackers.accounts ?? [])]
       .filter(
@@ -122,14 +123,12 @@ function resolveStandaloneIssueLink<Project extends LinkProject>(
     issueTrackerBindingScopes(candidate.binding).find((key) => key.toLowerCase() === scope);
   const own = preferFirst(onTracker.filter((candidate) => boundScope(candidate) !== undefined));
   const lender = own ?? preferFirst(onTracker);
-  // An unbound project uses the default account, so it must reach the link's workspace.
-  const fallback =
-    canUseUnboundProject && accounts.has(null)
-      ? projects.find(
-          (project) =>
-            project.id === preferredProjectId && bindings[project.id]?.tracker !== tracker,
-        )
-      : undefined;
+  // An unbound project reads with the tracker's first account, so that one must reach the workspace.
+  const fallback = accounts.has(null)
+    ? projects.find(
+        (project) => project.id === preferredProjectId && bindings[project.id]?.tracker !== tracker,
+      )
+    : undefined;
   const project = lender?.project ?? fallback;
   if (project === undefined) return null;
   return {
@@ -145,10 +144,9 @@ function resolveStandaloneIssueLink<Project extends LinkProject>(
 }
 
 /**
- * The reference an issue link resolves to, and the project it is read through: the project whose
- * tracker binding is that host and scope, else any project on the same tracker and host lending
- * its credentials for a read-only view. The same rule as the server's `IssueService.resolveUrl`,
- * applied on the client so a lookalike hostname matches no project and stays an ordinary link.
+ * The reference an issue link resolves to and the project that reads it: the one bound to its
+ * host and scope, else any lending its credentials read-only. These are the server's rules, run on
+ * the client so a lookalike hostname matches no project and stays an ordinary link.
  */
 export function resolveIssueLinkTarget<Project extends LinkProject>(input: {
   readonly url: string;

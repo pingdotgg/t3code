@@ -140,14 +140,22 @@ describe("resolveIssueLinkTarget", () => {
       resolveIssueLinkTarget({ url: "https://linear.app/acme/issue/WEB-17", projects }),
     ).toBeNull();
 
-    expect(
+    // With no binding, the caller's own project reads the link with the first account.
+    const unbound = (url: string) =>
       resolveIssueLinkTarget({
-        url: "https://linear.app/acme/issue/WEB-17",
+        url,
         projects,
         preferredProjectId: ProjectId.make("p1"),
         trackers: { ...trackers, bindings: {} },
-      }),
-    ).toBeNull();
+      })?.ref;
+    expect(unbound("https://linear.app/acme/issue/WEB-17")).toEqual({
+      projectId: "p1",
+      tracker: "linear",
+      host: "linear.app",
+      scope: "WEB",
+      key: "WEB-17",
+    });
+    expect(unbound("https://linear.app/othercorp/issue/WEB-17")).toBeUndefined();
 
     // A second account reaches its own workspace, through only the projects bound with it.
     const accountId = IssueTrackerAccountId.make("second");
