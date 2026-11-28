@@ -775,6 +775,74 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
     ),
   );
 
+  // Helpers to temporarily disable the global fallback-dir override so these
+  // tests exercise the default POSIX CLI directory search.
+  const disableFallbackDirsOverride = (): string | undefined => {
+    const saved = process.env.T3CODE_CLI_FALLBACK_DIRS;
+    delete process.env.T3CODE_CLI_FALLBACK_DIRS;
+    return saved;
+  };
+  const restoreFallbackDirsOverride = (saved: string | undefined): void => {
+    if (saved === undefined) delete process.env.T3CODE_CLI_FALLBACK_DIRS;
+    else process.env.T3CODE_CLI_FALLBACK_DIRS = saved;
+  };
+
+  it.effect("finds a command in a known POSIX CLI directory that is not on PATH", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(disableFallbackDirsOverride),
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-posix-home-" });
+          const localBin = path.join(home, ".local", "bin");
+          yield* fs.makeDirectory(localBin, { recursive: true });
+          const claude = path.join(localBin, "claude");
+          yield* fs.writeFileString(claude, "#!/bin/sh\n");
+          yield* fs.chmod(claude, 0o755);
+
+          // PATH deliberately excludes ~/.local/bin, as a GUI app launched from
+          // Finder/Dock would have.
+          const env = { HOME: home, PATH: "/usr/bin:/bin" };
+
+          const resolved = yield* resolveCommandPath("claude", { env }).pipe(
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(CommandResolutionCache, new Map()),
+          );
+
+          expect(resolved).toBe(claude);
+        }),
+      (saved) => Effect.sync(() => restoreFallbackDirsOverride(saved)),
+    ),
+  );
+
+  it.effect("finds a command in a known POSIX directory even when PATH is empty", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(disableFallbackDirsOverride),
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-posix-home-" });
+          const localBin = path.join(home, ".local", "bin");
+          yield* fs.makeDirectory(localBin, { recursive: true });
+          const claude = path.join(localBin, "claude");
+          yield* fs.writeFileString(claude, "#!/bin/sh\n");
+          yield* fs.chmod(claude, 0o755);
+
+          const env = { HOME: home, PATH: "" };
+
+          const resolved = yield* resolveCommandPath("claude", { env }).pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(CommandResolutionCache, new Map()),
+          );
+
+          expect(resolved).toBe(claude);
+        }),
+      (saved) => Effect.sync(() => restoreFallbackDirsOverride(saved)),
+    ),
+  );
+
   it.effect("does not keep the listing of a PATH directory that changed moments ago", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1383,6 +1451,66 @@ describe("npmShimExecutable", () => {
 });
 
 effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "keeps PATH commands ahead of fallback commands when spawning",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped();
+        const primary = path.join(root, "primary");
+        const fallback = path.join(root, "fallback");
+        for (const [dir, value] of [
+          [primary, "primary"],
+          [fallback, "fallback"],
+        ] as const) {
+          yield* fs.makeDirectory(dir, { recursive: true });
+          const file = path.join(dir, "t3-path-probe");
+          yield* fs.writeFileString(file, `#!/bin/sh\nprintf '${value}'\n`);
+          yield* fs.chmod(file, 0o755);
+        }
+        const env = { PATH: primary, T3CODE_CLI_FALLBACK_DIRS: fallback };
+        const resolved = yield* resolveSpawnCommand("t3-path-probe", [], { env }).pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+        );
+        expect(
+          NodeChildProcess.execFileSync(resolved.command, [...resolved.args], {
+            env,
+            encoding: "utf8",
+          }),
+        ).toBe("primary");
+      }),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "passes fallback interpreters to spawns that extend the environment",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped();
+        yield* fs.symlink(yield* HostProcess.ExecutablePath, path.join(root, "node"));
+        const cli = path.join(root, "t3-fallback-probe");
+        yield* fs.writeFileString(
+          cli,
+          "#!/usr/bin/env node\nconsole.log('fallback interpreter');\n",
+        );
+        yield* fs.chmod(cli, 0o755);
+        const host = { PATH: "/usr/bin:/bin" };
+        const env = { PATH: "", T3CODE_CLI_FALLBACK_DIRS: root };
+        const resolved = yield* resolveSpawnCommand(cli, [], { env, extendEnv: true }).pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Environment, host),
+        );
+        expect(
+          NodeChildProcess.execFileSync(resolved.command, [...resolved.args], {
+            env: { ...host, ...env },
+            encoding: "utf8",
+          }).trim(),
+        ).toBe("fallback interpreter");
+      }),
+  );
+
   it.effect("yields while discovering a Windows executable", () =>
     Effect.scoped(
       Effect.gen(function* () {

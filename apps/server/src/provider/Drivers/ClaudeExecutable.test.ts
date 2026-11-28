@@ -38,6 +38,18 @@ function withWindowsResolution(input: {
 }
 
 describe("resolveClaudeSdkExecutablePath", () => {
+  it.effect("adds fallback directories to the POSIX SDK environment after PATH", () =>
+    Effect.gen(function* () {
+      const environment = { PATH: "/preferred/bin", T3CODE_CLI_FALLBACK_DIRS: "/fallback/bin" };
+      expect(
+        yield* resolveClaudeSdkExecutablePath("claude", environment).pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+        ),
+      ).toBe("claude");
+      expect(environment.PATH).toBe("/preferred/bin:/fallback/bin");
+    }),
+  );
+
   it.effect("follows an npm launcher shim to the packaged native binary", () =>
     Effect.gen(function* () {
       expect(
