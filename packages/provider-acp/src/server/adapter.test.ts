@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { acpChunkContinuesUnnamedText, acpClassifyUnnamedTextBoundaryForTool } from "./adapter.ts";
 
 describe("acpClassifyUnnamedTextBoundaryForTool", () => {
-  it("keeps unnamed text open when mid-token, mid-inline-code, or inside unclosed Markdown", () => {
+  it("keeps unnamed text open inside an unclosed code span or fence, or mid-phrase", () => {
     expect(
       acpClassifyUnnamedTextBoundaryForTool(
         "Permissions (config `umask 027` app `0750` & keyring `0",
@@ -14,12 +14,6 @@ describe("acpClassifyUnnamedTextBoundaryForTool", () => {
     expect(
       acpClassifyUnnamedTextBoundaryForTool("Here is the script:\n```bash\necho 'done.'\n"),
     ).toBe("open");
-    expect(acpClassifyUnnamedTextBoundaryForTool("2. **Surface 1 (")).toBe("open");
-    expect(acpClassifyUnnamedTextBoundaryForTool("See [the guide](https://example.com")).toBe(
-      "open",
-    );
-    expect(acpClassifyUnnamedTextBoundaryForTool("The script configures ")).toBe("open");
-    expect(acpClassifyUnnamedTextBoundaryForTool("Step 1 finished. ")).toBe("open");
     expect(acpClassifyUnnamedTextBoundaryForTool("First, inspect bootstrap,")).toBe("open");
     expect(acpClassifyUnnamedTextBoundaryForTool("   ")).toBe("open");
   });
@@ -32,6 +26,8 @@ describe("acpClassifyUnnamedTextBoundaryForTool", () => {
     expect(acpClassifyUnnamedTextBoundaryForTool("Let me check `config.json`.")).toBe("close");
     expect(acpClassifyUnnamedTextBoundaryForTool("Checking (quick pass).")).toBe("close");
     expect(acpClassifyUnnamedTextBoundaryForTool("**Checking config.**")).toBe("close");
+    expect(acpClassifyUnnamedTextBoundaryForTool("I'll search **/*.ts for usages.")).toBe("close");
+    expect(acpClassifyUnnamedTextBoundaryForTool("Open (see [docs](x).")).toBe("close");
     expect(acpClassifyUnnamedTextBoundaryForTool("Use \\`escaped\\` ticks.")).toBe("close");
     expect(
       acpClassifyUnnamedTextBoundaryForTool("Here is the script:\n```bash\necho ok\n```\n"),
@@ -43,6 +39,10 @@ describe("acpClassifyUnnamedTextBoundaryForTool", () => {
     expect(acpClassifyUnnamedTextBoundaryForTool("Checking the conf")).toBe("defer");
     expect(acpClassifyUnnamedTextBoundaryForTool("Checking")).toBe("defer");
     expect(acpClassifyUnnamedTextBoundaryForTool("Check `config.json`")).toBe("defer");
+    expect(acpClassifyUnnamedTextBoundaryForTool("Use Open")).toBe("defer");
+    expect(acpClassifyUnnamedTextBoundaryForTool("2. **Surface 1 (")).toBe("defer");
+    expect(acpClassifyUnnamedTextBoundaryForTool("The script configures ")).toBe("defer");
+    expect(acpClassifyUnnamedTextBoundaryForTool("Step 1 finished. ")).toBe("defer");
     expect(acpClassifyUnnamedTextBoundaryForTool("| a | b |\n|---|---|\n| 1 | x |\n")).toBe(
       "defer",
     );

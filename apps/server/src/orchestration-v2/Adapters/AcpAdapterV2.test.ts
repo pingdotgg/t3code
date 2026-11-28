@@ -3954,6 +3954,62 @@ describe("AcpAdapterV2", () => {
       expectedAssistants: ["First sentence done. Second sentence continues cleanly. Final tail."],
     },
     {
+      label: "a brand-new tool call arrives mid-word before an uppercase continuation",
+      steps: [
+        answer(undefined, "Use Open"),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "interleaved-cmd-2",
+          title: "ls",
+          kind: "execute",
+          status: "in_progress",
+          rawInput: { command: "ls" },
+        },
+        answer(undefined, "AI here."),
+      ],
+      expectedAssistants: ["Use OpenAI here."],
+    },
+    {
+      label: "a preamble with trailing whitespace precedes a sequential tool call and reply",
+      steps: [
+        answer(undefined, "Let me check the config file. "),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "seq-ws",
+          title: "Read config.json",
+          kind: "read",
+          status: "in_progress",
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "seq-ws",
+          status: "completed",
+        },
+        answer(undefined, "Found the issue."),
+      ],
+      expectedAssistants: ["Let me check the config file. ", "Found the issue."],
+    },
+    {
+      label: "a preamble containing an unpaired ** precedes a sequential tool call and reply",
+      steps: [
+        answer(undefined, "I'll search **/*.ts for usages."),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "seq-glob",
+          title: "Read **/*.ts",
+          kind: "read",
+          status: "in_progress",
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "seq-glob",
+          status: "completed",
+        },
+        answer(undefined, "Found 3 usages."),
+      ],
+      expectedAssistants: ["I'll search **/*.ts for usages.", "Found 3 usages."],
+    },
+    {
       label: "a clean preamble precedes a sequential tool call and follow-up reply",
       steps: [
         answer(undefined, "Let me check the config file."),
