@@ -261,6 +261,7 @@ function RoutingProbe({ input, onPrepared }: HarnessProps) {
         </button>
       ))}
       <span>{draft?.environmentId}</span>
+      <span>{`${draft?.environmentSelection ?? "auto"} routing`}</span>
       <button onClick={routing.onAutoEnvironmentStable}>Auto balance</button>
       <button
         disabled={routing.isEnvironmentChanging}
@@ -609,6 +610,40 @@ it.each([
   expect(draft?.activeProvider).toBe(codex);
   expect(draft?.modelSelectionByProvider[codex]?.model).toBe(model);
   expect(draft?.modelSelectionExplicit === true).toBe(explicit);
+});
+
+it("keeps the model when the machine picked by hand is the one automatic routing chose", async () => {
+  const { b, draftId, input, store } = fanoutSetup();
+  const codex = ProviderInstanceId.make("codex");
+  resources.projects = resources.projects.map((project) =>
+    project.environmentId === b
+      ? {
+          ...project,
+          defaultModelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            "opus",
+          ),
+        }
+      : project,
+  );
+  store.setStickyModelSelection(createModelSelection(codex, "sol"));
+  store.setModelSelection(draftId, createModelSelection(codex, "sol"));
+  // Automatic routing has already placed the draft on machine B.
+  store.setDraftThreadContext(draftId, {
+    projectRef: scopeProjectRef(b, input.draftThread!.projectId),
+    environmentSelection: "auto",
+    loadBalancedEnvironmentId: b,
+  });
+  await using screen = await render(
+    <Harness input={{ ...input, draftThread: store.getDraftSession(draftId) }} />,
+  );
+  await expect.element(screen.getByText(b)).toBeInTheDocument();
+
+  await screen.getByRole("button", { name: `Switch to ${b}` }).click();
+  await expect.element(screen.getByText("manual routing")).toBeInTheDocument();
+  const draft = store.getComposerDraft(draftId);
+  expect(draft?.activeProvider).toBe(codex);
+  expect(draft?.modelSelectionByProvider[codex]?.model).toBe("sol");
 });
 
 it("takes the destination's default workspace when the draft switches machine by hand", async () => {
