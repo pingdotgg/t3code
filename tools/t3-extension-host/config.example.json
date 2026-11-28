@@ -15,18 +15,25 @@
   "reconnectDiscordSeconds": 30,
   // Application ID from https://discord.com/developers/applications; Discord shows that app's name.
   "discordClientId": null,
-  "discordSmallImage": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-circle-512.png",
-  "discordSmallText": "T3 Code",
-  // "language" keeps the file-type icon.
+  // Modes: idle, working, waiting (the agent needs your answer), editing. Only list what you change.
+  // "language" uses the file-type icon; image names like "ts" use Discord Presence's images.
   "discordLargeImages": {
-    "idle": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-logo-512.png",
-    "working": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-logo-512.png",
+    "idle": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-idle-512.png",
+    "working": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-working-512.png",
+    "waiting": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-waiting-512.png",
     "editing": "language"
   },
-  // Placeholders: {project}, {thread}, {file}, {language}. Only list what you change.
+  // One image or text for every mode, or one per mode.
+  "discordSmallImage": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-circle-512.png",
+  "discordSmallText": { "idle": "T3 Code", "working": "T3 Code · {model}", "waiting": "T3 Code · {model}", "editing": "T3 Code · {model}" },
+  // Your own file-type images, by file extension or language ID.
+  "discordLanguageImages": { ".ts": "https://example.com/my-typescript.png", "python": "py" },
+  "discordSwapImages": false,
+  // Placeholders: {project}, {thread}, {file}, {language}, {model}, {agent}.
   "discordStatus": {
-    "idle": { "details": "Idling in T3 Code", "state": "{project}", "largeText": "T3 Code" },
-    "working": { "details": "Agent working in {project}", "state": "{thread}", "largeText": "Agent working" },
+    "idle": { "details": "Idling in T3 Code", "state": "{project}", "largeText": "Idling" },
+    "working": { "details": "Agent working in {project}", "state": "{thread}", "largeText": "{agent} is working" },
+    "waiting": { "details": "Waiting for input in {project}", "state": "{thread}", "largeText": "{agent} needs an answer" },
     "editing": { "details": "Agent editing {file}", "state": "{thread}", "largeText": "Editing a {language} file" }
   },
   "logLevel": "info"

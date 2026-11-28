@@ -7,7 +7,7 @@ const { pathToFileURL } = require('node:url');
 const { loadConfig } = require('../config');
 const { createLogger } = require('../logger');
 const { isDiscordAvailable, readT3Runtime } = require('../runtime');
-const { installDiscordOverrides, languageName } = require('./discord');
+const { agentName, installDiscordOverrides, languageName, modelName } = require('./discord');
 const { ExtensionHost, discoverAll, installVscodeModule, readDisabled, selectExtensions } = require('./extensions');
 const { FocusWatcher } = require('./focus-watcher');
 const { createGitExtension } = require('./git');
@@ -97,6 +97,8 @@ class Bridge {
     this.threadId = null;
     this.thread = null;
     this.agentRunning = false;
+    this.agentWaiting = false;
+    this.agent = null;
     this.onTick = null;
     this.lastEditAt = 0;
     this.lastEditThread = null;
@@ -164,6 +166,8 @@ class Bridge {
 
     const agentRunning = Boolean(this.threadId && snapshot.runningThreadIds.has(this.threadId));
     this.agentRunning = agentRunning;
+    this.agentWaiting = agentRunning && Boolean(snapshot.waitingThreadIds?.has(this.threadId));
+    this.agent = agentRunning ? (snapshot.agents?.get(this.threadId) ?? null) : null;
     this.workbench.setAgentActive(agentRunning);
     if (agentRunning) {
       if (now - this.lastPulseAt >= this.pulseMs) {
@@ -187,11 +191,15 @@ class Bridge {
     const doc = this.workbench.activeEditor?.document;
     const shared = Boolean(this.workbench.workspaceRoot);
     return {
-      mode: !this.agentRunning ? 'idle' : doc ? 'editing' : 'working',
+      mode: !this.agentRunning ? 'idle' : this.agentWaiting ? 'waiting' : doc ? 'editing' : 'working',
       project: this.workbench.workspaceName ?? 'T3 Code',
       thread: shared ? (this.thread?.title ?? '') : '',
       file: doc ? path.basename(doc.fileName) : '',
       language: languageName(doc?.languageId),
+      languageId: doc?.languageId ?? '',
+      extension: doc ? path.extname(doc.fileName).toLowerCase() : '',
+      model: modelName(this.agent?.model),
+      agent: agentName(this.agent?.provider) || 'Agent',
     };
   }
 
@@ -316,6 +324,8 @@ async function main() {
     smallImage: config.discordSmallImage,
     smallText: config.discordSmallText,
     largeImages: config.discordLargeImages,
+    languageImages: config.discordLanguageImages,
+    swapImages: config.discordSwapImages,
     status: config.discordStatus,
     getContext: () => bridge.presenceContext(),
     cacheDir: config.stateDir,

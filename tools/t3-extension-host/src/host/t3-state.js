@@ -62,7 +62,7 @@ function describeFileChange(payload, root) {
 }
 
 const REQUIRED_SCHEMA = {
-  orchestration_v2_projection_runs: ['run_id', 'thread_id', 'status', 'requested_at', 'completed_at'],
+  orchestration_v2_projection_runs: ['run_id', 'thread_id', 'status', 'requested_at', 'completed_at', 'payload_json'],
   orchestration_v2_projection_turn_items: ['turn_item_id', 'thread_id', 'run_id', 'type', 'status', 'payload_json'],
   orchestration_v2_projection_threads: ['thread_id', 'project_id', 'title', 'payload_json', 'deleted_at', 'archived_at'],
   projection_projects: ['project_id', 'title', 'workspace_root'],
@@ -76,6 +76,11 @@ function missingSchema(db) {
     else for (const column of columns) if (!present.has(column)) missing.push(`${table}.${column}`);
   }
   return missing;
+}
+
+function hasColumns(db, table, columns) {
+  const present = new Set(db.prepare('select name from pragma_table_info(?)').all(table).map((row) => row.name));
+  return columns.every((column) => present.has(column));
 }
 
 class T3State {
@@ -106,9 +111,17 @@ class T3State {
     return {
       dataVersion: db.prepare('pragma data_version'),
       runs: db.prepare(`
-        select run_id, thread_id, status from orchestration_v2_projection_runs
+        select run_id, thread_id, status,
+          json_extract(payload_json, '$.modelSelection.model') as model,
+          json_extract(payload_json, '$.providerInstanceId') as provider
+        from orchestration_v2_projection_runs
         where status in ('running', 'queued') or completed_at >= ?
         order by requested_at desc`),
+      waiting: hasColumns(db, 'orchestration_v2_projection_runtime_requests', ['thread_id', 'status', 'resolved_at'])
+        ? db.prepare(`
+            select distinct thread_id from orchestration_v2_projection_runtime_requests
+            where resolved_at is null and status not in ('resolved', 'cancelled', 'failed', 'expired', 'rejected', 'interrupted')`)
+        : null,
       itemIds: db.prepare(`
         select turn_item_id from orchestration_v2_projection_turn_items
         where thread_id = ? and run_id = ? and type = 'file_change' and status = 'completed'`),
@@ -199,9 +212,14 @@ class T3State {
     this.primed = true;
 
     const runningThreadIds = new Set(running.map((run) => run.thread_id));
+    const agents = new Map();
+    for (const run of running) {
+      if (!agents.has(run.thread_id)) agents.set(run.thread_id, { model: run.model ?? null, provider: run.provider ?? null });
+    }
+    const waitingThreadIds = new Set((this.queries.waiting?.all() ?? []).map((row) => row.thread_id).filter((id) => runningThreadIds.has(id)));
     const visited = this.queries.lastVisited.get()?.thread_id;
     const focusId = visited && runningThreadIds.has(visited) ? visited : (running[0]?.thread_id ?? visited);
-    this.last = { focus: focusId ? this.thread(focusId) : null, runningThreadIds };
+    this.last = { focus: focusId ? this.thread(focusId) : null, runningThreadIds, waitingThreadIds, agents };
     this.dataVersion = version;
     return { ...this.last, edits };
   }

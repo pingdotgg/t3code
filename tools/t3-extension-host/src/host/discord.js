@@ -25,6 +25,30 @@ function languageName(languageId) {
   return LANGUAGE_NAMES[languageId] ?? languageId.charAt(0).toUpperCase() + languageId.slice(1);
 }
 
+const AGENT_NAMES = {
+  claudeagent: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', cursor: 'Cursor', grok: 'Grok', kiro: 'Kiro', pi: 'Pi', muse: 'Muse',
+};
+const UPPERCASE_WORDS = new Set(['gpt', 'ai', 'glm', 'llm']);
+
+// "cufora/claude-opus-5-5" -> "Claude Opus 5.5", "gpt-5.6-luna" -> "GPT 5.6 Luna"
+function modelName(model) {
+  if (typeof model !== 'string' || !model.trim()) return '';
+  const words = model.trim().split('/').pop().split(/[-_\s]+/).filter(Boolean);
+  const out = [];
+  for (const word of words) {
+    const previous = out[out.length - 1];
+    if (/^\d+$/.test(word) && previous && /^\d+(\.\d+)*$/.test(previous) && !previous.includes('.')) out[out.length - 1] = `${previous}.${word}`;
+    else if (UPPERCASE_WORDS.has(word.toLowerCase())) out.push(word.toUpperCase());
+    else out.push(/^\d/.test(word) ? word : word.charAt(0).toUpperCase() + word.slice(1));
+  }
+  return out.join(' ');
+}
+
+function agentName(provider) {
+  if (typeof provider !== 'string' || !provider) return '';
+  return AGENT_NAMES[provider.toLowerCase()] ?? provider.charAt(0).toUpperCase() + provider.slice(1);
+}
+
 function decode(chunk) {
   if (!Buffer.isBuffer(chunk) || chunk.length < 8 || chunk.readUInt32LE(4) !== chunk.length - 8) return null;
   const op = chunk.readUInt32LE(0);
@@ -73,7 +97,8 @@ function fill(template, values) {
   const text = template
     .replace(/\{(\w+)\}/g, (match, key) => (Object.hasOwn(values, key) ? String(values[key] ?? '') : match))
     .replace(/\s+/g, ' ')
-    .trim();
+    .trim()
+    .replace(/^[\s·•|:–—-]+|[\s·•|:–—-]+$/g, '');
   const chars = Array.from(text);
   if (chars.length < 2) return undefined;
   return chars.length > TEXT_LIMIT ? `${chars.slice(0, TEXT_LIMIT - 1).join('')}…` : text;
@@ -101,14 +126,31 @@ function setText(target, key, template, values) {
   else target[key] = text;
 }
 
-function rewriteActivity(activity, { context, status, largeImages, smallImage, smallText, assetUrls }) {
+function forMode(value, mode) {
+  if (value === null || typeof value !== 'object') return value;
+  return mode ? value[mode] : undefined;
+}
+
+function languageImage(languageImages, context) {
+  if (!languageImages || typeof languageImages !== 'object') return undefined;
+  const keys = [context?.extension, context?.languageId].filter(Boolean);
+  for (const key of keys) {
+    const match = Object.keys(languageImages).find((name) => name.toLowerCase() === key.toLowerCase());
+    if (match && typeof languageImages[match] === 'string' && languageImages[match]) return languageImages[match];
+  }
+  return undefined;
+}
+
+function resolveImage(image, assetUrls) {
+  if (!assetUrls || /^(https?|mp):/.test(image)) return image;
+  return assetUrls.get(image) ?? image;
+}
+
+function rewriteActivity(activity, { context, status, largeImages, languageImages, smallImage, smallText, swapImages, assetUrls }) {
   const next = { ...activity, assets: { ...(activity.assets ?? {}) } };
   const assets = next.assets;
-  if (assetUrls) {
-    for (const key of ['large_image', 'small_image']) {
-      const url = typeof assets[key] === 'string' && !/^(https?|mp):/.test(assets[key]) ? assetUrls.get(assets[key]) : undefined;
-      if (url) assets[key] = url;
-    }
+  for (const key of ['large_image', 'small_image']) {
+    if (typeof assets[key] === 'string') assets[key] = resolveImage(assets[key], assetUrls);
   }
   const mode = context?.mode;
   const values = context ?? {};
@@ -118,19 +160,44 @@ function rewriteActivity(activity, { context, status, largeImages, smallImage, s
     setText(next, 'state', texts.state, values);
     setText(assets, 'large_text', texts.largeText, values);
   }
-  const largeImage = mode ? largeImages?.[mode] : undefined;
-  if (typeof largeImage === 'string' && largeImage && largeImage !== 'language') assets.large_image = largeImage;
-  if (smallImage) assets.small_image = smallImage;
-  if (smallText !== undefined) setText(assets, 'small_text', smallText, values);
+  const largeImage = forMode(largeImages, mode);
+  if (typeof largeImage === 'string' && largeImage) {
+    if (largeImage !== 'language') assets.large_image = resolveImage(largeImage, assetUrls);
+    else {
+      const custom = languageImage(languageImages, context);
+      if (custom) assets.large_image = resolveImage(custom, assetUrls);
+    }
+  }
+  const small = forMode(smallImage, mode);
+  if (typeof small === 'string' && small) assets.small_image = resolveImage(small, assetUrls);
+  const smallLabel = forMode(smallText, mode);
+  if (smallLabel !== undefined) setText(assets, 'small_text', smallLabel, values);
+  if (swapImages) {
+    [assets.large_image, assets.small_image] = [assets.small_image, assets.large_image];
+    [assets.large_text, assets.small_text] = [assets.small_text, assets.large_text];
+    for (const key of ['large_image', 'small_image', 'large_text', 'small_text']) if (assets[key] === undefined) delete assets[key];
+  }
   return next;
 }
 
-async function installDiscordOverrides({ clientId: rawClientId, smallImage, smallText, largeImages, status, getContext, cacheDir, logger, settleMs = SETTLE_MS }) {
+async function installDiscordOverrides({
+  clientId: rawClientId,
+  smallImage,
+  smallText,
+  largeImages,
+  languageImages,
+  swapImages,
+  status,
+  getContext,
+  cacheDir,
+  logger,
+  settleMs = SETTLE_MS,
+}) {
   const clientId = normalizeClientId(rawClientId, logger);
   const customApp = Boolean(clientId);
   const assetUrls = customApp ? await loadAssetUrls(path.join(cacheDir, 'discord-assets.json'), logger) : null;
   const original = net.Socket.prototype.write;
-  const options = { status, largeImages, smallImage, smallText, assetUrls };
+  const options = { status, largeImages, languageImages, smallImage, smallText, swapImages: Boolean(swapImages), assetUrls };
   let last = null;
   let refreshes = 0;
 
@@ -182,4 +249,4 @@ async function installDiscordOverrides({ clientId: rawClientId, smallImage, smal
   };
 }
 
-module.exports = { installDiscordOverrides, languageName, normalizeClientId, rewriteActivity, VSCODE_CLIENT_ID };
+module.exports = { agentName, installDiscordOverrides, languageName, modelName, normalizeClientId, rewriteActivity, VSCODE_CLIENT_ID };

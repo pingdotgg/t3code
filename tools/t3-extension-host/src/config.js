@@ -55,16 +55,30 @@ const DEFAULTS = {
   ignoreProjects: [],
   reconnectDiscordSeconds: 30,
   discordClientId: null,
-  discordSmallImage: `${ASSETS_URL}/t3-circle-512.png`,
-  discordSmallText: 'T3 Code',
+  discordSmallImage: {
+    idle: `${ASSETS_URL}/t3-circle-512.png`,
+    working: `${ASSETS_URL}/t3-circle-512.png`,
+    waiting: `${ASSETS_URL}/t3-circle-512.png`,
+    editing: `${ASSETS_URL}/t3-circle-512.png`,
+  },
+  discordSmallText: {
+    idle: 'T3 Code',
+    working: 'T3 Code · {model}',
+    waiting: 'T3 Code · {model}',
+    editing: 'T3 Code · {model}',
+  },
   discordLargeImages: {
-    idle: `${ASSETS_URL}/t3-logo-512.png`,
-    working: `${ASSETS_URL}/t3-logo-512.png`,
+    idle: `${ASSETS_URL}/t3-idle-512.png`,
+    working: `${ASSETS_URL}/t3-working-512.png`,
+    waiting: `${ASSETS_URL}/t3-waiting-512.png`,
     editing: 'language',
   },
+  discordLanguageImages: {},
+  discordSwapImages: false,
   discordStatus: {
-    idle: { details: 'Idling in T3 Code', state: '{project}', largeText: 'T3 Code' },
-    working: { details: 'Agent working in {project}', state: '{thread}', largeText: 'Agent working' },
+    idle: { details: 'Idling in T3 Code', state: '{project}', largeText: 'Idling' },
+    working: { details: 'Agent working in {project}', state: '{thread}', largeText: '{agent} is working' },
+    waiting: { details: 'Waiting for input in {project}', state: '{thread}', largeText: '{agent} needs an answer' },
     editing: { details: 'Agent editing {file}', state: '{thread}', largeText: 'Editing a {language} file' },
   },
   logLevel: 'info',
@@ -81,7 +95,10 @@ function loadConfig() {
   }
   const config = { ...DEFAULTS, ...user, dataDir: dir, configFile: file };
   const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
-  if (isObject(user.discordLargeImages)) config.discordLargeImages = { ...DEFAULTS.discordLargeImages, ...user.discordLargeImages };
+  for (const key of ['discordLargeImages', 'discordSmallImage', 'discordSmallText']) {
+    if (isObject(user[key])) config[key] = { ...DEFAULTS[key], ...user[key] };
+  }
+  if (!isObject(config.discordLanguageImages)) config.discordLanguageImages = {};
   if (isObject(user.discordStatus)) {
     config.discordStatus = Object.fromEntries(
       Object.entries(DEFAULTS.discordStatus).map(([mode, texts]) => {
