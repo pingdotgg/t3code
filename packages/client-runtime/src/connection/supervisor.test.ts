@@ -2203,6 +2203,45 @@ describe("EnvironmentSupervisor routes", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("moves to a LAN route that answered just after its head start", () =>
+    Effect.gen(function* () {
+      const lanChecks = yield* Ref.make(0);
+      const checkingLan = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          route.target._tag === "BearerConnectionTarget"
+            ? Ref.updateAndGet(lanChecks, (count) => count + 1).pipe(
+                Effect.flatMap((count) =>
+                  count === 1
+                    ? Deferred.succeed(checkingLan, undefined).pipe(
+                        Effect.andThen(Effect.sleep("800 millis")),
+                        Effect.as("answered" as const),
+                      )
+                    : Effect.succeed("answered" as const),
+                ),
+              )
+            : Effect.succeed("unchecked"),
+        prepare: (_attempt, target) =>
+          Effect.sync(() => attempted.push(target._tag)).pipe(Effect.as(preparedFor(target))),
+      });
+      const attempted: Array<string> = [];
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(checkingLan);
+      yield* TestClock.adjust("500 millis");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(attempted).toEqual(["RelayConnectionTarget", "BearerConnectionTarget"]);
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "BearerConnectionTarget",
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("shares one head start across several slow LAN routes", () =>
     Effect.gen(function* () {
       const secondLanTarget = new BearerConnectionTarget({
@@ -2705,13 +2744,12 @@ describe("EnvironmentSupervisor routes", () => {
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 1,
       );
-      yield* Ref.set(lanChecks, 0);
 
-      // Checked at 1, 3 and 7 minutes instead of every minute.
+      // After the connect's own check, checked at 0, 2 and 6 minutes instead of every minute.
       for (let minute = 0; minute < 10; minute += 1) {
         yield* TestClock.adjust("60 seconds");
       }
-      expect(yield* Ref.get(lanChecks)).toBe(3);
+      expect(yield* Ref.get(lanChecks)).toBe(4);
 
       yield* Ref.set(lanReachable, true);
       yield* harness.wake("network-changed");
@@ -2748,7 +2786,8 @@ describe("EnvironmentSupervisor routes", () => {
       for (let minute = 0; minute < 10; minute += 1) {
         yield* TestClock.adjust("60 seconds");
       }
-      expect(yield* Ref.get(lanPreflights)).toBe(10);
+      // Once on connecting over relay, then every minute.
+      expect(yield* Ref.get(lanPreflights)).toBe(11);
     }),
   );
 
