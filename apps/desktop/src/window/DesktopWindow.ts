@@ -796,9 +796,12 @@ export const make = Effect.gen(function* () {
     });
     // Chromium asks this before handing a navigation to an OS protocol handler, and grants it
     // when nothing answers. External links are opened through ElectronShell only.
-    window.webContents.session.setPermissionRequestHandler((_contents, permission, callback) =>
-      callback(permission !== "openExternal"),
-    );
+    window.webContents.session.setPermissionRequestHandler((_contents, permission, callback) => {
+      // On macOS, creating Electron's notification presenter is what asks the system for
+      // permission. Left lazy, that happens on the first alert, which macOS then drops.
+      if (permission === "notifications") Electron.Notification.isSupported();
+      callback(permission !== "openExternal");
+    });
     window.webContents.on("will-navigate", (event, url) => {
       if (
         isSameOriginRendererNavigation({
