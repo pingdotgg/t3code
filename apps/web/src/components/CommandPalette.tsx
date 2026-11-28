@@ -60,7 +60,7 @@ import {
   type ScopedProjectRef,
 } from "@t3tools/contracts";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
   BugIcon,
@@ -446,6 +446,7 @@ function OpenCommandPaletteDialog(props: {
 }) {
   const gt = useGT();
   const messages = useMessages();
+  const router = useRouter();
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { openChildSearch, setOpen } = props;
@@ -607,10 +608,14 @@ function OpenCommandPaletteDialog(props: {
     if (project !== null && (await moveDraftToAddedProject(project))) return;
     await handleNewThread(projectRef);
   };
-  const openAddedProject = async (projectRef: ScopedProjectRef): Promise<void> => {
+  const openAddedProject = async (
+    projectRef: ScopedProjectRef,
+    locationAtSubmit?: typeof router.latestLocation,
+  ): Promise<void> => {
     // A moved draft is keyed from the project record, so wait for it to reach this client.
     const project =
       addProjectDraftId === null ? null : await waitForProject(projectRef, 3_000).catch(() => null);
+    if (locationAtSubmit !== undefined && router.latestLocation !== locationAtSubmit) return;
     await openSyncedProject(projectRef, project);
   };
   const createNewProject = useNewProject(openAddedProject);
@@ -2116,6 +2121,7 @@ function OpenCommandPaletteDialog(props: {
       );
       return;
     }
+    const locationAtSubmit = router.latestLocation;
     const projectId = newProjectId();
     const createResult = await createProject({
       environmentId: input.environmentId,
@@ -2142,7 +2148,7 @@ function OpenCommandPaletteDialog(props: {
     }
 
     const navigationResult = await settlePromise(() =>
-      openAddedProject(scopeProjectRef(input.environmentId, projectId)),
+      openAddedProject(scopeProjectRef(input.environmentId, projectId), locationAtSubmit),
     );
     if (navigationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(navigationResult);
