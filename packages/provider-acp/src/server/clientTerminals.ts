@@ -91,6 +91,7 @@ interface ManagedAcpTerminal {
   readonly terminalId: string;
   readonly sessionId: string;
   readonly commandLine: string;
+  readonly commandArgv: ReadonlyArray<string> | undefined;
   readonly buffer: OutputBufferState;
   readonly exit: Deferred.Deferred<EffectAcpSchema.WaitForTerminalExitResponse>;
   readonly kill: Effect.Effect<void>;
@@ -121,6 +122,7 @@ export interface AcpClientTerminals {
     terminalId: string,
   ) => AcpTerminalOutputSnapshot | undefined;
   readonly readCommandLine: (terminalId: string) => string | undefined;
+  readonly readCommandArgv?: (terminalId: string) => ReadonlyArray<string> | undefined;
   readonly disposeAll: Effect.Effect<void>;
 }
 
@@ -301,6 +303,10 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
             terminalId,
             sessionId: request.sessionId,
             commandLine: [request.command, ...(request.args ?? [])].join(" "),
+            commandArgv:
+              options.shellCommands !== true && (request.args?.length ?? 0) > 0
+                ? [request.command, ...(request.args ?? [])]
+                : undefined,
             buffer: {
               chunks: [],
               bytes: 0,
@@ -411,6 +417,9 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
   const readCommandLine: AcpClientTerminals["readCommandLine"] = (terminalId) =>
     terminals.get(terminalId)?.commandLine;
 
+  const readCommandArgv: NonNullable<AcpClientTerminals["readCommandArgv"]> = (terminalId) =>
+    terminals.get(terminalId)?.commandArgv;
+
   const disposeAll: AcpClientTerminals["disposeAll"] = Effect.uninterruptible(
     Effect.suspend(() =>
       Effect.forEach(
@@ -447,6 +456,7 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
     release: logged("terminal/release", release),
     readOutputSnapshot,
     readCommandLine,
+    readCommandArgv,
     disposeAll,
   };
 });

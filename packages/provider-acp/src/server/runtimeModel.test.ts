@@ -1728,6 +1728,33 @@ describe("extractMcpToolCallIdentity", () => {
         command: 'cat <<< ignored\n"$T3_ACP_MCP_NODE" acp-mcp-call html_render \'{"path":"/p"}\'',
         expected: { server: "t3-code", tool: "html_render", input: { path: "/p" } },
       },
+      {
+        name: "leading redirection before fallback call",
+        command: '>render.log 2>&1 "$T3_ACP_MCP_NODE" acp-mcp-call html_render \'{"path":"/p"}\'',
+        expected: { server: "t3-code", tool: "html_render", input: { path: "/p" } },
+      },
+      {
+        name: "double-quoted heredoc delimiter with literal backslash",
+        command:
+          'cat <<"END\\q"\nignored\nEND\\q\n"$T3_ACP_MCP_NODE" acp-mcp-call html_render \'{"path":"/p"}\'',
+        expected: { server: "t3-code", tool: "html_render", input: { path: "/p" } },
+      },
+      {
+        name: "client terminal argv with spaces in paths",
+        command: [
+          "/Applications/T3 Code (Nightly).app/Contents/MacOS/T3 Code (Nightly)",
+          "/Applications/T3 Code (Nightly).app/Contents/Resources/app.asar/apps/server/dist/bin.mjs",
+          "acp-mcp-call",
+          "html_render",
+          '{"path":"/p"}',
+        ],
+        expected: { server: "t3-code", tool: "html_render", input: { path: "/p" } },
+      },
+      {
+        name: "client terminal argv bash -lc script",
+        command: ["bash", "-lc", '"$T3_ACP_MCP_NODE" acp-mcp-call html_render \'{"path":"/p"}\''],
+        expected: { server: "t3-code", tool: "html_render", input: { path: "/p" } },
+      },
     ] as const;
 
     for (const testCase of cases) {
@@ -1757,6 +1784,10 @@ describe("extractMcpToolCallIdentity", () => {
       "grep -c 'acp-mcp-call html_render' f",
       "echo acp-mcp-call html_render",
       "cat <<'EOF'\nacp-mcp-call html_render\nEOF",
+      "cat <<''\nacp-mcp-call html_render\n\n",
+      "printf &>acp-mcp-call html_render",
+      "rg needle . # example;acp-mcp-call html_render",
+      "printf '%s\\n' bash -c 'acp-mcp-call html_render'",
     ]) {
       expect(
         extractMcpToolCallIdentity(toolCall, { embeddedTerminalCommands: [command] }),

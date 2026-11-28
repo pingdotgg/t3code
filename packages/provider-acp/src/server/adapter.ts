@@ -2755,12 +2755,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const embeddedTerminalCommands = (
           sessionId: string,
           toolCallId: string,
-        ): ReadonlyArray<string> =>
+        ): ReadonlyArray<string | ReadonlyArray<string>> =>
           (
             embeddedTerminalsByToolCallId.get(sessionScopedId(sessionId, toolCallId))
               ?.terminalIds ?? []
           ).flatMap((terminalId) => {
             const command =
+              clientTerminals?.readCommandArgv?.(terminalId) ??
               clientTerminals?.readCommandLine(terminalId) ??
               agentTerminalsById.get(sessionScopedId(sessionId, terminalId))?.command;
             return command === undefined ? [] : [command];
