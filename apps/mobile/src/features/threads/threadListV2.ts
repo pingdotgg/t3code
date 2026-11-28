@@ -55,20 +55,17 @@ import {
 
 export const threadListInboxReturns = createInboxReturnTracker();
 
-export function resolveThreadListV2ProviderDrivers(
+export function resolveThreadListV2ProviderStack(
   thread: Pick<EnvironmentThreadShell, "providerInstanceHistory" | "modelSelection" | "runtime">,
   providers: ReadonlyArray<ThreadListProvider> | undefined,
-): ReadonlyArray<string> {
+): ReadonlyArray<ThreadListProvider> {
   if (providers === undefined) return [];
-  const stack = resolveThreadProviderStack(thread);
-  const drivers = stack.flatMap((instanceId) => {
-    const driver = providers.find((provider) => provider.instanceId === instanceId)?.driver;
-    return driver === undefined ? [] : [driver];
+  const stack = resolveThreadProviderStack(thread).flatMap((instanceId) => {
+    const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+    return provider === undefined ? [] : [provider];
   });
-  const currentDriver = providers.find(
-    (provider) => provider.instanceId === stack[stack.length - 1],
-  )?.driver;
-  return currentDriver === undefined ? [] : drivers;
+  const currentInstanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
+  return stack.at(-1)?.instanceId === currentInstanceId ? stack : [];
 }
 
 export type ThreadListV2Status =
