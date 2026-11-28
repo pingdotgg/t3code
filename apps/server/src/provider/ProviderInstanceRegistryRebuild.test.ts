@@ -26,7 +26,7 @@ describe("provider instance rebuild", () => {
         defaultConfig: () => ({}),
         create: (input) =>
           Effect.gen(function* () {
-            const continuationKey = input.environment[0]?.value;
+            const continuationKey = input.environment[0]?.value ?? "missing";
             let open = true;
             yield* Effect.addFinalizer(() =>
               Effect.sync(() => {
