@@ -4,6 +4,7 @@ import {
   type ClientSettings,
 } from "@t3tools/contracts";
 import { EnvironmentId, ProjectId, type PullRequestDetailView } from "@t3tools/contracts";
+import { createRef } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -60,6 +61,7 @@ function setup() {
 import "~/index.css";
 import { workspaceAreaProps } from "~/lib/workspaceFocus";
 import { act, render as renderUi } from "../../../test/render";
+import { PullRequestCommentForm, type PullRequestQuoteRequest } from "./PullRequestCommentForm";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 
 const detail: PullRequestDetailView = {
@@ -209,6 +211,52 @@ it("leaves description checkboxes read-only without the right to edit it", async
   );
 });
 
+it("keeps an unsent reply when a resolved conversation is collapsed and reopened", async () => {
+  setup();
+  const note = {
+    author: { login: "reviewer", name: null, avatarUrl: null },
+    createdAt: "2026-09-01T00:00:00Z",
+    url: null,
+  };
+  const body = "Rename this helper";
+  const filterKey = "t3code:pull-request-comment-filter:v1";
+  localStorage.setItem(filterKey, JSON.stringify({ bots: false, resolved: true }));
+  using _filter = { [Symbol.dispose]: () => localStorage.removeItem(filterKey) };
+  await using screen = await render({
+    ...detail,
+    capabilities: {
+      ...detail.capabilities,
+      review: { ...detail.capabilities.review, reply: true },
+    },
+    comments: [
+      { ...note, id: "10", kind: "review-comment", body, path: "src/a.ts", reviewState: null },
+    ],
+    reviewThreads: [
+      {
+        id: "thread",
+        path: "src/a.ts",
+        line: 3,
+        side: "right",
+        isResolved: true,
+        isOutdated: false,
+        comments: [{ ...note, id: "10", body }],
+      },
+    ],
+  });
+  const status = screen.getByRole("button", { name: "Resolved" });
+
+  await userEvent.click(status);
+  await userEvent.click(screen.getByRole("button", { name: "Reply" }));
+  await userEvent.type(screen.getByLabelText("Reply to this conversation"), "Unsent reply");
+  await userEvent.click(status);
+  await expect.element(screen.getByLabelText("Reply to this conversation")).not.toBeVisible();
+  await userEvent.click(status);
+
+  await expect
+    .element(screen.getByLabelText("Reply to this conversation"))
+    .toHaveValue("Unsent reply");
+});
+
 it("fixes an overview thread as its opening remark, since it has no line to attach", async () => {
   setup();
   const author = { login: "reviewer", name: null, avatarUrl: null };
@@ -352,6 +400,29 @@ it("scrolls from the keyboard after a click inside it", async () => {
   await userEvent.click(screen.getByText("Paragraph 0", { exact: true }));
   await userEvent.keyboard("{PageDown}");
   await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
+});
+
+it("adds a quote that arrives as posting settles along with the ones queued before it", async () => {
+  setup();
+  const form = (actionPending: boolean, quoteRequest: PullRequestQuoteRequest) => (
+    <PullRequestCommentForm
+      environmentId={EnvironmentId.make("environment")}
+      active
+      reference={detail}
+      detail={detail}
+      actionPending={actionPending}
+      textareaRef={createRef()}
+      quoteRequest={quoteRequest}
+      onCommentAction={vi.fn()}
+      onCommented={vi.fn()}
+      onClose={vi.fn()}
+      onQuoted={vi.fn()}
+    />
+  );
+  await using screen = await renderUi(form(true, { text: "> first" }));
+  await screen.rerender(form(true, { text: "> second" }));
+  await screen.rerender(form(false, { text: "> third" }));
+  await expect.element(screen.getByRole("textbox")).toHaveValue("> second\n\n> third");
 });
 
 it("opens comment timestamps through the link-target setting, not a popup", async () => {
