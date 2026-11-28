@@ -494,10 +494,14 @@ async function captureElement(element: Element): Promise<PickedElementPayload> {
       };
     }
   } catch {}
+  const html = element.outerHTML;
+  const before = html.charCodeAt(HTML_PREVIEW_MAX_CHARS - 1);
+  const after = html.charCodeAt(HTML_PREVIEW_MAX_CHARS);
+  const splitPair = before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
   return {
     ...base,
     selector: null,
-    htmlPreview: element.outerHTML.slice(0, HTML_PREVIEW_MAX_CHARS),
+    htmlPreview: html.slice(0, splitPair ? HTML_PREVIEW_MAX_CHARS - 1 : HTML_PREVIEW_MAX_CHARS),
     componentName: null,
     source: null,
     stack: [],
@@ -578,19 +582,21 @@ function startAnnotation(
   host.style.cssText = `position:fixed;inset:0;width:auto;height:auto;margin:0;border:0;padding:0;overflow:visible;background:transparent;color:inherit;z-index:${Z_INDEX_OVERLAY};pointer-events:none`;
   applyAnnotationTheme(host, annotationTheme);
   const shadowRoot = host.attachShadow({ mode: "closed" });
-  const themeStyle = document.createElement("style");
-  themeStyle.textContent = previewAnnotationStyles;
-  shadowRoot.appendChild(themeStyle);
+  // Constructed sheets are exempt from the page's CSP style-src; <style> elements are not.
+  const themeSheet = new CSSStyleSheet();
+  themeSheet.replaceSync(previewAnnotationStyles);
+  shadowRoot.adoptedStyleSheets = [themeSheet];
 
   const root = document.createElement("div");
   root.setAttribute(OVERLAY_ATTRIBUTE, "");
   root.setAttribute("dir", "ltr");
   root.className = "fixed inset-0 font-sans text-foreground";
   root.style.cssText = "pointer-events:none";
-  const cursorStyle = document.createElement("style");
-  cursorStyle.setAttribute(OVERLAY_ATTRIBUTE, "");
-  cursorStyle.textContent = `[${OVERLAY_ATTRIBUTE}]::backdrop { display:none !important; } html[data-t3code-annotation-tool] body, html[data-t3code-annotation-tool] body * { cursor: crosshair !important; } [${OVERLAY_ATTRIBUTE}], [${OVERLAY_ATTRIBUTE}] * { cursor: default !important; } [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-inner-spin-button, [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-outer-spin-button { appearance:none; margin:0; }`;
-  document.documentElement.appendChild(cursorStyle);
+  const cursorSheet = new CSSStyleSheet();
+  cursorSheet.replaceSync(
+    `[${OVERLAY_ATTRIBUTE}]::backdrop { display:none !important; } html[data-t3code-annotation-tool] body, html[data-t3code-annotation-tool] body * { cursor: crosshair !important; } [${OVERLAY_ATTRIBUTE}], [${OVERLAY_ATTRIBUTE}] * { cursor: default !important; } [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-inner-spin-button, [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-outer-spin-button { appearance:none; margin:0; }`,
+  );
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, cursorSheet];
   shadowRoot.appendChild(root);
 
   const hoverOutline = createBox(PRIMARY, PRIMARY_FILL);
@@ -1697,7 +1703,9 @@ function startAnnotation(
     ipcRenderer.off(ANNOTATION_VOICE_STATE_CHANNEL, onVoiceState);
     if (elapsedTimer !== null) clearInterval(elapsedTimer);
     document.documentElement.removeAttribute("data-t3code-annotation-tool");
-    cursorStyle.remove();
+    document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
+      (sheet) => sheet !== cursorSheet,
+    );
     inputLayer?.remove();
     host.remove();
     activeSession = null;

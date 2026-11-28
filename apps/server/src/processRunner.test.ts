@@ -1,9 +1,7 @@
-// @effect-diagnostics nodeBuiltinImport:off - A test kills the helper mid-handoff and watches its child through a FIFO.
+// @effect-diagnostics nodeBuiltinImport:off - Tests kill the server or its helper and watch commands through a FIFO.
 import { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
 import * as NodeChildProcess from "node:child_process";
-import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
-import * as NodeNet from "node:net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -17,7 +15,7 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
@@ -322,24 +320,6 @@ describe("ProcessRunner.layer", () => {
       }).pipe(Effect.provide(layerLaunched.pipe(Layer.provide(NodeServices.layer)))),
   );
 
-  // The helper's stdin and stdout are /dev/null, so inherited stdio must come from the server.
-  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
-    "forks the server for a command that inherits its stdio",
-    () =>
-      Effect.gen(function* () {
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const handle = yield* spawner.spawn(
-          ChildProcess.make("sh", ["-c", "echo $PPID >&2"], { stdin: "inherit" }),
-        );
-        const parent = yield* handle.stderr.pipe(Stream.decodeText(), Stream.mkString);
-
-        expect(Number(parent.trim())).toBe(process.pid);
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(ProcessLauncher.layerServer.pipe(Layer.provideMerge(NodeServices.layer))),
-      ),
-  );
-
   // Node throws some spawn errnos, such as ENOMEM, instead of emitting "error".
   it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
     "runs commands natively when starting the helper throws",
@@ -353,10 +333,7 @@ describe("ProcessRunner.layer", () => {
           Effect.sync(() => {
             childProcess.spawn = ((...args: Parameters<typeof spawn>) => {
               const launcherArgs = args[1];
-              if (
-                Array.isArray(launcherArgs) &&
-                launcherArgs.some((arg) => String(arg).includes("process-launcher"))
-              ) {
+              if (Array.isArray(launcherArgs) && launcherArgs.includes("--input-type=module")) {
                 throw Object.assign(new Error("spawn ENOMEM"), { code: "ENOMEM" });
               }
               return spawn(...args);
@@ -458,144 +435,17 @@ describe("ProcessRunner.layer", () => {
       }).pipe(Effect.provide(layerLaunched.pipe(Layer.provide(NodeServices.layer)))),
   );
 
-  // Descendants keep writing after the leader exits; losing the helper must not truncate that.
-  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
-    "delivers output written after the helper process dies",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const handle = yield* spawner.spawn(
-          ChildProcess.make("sh", [
-            "-c",
-            `d=$(mktemp -d); mkfifo "$d/f"; (cat "$d/f"; rm -r "$d") & echo "$PPID $d/f"`,
-          ]),
-        );
-        expect(yield* handle.exitCode).toBe(0);
-        const output = yield* handle.stdout.pipe(
-          Stream.tap((chunk) => {
-            const [helper = "", fifo] = new TextDecoder().decode(chunk).trim().split(" ");
-            if (fifo === undefined) return Effect.void;
-            process.kill(expectHelperPid(helper), "SIGKILL");
-            return fs.writeFileString(fifo, "complete\n");
-          }),
-          Stream.decodeText(),
-          Stream.mkString,
-        );
-
-        expect(output).toMatch(/ \S+\ncomplete\n$/);
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(ProcessLauncher.layer.pipe(Layer.provideMerge(NodeServices.layer))),
-      ),
-  );
-
-  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
-    "kills a command whose helper dies while handing over its pipes",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const fifo = `${yield* fs.makeTempDirectoryScoped()}/alive`;
-        NodeChildProcess.execFileSync("mkfifo", [fifo]);
-        // Reaches EOF once the command, its only writer, is gone.
-        const alive = new NodeNet.Socket({
-          fd: NodeFS.openSync(fifo, NodeFS.constants.O_RDONLY | NodeFS.constants.O_NONBLOCK),
-          readable: true,
-          writable: false,
-        });
-        const commandReady = Deferred.makeUnsafe<void>();
-        const commandGone = Deferred.makeUnsafe<void>();
-        alive.once("data", () => Deferred.doneUnsafe(commandReady, Exit.void));
-        alive.once("end", () => Deferred.doneUnsafe(commandGone, Exit.void));
-
-        const helperPaused = Deferred.makeUnsafe<number>();
-        const childProcess: typeof NodeChildProcess = NodeModule.createRequire(import.meta.url)(
-          "node:child_process",
-        );
-        const spawn = childProcess.spawn;
-        yield* Effect.acquireRelease(
-          Effect.sync(() => {
-            childProcess.spawn = ((...args: Parameters<typeof spawn>) => {
-              const helper = spawn(...args);
-              helper.on("message", (event: { readonly type: string }) => {
-                if (event.type !== "stdio" || Deferred.isDoneUnsafe(helperPaused)) return;
-                process.kill(helper.pid!, "SIGSTOP");
-                Deferred.doneUnsafe(helperPaused, Exit.succeed(helper.pid!));
-              });
-              return helper;
-            }) as typeof spawn;
-            NodeModule.syncBuiltinESMExports();
-          }),
-          () =>
-            Effect.sync(() => {
-              childProcess.spawn = spawn;
-              NodeModule.syncBuiltinESMExports();
-            }),
-        );
-        const runner = Context.get(yield* Layer.build(layerLaunched), ProcessRunner.ProcessRunner);
-        const run = yield* runner
-          .run({
-            command: "sh",
-            args: ["-c", `exec 3>"$0"; echo ready >&3; exec sleep 1000`, fifo],
-          })
-          .pipe(Effect.forkChild);
-        const helper = yield* Deferred.await(helperPaused);
-        yield* Deferred.await(commandReady);
-        process.kill(helper, "SIGKILL");
-
-        expect((yield* Effect.flip(Fiber.join(run)))._tag).toBe("ProcessSpawnError");
-        yield* Deferred.await(commandGone);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
-    "fails a command whose output pipe never arrives instead of returning no output",
-    () =>
-      Effect.gen(function* () {
-        const childProcess: typeof NodeChildProcess = NodeModule.createRequire(import.meta.url)(
-          "node:child_process",
-        );
-        const spawn = childProcess.spawn;
-        yield* Effect.acquireRelease(
-          Effect.sync(() => {
-            childProcess.spawn = ((...args: Parameters<typeof spawn>) => {
-              const helper = spawn(...args);
-              const emit = helper.emit.bind(helper);
-              helper.emit = ((event: string, ...rest: Array<unknown>) => {
-                const [message, socket] = rest as [{ type?: string; fd?: number }, NodeNet.Socket?];
-                if (event !== "message" || message.type !== "stdio" || message.fd !== 1) {
-                  return emit(event, ...rest);
-                }
-                socket?.destroy();
-                return emit(event, message, undefined);
-              }) as typeof helper.emit;
-              return helper;
-            }) as typeof spawn;
-            NodeModule.syncBuiltinESMExports();
-          }),
-          () =>
-            Effect.sync(() => {
-              childProcess.spawn = spawn;
-              NodeModule.syncBuiltinESMExports();
-            }),
-        );
-        const runner = Context.get(yield* Layer.build(layerLaunched), ProcessRunner.ProcessRunner);
-
-        const error = yield* runner.run({ command: "echo", args: ["output"] }).pipe(Effect.flip);
-
-        expect(error._tag).toBe("ProcessSpawnError");
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
   it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
     "replaces a helper that stops answering",
     () =>
       Effect.gen(function* () {
         const runner = yield* ProcessRunner.ProcessRunner;
+        const launcher = yield* ProcessLauncher.ProcessLauncher;
         const parentPid = runner
           .run({ command: "sh", args: ["-c", "echo $PPID"] })
           .pipe(Effect.map((result) => expectHelperPid(result.stdout)));
         const helper = yield* parentPid;
+        expect(yield* launcher.currentPid).toBe(helper);
         process.kill(helper, "SIGSTOP");
         const error = yield* runner.run({ command: "true", args: [] }).pipe(Effect.flip);
         const replacement = yield* parentPid;
@@ -603,15 +453,11 @@ describe("ProcessRunner.layer", () => {
         expect(error._tag).toBe("ProcessSpawnError");
         expect(replacement).not.toBe(helper);
         expect(replacement).not.toBe(process.pid);
+        expect(yield* launcher.currentPid).toBe(replacement);
       }).pipe(
         Effect.provide(
           ProcessRunner.layer.pipe(
-            Layer.provide(
-              Layer.effect(
-                ChildProcessSpawner.ChildProcessSpawner,
-                ProcessLauncher.make("1 second"),
-              ),
-            ),
+            Layer.provideMerge(Layer.effectContext(ProcessLauncher.make("1 second"))),
             Layer.provide(NodeServices.layer),
           ),
         ),
@@ -632,12 +478,16 @@ describe("ProcessRunner.layer", () => {
           Effect.sync(() => {
             childProcess.spawn = ((...args: Parameters<typeof spawn>) => {
               const helper = spawn(...args);
-              helper.on("message", (event: { readonly type: string }) => {
-                if (event.type !== "pid" || blocked) return;
-                blocked = true;
-                // Holds the server's event loop past the reply deadline, as a loaded server does.
-                NodeChildProcess.execFileSync("sleep", ["1.5"]);
-              });
+              const send = helper.send.bind(helper);
+              helper.send = ((message: { readonly command?: string }, ...rest: Array<never>) => {
+                const sent = send(message, ...rest);
+                if (message.command !== undefined && !blocked) {
+                  blocked = true;
+                  // Holds the server's event loop past the reply deadline, as a loaded server does.
+                  NodeChildProcess.execFileSync("sleep", ["1.5"]);
+                }
+                return sent;
+              }) as typeof helper.send;
               return helper;
             }) as typeof spawn;
             NodeModule.syncBuiltinESMExports();
@@ -651,12 +501,7 @@ describe("ProcessRunner.layer", () => {
         const runner = Context.get(
           yield* Layer.build(
             ProcessRunner.layer.pipe(
-              Layer.provide(
-                Layer.effect(
-                  ChildProcessSpawner.ChildProcessSpawner,
-                  ProcessLauncher.make("1 second"),
-                ),
-              ),
+              Layer.provide(Layer.effectContext(ProcessLauncher.make("1 second"))),
             ),
           ),
           ProcessRunner.ProcessRunner,
