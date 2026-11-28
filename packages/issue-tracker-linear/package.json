@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./shared/fileUrls": {
+      "types": "./src/shared/fileUrls.ts",
+      "import": "./src/shared/fileUrls.ts"
+    },
     "./shared/issueUrl": {
       "types": "./src/shared/issueUrl.ts",
       "import": "./src/shared/issueUrl.ts"

@@ -1,5 +1,9 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { issueEventSentence, issueWriteAccess } from "@t3tools/client-runtime/issue-presentation";
+import {
+  issueDescriptionResetKey,
+  issueEventSentence,
+  issueWriteAccess,
+} from "@t3tools/client-runtime/issue-presentation";
 import { createIssueCommentPager } from "@t3tools/client-runtime/state/issues";
 import {
   issueAssigneeHeld,
@@ -876,6 +880,7 @@ export function IssueDetailPanel({
             {editing === "body" ? (
               <PullRequestMarkdownEditor
                 value={detail.body}
+                resetKey={issueDescriptionResetKey(detail)}
                 cwd={cwd}
                 environmentId={environmentId}
                 threadRef={threadRef}
