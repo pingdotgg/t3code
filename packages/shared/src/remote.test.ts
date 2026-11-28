@@ -127,6 +127,21 @@ describe("remote", () => {
     expect((pairingUrlError as RemotePairingUrlInvalidError).cause).toBeUndefined();
   });
 
+  it("rejects dotted unsupported URL schemes instead of prefixing https", () => {
+    expect(() =>
+      resolveRemotePairingTarget({
+        host: "foo.bar://remote.example.com",
+        pairingCode: "pairing-token",
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        _tag: "RemoteBackendUrlInvalidError",
+        source: "direct-host",
+        protocol: "foo.bar:",
+      }),
+    );
+  });
+
   it("uses distinct structural errors for missing pairing inputs", () => {
     expect(() => resolveRemotePairingTarget({})).toThrowError(RemoteBackendUrlMissingError);
     expect(() =>

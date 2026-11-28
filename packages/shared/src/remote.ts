@@ -86,7 +86,7 @@ const normalizeRemoteBaseUrl = (
   }
 
   const withoutLeadingSlashes = trimmed.replace(/^\/+/, "");
-  const normalizedInput = /^[a-zA-Z][a-zA-Z\d+-]*:\/\//.test(withoutLeadingSlashes)
+  const normalizedInput = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(withoutLeadingSlashes)
     ? withoutLeadingSlashes
     : `https://${withoutLeadingSlashes}`;
   let url: URL;
