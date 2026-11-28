@@ -1152,8 +1152,12 @@ export const make = Effect.gen(function* () {
     const pointerTexts = yield* readGitFiles(pointers.map(({ gitPath }) => gitPath));
     const linkedWorktrees: Array<{ directory: string; gitDir: string }> = [];
     for (const { directory, gitPath } of pointers) {
-      const target = /^gitdir:\s*(.+)$/m.exec(pointerTexts.get(gitPath) ?? "")?.[1]?.trim();
-      if (target === undefined || target.length === 0) {
+      const pointer = pointerTexts.get(gitPath) ?? "";
+      const prefix = "gitdir: ";
+      const target = pointer.startsWith(prefix)
+        ? pointer.slice(prefix.length).replace(/[\r\n]+$/u, "")
+        : "";
+      if (target === "") {
         identities.set(directory, { _tag: "NotGit" });
         continue;
       }
