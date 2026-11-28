@@ -3,9 +3,9 @@ import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { msg, T } from "gt-react";
 import { ZapIcon } from "lucide-react";
 import { m, type MessageResolver } from "~/i18n/messages";
-import { UltrafastIcon } from "../Icons";
 import { cn } from "~/lib/utils";
 import { ComposerControlIcon, type ComposerControlSize } from "./ComposerControl";
+import { FastBolt } from "./EffortGlyph";
 
 export function getTraitsSpeedDisplay(
   descriptor: ProviderOptionDescriptor,
@@ -57,18 +57,22 @@ export function TraitsSpeedIcon({
 }) {
   return (
     <>
-      <ComposerControlIcon
-        icon={speedIcon === "ultrafast" ? UltrafastIcon : ZapIcon}
-        size={size}
-        className={cn(
-          "fill-current opacity-80",
-          size === "xs"
-            ? "text-current"
-            : provider === "claudeAgent"
-              ? "text-[#d97757]"
-              : "text-foreground",
-        )}
-      />
+      {speedIcon === "ultrafast" ? (
+        <FastBolt ultra />
+      ) : (
+        <ComposerControlIcon
+          icon={ZapIcon}
+          size={size}
+          className={cn(
+            "fill-current opacity-80",
+            size === "xs"
+              ? "text-current"
+              : provider === "claudeAgent"
+                ? "text-[#d97757]"
+                : "text-foreground",
+          )}
+        />
+      )}
       <span className="sr-only">
         {speedIcon === "ultrafast" ? <T>Ultrafast mode on</T> : <T>Fast mode on</T>}
       </span>
