@@ -852,6 +852,15 @@ it.live("starts each repository from the base branch where it has one", () =>
         yield* head(path.join(unset.taskFolder.root, "web"), "HEAD"),
         yield* head(web, "main"),
       );
+
+      // A commit (a delegated child's parent's) starts the repository holding it there.
+      const releaseCommit = yield* head(api, "release");
+      const pinned = yield* create("at-commit", undefined, releaseCommit);
+      assert.equal(yield* head(path.join(pinned.taskFolder.root, "api"), "HEAD"), releaseCommit);
+      assert.equal(
+        yield* head(path.join(pinned.taskFolder.root, "web"), "HEAD"),
+        yield* head(web, "main"),
+      );
     }),
   ),
 );

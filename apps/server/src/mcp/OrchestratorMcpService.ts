@@ -3031,8 +3031,9 @@ const make = Effect.gen(function* () {
         !isRetryOfAcceptedDelegation &&
         (yield* threadLaunch.isNonGitProject(parent.thread.projectId))
       ) {
-        // The child gets a copy of the project folder, which leaves out a repository the parent's
-        // own folder is (one a Scratch thread made, say), so it would start without that code.
+        // A parent working in one of the folder's repositories (one a Scratch thread made, say)
+        // names it, so the child gets its worktree at the parent's commit whatever the default
+        // selection would drop.
         const parentCheckout = parent.thread.worktreePath;
         const parentIsRepositoryRoot =
           parentCheckout !== null &&
@@ -3046,14 +3047,22 @@ const make = Effect.gen(function* () {
               Effect.map((result) => result.stdout.trim() === ""),
               Effect.orElseSucceed(() => false),
             ));
-        if (parentIsRepositoryRoot) {
-          return yield* failure(
-            "invalid_request",
-            `Isolation "worktree" copies the project folder, not the Git repository in this thread's folder (${parentCheckout}), so the child would start without it. Use isolation "shared" to work in the parent's checkout.`,
-          );
-        }
-        // A plain project folder has no commit of its own; `HEAD` leaves each repository on its default branch.
-        workspaceStrategy = { type: "worktree", baseRef: "HEAD" };
+        const parentCommit = parentIsRepositoryRoot
+          ? yield* gitDriver.resolveCommit({ cwd: parentCheckout, revision: "HEAD" }).pipe(
+              Effect.map((resolved) => resolved.commitSha),
+              Effect.orElseSucceed(() => null),
+            )
+          : null;
+        workspaceStrategy =
+          parentCheckout !== null && parentCommit !== null
+            ? {
+                type: "worktree",
+                baseRef: parentCommit,
+                startFromOrigin: false,
+                repositories: [{ path: parentCheckout }],
+              }
+            : // A plain project folder has no commit of its own; `HEAD` leaves each repository on its default branch.
+              { type: "worktree", baseRef: "HEAD" };
       } else if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
         const project = yield* requireProject(parent.thread.projectId);
         const base = yield* gitDriver

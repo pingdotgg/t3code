@@ -697,6 +697,13 @@ const make = Effect.gen(function* () {
   ) {
     // Clients send `HEAD` when no base was chosen; as a name it would match `origin/HEAD`.
     const wanted = baseBranch?.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+    // A delegated child names its parent's commit; only the repository holding it starts there.
+    if (
+      wanted !== undefined &&
+      /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(wanted) &&
+      (yield* git.hasCommit({ cwd, refName: wanted }))
+    )
+      return { refName: wanted, baseRefName: wanted };
     const defaultBranch =
       wanted !== undefined &&
       wanted !== "" &&
