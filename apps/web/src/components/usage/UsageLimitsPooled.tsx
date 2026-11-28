@@ -83,24 +83,20 @@ function AccountAvatar({
   readonly account: LimitAccount;
   readonly className?: string;
 }) {
-  if (account.redeem) {
-    return (
-      <ProviderInstanceIcon
-        driverKind={account.driver}
-        displayName={
-          account.displayName ??
-          providerClients.get(account.driver)?.label ??
-          String(account.driver)
-        }
-        accentColor={account.accentColor}
-        showBadge={Boolean(account.displayName)}
-        indicatorBackground="var(--popover)"
-        className={cn("size-5", className)}
-        iconClassName="size-4 text-foreground/80"
-      />
-    );
-  }
-  return account.email ? <AccountChip email={account.email} /> : null;
+  if (account.email && !account.displayName) return <AccountChip email={account.email} />;
+  return (
+    <ProviderInstanceIcon
+      driverKind={account.driver}
+      displayName={
+        account.displayName ?? providerClients.get(account.driver)?.label ?? String(account.driver)
+      }
+      accentColor={account.accentColor}
+      showBadge={Boolean(account.displayName)}
+      indicatorBackground="var(--popover)"
+      className={cn("size-5", className)}
+      iconClassName="size-4 text-foreground/80"
+    />
+  );
 }
 
 function AccountName({
@@ -123,6 +119,18 @@ function AccountName({
       {providerClients.get(account.driver)?.label ?? String(account.driver)}
     </span>
   );
+}
+
+/** The name beside an account's avatar; an email-only account's chip already is its name. */
+function AccountLabel({
+  account,
+  className,
+}: {
+  readonly account: LimitAccount;
+  readonly className: string;
+}) {
+  if (!account.displayName && account.email) return null;
+  return <AccountName account={account} className={className} />;
 }
 
 function Row({ label, children }: { readonly label: string; readonly children: ReactNode }) {
@@ -440,13 +448,14 @@ function SegmentTriggers({
         ) : null}
         <span
           aria-hidden
-          className="absolute inset-0 flex items-center justify-center overflow-hidden rounded-md text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
+          className="absolute inset-0 flex items-center justify-center overflow-hidden rounded-md @2xl/pool:hidden"
         >
-          {index}
+          <AccountAvatar account={account} />
         </span>
         <div className="relative hidden h-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md px-2 text-xs @2xl/pool:flex">
+          {showAccountName ? <AccountAvatar account={account} /> : null}
           {showAccountName ? (
-            <AccountName
+            <AccountLabel
               account={account}
               className="min-w-0 truncate font-medium text-foreground"
             />
@@ -477,19 +486,17 @@ function SegmentTriggers({
           ) : null}
         </div>
       </PopoverTrigger>
-      <LegendRow payload={payload} color={color} now={now} index={index} />
+      <LegendRow payload={payload} now={now} index={index} />
     </>
   );
 }
 
 function LegendRow({
   payload,
-  color,
   now,
   index,
 }: {
   readonly payload: SegmentPayload;
-  readonly color: string;
   readonly now: number;
   readonly index: number;
 }) {
@@ -508,16 +515,8 @@ function LegendRow({
       render={<Button variant="ghost" size="compact" />}
       className="min-w-0 @2xl/pool:hidden"
     >
-      <span className="relative inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-3xs leading-none font-semibold text-foreground/80 tabular-nums">
-        <span
-          aria-hidden
-          className="absolute inset-0 rounded-sm opacity-35"
-          style={{ backgroundColor: color }}
-        />
-        <span className="sr-only">{`${gt("Segment")} `}</span>
-        <span className="relative">{index}</span>
-      </span>
-      <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
+      <AccountAvatar account={account} />
+      <AccountLabel account={account} className="min-w-0 truncate font-medium text-foreground" />
       <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
       <span className="ms-auto flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground tabular-nums">
         {resetsIn ?? ""}

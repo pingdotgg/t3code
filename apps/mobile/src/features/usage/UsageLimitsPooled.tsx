@@ -29,7 +29,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import type { MessageResolver } from "../../i18n/messages";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
@@ -75,6 +75,27 @@ function AccountChip({ email }: { readonly email: string }) {
         {emailInitials(email)}
       </Text>
     </View>
+  );
+}
+
+// Same mark as the web Limits bar: the instance glyph and badge, or the chip for an email-only account.
+function AccountAvatar({
+  account,
+  resolve,
+}: {
+  readonly account: LimitAccount;
+  readonly resolve: MessageResolver;
+}) {
+  if (account.email && !account.displayName) return <AccountChip email={account.email} />;
+  return (
+    <ProviderInstanceIcon
+      provider={account.driver}
+      size={20}
+      displayName={accountName(account, resolve)}
+      accentColor={account.accentColor}
+      showBadge={Boolean(account.displayName)}
+      surfaceColor="transparent"
+    />
   );
 }
 
@@ -292,7 +313,7 @@ function PoolWindowCard({
                 className="absolute inset-0 flex-row items-center justify-between gap-2 overflow-hidden rounded-md px-2"
               >
                 <View className="min-w-0 shrink flex-row items-center gap-1.5">
-                  {account.email ? <AccountChip email={account.email} /> : null}
+                  <AccountAvatar account={account} resolve={m} />
                   {account.email && !(account.displayName && inlineName) ? null : (
                     <Text
                       numberOfLines={1}
@@ -335,12 +356,7 @@ function PoolWindowCard({
                 pointerEvents="none"
                 className="absolute inset-0 items-center justify-center overflow-hidden rounded-md"
               >
-                <Text
-                  numberOfLines={1}
-                  className="max-w-full shrink text-xs font-t3-medium tabular-nums text-foreground"
-                >
-                  {index + 1}
-                </Text>
+                <AccountAvatar account={account} resolve={m} />
               </View>
             )}
           </Pressable>
@@ -352,7 +368,6 @@ function PoolWindowCard({
     <View>
       {pool.columns.map(({ account, window }, index) => {
         if (!window) return null;
-        const segmentColor = normalizeProviderAccentColor(account.accentColor) ?? color;
         const credits = account.limits.resetCredits?.availableCount ?? 0;
         const reset = resetLabels(window, now, m);
         const resetsIn = reset?.full;
@@ -399,16 +414,7 @@ function PoolWindowCard({
             onPress={() => openAccount(account)}
             className="min-h-[44px] flex-row items-center gap-2 active:opacity-60"
           >
-            <View className="relative size-5 items-center justify-center overflow-hidden rounded-md bg-subtle-strong">
-              <View
-                pointerEvents="none"
-                className="absolute inset-0"
-                style={{ backgroundColor: segmentColor, opacity: 0.35 }}
-              />
-              <Text className="text-xs font-t3-medium tabular-nums text-foreground">
-                {index + 1}
-              </Text>
-            </View>
+            <AccountAvatar account={account} resolve={m} />
             <Text
               numberOfLines={1}
               className="min-w-0 flex-1 text-sm font-t3-medium text-foreground"
