@@ -61,11 +61,8 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
     const ref = parseThreadKey(key);
     return Atom.make((get) => {
       const registry = get.registry;
-      // Showing the thread is the open, whether or not its shell has arrived;
-      // the shell only decides when the server hears about it.
-      // Recorded even when the server cannot take opens, so recents follow
-      // it. A palette pick already sent the open with its query.
-      let openPending = claimThreadOpen(ref.environmentId, ref.threadId, Date.now());
+      let openClaimed = false;
+      let openPending = false;
       // Dedupe per watermark: the shell updates again before the command's echo
       // lands. It also keeps a mark-unread on the open thread sticky, since the
       // rewind leaves updatedAt untouched.
@@ -133,8 +130,13 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
 
       const onShell = (shell: VisitedShell | null) => {
         clearTimer();
-        if (shell === null) return;
         if (options.viewingAtom && !registry.get(options.viewingAtom)) return;
+        if (!openClaimed) {
+          // Claim once on first visibility, before requiring a loaded shell.
+          openClaimed = true;
+          openPending = claimThreadOpen(ref.environmentId, ref.threadId, Date.now());
+        }
+        if (shell === null) return;
 
         const shellUpdatedAtMs = Date.parse(shell.updatedAt);
         if (Number.isNaN(shellUpdatedAtMs)) return;
