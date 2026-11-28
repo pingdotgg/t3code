@@ -4,6 +4,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { AuthSessionId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
@@ -12,6 +13,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Runtime from "effect/Runtime";
+import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 import { vi } from "vite-plus/test";
@@ -218,5 +220,73 @@ it.effect("points to Labs only when the server hides the feedback tool", () =>
         ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_PORT: "3773" } })),
       ),
     ),
+  ),
+);
+
+it.effect("list leaves the data directory and uploads alone", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const isPosix = (yield* HostProcess.Platform) !== "win32";
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-feedback-list-" });
+    const stateDir = path.join(baseDir, "userdata");
+    const attachmentsDir = path.join(stateDir, "attachments");
+    const upload = path.join(attachmentsDir, "upload.part");
+    const dbPath = path.join(stateDir, "statev2.sqlite");
+
+    yield* fs.makeDirectory(attachmentsDir, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(stateDir, "settings.json"),
+      JSON.stringify({ agentFeedback: { mode: "auto" } }),
+    );
+    yield* fs.writeFileString(upload, "partial upload");
+    yield* fs.utimes(upload, 0, 0);
+    yield* TestClock.setTime(2 * 60 * 60 * 1_000);
+
+    yield* Effect.scoped(Layer.build(SqlitePersistence.layerFromPath(dbPath)));
+    const database = new NodeSqlite.DatabaseSync(dbPath);
+    try {
+      database.exec(
+        `INSERT INTO agent_feedback (id, thread_id, run_id, created_at, kind, subject, expected,
+          actual, workaround, user_requested, trace, source, sent)
+        VALUES ('r1', 't1', 'run1', '2026-11-17T00:00:00.000Z', 'bug', 't3_thread_read', 'a', 'b',
+          '', 1, NULL, 'mcp', 1)`,
+      );
+    } finally {
+      database.close();
+    }
+    if (isPosix) yield* fs.chmod(stateDir, 0o755);
+
+    const reports = yield* Command.runWith(feedbackCommand, { version: "0.0.0" })([
+      "list",
+      "--json",
+      "--base-dir",
+      baseDir,
+    ]).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: {
+              T3CODE_PORT: "3773",
+              T3CODE_TRACE_FILE: path.join(baseDir, "trace", "trace.ndjson"),
+            },
+          }),
+        ),
+      ),
+      Effect.andThen(TestConsole.logLines),
+      Effect.map((lines): unknown => JSON.parse(String(lines.at(-1)))),
+    );
+
+    expect(reports).toMatchObject([{ id: "r1" }]);
+    expect(yield* fs.exists(upload)).toBe(true);
+    expect(yield* fs.readDirectory(baseDir)).toEqual(["userdata"]);
+    const stateEntries = (yield* fs.readDirectory(stateDir)).filter(
+      (entry) => entry !== "statev2.sqlite-wal" && entry !== "statev2.sqlite-shm",
+    );
+    expect(stateEntries.toSorted()).toEqual(["attachments", "settings.json", "statev2.sqlite"]);
+    if (isPosix) expect((yield* fs.stat(stateDir)).mode & 0o777).toBe(0o755);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer)),
   ),
 );

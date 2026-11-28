@@ -57,6 +57,7 @@ const firstLine = (error: { readonly _tag: string; readonly message?: unknown })
 const listReports = Effect.fn("cli.feedback.listReports")(function* (flags: CliAuthLocationFlags) {
   const config = yield* resolveCliAuthConfig(flags, yield* GlobalFlag.LogLevel, {
     quietLogs: true,
+    prepareDirectories: false,
   });
   return yield* Effect.gen(function* () {
     // Settings first, from the file alone, so Off never opens the database.
