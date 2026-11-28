@@ -243,12 +243,14 @@ export function BranchToolbarBranchSelector({
     }
     const draftTarget = draftId ?? threadRef;
     const currentDraft = useComposerDraftStore.getState().getDraftThread(draftTarget);
-    // A checkout can finish after the same draft has moved to another project.
+    // The draft may have changed since the render that started this selection.
     if (
       !currentDraft ||
       currentDraft.promotedTo ||
       currentDraft.environmentId !== environmentId ||
-      currentDraft.projectId !== activeProject.id
+      currentDraft.projectId !== activeProject.id ||
+      currentDraft.envMode !== draftThread?.envMode ||
+      currentDraft.worktreePath !== draftThread?.worktreePath
     ) {
       return false;
     }
@@ -460,10 +462,34 @@ export function BranchToolbarBranchSelector({
     });
   };
 
+  const latestSelectionIdRef = useRef(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates pending picks on every draft workspace change, even if the draft moves back before the next render
+  useEffect(() => {
+    if (hasServerThread) return;
+    const target = draftId ?? scopeThreadRef(environmentId, threadId);
+    let previous = useComposerDraftStore.getState().getDraftThread(target);
+    const unsubscribe = useComposerDraftStore.subscribe((state) => {
+      const current = state.getDraftThread(target);
+      if (
+        current?.environmentId !== previous?.environmentId ||
+        current?.projectId !== previous?.projectId ||
+        current?.envMode !== previous?.envMode ||
+        current?.worktreePath !== previous?.worktreePath ||
+        current?.promotedTo !== previous?.promotedTo
+      ) {
+        latestSelectionIdRef.current++;
+      }
+      previous = current;
+    });
+    return () => {
+      unsubscribe();
+      latestSelectionIdRef.current++;
+    };
+  }, [draftId, environmentId, hasServerThread, threadId]);
+
   // The picker's list, and the server's coalesced ref listing, can predate a checkout an agent
   // ran itself. Only the claimed worktree's live HEAD confirms the claim; an unconfirmed one
   // falls back to a real checkout, which Git refuses if the branch is checked out elsewhere.
-  const latestSelectionIdRef = useRef(0);
   const readSelectedRef = async (worktreePath: string, listedRef: VcsRef): Promise<VcsRef> => {
     const result = await readRefs({
       environmentId,
@@ -541,15 +567,17 @@ export function BranchToolbarBranchSelector({
         pickerCheckouts.set(checkoutKey, nextBranchName);
         const movesCheckout = selectionTarget.checkoutCwd !== branchCwd;
         let hold: BranchHold | null = null;
-        const applied = setThreadBranch(
-          nextBranchName,
-          selectionTarget.nextWorktreePath,
-          false,
-          // A failed move leaves the thread in its old checkout, which never had the new branch.
-          movesCheckout
-            ? () => setBranchHold((current) => (current === hold ? null : current))
-            : undefined,
-        );
+        const applied =
+          (hasServerThread || selectionId === latestSelectionIdRef.current) &&
+          setThreadBranch(
+            nextBranchName,
+            selectionTarget.nextWorktreePath,
+            false,
+            // A failed move leaves the thread in its old checkout, which never had the new branch.
+            movesCheckout
+              ? () => setBranchHold((current) => (current === hold ? null : current))
+              : undefined,
+          );
         if (applied) {
           hold = {
             branch: nextBranchName,
@@ -590,7 +618,7 @@ export function BranchToolbarBranchSelector({
     if (!canChangeThreadBranch) return;
     const name = sanitizeNewRefName(rawName);
     if (!branchCwd || !name || isBranchActionPending) return;
-    latestSelectionIdRef.current++;
+    const selectionId = ++latestSelectionIdRef.current;
 
     setIsBranchMenuOpen(false);
     onComposerFocusRequest?.();
@@ -611,7 +639,9 @@ export function BranchToolbarBranchSelector({
       if (createBranchResult._tag === "Success") {
         const nextBranchName = createBranchResult.value.refName;
         pickerCheckouts.set(checkoutKey, nextBranchName);
-        const applied = setThreadBranch(nextBranchName, activeWorktreePath);
+        const applied =
+          (hasServerThread || selectionId === latestSelectionIdRef.current) &&
+          setThreadBranch(nextBranchName, activeWorktreePath);
         if (applied) {
           setBranchHold({
             branch: nextBranchName,
