@@ -86,9 +86,10 @@ const SHELL_WRAPPER = /^\s*(?:\S*\/)?(?:ba|z|da|k)?sh\s+-l?c\s+(?=["'])([\s\S]*)
 const SHELL_WORD_PIECE = /"((?:\\[\s\S]|[^"\\])*)"|'([^']*)'|\\([\s\S])|(\S)/gu;
 // Heredoc bodies, quoted strings and comments are text a command carries, not commands it runs.
 // One left-to-right pass, so whichever starts first wins, as in the shell. A comment's separator is
-// matched (not looked behind) so an escaped space, already consumed, cannot open one.
+// matched (not looked behind) so an escaped space, already consumed, cannot open one. A heredoc
+// opened by `"$(cat <<'EOF'` is read before its outer quote can close, so its body's quotes are text.
 const SHELL_NON_CODE =
-  /\\[\s\S]|\$'(?:\\[\s\S]|[^'\\])*'|'[^']*'|"(?:\\[\s\S]|[^"\\])*"|(?<sep>^|[\s;&|(])#[^\n]*|<<-?[ \t]*(?<q>['"]?)(?<tag>\w+)\k<q>[^\n]*\n(?:(?:[\s\S]*?\n)?[ \t]*\k<tag>[ \t]*(?=\n|$)|[\s\S]*$)/gu;
+  /\\[\s\S]|\$'(?:\\[\s\S]|[^'\\])*'|'[^']*'|"(?:\\[\s\S]|\$\([^"()\n]*<<-?[ \t]*(?<subq>['"]?)(?<subtag>\w+)\k<subq>[^\n]*\n(?:[\s\S]*?\n)?[ \t]*\k<subtag>[ \t]*(?=\n)|[^"\\])*"|(?<sep>^|[\s;&|(])#[^\n]*|<<-?[ \t]*(?<q>['"]?)(?<tag>\w+)\k<q>[^\n]*\n(?:(?:[\s\S]*?\n)?[ \t]*\k<tag>[ \t]*(?=\n|$)|[\s\S]*$)/gu;
 const COMMAND_SEPARATOR = /&&|\|\||[;|\n]/u;
 const COMMAND_SEPARATORS = new RegExp(COMMAND_SEPARATOR, "gu");
 // Commands that print other change requests' URLs, so output beside them proves nothing.
