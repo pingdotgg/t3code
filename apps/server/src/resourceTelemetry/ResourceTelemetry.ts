@@ -1,3 +1,4 @@
+import { ResourceTelemetryHistoryError } from "@t3tools/contracts";
 import type {
   DesktopHostTelemetrySnapshot,
   HostPowerSnapshot,
@@ -31,10 +32,10 @@ import {
 import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./ResourceAttribution.ts";
 import {
-  buildResourceTelemetryHistory,
   normalizeResourceTelemetryHistoryInput,
   type ResourceTelemetryHistoryWithLegacyBuckets,
 } from "./ResourceTelemetryHistory.ts";
+import { readResourceTelemetryHistory } from "./ResourceTelemetryHistoryReader.ts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
 
 export class ResourceTelemetryRefreshFailed extends Schema.TaggedError<ResourceTelemetryRefreshFailed>()(
@@ -64,7 +65,7 @@ export class ResourceTelemetry extends Context.Service<
     >;
     readonly readHistory: (
       input: ResourceTelemetryHistoryInput,
-    ) => Effect.Effect<ResourceTelemetryHistoryWithLegacyBuckets>;
+    ) => Effect.Effect<ResourceTelemetryHistoryWithLegacyBuckets, ResourceTelemetryHistoryError>;
     readonly refresh: Effect.Effect<ResourceTelemetrySnapshot, ResourceTelemetryRefreshFailed>;
     readonly retry: Effect.Effect<ResourceTelemetryRetryResult>;
   }
@@ -144,6 +145,8 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
   const desktopReceiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
   const attribution = yield* ResourceAttribution.ResourceAttribution;
   const mutex = yield* Semaphore.make(1);
+  // One history worker at a time bounds the retained-snapshot copies in flight.
+  const historyMutex = yield* Semaphore.make(1);
   const changes = yield* PubSub.sliding<ResourceTelemetrySnapshot>(8);
   const initialReadAt = yield* DateTime.now;
   const nativeHealthSubscription = yield* nativeClient.subscribeHealth;
@@ -425,7 +428,7 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
       desktopReceiver.health,
     ]);
     const current = yield* Ref.get(state);
-    return buildResourceTelemetryHistory({
+    return yield* readResourceTelemetryHistory({
       readAt,
       windowMs: normalizedInput.windowMs,
       bucketMs: normalizedInput.bucketMs,
@@ -439,8 +442,13 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
         desktop: desktopHealth,
         nativeSnapshot: current.nativeSnapshot,
       }),
-    });
-  });
+    }).pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("Resource telemetry history aggregation failed", { cause: error.cause }),
+      ),
+      Effect.mapError(() => new ResourceTelemetryHistoryError()),
+    );
+  }, historyMutex.withPermits(1));
   yield* nativeHealthSubscription.changes.pipe(
     Stream.runForEach(() => refreshHealth),
     Effect.forkScoped,
