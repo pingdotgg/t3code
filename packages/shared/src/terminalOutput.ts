@@ -93,9 +93,9 @@ function isDetachedTailStart(
   return false;
 }
 
-function* previousCharacters(text: string, end: number, skipSgr = false): Generator<string> {
+function* previousCharacters(text: string, end: number): Generator<string> {
   while (end > 0) {
-    if (skipSgr && text[end - 1] === "m") {
+    if (text[end - 1] === "m") {
       let start = end - 1;
       while (start > 0 && /[0-9;:]/u.test(text[start - 1]!)) start -= 1;
       if (start >= 2 && text.startsWith(`${ESC}[`, start - 2)) {
@@ -754,7 +754,7 @@ export function terminalOutputTail(
       continue;
     }
     const character = String.fromCodePoint(text.codePointAt(start)!);
-    if (!isDetachedTailStart(character, () => previousCharacters(text, start, true))) break;
+    if (!isDetachedTailStart(character, () => previousCharacters(text, start))) break;
     start += character.length;
   }
   return { text: start < text.length ? prefix + text.slice(start) : "", truncated: true };
