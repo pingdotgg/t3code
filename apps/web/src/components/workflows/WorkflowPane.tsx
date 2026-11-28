@@ -4,6 +4,7 @@ import { EnvironmentId, ThreadId, type WorkflowRunReference } from "@t3tools/con
 import { useGT } from "gt-react";
 import { BotIcon, Maximize2Icon, XIcon } from "lucide-react";
 
+import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -35,11 +36,13 @@ export default function WorkflowPane({
   runId,
   state,
   onChange,
+  electron = isElectron,
 }: {
   readonly environmentId: EnvironmentId;
   readonly runId: string | null;
   readonly state: WorkflowPaneState;
   readonly onChange: (next: WorkflowPaneState) => void;
+  readonly electron?: boolean;
 }) {
   const gt = useGT();
   const detail = useEnvironmentQuery(
@@ -83,7 +86,12 @@ export default function WorkflowPane({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-(--workspace-topbar-height) shrink-0 items-center gap-1 border-b ps-2 pe-2">
+      <div
+        className={cn(
+          "flex h-(--workspace-topbar-height) shrink-0 items-center gap-1 border-b ps-2 pe-2",
+          electron && "drag-region wco:pr-(--workspace-native-controls-inset)",
+        )}
+      >
         <div
           role="tablist"
           aria-label={gt("Open beside the run")}

@@ -32,12 +32,13 @@ vi.mock("./WorkflowThreadPane", () => ({
   useOpenThreadPage: () => state.openThreadPage,
 }));
 
-const pane = (env: string | undefined) => (
+const pane = (env: string | undefined, electron?: boolean) => (
   <WorkflowPane
     environmentId={environmentId}
     runId={null}
     state={{ pane: [{ thread: "thread-2", ...(env === undefined ? {} : { env }) }] }}
     onChange={vi.fn()}
+    {...(electron === undefined ? {} : { electron })}
   />
 );
 
@@ -75,5 +76,41 @@ describe("WorkflowPane", () => {
     await expect
       .element(screen.getByRole("button", { name: "Open as a full thread" }))
       .not.toBeInTheDocument();
+  });
+
+  it("reserves native window controls inset and drag region under Electron WCO", async () => {
+    state.linked = [];
+    state.openThreadPage = vi.fn();
+    document.documentElement.classList.add("wco");
+    document.documentElement.style.setProperty("--workspace-native-controls-inset", "140px");
+    try {
+      await using screen = await render(pane(undefined, true));
+      const tablist = screen.getByRole("tablist").element();
+      const header = tablist.parentElement;
+      expect(header).not.toBeNull();
+      expect(header!.classList.contains("drag-region")).toBe(true);
+      expect(getComputedStyle(header!).paddingRight).toBe("140px");
+    } finally {
+      document.documentElement.classList.remove("wco");
+      document.documentElement.style.removeProperty("--workspace-native-controls-inset");
+    }
+  });
+
+  it("does not reserve WCO inset or drag region outside Electron", async () => {
+    state.linked = [];
+    state.openThreadPage = vi.fn();
+    document.documentElement.classList.add("wco");
+    document.documentElement.style.setProperty("--workspace-native-controls-inset", "140px");
+    try {
+      await using screen = await render(pane(undefined, false));
+      const tablist = screen.getByRole("tablist").element();
+      const header = tablist.parentElement;
+      expect(header).not.toBeNull();
+      expect(header!.classList.contains("drag-region")).toBe(false);
+      expect(getComputedStyle(header!).paddingRight).toBe("8px");
+    } finally {
+      document.documentElement.classList.remove("wco");
+      document.documentElement.style.removeProperty("--workspace-native-controls-inset");
+    }
   });
 });
