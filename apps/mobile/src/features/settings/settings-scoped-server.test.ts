@@ -178,13 +178,13 @@ describe("managed settings across environments", () => {
       null,
     );
 
-    expect(managedSettingReason(targets, "storageCleanup.logsAfterDays")).toBe(
+    expect(managedSettingReason(targets, ["storageCleanup.logsAfterDays"])).toBe(
       "Managed by Example Corp.",
     );
-    expect(managedSettingReason(targets, "defaultAutoPull", "storageCleanup")).toBe(
+    expect(managedSettingReason(targets, ["defaultAutoPull", "storageCleanup"])).toBe(
       "Managed by Example Corp.",
     );
-    expect(managedSettingReason(targets, "defaultAutoPull")).toBeUndefined();
-    expect(managedSettingReason(targets.slice(0, 1), "storageCleanup")).toBeUndefined();
+    expect(managedSettingReason(targets, ["defaultAutoPull"])).toBeUndefined();
+    expect(managedSettingReason(targets.slice(0, 1), ["storageCleanup"])).toBeUndefined();
   });
 });

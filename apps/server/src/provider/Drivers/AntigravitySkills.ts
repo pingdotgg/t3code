@@ -37,6 +37,7 @@ export function antigravityUserSkillDirectories(
 const MAX_SKILL_BYTES = 1_000_000;
 const MAX_SCAN_BYTES = 8_000_000;
 const MAX_SCAN_ENTRIES = 10_000;
+const MAX_INHERIT_DEPTH = 10;
 // Typical frontmatter fits in one chunk, so most skills cost about this much of the scan budget.
 const SKILL_READ_CHUNK_BYTES = 1024;
 
@@ -45,6 +46,46 @@ const SkillFrontmatter = Schema.Struct({
   description: Schema.optional(Schema.NullOr(Schema.String)),
 });
 const decodeSkillFrontmatter = Schema.decodeUnknownSync(SkillFrontmatter);
+const SkillConfigEntry = Schema.Struct({
+  path: Schema.String,
+  include_only: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+  exclude: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+});
+const decodeSkillsConfig = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      inherits: Schema.optional(Schema.NullOr(Schema.Array(SkillConfigEntry))),
+      entries: Schema.optional(Schema.NullOr(Schema.Array(SkillConfigEntry))),
+    }),
+  ),
+);
+// agy reads only the first manifest present, and skips the plugin when that one does not parse.
+const PLUGIN_MANIFEST_PATHS = [
+  [".antigravity-plugin", "plugin.json"],
+  [".gemini-plugin", "plugin.json"],
+  ["plugin.json"],
+] as const;
+// agy ignores `skills` in an Agent Plugins manifest while its enable-agent-plugins-spec flag is on.
+const AGENT_PLUGINS_SCHEMA_PREFIX = "https://agent-plugins.org/schemas/";
+const decodePluginManifest = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      $schema: Schema.optional(Schema.Unknown),
+      skills: Schema.optional(
+        Schema.NullOr(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+      ),
+    }),
+  ),
+);
+const decodePluginPreferences = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      plugins: Schema.optional(
+        Schema.Record(Schema.String, Schema.Struct({ enabled: Schema.optional(Schema.Boolean) })),
+      ),
+    }),
+  ),
+);
 
 export class AntigravitySkillsProbeError extends Schema.TaggedError<AntigravitySkillsProbeError>()(
   "AntigravitySkillsProbeError",
@@ -88,7 +129,11 @@ function parseSkillFrontmatter(contents: string, fileName: string) {
   if (end === -1) return undefined;
   try {
     const frontmatter = decodeSkillFrontmatter(
-      parseYamlDocument(contents.slice(start + 3, end).trim()) ?? {},
+      // Antigravity reads plain scalar names and descriptions as text.
+      parseYamlDocument(contents.slice(start + 3, end).trim(), {
+        schema: "failsafe",
+        customTags: ["null"],
+      }) ?? {},
     );
     const name = frontmatter.name || fileName.slice(0, -3);
     const description = frontmatter.description?.trim();
@@ -162,10 +207,49 @@ const readSkillFrontmatter = Effect.fn("readAntigravitySkill")(function* (
   return bytes.toString("utf8", 0, frontmatterEnd);
 });
 
+interface SkillEntryFilter {
+  readonly includeGroups: ReadonlyArray<ReadonlyArray<string>>;
+  readonly excludeNames: ReadonlyArray<string>;
+}
+
+const EMPTY_SKILL_FILTER: SkillEntryFilter = {
+  includeGroups: [],
+  excludeNames: [],
+};
+
+function matchesSkillFilter(entry: string, filter: SkillEntryFilter): boolean {
+  for (const group of filter.includeGroups) {
+    if (!group.includes(entry)) return false;
+  }
+  return !filter.excludeNames.includes(entry);
+}
+
+function narrowSkillFilter(
+  parent: SkillEntryFilter,
+  entry: typeof SkillConfigEntry.Type,
+): SkillEntryFilter {
+  const includeGroups =
+    entry.include_only && entry.include_only.length > 0
+      ? [...parent.includeGroups, entry.include_only]
+      : parent.includeGroups;
+  const excludeNames =
+    entry.exclude && entry.exclude.length > 0
+      ? [...parent.excludeNames, ...entry.exclude]
+      : parent.excludeNames;
+  return { includeGroups, excludeNames };
+}
+
+// agy does not expand ~, so a ~/ path stays relative to the config file.
+function resolveSkillsConfigPath(path: Path.Path, rawPath: string, baseDir: string): string {
+  return path.isAbsolute(rawPath) ? path.resolve(rawPath) : path.resolve(baseDir, rawPath);
+}
+
 /** Keep read errors typed so workspace snapshots cannot cache partial results. */
 export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(function* (input: {
   readonly cwd: string;
   readonly userHome: string;
+  /** The instance's GEMINI_HOME, where agy loads plugins from. */
+  readonly profileDirectory: string;
 }): Effect.fn.Return<
   ReadonlyArray<ServerProviderSkill>,
   AntigravitySkillsProbeError,
@@ -181,8 +265,8 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     { directory: configSkills, scope: "user" },
     { directory: path.resolve(input.cwd, ".gemini", "skills"), scope: "project" },
     { directory: cliSkills, scope: "user" },
-    { directory: path.resolve(input.cwd, ".agents", "skills"), scope: "project" },
-    { directory: path.resolve(input.cwd, ".agent", "skills"), scope: "project" },
+    { directory: path.resolve(input.cwd, ".agents", "skills"), scope: "project", agentRoot: true },
+    { directory: path.resolve(input.cwd, ".agent", "skills"), scope: "project", agentRoot: true },
   ];
   const budget: ScanBudget = {
     remainingBytes: MAX_SCAN_BYTES,
@@ -190,12 +274,47 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
   };
   const skillsByName = new Map<string, ServerProviderSkill>();
 
+  const addSkillFile = Effect.fn("addAntigravitySkillFile")(function* (
+    skillPath: string,
+    scope: string,
+    pluginName?: string,
+  ) {
+    const fileName = path.basename(skillPath);
+    if (fileName.toLowerCase() !== "skill.md" || !fileName.endsWith(".md")) return;
+    const contents = yield* readSkillFrontmatter(skillPath, budget);
+    if (contents === undefined) return;
+    const skill = parseSkillFrontmatter(contents, fileName);
+    if (!skill || skillsByName.has(skill.name)) return;
+    skillsByName.set(skill.name, {
+      ...skill,
+      path: skillPath,
+      scope,
+      enabled: true,
+      ...(pluginName === undefined ? {} : { displayName: `${pluginName}:${skill.name}` }),
+    });
+  });
+
   const scanDirectory = Effect.fn("scanAntigravitySkillDirectory")(function* (
     directory: string,
     scope: string,
-    scanChildren: boolean,
+    mode: "directory" | "agent-root" | "child" | "manifest",
+    filter: SkillEntryFilter = EMPTY_SKILL_FILTER,
+    pluginName?: string,
   ): Effect.fn.Return<void, AntigravitySkillsProbeError, FileSystem.FileSystem> {
     const info = yield* readIfPresent(fileSystem.stat(directory), directory);
+    if (info?.type === "File" && mode === "manifest") {
+      if (budget.remainingEntries === 0) {
+        return yield* new AntigravitySkillsProbeError({
+          reason: "scan-budget-exhausted",
+          path: directory,
+        });
+      }
+      budget.remainingEntries -= 1;
+      if (matchesSkillFilter(path.basename(path.dirname(directory)), filter)) {
+        yield* addSkillFile(directory, scope, pluginName);
+      }
+      return;
+    }
     if (info?.type !== "Directory") return;
     const entries = yield* readIfPresent(fileSystem.readDirectory(directory), directory);
     if (entries === undefined) return;
@@ -209,35 +328,188 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
 
     const sortedEntries = entries.toSorted();
     const skillFileName = sortedEntries.find((entry) => entry.toLowerCase() === "skill.md");
-    if (skillFileName !== undefined) {
-      if (!skillFileName.endsWith(".md")) return;
-      const skillPath = path.join(directory, skillFileName);
-      const contents = yield* readSkillFrontmatter(skillPath, budget);
-      if (contents === undefined) return;
-      const skill = parseSkillFrontmatter(contents, skillFileName);
-      if (!skill || skillsByName.has(skill.name)) return;
-      skillsByName.set(skill.name, {
-        ...skill,
-        path: skillPath,
-        scope,
-        enabled: true,
-      });
+    // agy treats the automatic .agent(s)/skills roots as collections.
+    if (skillFileName !== undefined && mode !== "agent-root") {
+      if (matchesSkillFilter(path.basename(directory), filter)) {
+        yield* addSkillFile(path.join(directory, skillFileName), scope, pluginName);
+      }
       return;
     }
-    if (scanChildren) {
+    if (mode !== "child") {
       const children = sortedEntries
+        .filter((entry) => matchesSkillFilter(entry, filter))
         .map((entry) => ({ entry, sortKey: skillPathSortKey(entry) }))
         .sort((left, right) =>
           left.sortKey < right.sortKey ? -1 : left.sortKey > right.sortKey ? 1 : 0,
         );
       for (const { entry } of children) {
-        yield* scanDirectory(path.join(directory, entry), scope, false);
+        yield* scanDirectory(
+          path.join(directory, entry),
+          scope,
+          "child",
+          EMPTY_SKILL_FILTER,
+          pluginName,
+        );
       }
     }
   });
 
+  const scanSkillsConfig = Effect.fn("scanAntigravitySkillsConfig")(function* (
+    configPath: string,
+    baseDir: string,
+    scope: string,
+    filter: SkillEntryFilter,
+    visitedConfigs: ReadonlySet<string>,
+    depth: number,
+  ): Effect.fn.Return<void, AntigravitySkillsProbeError, FileSystem.FileSystem> {
+    if (depth > MAX_INHERIT_DEPTH) return;
+    const resolvedConfigPath = path.resolve(configPath);
+    if (visitedConfigs.has(resolvedConfigPath)) return;
+    const configInfo = yield* readIfPresent(
+      fileSystem.stat(resolvedConfigPath),
+      resolvedConfigPath,
+    );
+    if (configInfo?.type !== "File") return;
+    const byteLimit = Math.min(MAX_SKILL_BYTES, budget.remainingBytes);
+    if (configInfo.size > BigInt(byteLimit)) {
+      return yield* new AntigravitySkillsProbeError({
+        reason: "scan-budget-exhausted",
+        path: resolvedConfigPath,
+      });
+    }
+    const raw = yield* readIfPresent(
+      fileSystem.readFileString(resolvedConfigPath),
+      resolvedConfigPath,
+    );
+    if (raw === undefined) return;
+    budget.remainingBytes -= Buffer.byteLength(raw, "utf8");
+    const parsed = decodeSkillsConfig(raw);
+    if (parsed._tag === "None") return;
+
+    const nextVisited = new Set(visitedConfigs);
+    nextVisited.add(resolvedConfigPath);
+    for (const inherited of parsed.value.inherits ?? []) {
+      const inheritedPath = resolveSkillsConfigPath(path, inherited.path, baseDir);
+      yield* scanSkillsConfig(
+        inheritedPath,
+        path.dirname(inheritedPath),
+        scope,
+        narrowSkillFilter(filter, inherited),
+        nextVisited,
+        depth + 1,
+      );
+    }
+    for (const entry of parsed.value.entries ?? []) {
+      const entryDirectory = resolveSkillsConfigPath(path, entry.path, baseDir);
+      yield* scanDirectory(entryDirectory, scope, "manifest", narrowSkillFilter(filter, entry));
+    }
+  });
+
   for (const root of roots) {
-    yield* scanDirectory(root.directory, root.scope, true);
+    yield* scanDirectory(root.directory, root.scope, root.agentRoot ? "agent-root" : "directory");
+  }
+
+  for (const config of [
+    {
+      configPath: path.resolve(input.cwd, ".agents", "skills.json"),
+      baseDir: input.cwd,
+      scope: "project",
+    },
+    {
+      configPath: path.resolve(input.cwd, ".agent", "skills.json"),
+      baseDir: input.cwd,
+      scope: "project",
+    },
+    {
+      configPath: path.join(input.userHome, ".gemini", "config", "skills.json"),
+      baseDir: path.join(input.userHome, ".gemini", "config"),
+      scope: "user",
+    },
+  ]) {
+    yield* scanSkillsConfig(
+      config.configPath,
+      config.baseDir,
+      config.scope,
+      EMPTY_SKILL_FILTER,
+      new Set(),
+      0,
+    );
+  }
+
+  /** The skill paths a plugin's manifest adds to its skills/ folder, or undefined when agy skips the plugin. */
+  const readPluginSkillPaths = Effect.fn("readAntigravityPluginSkillPaths")(function* (
+    pluginDirectory: string,
+  ): Effect.fn.Return<
+    ReadonlyArray<string> | undefined,
+    AntigravitySkillsProbeError,
+    FileSystem.FileSystem
+  > {
+    for (const segments of PLUGIN_MANIFEST_PATHS) {
+      const manifestPath = path.join(pluginDirectory, ...segments);
+      const info = yield* readIfPresent(fileSystem.stat(manifestPath), manifestPath);
+      if (info?.type !== "File") continue;
+      if (info.size > BigInt(Math.min(MAX_SKILL_BYTES, budget.remainingBytes))) {
+        return yield* new AntigravitySkillsProbeError({
+          reason: "scan-budget-exhausted",
+          path: manifestPath,
+        });
+      }
+      const raw = yield* readIfPresent(fileSystem.readFileString(manifestPath), manifestPath);
+      if (raw === undefined) return undefined;
+      budget.remainingBytes -= Buffer.byteLength(raw, "utf8");
+      const manifest = decodePluginManifest(raw.replace(/^\uFEFF/, ""));
+      if (manifest._tag === "None") return undefined;
+      const { $schema, skills } = manifest.value;
+      if (typeof $schema === "string" && $schema.startsWith(AGENT_PLUGINS_SCHEMA_PREFIX)) return [];
+      return (typeof skills === "string" ? [skills] : (skills ?? [])).map((entry) =>
+        path.resolve(pluginDirectory, entry),
+      );
+    }
+    return undefined;
+  });
+
+  const pluginsDirectory = path.join(input.profileDirectory, "config", "plugins");
+  const plugins = yield* readIfPresent(
+    fileSystem.readDirectory(pluginsDirectory),
+    pluginsDirectory,
+  );
+  if (plugins !== undefined && plugins.length > 0) {
+    const configPath = path.join(input.profileDirectory, "config", "config.json");
+    const configInfo = yield* readIfPresent(fileSystem.stat(configPath), configPath);
+    if (configInfo?.type === "File" && configInfo.size > BigInt(MAX_SKILL_BYTES)) {
+      return yield* new AntigravitySkillsProbeError({
+        reason: "scan-budget-exhausted",
+        path: configPath,
+      });
+    }
+    const config =
+      configInfo?.type === "File"
+        ? yield* readIfPresent(fileSystem.readFileString(configPath), configPath)
+        : undefined;
+    const preferences = config === undefined ? undefined : decodePluginPreferences(config);
+    const disabled = new Set(
+      Object.entries(
+        (preferences?._tag === "Some" ? preferences.value.plugins : undefined) ?? {},
+      ).flatMap(([name, plugin]) => (plugin.enabled === false ? [name] : [])),
+    );
+    for (const plugin of plugins.toSorted()) {
+      if (disabled.has(plugin)) continue;
+      const pluginDirectory = path.join(pluginsDirectory, plugin);
+      const info = yield* readIfPresent(fileSystem.stat(pluginDirectory), pluginDirectory);
+      if (info?.type !== "Directory") continue;
+      const manifestSkillPaths = yield* readPluginSkillPaths(pluginDirectory);
+      if (manifestSkillPaths === undefined) continue;
+      yield* scanDirectory(
+        path.join(pluginDirectory, "skills"),
+        "user",
+        "directory",
+        EMPTY_SKILL_FILTER,
+        plugin,
+      );
+      for (const skillPath of manifestSkillPaths) {
+        yield* scanDirectory(skillPath, "user", "manifest", EMPTY_SKILL_FILTER, plugin);
+      }
+    }
   }
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 });

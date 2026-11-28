@@ -78,6 +78,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
             nodePath: "/node",
             platforms: [{ platform: "ios", available: true }],
             hubPort: 1234,
+            hubToken: "hub-token",
             helpers: { serveSimAxSettings: null, serveSimCli: null },
             ...(mode === "agent-start"
               ? { daemonPort: 1235, token: "fixture", entryPath: "/agent.mjs" }
@@ -222,6 +223,7 @@ it.effect("releases the forward of a bootstrap interrupted before its hub answer
               nodePath: "/node",
               platforms: [{ platform: "ios", available: true }],
               hubPort: 1234,
+              hubToken: "hub-token",
               helpers: { serveSimAxSettings: null, serveSimCli: null },
             });
         return ChildProcessSpawner.makeHandle({
@@ -324,6 +326,7 @@ it.effect("lists Android devices without probing the host again once it reports 
                     { platform: "android", available: androidInstalled },
                   ],
                   hubPort: 1234,
+                  hubToken: "hub-token",
                   helpers: { serveSimAxSettings: null, serveSimCli: null },
                 });
         }
@@ -422,6 +425,7 @@ it.effect(
             nodePath: "/node",
             platforms: [{ platform: "ios", available: true }],
             hubPort: 1234,
+            hubToken: "hub-token",
             helpers: { serveSimAxSettings: null, serveSimCli: null },
           });
           return ChildProcessSpawner.makeHandle({
@@ -530,16 +534,79 @@ it.effect.each([
     windows: false,
   },
   {
-    name: "a connection failure",
+    name: "an unrecognized SSH failure",
     exitCode: 255,
     stderr: "Connection refused\n",
     shellEcho: "Windows_NT\n",
     nodePlatform: "win32",
     windows: false,
   },
+  {
+    name: "a ProxyCommand permission error",
+    exitCode: 255,
+    stderr: "bash: /usr/local/bin/proxy: Permission denied\n",
+    shellEcho: "",
+    nodePlatform: null,
+    windows: false,
+  },
+  {
+    name: "an untrusted host key",
+    exitCode: 255,
+    stderr: "Host key verification failed.\r\n",
+    shellEcho: "Windows_NT\n",
+    nodePlatform: "win32",
+    windows: false,
+    connect: { reason: "host_key_unknown", detail: "Host key verification failed." },
+  },
+  {
+    name: "a changed host key",
+    exitCode: 255,
+    stderr:
+      "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\nIT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!\nHost key verification failed.\n",
+    shellEcho: "",
+    nodePlatform: null,
+    windows: false,
+    connect: {
+      reason: "host_key_changed",
+      detail: "@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @",
+    },
+  },
+  {
+    name: "a rejected login",
+    exitCode: 255,
+    stderr: "me@test.example: Permission denied (publickey).\n",
+    shellEcho: "",
+    nodePlatform: null,
+    windows: false,
+    connect: { reason: "auth", detail: "me@test.example: Permission denied (publickey)." },
+  },
+  {
+    name: "an unresolvable host name",
+    exitCode: 255,
+    stderr: "ssh: Could not resolve hostname test.example: Name or service not known\n",
+    shellEcho: "",
+    nodePlatform: null,
+    windows: false,
+    connect: {
+      reason: "resolve",
+      detail: "ssh: Could not resolve hostname test.example: Name or service not known",
+    },
+  },
+  {
+    name: "a refused connection",
+    exitCode: 255,
+    stderr: "ssh: connect to host test.example port 22: Connection refused\n",
+    shellEcho: "",
+    nodePlatform: null,
+    windows: false,
+    connect: {
+      reason: "connect",
+      detail: "ssh: connect to host test.example port 22: Connection refused",
+    },
+  },
 ])(
   "probe failure on $name keeps the SSH cause",
-  ({ exitCode, stderr, shellEcho, nodePlatform, windows }) =>
+  ({ exitCode, stderr, shellEcho, nodePlatform, windows, connect }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const home = yield* fs.makeTempDirectoryScoped();
@@ -589,7 +656,11 @@ it.effect.each([
       expect(failure).toMatchObject({ _tag: "DeviceHostError", step: "probe" });
       const sshFailure = { _tag: "SshCommandError", exitCode, stderr };
       expect(failure.cause).toMatchObject(
-        windows ? { _tag: "SshWindowsHostError", cause: sshFailure } : sshFailure,
+        windows
+          ? { _tag: "SshWindowsHostError", cause: sshFailure }
+          : connect
+            ? { _tag: "SshConnectError", ...connect, target: "test.example", cause: sshFailure }
+            : sshFailure,
       );
       // A transport failure has no remote shell to ask.
       if (exitCode === 255) expect(shellChecks).toEqual([]);

@@ -19,6 +19,8 @@ This document maps v3 Schema APIs to their v4 equivalents. Simple renames and ar
 | `compose(schemaB)`                              | `decodeTo(schemaB)`                                                           | rename            |
 | `annotations(ann)`                              | `annotate(ann)`                                                               | rename            |
 | `decodingFallback` annotation                   | `catchDecoding(...)`                                                          | rename            |
+| `concurrency` annotation                        | see [concurrency and batching](#concurrency-and-batching-annotations)         | manual            |
+| `batching` annotation                           | — (see [concurrency and batching](#concurrency-and-batching-annotations))     | removed           |
 | `parseJson()`                                   | `fromJsonString(Unknown)`                                                     | rename            |
 | `parseJson(schema)`                             | `fromJsonString(schema)`                                                      | rename            |
 | `pattern(regex)`                                | `check(isPattern(regex))`                                                     | rename            |
@@ -80,6 +82,10 @@ This document maps v3 Schema APIs to their v4 equivalents. Simple renames and ar
 | `declare`                                       | see [declare](#declare)                                                       | manual            |
 
 ## Additional rename notes
+
+### `annotations` → `annotate`
+
+`Schema.Annotations.Annotations` accepts any string key, so renaming `.annotations(...)` to `.annotate(...)` still type-checks when the object contains v3 annotations that v4 removed, such as `concurrency`, `batching`, or `parseOptions`. v4 keeps those keys as metadata but never reads them. Migrate them as described in [concurrency and batching](#concurrency-and-batching-annotations) and [`parseOptions` annotation](#parseoptions-annotation) instead of renaming them.
 
 ### `*FromSelf` renames
 
@@ -249,30 +255,9 @@ Behavior note: `TemplateLiteral` and `TemplateLiteralParser` match parts semanti
 
 ### format
 
-**Migration: manual**
+**Migration: removed**
 
-**New imports:** `SchemaRepresentation`
-
-v3
-
-```ts
-import { Schema } from "effect"
-
-console.log(Schema.format(Schema.String))
-// string
-```
-
-v4
-
-```ts
-import { Schema, SchemaRepresentation } from "effect"
-
-const doc = SchemaRepresentation.toRepresentation(Schema.String.ast)
-const multi = SchemaRepresentation.toMultiDocument(doc)
-const codeDoc = SchemaRepresentation.toCodeDocument(multi)
-console.log(codeDoc.codes[0].Type)
-// string
-```
+`Schema.format` was removed in v4 and has no replacement.
 
 ### ParseResult formatters
 
@@ -988,6 +973,125 @@ import { Effect, Schema } from "effect"
 const schema = Schema.String.pipe(Schema.catchDecoding(() => Effect.succeedSome("a")))
 ```
 
+### `concurrency` and `batching` annotations
+
+**Migration: manual**
+
+v4 removes the `concurrency` and `batching` schema annotations and has no annotation-based replacement. Because `annotate` accepts any key, `.annotate({ concurrency: "unbounded", batching: true })` still compiles and is ignored at runtime: parsing runs sequentially, so requests that sibling children make with `Effect.request` are no longer pending at the same time and stop sharing batches.
+
+> **Warning:** Losing these annotations does not cause an error. It shows up as slower parsing and more backend calls. When a schema decodes many values through `Effect.request` (for example, while loading startup data) and each child awaits one request, a parse running on its own sends every request in its own batch, and a step that used to take seconds can take minutes. Before upgrading, search for `concurrency:` and `batching:` in `.annotations(...)` calls, plus any calls to `AST.getConcurrencyAnnotation` or `AST.getBatchingAnnotation`.
+
+In v3:
+
+- the annotations applied only to the annotated tuple, array, struct, record, or union node, and nested schemas needed their own annotations;
+- `batching: true` batched requests from the node's children even when they were parsed sequentially;
+- `concurrency` without `batching` did not batch requests.
+
+In v4:
+
+- **Concurrency is a parse option.** Pass `concurrency` (a number or `"unbounded"`) when you create a decoder, encoder, or parser (`Schema.decodeUnknownEffect(schema, { concurrency })`) or on each call (`decode(input, { concurrency })`). Constructors take it as `SchemaParser.makeEffect(schema)(input, { parseOptions: { concurrency } })`. The default is sequential.
+- **The option covers the whole parse.** Every tuple, array, struct, record, and struct-with-rest node enforces the limit on its own children, so nested products can run more children at once than the limit. Union members are still tried one at a time, unlike v3, but products inside the member being tried use the option.
+- **There is no batching option.** `Effect.withRequestBatching` and the `batching` option of `Effect.forEach` are gone too. A `RequestResolver` batches whatever requests are pending for it when its delay ends (`Effect.yieldNow` by default, adjustable with `RequestResolver.setDelay`). The parse option only decides whether sibling children are traversed together. With sequential parsing, children that each await one request send them in separate batches when nothing else uses the resolver; with concurrent parsing, those requests are pending together and can share a batch. Requests started concurrently inside one transformation (for example with `Effect.all(..., { concurrency: "unbounded" })`), or by other fibers and parses using the same resolver, still batch under sequential parsing, so do not add parse concurrency only to keep batching you already have.
+- **Batch sizes are not guaranteed.** A batch holds whatever is pending when the resolver's delay ends, which depends on each node's concurrency limit, on how nested products overlap, on other effects that run before a request, and on the resolver's settings (`RequestResolver.batchN`, batch keys, and the delay). Bound backend batch sizes with the resolver, not with the parse option.
+- **Concurrency affects more than requests.** Every effectful transformation, check, and constructor default of sibling children runs concurrently. Issues are collected in completion order, and with `errors: "first"` the first failure to complete interrupts the remaining children, which may not be the earliest position.
+
+v3
+
+```ts
+import { Schema } from "effect"
+
+// Decodes a user id by calling Effect.request
+declare const UserFromId: Schema.Schema<string, number>
+
+const Users = Schema.Array(UserFromId).annotations({ concurrency: "unbounded", batching: true })
+
+const program = Schema.decodeUnknown(Users)([1, 2, 3])
+```
+
+v4
+
+```ts
+import { Effect, Exit, Request, RequestResolver, Schema, SchemaGetter } from "effect"
+
+interface GetUser extends Request.Request<string> {
+  readonly _tag: "GetUser"
+  readonly id: number
+}
+const GetUser = Request.tagged<GetUser>("GetUser")
+
+const UserResolver = RequestResolver.make<GetUser>((entries) =>
+  Effect.sync(() => {
+    // One backend call per batch
+    for (const entry of entries) {
+      entry.completeUnsafe(Exit.succeed(`user-${entry.request.id}`))
+    }
+  })
+)
+
+const UserFromId = Schema.Number.pipe(
+  Schema.decodeTo(Schema.String, {
+    decode: SchemaGetter.transformEffect((id: number) => Effect.request(GetUser({ id }), UserResolver)),
+    encode: SchemaGetter.forbidden(() => "Encoding is not supported")
+  })
+)
+
+// Do not move the v3 keys to `annotate`: they are accepted and ignored
+const Users = Schema.Array(UserFromId)
+
+// Options given to the decoder factory apply to every call
+const decodeUsers = Schema.decodeUnknownEffect(Users, { concurrency: "unbounded" })
+
+// The three requests are pending together and resolve in one batch
+const program = decodeUsers([1, 2, 3])
+```
+
+Without `{ concurrency: "unbounded" }`, the same program resolves three batches of one request each. With `{ concurrency: 2 }`, the array has at most two of its requests pending at a time, but the limit is per node: requests from other products in the same parse can land in the same batch.
+
+### `parseOptions` annotation
+
+**Migration: manual**
+
+v4 removes the `parseOptions` annotation and has no annotation-based replacement. `.annotate({ parseOptions: { onExcessProperty: "error" } })` still compiles and is ignored at runtime, like the [`concurrency` and `batching` annotations](#concurrency-and-batching-annotations).
+
+> **Warning:** Losing this annotation does not cause an error. A nested struct that refused unknown keys now accepts them and drops them from the decoded value. Search for `parseOptions` in `.annotations(...)` calls, plus any calls to `AST.getParseOptionsAnnotation`.
+
+In v3, the annotation set `onExcessProperty`, `errors`, `exact` or `propertyOrder` for the annotated node and its children, whatever options the decoder was called with.
+
+In v4, pass `onExcessProperty` and `errors` when you create a decoder, encoder, or parser, or on each call. They apply to the whole parse, and there is no per-node override.
+
+The `exact` and `propertyOrder` parse options were removed. Model required and optional keys in the schema itself. Output key order is unspecified; handle any required presentation or serialization order outside the parser.
+
+v3
+
+```ts
+import { Schema } from "effect"
+
+const Inner = Schema.Struct({ x: Schema.String }).annotations({
+  parseOptions: { onExcessProperty: "error" }
+})
+const Outer = Schema.Struct({ inner: Inner })
+
+// Left: the unknown key `y` is refused, although the decoder ignores excess properties by default
+Schema.decodeUnknownEither(Outer)({ inner: { x: "a", y: 1 } })
+```
+
+v4
+
+```ts
+import { Schema } from "effect"
+
+const Inner = Schema.Struct({ x: Schema.String })
+const Outer = Schema.Struct({ inner: Inner })
+
+// The option now applies to every struct in the parse, `Outer` included
+const decodeOuter = Schema.decodeUnknownExit(Outer, { onExcessProperty: "error" })
+
+// Failure: the unknown key `y` is refused
+decodeOuter({ inner: { x: "a", y: 1 } })
+```
+
+If only some structs must refuse unknown keys, decode their raw inputs separately with `{ onExcessProperty: "error" }`, before a surrounding parse can strip the extra keys.
+
 ### rename
 
 **Migration: manual**
@@ -1092,6 +1196,28 @@ function split(separator: string) {
   )
 }
 ```
+
+### JSON Schema output
+
+**Migration: manual**
+
+`JSONSchema.make` becomes `Schema.toJsonSchemaDocument` (see [`JSONSchema.make`](./v3-to-v4.md#jsonschemamake)). Some schemas also produce a looser JSON Schema than in v3. The v4 document describes the encoded side of the schema's JSON codec (`Schema.toCodecJson`), so it accepts the values that codec writes. In v3, the document described the schema's own encoded side.
+
+| v3 schema          | v3 `JSONSchema.make`                 | v4 `Schema.toJsonSchemaDocument`                                          |
+| ------------------ | ------------------------------------ | ------------------------------------------------------------------------- |
+| `Number`           | `{ "type": "number" }`               | `number`, or one of the strings `"Infinity"`, `"-Infinity"`, `"NaN"`      |
+| `optional(String)` | `{ "type": "string" }`, not required | `string` or `null`, not required                                          |
+| `Struct({ ... })`  | `"additionalProperties": false`      | `"additionalProperties": true`, unless `onExcessProperty: "error"` is set |
+
+A document that passes the v4 JSON Schema can therefore fail `Schema.decodeUnknown*(schema)`: that decoder refuses `"NaN"` for `Schema.Number` and `null` for `Schema.optional(Schema.String)`. Decoding through `Schema.toCodecJson(schema)` accepts them.
+
+To keep the v3 output:
+
+- use `Schema.Finite` for a number that is never `NaN` or infinite: it produces `{ "type": "number" }`;
+- use `Schema.optionalKey` for a key that is either absent or present with a value: it does not add `null`;
+- pass `{ onExcessProperty: "error" }` to the generator, and to the decoder, to close objects.
+
+If you publish JSON Schemas or compare them with earlier output, compare which documents they accept and refuse rather than their text. Built-in schemas such as `NonEmptyString` no longer carry their v3 `description`, `title`, and `identifier` annotations, so they can appear inline without that metadata. Schemas annotated with an `identifier` still produce named definitions and `$ref` references. The returned document stores those definitions separately in `definitions`; the root `schema` refers to them through `#/$defs/...`.
 
 ## Migrating from the fast-check bridge to native Arbitrary
 

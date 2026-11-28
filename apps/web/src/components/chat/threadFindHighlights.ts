@@ -1,6 +1,8 @@
 import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import { useEffect, useEffectEvent, useRef } from "react";
-import { THREAD_FIND_BLOCK_TAGS } from "@t3tools/shared/threadFindText";
+import { THREAD_FIND_BLOCK_TAGS } from "@t3tools/shared/threadFindBlockTags";
+
+import { observeResize } from "~/lib/observeResize";
 
 const THREAD_FIND_HIGHLIGHT_NAME = "t3-thread-find";
 const THREAD_FIND_ACTIVE_HIGHLIGHT_NAME = "t3-thread-find-active";
@@ -160,9 +162,19 @@ export function useThreadFindHighlights(input: {
       }
       for (const row of cache.keys()) if (!rows.has(row)) cache.delete(row);
       rangesRef.current = ranges;
-      paint(ranges, readSelection());
+      paint.update(cache, ranges, readSelection());
     };
     let frame: number | null = null;
+    let dirty = false;
+    const schedule = () => {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        if (dirty) repaint();
+        else paint.place(cache);
+        dirty = false;
+      });
+    };
     const observer = new MutationObserver((mutations) => {
       // Ignore timer and status mutations outside searchable text and folds.
       const relevant = mutations.filter(affectsSearchableText);
@@ -174,12 +186,12 @@ export function useThreadFindHighlights(input: {
             : mutation.target.parentElement;
         const row = target?.closest("[data-timeline-row-id]");
         if (row) cache.delete(row);
+        // A hidden wrapper around rows changes their runs, which are cached with their matches.
+        if (mutation.attributeName === "hidden" && target)
+          for (const cached of cache.keys()) if (target.contains(cached)) cache.delete(cached);
       }
-      if (frame !== null) return;
-      frame = requestAnimationFrame(() => {
-        frame = null;
-        repaint();
-      });
+      dirty = true;
+      schedule();
     });
     observer.observe(container, {
       subtree: true,
@@ -195,10 +207,14 @@ export function useThreadFindHighlights(input: {
         "data-thread-find-ignore",
       ],
     });
+    container.addEventListener("scroll", schedule, { passive: true });
+    const stopResize = observeResize(container, schedule);
     // Revealing the first match can synchronously mount or recycle list rows.
     repaint();
     return () => {
       observer.disconnect();
+      stopResize();
+      container.removeEventListener("scroll", schedule);
       if (frame !== null) cancelAnimationFrame(frame);
       cache.clear();
       paintRef.current = null;
@@ -211,7 +227,7 @@ export function useThreadFindHighlights(input: {
   // layout inputs, and repainting the active highlight for those is wasted work.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- repaints the active CSS Highlight range when the selected match changes
   useEffect(() => {
-    paintRef.current?.(rangesRef.current, {
+    paintRef.current?.select({
       activeRowId,
       activeOccurrence,
       onActiveRange: readSelection().onActiveRange,
@@ -219,47 +235,188 @@ export function useThreadFindHighlights(input: {
   }, [activeOccurrence, activeRowId]);
 }
 
+type ThreadFindSelection = Pick<
+  Parameters<typeof useThreadFindHighlights>[0],
+  "activeRowId" | "activeOccurrence" | "onActiveRange"
+>;
+
+interface TextRun {
+  readonly start: number;
+  end: number;
+  readonly box: Element;
+  readonly item: Node | null;
+  readonly ordered: boolean;
+  readonly hidden: boolean;
+}
+
+const INLINE_DISPLAYS = new Set(["inline", "contents"]);
+const textRunsByMatches = new WeakMap<readonly ThreadFindRange[], readonly TextRun[]>();
+
+// Splits a row's matches into runs that each lie in one inline formatting context,
+// where a later match is never higher on screen. Cells, flex and grid items, and
+// inline blocks each start a run, since their text can sit beside earlier text.
+function textRuns(row: Element, matches: readonly ThreadFindRange[]): readonly TextRun[] {
+  const cached = textRunsByMatches.get(matches);
+  if (cached) return cached;
+  const displays = new Map<Element, string>();
+  const displayOf = (element: Element) => {
+    let display = displays.get(element);
+    if (display === undefined) {
+      display = getComputedStyle(element).display;
+      displays.set(element, display);
+    }
+    return display;
+  };
+  const columns = new Map<Element, boolean>();
+  const inColumns = (element: Element): boolean => {
+    let multicol = columns.get(element);
+    if (multicol === undefined) {
+      const style = getComputedStyle(element);
+      multicol =
+        style.columnCount !== "auto" ||
+        style.columnWidth !== "auto" ||
+        (element !== row && element.parentElement !== null && inColumns(element.parentElement));
+      columns.set(element, multicol);
+    }
+    return multicol;
+  };
+  const runs: TextRun[] = [];
+  let text: Node | null = null;
+  for (const [index, { range }] of matches.entries()) {
+    const last = runs.at(-1);
+    if (last && range.startContainer === text) {
+      last.end = index + 1;
+      continue;
+    }
+    const parent = range.startContainer.parentElement;
+    if (!parent) continue;
+    text = range.startContainer;
+    let box = parent;
+    while (box !== row && box.parentElement && INLINE_DISPLAYS.has(displayOf(box)))
+      box = box.parentElement;
+    // Text directly inside a flex or grid container is an anonymous item of its own.
+    const item = /flex|grid/.test(displayOf(box)) ? text : null;
+    const hidden = parent.closest("[hidden]") !== null;
+    if (last?.end === index && last.box === box && last.item === item && last.hidden === hidden) {
+      last.end = index + 1;
+      continue;
+    }
+    runs.push({ start: index, end: index + 1, box, item, hidden, ordered: !inColumns(box) });
+  }
+  textRunsByMatches.set(matches, runs);
+  return runs;
+}
+
+// Blink rebuilds every registered highlight Range on any DOM or style change, so
+// only matches within a screen of the viewport are painted; the active one always is.
+function matchesInZone(
+  row: Element,
+  matches: readonly ThreadFindRange[],
+  zone: { top: number; bottom: number },
+  shown: Set<Range>,
+): void {
+  const rowBox = row.getBoundingClientRect();
+  if (matches.length === 0 || rowBox.bottom < zone.top || rowBox.top > zone.bottom) return;
+  const intersects = (rect: DOMRect) => rect.bottom >= zone.top && rect.top <= zone.bottom;
+  for (const run of textRuns(row, matches)) {
+    if (run.hidden) continue;
+    const boxes = run.box.getClientRects();
+    if (boxes.length === 0 || ![...boxes].some(intersects)) continue;
+    if (!run.ordered) {
+      for (let index = run.start; index < run.end; index++)
+        if (intersects(matches[index]!.range.getBoundingClientRect()))
+          shown.add(matches[index]!.range);
+      continue;
+    }
+    const firstShown = (index: number, high: number): [number, DOMRect | null] => {
+      for (; index < high; index++) {
+        const rect = matches[index]!.range.getBoundingClientRect();
+        if (rect.height > 0) return [index, rect];
+      }
+      return [high, null];
+    };
+    const firstWhere = (isPast: (rect: DOMRect) => boolean) => {
+      let low = run.start;
+      let high = run.end;
+      while (low < high) {
+        const mid = (low + high) >>> 1;
+        const [probe, rect] = firstShown(mid, high);
+        if (!rect || isPast(rect)) high = mid;
+        else low = probe + 1;
+      }
+      return low;
+    };
+    const end = firstWhere((rect) => rect.top > zone.bottom);
+    for (let index = firstWhere((rect) => rect.bottom >= zone.top); index < end; index++)
+      shown.add(matches[index]!.range);
+  }
+}
+
 function makeThreadFindHighlightPainter(container: HTMLElement) {
-  let previousRanges: readonly ThreadFindRange[] | null = null;
-  const rangesByRow = new Map<string, Range[]>();
   const inactive = new Highlight();
   const active = new Highlight();
-  let previousActive: Range | null = null;
+  const zoned = new Set<Range>();
+  const windows = new Map<Element, Set<Range>>();
+  const rangesByRow = new Map<string, Range[]>();
+  let selected: Range | null = null;
   CSS.highlights.set(THREAD_FIND_HIGHLIGHT_NAME, inactive);
   CSS.highlights.set(THREAD_FIND_ACTIVE_HIGHLIGHT_NAME, active);
-  return (
-    ranges: readonly ThreadFindRange[],
-    selection: Pick<
-      Parameters<typeof useThreadFindHighlights>[0],
-      "activeRowId" | "activeOccurrence" | "onActiveRange"
-    >,
-  ) => {
-    if (previousRanges !== ranges) {
-      previousRanges = ranges;
-      previousActive = null;
-      rangesByRow.clear();
-      inactive.clear();
-      for (const match of ranges) {
-        const row = rangesByRow.get(match.rowId) ?? [];
-        row[match.occurrence] = match.range;
-        rangesByRow.set(match.rowId, row);
-        if (foldsHiding(match.range, container).length === 0) inactive.add(match.range);
-      }
+  const show = (range: Range) => {
+    zoned.add(range);
+    if (range !== selected && foldsHiding(range, container).length === 0) inactive.add(range);
+  };
+  const hide = (range: Range) => {
+    zoned.delete(range);
+    inactive.delete(range);
+  };
+  const place = (rows: ReadonlyMap<Element, readonly ThreadFindRange[]>) => {
+    const viewport = container.getBoundingClientRect();
+    const zone = { top: viewport.top - viewport.height, bottom: viewport.bottom + viewport.height };
+    for (const [row, previous] of windows) {
+      if (rows.has(row)) continue;
+      for (const range of previous) hide(range);
+      windows.delete(row);
     }
-    if (previousActive && foldsHiding(previousActive, container).length === 0)
-      inactive.add(previousActive);
-    const selected =
+    for (const [row, matches] of rows) {
+      const shown = new Set<Range>();
+      matchesInZone(row, matches, zone, shown);
+      const previous = windows.get(row);
+      if (previous) for (const range of previous) if (!shown.has(range)) hide(range);
+      for (const range of shown) if (!previous?.has(range)) show(range);
+      windows.set(row, shown);
+    }
+  };
+  const select = (selection: ThreadFindSelection) => {
+    const next =
       selection.activeRowId === null
         ? null
         : (rangesByRow.get(selection.activeRowId)?.[selection.activeOccurrence] ?? null);
+    if (selected && selected !== next && zoned.has(selected)) {
+      if (foldsHiding(selected, container).length === 0) inactive.add(selected);
+    }
+    selected = next;
     active.clear();
-    if (selected) inactive.delete(selected);
-    previousActive = selected;
-    if (selected && revealFolded(selected, container)) {
+    if (next) inactive.delete(next);
+    if (next && revealFolded(next, container)) {
       selection.onActiveRange(null);
     } else {
-      if (selected) active.add(selected);
-      selection.onActiveRange(selected);
+      if (next) active.add(next);
+      selection.onActiveRange(next);
     }
   };
+  const update = (
+    rows: ReadonlyMap<Element, readonly ThreadFindRange[]>,
+    ranges: readonly ThreadFindRange[],
+    selection: ThreadFindSelection,
+  ) => {
+    rangesByRow.clear();
+    for (const match of ranges) {
+      const row = rangesByRow.get(match.rowId) ?? [];
+      row[match.occurrence] = match.range;
+      rangesByRow.set(match.rowId, row);
+    }
+    place(rows);
+    select(selection);
+  };
+  return { update, place, select };
 }

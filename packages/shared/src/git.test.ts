@@ -85,6 +85,28 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("C:/repos/project")).toBe("c:/repos/project");
     expect(normalizeGitRemoteUrl("git@x:team/project.git")).toBe("x/team/project");
   });
+
+  it("keys a one-segment URL remote by what names the repository", () => {
+    expect(normalizeGitRemoteUrl("https://deploy:s3cr3ttok@git.example.com/Repo.git")).toBe(
+      "https://git.example.com/repo",
+    );
+    expect(normalizeGitRemoteUrl("https://0123abcd@git.example.com/repo.git?key=0123abcd#x")).toBe(
+      "https://git.example.com/repo",
+    );
+    expect(normalizeGitRemoteUrl("ftp://deploy:s3cr3ttok@git.example.com/team/repo.git")).toBe(
+      "ftp://git.example.com/team/repo",
+    );
+    expect(normalizeGitRemoteUrl("ssh://git:s3cr3ttok@git.example.com:2222/repo.git")).toBe(
+      "ssh://git@git.example.com:2222/repo",
+    );
+    expect(normalizeGitRemoteUrl("ssh://git@git.example.com/repo.git")).toBe(
+      "ssh://git@git.example.com/repo",
+    );
+    expect(normalizeGitRemoteUrl("https://git.example.com/repo.git")).toBe(
+      "https://git.example.com/repo",
+    );
+    expect(normalizeGitRemoteUrl("/srv/git/Repo.git")).toBe("/srv/git/repo");
+  });
 });
 
 describe("isBareGitConfig", () => {
@@ -164,6 +186,20 @@ describe("parseOriginUrlFromGitConfig", () => {
     expect(
       parseOriginUrlFromGitConfig('[remote "origin"]\n\turl = "git@github.com:acme/repo.git"\n'),
     ).toBe("git@github.com:acme/repo.git");
+    for (const newline of ["\n", "\r\n"]) {
+      for (const comment of ["#", ";"]) {
+        const config = [
+          '[remote "upstream"]',
+          `url = https://github.com/other/repo.git ${comment} ignored backslash \\`,
+          '[remote "origin"]',
+          `url = https://github.com/acme/repo.git ${comment} ignored backslash \\`,
+          `${comment} ignored backslash \\`,
+          '[remote "fork"]',
+          "url = https://github.com/me/repo.git",
+        ].join(newline);
+        expect(parseOriginUrlFromGitConfig(config)).toBe("https://github.com/acme/repo.git");
+      }
+    }
   });
 
   it("accepts legacy dotted headers, header comments, and line continuations", () => {
@@ -185,7 +221,7 @@ describe("parseOriginUrlFromGitConfig", () => {
       parseOriginUrlFromGitConfig(
         '[remote "origin"]\n\turl = https://github.com/acme/\\\n\t\trepo.git\n',
       ),
-    ).toBe("https://github.com/acme/repo.git");
+    ).toBe("https://github.com/acme/\t\trepo.git");
   });
 
   it("reads settings on the remote header line", () => {
@@ -203,15 +239,18 @@ describe("parseOriginUrlFromGitConfig", () => {
     ).toBe("git@github.com:a/b.git");
   });
 
-  it("falls back to the first remote when there is no origin", () => {
-    const config = [
-      '[remote "upstream"]',
-      "\turl = https://github.com/acme/repo.git",
-      '[remote "fork"]',
-      "\turl = https://github.com/me/repo.git",
-    ].join("\n");
-    expect(parseOriginUrlFromGitConfig(config)).toBe("https://github.com/acme/repo.git");
-  });
+  it.each(["upstream", String.raw`team\"mirror`])(
+    "falls back to the first remote when there is no origin: %s",
+    (remoteName) => {
+      const config = [
+        `[remote "${remoteName}"]`,
+        "\turl = https://github.com/acme/repo.git",
+        '[remote "fork"]',
+        "\turl = https://github.com/me/repo.git",
+      ].join("\n");
+      expect(parseOriginUrlFromGitConfig(config)).toBe("https://github.com/acme/repo.git");
+    },
+  );
 });
 
 describe("isTemporaryWorktreeBranch", () => {
@@ -347,6 +386,16 @@ describe("sanitizeFeatureBranchName", () => {
   it("keeps accented letters as their plain letters", () => {
     expect(sanitizeFeatureBranchName("fix/Añadir validación del café")).toBe(
       "fix/anadir-validacion-del-cafe",
+    );
+  });
+
+  it("keeps words with letters that have no Unicode decomposition whole", () => {
+    expect(sanitizeFeatureBranchName("Größe der Straße korrigieren")).toBe(
+      "feature/grosse-der-strasse-korrigieren",
+    );
+    expect(sanitizeFeatureBranchName("fix/Đặt tên")).toBe("fix/dat-ten");
+    expect(sanitizeFeatureBranchName("Napraw błąd w żółtym przycisku")).toBe(
+      "feature/napraw-blad-w-zoltym-przycisku",
     );
   });
 });

@@ -56,4 +56,27 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("GitWorkflowServi
       ),
     ),
   );
+
+  it.effect("reads no HEAD path from a removed worktree without spawning Git", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-removed-wt-" });
+      const removed = `${parent}/removed`;
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      assert.strictEqual(yield* workflow.headPath(removed), null);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        GitWorkflowService.layer.pipe(
+          Layer.provide(Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({})),
+          Layer.provide(Layer.mock(GitManager.GitManager)({})),
+          Layer.provide(
+            Layer.mock(GitVcsDriver.GitVcsDriver)({
+              execute: (input) => Effect.die(`spawned Git in ${input.cwd}`),
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
 });

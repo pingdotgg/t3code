@@ -19,7 +19,11 @@ const SEQUENCE_SOS_PM_APC = 5;
 const SEQUENCE_OSC = 6;
 
 // Bits above the low three hold a high surrogate until its other half arrives.
-function nextTerminalSequenceState(state: number, unit: number): number {
+function nextTerminalSequenceState(
+  state: number,
+  unit: number,
+  onC1ReturnToGround?: (byte: number, remainingBytes: number) => void,
+): number {
   if (unit === 0x1b) return SEQUENCE_ESCAPE;
   if (state === TERMINAL_SEQUENCE_GROUND || unit === 0x18 || unit === 0x1a) {
     return TERMINAL_SEQUENCE_GROUND;
@@ -62,7 +66,10 @@ function nextTerminalSequenceState(state: number, unit: number): number {
     if (byte === 0x90) mode = SEQUENCE_DCS;
     else if (byte === 0x9b) mode = SEQUENCE_CSI;
     else if (byte === 0x98 || byte >= 0x9e) mode = SEQUENCE_SOS_PM_APC;
-    else return TERMINAL_SEQUENCE_GROUND;
+    else {
+      onC1ReturnToGround?.(byte, shift / 6);
+      return TERMINAL_SEQUENCE_GROUND;
+    }
   }
   return mode;
 }
@@ -97,6 +104,53 @@ export function terminalSequenceEnd(state: number, text: string): number {
   return index;
 }
 
+function scanSnapshotContinuation(state: number, data: string, limit = data.length) {
+  let control = "";
+  let replacementCount = 0;
+  const replayC1 = (byte: number, remainingBytes: number) => {
+    // Replay IND, NEL, HTS and RI from ground. Any bytes parsed after the control
+    // are now stray UTF-8 continuation bytes.
+    if (byte === 0x84 || byte === 0x85 || byte === 0x88 || byte === 0x8d) {
+      control = "\u001b" + String.fromCharCode(byte - 0x40);
+    }
+    replacementCount = remainingBytes;
+  };
+  let end = 0;
+  while (state !== TERMINAL_SEQUENCE_GROUND && end < limit) {
+    state = nextTerminalSequenceState(state, data.charCodeAt(end), replayC1);
+    end += 1;
+  }
+  return { state, end, control, replacementCount };
+}
+
+/** Skip the continuation of an omitted snapshot prefix, retaining any new escape sequence. */
+export function skipTerminalSnapshotContinuation(state: number, data: string) {
+  if (data.length === 0) return { state, data };
+  if (state === SEQUENCE_ESCAPE) {
+    return {
+      state: TERMINAL_SEQUENCE_GROUND,
+      data: data[0] === "\\" ? data.slice(1) : "\u001b" + data,
+    };
+  }
+
+  const escape = data.indexOf("\u001b");
+  const {
+    state: next,
+    end,
+    control,
+    replacementCount,
+  } = scanSnapshotContinuation(state, data, escape < 0 ? data.length : escape);
+  if (next === TERMINAL_SEQUENCE_GROUND || end === data.length) {
+    return { state: next, data: control + "\ufffd".repeat(replacementCount) + data.slice(end) };
+  }
+  // Hold a final ESC until we know whether it starts a new sequence or completes ST.
+  if (end + 1 === data.length) return { state: SEQUENCE_ESCAPE, data: "" };
+  return {
+    state: TERMINAL_SEQUENCE_GROUND,
+    data: data.slice(data[end + 1] === "\\" ? end + 2 : end),
+  };
+}
+
 /**
  * The final `maxBytes` of UTF-8 a client retains, starting at a code point boundary and
  * outside any control sequence the cut went through.
@@ -127,7 +181,29 @@ export function retainedTerminalHistory(history: string, maxBytes: number): stri
     0,
     history.length - retained.length,
   );
-  return retained.slice(terminalSequenceEnd(state, retained));
+  const { end, control, replacementCount } = scanSnapshotContinuation(state, retained);
+  const tail = retained.slice(end);
+  if (replacementCount === 0) return control + tail;
+  // The two-byte ESC form fits where the consumed code point did. Each replacement
+  // glyph takes three bytes, so keep only as many as fit alongside the control and tail.
+  const available = maxBytes - historyEncoder.encode(tail).byteLength - control.length;
+  return control + "\ufffd".repeat(Math.min(replacementCount, Math.floor(available / 3))) + tail;
+}
+
+/** Keep a whole unfinished prefix when possible, or skip its continuation during replay. */
+export function retainTerminalSnapshotHistory(history: string, maxBytes: number) {
+  const retained = retainedTerminalHistory(history, maxBytes);
+  if (retained.length > 0) return { history: retained };
+
+  // The last ESC starts a sequence independently of the discarded prefix.
+  const start = history.lastIndexOf("\u001b");
+  if (start < 0) return { history: retained };
+  const state = terminalSequenceStateAfter(TERMINAL_SEQUENCE_GROUND, history, start);
+  if (state === TERMINAL_SEQUENCE_GROUND) return { history: retained };
+  const pending = history.slice(start);
+  return historyEncoder.encode(pending).byteLength <= maxBytes
+    ? { history: pending }
+    : { history: "", historySequenceState: state };
 }
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
@@ -170,8 +246,15 @@ export const TerminalOpenInput = Schema.Struct({
 });
 export type TerminalOpenInput = typeof TerminalOpenInput.Type;
 
-export const TerminalAttachInput = Schema.Struct({
+export const TerminalObserveInput = Schema.Struct({
   ...TerminalSessionInput.fields,
+  // The viewer can skip a discarded prefix using the snapshot's parser state.
+  supportsSnapshotSequenceState: Schema.optional(Schema.Boolean),
+});
+export type TerminalObserveInput = Schema.Codec.Encoded<typeof TerminalObserveInput>;
+
+export const TerminalAttachInput = Schema.Struct({
+  ...TerminalObserveInput.fields,
   cwd: Schema.optional(TrimmedNonEmptyStringSchema),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   cols: Schema.optional(TerminalColsSchema),
@@ -187,14 +270,50 @@ export const TerminalAttachInput = Schema.Struct({
 });
 export type TerminalAttachInput = typeof TerminalAttachInput.Type;
 
-export const TerminalObserveInput = TerminalSessionInput;
-export type TerminalObserveInput = Schema.Codec.Encoded<typeof TerminalObserveInput>;
+/** Longest `data` one `terminal.write` carries, in UTF-16 code units. */
+export const TERMINAL_WRITE_MAX_LENGTH = 65_536;
+
+export const TERMINAL_BRACKETED_PASTE_START = "\x1b[200~";
+export const TERMINAL_BRACKETED_PASTE_END = "\x1b[201~";
 
 export const TerminalWriteInput = Schema.Struct({
   ...TerminalSessionInput.fields,
-  data: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536)),
-});
+  data: Schema.String.check(Schema.isMaxLength(TERMINAL_WRITE_MAX_LENGTH)),
+  // Older servers ignore the phase and still receive the bracket markers in data.
+  bracketedPaste: Schema.optionalKey(Schema.Literals(["start", "continue", "end", "abort"])),
+  plainWrite: Schema.optionalKey(Schema.Literals(["start", "continue", "end", "abort"])),
+  // `data` holds one byte per UTF-16 code unit; older servers write it as UTF-8 text.
+  binary: Schema.optionalKey(Schema.Boolean),
+  // A renderer's answer to a terminal query (DA, DSR, DECRQM). Every attached renderer
+  // answers, so the server passes on one viewer's replies; older servers ignore it.
+  reply: Schema.optionalKey(Schema.Boolean),
+  // Reject the write if the process that owns the paste has gone.
+  expectedPid: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
+}).check(
+  Schema.makeFilter(({ data, plainWrite }) => (plainWrite === "abort") === (data.length === 0)),
+);
 export type TerminalWriteInput = Schema.Codec.Encoded<typeof TerminalWriteInput>;
+
+/** Splits input into writes that fit `TerminalWriteInput`, never between a surrogate pair. */
+export function chunkTerminalWrite(data: string): ReadonlyArray<string> {
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < data.length) {
+    let end = Math.min(start + TERMINAL_WRITE_MAX_LENGTH, data.length);
+    const last = data.charCodeAt(end - 1);
+    if (end < data.length && last >= 0xd800 && last <= 0xdbff) {
+      end -= 1;
+    }
+    chunks.push(data.slice(start, end));
+    start = end;
+  }
+  return chunks;
+}
+
+export function terminalWritePhase(index: number, count: number) {
+  if (count <= 1) return undefined;
+  return index === 0 ? "start" : index === count - 1 ? "end" : "continue";
+}
 
 export const TerminalResizeInput = Schema.Struct({
   ...TerminalSessionInput.fields,
@@ -223,7 +342,12 @@ export const TerminalSessionSnapshot = Schema.Struct({
   worktreePath: Schema.NullOr(TrimmedNonEmptyStringSchema),
   status: TerminalSessionStatus,
   pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  supportsConditionalWrites: Schema.optional(Schema.Boolean),
   history: Schema.String,
+  // Parser state of an unfinished prefix omitted after the replayable history.
+  historySequenceState: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: (0xdbff << 3) | SEQUENCE_OSC })),
+  ),
   exitCode: Schema.NullOr(Schema.Int),
   exitSignal: Schema.NullOr(Schema.Int),
   label: Schema.String.check(Schema.isMaxLength(128)),
@@ -232,6 +356,8 @@ export const TerminalSessionSnapshot = Schema.Struct({
   // The PTY grid every renderer of this terminal should draw; absent from older servers.
   cols: Schema.optional(TerminalColsSchema),
   rows: Schema.optional(TerminalRowsSchema),
+  // Why the shell failed to start, kept so later attachments can show it.
+  error: Schema.optional(Schema.String.check(Schema.isNonEmpty())),
 });
 export type TerminalSessionSnapshot = typeof TerminalSessionSnapshot.Type;
 
@@ -253,6 +379,7 @@ export type TerminalSummary = typeof TerminalSummary.Type;
 const TerminalMetadataSnapshotEvent = Schema.Struct({
   type: Schema.Literal("snapshot"),
   terminals: Schema.Array(TerminalSummary),
+  managerId: Schema.optional(Schema.String),
 });
 
 const TerminalMetadataUpsertEvent = Schema.Struct({
@@ -312,6 +439,7 @@ const TerminalErrorEvent = Schema.Struct({
 const TerminalClearedEvent = Schema.Struct({
   ...TerminalEventBaseSchema.fields,
   type: Schema.Literal("cleared"),
+  pendingControlSequence: Schema.optionalKey(Schema.String),
 });
 
 const TerminalRestartedEvent = Schema.Struct({
@@ -491,6 +619,11 @@ export class TerminalResizeError extends Schema.TaggedError<TerminalResizeError>
   }
 }
 
+export class TerminalProcessChangedError extends Schema.TaggedError<TerminalProcessChangedError>()(
+  "TerminalProcessChangedError",
+  {},
+) {}
+
 export const TerminalError = Schema.Union([
   TerminalCwdError,
   TerminalHistoryError,
@@ -498,6 +631,7 @@ export const TerminalError = Schema.Union([
   TerminalProviderInstanceNotFoundError,
   TerminalProviderEnvironmentError,
   TerminalNotRunningError,
+  TerminalProcessChangedError,
   TerminalWriteError,
   TerminalResizeError,
 ]);

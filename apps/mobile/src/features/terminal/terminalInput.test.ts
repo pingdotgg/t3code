@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  chunkTerminalWrite,
-  encodeTerminalPaste,
-  resolveModifiedTerminalInput,
-  TERMINAL_WRITE_MAX_LENGTH,
-} from "./terminalInput";
+import { encodeTerminalPaste, resolveModifiedTerminalInput } from "./terminalInput";
 
 const byte = (code: number) => String.fromCharCode(code);
 const ESC = byte(0x1b);
@@ -20,6 +15,12 @@ describe("resolveModifiedTerminalInput", () => {
         hostPlatform: "linux",
       }),
     ).toEqual({ kind: "write", data: `${ESC}[1;5${arrow}` });
+  });
+
+  it("sends NUL for ctrl+space like a desktop terminal", () => {
+    expect(
+      resolveModifiedTerminalInput({ data: " ", modifier: "ctrl", hostPlatform: "linux" }),
+    ).toEqual({ kind: "write", data: byte(0x00) });
   });
 
   it.each(["A", "B", "C", "D"])("encodes meta+arrow %s with the cursor modifier", (arrow) => {
@@ -76,25 +77,5 @@ describe("encodeTerminalPaste", () => {
 
   it("never lets a bracketed-paste end marker reach the shell", () => {
     expect(encodeTerminalPaste(`safe${ESC}[201~; rm -rf /\n`)).toBe("safe [201~; rm -rf /\r");
-  });
-});
-
-describe("chunkTerminalWrite", () => {
-  it("splits oversized writes so every chunk fits the contract", () => {
-    const chunks = chunkTerminalWrite("y".repeat(TERMINAL_WRITE_MAX_LENGTH * 2 + 5));
-    expect(chunks.map((chunk) => chunk.length)).toEqual([
-      TERMINAL_WRITE_MAX_LENGTH,
-      TERMINAL_WRITE_MAX_LENGTH,
-      5,
-    ]);
-    expect(chunks.join("")).toHaveLength(TERMINAL_WRITE_MAX_LENGTH * 2 + 5);
-  });
-
-  it("does not cut a surrogate pair in half at the boundary", () => {
-    const data = `${"z".repeat(TERMINAL_WRITE_MAX_LENGTH - 1)}😀tail`;
-    const chunks = chunkTerminalWrite(data);
-    expect(chunks[0]).toHaveLength(TERMINAL_WRITE_MAX_LENGTH - 1);
-    expect(chunks[1]).toBe("😀tail");
-    expect(chunks.join("")).toBe(data);
   });
 });

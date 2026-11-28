@@ -16,7 +16,6 @@ import {
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Context from "effect/Context";
@@ -25,6 +24,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -54,9 +54,10 @@ import * as ProjectService from "./ProjectService.ts";
 const projectId = ProjectId.make("agent-session-import-project");
 const timestamp = "2026-09-01T10:00:00.000Z";
 const now = DateTime.makeUnsafe(timestamp);
-const stores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
-  Layer.provideMerge(SqlitePersistence.layerMemory),
-);
+const stores = Layer.mergeAll(
+  EventStore.layer,
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
+).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 const persistence = Layer.mergeAll(
   stores,
   EventSink.layer.pipe(Layer.provide(stores)),
@@ -185,10 +186,10 @@ const seedOwner = Effect.fn(function* (
 });
 
 const makeImporter = Effect.fn(function* (
-  candidates: ReadonlyArray<ReturnType<typeof candidate>>,
+  candidates: ReadonlyArray<AgentSessionScanner.AgentSessionRecentThread>,
   beforeTransaction: Effect.Effect<void> = Effect.void,
   getAdapter?: ProviderAdapterRegistry.ProviderAdapterRegistryV2Shape["get"],
-  threadCommands?: KeyedLock.KeyedLock<ThreadId>,
+  threadCommands?: ThreadCommandExecutor.ThreadCommandExecutor["Service"],
   settings: Layer.Layer<
     ServerSettings.ServerSettingsService,
     ServerSettingsError
@@ -271,7 +272,7 @@ const makeImporter = Effect.fn(function* (
           ),
           Layer.succeed(
             ThreadCommandExecutor.ThreadCommandExecutor,
-            threadCommands ?? (yield* KeyedLock.make<ThreadId>()),
+            threadCommands ?? (yield* ThreadCommandExecutor.make),
           ),
         ),
       ),
@@ -484,8 +485,8 @@ it.effect(
       expect(yield* runtimes.list()).toEqual([]);
       yield* sql`DROP TRIGGER fail_runtime`;
 
-      expect(yield* importer.run).toEqual({ importedCount: 1, skippedCount: 0 });
-      expect(yield* importer.run).toEqual({ importedCount: 1, skippedCount: 0 });
+      expect(yield* importer.run).toEqual({ importedCount: 0, skippedCount: 0 });
+      expect(yield* importer.run).toEqual({ importedCount: 0, skippedCount: 0 });
       expect(yield* events.read({ threadId }).pipe(Stream.runCollect)).toEqual(committed);
       expect(importer.published).toHaveLength(6);
       expect(
@@ -501,7 +502,50 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
-it.effect("does not certify new native history after a partial import retry", () =>
+it.effect("counts only new threads when re-importing cached and recovered transcripts", () =>
+  Effect.gen(function* () {
+    const events = yield* EventStore.EventStoreV2;
+    const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+    const cached = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "020e7f00-dce6-406b-8ec6-ed90498945d6",
+      "claudeAgent",
+    );
+    const recovered = candidate(CODEX_MODEL_SELECTION, "recovered");
+    const initial = yield* makeImporter([cached, recovered]);
+    expect(yield* initial.run).toEqual({ importedCount: 2, skippedCount: 0 });
+    const before = yield* events.read({ threadId: importId(recovered) }).pipe(Stream.runCollect);
+    // The file changed on disk but still holds the imported messages.
+    recovered.source.size += 100;
+    recovered.source.mtimeMs += 1;
+    const duplicate = { ...recovered.source, filePath: "/tmp/duplicate.jsonl" };
+    const fresh = candidate(CODEX_MODEL_SELECTION, "fresh");
+    const repeated = yield* makeImporter([
+      { _tag: "AlreadyImported", source: cached.source },
+      recovered,
+      { _tag: "Duplicate", source: duplicate },
+      fresh,
+      { _tag: "Skipped" },
+    ]);
+
+    expect(yield* repeated.run).toEqual({ importedCount: 1, skippedCount: 1 });
+    expect(yield* events.read({ threadId: importId(recovered) }).pipe(Stream.runCollect)).toEqual(
+      before,
+    );
+    expect(
+      new Set(
+        repeated.published.flatMap((stored) => ("event" in stored ? [stored.event.threadId] : [])),
+      ),
+    ).toEqual(new Set([importId(fresh)]));
+    expect(
+      Option.getOrThrow(yield* runtimes.getByThreadId({ threadId: importId(recovered) })),
+    ).toMatchObject({
+      runtimePayload: { importedTranscripts: [recovered.source, duplicate] },
+    });
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("certifies new native history only with its messages after a partial import retry", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -520,17 +564,18 @@ it.effect("does not certify new native history after a partial import retry", ()
       { role: "user", text: "Continue outside T3", createdAt: timestamp },
       { role: "assistant", text: "Native continuation", createdAt: timestamp },
     );
-    // The thread holds only the original messages, so the continued transcript stays unrecorded.
     expect(yield* (yield* makeImporter([continued])).run).toEqual({
       importedCount: 0,
-      skippedCount: 1,
+      skippedCount: 0,
     });
-    expect(yield* runtimes.list()).toEqual([]);
     expect(
       (yield* projections.getThreadRecords(threadId, ["messages"])).messages.map(
         (message) => message.text,
       ),
-    ).toEqual(["Fix it", "Fixed"]);
+    ).toEqual(["Fix it", "Fixed", "Continue outside T3", "Native continuation"]);
+    expect(Option.getOrThrow(yield* runtimes.getByThreadId({ threadId }))).toMatchObject({
+      runtimePayload: { importedTranscripts: [continued.source] },
+    });
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
@@ -572,6 +617,91 @@ it.effect("does not record a changed transcript as imported without its new mess
       recordsChangedTranscript: recorded?.some((source) => source.size === 200) ?? false,
       showsNewMessages: texts.includes("Continued"),
     }).not.toEqual({ recordsChangedTranscript: true, showsNewMessages: false });
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("re-import brings a continued transcript into an import thread with no runs", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const first = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "7a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      "claudeAgent",
+    );
+    const threadId = importId(first);
+    yield* (yield* makeImporter([first])).run;
+    expect((yield* projections.getThreadRecords(threadId, ["runs"])).runs).toEqual([]);
+
+    const continued = candidate(
+      CLAUDE_MODEL_SELECTION,
+      first.source.providerSessionId,
+      "claudeAgent",
+    );
+    continued.source.size = 200;
+    continued.source.mtimeMs = 3;
+    continued.thread.messages.push(
+      { role: "user", text: "Continue in the terminal", createdAt: timestamp },
+      { role: "assistant", text: "Continued in the terminal", createdAt: timestamp },
+    );
+
+    expect(yield* (yield* makeImporter([continued])).run).toMatchObject({ skippedCount: 0 });
+    expect(
+      (yield* projections.getThreadRecords(threadId, ["messages"])).messages.map(
+        (message) => message.text,
+      ),
+    ).toEqual(["Fix it", "Fixed", "Continue in the terminal", "Continued in the terminal"]);
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("re-import leaves an import thread that has runs at its stored messages", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const first = candidate(CODEX_MODEL_SELECTION, "continued-in-t3");
+    const threadId = importId(first);
+    yield* (yield* makeImporter([first])).run;
+    const { thread } = yield* projections.getThreadRecords(threadId, []);
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(`${threadId}:run`),
+          type: "run.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: RunId.make(`${threadId}:run`),
+            threadId,
+            ordinal: 1,
+            providerInstanceId: thread.providerInstanceId,
+            modelSelection: thread.modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make(`${threadId}:prompt`),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "queued",
+            requestedAt: now,
+            startedAt: null,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        },
+      ],
+    });
+    const continued = candidate(CODEX_MODEL_SELECTION, first.source.providerSessionId);
+    continued.source.size = 200;
+    continued.source.mtimeMs = 3;
+    continued.thread.messages.push(
+      { role: "user", text: "Continue outside T3", createdAt: timestamp },
+      { role: "assistant", text: "Native continuation", createdAt: timestamp },
+    );
+
+    expect(yield* (yield* makeImporter([continued])).run).toMatchObject({ skippedCount: 1 });
+    expect(
+      (yield* projections.getThreadRecords(threadId, ["messages"])).messages.map(
+        (message) => message.text,
+      ),
+    ).toEqual(["Fix it", "Fixed"]);
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
@@ -773,7 +903,7 @@ const importDuringCommand = Effect.fn(function* (
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const sink = yield* EventSink.EventSinkV2;
   const threadId = yield* seedOwner(candidate(CODEX_MODEL_SELECTION, name));
-  const lock = yield* KeyedLock.make<ThreadId>();
+  const lock = yield* ThreadCommandExecutor.make;
   const loaded = yield* Deferred.make<void>();
   const importerCommitting = yield* Deferred.make<void>();
   const commandWritten = yield* Deferred.make<void>();
@@ -1000,7 +1130,7 @@ it.effect("repeated imports reach linked-worktree sessions behind the scan budge
     });
 
     expect(yield* importer.run).toEqual({ importedCount: 100, skippedCount: 1 });
-    expect(yield* importer.run).toEqual({ importedCount: 101, skippedCount: 0 });
+    expect(yield* importer.run).toEqual({ importedCount: 1, skippedCount: 0 });
     const oldest = yield* ProjectionStore.ProjectionStoreV2.pipe(
       Effect.flatMap((projections) =>
         projections.getThread(ThreadId.make("import:codex:session-100")),

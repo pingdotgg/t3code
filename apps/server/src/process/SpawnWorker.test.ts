@@ -138,6 +138,38 @@ describe("SpawnWorker", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
+  it.live("a short child's output ends while a sibling launched beside it still runs", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const untilStdin =
+        "process.stdout.write('ready');process.stdin.once('data',()=>process.exit(0))";
+      // Workers that own a child stay alive, as beside a running agent, so each round's two
+      // launches land on two warm workers at once.
+      yield* Effect.all(
+        Array.from({ length: 4 }, () =>
+          Effect.gen(function* () {
+            const holder = yield* spawner.spawn(node(untilStdin));
+            expect(yield* holder.stdout.pipe(Stream.take(1), text)).toBe("ready");
+          }),
+        ),
+        { concurrency: "unbounded" },
+      );
+      for (let round = 0; round < 20; round++) {
+        const [sibling, output] = yield* Effect.all(
+          [
+            spawner.spawn(node(untilStdin, [], { stdin: { stream: Stream.never } })),
+            spawner
+              .spawn(node("process.stdout.write('ok')"))
+              .pipe(Effect.flatMap((child) => text(child.stdout))),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(output).toBe("ok");
+        expect(yield* sibling.isRunning).toBe(true);
+      }
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
   it.live("kills running commands, detached or not, and on scope interruption", () =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -167,6 +199,36 @@ describe("SpawnWorker", () => {
       });
       const exited = new Promise((resolve) => direct.once("exit", () => resolve(direct.killed)));
       expect(yield* Effect.promise(() => exited)).toBe(true);
+      // Windows has no process groups. Node ends a non-detached grandchild with its parent, but a
+      // detached one, like a CLI's background shell, outlives it unless the kill ends the tree.
+      if (HostProcess.Platform.defaultValue() === "win32") {
+        const cli = SpawnWorker.spawnPiped(
+          process.execPath,
+          [
+            "-e",
+            "const c=require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1e3)'],{detached:true,stdio:'ignore'});process.stdout.write(String(c.pid));process.stdin.resume()",
+          ],
+          {},
+        );
+        const grandchild = yield* Effect.promise(
+          () =>
+            new Promise<number>((resolve) =>
+              cli.stdout.once("data", (pid) => resolve(Number(String(pid)))),
+            ),
+        );
+        const cliExited = new Promise((resolve) => cli.once("exit", resolve));
+        cli.kill();
+        yield* Effect.promise(() => cliExited);
+        const survived = (() => {
+          try {
+            return process.kill(grandchild, 0);
+          } catch {
+            return false;
+          }
+        })();
+        if (survived) process.kill(grandchild);
+        expect(survived).toBe(false);
+      }
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { commitNumberFieldOnEnter } from "./commitNumberFieldOnEnter";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -9,13 +10,13 @@ import {
 import { normalizeIntervalSeconds } from "./SettingsPanels.logic";
 
 export function IntervalSecondsField({
-  label,
+  labels,
   value,
   min,
   step,
   onCommit,
 }: {
-  label: string;
+  labels: { readonly decrease: string; readonly input: string; readonly increase: string };
   value: number;
   min: number;
   step: number;
@@ -66,11 +67,9 @@ export function IntervalSecondsField({
       }}
     >
       <NumberFieldGroup>
-        <NumberFieldDecrement aria-label={`Decrease ${label}`} />
-        <NumberFieldInput
-          aria-label={`${label.charAt(0).toUpperCase()}${label.slice(1)} in seconds`}
-        />
-        <NumberFieldIncrement aria-label={`Increase ${label}`} />
+        <NumberFieldDecrement aria-label={labels.decrease} />
+        <NumberFieldInput aria-label={labels.input} onKeyDown={commitNumberFieldOnEnter} />
+        <NumberFieldIncrement aria-label={labels.increase} />
       </NumberFieldGroup>
     </NumberField>
   );

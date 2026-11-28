@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import type { ServerProvider } from "@t3tools/contracts";
 import { CircleCheckIcon, DownloadIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { T, useGT, useMessages } from "gt-react";
 import { useEffect, useEffectEvent, useState, type CSSProperties } from "react";
 
 import { primaryServerProvidersAtom } from "../../state/server";
@@ -10,7 +11,7 @@ import {
   getProviderUpdateSidebarPillView,
   type ProviderUpdateSidebarPillView,
 } from "../ProviderUpdateLaunchNotification.logic";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 // Matches the pill's `duration-180` class.
 const PROVIDER_UPDATE_PILL_EXIT_MS = 180;
@@ -43,21 +44,27 @@ function latestProviderCheckedAt(
 }
 
 export function SidebarProviderUpdatePill() {
+  const gt = useGT();
+  const messages = useMessages();
   const navigate = useNavigate();
   const providers = useAtomValue(primaryServerProvidersAtom);
   const [dismissedKeys, setDismissedKeys] = useState<ReadonlySet<string>>(() => new Set());
   const [renderedView, setRenderedView] = useState<ProviderUpdateSidebarPillView | null>(null);
   const [pendingView, setPendingView] = useState<ProviderUpdateSidebarPillView | null>(null);
   const [exitingKey, setExitingKey] = useState<string | null>(null);
-  const [dismissAfterExitKey, setDismissAfterExitKey] = useState<string | null>(null);
+  const [dismissAfterExitKeys, setDismissAfterExitKeys] = useState<ReadonlyArray<string>>([]);
   const [visibleAfterIso, setVisibleAfterIso] = useState<string | undefined>();
   const effectiveVisibleAfterIso = visibleAfterIso ?? latestProviderCheckedAt(providers);
-  const view = getProviderUpdateSidebarPillView(providers, {
-    ...(effectiveVisibleAfterIso !== undefined
-      ? { visibleAfterIso: effectiveVisibleAfterIso }
-      : {}),
-    dismissedKeys,
-  });
+  const view = getProviderUpdateSidebarPillView(
+    providers,
+    {
+      ...(effectiveVisibleAfterIso !== undefined
+        ? { visibleAfterIso: effectiveVisibleAfterIso }
+        : {}),
+      dismissedKeys,
+    },
+    messages,
+  );
 
   if (visibleAfterIso === undefined && effectiveVisibleAfterIso !== undefined) {
     setVisibleAfterIso(effectiveVisibleAfterIso);
@@ -66,7 +73,7 @@ export function SidebarProviderUpdatePill() {
   const openProviderSettings = () => {
     void navigate({ to: "/settings/providers" });
   };
-  const displayedView = renderedView ?? view;
+  const displayedView = renderedView?.key === view?.key ? view : (renderedView ?? view);
   const dismissAfterVisibleMs = displayedView?.dismissAfterVisibleMs;
   const viewKey = displayedView?.key ?? null;
   const showDismissProgress =
@@ -77,14 +84,14 @@ export function SidebarProviderUpdatePill() {
   const startExit = (
     key: string,
     nextView: ProviderUpdateSidebarPillView | null,
-    dismissKey?: string,
+    dismissKeys: ReadonlyArray<string> = [],
   ) => {
     if (exitingKey === key) {
       return;
     }
     setPendingView(nextView);
     setExitingKey(key);
-    setDismissAfterExitKey(dismissKey ?? null);
+    setDismissAfterExitKeys(dismissKeys);
   };
 
   if (exitingKey === null) {
@@ -99,16 +106,18 @@ export function SidebarProviderUpdatePill() {
     }
   }
 
-  const exitAfterVisible = useEffectEvent((key: string) => startExit(key, null, key));
+  const exitAfterVisible = useEffectEvent((key: string) =>
+    startExit(key, null, displayedView?.dismissKeys),
+  );
 
   const finishExit = useEffectEvent(() => {
-    if (dismissAfterExitKey !== null) {
-      setDismissedKeys((previous) => new Set(previous).add(dismissAfterExitKey));
+    if (dismissAfterExitKeys.length > 0) {
+      setDismissedKeys((previous) => new Set([...previous, ...dismissAfterExitKeys]));
     }
     setRenderedView(pendingView);
     setPendingView(null);
     setExitingKey(null);
-    setDismissAfterExitKey(null);
+    setDismissAfterExitKeys([]);
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fallback timer that finishes the exit if the CSS transition never ends
@@ -163,47 +172,47 @@ export function SidebarProviderUpdatePill() {
         />
       ) : null}
       <div className="pointer-events-none absolute inset-0 rounded-lg transition-colors" />
-      <Tooltip>
-        <TooltipTrigger
+      <SharedTooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={displayedView.description}
+            data-provider-update-main
+            className="relative z-[1] flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
+            onClick={openProviderSettings}
+          >
+            {displayedView.tone === "loading" ? (
+              <Spinner size="sm" className="shrink-0" />
+            ) : displayedView.tone === "success" ? (
+              <CircleCheckIcon className="size-3.5 shrink-0" />
+            ) : displayedView.tone === "error" ? (
+              <TriangleAlertIcon className="size-3.5 shrink-0" />
+            ) : (
+              <DownloadIcon className="size-3.5 shrink-0" />
+            )}
+            <span className="min-w-0 wrap-break-word">{displayedView.title}</span>
+          </button>
+        }
+        label={displayedView.description}
+      />
+      {displayedView.dismissible && (
+        <SharedTooltipTrigger
           render={
             <button
               type="button"
-              aria-label={displayedView.description}
-              data-provider-update-main
-              className="relative z-[1] flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
-              onClick={openProviderSettings}
+              aria-label={gt("Dismiss provider update notice")}
+              className="relative z-[1] mr-1 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-70 outline-none hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              onClick={() => startExit(displayedView.key, null, displayedView.dismissKeys)}
             >
-              {displayedView.tone === "loading" ? (
-                <Spinner size="sm" className="shrink-0" />
-              ) : displayedView.tone === "success" ? (
-                <CircleCheckIcon className="size-3.5 shrink-0" />
-              ) : displayedView.tone === "error" ? (
-                <TriangleAlertIcon className="size-3.5 shrink-0" />
-              ) : (
-                <DownloadIcon className="size-3.5 shrink-0" />
-              )}
-              <span className="min-w-0 wrap-break-word">{displayedView.title}</span>
+              <XIcon className="size-3.5 shrink-0" />
             </button>
           }
+          label={
+            <>
+              <T>Dismiss until provider status changes</T>
+            </>
+          }
         />
-        <TooltipPopup side="top">{displayedView.description}</TooltipPopup>
-      </Tooltip>
-      {displayedView.dismissible && (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                aria-label="Dismiss provider update notice"
-                className="relative z-[1] mr-1 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-70 outline-none hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                onClick={() => startExit(displayedView.key, null, displayedView.key)}
-              >
-                <XIcon className="size-3.5 shrink-0" />
-              </button>
-            }
-          />
-          <TooltipPopup side="top">Dismiss until provider status changes</TooltipPopup>
-        </Tooltip>
       )}
     </div>
   );

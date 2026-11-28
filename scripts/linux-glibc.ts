@@ -25,7 +25,8 @@ export function parseGlibcNeeds(output: string): string | undefined {
     if (line.startsWith("Version ")) inNeeds = line.startsWith("Version needs section ");
     if (!inNeeds) continue;
     const name = /\bName:\s+(GLIBC_\S+)/.exec(line)?.[1];
-    if (!name) continue;
+    // The loader only warns when a WEAK version is missing, so it does not raise the floor.
+    if (!name || /\bFlags:[^:]*\bWEAK\b/.test(line)) continue;
     // DT_RELR's named ABI requirement was introduced in glibc 2.36.
     const version =
       name === "GLIBC_ABI_DT_RELR" ? "2.36" : /^GLIBC_(\d+(?:\.\d+)+)$/.exec(name)?.[1];

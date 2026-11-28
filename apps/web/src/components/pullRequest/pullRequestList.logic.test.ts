@@ -15,17 +15,23 @@ import {
   filterPullRequestsByInvolvement,
   findProjectForRepository,
   findScopedProject,
+  matchesPullRequestFilters,
   mergePullRequestLists,
   pullRequestEntryKey,
+  pullRequestListAnsweredEmpty,
   groupPullRequestsByInvolvement,
   pullRequestStatsBatches,
   pullRequestStatsKeysToRequest,
   pullRequestStatsRefreshBatches,
   mergePullRequestDiffStats,
+  withDiffStat,
   partitionPullRequestsWithPriority,
   pullRequestAuthorChoices,
   selectedPullRequestAuthor,
+  selectedPullRequestLabels,
   pullRequestLabelChoices,
+  rememberPullRequestAuthors,
+  rememberPullRequestLabels,
   rankPullRequestMatches,
   rankPullRequestsBlockedOnAuthor,
   rankPullRequestsByMergeReadiness,
@@ -87,6 +93,7 @@ describe("visible pull request line-count targets", () => {
       {
         environmentId: ENV_1,
         projectId: "project-1",
+        repository: "pingdotgg/t3code",
         number: 1,
         additions: 1,
         deletions: 1,
@@ -101,8 +108,50 @@ describe("visible pull request line-count targets", () => {
     );
     expect([...keys]).toEqual([secondKey]);
     expect(pullRequestStatsBatches(entriesByKey, keys)[0]?.input.refs).toEqual([
-      { projectId: "project-1", repository: "pingdotgg/t3code", number: 2 },
+      { projectId: "project-1", host: "github.com", repository: "pingdotgg/t3code", number: 2 },
     ]);
+  });
+
+  it("keeps diff stats apart by host, and lets an older server's host-less stat stand in", () => {
+    const own = entry({ additions: 0, deletions: 0, number: 42 });
+    const stat = {
+      environmentId: ENV_1,
+      projectId: "project-1",
+      repository: "pingdotgg/t3code",
+      number: 42,
+      deletions: 0,
+    };
+    const mirrored = mergePullRequestDiffStats(new Map(), [
+      { ...stat, host: "gitlab.com", additions: 20 },
+    ]);
+    expect(withDiffStat(own, mirrored)).toEqual(own);
+    expect(
+      withDiffStat(
+        own,
+        mergePullRequestDiffStats(mirrored, [{ ...stat, host: "github.com", additions: 10 }]),
+      ),
+    ).toMatchObject({ additions: 10 });
+    expect(
+      withDiffStat(own, mergePullRequestDiffStats(new Map(), [{ ...stat, additions: 5 }])),
+    ).toMatchObject({ additions: 5 });
+  });
+
+  it("matches diff stats by repository, ignoring case", () => {
+    const own = entry({ additions: 0, deletions: 0, number: 42 });
+    const stat = { environmentId: ENV_1, projectId: "project-1", number: 42, deletions: 2 };
+    const stats = mergePullRequestDiffStats(new Map(), [
+      { ...stat, repository: "other/lib", additions: 120 },
+    ]);
+
+    expect(withDiffStat(own, stats)).toEqual(own);
+    expect(
+      withDiffStat(
+        own,
+        mergePullRequestDiffStats(stats, [
+          { ...stat, repository: "PingDotGG/T3Code", additions: 7 },
+        ]),
+      ),
+    ).toMatchObject({ additions: 7, deletions: 2 });
   });
 
   it("keeps every per-environment batch within the stats contract limit", () => {
@@ -156,6 +205,23 @@ describe("pull request involvement filtering", () => {
     expect(
       filterPullRequestsByInvolvement(mixed, VIEWERS, "authored").map((item) => item.number),
     ).toEqual([1]);
+  });
+});
+
+describe("matchesPullRequestFilters", () => {
+  it.each([
+    ["passing", [1, 4]],
+    ["failing", [2, 4]],
+  ] as const)("narrows rows by checks:%s and keeps unknown check state", (checks, kept) => {
+    const rows = [
+      entry({ number: 1, checksState: "passing" }),
+      entry({ number: 2, checksState: "failing" }),
+      entry({ number: 3, checksState: "pending" }),
+      entry({ number: 4 }),
+    ];
+    expect(
+      rows.filter((row) => matchesPullRequestFilters(row, { checks })).map((row) => row.number),
+    ).toEqual(kept);
   });
 });
 
@@ -388,6 +454,18 @@ describe("partitioning with the hosts' own priority reads", () => {
     expect(groups[0]!.entries.map((item) => item.number)).toEqual([1]);
     expect(groups[1]!.entries.map((item) => item.number)).toEqual([2, 3]);
   });
+
+  it("lists a pull request once when another environment's authored read supplies it", () => {
+    const mine = authoredRow(4, "2026-07-01T00:00:00Z");
+    const groups = partitionPullRequestsWithPriority(
+      [{ ...mine, environmentId: ENV_1 }],
+      [{ ...mine, environmentId: ENV_2 }],
+      [],
+    );
+    expect(groups.map((group) => [group.key, group.entries])).toEqual([
+      ["authored", [{ ...mine, environmentId: ENV_1 }]],
+    ]);
+  });
 });
 
 describe("remembered pull request list controls", () => {
@@ -491,12 +569,19 @@ describe("merging the environments' own listings", () => {
         ...rows.map((row) => [ENV_1, answer({ entries: [row] })] as const),
         [ENV_2, answer({ entries: [older] })],
       ]);
-      expect(merged?.entries).toEqual([
-        { ...newer, environmentId: ENV_1 },
-        { ...older, environmentId: ENV_2 },
-      ]);
+      expect(merged?.entries).toEqual([{ ...newer, environmentId: ENV_1 }]);
     },
   );
+
+  it("keeps a pull request two environments read on the first environment that answered", () => {
+    const older = entry({ number: 4, updatedAt: "2026-07-01T00:00:00Z" });
+    const newer = entry({ number: 4, updatedAt: "2026-07-02T00:00:00Z" });
+    const merged = mergePullRequestLists([
+      [ENV_1, answer({ entries: [older] })],
+      [ENV_2, answer({ entries: [newer] })],
+    ]);
+    expect(merged?.entries).toEqual([{ ...older, environmentId: ENV_1 }]);
+  });
 
   it("keeps Azure pull requests from distinct projects with the same repository name and number", () => {
     const first = entry({
@@ -531,6 +616,18 @@ describe("merging the environments' own listings", () => {
     ]);
 
     expect(merged?.errors).toEqual([{ ...error, environmentId: ENV_1 }]);
+  });
+
+  it("counts a listing with no rows as empty even when a project could not be read", () => {
+    const error = {
+      projectId: "project-1" as ProjectId,
+      projectTitle: "Web",
+      message: "acme/web could not be read.",
+    } as const;
+    const data = mergePullRequestLists([[ENV_1, answer({ errors: [error] })]]);
+
+    expect(pullRequestListAnsweredEmpty({ data, isPending: false, error: null })).toBe(true);
+    expect(pullRequestListAnsweredEmpty({ data, isPending: true, error: null })).toBe(false);
   });
 
   it("folds a host reached from two environments into one switcher row", () => {
@@ -953,5 +1050,41 @@ describe("filter picker choices", () => {
       { name: "size:XL", color: "d93f0b", count: 7 },
       { name: "bug", color: null, count: 0 },
     ]);
+  });
+
+  it("restores a selected label's color and count from loaded facets or host labels", () => {
+    const loaded = [{ name: "bug", color: "d73a4a", count: 5 }];
+    const hosted = [{ name: "size:XL", color: "d93f0b" }];
+
+    expect(selectedPullRequestLabels(loaded, hosted, ["BUG", "size:xl", "custom"])).toEqual([
+      { name: "bug", color: "d73a4a", count: 5 },
+      { name: "size:XL", color: "d93f0b", count: 0 },
+      { name: "custom", color: null, count: 0 },
+    ]);
+  });
+
+  it("keeps a host-only label's color after the host answers a new search without it", () => {
+    const first = rememberPullRequestLabels([], [{ name: "release-blocker", color: "b60205" }]);
+    const next = rememberPullRequestLabels(first, [{ name: "docs", color: "0075ca" }]);
+
+    expect(selectedPullRequestLabels([], next, ["release-blocker"])).toEqual([
+      { name: "release-blocker", color: "b60205", count: 0 },
+    ]);
+    expect(rememberPullRequestLabels(next, [{ name: "docs", color: "0075ca" }])).toBe(next);
+  });
+
+  it("keeps a host-only author's avatar after the host answers a new search without them", () => {
+    const juliana = { login: "Juliana", name: "Juliana", avatarUrl: "https://host/juliana.png" };
+    const first = rememberPullRequestAuthors([], [juliana]);
+    const next = rememberPullRequestAuthors(first, [actor("theo")]);
+
+    expect(selectedPullRequestAuthor([], next, "juliana")?.actor).toEqual(juliana);
+    expect(rememberPullRequestAuthors(next, [actor("theo")])).toBe(next);
+    expect(rememberPullRequestAuthors(next, [])).toBe(next);
+
+    const moved = { ...juliana, avatarUrl: "https://host/juliana-new.png" };
+    expect(
+      selectedPullRequestAuthor([], rememberPullRequestAuthors(first, [moved]), "juliana")?.actor,
+    ).toEqual(moved);
   });
 });

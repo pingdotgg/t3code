@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { memo, useRef } from "react";
 import { CheckIcon, CopyIcon, type LucideIcon } from "lucide-react";
 import { Button } from "../ui/button";
@@ -6,11 +7,11 @@ import {
   ANCHORED_COPY_TOAST_TIMEOUT_MS,
   showAnchoredCopyErrorToast,
 } from "../ui/anchoredCopyToast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export const MessageCopyButton = memo(function MessageCopyButton({
   text,
-  label = "Copy message",
+  label: labelProp,
   icon: Icon = CopyIcon,
   extraFlavors,
   size = "xs",
@@ -25,6 +26,8 @@ export const MessageCopyButton = memo(function MessageCopyButton({
   variant?: "outline" | "ghost";
   className?: string;
 }) {
+  const gt = useGT();
+  const label = labelProp ?? gt("Copy message");
   const ref = useRef<HTMLButtonElement>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({
     onError: (error: Error) => showAnchoredCopyErrorToast(ref, error),
@@ -33,26 +36,26 @@ export const MessageCopyButton = memo(function MessageCopyButton({
   });
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            aria-label={label}
-            disabled={isCopied}
-            onClick={() => copyToClipboard(text)}
-            ref={ref}
-            type="button"
-            size={size}
-            variant={variant === "ghost" ? "ghost-muted" : variant}
-            className={className}
-          />
-        }
-      >
-        {isCopied ? <CheckIcon className="size-3 text-primary" /> : <Icon className="size-3" />}
-      </TooltipTrigger>
-      <TooltipPopup>
-        <p>{label}</p>
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          aria-label={label}
+          disabled={isCopied}
+          onClick={() => copyToClipboard(text)}
+          ref={ref}
+          type="button"
+          size={size}
+          variant={variant === "ghost" ? "ghost-muted" : variant}
+          className={className}
+        />
+      }
+      label={
+        <>
+          <p>{label}</p>
+        </>
+      }
+    >
+      {isCopied ? <CheckIcon className="size-3 text-primary" /> : <Icon className="size-3" />}
+    </SharedTooltipTrigger>
   );
 });

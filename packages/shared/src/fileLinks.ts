@@ -9,9 +9,13 @@ const POSITION_SUFFIX_CAPTURE_PATTERN = /:(\d+)(?::(\d+)|-(\d+))?$/;
 
 const POSITION_HASH_PATTERN = /^#L(\d+)(?:C(\d+)|-L?(\d+))?$/i;
 
-/** Keeps paths percent-encoded to avoid double decoding; non-localhost authorities become UNC shares. */
+/**
+ * Keeps paths percent-encoded to avoid double decoding. `localhost` and `localHostname` (the
+ * machine the path lives on) are local authorities; any other becomes a UNC share.
+ */
 export function parseFileUrlHref(
   href: string,
+  localHostname?: string,
 ): { readonly path: string; readonly hash: string } | null {
   // Chromium on Windows parses any one-letter scheme as a drive letter
   // (`new URL("d:x")` is `file:///D:/x`), so the protocol check alone would turn
@@ -21,7 +25,16 @@ export function parseFileUrlHref(
     const parsed = new URL(href);
     if (parsed.protocol.toLowerCase() !== "file:") return null;
 
-    const uncHostname = parsed.hostname.toLowerCase() === "localhost" ? "" : parsed.hostname;
+    const host = parsed.hostname.toLowerCase();
+    let localHost = "";
+    if (host && localHostname) {
+      try {
+        localHost = new URL(`file://${encodeURIComponent(localHostname)}/`).hostname;
+      } catch {
+        // System hostnames need not be valid URL authorities; they cannot match a file URI.
+      }
+    }
+    const uncHostname = host === "localhost" || host === localHost ? "" : parsed.hostname;
     const path = uncHostname
       ? `\\\\${uncHostname}${parsed.pathname.replaceAll("/", "\\")}`
       : parsed.pathname;
@@ -61,15 +74,12 @@ export function formatFilePathPosition(position: FilePathPosition): string {
   return `${position.path}:${position.line}${position.column ? `:${position.column}` : ""}`;
 }
 
-function isWindowsPathStyle(value: string): boolean {
-  return isWindowsAbsolutePath(value) || /[A-Za-z]:\\/.test(value);
-}
-
 export function joinPath(base: string, next: string, separator: "/" | "\\"): string {
-  const cleanBase = base.replace(/[\\/]+$/, "");
   if (separator === "\\") {
+    const cleanBase = base.replace(/[\\/]+$/, "");
     return `${cleanBase}\\${next.replaceAll("/", "\\")}`;
   }
+  const cleanBase = base.replace(/\/+$/, "");
   return `${cleanBase}/${next.replace(/^\/+/, "")}`;
 }
 
@@ -97,14 +107,14 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
   const { path } = position;
 
   let resolvedPath = path;
-  if (path.startsWith("~/") || (isWindowsPathStyle(cwd) && path.startsWith("~\\"))) {
+  if (path.startsWith("~/") || (isWindowsAbsolutePath(cwd) && path.startsWith("~\\"))) {
     const home = inferHomeFromCwd(cwd);
     if (home) {
-      const separator: "/" | "\\" = isWindowsPathStyle(home) ? "\\" : "/";
+      const separator: "/" | "\\" = isWindowsAbsolutePath(home) ? "\\" : "/";
       resolvedPath = joinPath(home, path.slice(2), separator);
     }
   } else if (!isAbsolutePath(path)) {
-    const separator: "/" | "\\" = isWindowsPathStyle(cwd) ? "\\" : "/";
+    const separator: "/" | "\\" = isWindowsAbsolutePath(cwd) ? "\\" : "/";
     resolvedPath = joinPath(cwd, path.replace(/^(?:\.\/)+/, ""), separator);
   }
 
@@ -171,13 +181,17 @@ export function fileLinkLabel(
   parentSuffixByPath: ReadonlyMap<string, string>,
 ): string {
   const suffix = parentSuffixByPath.get(file.path.replaceAll("\\", "/"));
-  return [
-    fileBasename(file.path),
-    suffix,
-    file.line
-      ? `L${file.line}${file.endLine ? `–${file.endLine}` : file.column ? `:C${file.column}` : ""}`
-      : undefined,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  return (
+    [
+      fileBasename(file.path),
+      suffix,
+      file.line
+        ? `L${file.line}${file.endLine ? `–${file.endLine}` : file.column ? `:C${file.column}` : ""}`
+        : undefined,
+    ]
+      .filter(Boolean)
+      .join(" · ")
+      // macOS stores many names in NFD; compose them for display only.
+      .normalize("NFC")
+  );
 }

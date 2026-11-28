@@ -1,32 +1,113 @@
-import { act, useEffect, useState } from "react";
+import { act, useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 import {
   AssetWorkspaceAssetNotFoundError,
+  AuthFilesystemReadScope,
   EnvironmentId,
   SOURCE_CONTROL_MEDIA_ASSET,
   ThreadId,
 } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
+import { requireNativeModule } from "expo";
+import type {
+  AttachmentPreviewFile,
+  downloadAttachmentForPreview,
+} from "../../lib/attachmentDownload";
+import type { downloadAndShareAttachment } from "../../lib/attachmentDownload";
+import type { useMediaActions } from "../../state/mediaActions";
 
 const harness = vi.hoisted(() => ({
   refreshAssetUrl:
     vi.fn<(environmentId: string, resource: { url: string }) => Promise<string | null>>(),
   alert: vi.fn(),
+  share: vi.fn<typeof downloadAndShareAttachment>(),
+  download: vi.fn<typeof downloadAttachmentForPreview>(),
   previews: [] as unknown[],
   mounts: 0,
   presentationFinished: false,
 }));
 
-vi.mock("../../state/assets", () => ({ refreshAssetUrl: harness.refreshAssetUrl }));
+vi.mock("../../state/assets", () => ({
+  refreshAssetUrl: harness.refreshAssetUrl,
+  useRefreshAssetUrl: (environmentId: string, resource: { url: string }) => () =>
+    harness.refreshAssetUrl(environmentId, resource),
+}));
 vi.mock("../../lib/localAttachmentPreview", () => ({ loadLocalAttachmentPreview: vi.fn() }));
 vi.mock("../../lib/attachmentDownload", () => ({
-  downloadAndShareAttachment: vi.fn(),
+  downloadAndShareAttachment: harness.share,
+  downloadAttachmentForPreview: harness.download,
   nativeViewerErrorMessage: () => "",
   shareLocalAttachment: vi.fn(),
 }));
 vi.mock("../../lib/previewPresentation", () => ({ usePreviewPresentation: () => {} }));
 vi.mock("./Dialog", () => ({ alert: harness.alert }));
+vi.mock("./Button", () => ({ Button: () => null }));
+vi.mock("./SheetHeader", () => ({ SheetHeader: () => null }));
+vi.mock("./AppText", () => ({ AppText: () => null }));
+vi.mock("../PdfPreview", () => ({ PdfPreview: () => null }));
+vi.mock("../MediaPreviewHeader", () => ({
+  MediaPreviewHeader: ({ media }: { media: ReturnType<typeof useMediaActions> }) =>
+    media.actions
+      .filter(({ id }) => id === "save" || id === "save-image")
+      .map(({ id, disabled, run, title }) => (
+        <button
+          key={id}
+          data-action={id === "save" ? "share" : id}
+          disabled={disabled}
+          onClick={run}
+        >
+          {title}
+        </button>
+      )),
+}));
+vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ navigate: vi.fn() }) }));
+vi.mock("../../state/session", () => ({
+  environmentSession: { sessionStateAtom: (environmentId: string) => environmentId },
+}));
+const grant = { authenticated: true, scopes: [AuthFilesystemReadScope] };
+vi.mock("../../state/query", () => ({
+  useEnvironmentQuery: () => ({ data: grant, error: null }),
+}));
+vi.mock("../../state/atom-registry", () => ({
+  appAtomRegistry: { get: () => AsyncResult.success(grant) },
+}));
+vi.mock("expo", () => ({ requireNativeModule: vi.fn() }));
+vi.mock("expo-clipboard", () => ({ setStringAsync: vi.fn() }));
+vi.mock("expo-haptics", () => ({ notificationAsync: vi.fn() }));
+vi.mock("react-native", () => ({
+  Modal: () => null,
+  Platform: { OS: "android", Version: 35 },
+  View: ({ children }: { children: ReactNode }) => children,
+}));
+vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
+vi.mock("react-native-image-viewing", () => ({
+  default: function ImageViewing(props: {
+    images: readonly { uri?: string }[];
+    imageIndex: number;
+    HeaderComponent?: ComponentType<{ imageIndex: number }>;
+  }) {
+    useState(() => harness.mounts++);
+    harness.previews.push({
+      kind: "image",
+      images: props.images,
+      selectedIndex: props.imageIndex,
+    });
+    const [index, setIndex] = useState(props.imageIndex);
+    const Header = props.HeaderComponent;
+    if (!Header) return null;
+    return (
+      <>
+        <Header imageIndex={index} />
+        {props.images.map(({ uri }, imageIndex) => (
+          <button key={uri} data-page={imageIndex} onClick={() => setIndex(imageIndex)} />
+        ))}
+      </>
+    );
+  },
+}));
 
+import { FilePreviewModal as AndroidFilePreviewModal } from "./FilePreviewModal.android";
 import type { FilePreviewItem, FilePreviewViewerProps } from "./FilePreviewModal.types";
 import { FilePreviewSession } from "./FilePreviewSession";
 
@@ -55,20 +136,118 @@ async function openGallery(
   harness.previews.length = 0;
   harness.mounts = 0;
   harness.alert.mockClear();
-  const root = createRoot(document.createElement("div"));
+  const container = document.createElement("div");
+  const root = createRoot(container);
   const onRequestClose = vi.fn();
+  const source = { ...selected, gallery };
   await act(async () =>
     root.render(
-      <FilePreviewSession
-        source={{ ...selected, gallery }}
-        onRequestClose={onRequestClose}
-        progressiveGallery={progressiveGallery}
-        Viewer={Viewer}
-      />,
+      progressiveGallery ? (
+        <FilePreviewSession
+          source={source}
+          onRequestClose={onRequestClose}
+          progressiveGallery
+          Viewer={Viewer}
+        />
+      ) : (
+        <AndroidFilePreviewModal source={source} onRequestClose={onRequestClose} />
+      ),
     ),
   );
-  return { onRequestClose, [Symbol.asyncDispose]: () => act(async () => root.unmount()) };
+  return {
+    container,
+    onRequestClose,
+    [Symbol.asyncDispose]: () => act(async () => root.unmount()),
+  };
 }
+
+it.each(["completes", "fails"] as const)(
+  "isolates Android gallery shares when the previous download %s after a swipe",
+  async (outcome) => {
+    const threadId = ThreadId.make("thread");
+    const workspaceImage = (folder: string): FilePreviewItem => {
+      const path = `${folder}/image.png`;
+      const resource = { _tag: "media-file" as const, threadId, path };
+      return {
+        kind: "image",
+        environmentId,
+        resource,
+        name: "image.png",
+        actionsSource: { environmentId, resource, name: "image.png", mimeType: "image/png" },
+      };
+    };
+    const first = workspaceImage("first");
+    const second = workspaceImage("second");
+    harness.refreshAssetUrl.mockImplementation(
+      async (_environmentId, resource) =>
+        "https://assets.test/" + ("path" in resource ? resource.path : resource.url),
+    );
+    const pendingFirst = Promise.withResolvers<void>();
+    const pendingSecond = Promise.withResolvers<void>();
+    harness.share
+      .mockReset()
+      .mockReturnValueOnce(pendingFirst.promise)
+      .mockReturnValueOnce(pendingSecond.promise);
+    await using preview = await openGallery(first, [first, second], false);
+    const share = () => preview.container.querySelector<HTMLButtonElement>("[data-action=share]")!;
+
+    await act(async () => share().click());
+    expect(share().textContent).toBe("Opening share sheet…");
+    const firstRequest = harness.share.mock.calls[0]![0];
+
+    await act(async () =>
+      preview.container.querySelector<HTMLButtonElement>("[data-page='1']")!.click(),
+    );
+    expect(share().textContent).toBe("Share");
+    expect(share().disabled).toBe(false);
+    expect(firstRequest.signal.aborted).toBe(true);
+
+    await act(async () => share().click());
+    expect(harness.share.mock.calls[1]?.[0].url).toBe("https://assets.test/second/image.png");
+    await act(async () => {
+      if (outcome === "fails") pendingFirst.reject(new Error("Download failed"));
+      else pendingFirst.resolve();
+    });
+    expect(harness.alert).not.toHaveBeenCalled();
+    expect(share().textContent).toBe("Opening share sheet…");
+
+    await act(async () => pendingSecond.resolve());
+    expect(share().disabled).toBe(false);
+  },
+);
+
+it("hands the previous Android gallery image to the photo library after a swipe", async () => {
+  const remoteImage = (name: string): FilePreviewItem => {
+    const uri = `https://assets.test/${name}`;
+    return { ...image(uri), name, actionsSource: { uri, name, mimeType: "image/png" } };
+  };
+  const first = remoteImage("first.png");
+  const second = remoteImage("second.png");
+  harness.refreshAssetUrl.mockImplementation(async (_environmentId, resource) => resource.url);
+  const pending = Promise.withResolvers<AttachmentPreviewFile>();
+  harness.download.mockReset().mockReturnValueOnce(pending.promise);
+  const saveImageToLibrary = vi.fn().mockRejectedValue(new Error("Library full"));
+  vi.mocked(requireNativeModule).mockReturnValueOnce({ saveImageToLibrary });
+  await using preview = await openGallery(first, [first, second], false);
+
+  await act(async () =>
+    preview.container.querySelector<HTMLButtonElement>("[data-action=save-image]")!.click(),
+  );
+  expect(harness.download).toHaveBeenCalledWith(
+    expect.objectContaining({ url: "https://assets.test/first.png" }),
+  );
+  await act(async () =>
+    preview.container.querySelector<HTMLButtonElement>("[data-page='1']")!.click(),
+  );
+  expect(preview.container.querySelector<HTMLButtonElement>("[data-action=share]")!.disabled).toBe(
+    false,
+  );
+  const uri = "file:///cache/first.png";
+  await act(async () => pending.resolve({ uri, share: vi.fn(), dispose: vi.fn() }));
+
+  expect(saveImageToLibrary).toHaveBeenCalledWith(uri, "image/png", "first.png");
+  expect(harness.alert).toHaveBeenCalledWith("Could not save image", "Library full");
+});
 
 it.each([true, false])(
   "keeps the gallery stable while a sibling is still resolving (progressive: %s)",
@@ -105,9 +284,17 @@ it.each([true, false])(
   },
 );
 
-it.each([true, false])(
-  "handles a failed sibling without leaving a pending page (progressive: %s)",
-  async (progressiveGallery) => {
+it.each([
+  // The progressive viewer already gave the missing image a page; a viewer that waits opens without it.
+  [
+    true,
+    1,
+    [{ failed: true }, { uri: "https://signed.test/a.png" }, { uri: "https://signed.test/c.png" }],
+  ],
+  [false, 0, [{ uri: "https://signed.test/a.png" }, { uri: "https://signed.test/c.png" }]],
+])(
+  "opens the gallery when a sibling cannot be resolved (progressive: %s)",
+  async (progressiveGallery, selectedIndex, images) => {
     harness.refreshAssetUrl.mockImplementation(async (_environmentId, resource) => {
       if (resource.url.endsWith("missing.png")) throw new Error("not found");
       return `https://signed.test/${resource.url.split("/").pop()}`;
@@ -115,26 +302,16 @@ it.each([true, false])(
     const selected = image("https://github.com/a.png");
     await using preview = await openGallery(
       selected,
-      [selected, image("https://github.com/missing.png"), image("https://github.com/c.png")],
+      [image("https://github.com/missing.png"), selected, image("https://github.com/c.png")],
       progressiveGallery,
     );
 
-    if (!progressiveGallery) {
-      expect(preview.onRequestClose).toHaveBeenCalledOnce();
-      expect(harness.alert).toHaveBeenCalledOnce();
-      expect(harness.previews).toEqual([]);
-      return;
-    }
-
     expect(preview.onRequestClose).not.toHaveBeenCalled();
     expect(harness.alert).not.toHaveBeenCalled();
-    expect(harness.previews.at(-1)).toMatchObject({
-      selectedIndex: 0,
-      images: [
-        { uri: "https://signed.test/a.png" },
-        { failed: true },
-        { uri: "https://signed.test/c.png" },
-      ],
+    expect(harness.previews.at(-1)).toEqual({
+      kind: "image",
+      selectedIndex,
+      images: images.map((page) => expect.objectContaining(page)),
     });
   },
 );
