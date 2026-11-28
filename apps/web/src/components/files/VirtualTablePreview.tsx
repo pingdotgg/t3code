@@ -142,6 +142,7 @@ export default function VirtualTablePreview(props: {
           aria-colcount={props.source ? undefined : props.columns}
           className="flex h-full min-h-0 flex-col text-xs"
           style={{ width: tableWidth }}
+          onKeyDown={selectRenderedContentOnSelectAll}
         >
           {!props.source ? (
             <div
@@ -635,7 +636,6 @@ function ScaledRows(
       tabIndex={0}
       className="min-h-0 flex-1 overflow-auto"
       onKeyDown={(event) => {
-        selectRenderedContentOnSelectAll(event);
         const node = event.currentTarget;
         const delta =
           event.key === "ArrowDown"

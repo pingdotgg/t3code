@@ -1041,7 +1041,7 @@ describe("rendered Markdown select all", () => {
 });
 
 describe("table preview select all", () => {
-  it("selects only the table in a CSV preview", async () => {
+  it("selects only the table, headers included, in a CSV preview", async () => {
     using _settings = setup();
     using _style = withAppCss();
     state.file = {
@@ -1061,6 +1061,7 @@ describe("table preview select all", () => {
       isMacPlatform(navigator.platform) ? "{Meta>}a{/Meta}" : "{Control>}a{/Control}",
     );
     const selection = window.getSelection()?.toString() ?? "";
+    expect(selection).toContain("city");
     expect(selection).toContain("London");
     expect(selection).not.toContain("Transcript text from the chat thread.");
   });
