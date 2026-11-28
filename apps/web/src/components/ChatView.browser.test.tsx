@@ -1420,12 +1420,12 @@ it("picking /clear while editing a queued message does not arm a fresh session",
   const editor = page.getByTestId("composer-editor");
   await userEvent.click(editor);
   await userEvent.keyboard("{ControlOrMeta>}a{/ControlOrMeta}");
-  await insertText("/clear");
-  await page.getByRole("option", { name: /^\/clear/ }).click();
+  await insertText("/");
+  await expect.element(page.getByRole("option", { name: /^\/model/ })).toBeVisible();
 
-  await expect.element(editor).toHaveTextContent("");
-  await expect.element(page.getByText("Editing in the composer")).toBeVisible();
   // The queued edit owns the composer, as on mobile, so /clear must not arm the next send.
+  expect(page.getByRole("option", { name: /^\/clear/ }).query()).toBeNull();
+  await expect.element(page.getByText("Editing in the composer")).toBeVisible();
   await expect
     .element(page.getByText("Your next message starts a fresh session"))
     .not.toBeInTheDocument();
