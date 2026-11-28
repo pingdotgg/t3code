@@ -551,7 +551,7 @@ describe("pickSnoozePreset", () => {
     });
     const shown = resolveSnoozePresets(now, { pullRequests: [pullRequest("open")] });
     const picked = pickSnoozePreset({ shown, id: "pull-request", now });
-    expect(shown.at(-1)).toBe(picked);
+    expect(shown.at(-2)).toBe(picked);
     expect(picked).toMatchObject({ label: "Until PR updates", whenLabel: "#12" });
     expect(picked?.untilPullRequest).toBe(true);
     expect(
