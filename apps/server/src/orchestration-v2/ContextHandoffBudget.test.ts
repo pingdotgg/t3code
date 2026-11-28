@@ -279,7 +279,7 @@ describe("handoff budget", () => {
         64_000,
       );
     }
-    assert.equal(handoffBudget({ ...base, tokenCap: 2_000 }), 2_000);
+    assert.equal(handoffBudget({ ...base, tokenCap: 2_000 }), 8_000);
     // The work reserve never takes more than half of a small local window.
     for (const [modelContextWindow, nativeContextEstimate, expected] of [
       [8_192, 0, 4_086],
@@ -375,7 +375,7 @@ describe("handoff budget", () => {
         nativeContextEstimate: 0,
         modelContextWindow: preserved?.maxTokens,
       }),
-      16_000,
+      64_000,
     );
     assert.equal(
       handoffBudget({
@@ -389,7 +389,7 @@ describe("handoff budget", () => {
     );
   });
   it("reserves context for image batches up to the attachment limit, honoring smaller known windows", () => {
-    let previousBudget = 16_000;
+    let previousBudget = 64_000;
     for (let count = 1; count <= PROVIDER_SEND_TURN_MAX_ATTACHMENTS; count++) {
       const input = {
         tokenCap: 16_000,
@@ -408,17 +408,17 @@ describe("handoff budget", () => {
       assert.isAtLeast(budget, 0);
       assert.isAtMost(budget, previousBudget);
       previousBudget = budget;
-      if (count <= 8) assert.equal(budget, 16_000);
-      if (count === 10) {
+      if (count <= 3) assert.equal(budget, 64_000);
+      if (count >= 4 && count <= 10) {
         assert.isAbove(budget, 0);
-        assert.isBelow(budget, 16_000);
+        assert.isBelow(budget, 64_000);
       }
       if (count === PROVIDER_SEND_TURN_MAX_ATTACHMENTS) assert.equal(budget, 0);
       if (budget > 0) {
         const selected = selectHistory({ messages, coverage: "Recover omitted history", budget });
         assert.isAtMost(historyCost(selected.messages, selected.context), budget);
       }
-      assert.equal(handoffBudget({ ...input, modelContextWindow: 2_000_000 }), 16_000);
+      assert.equal(handoffBudget({ ...input, modelContextWindow: 2_000_000 }), 64_000);
       // 20k window: half is reserved for work, then 27 prompt bytes and 8,192 per image.
       const smallWindowBudget = count === 1 ? 1_781 : 0;
       assert.equal(handoffBudget({ ...input, modelContextWindow: 20_000 }), smallWindowBudget);

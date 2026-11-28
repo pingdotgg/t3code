@@ -7,6 +7,9 @@ import {
   type ProjectSnapshot,
   ProjectId,
 } from "@t3tools/contracts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -219,6 +222,14 @@ const normalizeWorkspaceRootForProjectCommand = Effect.fn(
   "normalizeWorkspaceRootForProjectCommand",
 )(function* (workspaceRoot: string) {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+  if (workspaceRoot !== workspaceRoot.trimStart()) {
+    const path = yield* Path.Path;
+    const home = yield* HostProcess.HomeDirectory;
+    if (path.parse(expandHomePath(workspaceRoot.trim(), home)).root === "") {
+      // Resolving the relative argument first keeps its leading space inside the absolute path.
+      return yield* workspacePaths.normalizeWorkspaceRoot(path.resolve(workspaceRoot.trimEnd()));
+    }
+  }
   return yield* workspacePaths.normalizeWorkspaceRoot(workspaceRoot);
 });
 
@@ -265,7 +276,7 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
   }
 
   const normalizedWorkspaceRootResult = yield* Effect.result(
-    normalizeWorkspaceRootForProjectCommand(trimmedIdentifier),
+    normalizeWorkspaceRootForProjectCommand(input.identifier),
   );
   // A stored workspace path still identifies its project after the directory is gone, so a
   // relative or trailing-slash path resolves the same way it would while the directory exists.
@@ -395,12 +406,14 @@ const projectAddCommand = Command.make("add", {
           (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
         );
         const path = yield* Path.Path;
+        const home = yield* HostProcess.HomeDirectory;
         const named = flags.track
           .map((folder) => {
-            const resolved = path.resolve(folder);
+            const resolved = path.resolve(expandHomePath(folder, home));
+            const name = (path.basename(resolved) || resolved).trimStart();
             return {
               path: resolved,
-              name: (path.basename(resolved) || resolved).slice(0, 128).trim(),
+              name: name.slice(0, splitsSurrogatePair(name, 128) ? 127 : 128).trim(),
             };
           })
           .filter(

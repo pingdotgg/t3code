@@ -5,6 +5,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -63,6 +64,23 @@ it.effect("links a file of environments, reports each line, and fails when one d
       const link = (from: string) =>
         runCli(["environment", "link", "--from", from, "--access", "auto", "--base-dir", baseDir]);
 
+      const conflict = yield* runCli([
+        "environment",
+        "link",
+        "--from",
+        file,
+        "--url",
+        "http://ignored.invalid",
+        "--access",
+        "auto",
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+      expect(conflict).toMatchObject({
+        _tag: "EnvironmentLinkUsageError",
+        detail: "--from takes its addresses and pairing codes from the file.",
+      });
+
       const failed = yield* link(file).pipe(Effect.flip);
       expect(failed).toMatchObject({ _tag: "EnvironmentLinkBatchError", failed: 1, total: 3 });
       const report = (yield* reports).at(-1) ?? "";
@@ -84,7 +102,7 @@ it.effect("links a file of environments, reports each line, and fails when one d
         retry,
         `${one.url} ${firstCode}\n${two.url} ${yield* codeFor(two)}\n${three.url} never-valid\n`,
       );
-      yield* link(retry);
+      yield* link("~/retry.txt").pipe(Effect.provideService(HostProcess.HomeDirectory, baseDir));
       const retried = (yield* reports).at(-1) ?? "";
       expect(retried).toContain(
         `${one.url}: already linked as VM 1 (environment-vm-1), left as it is`,

@@ -4,8 +4,11 @@
  * so the server places an agent-issued pin the same way a client pin is placed.
  */
 const PIN_ORDER_DIGITS = "abcdefghijklmnopqrstuvwxyz";
+/** Prefix of a tier that sorts before every plain key (see `activeThreadSortKey`). */
+export const LEADING_ORDER_TIER = "0";
 
 function isValidPinOrderKey(key: string): boolean {
+  if (key.startsWith(LEADING_ORDER_TIER)) key = key.slice(LEADING_ORDER_TIER.length);
   if (key.length === 0) return false;
   for (const char of key) {
     if (!PIN_ORDER_DIGITS.includes(char)) return false;
@@ -43,6 +46,10 @@ export function pinOrderKeyBetween(before: string | null, after: string | null):
   if (a !== "" && !isValidPinOrderKey(a)) return null;
   if (b !== "" && !isValidPinOrderKey(b)) return null;
   if (b !== "" && a >= b) return null;
+  const tier = LEADING_ORDER_TIER;
+  if (b.startsWith(tier))
+    return tier + pinOrderMidpoint(a.slice(tier.length), b.slice(tier.length));
+  if (a.startsWith(tier)) return tier + pinOrderMidpoint(a.slice(tier.length), "");
   return pinOrderMidpoint(a, b);
 }
 

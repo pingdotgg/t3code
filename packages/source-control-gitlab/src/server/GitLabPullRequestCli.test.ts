@@ -1804,6 +1804,68 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("approves at the head the caller reviewed", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const approval = {
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        verdict: "approve" as const,
+        body: "",
+        comments: [],
+      };
+
+      yield* cli.submitReview({ ...approval, expectedHeadSha: "0a1b2c3d4e5f" });
+      expect(argsOfCall(0)[1]).toContain("merge_requests/7/approve");
+      expect(JSON.parse(callAt(0).stdin ?? "{}")).toEqual({ sha: "0a1b2c3d4e5f" });
+
+      yield* cli.submitReview(approval);
+      expect(argsOfCall(1)[1]).toContain("merge_requests/7/approve");
+      expect(callAt(1).stdin).toBeUndefined();
+    }),
+  );
+
+  it.effect("posts no line comment when the head is no longer the one the caller reviewed", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            JSON.stringify({
+              iid: 7,
+              title: "t",
+              web_url: "https://gitlab.com/acme/web/-/merge_requests/7",
+              source_branch: "feat",
+              target_branch: "main",
+              created_at: "2026-07-01T00:00:00Z",
+              updated_at: "2026-07-01T00:00:00Z",
+              diff_refs: { base_sha: "base", head_sha: "newer-head", start_sha: "start" },
+            }),
+          ),
+        ),
+      );
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const refused = yield* Effect.flip(
+        cli.submitReview({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          verdict: "approve",
+          body: "Looks right.",
+          expectedHeadSha: "reviewed-head",
+          comments: [{ path: "src/b.ts", position: { kind: "added", newLine: 12 }, body: "nit" }],
+        }),
+      );
+
+      expect(refused.message).toContain("the head is now newer-head, not reviewed-head");
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(argsOfCall(0)[1]).toContain("merge_requests/7");
+    }),
+  );
+
   it.effect("requests changes as a reviewer and reports what GitLab refused", () =>
     Effect.gen(function* () {
       mockedExecute

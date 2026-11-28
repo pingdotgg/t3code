@@ -1,6 +1,12 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { deadlineStore, recordServerClock, secondTick, toServerClock } from "./clock.ts";
+import {
+  deadlineStore,
+  observeServerTime,
+  recordServerClock,
+  secondTick,
+  toServerClock,
+} from "./clock.ts";
 
 describe("deadlineStore", () => {
   afterEach(() => {
@@ -171,5 +177,25 @@ describe("server clock", () => {
       receivedAtMs: 9_000,
     });
     expect(toServerClock(environmentId, 12_345)).toBe(12_345);
+  });
+
+  it("raises a stale negative offset when a host timestamp arrives ahead of it", () => {
+    const environmentId = EnvironmentId.make("caught-up");
+    recordServerClock(environmentId, {
+      serverTimeMs: 1_000,
+      requestedAtMs: 2 * HOUR + 900,
+      receivedAtMs: 2 * HOUR + 1_050,
+    });
+    expect(toServerClock(environmentId, 2 * HOUR + 10_050)).toBe(10_150);
+
+    observeServerTime(environmentId, 2 * HOUR + 10_000, 2 * HOUR + 10_050);
+    expect(toServerClock(environmentId, 2 * HOUR + 20_050)).toBe(2 * HOUR + 20_000);
+
+    observeServerTime(environmentId, 5_000, 2 * HOUR + 20_100);
+    expect(toServerClock(environmentId, 2 * HOUR + 20_050)).toBe(2 * HOUR + 20_000);
+
+    const unrecorded = EnvironmentId.make("unrecorded");
+    observeServerTime(unrecorded, HOUR, 1_000);
+    expect(toServerClock(unrecorded, 1_000)).toBe(1_000);
   });
 });
