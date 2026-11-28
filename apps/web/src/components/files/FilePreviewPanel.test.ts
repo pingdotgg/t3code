@@ -1045,7 +1045,7 @@ Third}`;
       )
       .file(
         "Book/two&&&.xhtml",
-        '<?xml-stylesheet href="a<b.css"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><p>Run <tt>make install</tt> with <acronym title="GNU Compiler Collection">GCC</acronym>.</p><pre><![CDATA[Use &amp; and &lt; literally]]></pre><pre><![CDATA[<!DOCTYPE html><!ENTITY author "Ada">]]></pre><!-- <!ENTITY note "x"> --><img src="cover.png" alt="&lt; &copy; &NotEqualTilde;"/></body></html>',
+        '<?xml-stylesheet href="a<b.css"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><p>Run <tt>make install</tt> with <acronym title="GNU Compiler Collection">GCC</acronym>.</p><center><p>Archive <strike>draft</strike> edition</p></center><pre><![CDATA[Use &amp; and &lt; literally]]></pre><pre><![CDATA[<!DOCTYPE html><!ENTITY author "Ada">]]></pre><!-- <!ENTITY note "x"> --><img src="cover.png" alt="&lt; &copy; &NotEqualTilde;"/></body></html>',
       )
       .file(
         "Book/cover.png",
@@ -1062,6 +1062,7 @@ Third}`;
     expect(first.html).toContain(
       '<p>Run <tt>make install</tt> with <acronym title="GNU Compiler Collection">GCC</acronym>.</p>',
     );
+    expect(first.html).toContain("<center><p>Archive <strike>draft</strike> edition</p></center>");
     expect(first.html).toContain("<pre>Use &amp;amp; and &amp;lt; literally</pre>");
     expect(first.html).toContain(
       "<pre>&lt;!DOCTYPE html&gt;&lt;!ENTITY author &quot;Ada&quot;&gt;</pre>",
