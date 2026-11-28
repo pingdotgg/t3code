@@ -985,6 +985,46 @@ it.effect("a tab the desktop does not draw is marked headless, so the desktop st
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a desktop tab whose window stops painting moves to headless at the same page", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* ready;
+      desktopRendersNext = true;
+      desktopPageUrl = "https://example.com/account";
+      const { tabId } = yield* manager.open({
+        threadId: scope.thread.threadId,
+        runtime: "server",
+        url: desktopPageUrl,
+      });
+      yield* manager.reportStatus({
+        threadId: scope.thread.threadId,
+        tabId,
+        navStatus: { _tag: "Success", url: desktopPageUrl, title: "Account" },
+        canGoBack: false,
+        canGoForward: false,
+        serverControlled: true,
+      });
+      // A Wayland window on a hidden workspace answers no capture at all.
+      heldStill = () => new Promise(() => {});
+      const stalled = yield* browser.attachViewer(viewerInput(tabId, true));
+      let end = yield* Queue.take(stalled.output);
+      while (end._tag !== "reconnect") end = yield* Queue.take(stalled.output);
+      heldStill = null;
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      expect(sessions.find((session) => session.tabId === tabId)?.headless).toBe(true);
+
+      yield* browser.attachViewer(viewerInput(tabId, true));
+      expect(desktopConnections).toHaveLength(1);
+      expect(contexts.at(-1)!.page.goto).toHaveBeenCalledWith(
+        "https://example.com/account",
+        expect.objectContaining({ waitUntil: "commit" }),
+      );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("a server started without the desktop browser channel marks its tabs headless", () =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -814,6 +814,46 @@ const make = Effect.gen(function* () {
     await reopening.catch(constVoid);
   };
 
+  // A window that stops painting never answers a capture: Wayland sends a window on a hidden
+  // workspace no frame callbacks, and Electron's own capture cannot wake it. Such a tab moves
+  // to a headless page, as a tab the desktop never attached to does.
+  const moveToHeadless = async (tab: ServerTab) => {
+    const key = tabKey(tab.threadId, tab.tabId);
+    if (!tab.desktop || tabs.get(key) !== tab || pendingTabs.has(key)) return;
+    const url = tab.page.url();
+    // Dropped before the desktop hears of the move, so its webview closing cannot close the session.
+    dropTab(tab, false, true);
+    const moving = (async () => {
+      await runPromise(
+        manager.markHeadless({ threadId: tab.threadId, tabId: tab.tabId }).pipe(Effect.ignore),
+      );
+      const { sessions } = await runPromise(manager.list({ threadId: tab.threadId }));
+      const snapshot = sessions.find(
+        (session) => session.tabId === tab.tabId && session.runtime === "server",
+      );
+      if (!snapshot) {
+        throw new ServerBrowserTabNotFoundError({ threadId: tab.threadId, tabId: tab.tabId });
+      }
+      const moved = await createTab(snapshot);
+      // A new headless page only loads a session that is still loading.
+      if (moved.initialNavigation === null && moved.crash === undefined && url !== "about:blank") {
+        moved.initialNavigation = moved.page
+          .goto(url, { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS })
+          .then(constVoid, (cause: unknown) => {
+            throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
+          });
+        if (moved.control.agentId !== null) moved.control.track(moved.initialNavigation);
+        else void moved.initialNavigation.catch(constVoid);
+      }
+      return moved;
+    })().finally(() => {
+      pendingTabs.delete(key);
+      closedPendingTabs.delete(key);
+    });
+    pendingTabs.set(key, { agentId: tab.control.agentId, promise: moving });
+    await moving.catch(constVoid);
+  };
+
   const dialogStatus = (tab: ServerTab) =>
     tab.dialog
       ? {
@@ -3140,7 +3180,15 @@ const make = Effect.gen(function* () {
           snapshotInput?.pixelsRequired === false
             ? ServerBrowserPage.snapshotMetadata(rendering)
             : ServerBrowserPage.snapshot(rendering),
-        );
+        ).catch((cause: unknown) => {
+          if (!tab.desktop || !ServerBrowserPage.isNotPainting(cause)) throw cause;
+          void moveToHeadless(tab);
+          throw new ServerBrowserPage.ServerBrowserOperationError({
+            tag: "PreviewAutomationExecutionError",
+            message:
+              "The T3 Code window is not drawing this tab, so it reopened in the server's own browser. Take the snapshot again.",
+          });
+        });
         const loadError = loadErrorOf(tab);
         return loadError ? { ...snapshot, url: loadError.url, loadError } : snapshot;
       }
@@ -3680,9 +3728,14 @@ const make = Effect.gen(function* () {
     const pushStill = async () => {
       const data = await withCaptureLock(tab, async () => {
         let timer: ReturnType<typeof setTimeout> | undefined;
+        const capture = ServerBrowserPage.captureViewport(session, { format: "jpeg", quality });
+        // Outlives the race below: the viewer would otherwise wait on a window that never paints.
+        capture.catch((cause: unknown) => {
+          if (tab.desktop && ServerBrowserPage.isNotPainting(cause)) void moveToHeadless(tab);
+        });
         try {
           return await Promise.race([
-            ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
+            capture,
             new Promise<null>((resolve) => {
               timer = setTimeout(() => resolve(null), VIEWER_STILL_TIMEOUT_MS);
             }),
