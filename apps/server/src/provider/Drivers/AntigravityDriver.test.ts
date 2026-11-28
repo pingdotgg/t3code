@@ -314,6 +314,23 @@ const layerTest = ProviderHostLive.layer.pipe(
 
 it.layer(layerTest)("AntigravityDriver", (it) => {
   it.effect.skipIf(windowsHost)(
+    "keeps the starting model's thinking level after probing the other models",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({
+          environment: [{ name: "T3_ACP_ANTIGRAVITY_INITIAL_THINKING", value: "high" }],
+        });
+        yield* h.refresh();
+        const snapshot = yield* h.instance.snapshot.getSnapshot;
+        const level = (slug: string) =>
+          snapshot.models.find((model) => model.slug === slug)?.capabilities
+            ?.optionDescriptors?.[0];
+        expect(level("gemini-test-low")).toMatchObject({ currentValue: "high" });
+        expect(level("gemini-test-high")).toMatchObject({ currentValue: "medium" });
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
     "reports an incompatible managed runtime during a health check",
     () =>
       Effect.gen(function* () {
