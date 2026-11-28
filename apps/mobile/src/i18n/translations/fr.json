@@ -5731,5 +5731,19 @@
   "6b7765835778dc77": "Tous les fichiers sont masqués",
   "bd2cfcb7be24cd38": "Les fichiers consultés sont masqués dans cette revue.",
   "6ae1484aa5bd2bc8": "Afficher les fichiers consultés",
-  "15db3431c35d4927": "{count, plural, one {{count} consulté masqué} other {{count} consultés masqués}}"
+  "15db3431c35d4927": "{count, plural, one {{count} consulté masqué} other {{count} consultés masqués}}",
+  "2461bdd8e58e0a72": "Les environnements T3 Connect ne peuvent pas être renommés ici.",
+  "7c0dd5a5a1cd0f95": "Vous pouvez modifier ce choix pour chaque agent dans Réglages → Fournisseurs, sur le web ou l'ordinateur.",
+  "a5120a92dce4546a": "Ne pas autoriser",
+  "77bc7873d636e9b6": "Autoriser",
+  "b1407315384f1c1b": "Impossible d'enregistrer l'accès à l'utilisation",
+  "175fd48b1f788f46": "Autorisez l'accès à l'utilisation pour afficher les limites de cet agent.",
+  "e374560884a7e12b": "{environment} · {detail}",
+  "04ce6b74fccf8b83": "Afficher l’utilisation des agents ?",
+  "0f599478d23d645d": "T3 Code lit ces données pour chaque agent, sur tout le système. Choisissez les agents à autoriser.",
+  "0ef08693f1224444": "Historique de sessions et connexion",
+  "bb9866823586b67a": "Base de données d’utilisation et clé Go",
+  "8380d6f1828fe191": "Historique de conversations",
+  "1f2036cf25caaf16": "Utilisation du compte depuis Cursor",
+  "51aa7700c1f967d2": "Historique de sessions"
 }

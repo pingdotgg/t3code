@@ -5739,5 +5739,19 @@
   "6b7765835778dc77": "Wszystkie pliki są ukryte",
   "bd2cfcb7be24cd38": "Przejrzane pliki są ukryte w tym przeglądzie.",
   "6ae1484aa5bd2bc8": "Pokaż przejrzane pliki",
-  "15db3431c35d4927": "{count, plural, one {Ukryto {count} przejrzany} few {Ukryto {count} przejrzane} many {Ukryto {count} przejrzanych} other {Ukryto {count} przejrzanego}}"
+  "15db3431c35d4927": "{count, plural, one {Ukryto {count} przejrzany} few {Ukryto {count} przejrzane} many {Ukryto {count} przejrzanych} other {Ukryto {count} przejrzanego}}",
+  "2461bdd8e58e0a72": "Środowisk T3 Connect nie można tutaj zmienić nazwy.",
+  "7c0dd5a5a1cd0f95": "Możesz to zmienić dla każdego agenta w wersji webowej lub desktopowej: Ustawienia → Dostawcy.",
+  "a5120a92dce4546a": "Nie zezwalaj",
+  "77bc7873d636e9b6": "Zezwól",
+  "b1407315384f1c1b": "Nie udało się zapisać dostępu do użycia",
+  "175fd48b1f788f46": "Zezwól na dostęp do użycia, aby zobaczyć limity tego agenta.",
+  "e374560884a7e12b": "{environment} · {detail}",
+  "04ce6b74fccf8b83": "Pokazać użycie agentów?",
+  "0f599478d23d645d": "T3 Code odczytuje te dane z każdego agenta w całym systemie. Wybierz, którym agentom na to pozwolić.",
+  "0ef08693f1224444": "Historia sesji i dane logowania",
+  "bb9866823586b67a": "Baza danych użycia i klucz Go",
+  "8380d6f1828fe191": "Historia konwersacji",
+  "1f2036cf25caaf16": "Użycie konta z Cursor",
+  "51aa7700c1f967d2": "Historia sesji"
 }

@@ -5731,5 +5731,19 @@
   "6b7765835778dc77": "Todos los archivos están ocultos",
   "bd2cfcb7be24cd38": "Los archivos vistos están ocultos en esta revisión.",
   "6ae1484aa5bd2bc8": "Mostrar archivos vistos",
-  "15db3431c35d4927": "{count, plural, one {{count} visto oculto} other {{count} vistos ocultos}}"
+  "15db3431c35d4927": "{count, plural, one {{count} visto oculto} other {{count} vistos ocultos}}",
+  "2461bdd8e58e0a72": "No se puede cambiar el nombre de los entornos de T3 Connect aquí.",
+  "7c0dd5a5a1cd0f95": "Puedes cambiarlo para cada agente en Configuración → Proveedores en la web o el escritorio.",
+  "a5120a92dce4546a": "No permitir",
+  "77bc7873d636e9b6": "Permitir",
+  "b1407315384f1c1b": "No se pudo guardar el acceso al uso",
+  "175fd48b1f788f46": "Permite el acceso al uso para mostrar los límites de este agente.",
+  "e374560884a7e12b": "{environment} · {detail}",
+  "04ce6b74fccf8b83": "¿Mostrar el uso de los agentes?",
+  "0f599478d23d645d": "T3 Code lee esto de cada agente en todo el sistema. Elige qué agentes permitir.",
+  "0ef08693f1224444": "Historial de sesiones e inicio de sesión",
+  "bb9866823586b67a": "Base de datos de uso y clave de Go",
+  "8380d6f1828fe191": "Historial de conversaciones",
+  "1f2036cf25caaf16": "Uso de la cuenta desde Cursor",
+  "51aa7700c1f967d2": "Historial de sesiones"
 }

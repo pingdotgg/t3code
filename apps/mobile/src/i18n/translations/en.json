@@ -5739,5 +5739,19 @@
   "6b7765835778dc77": "All files are hidden",
   "bd2cfcb7be24cd38": "Viewed files are hidden from this review.",
   "6ae1484aa5bd2bc8": "Show viewed files",
-  "15db3431c35d4927": "{count, plural, one {{count} viewed hidden} other {{count} viewed hidden}}"
+  "15db3431c35d4927": "{count, plural, one {{count} viewed hidden} other {{count} viewed hidden}}",
+  "2461bdd8e58e0a72": "T3 Connect environments cannot be renamed here.",
+  "7c0dd5a5a1cd0f95": "You can change this for each agent in web or desktop Settings → Providers.",
+  "a5120a92dce4546a": "Don't allow",
+  "77bc7873d636e9b6": "Allow",
+  "b1407315384f1c1b": "Could not save usage access",
+  "175fd48b1f788f46": "Allow usage access to show this agent's limits.",
+  "e374560884a7e12b": "{environment} · {detail}",
+  "04ce6b74fccf8b83": "Show agent usage?",
+  "0f599478d23d645d": "T3 Code reads these from each agent, system-wide. Pick which agents to allow.",
+  "0ef08693f1224444": "Session history and sign-in",
+  "bb9866823586b67a": "Usage database and Go key",
+  "8380d6f1828fe191": "Conversation history",
+  "1f2036cf25caaf16": "Account usage from Cursor",
+  "51aa7700c1f967d2": "Session history"
 }

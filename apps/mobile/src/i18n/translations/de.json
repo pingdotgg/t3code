@@ -5737,5 +5737,19 @@
   "6b7765835778dc77": "Alle Dateien sind ausgeblendet",
   "bd2cfcb7be24cd38": "Angesehene Dateien sind in diesem Review ausgeblendet.",
   "6ae1484aa5bd2bc8": "Angesehene Dateien anzeigen",
-  "15db3431c35d4927": "{count, plural, one {{count} angesehene ausgeblendet} other {{count} angesehene ausgeblendet}}"
+  "15db3431c35d4927": "{count, plural, one {{count} angesehene ausgeblendet} other {{count} angesehene ausgeblendet}}",
+  "2461bdd8e58e0a72": "T3 Connect-Umgebungen können hier nicht umbenannt werden.",
+  "7c0dd5a5a1cd0f95": "Du kannst das für jeden Agenten in den Web- oder Desktop-Einstellungen unter Anbieter ändern.",
+  "a5120a92dce4546a": "Nicht erlauben",
+  "77bc7873d636e9b6": "Erlauben",
+  "b1407315384f1c1b": "Nutzungszugriff konnte nicht gespeichert werden",
+  "175fd48b1f788f46": "Erlaube den Nutzungszugriff, um die Limits dieses Agenten anzuzeigen.",
+  "e374560884a7e12b": "{environment} · {detail}",
+  "04ce6b74fccf8b83": "Agenten-Nutzung anzeigen?",
+  "0f599478d23d645d": "T3 Code liest das systemweit von jedem Agenten. Wähle, welche Agenten du erlaubst.",
+  "0ef08693f1224444": "Sitzungsverlauf und Anmeldung",
+  "bb9866823586b67a": "Nutzungsdatenbank und Go-Schlüssel",
+  "8380d6f1828fe191": "Gesprächsverlauf",
+  "1f2036cf25caaf16": "Kontonutzung von Cursor",
+  "51aa7700c1f967d2": "Sitzungsverlauf"
 }
