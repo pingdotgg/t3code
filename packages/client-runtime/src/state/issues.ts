@@ -357,9 +357,16 @@ export interface MergedIssueList {
   /** The first environment that failed outright; the others may still have answered. */
   readonly error: string | null;
   readonly isPending: boolean;
+  /** An environment has neither answered nor failed yet, so the rows so far may not be all. */
+  readonly awaitingAnswer: boolean;
 }
 
-const NO_ISSUE_LISTS: MergedIssueList = { answers: [], error: null, isPending: false };
+const NO_ISSUE_LISTS: MergedIssueList = {
+  answers: [],
+  error: null,
+  isPending: false,
+  awaitingAnswer: false,
+};
 
 function refreshFailed<Target, A, E>(
   registry: AtomRegistry.AtomRegistry,
@@ -401,14 +408,16 @@ export function createMergedIssueListAtoms<E>(
       const answers: Array<readonly [EnvironmentId, IssueListResult]> = [];
       let error: string | null = null;
       let isPending = false;
+      let awaitingAnswer = false;
       for (const target of JSON.parse(key) as ReadonlyArray<IssueListTarget>) {
         const result = get(list(target));
         isPending ||= result.waiting;
+        awaitingAnswer ||= result._tag === "Initial";
         if (result._tag === "Failure" && error === null) error = formatError(result.cause);
         const value = Option.getOrNull(AsyncResult.value(result));
         if (value !== null) answers.push([target.environmentId, value]);
       }
-      return { answers, error, isPending };
+      return { answers, error, isPending, awaitingAnswer };
     }).pipe(Atom.withLabel(`issues:merged-list:${key}`)),
   );
   const refresh = (

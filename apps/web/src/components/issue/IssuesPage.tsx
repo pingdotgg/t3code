@@ -541,7 +541,7 @@ export function IssuesPage() {
         </Button>
       </EmptyContent>
     </Empty>
-  ) : groups.length === 0 ? (
+  ) : groups.length === 0 && !list.awaitingAnswer ? (
     <Empty>
       <EmptyMedia variant="icon">
         <IssueGlyph.issue />
@@ -602,7 +602,10 @@ export function IssuesPage() {
                 {error.projectTitle}: {error.message}
               </p>
             ))}
-            {group.tracker.configured && group.rows.length === 0 && group.errors.length === 0 ? (
+            {group.tracker.configured &&
+            group.rows.length === 0 &&
+            group.errors.length === 0 &&
+            !list.awaitingAnswer ? (
               <p className="px-3 text-sm text-muted-foreground">
                 {debouncedQuery ? (
                   <T>Nothing matches that.</T>
@@ -663,6 +666,8 @@ export function IssuesPage() {
           </section>
         );
       })}
+      {/* An environment still reading may add rows, or trackers the others do not have. */}
+      {list.awaitingAnswer ? <PullRequestListGhost rows={3} /> : null}
     </div>
   );
 
