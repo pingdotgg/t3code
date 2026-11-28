@@ -443,7 +443,9 @@ const markdownSourceKey = new PluginKey<MarkdownSourceState>("composer-markdown-
 function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
   let view: EditorView | null = null;
   // Rewriting under a held mouse reflows the text, and the browser's next
-  // hit-test moves the selection. Normalize once the button is released.
+  // hit-test moves the selection. A click normalizes once the button is
+  // released; a drag's range stays as dragged, since showing markers would
+  // still move the text under the pointer.
   let mouseSelecting = false;
   return new Plugin<MarkdownSourceState>({
     key: markdownSourceKey,
@@ -454,7 +456,9 @@ function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
       const release = () => {
         if (!mouseSelecting) return;
         mouseSelecting = false;
-        if (view) view.dispatch(view.state.tr.setSelection(view.state.selection));
+        if (view?.state.selection.empty) {
+          view.dispatch(view.state.tr.setSelection(view.state.selection));
+        }
       };
       target.addEventListener("mouseup", release);
       // A native drag or a context menu takes the mouseup.
