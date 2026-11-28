@@ -2959,6 +2959,7 @@ const make = Effect.gen(function* () {
       };
     }),
     delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (callerScope, input) {
+      const title = firstLineTitle(input.title);
       const environmentId =
         input.target === undefined
           ? undefined
@@ -2969,6 +2970,7 @@ const make = Effect.gen(function* () {
         // The task's child runs as an ordinary thread there; this thread keeps the task.
         const { taskId } = yield* remoteDelegation.delegate(scope, {
           ...input,
+          ...(title === undefined ? {} : { title }),
           target: { ...input.target, environmentId },
         });
         return yield* input.mode === "wait"
@@ -3076,7 +3078,6 @@ const make = Effect.gen(function* () {
         };
       }
       const parentNodeId = parentRun.rootNodeId;
-      const title = firstLineTitle(input.title);
       // The command commits the child's preparing run, which only this call
       // prepares, so a caller that goes away must not stop it in between.
       return yield* Effect.uninterruptibleMask((restore) =>
