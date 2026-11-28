@@ -37,6 +37,11 @@ describe("codexRateLimitsToLimits", () => {
     });
     expect(codexRateLimitsToLimits({ checkedAt, snapshot: {}, resetCredits: { availableCount: 2 } }).resetCredits)
       .toEqual({ availableCount: 2 });
+    expect(codexRateLimitsToLimits({
+      checkedAt,
+      snapshot: {},
+      resetCredits: { availableCount: 30, credits: Array.from({ length: 30 }, (_, index) => ({ status: "available", expiresAt: 1_784_000_000 + (29 - index) * 3600 })) },
+    }).resetCredits?.expiries).toEqual(Array.from({ length: 20 }, (_, index) => new Date((1_784_000_000 + index * 3600) * 1000).toISOString()));
   });
 
   it("shows an Enterprise monthly credit allowance in reads and notifications without a duration", () => {

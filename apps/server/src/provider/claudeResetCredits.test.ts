@@ -87,7 +87,7 @@ describe("claudeResetCreditsToContract", () => {
             gives_back_weekly: true,
             ends_at: "2027-03-09T07:59:00Z",
           }),
-          grant({ id: "fable_b", gives_back_weekly: true, type: "weekly" }),
+          grant({ id: "fable_b", gives_back_weekly: true, type: "weekly", ends_at: "2026-12-10T22:00:00Z" }),
           grant({ id: "session_a", type: "session" }),
           grant({ id: "spent", clears: ["seven_day"], resets_left: 0 }),
         ],
@@ -106,6 +106,9 @@ describe("claudeResetCreditsToContract", () => {
       ["fable_a", "Fable reset", 2],
     ]);
     expect(credits).toMatchObject({ availableCount: 4, nextCreditId: "weekly_a" });
+    expect(credits?.options?.find((option) => option.creditId === "fable_a")?.expiries).toEqual([
+      "2026-12-10T22:00:00.000Z", "2027-03-09T07:59:00.000Z",
+    ]);
   });
 
   it("offers nothing to redeem without a usable next grant or an eligible account", () => {
