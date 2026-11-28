@@ -373,17 +373,18 @@ export function applyOrchestrationV2ProjectionEvent(
     }
     case "node.updated":
       return { ...base, nodes: upsertEntity(base.nodes, event.payload) };
-    case "subagent.updated":
+    case "subagent.updated": {
+      const previous = base.subagents.find((subagent) => subagent.id === event.payload.id);
+      const restored = restoreSubagentBodies(event.payload, previous);
+      const subagent =
+        restored.completionDelivery === undefined && previous?.completionDelivery !== undefined
+          ? { ...restored, completionDelivery: previous.completionDelivery }
+          : restored;
       return {
         ...base,
-        subagents: upsertEntity(
-          base.subagents,
-          restoreSubagentBodies(
-            event.payload,
-            base.subagents.find((subagent) => subagent.id === event.payload.id),
-          ),
-        ),
+        subagents: upsertEntity(base.subagents, subagent),
       };
+    }
     case "provider-session.attached":
     case "provider-session.updated":
       return {

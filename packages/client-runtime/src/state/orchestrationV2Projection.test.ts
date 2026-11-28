@@ -625,6 +625,93 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.visibleTurnItems).toEqual([inheritedRow]);
     expect(next?.visibleTurnItems[0]).toBe(inheritedRow);
   });
+
+  it("preserves subagent completionDelivery across lifecycle updates that omit it", () => {
+    const later = DateTime.add(now, { seconds: 1 });
+    const subagentId = NodeId.make("node-delegated-completion-task");
+    const task = {
+      id: subagentId,
+      threadId,
+      runId,
+      parentNodeId: NodeId.make("node-delegated-completion-root"),
+      origin: "app_owned",
+      createdBy: "agent",
+      driver: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerThreadId: null,
+      childThreadId: null,
+      nativeTaskRef: null,
+      prompt: "Inspect the stop barrier.",
+      title: null,
+      model: null,
+      completionWake: "always",
+      completionDelivery: {
+        state: "disposed",
+        observedByRunId: null,
+      },
+      status: "running",
+      result: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+    } as OrchestrationV2ThreadProjection["subagents"][number];
+    const { completionDelivery: _completionDelivery, ...staleTask } = task;
+    const subagentEvent = (
+      id: string,
+      occurredAt: DateTime.Utc,
+      payload: OrchestrationV2ThreadProjection["subagents"][number],
+    ) =>
+      ({
+        id,
+        type: "subagent.updated",
+        threadId,
+        runId,
+        nodeId: subagentId,
+        driver: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        occurredAt,
+        payload,
+      }) as OrchestrationV2DomainEvent;
+
+    const disposed = applyOrchestrationV2ProjectionEvent(
+      emptyProjection,
+      subagentEvent("event-subagent-disposed", now, task),
+    );
+    const interrupted = applyOrchestrationV2ProjectionEvent(
+      disposed,
+      subagentEvent("event-subagent-stale-interrupted", later, {
+        ...staleTask,
+        status: "interrupted",
+        completedAt: later,
+        updatedAt: later,
+      }),
+    );
+
+    expect(interrupted?.subagents[0]?.status).toBe("interrupted");
+    expect(interrupted?.subagents[0]?.completionDelivery).toEqual({
+      state: "disposed",
+      observedByRunId: null,
+    });
+
+    const delivered = applyOrchestrationV2ProjectionEvent(
+      interrupted,
+      subagentEvent("event-subagent-explicit-delivery", later, {
+        ...staleTask,
+        status: "interrupted",
+        completedAt: later,
+        updatedAt: later,
+        completionDelivery: {
+          state: "delivered",
+          observedByRunId: runId,
+        },
+      }),
+    );
+
+    expect(delivered?.subagents[0]?.completionDelivery).toEqual({
+      state: "delivered",
+      observedByRunId: runId,
+    });
+  });
 });
 
 it("does not scan every row against every run for a streaming item update", () => {
