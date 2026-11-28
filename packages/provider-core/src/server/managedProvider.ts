@@ -292,10 +292,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       },
     );
     yield* Ref.set(settingsRef, nextSettings);
-    if (input.retryCheckSoon?.(nextSnapshot) === true) {
-      yield* Ref.set(recheckPendingRef, true);
-      // Wake the interval loop so a check made outside it does not wait out a full interval.
-      yield* Queue.offer(refreshIntervalChanges, undefined);
+    if (input.retryCheckSoon !== undefined) {
+      const retry = input.retryCheckSoon(nextSnapshot);
+      // Wake the interval loop so its next sleep matches this check, wherever the check ran.
+      if ((yield* Ref.getAndSet(recheckPendingRef, retry)) !== retry) {
+        yield* Queue.offer(refreshIntervalChanges, undefined);
+      }
     }
     yield* PubSub.publish(changesPubSub, nextSnapshot);
     yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration);
