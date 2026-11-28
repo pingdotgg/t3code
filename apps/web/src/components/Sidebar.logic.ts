@@ -1,6 +1,9 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadConnectionStatus,
+  resolveThreadWorkingStartedAt,
+} from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
@@ -659,6 +662,7 @@ type ThreadStatusInput = Pick<
   | "interactionMode"
   | "latestRun"
   | "runtime"
+  | "connectionPhase"
 > & {
   lastVisitedAt?: string | null | undefined;
   pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
@@ -910,6 +914,9 @@ export function resolveAdjacentThreadId<T>(input: {
 // Ready waits on the user; Monitoring waits on background work that will wake the agent.
 // Detached commands, such as a dev server, do not hold completion.
 export type SidebarThreadStatus =
+  | "connecting"
+  | "reconnecting"
+  | "offline"
   | "approval"
   | "input"
   | "request"
@@ -952,7 +959,10 @@ type SidebarThreadStatusInput = Pick<
   | "pendingGuestMessageCount"
   | "runtime"
   | "blockedOnThreadWait"
->;
+  | "connectionPhase"
+> & {
+  readonly pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"];
+};
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
@@ -965,6 +975,8 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if ((thread.pendingGuestMessageCount ?? 0) > 0) {
     return "request";
   }
+  const connectionStatus = resolveThreadConnectionStatus(thread);
+  if (connectionStatus !== null) return connectionStatus;
   if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
     return "waiting";
   }
@@ -1095,6 +1107,9 @@ export function groupSidebarThreadsByProject<
 }
 
 export type SidebarV2TopStatusKind =
+  | "connecting"
+  | "reconnecting"
+  | "offline"
   | "approval"
   | "done"
   | "failed"
@@ -1124,6 +1139,13 @@ export function resolveSidebarV2TopStatus(input: {
     return "approval";
   }
   if (input.status === "input" || input.status === "request") {
+    return input.status;
+  }
+  if (
+    input.status === "connecting" ||
+    input.status === "reconnecting" ||
+    input.status === "offline"
+  ) {
     return input.status;
   }
   if (input.status === "failed" || input.status === "limited") {
@@ -1281,6 +1303,21 @@ export function resolveThreadStatusPill(input: {
       label: msg("Guest Request"),
       colorClass: "text-guest-foreground",
       dotClass: "bg-guest",
+      pulse: false,
+    };
+  }
+
+  const connectionStatus = resolveThreadConnectionStatus(thread);
+  if (connectionStatus !== null) {
+    return {
+      label:
+        connectionStatus === "connecting"
+          ? msg("Connecting")
+          : connectionStatus === "reconnecting"
+            ? msg("Reconnecting")
+            : msg("Offline"),
+      colorClass: "text-sidebar-muted-foreground",
+      dotClass: "bg-sidebar-muted-foreground",
       pulse: false,
     };
   }

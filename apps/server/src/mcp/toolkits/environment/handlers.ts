@@ -1,6 +1,7 @@
 import { OrchestratorMcpFailure, type ServerSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
+import * as HostResources from "../../../resourceTelemetry/HostResources.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -29,6 +30,33 @@ export function preferences(settings: ServerSettings) {
     },
   };
 }
+const GB = 1e9;
+const gigabytes = (bytes: number) => Math.round((bytes / GB) * 10) / 10;
+
+const machine = Effect.gen(function* () {
+  const hostResources = yield* HostResources.HostResources;
+  const [snapshot, pressure] = yield* Effect.all([hostResources.read, hostResources.readPressure], {
+    concurrency: "unbounded",
+  });
+  return {
+    pressure: {
+      memory: pressure.memory,
+      cpu: pressure.cpu,
+      io: pressure.io,
+      disk: pressure.disk,
+    },
+    cpuCount: snapshot.cpuCount,
+    cpuUsedPercent:
+      snapshot.cpuUtilization === null ? null : Math.round(snapshot.cpuUtilization * 100),
+    memoryAvailableGb: gigabytes(snapshot.availableMemoryBytes),
+    memoryTotalGb: gigabytes(snapshot.totalMemoryBytes),
+    diskFreeGb:
+      snapshot.diskFreeBytes === undefined || snapshot.diskFreeBytes === null
+        ? null
+        : gigabytes(snapshot.diskFreeBytes),
+  };
+});
+
 const access = Effect.gen(function* () {
   const context = yield* readCaller();
   const environment = yield* Environment.ServerEnvironment;
@@ -51,6 +79,7 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
         serverVersion: descriptor.serverVersion,
         platform: descriptor.platform,
         preferences: preferences(current),
+        machine: yield* machine,
       };
     }),
   ),

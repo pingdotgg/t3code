@@ -1451,6 +1451,8 @@ interface ActiveCodexTurnContext {
   capacityRetryAttempt?: number;
   capacityRetryPending?: Deferred.Deferred<ActiveCodexTurnContext | undefined>;
   closedCommandItemIds?: ReadonlySet<string>;
+  /** Auto-review rationale by the command it denied; the declined item arrives after it. */
+  autoReviewDenials?: Map<string, string>;
   recoveredProviderRetries?: number;
   latestProviderFailure?: {
     readonly nativeMessage: string;
@@ -4505,6 +4507,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             startedAt,
             completedAt,
           };
+          const declined = item.status === "declined";
+          const autoReviewDenial = declined ? context.autoReviewDenials?.get(item.id) : undefined;
+          if (declined) context.autoReviewDenials?.delete(item.id);
+          const output =
+            autoReviewDenial !== undefined && !item.aggregatedOutput
+              ? autoReviewDenial
+              : item.aggregatedOutput;
           const turnItem: OrchestrationV2TurnItem = {
             id: turnItemId,
             threadId: context.projectionThreadId,
@@ -4520,11 +4529,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             startedAt,
             completedAt,
             updatedAt,
+            ...(declined ? { toolNonExecutionKind: "declined" } : {}),
             type: "command_execution",
             input: item.command,
-            ...(item.aggregatedOutput === null || item.aggregatedOutput === undefined
-              ? {}
-              : { output: item.aggregatedOutput }),
+            ...(output === null || output === undefined ? {} : { output }),
             ...(item.exitCode === null || item.exitCode === undefined
               ? {}
               : { exitCode: item.exitCode }),
@@ -5885,6 +5893,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
             ),
           ),
+        );
+
+        yield* client.handleServerNotification("item/autoApprovalReview/completed", (payload) =>
+          Effect.gen(function* () {
+            const rationale = trimText(payload.review.rationale);
+            if (payload.review.status !== "denied" || !payload.targetItemId || !rationale) return;
+            const resolved = yield* resolveItemEventContext(payload.turnId);
+            if (resolved === undefined) return;
+            (resolved.context.autoReviewDenials ??= new Map()).set(
+              payload.targetItemId,
+              `Auto-review denied this command: ${rationale}`,
+            );
+          }),
         );
 
         yield* client.handleServerNotification("item/started", (payload) =>

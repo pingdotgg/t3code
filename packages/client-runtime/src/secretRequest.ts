@@ -69,7 +69,7 @@ export function secretRequestInputs(
 // Backticks, <angle brackets> and markdown link targets (balanced parentheses allowed) keep their
 // exact text; a bare link drops trailing sentence punctuation.
 const REASON_LINK =
-  /`(https?:\/\/[^`\s]+)`|<(https?:\/\/[^>\s]+)>|\]\((https?:\/\/(?:[^()\s]|\([^()\s]*\))+)\)|(https?:\/\/[^\s<>"'`[\]]+)/giu;
+  /`(https?:\/\/[^`\s]+)`|<(https?:\/\/[^>\s]+)>|\]\((https?:\/\/(?:[^()\s]|\([^()\s]*\))+)\)|(https?:\/\/(?:[^\s<>"'`[\]]|\[[^\s<>"'`[\]]*\])+)/giu;
 /** Drops trailing sentence punctuation; a `)` stays when the link opened a matching `(`. */
 function trimPunctuation(link: string): string {
   let end = link.length;

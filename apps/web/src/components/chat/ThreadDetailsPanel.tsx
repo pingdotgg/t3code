@@ -20,6 +20,7 @@ import { T, useGT } from "gt-react";
 import { useState, type ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
+import { ThreadDetailsMachineLoad } from "./ThreadDetailsMachineLoad";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadRepositorySections } from "./ThreadRepositorySections";
@@ -195,7 +196,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         return (
           <>
             <div className="group/details-items thread-details-stack flex flex-col gap-1">
-              {Object.values(show).some(Boolean) || visible.usage || visible.context ? (
+              {Object.values(show).some(Boolean) ||
+              visible.usage ||
+              visible.context ||
+              visible.machineLoad ? (
                 <section aria-label={gt("Workspace")} className="surface-tray rounded-pane p-1">
                   <div className="surface-composer rounded-lg p-0.5">
                     {show.environment ? (
@@ -305,7 +309,9 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                       />
                     ) : null}
                   </div>
-                  {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
+                  {visible.usage ? (
+                    <ThreadDetailsUsage {...props.usage} environmentId={props.environmentId} />
+                  ) : null}
                   {visible.context ? (
                     <ThreadDetailsContext
                       usage={props.usage.contextWindow}
@@ -313,6 +319,9 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                       compactDisabled={props.compactDisabled}
                       compactDisabledReason={props.compactDisabledReason}
                     />
+                  ) : null}
+                  {visible.machineLoad ? (
+                    <ThreadDetailsMachineLoad environmentId={props.environmentId} />
                   ) : null}
                 </section>
               ) : null}
