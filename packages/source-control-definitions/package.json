@@ -6,12 +6,18 @@
     "./registry": {
       "types": "./src/registry.ts",
       "import": "./src/registry.ts"
+    },
+    "./standalone-issue-links": {
+      "types": "./src/standaloneIssueLinks.ts",
+      "import": "./src/standaloneIssueLinks.ts"
     }
   },
   "scripts": {
     "typecheck": "effect-tsgo tsrs --noEmit"
   },
   "dependencies": {
+    "@t3tools/issue-tracker-jira": "workspace:*",
+    "@t3tools/issue-tracker-linear": "workspace:*",
     "@t3tools/source-control-azure-devops": "workspace:*",
     "@t3tools/source-control-bitbucket": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",

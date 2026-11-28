@@ -22,14 +22,15 @@ import type {
   TrackerIssueSummary,
 } from "@t3tools/source-control-core/server/IssueTracker";
 
+import { JIRA_HOST, JIRA_KIND, parseJiraIssueUrl } from "../shared/issueUrl.ts";
 import { adfToMarkdown, hasUnwritableContent, markdownToAdf } from "./adf.ts";
 import * as JiraApi from "./JiraApi.ts";
 
 const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
-  tracker: JiraApi.KIND,
+  tracker: JIRA_KIND,
   displayName: "Jira",
   // Every Jira Cloud site; the one this server reads is part of the saved credential.
-  host: "atlassian.net",
+  host: JIRA_HOST,
   scopeNoun: "project",
   credential: {
     label: "API token",
@@ -40,16 +41,6 @@ const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
     ],
   },
 };
-
-/** `https://<site>.atlassian.net/browse/<PROJECT>-<n>`, keeping the site as the workspace. */
-export function parseJiraIssueUrl(url: URL) {
-  const site = url.hostname.toLowerCase();
-  if (url.protocol !== "https:" || !site.endsWith(`.${DESCRIPTOR.host}`)) return null;
-  const [, resource, key] = url.pathname.split("/");
-  if (resource !== "browse" || key === undefined) return null;
-  const scope = /^([A-Z][A-Z0-9_]*)-[1-9][0-9]*$/.exec(key)?.[1];
-  return scope === undefined ? null : { host: DESCRIPTOR.host, workspace: site, scope, key };
-}
 
 /** No reactions or development panel: Jira Cloud's public API serves neither. */
 const CAPABILITIES: IssueCapabilities = {
@@ -323,7 +314,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
       );
 
     const api: StandaloneIssueTrackerApi = {
-      kind: JiraApi.KIND,
+      kind: JIRA_KIND,
       capabilities: CAPABILITIES,
       standalone: DESCRIPTOR,
       parseIssueUrl: parseJiraIssueUrl,

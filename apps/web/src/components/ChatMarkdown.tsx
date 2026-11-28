@@ -154,7 +154,7 @@ import { rightPanelHostRef, useRightPanelStore } from "../rightPanelStore";
 import { useOpenIssueLink } from "../lib/openIssueLink";
 import { issueTrackerEnvironment } from "../state/issueTrackers";
 import { useEnvironmentQuery } from "../state/query";
-import { readThreadShell, useProjects } from "../state/entities";
+import { readThreadShell, useProjects, useQuietThreadShell } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
 import { assetEnvironment } from "../state/assets";
@@ -741,6 +741,8 @@ function useChatMarkdownState(
         : revealInFileExplorerLabelForOs(revealInFileManager, messages);
   const projects = useProjects();
   const issueProjects = projects.filter((project) => project.environmentId === environmentId);
+  // A standalone tracker's link with no bound project resolves through the thread's own.
+  const issuePreferredProjectId = useQuietThreadShell(threadRef ?? null)?.projectId;
   // Only text naming a standalone tracker asks for its bindings, whose read probes the tracker.
   const issueTrackers =
     useEnvironmentQuery(
@@ -1140,6 +1142,7 @@ function useChatMarkdownState(
     openMarkdownMedia,
     projects,
     issueProjects,
+    issuePreferredProjectId,
     issueTrackers,
     linkedThreadPullRequestFor,
     resolveThreadPullRequest,
@@ -1313,6 +1316,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       openExternalLinkInPreview,
       projects,
       issueProjects,
+      issuePreferredProjectId,
       issueTrackers,
       linkedThreadPullRequestFor,
       resolveThreadPullRequest,
@@ -1392,6 +1396,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           ? resolveIssueLinkTarget({
               url: href,
               projects: issueProjects,
+              preferredProjectId: issuePreferredProjectId,
               trackers: issueTrackers,
             })
           : null;

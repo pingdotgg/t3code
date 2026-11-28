@@ -1,4 +1,5 @@
 import { IssueTrackerKind } from "@t3tools/contracts";
+import type { StandaloneIssueLinkDefinition } from "@t3tools/source-control-core/shared/definition";
 
 export const LINEAR_KIND = IssueTrackerKind.make("linear");
 export const LINEAR_HOST = "linear.app";
@@ -11,3 +12,9 @@ export function parseLinearIssueUrl(url: URL) {
   const scope = /^([A-Z][A-Z0-9_]*)-[1-9][0-9]*$/.exec(key)?.[1];
   return scope === undefined ? null : { host: LINEAR_HOST, workspace, scope, key };
 }
+
+export const issueLinkDefinition: StandaloneIssueLinkDefinition = {
+  tracker: LINEAR_KIND,
+  parseIssueUrl: parseLinearIssueUrl,
+  mayContainIssueUrl: (text: string) => /linear\.app(?::\d+)?\//i.test(text),
+};

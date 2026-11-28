@@ -140,6 +140,23 @@ describe("resolveIssueLinkTarget", () => {
       resolveIssueLinkTarget({ url: "https://linear.app/acme/issue/WEB-17", projects }),
     ).toBeNull();
 
+    // With no binding, the caller's own project reads the link with the first account.
+    const unbound = (url: string) =>
+      resolveIssueLinkTarget({
+        url,
+        projects,
+        preferredProjectId: ProjectId.make("p1"),
+        trackers: { ...trackers, bindings: {} },
+      })?.ref;
+    expect(unbound("https://linear.app/acme/issue/WEB-17")).toEqual({
+      projectId: "p1",
+      tracker: "linear",
+      host: "linear.app",
+      scope: "WEB",
+      key: "WEB-17",
+    });
+    expect(unbound("https://linear.app/othercorp/issue/WEB-17")).toBeUndefined();
+
     // A second account reaches its own workspace, through only the projects bound with it.
     const accountId = IssueTrackerAccountId.make("second");
     const [p1, p2] = [ProjectId.make("p1"), ProjectId.make("p2")];
@@ -160,6 +177,50 @@ describe("resolveIssueLinkTarget", () => {
     ]).toEqual(["p2", "p1"]);
   });
 
+  it("opens a Jira link through No project only for the connected site", () => {
+    const jira = IssueTrackerKind.make("jira");
+    const scratch = {
+      id: ProjectId.make("scratch"),
+      environmentId: EnvironmentId.make("env"),
+      repositoryIdentity: null,
+    };
+    const connection = {
+      tracker: jira,
+      displayName: "Jira",
+      host: "atlassian.net",
+      scopeNoun: "project",
+      credential: { label: "API token", helpUrl: null },
+      connected: true,
+      account: "alex",
+      detail: null,
+      workspace: "acme.atlassian.net",
+      scopes: [],
+    };
+    const resolve = (url: string, trackers = { trackers: [connection], bindings: {} }) =>
+      resolveIssueLinkTarget({
+        url,
+        projects: [scratch, ...projects],
+        preferredProjectId: scratch.id,
+        trackers,
+      })?.ref;
+    expect(resolve("https://acme.atlassian.net/browse/HELP-42?focusedCommentId=1")).toEqual({
+      projectId: scratch.id,
+      tracker: jira,
+      host: "atlassian.net",
+      scope: "HELP",
+      key: "HELP-42",
+    });
+    expect(resolve("https://acme.atlassian.net:443/browse/HELP-42")?.key).toBe("HELP-42");
+    expect(resolve("https://other.atlassian.net/browse/HELP-42")).toBeUndefined();
+    expect(resolve("https://acme.atlassian.net.evil.test/browse/HELP-42")).toBeUndefined();
+    expect(
+      resolve("https://acme.atlassian.net/browse/HELP-42", {
+        trackers: [connection],
+        bindings: { [ProjectId.make("p1")]: { tracker: jira, scope: "HELP" } },
+      })?.projectId,
+    ).toBe("p1");
+  });
+
   it.each([
     "https://github.com.evil.example/acme/web/issues/7",
     "https://github.com/acme/web/pull/7",
@@ -172,6 +233,9 @@ describe("mayContainStandaloneIssueLink", () => {
   it.each([
     ["[issue](https://linear.app/acme/issue/WEB-17)", true],
     ["[issue](https://LINEAR.APP/acme/issue/WEB-17)", true],
+    ["[issue](https://acme.atlassian.net/browse/HELP-42)", true],
+    ["[issue](https://acme.atlassian.net:443/browse/HELP-42)", true],
+    ["[issue](https://linear.app:443/acme/issue/WEB-17)", true],
     ["[issue](https://github.com/acme/web/issues/7)", false],
   ])("classifies %s as %s", (text, expected) => {
     expect(mayContainStandaloneIssueLink(text)).toBe(expected);

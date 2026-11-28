@@ -1548,9 +1548,6 @@ importers:
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@t3tools/issue-tracker-linear':
-        specifier: workspace:*
-        version: link:../issue-tracker-linear
       '@t3tools/provider-acp-registry':
         specifier: workspace:*
         version: link:../provider-acp-registry
@@ -2412,6 +2409,12 @@ importers:
 
   packages/source-control-definitions:
     dependencies:
+      '@t3tools/issue-tracker-jira':
+        specifier: workspace:*
+        version: link:../issue-tracker-jira
+      '@t3tools/issue-tracker-linear':
+        specifier: workspace:*
+        version: link:../issue-tracker-linear
       '@t3tools/source-control-azure-devops':
         specifier: workspace:*
         version: link:../source-control-azure-devops
