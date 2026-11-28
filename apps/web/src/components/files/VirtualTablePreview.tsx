@@ -4,6 +4,7 @@ import { useClientSettings } from "~/hooks/useSettings";
 import { observeResize } from "~/lib/observeResize";
 import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
 import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
+import { selectRenderedContentOnSelectAll } from "./fileSurfaceChrome";
 import { createPositionMemory, PreviewPositionKey } from "./previewPosition";
 
 const savedRowPositions = createPositionMemory<{
@@ -634,6 +635,7 @@ function ScaledRows(
       tabIndex={0}
       className="min-h-0 flex-1 overflow-auto"
       onKeyDown={(event) => {
+        selectRenderedContentOnSelectAll(event);
         const node = event.currentTarget;
         const delta =
           event.key === "ArrowDown"
