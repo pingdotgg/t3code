@@ -14,6 +14,12 @@ describe("guest host images", () => {
     ["![a](file:///w/%73hot.png) ![b](/w/sh&#111;t2.png)", "/w/shot2.png", "image/png"],
     ["![a][r]\n\n[r]: /w/ref.png", "/w/ref.png", "image/png"],
     ["![a](file:///w/url%20form.png)", "/w/url form.png", "image/png"],
+    // Amp swaps local images for auth-only URLs and keeps the file in the fragment.
+    [
+      "![a](https://ampcode.com/user-content/attachments/a.png#amp-media-source=file%3A%2F%2F%2Fw%2Fshot.png)",
+      "/w/shot.png",
+      "image/png",
+    ],
     ["![a](C:\\w\\win.png)", "C:\\w\\win.png", "image/png"],
     ["![a][r]\n\n[r]: C:\\w\\ref.png", "C:/w/ref.png", "image/png"],
     [

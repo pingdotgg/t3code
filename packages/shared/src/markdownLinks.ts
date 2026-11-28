@@ -275,7 +275,8 @@ export function splitMarkdownLinkSearchAndHash(value: string): {
  * The decoded path a markdown destination names on the host, before any workspace resolution, or
  * null for a `file:` URL that does not parse. Clients and the guest media route both read it here.
  */
-export function markdownDestinationHostPath(source: string): string | null {
+export function markdownDestinationHostPath(destination: string): string | null {
+  const source = ampMediaSourceFileUrl(destination) ?? destination;
   if (/^file:/i.test(source)) {
     const target = parseFileUrlHref(source);
     return target === null
@@ -285,6 +286,16 @@ export function markdownDestinationHostPath(source: string): string | null {
   return stripSlashPrefixedWindowsDrive(
     safeDecodeURIComponent(splitMarkdownLinkSearchAndHash(source).path),
   );
+}
+
+const AMP_MEDIA_SOURCE_PATTERN = /[#&]amp-media-source=([^&]*)/;
+
+/** Amp swaps local images for auth-only attachment URLs and keeps the file URL in this fragment. */
+function ampMediaSourceFileUrl(source: string): string | null {
+  if (!/^https?:/i.test(source)) return null;
+  const match = AMP_MEDIA_SOURCE_PATTERN.exec(splitMarkdownLinkSearchAndHash(source).hash);
+  const fileUrl = match ? safeDecodeURIComponent(match[1] ?? "") : "";
+  return /^file:/i.test(fileUrl) ? fileUrl : null;
 }
 
 const DIRECT_IMAGE_SOURCE_PATTERN = /^(?:https?:|data:|blob:|\/\/)/i;
@@ -322,7 +333,8 @@ export function classifyMarkdownImageSource(
 ): MarkdownImageSource {
   if (value === null || value === undefined) return { _tag: "Blocked" };
 
-  const source = normalizeMarkdownLinkDestination(value);
+  const destination = normalizeMarkdownLinkDestination(value);
+  const source = ampMediaSourceFileUrl(destination) ?? destination;
   if (source.length === 0 || source.startsWith("#") || source.startsWith("?")) {
     return { _tag: "Blocked" };
   }
