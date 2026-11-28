@@ -169,10 +169,35 @@ const failStorage = (cause: unknown) =>
     ),
   );
 
+/** Whether credentials sent to `url` cross the network unencrypted. */
+const sendsInClear = (url: string | URL) => {
+  const { protocol, hostname } = new URL(url);
+  return protocol === "http:" && !isLocalLoopbackHost(hostname) && !isTailnetHost(hostname);
+};
+
+const IPV4_ADDRESS = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+
+/**
+ * An RFC 1918 address, as a home or office LAN hands out. Not the shared
+ * 100.64.0.0/10 space carrier-grade NAT uses, nor test ranges: plain http to
+ * those can cross networks the user doesn't control.
+ */
+const isLanAddress = (host: string) => {
+  const octets = IPV4_ADDRESS.exec(host)?.slice(1).map(Number);
+  if (octets === undefined || octets.some((octet) => octet > 255)) return false;
+  const [first, second] = octets as [number, number];
+  return (
+    first === 10 ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
+  );
+};
+
 /**
  * The base URL a peer is reached at, normalised to its origin. The pairing
- * code and then the link's token travel to it, so plain http is accepted only
- * where the network already encrypts: this machine, or a Tailscale address.
+ * code and then the link's token travel to it, so plain http off this machine
+ * and the tailnet is accepted only to a LAN address. A name is refused: DNS
+ * could resolve it to a public address.
  */
 const peerOrigin = (url: string) => {
   const parsed = URL.parse(url);
@@ -185,20 +210,24 @@ const peerOrigin = (url: string) => {
       }),
     );
   }
-  if (
-    parsed.protocol === "http:" &&
-    !isLocalLoopbackHost(parsed.hostname) &&
-    !isTailnetHost(parsed.hostname)
-  ) {
+  if (sendsInClear(parsed) && !isLanAddress(parsed.hostname)) {
     return Effect.fail(
       new PeerLinkError({
         reason: "unreachable",
-        message: `${parsed.origin} is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
+        message: `${parsed.origin} is plain http to an address outside the private LAN ranges (10.x, 172.16-31.x, 192.168.x), so the link's credentials could travel unencrypted across networks you don't control. Use its https address, its Tailscale name (.ts.net), or its address on your LAN.`,
       }),
     );
   }
   return Effect.succeed(parsed.origin);
 };
+
+/**
+ * The origins a link made over `primary` keeps. As with a paired client's
+ * token, a link's token goes over plain http only when the link was made over
+ * it, so one made over https, loopback or the tailnet never travels in clear.
+ */
+const keptOrigins = (primary: string, origins: ReadonlyArray<string>) =>
+  sendsInClear(primary) ? origins : origins.filter((origin) => !sendsInClear(origin));
 
 /** The system error under a failed connection, such as ECONNREFUSED or ENOTFOUND. */
 const connectionCode = (cause: unknown) =>
@@ -447,9 +476,9 @@ const make = Effect.gen(function* () {
 
   /**
    * The addresses that answer as `environmentId`, in the order given, with
-   * what the first one answered. Addresses this environment would not send
-   * credentials to are skipped; when none answers as it, the failure says why
-   * for each.
+   * the one to link through and what it answered. Addresses this environment
+   * would not send credentials to are skipped; when none answers as it, the
+   * failure says why for each.
    */
   const answeringAs = Effect.fn("PeerLinks.answeringAs")(function* (
     urls: ReadonlyArray<string>,
@@ -483,7 +512,8 @@ const make = Effect.gen(function* () {
     const matching = checked.flatMap((result) =>
       Result.isSuccess(result) ? [result.success] : [],
     );
-    const first = matching[0];
+    // Plain http is the fallback when no address that encrypts answers.
+    const first = matching.find((found) => !sendsInClear(found.origin)) ?? matching[0];
     if (first === undefined) {
       const failures = checked.flatMap((result) =>
         Result.isFailure(result) ? [result.failure] : [],
@@ -496,7 +526,7 @@ const make = Effect.gen(function* () {
       });
     }
     // Each address is kept once, even when two spellings share an origin.
-    const origins = [...new Set(matching.map((found) => found.origin))];
+    const origins = keptOrigins(first.origin, [...new Set(matching.map((found) => found.origin))]);
     return { primary: first.origin, peer: first.descriptor, origins };
   });
 
@@ -504,7 +534,11 @@ const make = Effect.gen(function* () {
   const answeringAt = Effect.fn("PeerLinks.answeringAt")(function* (urls: ReadonlyArray<string>) {
     const origins = yield* Effect.forEach(urls, peerOrigin);
     const primary = origins[0]!;
-    return { primary, peer: yield* probe(primary), origins };
+    const peer = yield* probe(primary);
+    if (sendsInClear(primary) && origins.length > 1) {
+      return yield* answeringAs(origins, peer.environmentId, peer.label);
+    }
+    return { primary, peer, origins: keptOrigins(primary, origins) };
   });
 
   const linkWith = Effect.fn("PeerLinks.link")(function* (

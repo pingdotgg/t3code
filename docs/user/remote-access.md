@@ -79,6 +79,7 @@ Link two T3 Code machines (beta) so agents on one can launch, message, delegate 
 
 - **Access boundary**: Agents never get more permissions on the target than the link's access level or their own thread mode. Below Full access, linked agents can only modify threads they started and skip project setup scripts.
 - **Delegation**: Agents can target a linked machine with `delegate_task`, or ask you to link an unlinked machine via an in-thread approval card.
+- **Plain HTTP on a LAN**: A link can use a machine's plain `http://` IP address in a private range (`10.x`, `172.16–31.x`, `192.168.x`). Machines picked from the list link over their HTTPS, Tailscale or T3 Connect address instead whenever one answers. Plain HTTP to any other address or hostname is refused, except `localhost` and Tailscale (`.ts.net`) names.
 
 ### Read a linked machine's threads
 
