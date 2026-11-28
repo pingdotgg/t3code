@@ -510,12 +510,10 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
             </WorkingBarChip>
           ) : null}
           {setupLive && ctx.onCancelWorktreeSetup ? (
-            <WorkingBarChip
-              icon={<XIcon aria-hidden className="size-3 shrink-0" />}
-              onClick={ctx.onCancelWorktreeSetup}
-            >
+            <Button size="xs" variant="ghost-muted" onClick={ctx.onCancelWorktreeSetup}>
+              <XIcon aria-hidden />
               <T>Cancel</T>
-            </WorkingBarChip>
+            </Button>
           ) : null}
           {window ? <WorkingBarSlot window={window} pendingRequest={pendingRequest} /> : null}
         </div>
