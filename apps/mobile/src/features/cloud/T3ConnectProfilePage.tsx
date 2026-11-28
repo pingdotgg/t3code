@@ -13,9 +13,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
-import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
-import { Menu } from "../../components/ui/Menu";
 import { m, type MessageResolver } from "../../i18n/messages";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { relayEnvironmentDiscovery } from "../../state/relay";
@@ -24,6 +22,7 @@ import {
   deregisterManagedRelayEnvironmentCommand,
   useManagedRelayEnvironments,
 } from "./managedRelayState";
+import { RegisteredServerMenu } from "./RegisteredServerMenu";
 
 const linkedAtFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
@@ -201,31 +200,16 @@ export function T3ConnectProfilePage() {
                 />
               ) : (
                 <View pointerEvents={deregisteringEnvironmentId === null ? "auto" : "none"}>
-                  <Menu
+                  <RegisteredServerMenu
                     actions={environmentMenuActions}
-                    isAnchoredToRight
+                    accessibilityLabel={gt("Actions for {environment}", {
+                      environment: environment.label,
+                    })}
+                    disabled={deregisteringEnvironmentId !== null}
                     onPressAction={() =>
                       confirmDeregister(environment, () => void handleDeregister(environment))
                     }
-                  >
-                    <Pressable
-                      accessibilityLabel={gt("Actions for {environment}", {
-                        environment: environment.label,
-                      })}
-                      accessibilityRole="button"
-                      disabled={deregisteringEnvironmentId !== null}
-                      className="size-[30px] items-center justify-center active:opacity-60 disabled:opacity-50"
-                    >
-                      <View className="rotate-90">
-                        <SymbolView
-                          name="ellipsis"
-                          size={18}
-                          tintColorClassName={"accent-clerk-foreground-muted"}
-                          type="monochrome"
-                        />
-                      </View>
-                    </Pressable>
-                  </Menu>
+                  />
                 </View>
               )
             }
