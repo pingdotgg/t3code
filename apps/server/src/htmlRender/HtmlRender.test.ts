@@ -76,7 +76,7 @@ describe("HtmlRender", () => {
       const prepared = yield* htmlRender.prepare(
         [
           "<!doctype html><html><head><title>Shots</title></head><body>",
-          `${commented}<img src="${png}"><div style="background:url(${svg})"></div>`,
+          `${commented}<img src="${png}"><img src="${svg}#svgView(viewBox(0,0,64,64))"><div style="background:url(${svg})"></div><div style="background:url(${svg}#mark)"></div>`,
           `<!--><img src="${png}"><!-- note --!><img src="${png}">`,
           `<script>const marker = '<!--'; const shots = ['${png}', \`${svg}\`];</script>`,
           ...kept.map((src) => `<img src="${src}">`),
@@ -87,8 +87,10 @@ describe("HtmlRender", () => {
       const pngUri = `data:image/png;base64,${Base64.encode(PNG_BYTES)}`;
       const svgUri = `data:image/svg+xml;base64,${Base64.encode("<svg/>")}`;
       expect(prepared).toContain(`${commented}<img src="${pngUri}">`);
+      expect(prepared).toContain(`<img src="${svgUri}#svgView(viewBox(0,0,64,64))">`);
       expect(prepared).toContain(`<!--><img src="${pngUri}"><!-- note --!><img src="${pngUri}">`);
       expect(prepared).toContain(`url(${svgUri})`);
+      expect(prepared).toContain(`url(${svgUri}#mark)`);
       expect(prepared).toContain(`['${pngUri}', \`${svgUri}\`]`);
       expect(prepared).not.toContain(directory);
       for (const src of kept) expect(prepared).toContain(`<img src="${src}">`);
@@ -173,6 +175,7 @@ describe("HtmlRender", () => {
       const folder = path.join(directory, "folder.png");
       yield* fileSystem.makeDirectory(folder);
       const missing = path.join(directory, "missing.jpg");
+      const missingSvg = path.join(directory, "missing.svg");
       const secret = path.join(directory, "secret.png");
       yield* fileSystem.writeFileString(secret, "API_KEY=abc123");
       const report = path.join(directory, "report.svg");
@@ -193,13 +196,14 @@ describe("HtmlRender", () => {
 
       const error = yield* htmlRender
         .prepare(
-          `<img title="<!--" src="${missing}"><img src='${folder}'><img src="C:\\nope\\shot.webp"><img src="${secret}"><img src="${report}"><img src="${config}"><img src="${stalling}"><img src="${unclosed}"><img src="${upper}"><img src="${longer}">`,
+          `<img title="<!--" src="${missing}"><img src="${missingSvg}#svgView(viewBox(0,0,64,64))"><img src='${folder}'><img src="C:\\nope\\shot.webp"><img src="${secret}"><img src="${report}"><img src="${config}"><img src="${stalling}"><img src="${unclosed}"><img src="${upper}"><img src="${longer}">`,
         )
         .pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(HtmlRender.HtmlRenderImagesNotFoundError);
       expect(error._tag === "HtmlRenderImagesNotFoundError" && error.paths).toEqual([
         missing,
+        missingSvg,
         folder,
         "C:\\nope\\shot.webp",
         secret,
