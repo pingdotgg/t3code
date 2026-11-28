@@ -43,6 +43,40 @@ const BATCH_TRANSCRIPT_BYTES = 512 * 1024;
 const STEP_TEXT_CAP = 4_000;
 const TOOL_INPUT_CAP = 1_000;
 const MAX_MESSAGE_FILES = 256;
+
+const ANTIGRAVITY_READ_TOOL_PATH_KEYS = [
+  "Path",
+  "AbsolutePath",
+  "File",
+  "DirectoryPath",
+  "path",
+  "file_path",
+  "filePath",
+] as const;
+
+const ANTIGRAVITY_SEARCH_TOOL_PATH_KEYS = [
+  "SearchPath",
+  "SearchDirectory",
+  "DirectoryPath",
+  "path",
+  "Path",
+] as const;
+
+export const ANTIGRAVITY_READ_PERMISSION_PATH_KEYS = [
+  ...new Set([
+    ...ANTIGRAVITY_READ_TOOL_PATH_KEYS,
+    ...ANTIGRAVITY_SEARCH_TOOL_PATH_KEYS,
+    "absolute_path",
+    "directory_path",
+    "search_path",
+    "search_directory",
+    "TargetFile",
+    "target_file",
+    "TargetDirectory",
+    "target_directory",
+  ]),
+] as const;
+
 const MAX_DETACHED_CHILDREN = 64;
 
 /** T3's title for a batch whose launch text it never saw. */
@@ -543,15 +577,7 @@ function transcriptToolCallToAcpState(input: {
   const lower = name.toLowerCase();
 
   if (READ_TOOL_NAMES.has(lower)) {
-    const targetPath = stringField(rawInput, [
-      "Path",
-      "AbsolutePath",
-      "File",
-      "DirectoryPath",
-      "path",
-      "file_path",
-      "filePath",
-    ]);
+    const targetPath = stringField(rawInput, ANTIGRAVITY_READ_TOOL_PATH_KEYS);
     return {
       projectedStatus,
       toolCall: {
@@ -650,13 +676,7 @@ function transcriptToolCallToAcpState(input: {
 
   if (FILE_SEARCH_TOOL_NAMES.has(lower)) {
     const query = stringField(rawInput, ["Query", "Pattern", "query", "pattern"]);
-    const searchPath = stringField(rawInput, [
-      "SearchPath",
-      "SearchDirectory",
-      "DirectoryPath",
-      "path",
-      "Path",
-    ]);
+    const searchPath = stringField(rawInput, ANTIGRAVITY_SEARCH_TOOL_PATH_KEYS);
     const normalizedInput = {
       ...sanitizedInputRecord,
       ...(query === undefined ? {} : { query, pattern: query }),

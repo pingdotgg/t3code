@@ -2397,6 +2397,129 @@ const isInlineWorkOutput = (payloadJson: string) => {
   );
 };
 
+const forkSourceRunIdsSql = (sql: SqlClient.SqlClient) => sql`
+  COALESCE(fork.fork_run_ids_json, (
+    SELECT json_group_array(run.run_id)
+    FROM orchestration_v2_projection_runs AS run
+    WHERE run.thread_id = json_extract(fork.payload_json, '$.forkedFrom.threadId')
+      AND run.ordinal <= (
+        SELECT ordinal FROM orchestration_v2_projection_runs
+        WHERE run_id = json_extract(fork.payload_json, '$.forkedFrom.runId')
+          AND thread_id = json_extract(fork.payload_json, '$.forkedFrom.threadId')
+      )
+      AND NOT COALESCE(
+        run.status = 'rolled_back' AND julianday(run.completed_at) < julianday(fork.created_at), 0
+      )
+  ))`;
+
+export const threadOwnsAttachmentSql = Effect.fn("ProjectionStore.threadOwnsAttachment")(function* (
+  sql: SqlClient.SqlClient,
+  threadId: ThreadId,
+  attachmentId: string,
+) {
+  const seen = new Set<string>([threadId]);
+  let currentThreadId: string = threadId;
+  let allowedRunIds: Set<string> | null = null;
+  let boundaryRunId: string | null = null;
+  let sourceHistoryOrigin: string | null = null;
+  while (true) {
+    const runless = allowedRunIds === null || sourceHistoryOrigin === "v1_import";
+    const included =
+      allowedRunIds === null
+        ? sql`r.status <> 'rolled_back'`
+        : allowedRunIds.size > 0 && boundaryRunId !== null
+          ? // Match inherited timeline visibility: stay at/before the boundary and hide undelivered queued input.
+            sql`r.run_id IN ${sql.in([...allowedRunIds])}
+              AND r.ordinal <= (
+                SELECT boundary.ordinal
+                FROM orchestration_v2_projection_runs AS boundary
+                WHERE boundary.thread_id = ${currentThreadId}
+                  AND boundary.run_id = ${boundaryRunId}
+                LIMIT 1
+              )
+              AND NOT (
+                r.status = 'queued'
+                OR (
+                  (
+                    r.status = 'cancelled'
+                    OR (
+                      r.status = 'rolled_back'
+                      AND EXISTS (
+                        SELECT 1
+                        FROM orchestration_v2_projection_run_attempts AS attempt
+                        WHERE attempt.run_id = r.run_id
+                          AND attempt.status = 'cancelled'
+                      )
+                    )
+                  )
+                  AND json_extract(r.payload_json, '$.startedAt') IS NULL
+                )
+              )`
+          : sql`0`;
+    const visible = sql`((item.run_id IS NULL AND ${runless ? 1 : 0}) OR EXISTS (
+      SELECT 1 FROM orchestration_v2_projection_runs AS r
+      WHERE r.run_id = item.run_id AND r.thread_id = item.thread_id AND ${included}
+    ))`;
+    const found = yield* sql`
+      SELECT 1 FROM orchestration_v2_projection_messages AS item, json_each(item.payload_json, '$.attachments') AS a
+      WHERE item.thread_id = ${currentThreadId} AND ${visible} AND json_extract(a.value, '$.id') = ${attachmentId}
+      UNION ALL
+      SELECT 1 FROM orchestration_v2_projection_turn_items AS item,
+        json_each(item.payload_json, '$.questionAnswer.attachmentsByQuestionId') AS q, json_each(q.value) AS a
+      WHERE item.thread_id = ${currentThreadId} AND item.type = 'user_input_request'
+        AND ${visible} AND json_extract(a.value, '$.id') = ${attachmentId}
+      LIMIT 1`;
+    if (found.length > 0) return true;
+    const renders = yield* sql<{ payload_json: string }>`
+      SELECT item.payload_json FROM orchestration_v2_projection_turn_items AS item
+      WHERE item.thread_id = ${currentThreadId} AND item.type = 'dynamic_tool'
+        AND instr(item.payload_json, ${attachmentId}) > 0
+        AND (item.payload_json LIKE '%htmlRender%' OR item.payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
+          OR item.payload_json LIKE '%preview_recording_stop%')
+        AND ${visible}`;
+    const toolItems = renders.map((row) => {
+      const item = parseEncodedPayload(row.payload_json);
+      return {
+        toolName: typeof item.toolName === "string" ? item.toolName : null,
+        output: item.output,
+      };
+    });
+    if (threadHtmlRenderAttachmentIds(currentThreadId, toolItems).includes(attachmentId)) {
+      return true;
+    }
+    const [fork] = yield* sql<{
+      source_thread_id: string | null;
+      boundary_run_id: string | null;
+      source_history_origin: string | null;
+      run_ids: string;
+    }>`
+      SELECT json_extract(fork.payload_json, '$.forkedFrom.threadId') AS source_thread_id,
+        json_extract(fork.payload_json, '$.forkedFrom.runId') AS boundary_run_id,
+        json_extract(source.payload_json, '$.historyOrigin') AS source_history_origin,
+        ${forkSourceRunIdsSql(sql)} AS run_ids
+      FROM orchestration_v2_projection_threads AS fork
+      LEFT JOIN orchestration_v2_projection_threads AS source
+        ON source.thread_id = json_extract(fork.payload_json, '$.forkedFrom.threadId')
+      WHERE fork.thread_id = ${currentThreadId}
+        AND json_extract(fork.payload_json, '$.forkedFrom.type') = 'run'
+        AND COALESCE(json_extract(fork.payload_json, '$.lineage.sideChat'), 0) <> 1`;
+    if (
+      typeof fork?.source_thread_id !== "string" ||
+      !fork.source_thread_id ||
+      typeof fork.boundary_run_id !== "string" ||
+      !fork.boundary_run_id ||
+      seen.has(fork.source_thread_id)
+    ) {
+      return false;
+    }
+    currentThreadId = fork.source_thread_id;
+    boundaryRunId = fork.boundary_run_id;
+    sourceHistoryOrigin = fork.source_history_origin;
+    seen.add(currentThreadId);
+    allowedRunIds = new Set(yield* decodeForkRunIds(fork.run_ids));
+  }
+}, NodeSqliteClient.readOnly);
+
 type ProjectionStoreServices = SqlClient.SqlClient | Digest.Digest;
 
 export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreServices> = Layer.effect(
@@ -7120,18 +7243,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
     const getForkSourceRunIds = Effect.fn("ProjectionStore.getForkSourceRunIds")(
       function* (threadId: ThreadId) {
         const rows = yield* sql<{ readonly run_ids: string }>`
-          SELECT COALESCE(fork.fork_run_ids_json, (
-            SELECT json_group_array(run.run_id)
-            FROM orchestration_v2_projection_runs AS run
-            WHERE run.thread_id = json_extract(fork.payload_json, '$.forkedFrom.threadId')
-              AND run.ordinal <= (
-                SELECT ordinal FROM orchestration_v2_projection_runs
-                WHERE run_id = json_extract(fork.payload_json, '$.forkedFrom.runId')
-              )
-              AND NOT COALESCE(
-                run.status = 'rolled_back' AND julianday(run.completed_at) < julianday(fork.created_at), 0
-              )
-          )) AS run_ids
+          SELECT ${forkSourceRunIdsSql(sql)} AS run_ids
           FROM orchestration_v2_projection_threads AS fork WHERE fork.thread_id = ${threadId}
         `;
         return yield* decodeForkRunIds(rows[0]?.run_ids ?? "[]");

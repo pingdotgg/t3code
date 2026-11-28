@@ -10,6 +10,7 @@ import {
   createAttachmentId,
   createDeterministicAttachmentId,
   createPendingAttachmentId,
+  parseAttachmentIdFromFileName,
   parseAttachmentUuid,
   planAttachmentClaim,
   parseThreadSegmentFromAttachmentId,
@@ -209,5 +210,18 @@ describe("threadHtmlRenderAttachmentIds", () => {
         },
       ]),
     ).toEqual([app]);
+  });
+
+  it("parses thread attachment ids from stored filenames and extracted text sidecars", () => {
+    const pngId = createAttachmentId("thread-a", "png")!;
+    const docxId = createAttachmentId("thread-a", "docx")!;
+    const pendingId = createPendingAttachmentId("png");
+    expect(parseAttachmentIdFromFileName(`${pngId}.png`)).toBe(pngId);
+    expect(parseAttachmentIdFromFileName(`${docxId}.docx.txt`)).toBe(docxId);
+    expect(parseAttachmentIdFromFileName(`${docxId}.txt`)).toBeNull();
+    expect(parseAttachmentIdFromFileName(`${pendingId}.png`)).toBeNull();
+    expect(parseAttachmentIdFromFileName(`${pngId}.png.part`)).toBeNull();
+    expect(parseAttachmentIdFromFileName(`nested/${pngId}.png`)).toBeNull();
+    expect(parseAttachmentIdFromFileName("pasted.txt")).toBeNull();
   });
 });

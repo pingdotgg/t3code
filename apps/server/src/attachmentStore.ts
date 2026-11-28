@@ -128,6 +128,31 @@ export function parseThreadSegmentFromAttachmentId(attachmentId: string): string
   return match[1]?.toLowerCase() ?? null;
 }
 
+export function parseAttachmentIdFromFileName(fileName: string): string | null {
+  if (!fileName || /[/\\\0]/.test(fileName) || /\.part$/i.test(fileName)) return null;
+  const lower = fileName.toLowerCase();
+  const base =
+    lower.endsWith(".txt") && fileName.indexOf(".") !== fileName.lastIndexOf(".")
+      ? fileName.slice(0, -4)
+      : fileName;
+  const dot = base.indexOf(".");
+  if (dot <= 0 || dot !== base.lastIndexOf(".") || dot === base.length - 1) return null;
+  const id = base.slice(0, dot);
+  const segment = parseThreadSegmentFromAttachmentId(id);
+  if (
+    parseAttachmentUuid(id) === null ||
+    segment === null ||
+    segment === PENDING_ATTACHMENT_THREAD_SEGMENT
+  ) {
+    return null;
+  }
+  const ext = base.slice(dot + 1).toLowerCase();
+  const idExt = parseAttachmentFileExtension(id);
+  return (idExt === null ? ATTACHMENT_FILENAME_EXTENSIONS.includes(`.${ext}`) : idExt === ext)
+    ? id
+    : null;
+}
+
 /** Only this thread's ids qualify, preserving source pages when deleting a fork. */
 export function threadHtmlRenderAttachmentIds(
   threadId: string,

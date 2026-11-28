@@ -2,6 +2,7 @@
 import type { RuntimeMode } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 export interface AcpRuntimePolicy {
@@ -193,8 +194,104 @@ function acpPolicyRequiresApproval(runtimePolicy: AcpRuntimePolicy): boolean {
     : runtimePolicy.approvalPolicy !== "never";
 }
 
-function isAcpReadKind(toolKind: string): boolean {
+export function isAcpReadKind(toolKind: string): boolean {
   return toolKind === "read" || toolKind === "search" || toolKind === "think";
+}
+
+export function acpReadRequiresApprovalForUnownedAttachment(policy: AcpRuntimePolicy): boolean {
+  const sandboxType = unknownRecord(policy.sandboxPolicy)?.type;
+  return (
+    acpPolicyRequiresApproval(policy) ||
+    policy.runtimeMode !== "full-access" ||
+    sandboxType === "readOnly" ||
+    sandboxType === "workspaceWrite"
+  );
+}
+
+export function acpReadTargetsInRoot(input: {
+  readonly cwd: string | null;
+  readonly root: string;
+  readonly homeDir?: string | undefined;
+  readonly extraPathKeys?: ReadonlyArray<string> | undefined;
+  readonly toolCall: {
+    readonly kind?: string | null | undefined;
+    readonly locations?: unknown;
+    readonly rawInput?: unknown;
+  };
+}): ReadonlyArray<string | null> | "unknown" {
+  const root = NodePath.resolve(input.root);
+  const canonicalRoot = acpCanonicalPathForContainment(root);
+  if (canonicalRoot === undefined) return "unknown";
+  const paths = new Set<string>();
+  const addPath = (value: unknown) => {
+    if (
+      typeof value === "string" &&
+      (value === "~" || value.startsWith("~/") || value.startsWith("~\\")) &&
+      !value.includes("\0")
+    ) {
+      paths.add(value);
+      return true;
+    }
+    const checkable = acpCheckablePath(value);
+    if (checkable === undefined) return false;
+    paths.add(checkable);
+    return true;
+  };
+  const addRawInputPath = (value: unknown) =>
+    (typeof value === "string" && value.trim().length === 0) || addPath(value);
+  if (Array.isArray(input.toolCall.locations)) {
+    if (input.toolCall.locations.length > MAX_ACP_CHANGED_PATHS) return "unknown";
+    for (const location of input.toolCall.locations) {
+      if (!addPath(unknownRecord(location)?.path)) return "unknown";
+    }
+  } else if (input.toolCall.locations != null) {
+    return "unknown";
+  }
+  const rawInput = unknownRecord(input.toolCall.rawInput);
+  if (rawInput !== undefined) {
+    const pathKeys =
+      input.extraPathKeys === undefined
+        ? ACP_RAW_INPUT_PATH_KEYS
+        : [...ACP_RAW_INPUT_PATH_KEYS, ...input.extraPathKeys];
+    for (const key of pathKeys) {
+      const value = rawInput[key];
+      if (value == null) continue;
+      if (Array.isArray(value)) {
+        if (value.length > MAX_ACP_CHANGED_PATHS || !value.every(addRawInputPath)) return "unknown";
+      } else if (!addRawInputPath(value)) {
+        return "unknown";
+      }
+    }
+  }
+  if (paths.size > MAX_ACP_CHANGED_PATHS) return "unknown";
+  const homeDir = input.homeDir ?? NodeOS.homedir();
+  const targets: Array<string | null> = [];
+  for (const raw of paths) {
+    // Substitute home without normalizing: `..` must resolve after symlinks, not before.
+    const expanded = raw.startsWith("~")
+      ? raw.length === 1
+        ? homeDir
+        : `${homeDir}${homeDir.endsWith(NodePath.sep) ? "" : NodePath.sep}${raw.slice(2)}`
+      : raw;
+    const resolved = resolveAcpPermissionPath(expanded, input.cwd);
+    if (resolved === undefined) return "unknown";
+    const canonical = acpCanonicalPathForContainment(resolved);
+    if (canonical !== undefined) {
+      if (acpPathIsWithinRoot(canonical, canonicalRoot)) targets.push(canonical);
+      else if (acpPathIsWithinRoot(canonicalRoot, canonical)) targets.push(null);
+    } else {
+      const resolvedAbs = NodePath.resolve(resolved);
+      if (
+        acpPathIsWithinRoot(resolvedAbs, canonicalRoot) ||
+        acpPathIsWithinRoot(canonicalRoot, resolvedAbs) ||
+        acpPathIsWithinRoot(resolvedAbs, root) ||
+        acpPathIsWithinRoot(root, resolvedAbs)
+      ) {
+        targets.push(null);
+      }
+    }
+  }
+  return targets;
 }
 
 /** Reads never ask; an absent sandbox implies read-only in approval-required mode. */

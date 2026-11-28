@@ -5,6 +5,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ChatFileAttachment,
+  CheckpointId,
   EnvironmentId,
   MessageId,
   NodeId,
@@ -15,6 +16,8 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
   compactDynamicToolOutput,
@@ -52,6 +55,9 @@ import { normalizeAntigravitySessionUpdate } from "../../provider/acp/Antigravit
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { createAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
+import { runMigrations } from "../../persistence/Migrations.ts";
+import { makeThreadAttachmentAccess } from "../../provider/threadAttachmentAccess.ts";
 import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -431,13 +437,42 @@ describe("AntigravityAdapterV2 session open", () => {
   );
 });
 
+const layerAttachmentSession = Layer.merge(
+  layerSession,
+  NodeSqliteClient.layer({ filename: ":memory:" }),
+);
+
+const attachToThread = Effect.fnUntraced(function* (
+  thread: string,
+  id: string,
+  run: string | null = null,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`INSERT INTO orchestration_v2_projection_messages
+    (message_id, thread_id, run_id, role, streaming, created_at, updated_at, payload_json)
+    VALUES (${id}, ${thread}, ${run}, 'user', 0, '2025-01-01', '2025-01-01', ${JSON.stringify({ attachments: [{ id }] })})`;
+});
+
+const makeAttachmentHost = Effect.gen(function* () {
+  const testHost = yield* ProviderHost.ProviderHost;
+  const sql = yield* SqlClient.SqlClient;
+  const fileSystem = yield* FileSystem.FileSystem;
+  yield* runMigrations();
+  const attachmentsDir = testHost.paths.attachmentsDir;
+  return ProviderHost.ProviderHost.of({
+    ...testHost,
+    canReadThreadAttachment: makeThreadAttachmentAccess({ sql, fileSystem, attachmentsDir }),
+    resolveAttachmentPath: (attachment) => resolveAttachmentPath({ attachmentsDir, attachment }),
+  });
+});
+
 describe("AntigravityAdapterV2 client file system", () => {
   it.effect("serves confined reads and leaves edits to the agent's diff tools", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const host = yield* ProviderHost.ProviderHost;
+      const host = yield* makeAttachmentHost;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
@@ -478,7 +513,7 @@ describe("AntigravityAdapterV2 client file system", () => {
           ),
         withProcess: (_stop, task) => task,
         defaultModel: Effect.undefined,
-      });
+      }).pipe(Effect.provideService(ProviderHost.ProviderHost, host));
       const workspace = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-antigravity-workspace-",
       });
@@ -487,10 +522,16 @@ describe("AntigravityAdapterV2 client file system", () => {
       });
       const outsideFile = path.join(outside, "secret.txt");
       yield* fileSystem.writeFileString(outsideFile, "secret");
-      const attachment = path.join(host.paths.attachmentsDir, "pasted.txt");
-      yield* fileSystem.writeFileString(attachment, "pasted");
-
       const threadId = ThreadId.make("thread-antigravity-containment");
+      const ownedId = createAttachmentId(threadId, "txt")!;
+      const attachment = path.join(host.paths.attachmentsDir, `${ownedId}.txt`);
+      const foreignAttachment = path.join(
+        host.paths.attachmentsDir,
+        `${createAttachmentId("other-thread", "txt")!}.txt`,
+      );
+      yield* fileSystem.writeFileString(attachment, "pasted");
+      yield* fileSystem.writeFileString(foreignAttachment, "other thread secret");
+      yield* attachToThread(threadId, ownedId);
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
         interactionMode: "default",
@@ -543,6 +584,11 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       );
       assert.equal(pasted.content, "pasted");
+      const foreignRead = yield* readTextFile(
+        { sessionId: "mock-session-1", path: foreignAttachment },
+        context("fs/read_text_file"),
+      ).pipe(Effect.flip);
+      assert.propertyVal(foreignRead, "code", -32602);
       yield* fileSystem.writeFileString(insidePath, "\uFEFFfirst\né中🙂\nlast");
       const sliced = yield* readTextFile(
         { sessionId: "mock-session-1", path: insidePath, line: 2, limit: 1 },
@@ -599,7 +645,7 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(relativeEscape), "a relative path escaping cwd is denied");
-    }).pipe(Effect.provide(layerSession)),
+    }).pipe(Effect.provide(layerAttachmentSession)),
   );
 });
 
@@ -4155,5 +4201,412 @@ describe("AntigravityAdapterV2 update_steps checklist", () => {
         ["Create b.txt", "running"],
       ]);
     }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+describe("Antigravity attachment permissions", () => {
+  const openAttachmentSession = Effect.fn("openAttachmentSession")(function* (
+    runtimeMode: "approval-required" | "auto-accept-edits" | "auto" | "full-access",
+    options?: {
+      readonly holdFork?: {
+        readonly entered: Deferred.Deferred<void>;
+        readonly release: Deferred.Deferred<void>;
+      };
+    },
+  ) {
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const path = yield* Path.Path;
+    const random = yield* SecureRandom.SecureRandom;
+    const script = yield* path.fromFileUrl(
+      new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+    );
+    type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+    const updates = yield* Deferred.make<Parameters<Runtime["handleSessionUpdate"]>[0]>();
+    const permissions = yield* Deferred.make<Parameters<Runtime["handleRequestPermission"]>[0]>();
+    const prompted = yield* Deferred.make<void>();
+    const releasePrompt = yield* Deferred.make<void>();
+    let reader: Parameters<Runtime["handleReadTextFile"]>[0] | undefined;
+    const instanceId = ProviderInstanceId.make("antigravity-attachment-test");
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode,
+      interactionMode: "default",
+      cwd: process.cwd(),
+    });
+    const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+    const threadId = ThreadId.make("source");
+    const host = yield* makeAttachmentHost;
+    const adapter = yield* makeAntigravityAdapterV2({
+      instanceId,
+      selfInvocation: yield* resolveSelfInvocation(),
+      makeRuntime: (input) =>
+        makeAntigravityAcpRuntime({
+          ...input,
+          childProcessSpawner,
+          spawn: {
+            command: process.execPath,
+            args: [script],
+            cwd: input.cwd,
+            env: {
+              T3_ACP_ANTIGRAVITY: "1",
+              T3_ACP_SESSION_LIFECYCLE: "1",
+              T3_ACP_AUTH_METHOD_ID: "oauth-personal",
+              T3_ACP_INITIAL_MODE: flavor.sessionModeForPolicy!(runtimePolicy),
+              T3_ACP_HANG_PROMPT_FOREVER: "1",
+            },
+          },
+        }).pipe(
+          Effect.provideService(SecureRandom.SecureRandom, random),
+          Effect.map((runtime): Runtime => ({
+            ...runtime,
+            handleSessionUpdate: (handler) =>
+              Deferred.succeed(updates, handler).pipe(
+                Effect.andThen(runtime.handleSessionUpdate(handler)),
+              ),
+            handleReadTextFile: (handler) =>
+              Effect.sync(() => {
+                reader = handler;
+              }).pipe(Effect.andThen(runtime.handleReadTextFile(handler))),
+            handleRequestPermission: (handler) =>
+              Deferred.succeed(permissions, handler).pipe(
+                Effect.andThen(runtime.handleRequestPermission(handler)),
+              ),
+            prompt: (payload, promptOptions) =>
+              Deferred.succeed(prompted, undefined).pipe(
+                Effect.andThen(
+                  Effect.raceFirst(
+                    runtime.prompt(payload, promptOptions),
+                    Deferred.await(releasePrompt).pipe(
+                      Effect.as({ stopReason: "end_turn" as const }),
+                    ),
+                  ),
+                ),
+              ),
+            forkSession: (sessionId, activationOptions, meta) =>
+              options?.holdFork === undefined
+                ? runtime.forkSession(sessionId, activationOptions, meta)
+                : Deferred.succeed(options.holdFork.entered, undefined).pipe(
+                    Effect.andThen(Deferred.await(options.holdFork.release)),
+                    Effect.andThen(runtime.forkSession(sessionId, activationOptions, meta)),
+                  ),
+          })),
+        ),
+      withProcess: (_stop, task) => task,
+      defaultModel: Effect.undefined,
+    }).pipe(Effect.provideService(ProviderHost.ProviderHost, host));
+    const session = yield* adapter.openSession({
+      threadId,
+      runtimePolicy,
+      modelSelection,
+      providerSessionId: ProviderSessionId.make("attachment-session"),
+    });
+    const providerThread = yield* session.ensureThread({ threadId, runtimePolicy, modelSelection });
+    const read = (file: string, sessionId = "subagent-conversation") =>
+      reader === undefined
+        ? Effect.die("Missing ACP file reader")
+        : reader({ sessionId, path: file }, { requestId: "read", method: "fs/read_text_file" });
+    return {
+      threadId,
+      providerThread,
+      session,
+      instanceId,
+      modelSelection,
+      runtimePolicy,
+      host,
+      read,
+      update: yield* Deferred.await(updates),
+      requestPermission: yield* Deferred.await(permissions),
+      prompted: Deferred.await(prompted),
+      finishPrompt: Deferred.succeed(releasePrompt, undefined),
+    };
+  });
+
+  it.effect.each(["approval-required", "auto-accept-edits", "auto", "full-access"] as const)(
+    "applies %s to read and search permission requests",
+    (runtimeMode) =>
+      Effect.gen(function* () {
+        const opened = yield* openAttachmentSession(runtimeMode);
+        const { session, host, requestPermission } = opened;
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const ownedId = createAttachmentId("source", "txt")!;
+        const own = path.join(host.paths.attachmentsDir, `${ownedId}.txt`);
+        const foreign = path.join(
+          host.paths.attachmentsDir,
+          `${createAttachmentId("other", "txt")!}.txt`,
+        );
+        yield* attachToThread("source", ownedId);
+        yield* fileSystem.writeFileString(own, "own");
+        yield* fileSystem.writeFileString(foreign, "foreign");
+        yield* session
+          .startTurn(makeTurnInput({ ...opened, now: yield* DateTime.now }))
+          .pipe(Effect.forkScoped);
+        yield* opened.prompted;
+
+        for (const [kind, rawInput, asks] of [
+          ["read", { AbsolutePath: own }, runtimeMode === "auto"],
+          ["read", { AbsolutePath: foreign }, runtimeMode !== "full-access"],
+          ["read", { Path: foreign }, runtimeMode !== "full-access"],
+          ["search", { SearchPath: foreign }, runtimeMode !== "full-access"],
+          ["search", { SearchDirectory: host.paths.attachmentsDir }, runtimeMode !== "full-access"],
+          ["search", { query: "effect docs" }, runtimeMode === "auto"],
+        ] as const) {
+          const outcome = yield* Effect.raceFirst(
+            requestPermission(
+              {
+                sessionId: "mock-session-1",
+                toolCall: { toolCallId: `${kind}-${String(asks)}`, kind, rawInput },
+                options: [
+                  { optionId: "allow", name: "Allow", kind: "allow_once" },
+                  { optionId: "deny", name: "Deny", kind: "reject_once" },
+                ],
+              },
+              { requestId: kind, method: "session/request_permission" },
+            ).pipe(Effect.map((reply) => reply.outcome)),
+            session.events.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "runtime_request.updated" &&
+                  event.runtimeRequest.status === "pending",
+              ),
+              Stream.runHead,
+              Effect.as("ask" as const),
+            ),
+          );
+          assert.deepEqual(outcome, asks ? "ask" : { outcome: "selected", optionId: "allow" });
+        }
+      }).pipe(Effect.provide(layerAttachmentSession)),
+  );
+
+  it.effect("isolates attachments across subagents, fork, resume, and rollback", () =>
+    Effect.gen(function* () {
+      const holdFork = {
+        entered: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      const opened = yield* openAttachmentSession("approval-required", { holdFork });
+      const { host, session, providerThread, read } = opened;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sql = yield* SqlClient.SqlClient;
+      const child = ThreadId.make("child");
+      const docId = createAttachmentId("source", "docx")!;
+      const doc = path.join(host.paths.attachmentsDir, `${docId}.docx.txt`);
+      const postForkSourceId = createAttachmentId("source", "txt")!;
+      const postForkSource = path.join(host.paths.attachmentsDir, `${postForkSourceId}.txt`);
+      const forkOnlyId = createAttachmentId("child", "txt")!;
+      const forkOnly = path.join(host.paths.attachmentsDir, `${forkOnlyId}.txt`);
+      yield* fileSystem.writeFileString(doc, "source document");
+      yield* fileSystem.writeFileString(postForkSource, "post-fork source attachment");
+      yield* fileSystem.writeFileString(forkOnly, "fork attachment");
+
+      yield* sql`INSERT INTO orchestration_v2_projection_runs
+        (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+        VALUES ('boundary', 'source', 1, 'test', 'completed', '2025-01-01', '{}')`;
+      yield* sql`INSERT INTO orchestration_v2_projection_runs
+        (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+        VALUES ('after-boundary', 'source', 2, 'test', 'completed', '2025-01-03', '{}')`;
+      yield* sql`INSERT INTO orchestration_v2_projection_threads
+        (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json, fork_run_ids_json)
+        VALUES ('child', 'p', 'child', 'test', 'auto', 'default', '2025-01-02', '2025-01-02',
+          '{"forkedFrom":{"type":"run","threadId":"source","runId":"boundary"}}', '["boundary"]')`;
+      yield* attachToThread("source", docId, "boundary");
+      yield* attachToThread("source", postForkSourceId, "after-boundary");
+      yield* attachToThread(child, forkOnlyId);
+
+      const parentSession = providerThread.nativeThreadRef?.nativeId;
+      assert.ok(parentSession);
+      assert.equal((yield* read(doc, parentSession)).content, "source document");
+      assert.propertyVal(yield* read(forkOnly, parentSession).pipe(Effect.flip), "code", -32602);
+      // Unregistered sessions are denied outside an active turn.
+      assert.propertyVal(
+        yield* read(doc, "subagent-conversation").pipe(Effect.flip),
+        "code",
+        -32602,
+      );
+
+      const forkRoot = yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped());
+      const forkWorkspaceFile = path.join(forkRoot, "fork.txt");
+      yield* fileSystem.writeFileString(forkWorkspaceFile, "workspace");
+      const forkFiber = yield* session
+        .forkThread({
+          sourceProviderThread: providerThread,
+          targetThreadId: child,
+          runtimePolicy: { ...opened.runtimePolicy, runtimeMode: "full-access", cwd: forkRoot },
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(holdFork.entered);
+      // While session/fork is in flight, an unregistered session cannot fall back to source attachments.
+      assert.propertyVal(
+        yield* read(postForkSource, "in-flight-fork-session").pipe(Effect.flip),
+        "code",
+        -32602,
+      );
+      yield* Deferred.succeed(holdFork.release, undefined);
+      const fork = yield* Fiber.join(forkFiber);
+      const childSession = fork.nativeThreadRef?.nativeId;
+      assert.ok(childSession);
+      assert.equal((yield* read(doc, childSession)).content, "source document");
+      assert.equal((yield* read(forkOnly, childSession)).content, "fork attachment");
+      assert.propertyVal(
+        yield* read(postForkSource, childSession).pipe(Effect.flip),
+        "code",
+        -32602,
+      );
+      assert.propertyVal(
+        yield* read(forkOnly, "subagent-conversation").pipe(Effect.flip),
+        "code",
+        -32602,
+      );
+      assert.equal((yield* read(forkWorkspaceFile, childSession)).content, "workspace");
+      assert.propertyVal(yield* read(forkOnly, parentSession).pipe(Effect.flip), "code", -32602);
+      assert.propertyVal(
+        yield* read(forkWorkspaceFile, parentSession).pipe(Effect.flip),
+        "code",
+        -32602,
+      );
+
+      yield* session.resumeThread({ providerThread });
+      assert.equal((yield* read(doc, parentSession)).content, "source document");
+      assert.propertyVal(yield* read(forkOnly, parentSession).pipe(Effect.flip), "code", -32602);
+
+      const ensuredRoot = yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped());
+      const ensuredFile = path.join(ensuredRoot, "ensured.txt");
+      yield* fileSystem.writeFileString(ensuredFile, "ensured");
+      yield* session.ensureThread({
+        threadId: opened.threadId,
+        modelSelection: opened.modelSelection,
+        runtimePolicy: { ...opened.runtimePolicy, cwd: ensuredRoot },
+      });
+      assert.equal((yield* read(ensuredFile, parentSession)).content, "ensured");
+      assert.propertyVal(
+        yield* read(path.join(process.cwd(), "package.json"), parentSession).pipe(Effect.flip),
+        "code",
+        -32602,
+      );
+      yield* session.ensureThread({
+        threadId: opened.threadId,
+        modelSelection: opened.modelSelection,
+        runtimePolicy: opened.runtimePolicy,
+      });
+
+      const turnFiber = yield* session
+        .startTurn(makeTurnInput({ ...opened, now: yield* DateTime.now }))
+        .pipe(Effect.forkScoped);
+      yield* opened.prompted;
+      yield* opened.update(
+        normalizeAntigravitySessionUpdate({
+          sessionId: parentSession,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "child-launch",
+            kind: "other",
+            title: "Running start_subagent",
+            rawOutput: { conversation_id: "registered-child" },
+            status: "completed",
+          },
+        }),
+      );
+      const subagentThread = (yield* IdAllocator.IdAllocatorV2).derive.subagentThread({
+        driver: providerThread.driver,
+        providerInstanceId: opened.instanceId,
+        nativeThreadId: `${parentSession}:task:child-launch`,
+      });
+      const subagentId = createAttachmentId(subagentThread, "txt")!;
+      const subagentFile = path.join(host.paths.attachmentsDir, `${subagentId}.txt`);
+      yield* attachToThread(subagentThread, subagentId);
+      yield* fileSystem.writeFileString(subagentFile, "subagent");
+      assert.equal((yield* read(subagentFile, "registered-child")).content, "subagent");
+      assert.equal((yield* read(doc, "registered-child")).content, "source document");
+      assert.equal((yield* read(doc, "subagent-conversation")).content, "source document");
+      assert.propertyVal(
+        yield* read(subagentFile, parentSession).pipe(Effect.flip),
+        "code",
+        -32602,
+      );
+
+      // Settling the turn disables unregistered fallback and lets registered subagents pick up live parent policy updates.
+      const settled = yield* session.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status !== "running",
+        ),
+        Stream.runHead,
+        Effect.forkScoped,
+      );
+      yield* opened.finishPrompt;
+      yield* Fiber.await(turnFiber);
+      yield* Fiber.join(settled);
+      assert.propertyVal(
+        yield* read(doc, "subagent-conversation").pipe(Effect.flip),
+        "code",
+        -32602,
+      );
+      yield* session.ensureThread({
+        threadId: opened.threadId,
+        modelSelection: opened.modelSelection,
+        runtimePolicy: { ...opened.runtimePolicy, cwd: ensuredRoot },
+      });
+      assert.equal((yield* read(ensuredFile, "registered-child")).content, "ensured");
+      assert.propertyVal(
+        yield* read(path.join(process.cwd(), "package.json"), "registered-child").pipe(Effect.flip),
+        "code",
+        -32602,
+      );
+      yield* session.ensureThread({
+        threadId: opened.threadId,
+        modelSelection: opened.modelSelection,
+        runtimePolicy: opened.runtimePolicy,
+      });
+
+      const coldThreadId = ThreadId.make("cold-resumed");
+      const coldSessionId = "cold-resume-session";
+      const coldAttachId = createAttachmentId(coldThreadId, "txt")!;
+      const coldAttachFile = path.join(host.paths.attachmentsDir, `${coldAttachId}.txt`);
+      yield* attachToThread(coldThreadId, coldAttachId);
+      yield* fileSystem.writeFileString(coldAttachFile, "cold attachment");
+      const coldRoot = yield* fileSystem.realPath(yield* fileSystem.makeTempDirectoryScoped());
+      const coldWorkspaceFile = path.join(coldRoot, "cold.txt");
+      yield* fileSystem.writeFileString(coldWorkspaceFile, "cold workspace");
+      const resumed = yield* session.resumeThread({
+        providerThread: {
+          ...providerThread,
+          appThreadId: coldThreadId,
+          nativeThreadRef: {
+            driver: providerThread.driver,
+            nativeId: coldSessionId,
+            strength: "strong",
+          },
+        },
+        runtimePolicy: { ...opened.runtimePolicy, cwd: coldRoot },
+      });
+      assert.equal(resumed.appThreadId, coldThreadId);
+      assert.equal((yield* read(coldAttachFile, coldSessionId)).content, "cold attachment");
+      assert.equal((yield* read(coldWorkspaceFile, coldSessionId)).content, "cold workspace");
+      assert.propertyVal(yield* read(doc, coldSessionId).pipe(Effect.flip), "code", -32602);
+    }).pipe(Effect.provide(layerAttachmentSession)),
+  );
+
+  it.effect("binds replacement sessions created by rollback to the rollback thread", () =>
+    Effect.gen(function* () {
+      const opened = yield* openAttachmentSession("approval-required");
+      const target = ThreadId.make("rollback");
+      const result = yield* opened.session.rollbackThread({
+        providerThread: { ...opened.providerThread, appThreadId: target },
+        providerThreadTurns: [],
+        target: {
+          type: "thread_start",
+          checkpointId: CheckpointId.make("rollback"),
+          appRunOrdinal: 0,
+        },
+      });
+      const native = result.providerThread.nativeThreadRef?.nativeId;
+      assert.ok(native);
+      const id = createAttachmentId(target, "txt")!;
+      const path = yield* Path.Path;
+      const file = path.join(opened.host.paths.attachmentsDir, `${id}.txt`);
+      yield* attachToThread(target, id);
+      yield* (yield* FileSystem.FileSystem).writeFileString(file, "rollback file");
+      assert.equal((yield* opened.read(file, native)).content, "rollback file");
+    }).pipe(Effect.provide(layerAttachmentSession)),
   );
 });

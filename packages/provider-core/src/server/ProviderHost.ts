@@ -3,6 +3,7 @@ import type {
   ChatAttachment,
   ServerSettings,
   ServerSettingsError,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -18,7 +19,7 @@ export interface ProviderHostPaths {
   readonly baseDir: string;
   readonly stateDir: string;
   readonly providerStatusCacheDir: string;
-  /** Where chat attachments are stored; agents that sandbox file reads must be granted it. */
+  /** Where chat attachments are stored. */
   readonly attachmentsDir: string;
 }
 
@@ -49,6 +50,11 @@ export class ProviderHost extends Context.Service<
     readonly awaitServerReady?: Effect.Effect<void>;
     /** Absolute attachment path, or null if the ID does not resolve inside attachmentsDir. */
     readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
+    /** Returns whether `threadId` owns the canonical absolute `attachmentPath` (symlink-first resolved). */
+    readonly canReadThreadAttachment?: (
+      threadId: ThreadId,
+      attachmentPath: string,
+    ) => Effect.Effect<boolean>;
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     /**
      * Counts a running agent for local server discovery, so listeners carrying its

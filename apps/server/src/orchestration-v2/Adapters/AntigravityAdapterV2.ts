@@ -30,6 +30,7 @@ import {
   type AntigravityAcpRuntimeInput,
 } from "../../provider/acp/AntigravityAcpSupport.ts";
 import {
+  ANTIGRAVITY_READ_PERMISSION_PATH_KEYS,
   ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
   antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
@@ -38,6 +39,7 @@ import {
   readAntigravityPendingReply,
   readAntigravitySubagentTranscript,
 } from "../../provider/acp/AntigravityChildWork.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
@@ -155,8 +157,10 @@ export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
   const { profileDirectory } = options;
-  const antigravityClientFileRoots = (cwd: string | null) =>
-    cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
+  const antigravityClientFileRoots = (policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) => [
+    ...(policy.cwd === null ? [] : [policy.cwd]),
+    ...(policy.workspace?.extraRoots ?? []),
+  ];
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
       const scope = yield* Scope.fork(yield* Effect.scope);
@@ -287,13 +291,18 @@ export function makeAntigravityAcpAdapterFlavor(
     }),
     sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
     runtimeModeForSessionMode: antigravityRuntimeModeForSessionMode,
+    // agy subagents can request client reads before start_subagent registers their session ID.
+    fallbackUnregisteredSubagentAttachments: true,
+    readPermissionPathKeys: ANTIGRAVITY_READ_PERMISSION_PATH_KEYS,
     clientFileSystem: {
-      readTextFile: (request, cwd) =>
+      readTextFile: (request, context) =>
         readAntigravityClientTextFile({
           fileSystem: options.fileSystem,
           path: options.path,
-          cwd,
-          allowedRoots: antigravityClientFileRoots(cwd),
+          cwd: context.policy.cwd,
+          allowedRoots: antigravityClientFileRoots(context.policy),
+          attachmentsDir: options.host.paths.attachmentsDir,
+          isAllowedAttachment: context.canReadAttachment,
           request,
         }),
     },
