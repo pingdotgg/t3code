@@ -67,6 +67,10 @@ export function trackPendingDraftCheckout(
   return isCurrent;
 }
 
+export function readPendingDraftCheckout(draftId: DraftId): Promise<CheckoutOutcome> | null {
+  return pendingCheckouts.get(draftId) ?? null;
+}
+
 /** "moved" means the send waited on a checkout the draft left by changing projects. */
 export function readPendingWorkspaceDefault(
   draftId: DraftId,

@@ -69,7 +69,10 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
-import { readPendingWorkspaceDefault } from "../../lib/draftWorkspaceDefaults";
+import {
+  readPendingDraftCheckout,
+  readPendingWorkspaceDefault,
+} from "../../lib/draftWorkspaceDefaults";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   beginBackgroundDraftSubmissionByRef,
@@ -318,7 +321,7 @@ export function useComposerSend(input: ComposerSendInput) {
     draftThread,
     activeThread,
     activeThreadKey,
-    activeThreadBranch,
+    activeThreadBranch: renderedBranch,
     activeProject,
     activeProjectIsScratch,
     activeProjectDefaultModelSelection,
@@ -328,9 +331,9 @@ export function useComposerSend(input: ComposerSendInput) {
     isGitRepo,
     phase,
     runtimeMode,
-    sendEnvMode,
+    sendEnvMode: renderedSendEnvMode,
     worktreeRepositories,
-    startFromOrigin,
+    startFromOrigin: renderedStartFromOrigin,
     localCheckoutBranchMismatch,
     logicalProjectEnvironments,
     providerInstanceEntries,
@@ -409,7 +412,7 @@ export function useComposerSend(input: ComposerSendInput) {
     composerRef,
     promptRef,
     runtimeMode,
-    startFromOrigin,
+    startFromOrigin: renderedStartFromOrigin,
     worktreeRepositories,
     resetLocalDispatch,
     setThreadError,
@@ -764,6 +767,27 @@ export function useComposerSend(input: ComposerSendInput) {
       notifyDirectAnnotationAttached();
       return;
     }
+    // A detached send can't pick up the render triggered by checkout completion.
+    const detachedDraft =
+      detachedOverride && isLocalDraftThread && draftId
+        ? useComposerDraftStore.getState().getDraftSession(draftId)
+        : null;
+    if (
+      detachedOverride &&
+      isLocalDraftThread &&
+      (!detachedDraft ||
+        detachedDraft.promotedTo ||
+        detachedDraft.threadId !== activeThread.id ||
+        detachedDraft.projectId !== activeThread.projectId ||
+        detachedDraft.environmentId !== environmentId)
+    ) {
+      return;
+    }
+    const preparedDraft = detachedDraft?.checkoutPullRequest ? detachedDraft : null;
+    const activeThreadBranch = preparedDraft ? preparedDraft.branch : renderedBranch;
+    const worktreePath = preparedDraft ? preparedDraft.worktreePath : activeThread.worktreePath;
+    const sendEnvMode = preparedDraft?.envMode ?? renderedSendEnvMode;
+    const startFromOrigin = preparedDraft?.startFromOrigin ?? renderedStartFromOrigin;
     const multipleModelSelections = sendCtx.multipleModelSelections;
     const approvalFeedbackTarget = pendingApprovalsRef.current.find(
       (approval) =>
@@ -1026,7 +1050,7 @@ export function useComposerSend(input: ComposerSendInput) {
       isServerThread,
       activeMessageCount,
       sendEnvMode,
-      worktreePath: activeThread.worktreePath,
+      worktreePath,
       activeThreadBranch,
       projectIsGitRepo: isGitRepo,
       plainProjectBaseBranch: readWorktreeBaseBranch(activeProject),
@@ -1556,7 +1580,7 @@ export function useComposerSend(input: ComposerSendInput) {
                       runtimeMode,
                       interactionMode: DEFAULT_INTERACTION_MODE,
                       branch: activeThreadBranch,
-                      worktreePath: activeThread.worktreePath,
+                      worktreePath,
                       createdAt: activeThread.createdAt,
                     },
                   }
@@ -1698,10 +1722,11 @@ export function useComposerSend(input: ComposerSendInput) {
     }
 
     if (failure !== null) {
-      if (isLocalDraftThread && draftId && draftThread) {
+      const draftToRestore = preparedDraft ?? draftThread;
+      if (isLocalDraftThread && draftId && draftToRestore) {
         restoreFailedDraftThread(
           draftId,
-          draftThread,
+          draftToRestore,
           wasBootstrapThreadDeleted(squashAtomCommandFailure(failure))
             ? newThreadId()
             : threadIdForSend,
@@ -1861,8 +1886,32 @@ export function useComposerSend(input: ComposerSendInput) {
     if (result === false || result === "moved" || !draftReady || !sameRoute) return;
     return sendWithEnvironmentRefreshLatest(...args);
   };
-  // No load-balancing refresh: it bails once the draft is no longer displayed, which is the
-  // only time a detached send runs, so the draft keeps the environment it was dictated for.
-  const captureDetachedSend = useStableCallback(() => onSend);
-  return { onSend: onSendWithRouting, captureDetachedSend };
+  const captureDictatedSend = useStableCallback(() => {
+    // Keep the outcome even if checkout finishes while transcription is still running.
+    const checkoutAtSubmit = draftId ? readPendingDraftCheckout(draftId) : null;
+    return {
+      afterCheckout: async (resume: () => void) => {
+        const checkout = (draftId ? readPendingDraftCheckout(draftId) : null) ?? checkoutAtSubmit;
+        if (checkout !== null) {
+          if (sendInFlightRef.current) return;
+          const { result, draftReady } = await waitBeforeSend(checkout);
+          if (result === "moved") {
+            reportDraftChangedBeforeSend();
+            return;
+          }
+          if (!result) {
+            toastManager.add(
+              stackedThreadToast({ type: "error", title: m(msg("Message not sent")) }),
+            );
+            return;
+          }
+          if (!draftReady) return;
+        }
+        resume();
+      },
+      // Load balancing needs the displayed draft. A detached send keeps its original environment.
+      sendDetached: onSend,
+    };
+  });
+  return { onSend: onSendWithRouting, captureDictatedSend };
 }

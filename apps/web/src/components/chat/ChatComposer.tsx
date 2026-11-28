@@ -501,19 +501,22 @@ export interface ChatComposerProps {
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
   ) => void;
-  captureDetachedSend?: () => (
-    e?: { preventDefault: () => void },
-    dispatchMode?: ComposerDispatchMode,
-    submissionIntent?: ComposerSubmissionIntent,
-    directAnnotation?: {
-      annotation: PreviewAnnotationPayload;
-      image: ComposerImageAttachment | null;
-    },
-    detachedOverride?: {
-      readonly prompt: string;
-      readonly sendContext: ReturnType<ChatComposerHandle["getSendContext"]>;
-    },
-  ) => void;
+  captureDictatedSend?: () => {
+    afterCheckout: (resume: () => void) => Promise<void>;
+    sendDetached: (
+      e?: { preventDefault: () => void },
+      dispatchMode?: ComposerDispatchMode,
+      submissionIntent?: ComposerSubmissionIntent,
+      directAnnotation?: {
+        annotation: PreviewAnnotationPayload;
+        image: ComposerImageAttachment | null;
+      },
+      detachedOverride?: {
+        readonly prompt: string;
+        readonly sendContext: ReturnType<ChatComposerHandle["getSendContext"]>;
+      },
+    ) => void;
+  };
   onResume: () => void;
   onInterrupt: () => void;
   onSelectActivePendingUserInputOption: (questionId: string, optionValue: string) => void;
@@ -616,7 +619,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPageScrollRelease,
     onCompactContext,
     onSend,
-    captureDetachedSend,
+    captureDictatedSend,
     onResume,
     onInterrupt,
     onSelectActivePendingUserInputOption,
@@ -2373,12 +2376,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           activeTurnDefault: followUpBehavior,
           canSteer,
         });
-      const capturedDetachedSend =
-        questionAttachmentTarget === null ? (captureDetachedSend?.() ?? null) : null;
-      const capturedSendContext =
-        capturedDetachedSend !== null ? (composerRef.current?.getSendContext() ?? null) : null;
+      const capturedDictatedSend =
+        questionAttachmentTarget === null ? (captureDictatedSend?.() ?? null) : null;
+      const capturedDetachedSend = capturedDictatedSend?.sendDetached;
+      const capturedSendContext = capturedDetachedSend
+        ? (composerRef.current?.getSendContext() ?? null)
+        : null;
       const capturedSubmissionTarget = submissionTarget;
-      submitAfterDictation((transcribedText) => {
+      const sendTranscript = (transcribedText: string) => {
         const stillLive =
           composerMountedRef.current && attachmentTargetKeyRef.current === queuedOwnerKey;
         if (stillLive) {
@@ -2424,6 +2429,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             return true;
           },
         });
+      };
+      submitAfterDictation((transcribedText) => {
+        if (capturedDictatedSend) {
+          void capturedDictatedSend.afterCheckout(() => sendTranscript(transcribedText));
+        } else {
+          sendTranscript(transcribedText);
+        }
       });
       return false;
     }
