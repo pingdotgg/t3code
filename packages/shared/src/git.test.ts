@@ -224,6 +224,17 @@ describe("parseOriginUrlFromGitConfig", () => {
     ).toBe("https://github.com/acme/\t\trepo.git");
   });
 
+  it("decodes Git value escape sequences in the url value", () => {
+    expect(
+      parseOriginUrlFromGitConfig('[remote "origin"]\n\turl = git@forge.example:team/a\\tb.git\n'),
+    ).toBe("git@forge.example:team/a\tb.git");
+    expect(
+      parseOriginUrlFromGitConfig(
+        '[remote "origin"]\n\turl = "git@forge.example:team/a\\nb\\bc\\"d\\\\e\\\\tf.git"\n',
+      ),
+    ).toBe('git@forge.example:team/a\nb\bc"d\\e\\tf.git');
+  });
+
   it("reads settings on the remote header line", () => {
     const upstream = '\n[remote "upstream"]\n\turl = https://github.com/other/source.git\n';
     expect(

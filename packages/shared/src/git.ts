@@ -244,7 +244,8 @@ function parseGitConfigValue(raw: string): string {
   for (let index = 0; index < raw.length; index += 1) {
     const char = raw[index]!;
     if (char === "\\" && index + 1 < raw.length) {
-      out += raw[index + 1];
+      const next = raw[index + 1]!;
+      out += next === "n" ? "\n" : next === "t" ? "\t" : next === "b" ? "\b" : next;
       index += 1;
       continue;
     }
