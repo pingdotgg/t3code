@@ -66,6 +66,10 @@ const lineWidths = new WeakMap<Line, number>();
 const ZERO_WIDTH = /[\p{Mark}\p{Default_Ignorable_Code_Point}]/u;
 const ASCII = /^[\x00-\x7f]*$/u;
 
+function isDetachedTailStart(character: string): boolean {
+  return ZERO_WIDTH.test(character) || /[\p{Emoji_Modifier}\uDC00-\uDFFF]/u.test(character);
+}
+
 function characterWidth(character: string): number {
   return ZERO_WIDTH.test(character) ? 0 : eastAsianWidth(character.codePointAt(0)!);
 }
@@ -154,9 +158,8 @@ function trimLineStart(runs: Array<Run>, count: number): number {
     let cut = Math.min(remaining, run.text.length);
     // A retained tail must start at a complete character, with no detached marks.
     while (cut < run.text.length) {
-      const code = run.text.charCodeAt(cut);
       const character = String.fromCodePoint(run.text.codePointAt(cut)!);
-      if (!(code >= 0xdc00 && code <= 0xdfff) && characterWidth(character) !== 0) break;
+      if (!isDetachedTailStart(character)) break;
       cut += character.length;
     }
     removedWidth += textWidth(run.text.slice(0, cut));
@@ -690,7 +693,7 @@ export function terminalOutputTail(
     return { text: text.slice(newline + 1), truncated: true };
   }
   // Cutting inside a line: never split an escape, keep the colour in force, and skip
-  // zero-width marks and lone low surrogates left without their base character.
+  // detached marks, emoji modifiers, and low surrogates.
   const style = styleAt(text, start);
   let prefix = style.prefix;
   start = style.start;
@@ -703,9 +706,8 @@ export function terminalOutputTail(
       start = end + 1;
       continue;
     }
-    const code = text.charCodeAt(start);
     const character = String.fromCodePoint(text.codePointAt(start)!);
-    if (!(code >= 0xdc00 && code <= 0xdfff) && characterWidth(character) !== 0) break;
+    if (!isDetachedTailStart(character)) break;
     start += character.length;
   }
   return { text: start < text.length ? prefix + text.slice(start) : "", truncated: true };
