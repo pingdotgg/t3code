@@ -22,6 +22,11 @@ const COLON_HEADING = /^(\S.*):$/;
 const OPENCODE_NUMBERED_LINE = /^\s+Line \d+:/;
 const RIPGREP_NUMBERED_LINE = /^\d+:/;
 
+function isValidInlineMatch(line: string): boolean {
+  const match = PATH_LINE_TEXT.exec(line);
+  return match !== null && Number(match[2]) >= 1;
+}
+
 /**
  * Grep tool text as one result per matched line, from ripgrep's `path:line:text` and `--heading`
  * forms, OpenCode's `path:` / `Line N: text`, and Gemini's `File: path` / `LN: text`. Returns
@@ -57,7 +62,7 @@ export function parseGrepOutput(
       if (
         ripgrepFormat === "heading" &&
         RIPGREP_NUMBERED_LINE.test(line) &&
-        !PATH_LINE_TEXT.test(line)
+        !isValidInlineMatch(line)
       ) {
         ambiguousHeading = false;
       }
@@ -76,7 +81,7 @@ export function parseGrepOutput(
       // Two inline rows can look like a heading and match. Keep parsing to see if a later row
       // in the grouped output rules out the inline form.
       if (ripgrepFormat === undefined || ambiguousHeading) {
-        ambiguousHeading = PATH_LINE_TEXT.test(trimmed) && PATH_LINE_TEXT.test(nextLine);
+        ambiguousHeading = isValidInlineMatch(trimmed) && isValidInlineMatch(nextLine);
       }
       file = line;
       ripgrepFormat = "heading";
