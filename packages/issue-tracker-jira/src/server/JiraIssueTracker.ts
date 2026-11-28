@@ -42,7 +42,7 @@ const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
 };
 
 /** `https://<site>.atlassian.net/browse/<PROJECT>-<n>`, keeping the site as the workspace. */
-export function parseJiraIssueUrl(url: URL) {
+function parseJiraIssueUrl(url: URL) {
   const site = url.hostname.toLowerCase();
   if (url.protocol !== "https:" || !site.endsWith(`.${DESCRIPTOR.host}`)) return null;
   const [, resource, key] = url.pathname.split("/");

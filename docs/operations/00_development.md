@@ -62,8 +62,8 @@ Restart `vp run dev --share` and open its printed pairing URL once per browser p
 
 ## Checks
 
-- `vp run check:changed` — CI's fast checks for your branch (format, lint, knip, affected typechecks, nearby tests, and React Compiler coverage).
-- Focused iteration: `vp test run <files>`, `vp lint <files>`, `vp run --filter <pkg> typecheck`, `vp run knip:check`, `vp run lint:mobile`.
+- `vp run check:changed` — CI's fast checks for your branch (format, lint, fallow, affected typechecks, nearby tests, and React Compiler coverage).
+- Focused iteration: `vp test run <files>`, `vp lint <files>`, `vp run --filter <pkg> typecheck`, `vp run fallow:check`, `vp run lint:mobile`.
 - `apps/web` uses real Chromium (`*.browser.test.{ts,tsx}`) for DOM/React tests (no jsdom) and Node for `*.test.ts`.
 - Typechecking uses `effect-tsgo tsrs --noEmit` (`@effect/tsgo`), not `typescript` (except `apps/marketing` for Astro). On Windows, open the workspace through WSL for VS Code's `.vscode/tsdk/tsgo`.
 

@@ -1,0 +1,86 @@
+{
+  "$schema": "./node_modules/fallow/schema.json",
+  // Keep vendored reference repositories outside the project.
+  "ignorePatterns": [".repos/**"],
+  // Exported types are part of our contracts even before they have consumers.
+  // Effect schemas count as types: a schema without a consumer is not reported.
+  "rules": {
+    "unused-types": "off",
+    // Fallow warns for these by default. The gate must fail on them.
+    "unused-dev-dependencies": "error",
+    "unused-optional-dependencies": "error",
+    "unused-namespace-members": "error",
+    "duplicate-export-aliases": "error",
+    // An escaped namespace import turns off the export check of its module.
+    "namespace-escapes": "error",
+  },
+  "effect": { "schemaExportsAsTypes": true },
+  // Only `@public` keeps an export without a consumer. `@internal` does not.
+  "keepExportTags": ["public"],
+  // Files that run in production and that no import or package manifest reaches.
+  "entry": [
+    // Electron loads this stylesheet by filename.
+    "apps/desktop/src/preview/Annotation.css",
+    // Vite builds this second page (`rolldownOptions.input`).
+    "apps/web/epub-preview.html",
+    // Metro embeds the browser entries in the native WebView.
+    "apps/mobile/src/features/browser/preview-stream.browser.ts",
+  ],
+  // Scripts and fixtures that run outside production.
+  "supportEntry": [
+    // electron-builder loads the macOS signer by path.
+    "scripts/sign-macos.ts",
+    // e2e loads the scenarios by path.
+    "scripts/scenarios/*.ts",
+    // Developers run these scripts directly.
+    "apps/server/scripts/probe-claude-fork-local-rollback-replay.ts",
+    "apps/server/scripts/update-test-shard-weights.ts",
+    "apps/server/scripts/verify-background-live.ts",
+    "packages/source-control-github/scripts/measure-pr-preview.ts",
+    // Evidence fixtures run under node.
+    "apps/web/test/fixtures/**/*.mjs",
+  ],
+  "ignoreFindings": [
+    // The `t3` npm package's files: copied into the package, never imported.
+    "scripts/npm-launcher/**",
+    "infra/task-cache/vendor/**",
+  ],
+  "ignoreExports": [
+    // UI component modules are copied and adapted as cohesive sets. Keep their
+    // named subcomponents even before they have callers; the file audit still
+    // reports an entire component module when nothing imports it.
+    { "file": "apps/web/src/components/ui/*.tsx", "exports": ["*"] },
+    // Generated code exports every name, with or without a consumer.
+    { "file": "**/*.graphql.ts", "exports": ["*"] },
+    { "file": "packages/*/src/_generated/**", "exports": ["*"] },
+  ],
+  "overrides": [
+    {
+      // The export check is not clean in these workspaces yet, so `fallow:check`
+      // does not gate it there. Remove a path when its workspace is clean.
+      "files": ["apps/marketing/**", "apps/mobile/**", "evals/**", "infra/**", "scripts/**"],
+      "rules": {
+        "unused-exports": "off",
+        "duplicate-export-aliases": "off",
+      },
+    },
+  ],
+  "workspaces": {
+    "settings": {
+      "apps/server": {
+        // The Vite+ web build prerequisite.
+        // Native and disk-loaded provider packages stay external to the bundle; the
+        // CLI archive and desktop sidecar stage them from this manifest.
+        "ignoreDependencies": ["@t3tools/web", "transcribe-cpp"],
+      },
+      "apps/desktop": {
+        // The injected runtime resolves Playwright by string; release tooling runs
+        // electron-builder from this workspace, outside its package scripts.
+        "ignoreDependencies": ["playwright-core", "electron-builder"],
+      },
+      // These workspace packages are private to this monorepo, so an export of a
+      // package entry file needs a consumer too.
+      "packages/*": { "includeEntryExports": true },
+    },
+  },
+}

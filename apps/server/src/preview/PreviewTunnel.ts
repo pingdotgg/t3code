@@ -57,7 +57,7 @@ export class PreviewTunnelConnectError extends Schema.TaggedError<PreviewTunnelC
   }
 }
 
-export class PreviewTunnel extends Context.Service<
+class PreviewTunnel extends Context.Service<
   PreviewTunnel,
   {
     /** Connects to a loopback port. `servedPort` is the port the request arrived on. */
