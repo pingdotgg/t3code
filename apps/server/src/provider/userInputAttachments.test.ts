@@ -1154,18 +1154,17 @@ describe("question answer paths", () => {
           expected: ["Encoded question mark chapter text."],
           absent: ["[Skipped document part", "[Extracted text truncated"],
         },
-        {
+        ...["My%20Book/book%201.opf", "./My%20Book/draft/../book%201.opf"].map((packagePath) => ({
           ext: "epub",
           parts: {
-            "META-INF/container.xml":
-              '<container><rootfile full-path="My%20Book/book%201.opf"/></container>',
+            "META-INF/container.xml": `<container><rootfile full-path="${packagePath}"/></container>`,
             "My Book/book 1.opf":
               '<package><item id="ch1" href="ch1.xhtml"/><itemref idref="ch1"/></package>',
             "My Book/ch1.xhtml": "<html><p>Percent-encoded rootfile chapter text.</p></html>",
           },
           expected: ["Percent-encoded rootfile chapter text."],
           absent: ["[Skipped document part", "[Extracted text truncated"],
-        },
+        })),
         {
           ext: "epub",
           parts: {
