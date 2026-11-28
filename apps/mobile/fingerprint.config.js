@@ -16,6 +16,12 @@ module.exports = {
   nativeModuleSourceType: "files",
   extraSources: [
     { type: "contents", id: "appMajorVersion", contents: majorVersion },
+    // Expo skips symlinks when hashing local modules.
+    {
+      type: "file",
+      filePath: "../../native/apple-speech/AppleSpeechEngine.swift",
+      reasons: ["appleSpeech"],
+    },
     // The controls plugin copies these native inputs outside Expo's module tracking.
     ...[
       "plugins/ios/T3ControlIntents.swift",

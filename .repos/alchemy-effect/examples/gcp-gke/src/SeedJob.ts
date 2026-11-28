@@ -1,19 +1,13 @@
-import * as GCP from "alchemy/GCP";
-import * as Kubernetes from "alchemy/Kubernetes";
+import * as GCP from "@alchemy.run/gcp";
+import * as Kubernetes from "@alchemy.run/kubernetes";
 import * as Effect from "effect/Effect";
-import {
-  EntriesDatabase,
-  entryPath,
-  GuestbookCluster,
-  GuestbookNamespace,
-} from "./infra.ts";
+import { EntriesDatabase, entryPath, GuestbookCluster, GuestbookNamespace } from "./infra.ts";
 
 export const seedEntries = [
   { id: "ada", message: "First computers, now clusters." },
   {
     id: "grace",
-    message:
-      "A cluster in port is safe, but that is not what clusters are for.",
+    message: "A cluster in port is safe, but that is not what clusters are for.",
   },
   { id: "linus", message: "Talk is cheap. Show me the manifest." },
 ];

@@ -9,9 +9,11 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
   NonNegativeInt,
-  settingsSecretLiteral,
+  requireSettingsSecretLiteral,
+  SettingsSecretUnresolvedError,
   SourceControlProviderKind,
   TrimmedNonEmptyString,
+  type ServerSettings,
   type SourceControlProviderAuth,
   type SourceControlProviderInfo,
   type SourceControlRepositoryCloneUrls,
@@ -120,6 +122,7 @@ export class BitbucketResponseError extends Schema.TaggedError<BitbucketResponse
     status: Schema.Int,
     responseBodyLength: NonNegativeInt,
     retryAt: Schema.optional(Schema.Number),
+    userFacingDetail: Schema.optional(Schema.String),
   },
 ) {
   get detail(): string {
@@ -277,6 +280,7 @@ export const BitbucketApiError = Schema.Union([
   BitbucketPullRequestBodyReadError,
   BitbucketCheckoutError,
   SourceControlRateLimit.SourceControlRateLimitPausedError,
+  SettingsSecretUnresolvedError,
 ]);
 export type BitbucketApiError = typeof BitbucketApiError.Type;
 const isBitbucketApiError = Schema.is(BitbucketApiError);
@@ -563,23 +567,24 @@ function credentialFrom(input: {
   return null;
 }
 
-function resolveCredential(
+const resolveCredential = Effect.fn("BitbucketApi.resolveCredential")(function* (
   settings: BitbucketClient.BitbucketSettings,
+  secretProviders: ServerSettings["secretProviders"],
   env: Config.Success<typeof BitbucketApiEnvConfig>,
-): BitbucketCredential | null {
+) {
+  const accessToken = yield* requireSettingsSecretLiteral(settings.accessToken, secretProviders);
+  const apiToken = HEADER_SAFE.test(accessToken)
+    ? ""
+    : yield* requireSettingsSecretLiteral(settings.apiToken, secretProviders);
   return (
-    credentialFrom({
-      accessToken: settingsSecretLiteral(settings.accessToken),
-      email: settings.email,
-      apiToken: settingsSecretLiteral(settings.apiToken),
-    }) ??
+    credentialFrom({ accessToken, email: settings.email, apiToken }) ??
     credentialFrom({
       accessToken: Option.getOrElse(env.accessToken, () => ""),
       email: Option.getOrElse(env.email, () => ""),
       apiToken: Option.getOrElse(env.apiToken, () => ""),
     })
   );
-}
+});
 
 function authFromCredential(credential: BitbucketCredential | null): SourceControlProviderAuth {
   if (credential?.kind === "access-token") {
@@ -605,7 +610,7 @@ function authFromCredential(credential: BitbucketCredential | null): SourceContr
     account: Option.none(),
     host: Option.some("bitbucket.org"),
     detail: Option.some(
-      "Add a Bitbucket token in Settings → Source Control, or set the T3CODE_BITBUCKET_* environment variables on the server.",
+      "Add a Bitbucket token in Settings → Source control & issues, or set the T3CODE_BITBUCKET_* environment variables on the server.",
     ),
   };
 }
@@ -669,24 +674,26 @@ export const make = Effect.gen(function* () {
   const apiUrl = (path: string) => `${config.baseUrl.replace(/\/+$/u, "")}${path}`;
 
   const currentCredential = host.settings.getWithSecrets(BitbucketClient.definition.kind).pipe(
-    Effect.map((settings) =>
-      resolveCredential(
-        readSourceControlHostSettings(
-          BitbucketClient.settings,
-          settings.sourceControlHosts[BitbucketClient.definition.kind],
-        ),
-        config,
+    Effect.map((settings) => ({
+      bitbucket: readSourceControlHostSettings(
+        BitbucketClient.settings,
+        settings.sourceControlHosts[BitbucketClient.definition.kind],
       ),
-    ),
+      secretProviders: settings.secretProviders,
+    })),
     Effect.catch((error) =>
       // No cause: a settings decode error can quote a hand-edited token.
       Effect.logWarning("failed to read Bitbucket credentials from settings", {
         operation: error.operation,
       }).pipe(
-        Effect.as(
-          resolveCredential(readSourceControlHostSettings(BitbucketClient.settings, {}), config),
-        ),
+        Effect.as({
+          bitbucket: readSourceControlHostSettings(BitbucketClient.settings, {}),
+          secretProviders: {},
+        }),
       ),
+    ),
+    Effect.flatMap(({ bitbucket, secretProviders }) =>
+      resolveCredential(bitbucket, secretProviders, config),
     ),
   );
 
@@ -756,13 +763,10 @@ export const make = Effect.gen(function* () {
     throttled(
       request.method,
       withAuth(request.pipe(HttpClientRequest.acceptJson)).pipe(
-        Effect.flatMap(httpClient.execute),
-        Effect.mapError(
-          (cause) =>
-            new BitbucketRequestError({
-              operation,
-              cause,
-            }),
+        Effect.flatMap((authed) =>
+          httpClient
+            .execute(authed)
+            .pipe(Effect.mapError((cause) => new BitbucketRequestError({ operation, cause }))),
         ),
         Effect.flatMap((response) => decodeResponse(operation, schema, response)),
         Effect.timeout(BITBUCKET_API_REQUEST_TIMEOUT),
@@ -915,7 +919,18 @@ export const make = Effect.gen(function* () {
       repository: input.sourceRepositoryName,
       ...(input.context ? { context: input.context } : {}),
     }).pipe(Effect.map(normalizeRepositoryCloneUrls));
-    const originRemoteUrl = yield* readConfigValueNullable(input.cwd, "remote.origin.url");
+    // Git fetches from a remote's first URL; `config --get` returns the last of several, and
+    // `git remote -v` applies `insteadOf` rewrites.
+    const originRemoteUrl = yield* git
+      .execute({
+        operation: "BitbucketApi.readOriginRemoteUrl",
+        cwd: input.cwd,
+        args: ["config", "--get-all", "remote.origin.url"],
+      })
+      .pipe(
+        Effect.map((result) => result.stdout.split("\n", 1)[0]?.trim() || null),
+        Effect.orElseSucceed(() => null),
+      );
     return yield* git.ensureRemote({
       cwd: input.cwd,
       preferredName: input.isCrossRepository
@@ -960,9 +975,15 @@ export const make = Effect.gen(function* () {
         ? base
         : base.pipe(HttpClientRequest.bodyText(input.body, "application/json"));
     return withAuth(withBody).pipe(
-      Effect.flatMap(httpClient.execute),
-      Effect.mapError(
-        (cause): BitbucketApiError => new BitbucketRequestError({ operation: "request", cause }),
+      Effect.flatMap((request) =>
+        httpClient
+          .execute(request)
+          .pipe(
+            Effect.mapError(
+              (cause): BitbucketApiError =>
+                new BitbucketRequestError({ operation: "request", cause }),
+            ),
+          ),
       ),
       Effect.flatMap((response) => {
         const location = response.headers.location;
@@ -1042,6 +1063,15 @@ export const make = Effect.gen(function* () {
               Effect.catch(() => currentCredential.pipe(Effect.map(authFromCredential))),
             ),
       ),
+      Effect.catchTags({
+        SettingsSecretUnresolvedError: (error) =>
+          Effect.succeed<SourceControlProviderAuth>({
+            status: "unauthenticated",
+            account: Option.none(),
+            host: Option.some("bitbucket.org"),
+            detail: Option.some(error.message),
+          }),
+      }),
     ),
     listPullRequests: Effect.fn("BitbucketApi.listPullRequests")(function (input) {
       return resolveRepository(input).pipe(
@@ -1074,8 +1104,20 @@ export const make = Effect.gen(function* () {
     getPullRequest: Effect.fn("BitbucketApi.getPullRequest")(function (input) {
       return getRawPullRequest(input).pipe(Effect.map(normalizeBitbucketPullRequestRecord));
     }),
-    getRepositoryCloneUrls: Effect.fn("BitbucketApi.getRepositoryCloneUrls")(function (input) {
-      return getRepository(input).pipe(Effect.map(normalizeRepositoryCloneUrls));
+    getRepositoryCloneUrls: Effect.fn("BitbucketApi.getRepositoryCloneUrls")(function* (input) {
+      const locator = yield* resolveRepository(input);
+      return yield* getRepositoryFromLocator(locator).pipe(
+        Effect.mapError((error) => {
+          if (error._tag !== "BitbucketResponseError" || error.status !== 404) return error;
+          return new BitbucketResponseError({
+            ...error,
+            userFacingDetail: SourceControlProvider.repositoryNotFoundDetail(
+              `${locator.workspace}/${locator.repoSlug}`,
+            ),
+          });
+        }),
+        Effect.map(normalizeRepositoryCloneUrls),
+      );
     }),
     createRepository: Effect.fn("BitbucketApi.createRepository")(function (input) {
       return requireRepositoryLocator(input.repository).pipe(

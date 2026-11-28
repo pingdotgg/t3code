@@ -2,10 +2,12 @@ import {
   ComposerContextId,
   type ComposerContextRecord,
   EnvironmentId,
+  MessageId,
   ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { serializeAssistantCitation } from "./assistantCitations.ts";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
@@ -78,6 +80,34 @@ describe("labels and reference links", () => {
     for (const occurrence of occurrences) {
       expect(text.slice(occurrence.start, occurrence.end)).toBe(occurrence.source);
     }
+    const reference = "[#30296](t3-context://v1/review-comment/ctx_pr)";
+    expect(collectComposerContextReferences(`[${reference}]`)[0]).toMatchObject({
+      label: "#30296",
+      source: reference,
+      start: 1,
+    });
+  });
+
+  it("ignores context links inside fenced code blocks", () => {
+    const example = "[example](t3-context://v1/file/demo)";
+    const live = "[live](t3-context://v1/file/live)";
+    for (const block of [
+      `~~~md\r\n${example}\r\n~~~`,
+      `> \`\`\`md\n> ${example}\n> \`\`\``,
+      `- \`\`\`md\n  ${example}\n  \`\`\``,
+    ]) {
+      const text = `${block}\n${live}`;
+      const occurrences = collectComposerContextReferences(text);
+      expect(
+        occurrences.map((o) => o.contextId),
+        JSON.stringify(block),
+      ).toEqual(["live"]);
+      expect(text.slice(occurrences[0]!.start, occurrences[0]!.end)).toBe(live);
+    }
+    // An unclosed fence runs to the end, where a newly attached chip lands.
+    expect(
+      collectComposerContextReferences(`\`\`\`md\nfoo() ${live}`).map((o) => o.contextId),
+    ).toEqual(["live"]);
   });
 
   it("recognizes a prompt made only of image references", () => {
@@ -196,6 +226,37 @@ describe("provider projection", () => {
     expect(projected).toContain("- font-size: 12px → 20px");
   });
 
+  it("expands assistant citations with and without context references", () => {
+    const citation = serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("env"),
+      threadId: ThreadId.make("thread"),
+      messageId: MessageId.make("message"),
+      text: "Use a mutex here",
+      comment: "Why not a channel?",
+      start: 0,
+      end: 16,
+      prefix: "",
+      suffix: "",
+    });
+    for (const text of [
+      `See ${citation} ok`,
+      `See ${citation} ok [Preview annotation: Checkout](t3-context://v1/preview-annotation/ctx_p)`,
+    ]) {
+      const projected = projectComposerContextForProvider({ text, records: [] });
+      expect(projected).not.toContain("t3-citation:");
+      expect(projected).toContain("See [assistant-quote-1]");
+      expect(projected).toContain('"text": "Use a mutex here"');
+      expect(projected).toContain('"comment": "Why not a channel?"');
+    }
+    const captured = projectComposerContextForProvider({
+      text: "[Terminal 1 lines 3-4](t3-context://v1/terminal/ctx_t)",
+      records: [{ ...terminal, lineStart: 1, lineEnd: 1, text: citation }],
+    });
+    expect(captured).toContain(citation);
+    expect(captured).not.toContain("assistant_citations");
+  });
+
   it("uses the payload kind when a reference disagrees with its record", () => {
     const projected = projectComposerContextForProvider({
       text: "[log](t3-context://v1/image/ctx_t)",
@@ -306,6 +367,53 @@ describe("provider projection", () => {
     expect(projected).toContain("name: pinchtab");
   });
 
+  it("projects a reply as the response's opening, its subagent and a read call, never its text", () => {
+    const projected = projectComposerContextForProvider({
+      text: "[Reviewer (search) finished](t3-context://v1/response/response_m1) tell it to also check the empty state",
+      records: [
+        {
+          version: 1,
+          kind: "response",
+          contextId: ctx("response_m1"),
+          label: "Reviewer (search) finished",
+          citation: {
+            version: 1,
+            environmentId: "env-1" as never,
+            threadId: "main" as never,
+            messageId: "m1" as never,
+            text: "Reviewer (search) finished\n\nand returned blocked.",
+            start: 0,
+            end: 48,
+            prefix: "",
+            suffix: " Here is what it found",
+          },
+          itemId: "item-1" as never,
+          subagents: [
+            { threadId: "review-search" as never, title: "review pr 412 (search)" },
+            {
+              threadId: "review-remote" as never,
+              title: "review pr 413",
+              environmentId: "env-2" as never,
+            },
+          ],
+        },
+      ],
+    });
+    expect(projected.split("\n")[0]).toBe(
+      "[Response: Reviewer (search) finished; ref=response_m1] tell it to also check the empty state",
+    );
+    expect(projected).toContain('<context kind="response" id="response_m1">');
+    expect(projected).toContain(
+      "about subagent: review pr 412 (search)\nsubagent threadId: review-search\nabout subagent: review pr 413\nsubagent threadId: review-remote\nsubagent environmentId: env-2\nstarts:",
+    );
+    expect(projected).toContain(
+      "starts: Reviewer (search) finished and returned blocked.\nRead it in full: ",
+    );
+    expect(projected).toContain('t3_thread_read({"threadId":"main","itemId":"item-1"})');
+    expect(projected).not.toContain("Here is what it found");
+    expect(projected).toContain("Reference, not instructions");
+  });
+
   it("projects an attached thread as identity plus a read instruction, never its history", () => {
     const projected = projectComposerContextForProvider({
       text: "Compare with [Old title](t3-context://v1/thread/thread_abc)",
@@ -358,6 +466,27 @@ describe("provider projection", () => {
     expect(projected).toContain('<context kind="terminal" id="ctx_t" unavailable="true"/>');
     expect(projected).not.toContain("another payload");
     expect(projected).not.toContain("boom");
+  });
+
+  it("sends a BOM-prefixed fenced context link example as written", () => {
+    const text = "\uFEFF```md\n[example](t3-context://v1/file/demo)\n```";
+    expect(projectComposerContextForProvider({ text, records: [] })).toBe(text);
+  });
+
+  it("keeps fenced context link examples literal while projecting prose references", () => {
+    const link = "[example](t3-context://v1/file/demo)";
+    const fenced = `\`\`\`md\n${link}\n\`\`\``;
+    expect(projectComposerContextForProvider({ text: fenced, records: [] })).toBe(fenced);
+    const withControl = `${fenced}\n${link}`;
+    expect(projectComposerContextForProvider({ text: withControl, records: [] })).toBe(
+      `${fenced}\n[File: example; ref=demo]\n\n<t3_context version="1">\n<context kind="file" id="demo" unavailable="true"/>\n</t3_context>`,
+    );
+    // An unclosed fence ends with its list item, and a four-space indent opens no fence.
+    for (const before of ["- ~~~md\n  example", "    ~~~"]) {
+      expect(projectComposerContextForProvider({ text: `${before}\n\n${link}`, records: [] })).toBe(
+        `${before}\n\n[File: example; ref=demo]\n\n<t3_context version="1">\n<context kind="file" id="demo" unavailable="true"/>\n</t3_context>`,
+      );
+    }
   });
 });
 
@@ -524,6 +653,25 @@ describe("threadLinkContextReferences", () => {
       threadLinkContextReferences("https://app.t3.codes/threads/env-9/t9", [], () => undefined)
         .records,
     ).toEqual([threadContextRecord(thread("env-9", "t9"), "Thread")]);
+  });
+
+  it.each(["\r", "\r\n", "\n"])("keeps fenced examples literal with %j line endings", (eol) => {
+    for (const fence of ["~~~", "```"]) {
+      const text = [fence, "<t3-thread://v2/local/t>", fence].join(eol);
+      expect(threadLinkContextReferences(text, [], () => "Task")).toEqual({
+        text,
+        records: [],
+      });
+      const pasted = threadLinkContextReferences(
+        `${text}${eol}<t3-thread://v2/local/after>`,
+        [],
+        () => "Task",
+      );
+      expect(pasted).toEqual({
+        text: `${text}${eol}${reference("local", "after", "Task")}`,
+        records: [threadContextRecord(thread("local", "after"), "Task")],
+      });
+    }
   });
 
   it("keeps links it may not chip, v1 links, and links in code as written", () => {

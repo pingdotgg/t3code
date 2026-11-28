@@ -1,0 +1,30 @@
+import type * as neptunegraph from "@distilled.cloud/aws/neptune-graph";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for the `GetExportTask` operation (IAM action `neptune-graph:GetExportTask`).
+ *
+ * Reads one export task by id — status, progress percentage, and exported-record counts. Task ids are server-generated runtime data. Provide the implementation with
+ * `Effect.provide(AWS.NeptuneGraph.GetExportTaskHttp)`.
+ * ### Importing and Exporting Data
+ * **Example:** Poll an export task
+ * ```typescript
+ * const getExportTask = yield* NeptuneGraph.GetExportTask();
+ *
+ * const task = yield* getExportTask({ taskIdentifier });
+ * // task.status → "SUCCEEDED"
+ * ```
+ *
+ * @binding
+ */
+export interface GetExportTask extends Binding.Service<
+  GetExportTask,
+  "AWS.NeptuneGraph.GetExportTask",
+  () => Effect.Effect<
+    (
+      request: neptunegraph.GetExportTaskInput,
+    ) => Effect.Effect<neptunegraph.GetExportTaskOutput, neptunegraph.GetExportTaskError>
+  >
+> {}
+export const GetExportTask = Binding.Service<GetExportTask>("AWS.NeptuneGraph.GetExportTask");

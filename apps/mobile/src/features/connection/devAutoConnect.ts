@@ -6,7 +6,7 @@ import { findLinkedRoute, updateLinkedRoute } from "../../lib/appLinking";
 import { rootNavigationRef, whenRootNavigationReady } from "../../lib/rootNavigation";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { leaveSettingsPage } from "../settings/settings-navigation";
-import { workspaceHasColumns } from "../workspace/workspace-selection-store";
+import { workspaceHasColumns } from "../layout/workspace/workspace-selection-store";
 import { pairEnvironment } from "../../state/use-remote-environment-registry";
 
 export type DevAutoConnectAttempt =
@@ -85,6 +85,13 @@ export function withoutPairingTarget(
 }
 
 /**
+ * Pairing links prefill and auto-connect only in development and in mobile:metrics' release
+ * bundles, the one production bundle built with the probe flag; store builds never set it.
+ */
+export const pairingLinksAllowed = () =>
+  __DEV__ || process.env.EXPO_PUBLIC_T3_BEHAVIOR_PROBE === "1";
+
+/**
  * `connections/new?pairingUrl=…&autoConnect=1` (or `settings/environment-new?…`) pairs from the
  * link itself, so a remount of the form never pairs twice. Production builds ignore the flag so
  * a link can never pair with an attacker-chosen host.
@@ -92,7 +99,7 @@ export function withoutPairingTarget(
 export function startDevAutoConnect(
   state: PartialState<NavigationState> | undefined,
 ): PartialState<NavigationState> | undefined {
-  if (!__DEV__) return state;
+  if (!pairingLinksAllowed()) return state;
   const route = findLinkedRoute(state, PAIRING_FORM_ROUTES);
   if (route === undefined) return state;
   const params = (route.params ?? {}) as {

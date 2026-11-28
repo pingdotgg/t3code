@@ -1,8 +1,8 @@
 /**
  * Alpha: devices leased from a Simlock gateway the user runs. Opening a device
  * takes a lease through the gateway's agent-device front, so agents drive it
- * with the same session; closing it returns the device to the pool, wiped.
- * A lease left by a server that crashed ends one TTL after its last renewal.
+ * with the same session; closing it returns the device to the pool. A lease
+ * left by a crashed server ends one TTL after its last renewal.
  */
 import {
   DeviceBootError,
@@ -11,6 +11,7 @@ import {
   DeviceOperationError,
   type DevicePlatform,
   type DevicePlatformAvailability,
+  type SettingsSecretValue,
   type SimlockDeviceHostConfig,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -26,10 +27,13 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { truncate } from "@t3tools/shared/String";
 import type { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import { writeAgentDeviceConfig } from "./AgentDeviceTarget.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 
@@ -38,9 +42,9 @@ const REQUEST_TIMEOUT = Duration.seconds(15);
 // The gateway queues a lease request for up to five minutes when every device is busy.
 const OPEN_TIMEOUT = Duration.minutes(7);
 const COMMAND_TIMEOUT = Duration.minutes(2);
-// Renewal keeps a watched but idle device; a lease this server stops renewing ends after LEASE_TTL.
+// Renewal keeps a watched but idle device. It sends no ttlMs: Simlock then keeps the lease's own
+// length, while one above the gateway's lease.maxTtlMs is refused rather than shortened.
 const RENEW_INTERVAL = Duration.minutes(2);
-const LEASE_TTL_MS = 10 * 60_000;
 const STREAM_PATH = /^\/vendor\/serve-sim\/helper\/([^/]+)\/stream\.avcc$/;
 const INPUT_PATH = "/vendor/serve-sim/helper/ws";
 
@@ -51,36 +55,95 @@ const Catalog = Schema.Struct({
       modelRuntimes: Schema.Record(Schema.String, Schema.Array(Schema.String)),
       modelClasses: Schema.optional(Schema.Record(Schema.String, Schema.String)),
       modelWorkers: Schema.optional(Schema.Record(Schema.String, Schema.Array(Schema.String))),
+      virtualDevices: Schema.optional(Schema.Literal(false)),
     }),
   ),
 });
 const decodeCatalog = Schema.decodeUnknownEffect(Catalog);
+// `/v1/catalog` lists only models a worker can create; enrolled phones are in `/v1/status`.
+const Status = Schema.Struct({
+  devices: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        spec: Schema.Struct({
+          platform: Schema.String,
+          model: Schema.String,
+          osVersion: Schema.String,
+        }),
+        state: Schema.String,
+        physical: Schema.Boolean,
+        class: Schema.optional(Schema.String),
+        workerId: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
+  workers: Schema.optional(
+    Schema.Array(
+      Schema.Struct({ id: Schema.String, connection: Schema.String, drained: Schema.Boolean }),
+    ),
+  ),
+});
+const decodeStatus = Schema.decodeUnknownEffect(Status);
+// A phone in any other state (absent, quarantined, deleted) cannot be leased right now.
+const LEASABLE_PHONE_STATES = new Set(["ready", "leased", "reclaiming"]);
 const decodeSessionRecord = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ leaseId: Schema.String })),
 );
-const decodeCliFailure = Schema.decodeUnknownOption(
-  Schema.fromJsonString(
-    Schema.Struct({
-      error: Schema.Struct({ message: Schema.String, hint: Schema.optional(Schema.String) }),
-    }),
-  ),
-);
+const CliFailure = Schema.Struct({
+  error: Schema.Struct({
+    message: Schema.String,
+    hint: Schema.optional(Schema.String),
+    logPath: Schema.optional(Schema.String),
+    // An open bag; `line` holds the daemon's raw response when agent-device could not parse it.
+    details: Schema.optional(Schema.Unknown),
+  }),
+});
+const responseLine = (details: unknown) =>
+  typeof details === "object" &&
+  details !== null &&
+  "line" in details &&
+  typeof details.line === "string"
+    ? details.line
+    : undefined;
+const decodeCliFailure = Schema.decodeUnknownOption(Schema.fromJsonString(CliFailure));
+const describeCliFailure = ({ error }: typeof CliFailure.Type) => {
+  const line = responseLine(error.details);
+  return [
+    error.message,
+    error.hint,
+    line ? `The daemon answered: ${truncate(line, 300)}` : undefined,
+    error.logPath ? `Log: ${error.logPath}` : undefined,
+  ]
+    .filter((part) => part !== undefined)
+    .join(" ");
+};
 
 interface Lease {
   readonly leaseId: string;
   readonly platform: DevicePlatform;
+  readonly physical: boolean;
   readonly name: string;
   readonly version: string;
   readonly session: string;
   readonly dir: string;
   readonly configPath: string;
   readonly installDirectory: string;
+  /** The token the lease was opened with; ending it must not depend on reading the secret again. */
+  readonly token: string;
 }
 
-const catalogId = (platform: DevicePlatform, model: string) => `simlock:${platform}:${model}`;
+// An enrolled phone's id carries its OS version: two phones of one model can run different ones.
+const catalogId = (platform: DevicePlatform, model: string, osVersion?: string) =>
+  `simlock:${platform}${osVersion === undefined ? "" : `@${encodeURIComponent(osVersion)}`}:${model}`;
 const parseCatalogId = (id: string) => {
-  const match = /^simlock:(ios|android):(.+)$/.exec(id);
-  return match ? { platform: match[1] as DevicePlatform, model: match[2]! } : null;
+  const match = /^simlock:(ios|android)(?:@([^:]*))?:(.+)$/.exec(id);
+  return match
+    ? {
+        platform: match[1] as DevicePlatform,
+        model: match[3]!,
+        osVersion: match[2] === undefined ? undefined : decodeURIComponent(match[2]),
+      }
+    : null;
 };
 const platformVersion = (platform: DevicePlatform, runtime: string | undefined) =>
   `${platform === "ios" ? "iOS" : "Android"}${runtime ? ` ${runtime}` : ""}`;
@@ -108,20 +171,25 @@ export const machineSimlockToken = (environment: NodeJS.ProcessEnv) => {
 
 /**
  * The saved token, else this machine's agent-device token; each only for the gateway it belongs to,
- * so a URL being edited never receives either.
+ * so a URL being edited never receives either. A saved secret reference that cannot be read fails
+ * instead of falling back to this machine's token.
  */
-export const resolveSimlockToken = (
+export const resolveSimlockToken = Effect.fn("SimlockDeviceHost.resolveToken")(function* (
+  secrets: SecretResolver.SecretResolver["Service"],
   gatewayUrl: string,
-  saved: { readonly gatewayUrl: string; readonly agentToken: string } | undefined,
+  saved: { readonly gatewayUrl: string; readonly agentToken: SettingsSecretValue } | undefined,
   environment: NodeJS.ProcessEnv,
-) => {
+) {
   if (saved?.agentToken && sameOrigin(saved.gatewayUrl, gatewayUrl))
-    return { agentToken: saved.agentToken, source: "settings" as const };
+    return {
+      agentToken: yield* requireSettingsSecret(secrets, saved.agentToken),
+      source: "settings" as const,
+    };
   const machine = machineSimlockToken(environment);
   return machine && sameOrigin(machine.gatewayUrl, gatewayUrl)
     ? { agentToken: machine.agentToken, source: "env" as const }
     : null;
-};
+});
 
 /** What went wrong talking to a gateway, without the gateway's own text. */
 export const describeGatewayFailure = (cause: unknown, gatewayUrl: string, tokenOwner: string) => {
@@ -181,9 +249,9 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
   const server = yield* ServerConfig.ServerConfig;
   const services = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
   const environment = yield* HostProcess.Environment;
+  const secrets = yield* SecretResolver.SecretResolver;
   const hostId = config.id;
   const gateway = config.gatewayUrl.replace(/\/$/, "");
-  const agentToken = resolveSimlockToken(config.gatewayUrl, config, environment)?.agentToken ?? "";
   const agentDeviceUrl = `${gateway}/v1/agent-device`;
   const hostDir = path.join(server.stateDir, "device", "simlock", hostId);
   const leases = new Map<string, Lease>();
@@ -209,7 +277,18 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       ...(cause === undefined ? {} : { cause }),
     });
 
+  // Read on each use, so a rotated or unlocked secret applies without rebuilding the host.
+  const currentToken = resolveSimlockToken(secrets, config.gatewayUrl, config, environment).pipe(
+    Effect.mapError((error) => unavailable(error.message, error)),
+    Effect.flatMap((token) =>
+      token
+        ? Effect.succeed(token.agentToken)
+        : Effect.fail(unavailable(`Add an agent token for ${config.label} in Settings.`)),
+    ),
+  );
+
   const request = (
+    agentToken: string,
     method: "GET" | "POST" | "DELETE",
     route: string,
     body?: Readonly<Record<string, unknown>>,
@@ -274,27 +353,61 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       return yield* unavailable(
         Option.match(failure, {
           onNone: () => `agent-device ${args[0]} failed (exit code ${result.code ?? "none"}).`,
-          onSome: ({ error }) => (error.hint ? `${error.message} ${error.hint}` : error.message),
+          onSome: describeCliFailure,
         }),
       );
     }
     return result.stdout;
   });
 
+  /** One entry per model and OS version of the enrolled phones and tablets a worker can lease now. */
+  const fetchPhones = Effect.fn("SimlockDeviceHost.fetchPhones")(function* (agentToken: string) {
+    const status = yield* request(agentToken, "GET", "/v1/status").pipe(
+      Effect.flatMap(decodeStatus),
+    );
+    const usableWorkers = new Set(
+      (status.workers ?? [])
+        .filter((worker) => worker.connection === "connected" && !worker.drained)
+        .map((worker) => worker.id),
+    );
+    const phones = new Map<string, DeviceHost.HostDevice>();
+    for (const device of status.devices ?? []) {
+      const { platform, model, osVersion } = device.spec;
+      if (!device.physical || (platform !== "ios" && platform !== "android")) continue;
+      if (device.class !== undefined && device.class !== "phone" && device.class !== "tablet")
+        continue;
+      if (!LEASABLE_PHONE_STATES.has(device.state)) continue;
+      if (device.workerId !== undefined && !usableWorkers.has(device.workerId)) continue;
+      const id = catalogId(platform, model, osVersion);
+      phones.set(id, {
+        id,
+        platform,
+        name: model,
+        version: platformVersion(platform, osVersion),
+        booted: false,
+        physical: true,
+      });
+    }
+    return [...phones.values()];
+  });
+
   const fetchCatalog = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     if (catalog && now - catalog.at < CATALOG_TTL_MS) return catalog.devices;
-    if (!agentToken) {
-      return yield* unavailable(`Add an agent token for ${config.label} in Settings.`);
-    }
-    const decoded = yield* request("GET", "/v1/catalog").pipe(
+    const agentToken = yield* currentToken;
+    const decoded = yield* request(agentToken, "GET", "/v1/catalog").pipe(
       Effect.flatMap(decodeCatalog),
       Effect.mapError((cause) =>
         unavailable(describeGatewayFailure(cause, gateway, config.label), cause),
       ),
     );
     const byPlatform = decoded.platforms.map((entry) => {
-      if (entry.platform !== "ios" && entry.platform !== "android") return null;
+      // A phones-only platform offers no virtual models by design, so it never looks incomplete.
+      if (
+        (entry.platform !== "ios" && entry.platform !== "android") ||
+        entry.virtualDevices === false
+      )
+        return null;
       const platform: DevicePlatform = entry.platform;
       return Object.entries(entry.modelRuntimes).flatMap(([model, runtimes]) => {
         const kind = entry.modelClasses?.[model];
@@ -313,11 +426,19 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
         ];
       });
     });
-    const devices = byPlatform.flatMap((entry) => entry ?? []);
+    const virtual = byPlatform.flatMap((entry) => entry ?? []);
+    const phones = yield* fetchPhones(agentToken).pipe(
+      Effect.tapError((cause) => Effect.logWarning("Could not list Simlock phones", { cause })),
+      Effect.option,
+    );
+    const devices = [...virtual, ...Option.getOrElse(phones, () => [])];
     // A platform with nothing to offer is usually its workers reconnecting; caching that would
-    // hide it for the TTL, so only a catalog with devices on every platform is kept.
+    // hide it for the TTL, so only a catalog with devices on every platform is kept. Phones are
+    // extra: a listing without them is returned but not kept either.
     catalog =
-      devices.length > 0 && byPlatform.every((entry) => entry === null || entry.length > 0)
+      Option.isSome(phones) &&
+      devices.length > 0 &&
+      byPlatform.every((entry) => entry === null || entry.length > 0)
         ? { at: now, devices }
         : null;
     return devices;
@@ -327,7 +448,9 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
     Effect.tap((devices) =>
       Effect.sync(() => {
         platforms = (["ios", "android"] as const).map((platform) =>
-          devices.some((device) => device.platform === platform)
+          // A held lease stays openable even when discovery no longer lists its device.
+          devices.some((device) => device.platform === platform) ||
+          [...leases.values()].some((lease) => lease.platform === platform)
             ? { platform, available: true }
             : {
                 platform,
@@ -357,7 +480,9 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
   /** Ends the lease through its session, or over HTTP when the session is gone. */
   const release = Effect.fn("SimlockDeviceHost.release")(function* (lease: Lease) {
     yield* agentDevice(lease, ["close"]).pipe(
-      Effect.catch(() => request("DELETE", `/v1/leases/${encodeURIComponent(lease.leaseId)}`)),
+      Effect.catch(() =>
+        request(lease.token, "DELETE", `/v1/leases/${encodeURIComponent(lease.leaseId)}`),
+      ),
       Effect.tapError((cause) =>
         Effect.logWarning("Could not release Simlock lease", { leaseId: lease.leaseId, cause }),
       ),
@@ -376,9 +501,9 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       yield* Effect.sleep(Duration.millis(Math.min(left, Duration.toMillis(RENEW_INTERVAL))));
       if ((yield* Clock.currentTimeMillis) >= deadline) break;
       const renewed = yield* request(
+        lease.token,
         "POST",
         `/v1/leases/${encodeURIComponent(lease.leaseId)}/renew`,
-        { ttlMs: LEASE_TTL_MS },
       ).pipe(Effect.result);
       if (renewed._tag === "Success") continue;
       const error = renewed.failure;
@@ -418,17 +543,20 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
   ) {
     const target = parseCatalogId(device.id);
     if (!target) {
+      const reason = "This Simlock device is no longer leased. Open it again from the list.";
       return yield* new DeviceBootError({
         hostId,
         deviceId: device.id,
         reason: "launch_failed",
-        cause: new Error("This Simlock device is no longer leased. Open it again from the list."),
+        diagnostics: reason,
+        cause: new Error(reason),
       });
     }
     const suffix = (yield* Random.nextIntBetween(0, 0xffffff)).toString(16).padStart(6, "0");
     const session = `t3-${suffix}`;
     const dir = path.join(hostDir, suffix);
     const configPath = path.join(dir, "agent-device.json");
+    const agentToken = yield* currentToken;
     yield* writeAgentDeviceConfig(configPath, {
       baseUrl: agentDeviceUrl,
       token: agentToken,
@@ -447,7 +575,14 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       yield* agentDevice(pending, ["connect", "proxy", "--daemon-base-url", agentDeviceUrl]);
       yield* agentDevice(
         pending,
-        ["open", "--platform", target.platform, "--device", target.model],
+        [
+          "open",
+          "--platform",
+          target.platform,
+          "--device",
+          target.model,
+          ...(target.osVersion === undefined ? [] : ["--physical", "--os", target.osVersion]),
+        ],
         { cwd: installDirectory, timeout: OPEN_TIMEOUT },
       );
       const record = yield* fs
@@ -459,12 +594,14 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       const opened: Lease = {
         leaseId: record.leaseId,
         platform: target.platform,
+        physical: device.physical,
         name: target.model,
         version: device.version,
         session,
         dir,
         configPath,
         installDirectory,
+        token: agentToken,
       };
       if (stops !== stopsAtOpen)
         return yield* unavailable("Device support stopped while the device was opening.");
@@ -487,6 +624,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
               hostId,
               deviceId: device.id,
               reason: "launch_failed",
+              diagnostics: truncate(error.reason, 1_997),
               cause: new Error(error.reason),
             })
           : error,
@@ -524,7 +662,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
             name: lease.name,
             version: lease.version,
             booted: true,
-            physical: false,
+            physical: lease.physical,
           })),
         ],
         detail: undefined,
@@ -557,7 +695,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
         onSome: (lease) =>
           Effect.succeed({
             baseUrl: agentDeviceUrl,
-            token: agentToken,
+            token: lease.token,
             agentDeviceId: null,
             session: lease.session,
             stateDir: lease.dir,
@@ -588,7 +726,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       if (!lease) return null;
       return {
         url: `${gateway}/v1/leases/${encodeURIComponent(lease.leaseId)}/${stream ? "stream" : "input"}`,
-        headers: { authorization: `Bearer ${agentToken}` },
+        headers: { authorization: `Bearer ${lease.token}` },
         protocols: [],
       };
     });

@@ -117,6 +117,7 @@ public class T3ComposerEditorModule: Module {
         "onComposerBlur",
         "onComposerSubmit",
         "onComposerPasteImages",
+        "onComposerPasteImagesPending",
         "onComposerContextPress",
         "onComposerPasteContext",
         "onComposerPasteText",
@@ -131,6 +132,9 @@ public class T3ComposerEditorModule: Module {
       }
       AsyncFunction("setSelection") { (view: T3ComposerEditorView, start: Int, end: Int) in
         view.setSelection(start: start, end: end)
+      }
+      AsyncFunction("readState") { (view: T3ComposerEditorView) -> [String: Any] in
+        view.readState()
       }
     }
   }

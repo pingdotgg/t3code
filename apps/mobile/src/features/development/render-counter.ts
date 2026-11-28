@@ -136,17 +136,6 @@ const sorted = (map: Map<string, number>) =>
 install(state);
 
 Object.assign(globalThis, {
-  __t3RenderCounterOpen(url: string) {
-    const { Linking } = require("react-native") as typeof import("react-native");
-    void Linking.openURL(url);
-    return true;
-  },
-  /** Restarts the JS app on Home; deferred so the inspector call can reply first. */
-  __t3RenderCounterReload() {
-    const { DevSettings } = require("react-native") as typeof import("react-native");
-    setTimeout(() => DevSettings.reload(), 100);
-    return true;
-  },
   __t3RenderCounterStart() {
     state.commits = 0;
     state.counts = new Map();

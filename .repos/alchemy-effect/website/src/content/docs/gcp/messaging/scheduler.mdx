@@ -1,0 +1,92 @@
+---
+title: Cloud Scheduler
+description: Run code on a cron schedule with GCP.CloudScheduler.consumeSchedule — the handler lives on your Cloud Run service and only Cloud Scheduler can call it.
+---
+
+`consumeSchedule` runs a handler on your Cloud Run service on a cron
+schedule. Alchemy creates the Cloud Scheduler job and a private path
+on the service that only the scheduler can call.
+
+## Add a schedule
+
+```typescript
+// src/Monitor.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+
+export default class Monitor extends GCP.Function<Monitor>()(
+  "Monitor",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    yield* GCP.CloudScheduler.consumeSchedule(
+      "Heartbeat",
+      { schedule: "* * * * *", timeZone: "Etc/UTC" },
+      (event) => Effect.log(`tick ${event.scheduleTime}`),
+    );
+
+    return { fetch: Effect.succeed(HttpServerResponse.text("ok")) };
+  }).pipe(Effect.provide(GCP.Run.ScheduleEventSource)),
+) {}
+```
+
+`schedule` is standard cron. `event` carries the job name and the time
+the run was scheduled for.
+
+## Several schedules on one service
+
+Give each schedule its own name:
+
+```typescript
+yield* GCP.CloudScheduler.consumeSchedule(
+  "Heartbeat",
+  { schedule: "* * * * *", timeZone: "Etc/UTC" },
+  recordHeartbeat,
+);
+
+yield* GCP.CloudScheduler.consumeSchedule(
+  "DailyRollup",
+  { schedule: "0 0 * * *", timeZone: "Etc/UTC" },
+  rollUpYesterday,
+);
+```
+
+## Public service, private schedules
+
+`invokerIamDisabled: true` opens your `fetch` routes to everyone. The
+schedule path still rejects any request without a valid token from
+Cloud Scheduler.
+
+## Use bindings in the handler
+
+Handlers use the same clients as `fetch`:
+
+```typescript
+const writer = yield* GCP.BigQuery.WriteTable(table);
+
+yield* GCP.CloudScheduler.consumeSchedule(
+  "Heartbeat",
+  { schedule: "* * * * *", timeZone: "Etc/UTC" },
+  (event) =>
+    writer
+      .insert([{ jobName: event.jobName, receivedAt: new Date() }])
+      .pipe(Effect.orDie),
+);
+```
+
+## Start a job on a schedule
+
+To run a [Cloud Run job](/gcp/compute/jobs) nightly, point a
+`CloudScheduler.Job` straight at it. See
+[Run it on a schedule](/gcp/compute/jobs#run-it-on-a-schedule).
+
+## Example
+
+[`examples/gcp-cron`](https://github.com/alchemy-run/alchemy/tree/main/examples/gcp-cron)
+runs two schedules on one service and records each run in BigQuery.
+
+## Where next
+
+- [Cloud Run jobs](/gcp/compute/jobs) — batch work on a timer.
+- [CloudScheduler reference](/providers/gcp/cloudscheduler#job) —
+  every prop.

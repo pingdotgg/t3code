@@ -1,4 +1,5 @@
 import type { AnyRouter } from "@tanstack/react-router";
+import { msg } from "gt-react";
 
 import {
   dispatchCommandPalette,
@@ -10,6 +11,7 @@ import { APPEARANCE_OPTIONS, notifyThemeSaveFailure } from "../components/Comman
 import { toggleThemeEditorForTheme } from "../components/settings/themeEditorStore";
 import { toastManager } from "../components/ui/toast";
 import { getThemeSnapshot, setAppearanceMode } from "../hooks/useTheme";
+import { m } from "../i18n/messages";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { type CommandHandler, type CommandScopeOptions, registerCommands } from "./dispatcher";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -26,6 +28,7 @@ const toggleOverlay =
     const mode = overlayModeForCommand(command);
     if (mode === null) return false;
     consume(event);
+    if (event.repeat) return;
     dispatchCommandPalette({ _tag: "ToggleMode", mode });
   };
 
@@ -50,10 +53,11 @@ export function installCommandPaletteCommands(
       capture: true,
       when: isCommandPaletteMounted,
       onKeyDown: (event) => {
-        if (event.isComposing || event.key !== "Escape") return false;
+        if (event.isComposing || event.keyCode === 229 || event.key !== "Escape") return false;
         const { open, mode } = useCommandPaletteStore.getState();
         if (!open || mode === "command") return false;
         consume(event);
+        if (event.repeat) return;
         dispatchCommandPalette({ _tag: "BackToCommand" });
       },
     },
@@ -65,15 +69,20 @@ export function installCommandPaletteCommands(
         consume(event);
         if (event.repeat) return;
         const { appearanceMode } = getThemeSnapshot();
-        const nextMode =
-          appearanceMode === "system" ? "light" : appearanceMode === "light" ? "dark" : "system";
+        const index = APPEARANCE_OPTIONS.findIndex((option) => option.mode === appearanceMode);
+        const nextMode = APPEARANCE_OPTIONS[(index + 1) % APPEARANCE_OPTIONS.length]!.mode;
         if (!setAppearanceMode(nextMode)) {
           notifyThemeSaveFailure();
           return;
         }
         toastManager.add({
           id: "appearance-cycle",
-          title: `Appearance: ${APPEARANCE_OPTIONS.find((option) => option.mode === nextMode)?.label}`,
+          title: m(
+            msg(
+              "{mode, select, system {Appearance: System} light {Appearance: Light} other {Appearance: Dark}}",
+            ),
+            { mode: nextMode },
+          ),
           timeout: 1500,
         });
       },
@@ -84,11 +93,13 @@ export function installCommandPaletteCommands(
       },
       "themeEditor.toggle": (event) => {
         consume(event);
+        if (event.repeat) return;
         const { theme, themeHalves, resolvedTheme } = getThemeSnapshot();
         toggleThemeEditorForTheme({ theme, themeHalves, initialAppearance: resolvedTheme });
       },
       "usage.open": (event) => {
         consume(event);
+        if (event.repeat) return;
         dispatchCommandPalette({ _tag: "SetOpen", open: false });
         void router.navigate({ to: "/usage" });
       },

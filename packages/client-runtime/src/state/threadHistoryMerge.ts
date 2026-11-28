@@ -1,5 +1,6 @@
 import type {
   OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { isOrchestrationV2TurnItemVisible } from "@t3tools/shared/orchestrationV2Timeline";
@@ -49,6 +50,39 @@ function renumberVisible(
   return rows.map((row, position) => (row.position === position ? row : { ...row, position }));
 }
 
+// A page is a contiguous history range, so current rows before its first
+// visible row are older than the page start and new page rows sit just
+// before the next row both lists share.
+function interleavePage(
+  current: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  page: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  pageKeys: ReadonlySet<string>,
+): OrchestrationV2ProjectedTurnItem[] {
+  const currentIndex = new Map(current.map((row, index) => [projectedItemKey(row), index]));
+  const merged: OrchestrationV2ProjectedTurnItem[] = [];
+  let pending: OrchestrationV2ProjectedTurnItem[] = [];
+  let next = 0;
+  const emitCurrentThrough = (end: number) => {
+    for (; next < end; next += 1) {
+      const row = current[next]!;
+      if (!pageKeys.has(projectedItemKey(row))) merged.push(row);
+    }
+  };
+  for (const row of page) {
+    const index = currentIndex.get(projectedItemKey(row));
+    if (index === undefined) {
+      pending.push(row);
+      continue;
+    }
+    emitCurrentThrough(index + 1);
+    merged.push(...pending, row);
+    pending = [];
+  }
+  merged.push(...pending);
+  emitCurrentThrough(current.length);
+  return merged;
+}
+
 export function mergeOlderHistoryIntoProjection(
   projection: OrchestrationV2ThreadProjection,
   olderItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
@@ -67,6 +101,9 @@ export function mergeOlderHistoryIntoProjection(
   if (work !== undefined && deferred === undefined) return projection;
   const currentByKey = new Map(
     projection.visibleTurnItems.map((row) => [projectedItemKey(row), row]),
+  );
+  const rolledBackRuns = new Set(
+    projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
   );
   const turnItemById = new Map(projection.turnItems.map((item) => [String(item.id), item]));
   const pageKeys = new Set<string>();
@@ -89,9 +126,13 @@ export function mergeOlderHistoryIntoProjection(
       (row.visibility === "local" || row.sourceThreadId === projection.thread.id)
     ) {
       const currentItem = turnItemById.get(String(row.sourceItemId));
+      // Hidden live items stay hidden. Snapshots also retain interrupt requests and
+      // pending request cards outside the visible window; their history page shows them.
       if (currentItem !== undefined) {
         if (
-          currentItem.type !== "run_interrupt_request" ||
+          (currentItem.type !== "run_interrupt_request" &&
+            currentItem.type !== "approval_request" &&
+            currentItem.type !== "user_input_request") ||
           !isOrchestrationV2TurnItemVisible({
             item: currentItem,
             runs: projection.runs,
@@ -102,6 +143,8 @@ export function mergeOlderHistoryIntoProjection(
           continue;
         row = { ...row, item: currentItem };
       }
+      // A rollback can arrive before a history page for rows outside the loaded window.
+      if (row.item.runId !== null && rolledBackRuns.has(row.item.runId)) continue;
     }
     pageKeys.add(key);
     page.push(row);
@@ -145,10 +188,7 @@ export function mergeOlderHistoryIntoProjection(
     ];
     if (anchor.visibility === "local") turnItemById.set(String(updated.item.id), updated.item);
   } else {
-    visible = [
-      ...page,
-      ...projection.visibleTurnItems.filter((row) => !pageKeys.has(projectedItemKey(row))),
-    ];
+    visible = interleavePage(projection.visibleTurnItems, page, pageKeys);
   }
   if (
     visible.length === projection.visibleTurnItems.length &&
@@ -160,6 +200,17 @@ export function mergeOlderHistoryIntoProjection(
     turnItems: [...turnItemById.values()],
     visibleTurnItems: renumberVisible(visible),
   };
+}
+
+/** Adds the records of older subagents; a record already held is newer and stays. */
+export function mergeOlderSubagentsIntoProjection(
+  projection: OrchestrationV2ThreadProjection,
+  olderSubagents: ReadonlyArray<OrchestrationV2Subagent> | undefined,
+): OrchestrationV2ThreadProjection {
+  const held = new Set(projection.subagents.map((agent) => agent.id));
+  const added = olderSubagents?.filter((agent) => !held.has(agent.id)) ?? [];
+  if (added.length === 0) return projection;
+  return { ...projection, subagents: [...added, ...projection.subagents] };
 }
 
 export function applyHistoryPageMeta(

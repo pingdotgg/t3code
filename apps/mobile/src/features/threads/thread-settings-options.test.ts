@@ -2,13 +2,19 @@ import {
   getPromptControlledTraits,
   getTraitSelectChange,
 } from "@t3tools/client-runtime/model-traits";
-import type {
-  ManagedPolicySummary,
-  ProviderOptionDescriptor,
-  RuntimeMode,
+import {
+  ProviderInstanceId,
+  type ManagedPolicySummary,
+  type ProviderOptionDescriptor,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import {
+  applyProviderOptionSelection,
+  resolveProviderOptionDescriptors,
+  withImplicitFastModeSelection,
+} from "../../lib/providerOptions";
 import {
   RUNTIME_MODE_CHOICES,
   resolveNewThreadRuntimeMode,
@@ -63,6 +69,32 @@ const effortDescriptor: Extract<ProviderOptionDescriptor, { type: "select" }> = 
   currentValue: "high",
   promptInjectedValues: ["ultrathink"],
 };
+
+describe("fast mode switch", () => {
+  // regression: #29729 Cursor reports Fast on by default, but its picker shows an unset fastMode as off
+  it("shows an unset fast mode as off, saves it as off and turns it on when toggled", () => {
+    const capabilities = {
+      optionDescriptors: [
+        { id: "fastMode", label: "Fast", type: "boolean", currentValue: true } as const,
+      ],
+    };
+    const selection = { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2.5" };
+    const descriptors = resolveProviderOptionDescriptors({ capabilities, selections: undefined });
+    const shown = descriptors.find((descriptor) => descriptor.id === "fastMode")?.currentValue;
+
+    expect({
+      shown,
+      saved: withImplicitFastModeSelection(selection, [
+        { instanceId: selection.instanceId, models: [{ slug: selection.model, capabilities }] },
+      ]).options,
+      afterToggle: applyProviderOptionSelection(descriptors, { id: "fastMode", value: !shown }),
+    }).toEqual({
+      shown: false,
+      saved: [{ id: "fastMode", value: false }],
+      afterToggle: [{ id: "fastMode", value: true }],
+    });
+  });
+});
 
 describe("selectableChoices", () => {
   // regression: #21406 bring model controls in line with web

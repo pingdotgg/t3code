@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  markdownForNativeParsing,
   markdownForNativeRendering,
   markdownHtmlContent,
   markdownWithHtml,
@@ -85,18 +86,48 @@ describe("HTML in native Markdown", () => {
     expect(result).toContain('<img src="after.png">\n</details>');
   });
 
-  it("links HTML anchors in a table cell without breaking the row at <br>", () => {
-    const document = parseMarkdownDocument(
-      "| Status | Preview URL |\n| - | - |\n| Done | <a href='https://commit.example.com'>Commit</a><br><a href='https://branch.example.com'>Branch</a> |",
+  it("keeps <br> line breaks in a table cell without breaking the row", () => {
+    const markdown =
+      "| Status | Preview URL |\n| - | - |\n| Done | <a href='https://commit.example.com'>Commit</a><br><a href='https://branch.example.com'>Branch</a> |\n| • One<br/>• Two<BR />**Three** | `<br>` |";
+    // md4c decodes the reference to a newline in the cell's text, as remark does.
+    expect(markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX)).toContain(
+      "| • One&#10;• Two&#10;**Three** | `<br>` |",
     );
-    const table = document.children[0];
+    const table = parseMarkdownDocument(markdown).children[0];
     expect(table?.type).toBe("table");
     if (table?.type !== "table") return;
-    expect(table.children).toHaveLength(2);
+    expect(table.children).toHaveLength(3);
+    expect(table.children.map((row) => row.children.length)).toEqual([2, 2, 2]);
     expect(table.children[1]?.children[1]?.children).toMatchObject([
       { type: "link", url: "https://commit.example.com", children: [{ value: "Commit" }] },
-      { type: "text", value: " " },
+      { type: "text", value: "\n" },
       { type: "link", url: "https://branch.example.com", children: [{ value: "Branch" }] },
+    ]);
+    expect(table.children[2]?.children).toMatchObject([
+      { children: [{ value: "• One\n• Two\n" }, { type: "strong" }] },
+      { children: [{ type: "inlineCode", value: "<br>" }] },
+    ]);
+  });
+
+  it.each([
+    "one<p>two</p>",
+    "one<div>two</div>",
+    "one<summary>two</summary>",
+    "<p>one</p><p>two</p>",
+  ])("keeps a table row intact when a cell contains block HTML: %s", async (cell) => {
+    const native = await parseMarkdown(
+      markdownForNativeRendering(
+        `| A | B |\n| - | - |\n| ${cell} | x |`,
+        ENRICHED_INLINE_FILE_LINK_REGEX,
+      ),
+    );
+    const text = (node: { content?: string; children?: unknown[] }): string =>
+      (node.content ?? "") +
+      (node.children ?? []).map((child) => text(child as typeof node)).join("");
+    expect(native.children).toHaveLength(1);
+    expect(native.children?.[0]?.children?.[1]?.children?.[0]?.children?.map(text)).toEqual([
+      expect.stringMatching(/one\s*two/),
+      "x",
     ]);
   });
 
@@ -115,6 +146,35 @@ describe("HTML in native Markdown", () => {
 
   it("keeps anchor text unlinked for unsafe hrefs", () => {
     expect(markdownWithHtml('Run <a href="javascript:alert(1)">this</a> now')).toBe("Run this now");
+  });
+
+  it("keeps anchor labels and escaped bangs intact across nested formatting and table cells", () => {
+    const markdown =
+      '> **!<a href="https://x.test">[one]</a>** and <span>tail</span>\n\n| A |\n| - |\n| !<a href="https://x.test">x[y]</a><br><img src="x.png"> |';
+    expect(markdownWithHtml(markdown)).toBe(
+      "> **\\![\\[one\\]](<https://x.test>)** and tail\n\n| A |\n| - |\n| \\![x\\[y\\]](<https://x.test>)&#10;![](<x.png>) |",
+    );
+    expect(
+      markdownWithHtml(
+        String.raw`Before \!<a href="https://x.test">escaped</a> \\!<a href="mailto:a@b">even</a>`,
+      ),
+    ).toBe(String.raw`Before \![escaped](<https://x.test>) \\\![even](<mailto:a@b>)`);
+  });
+
+  it("converts separated HTML without changing code examples or an unfinished tag", () => {
+    const literal = '`<br>`\n\n```html\n<img src="literal.png">\n```\n\n<broken';
+    expect(markdownWithHtml(literal)).toBe(literal);
+    const rows = Array.from(
+      { length: 100 },
+      (_, index) => `row ${index} <span>text</span><br>!<a href="https://x.test/${index}">go</a>`,
+    );
+    const expected = Array.from(
+      { length: 100 },
+      (_, index) => `row ${index} text  \n\\![go](<https://x.test/${index}>)`,
+    );
+    expect(markdownWithHtml(rows.join("\n\n") + "\n\n" + literal)).toBe(
+      expected.join("\n\n") + "\n\n" + literal,
+    );
   });
 });
 
@@ -242,6 +302,38 @@ describe("file embeds in native thread and file Markdown", () => {
         }
       }
     }
+  });
+
+  it("gives each image on its own line its own native paragraph", async () => {
+    const images =
+      "![before](./before.png)\n![after light](./after-light.png) \\\n![after dark][dark]";
+    const source = `Shots:\n\n${images}\n\n![a](./a.svg) ![b](./b.svg)\n![c](./c.svg)\n\nNext\n\n[dark]: ./after-dark.png`;
+    const paragraphs = (
+      await parseMarkdown(markdownForNativeRendering(source, ENRICHED_INLINE_FILE_LINK_REGEX))
+    ).children?.map((block) => block.children?.map((child) => child.type).join(" "));
+    expect(paragraphs).toEqual([
+      "Text",
+      "Image",
+      "Image",
+      "Image",
+      "Image",
+      "Image",
+      "Image",
+      "Text",
+    ]);
+    expect(markdownForNativeParsing("![a](./a.png)\r\n![b](./b.png)")).toBe(
+      "![a](./a.png)\r\n\r\n![b](./b.png)",
+    );
+    expect(markdownForNativeParsing("![a](./a.png)\r![b](./b.png)")).toBe(
+      "![a](./a.png)\r\r![b](./b.png)",
+    );
+    expect(
+      markdownForNativeParsing(
+        "**Dialog** (native) ![a](./a.png)\n\n**Label**\n![b](./b.png)\nBuilt ![ci](./ci.svg) ok\n\nCI [![ci](./ci.svg)](https://ci)",
+      ),
+    ).toBe(
+      "**Dialog** (native)\n\n![a](./a.png)\n\n**Label**\n\n![b](./b.png)\n\nBuilt ![ci](./ci.svg) ok\n\nCI [![ci](./ci.svg)](https://ci)",
+    );
   });
 
   it("retains standalone audio players and image/video embeds in threads", () => {

@@ -6,10 +6,28 @@ interface Props {
   code: string;
   compact?: boolean;
   caption?: string;
+  /** 1-based, inclusive line ranges to highlight. */
+  highlight?: [number, number][];
 }
 
-const { filename = "alchemy.run.ts", code, compact, caption } = Astro.props;
-const html = highlightTS(code);
+const {
+  filename = "alchemy.run.ts",
+  code,
+  compact,
+  caption,
+  highlight,
+} = Astro.props;
+// With highlights, each line is highlighted on its own (snippets that use
+// this keep strings and comments on one line) and wrapped in a row.
+const html = highlight
+  ? code
+      .split("\n")
+      .map((line, i) => {
+        const lit = highlight.some(([a, b]) => i + 1 >= a && i + 1 <= b);
+        return `<span class="alc-code-block__line${lit ? " is-lit" : ""}">${highlightTS(line) || " "}</span>`;
+      })
+      .join("")
+  : highlightTS(code);
 ---
 
 {

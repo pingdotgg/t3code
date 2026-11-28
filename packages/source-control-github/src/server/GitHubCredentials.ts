@@ -16,9 +16,14 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { readSourceControlHostSettings } from "@t3tools/source-control-core/shared/definition";
-import { settingsSecretLiteral, type ServerSettings } from "@t3tools/contracts";
+import {
+  requireSettingsSecretLiteral,
+  type ServerSettings,
+  type SettingsSecretUnresolvedError,
+} from "@t3tools/contracts";
 
 import * as GitHubClient from "../shared/definition.ts";
+import { makeGhProcess } from "./gitHubCliProcess.ts";
 
 /**
  * Every gh run on the server shares this. A burst of them (a status poll across many checkouts)
@@ -55,7 +60,7 @@ export class GitHubNotSignedInError extends Schema.TaggedError<GitHubNotSignedIn
   override get message(): string {
     return this.account === undefined
       ? `No GitHub credential for ${this.host}: run \`gh auth login --hostname ${this.host}\`.`
-      : `No GitHub credential for ${this.account} on ${this.host}: run \`gh auth login --hostname ${this.host}\` for that account or pick another in Settings → Source Control.`;
+      : `No GitHub credential for ${this.account} on ${this.host}: run \`gh auth login --hostname ${this.host}\` for that account or pick another in Settings → Source control & issues.`;
   }
 }
 
@@ -64,7 +69,7 @@ export class GitHubHostDisabledError extends Schema.TaggedError<GitHubHostDisabl
   { host: Schema.String },
 ) {
   override get message(): string {
-    return `GitHub host ${this.host} is turned off in Settings → Source Control.`;
+    return `GitHub host ${this.host} is turned off in Settings → Source control & issues.`;
   }
 }
 
@@ -77,11 +82,22 @@ export class GitHubCliFailedError extends Schema.TaggedError<GitHubCliFailedErro
   }
 }
 
+export class GitHubCliTimeoutError extends Schema.TaggedError<GitHubCliTimeoutError>()(
+  "GitHubCliTimeoutError",
+  { host: Schema.String, timeoutMs: Schema.Number, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `The GitHub CLI did not hand over a credential for ${this.host} within ${this.timeoutMs / 1000} seconds. The server may be overloaded; try again.`;
+  }
+}
+
 export type GitHubCredentialUnavailableError =
   | GitHubCliMissingError
   | GitHubNotSignedInError
   | GitHubHostDisabledError
-  | GitHubCliFailedError;
+  | GitHubCliFailedError
+  | GitHubCliTimeoutError
+  | SettingsSecretUnresolvedError;
 
 export class GitHubCredentials extends Context.Service<
   GitHubCredentials,
@@ -94,7 +110,7 @@ export class GitHubCredentials extends Context.Service<
       host: string,
     ) => Effect.Effect<
       Option.Option<GitHubCredential>,
-      GitHubHostDisabledError | GitHubNotSignedInError
+      GitHubHostDisabledError | GitHubNotSignedInError | SettingsSecretUnresolvedError
     >;
     readonly fingerprint: (host: string, token: string) => Effect.Effect<string>;
     readonly invalidate: (host: string) => Effect.Effect<void>;
@@ -134,7 +150,7 @@ export function environmentToken(
 /** @public */
 export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
-  const process = sourceControlHost.process;
+  const process = yield* makeGhProcess;
   const crypto = yield* Digest.Digest;
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
@@ -158,8 +174,14 @@ export const make = Effect.gen(function* () {
           ...(account === undefined ? [] : ["--user", account]),
         ],
         cwd: workingDirectory,
-        // Never let gh print the token into a debug log.
-        env: { GH_DEBUG: "", GH_PROMPT_DISABLED: "1" },
+        // Never let gh print the token into a debug log. gh answers any host but github.com with
+        // the enterprise variables, which would undo the GH_HOST restriction above.
+        env: {
+          GH_DEBUG: "",
+          GH_PROMPT_DISABLED: "1",
+          GH_ENTERPRISE_TOKEN: "",
+          GITHUB_ENTERPRISE_TOKEN: "",
+        },
         timeoutMs: 10_000,
         concurrency: GH_PROCESS_CONCURRENCY,
       })
@@ -172,7 +194,9 @@ export const make = Effect.gen(function* () {
             : // gh exits non-zero with "no oauth token" when it has no login for the host.
               error._tag === "VcsProcessExitError"
               ? new GitHubNotSignedInError({ host, ...(account === undefined ? {} : { account }) })
-              : new GitHubCliFailedError({ host, cause: error }),
+              : error._tag === "VcsProcessTimeoutError"
+                ? new GitHubCliTimeoutError({ host, timeoutMs: error.timeoutMs, cause: error })
+                : new GitHubCliFailedError({ host, cause: error }),
         ),
         Effect.map((output) => output.stdout.trim()),
         Effect.filterOrFail(
@@ -195,10 +219,15 @@ export const make = Effect.gen(function* () {
 
   const savedToken = (host: string) =>
     sourceControlHost.settings.getWithSecrets(GitHubClient.definition.kind).pipe(
-      Effect.map(
-        (settings) => settingsSecretLiteral(readSettings(settings).tokens[host]).trim() || null,
+      Effect.map((settings) => ({
+        token: readSettings(settings).tokens[host],
+        secretProviders: settings.secretProviders,
+      })),
+      Effect.orElseSucceed(() => ({ token: undefined, secretProviders: {} })),
+      Effect.flatMap(({ token, secretProviders }) =>
+        requireSettingsSecretLiteral(token, secretProviders),
       ),
-      Effect.orElseSucceed(() => null),
+      Effect.map((token) => token.trim() || null),
     );
 
   const cacheKey = (host: string, account: string | undefined) =>
@@ -229,7 +258,10 @@ export const make = Effect.gen(function* () {
       Exit.isSuccess(exit)
         ? TOKEN_TTL
         : Exit.findErrorOption(exit).pipe(
-              Option.exists((error) => error._tag === "GitHubCliFailedError"),
+              Option.exists(
+                (error) =>
+                  error._tag === "GitHubCliFailedError" || error._tag === "GitHubCliTimeoutError",
+              ),
             )
           ? Duration.zero
           : MISSING_TTL,

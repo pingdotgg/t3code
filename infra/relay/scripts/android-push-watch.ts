@@ -25,7 +25,11 @@ import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
 import * as RelayConfiguration from "../src/Config.ts";
-import { androidActivityData, fitFcmData } from "../src/agentActivity/fcmPayloads.ts";
+import {
+  androidActivityData,
+  androidRecipientData,
+  fitFcmData,
+} from "../src/agentActivity/fcmPayloads.ts";
 import * as WebCrypto from "../src/WebCrypto.ts";
 import * as FcmAssertionSigner from "../src/agentActivity/FcmAssertionSigner.ts";
 import * as FcmClient from "../src/agentActivity/FcmClient.ts";
@@ -42,7 +46,19 @@ const Connection = Schema.Struct({
   wsUrl: Schema.NonEmptyString,
   bearerToken: Schema.NonEmptyString,
 });
-const readFile = (path: string) => Effect.tryPromise(() => NodeFSP.readFile(path, "utf8"));
+class WatchReadFileError extends Schema.TaggedError<WatchReadFileError>()("WatchReadFileError", {
+  path: Schema.String,
+  cause: Schema.Defect(),
+}) {
+  override get message() {
+    return `Could not read ${this.path}`;
+  }
+}
+const readFile = (path: string) =>
+  Effect.tryPromise({
+    try: () => NodeFSP.readFile(path, "utf8"),
+    catch: (cause) => new WatchReadFileError({ path, cause }),
+  });
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 class WatchUnregisteredDeviceError extends Schema.TaggedError<WatchUnregisteredDeviceError>()(
   "WatchUnregisteredDeviceError",
@@ -191,8 +207,7 @@ const main = Effect.gen(function* () {
             alert: alert !== null,
             data: fitFcmData({
               t3_kind: "agent_activity",
-              device_id: device.deviceId,
-              user_id: device.userId,
+              ...androidRecipientData(device.userId, device.deviceId, null),
               updated_at: String(now),
               ...androidActivityData(aggregate),
               ...alert,

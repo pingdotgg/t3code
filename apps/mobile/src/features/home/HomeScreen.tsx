@@ -1,10 +1,15 @@
+import { useGT, useMessages } from "gt-react-native";
+
+import { useContentTopInset } from "../../components/ui/useBarInset";
+import { usePaneRole } from "../../components/ui/Pane";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useActiveNewTask } from "../../state/active-new-task";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
-import { THREAD_SIDEBAR_ROW_LAYOUT } from "../threads/threadListAnimations";
+import { THREAD_LIST_ROW_LAYOUT } from "../threads/threadListAnimations";
 import {
   type EnvironmentProject,
   type EnvironmentThreadShell,
@@ -13,7 +18,15 @@ import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-gro
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { use, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import {
+  use,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import {
   Platform,
   ScrollView,
@@ -45,14 +58,15 @@ import {
   useNativeColumnLayoutMetrics,
   useNativeLayoutMetrics,
 } from "../../native/native-layout-metrics";
-import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import { useWorkspaceListEmptyTopInset } from "../layout/workspace/workspace-list-insets";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useThreadSearch } from "../../state/queries";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import { useThreadListSearchMatches } from "../threads/useThreadListSearchMatches";
 import { useThreadListV2 } from "../threads/useThreadListV2";
+import { useSidebarRowThreadKey } from "../threads/useSidebarRowThreadKey";
 import { useThreadListNow } from "../threads/use-thread-list-now";
-import { useSearchScrollRestoration } from "../workspace/useSearchScrollRestoration";
+import { useSearchScrollRestoration } from "../layout/workspace/useSearchScrollRestoration";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
@@ -81,14 +95,19 @@ import {
   buildHomeProjectScopes,
   findHomeProjectScope,
   type HomeProjectSortOrder,
+  sortHomeProjectScopes,
 } from "./homeThreadList";
 import { createSwipeRowActivation } from "./swipe-row-activation";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
 import { useFabScroll } from "./FabScrollContext";
-import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import { holdLaunchSplashForHomeRows, settleLaunchSplashHomeRows } from "./home-launch-splash";
+import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
+import { deriveHomeEmptyState } from "./home-empty-state";
 
 interface HomeScreenProps {
+  /** Whether this list is the one on screen; see `useHomeRouteVisible`. */
+  readonly visible: boolean;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
@@ -142,79 +161,13 @@ const ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT = 72;
 // rows that are already built instead of rows still being rebuilt.
 const THREAD_LIST_V2_DRAW_DISTANCE = 1_000;
 
-function deriveEmptyState(props: {
-  readonly catalogState: WorkspaceState;
-  readonly projectCount: number;
-}): { readonly title: string; readonly detail: string; readonly loading: boolean } {
-  const { catalogState } = props;
-  if (catalogState.isLoadingConnections) {
-    return {
-      title: "Loading environments",
-      detail: "Checking saved environments on this device.",
-      loading: true,
-    };
-  }
-
-  if (!catalogState.hasConnections) {
-    return {
-      title: "No environments connected",
-      detail: "Add an environment to load projects and start coding sessions.",
-      loading: false,
-    };
-  }
-
-  if (
-    (catalogState.connectionState === "available" ||
-      catalogState.connectionState === "offline" ||
-      catalogState.connectionState === "error" ||
-      catalogState.connectionState === "unsupported") &&
-    !catalogState.hasLoadedShellSnapshot
-  ) {
-    return {
-      title:
-        catalogState.connectionState === "unsupported"
-          ? "Client not supported"
-          : "Environment unavailable",
-      detail:
-        catalogState.connectionError ??
-        "The saved environment is offline. Check the URL or start the environment, then retry.",
-      loading: false,
-    };
-  }
-
-  if (
-    catalogState.hasConnectingEnvironment &&
-    !catalogState.hasLoadedShellSnapshot &&
-    catalogState.connectionError === null
-  ) {
-    return {
-      title: "Connecting to environment",
-      detail: "Loading projects and threads from the saved environment.",
-      loading: true,
-    };
-  }
-
-  if (props.projectCount === 0 && catalogState.hasLoadedShellSnapshot) {
-    return {
-      title: "No projects found",
-      detail: "The connected environment did not report any projects.",
-      loading: false,
-    };
-  }
-
-  return {
-    title: "No threads yet",
-    detail: "Create a task to start a new coding runtime in one of your connected projects.",
-    loading: false,
-  };
-}
-
 function HomeTopContentSpacer() {
   return <View className="h-4" />;
 }
 
 function HomeScrollView(props: ComponentProps<typeof ScrollView>) {
   const primaryColumn = use(NativePrimaryColumnContext);
+  const sidebarSurface = usePaneRole() === "sidebar" && primaryColumn !== null;
   if (Platform.OS !== "ios") return <ScrollView {...props} />;
 
   // Register the scroll view explicitly; layout and header siblings hide it from UIKit.
@@ -229,35 +182,41 @@ function HomeScrollView(props: ComponentProps<typeof ScrollView>) {
       <ScrollView
         {...props}
         // UIKit's scroll-edge material needs the scroll view's own surface color.
-        className={cn(props.className, primaryColumn ? "bg-drawer" : "bg-screen")}
+        className={cn(props.className, sidebarSurface ? "bg-drawer" : "bg-screen")}
       />
     </ScrollViewMarker>
   );
 }
 
 function renderHomeScrollView(props: ScrollViewProps) {
-  // FlatList clones this with cells and ref; keep the marker inside their actual ScrollView.
+  // The list passes its content and ref in these props; keep the marker inside the real ScrollView.
   return <HomeScrollView {...props} />;
 }
 
 export function HomeScreen(props: HomeScreenProps) {
+  const gt = useGT();
+  const m = useMessages();
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const workspace = useWorkspaceTabs();
   const [initialScrollOffset] = useState(() => workspace?.getScrollOffset("threads") ?? 0);
   const primaryColumn = use(NativePrimaryColumnContext);
-  const contentBackground = primaryColumn ? "bg-drawer" : "bg-screen";
+  const sidebarSurface = usePaneRole() === "sidebar" && primaryColumn !== null;
+  const contentBackground = sidebarSurface ? "bg-drawer" : "bg-screen";
   const containerClassName = cn(
     "flex-1",
     Platform.OS === "android" ? "bg-header" : contentBackground,
   );
   const columnMetrics = useNativeColumnLayoutMetrics();
   const activeNewTask = useActiveNewTask();
-  const selectedThreadKey = activeNewTask ? null : (primaryColumn?.selectedThreadKey ?? null);
+  const sidebarRowThreadKey = useSidebarRowThreadKey(primaryColumn?.selectedThreadKey ?? null);
+  const selectedThreadKey = activeNewTask ? null : sidebarRowThreadKey;
   const fullSwipeWidth = primaryColumn && columnMetrics ? columnMetrics.width - 20 : undefined;
   const queuedThreadKeys = useQueuedThreadKeys();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const homeScrollGesture = useNativeGesture();
   const insets = useSafeAreaInsets();
+  const contentTopInset = useContentTopInset();
+  const emptyTopInset = useWorkspaceListEmptyTopInset();
   const { fabClearance } = useAndroidControlSizing();
   const screenMetrics = useNativeLayoutMetrics();
   const contentSideInsets = usesNativeWorkspaceColumns
@@ -321,7 +280,7 @@ export function HomeScreen(props: HomeScreenProps) {
   useSearchScrollRestoration(searchMode, () => {
     if (restoredOffset === undefined) return;
     void listRef.current?.scrollToOffset({
-      offset: restoredOffset - (Platform.OS === "ios" ? insets.top : 0),
+      offset: restoredOffset - contentTopInset,
       animated: false,
     });
   });
@@ -342,7 +301,7 @@ export function HomeScreen(props: HomeScreenProps) {
     if (workspace)
       workspace.recordScrollOffset(
         "threads",
-        Math.max(0, event.nativeEvent.contentOffset.y + (Platform.OS === "ios" ? insets.top : 0)),
+        Math.max(0, event.nativeEvent.contentOffset.y + contentTopInset),
       );
     clearTimeout(activationTimerRef.current);
     activationTimerRef.current = setTimeout(
@@ -365,12 +324,15 @@ export function HomeScreen(props: HomeScreenProps) {
   const { projects, selectedEnvironmentId, projectGroupingMode } = props;
   const projectScopes = useMemo(
     () =>
-      buildHomeProjectScopes({
-        projects,
-        environmentId: selectedEnvironmentId,
-        projectGroupingMode,
-      }),
-    [projects, selectedEnvironmentId, projectGroupingMode],
+      buildHomeProjectScopes(
+        {
+          projects,
+          environmentId: selectedEnvironmentId,
+          projectGroupingMode,
+        },
+        m,
+      ),
+    [projects, selectedEnvironmentId, projectGroupingMode, m],
   );
   const hasSearchQuery = props.searchQuery.trim().length > 0;
   const projectByKey = (() => {
@@ -493,7 +455,7 @@ export function HomeScreen(props: HomeScreenProps) {
     }
     onSelectThread(thread);
   };
-  useThreadJumpShortcuts(threadListV2Items, selectThread);
+  useThreadJumpShortcuts(threadListV2Items, selectThread, props.onSelectPendingTask);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the list's visible range after commit to enable swipe gestures on those rows
   useEffect(() => {
     if (swipeEnabled) activateVisibleRows(threadListV2Items);
@@ -507,7 +469,7 @@ export function HomeScreen(props: HomeScreenProps) {
       );
       return (
         <ThreadListV2PendingRow
-          pane={primaryColumn ? "sidebar" : "screen"}
+          pane={sidebarSurface ? "sidebar" : "screen"}
           pendingTask={item.pendingTask}
           selected={
             activeNewTask?.pendingKey === item.pendingTask.key ||
@@ -516,7 +478,6 @@ export function HomeScreen(props: HomeScreenProps) {
                 selectedThreadKey)
           }
           project={projectByKey.get(pendingScopeKey) ?? null}
-          projectTitle={v2ProjectTitleByProjectKey.get(pendingScopeKey)}
           environmentLabel={
             Object.keys(props.savedConnectionsById).length > 1
               ? (props.savedConnectionsById[item.pendingTask.environmentId]?.environmentLabel ??
@@ -569,7 +530,7 @@ export function HomeScreen(props: HomeScreenProps) {
     const thread = item.item.thread;
     return (
       <ThreadListV2Row
-        pane={primaryColumn ? "sidebar" : "screen"}
+        pane={sidebarSurface ? "sidebar" : "screen"}
         selected={scopedThreadKey(thread.environmentId, thread.id) === selectedThreadKey}
         fullSwipeWidth={fullSwipeWidth}
         onNewThreadOnBranch={props.onNewThreadOnBranch}
@@ -656,58 +617,63 @@ export function HomeScreen(props: HomeScreenProps) {
     props.threads.some((thread) => thread.archivedAt === null) ||
     props.pendingTasks.length > 0 ||
     threadListV2Layout.settledCount > 0;
+  // A hidden list gets no layout, so it never reports its rows as laid out.
+  const hasRowsToLayOut = props.visible && hasAnyThreads && threadListV2Items.length > 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the native launch splash, which is outside React, until the rows are gone or this list unmounts; a layout effect runs before the splash hides in this commit
+  useLayoutEffect(() => {
+    return hasRowsToLayOut ? holdLaunchSplashForHomeRows() : undefined;
+  }, [hasRowsToLayOut]);
   const selectedEnvironmentLabel =
     props.selectedEnvironmentId === null
       ? null
       : (props.savedConnectionsById[props.selectedEnvironmentId]?.environmentLabel ??
         "this environment");
-  const emptyState = deriveEmptyState({
-    catalogState: props.catalogState,
-    projectCount: props.projects.length,
-  });
+  const emptyState = deriveHomeEmptyState(props.catalogState, props.projects.length, m);
 
   if (!hasAnyThreads) {
     return (
       <View className={containerClassName}>
-        <View
-          className={cn(
-            "flex-1 items-center justify-center px-8",
-            contentBackground,
-            Platform.OS === "android" && "overflow-hidden rounded-t-[28px]",
-          )}
-          style={{
-            paddingBottom: Platform.OS === "ios" ? iosBottomClearance : Math.max(insets.bottom, 24),
-            paddingTop: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 72 : 0,
-            paddingLeft: 32 + (contentSideInsets?.left ?? 0),
-            paddingRight: 32 + (contentSideInsets?.right ?? 0),
-          }}
-        >
-          <View className="w-full max-w-[430px]">
-            <EmptyState
-              title={emptyState.title}
-              detail={emptyState.detail}
-              actionLabel={!props.catalogState.hasReadyEnvironment ? "Add environment" : undefined}
-              onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
-              action={
-                Platform.OS === "android" && !props.catalogState.hasReadyEnvironment ? (
-                  <FloatingActionButton
-                    label="Add environment"
-                    icon="plus"
-                    variant="extended"
-                    tone="primary"
-                    onPress={props.onAddConnection}
-                  />
-                ) : undefined
-              }
-              variant="plain"
-            />
-            {emptyState.loading ? (
-              <View className="mt-4 items-center">
-                <AppActivityIndicator colorClassName="accent-icon-muted" />
-              </View>
-            ) : null}
+        <ScreenContent surface={sidebarSurface ? "drawer" : "screen"}>
+          <View
+            className={cn(
+              "flex-1 items-center justify-center px-8",
+              Platform.OS !== "android" && contentBackground,
+            )}
+            style={{
+              paddingBottom:
+                Platform.OS === "ios" ? iosBottomClearance : Math.max(insets.bottom, 24),
+              paddingTop: emptyTopInset,
+              paddingLeft: 32 + (contentSideInsets?.left ?? 0),
+              paddingRight: 32 + (contentSideInsets?.right ?? 0),
+            }}
+          >
+            <View className="w-full max-w-[430px]">
+              <EmptyState
+                title={emptyState.title}
+                detail={emptyState.detail}
+                actionLabel={emptyState.showsAddEnvironment ? gt("Add environment") : undefined}
+                onAction={emptyState.showsAddEnvironment ? props.onAddConnection : undefined}
+                action={
+                  Platform.OS === "android" && emptyState.showsAddEnvironment ? (
+                    <FloatingActionButton
+                      label={gt("Add environment")}
+                      icon="plus"
+                      variant="extended"
+                      tone="primary"
+                      onPress={props.onAddConnection}
+                    />
+                  ) : undefined
+                }
+                variant="plain"
+              />
+              {emptyState.loading ? (
+                <View className="mt-4 items-center">
+                  <AppActivityIndicator colorClassName="accent-icon-muted" />
+                </View>
+              ) : null}
+            </View>
           </View>
-        </View>
+        </ScreenContent>
       </View>
     );
   }
@@ -719,9 +685,16 @@ export function HomeScreen(props: HomeScreenProps) {
       {listHeader}
       {Platform.OS === "ios" && workspace ? (
         <ThreadListFilters
-          gutter={primaryColumn ? 8 : 0}
+          gutter={sidebarSurface ? 8 : 0}
           environments={props.environments}
-          projects={pickableProjectGroups(projectScopes).map((scope) => ({
+          projects={pickableProjectGroups(
+            sortHomeProjectScopes({
+              scopes: projectScopes,
+              threads: props.threads,
+              pendingTasks: [],
+              projectSortOrder: "updated_at",
+            }),
+          ).map((scope) => ({
             key: scope.key,
             label: scope.title,
           }))}
@@ -735,125 +708,134 @@ export function HomeScreen(props: HomeScreenProps) {
   );
 
   const v2ListEmpty =
-    hasSearchQuery && threadSearch.isPending ? undefined : hasSearchQuery ? (
+    hasSearchQuery && threadSearch.isPending ? (
       <EmptyState
-        title="No results"
-        detail={`No threads matching "${props.searchQuery}".`}
+        title={gt("Searching thread messages…")}
+        detail={gt('Looking for "{query}" in messages.', { query: props.searchQuery })}
+        variant={Platform.OS === "android" ? "plain" : undefined}
+      />
+    ) : hasSearchQuery && threadSearch.failed ? (
+      <EmptyState
+        title={gt("Search failed")}
+        detail={gt('Couldn\'t search messages for "{query}". Change the search to try again.', {
+          query: props.searchQuery,
+        })}
+        variant={Platform.OS === "android" ? "plain" : undefined}
+      />
+    ) : hasSearchQuery ? (
+      <EmptyState
+        title={gt("No results")}
+        detail={gt('No threads matching "{query}".', { query: props.searchQuery })}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : v2ScopedProjectGroup !== null ? (
       <EmptyState
-        title={`No threads in ${v2ScopedProjectGroup.title}`}
-        detail="Choose another project or create a new task."
+        title={gt("No threads in {name}", { name: v2ScopedProjectGroup.title })}
+        detail={gt("Choose another project or create a new task.")}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : selectedEnvironmentLabel ? (
       <EmptyState
-        title={`No threads in ${selectedEnvironmentLabel}`}
-        detail="Choose another environment or create a new task."
+        title={gt("No threads in {name}", { name: selectedEnvironmentLabel })}
+        detail={gt("Choose another environment or create a new task.")}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : (
       <EmptyState
-        title="No threads yet"
-        detail="Create a task to start a new coding session."
+        title={gt("No threads yet")}
+        detail={gt("Create a task to start a new coding session.")}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     );
 
   if (Platform.OS === "android" && threadListV2Items.length === 0) {
     return (
-      <View className="flex-1 bg-header">
+      <ScreenContent surface="screen">
         <View
-          className="flex-1 items-center justify-center overflow-hidden rounded-t-[28px] bg-screen px-4"
+          className="flex-1 items-center justify-center px-4"
           style={{ paddingBottom: insets.bottom }}
         >
           {v2ListEmpty}
         </View>
-      </View>
+      </ScreenContent>
     );
   }
 
   return (
     <View className={containerClassName}>
-      <View
-        className={
-          Platform.OS === "android"
-            ? "flex-1 overflow-hidden rounded-t-[28px] bg-screen"
-            : cn("flex-1", contentBackground)
-        }
-      >
-        <SwipeableScrollGateProvider enabled={swipeEnabled} activation={swipeRowActivation}>
-          <GestureDetector gesture={homeScrollGesture}>
-            <AnimatedLegendList
-              itemLayoutAnimation={primaryColumn ? THREAD_SIDEBAR_ROW_LAYOUT : undefined}
-              ref={listRef}
-              onLoad={() => activateVisibleRows(threadListV2Items)}
-              onTouchStart={(event) => trackListTouches(event, true)}
-              onTouchEnd={(event) => trackListTouches(event, false)}
-              onTouchCancel={(event) => trackListTouches(event, false)}
-              renderScrollComponent={Platform.OS === "ios" ? renderHomeScrollView : undefined}
-              data={threadListV2Items}
-              renderItem={renderV2Item}
-              keyExtractor={v2KeyExtractor}
-              getItemType={(item) => item.type}
-              itemsAreEqual={threadListV2ListItemsAreEqual}
-              estimatedItemSize={ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT}
-              drawDistance={THREAD_LIST_V2_DRAW_DISTANCE}
-              recycleItems
-              extraData={v2ExtraData}
-              ListHeaderComponent={v2ListHeader}
-              ListFooterComponent={
-                settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
-                  <ThreadListV2ShowMoreRow
-                    hiddenCount={threadListV2Layout.hiddenSettledCount}
-                    {...(olderSettledShelf.loading
-                      ? { state: "loading" as const }
-                      : olderSettledShelf.failed
-                        ? { state: "failed" as const }
-                        : {})}
-                    onPress={() => {
-                      olderSettledShelf.retry();
-                      showMoreSettled();
-                    }}
-                  />
-                ) : null
-              }
-              ListEmptyComponent={v2ListEmpty}
-              style={{ flex: 1 }}
-              automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
-              // UIKit owns the bar's inset, so a minimizing bar and a resized column move
-              // the list in the same frame as the bar.
-              contentInsetAdjustmentBehavior="automatic"
-              contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
-              // RN scrollTo clamps against raw insets and ignores the automatic bar inset.
-              scrollToOverflowEnabled
-              initialScrollOffset={
-                initialScrollOffset > 0
-                  ? initialScrollOffset - (Platform.OS === "ios" ? insets.top : 0)
-                  : undefined
-              }
-              showsVerticalScrollIndicator={false}
-              keyboardDismissMode="on-drag"
-              keyboardShouldPersistTaps="handled"
-              {...scrollGateHandlers}
-              scrollEventThrottle={16}
-              contentContainerStyle={{
-                paddingLeft:
-                  (contentSideInsets?.left ?? 0) + (primaryColumn ? 8 : 0) + androidListGutter,
-                paddingRight:
-                  (contentSideInsets?.right ?? 0) + (primaryColumn ? 8 : 0) + androidListGutter,
-                paddingBottom:
-                  Platform.OS === "ios"
-                    ? iosBottomClearance - (columnMetrics?.safeArea.bottom ?? insets.bottom)
-                    : (workspace?.bottomClearance ??
-                      Math.max(insets.bottom, 16) +
-                        (Platform.OS === "android" ? fabClearance : 88)),
-              }}
-            />
-          </GestureDetector>
-        </SwipeableScrollGateProvider>
-      </View>
+      <ScreenContent surface="screen">
+        <View className={cn("flex-1", Platform.OS !== "android" && contentBackground)}>
+          <SwipeableScrollGateProvider enabled={swipeEnabled} activation={swipeRowActivation}>
+            <GestureDetector gesture={homeScrollGesture}>
+              <AnimatedLegendList
+                itemLayoutAnimation={THREAD_LIST_ROW_LAYOUT}
+                ref={listRef}
+                onLoad={() => {
+                  settleLaunchSplashHomeRows();
+                  activateVisibleRows(threadListV2Items);
+                }}
+                onTouchStart={(event) => trackListTouches(event, true)}
+                onTouchEnd={(event) => trackListTouches(event, false)}
+                onTouchCancel={(event) => trackListTouches(event, false)}
+                renderScrollComponent={Platform.OS === "ios" ? renderHomeScrollView : undefined}
+                data={threadListV2Items}
+                renderItem={renderV2Item}
+                keyExtractor={v2KeyExtractor}
+                getItemType={(item) => item.type}
+                itemsAreEqual={threadListV2ListItemsAreEqual}
+                estimatedItemSize={ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT}
+                drawDistance={THREAD_LIST_V2_DRAW_DISTANCE}
+                recycleItems
+                extraData={v2ExtraData}
+                ListHeaderComponent={v2ListHeader}
+                // Lifted above the rows so an iOS filter menu's dismissal morph is not covered.
+                ListHeaderComponentStyle={{ zIndex: 1 }}
+                ListFooterComponent={
+                  settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
+                    <ThreadListV2ShowMoreRow
+                      hiddenCount={threadListV2Layout.hiddenSettledCount}
+                      {...(olderSettledShelf.loading
+                        ? { state: "loading" as const }
+                        : olderSettledShelf.failed
+                          ? { state: "failed" as const }
+                          : {})}
+                      onPress={() => {
+                        olderSettledShelf.retry();
+                        showMoreSettled();
+                      }}
+                    />
+                  ) : null
+                }
+                ListEmptyComponent={v2ListEmpty}
+                style={{ flex: 1 }}
+                automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
+                contentInsetAdjustmentBehavior="never"
+                contentInset={Platform.OS === "ios" ? { top: contentTopInset } : undefined}
+                initialScrollOffset={
+                  initialScrollOffset > 0 ? initialScrollOffset - contentTopInset : undefined
+                }
+                showsVerticalScrollIndicator={false}
+                keyboardDismissMode="on-drag"
+                keyboardShouldPersistTaps="handled"
+                {...scrollGateHandlers}
+                scrollEventThrottle={16}
+                contentContainerStyle={{
+                  paddingLeft:
+                    (contentSideInsets?.left ?? 0) + (sidebarSurface ? 8 : 0) + androidListGutter,
+                  paddingRight:
+                    (contentSideInsets?.right ?? 0) + (sidebarSurface ? 8 : 0) + androidListGutter,
+                  paddingBottom:
+                    Platform.OS === "ios"
+                      ? iosBottomClearance
+                      : (workspace?.bottomClearance ??
+                        Math.max(insets.bottom, 16) +
+                          (Platform.OS === "android" ? fabClearance : 88)),
+                }}
+              />
+            </GestureDetector>
+          </SwipeableScrollGateProvider>
+        </View>
+      </ScreenContent>
     </View>
   );
 }

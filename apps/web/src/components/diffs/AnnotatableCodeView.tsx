@@ -6,8 +6,8 @@ import type {
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
-import type { CodeViewHandle } from "@pierre/diffs/react";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { CodeViewHandle, CodeViewProps } from "@pierre/diffs/react";
+import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import { useState, type ReactNode, type Ref } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -32,6 +32,7 @@ interface DiffCommentAnnotationEntry {
 
 interface DiffCommentAnnotationGroup {
   entries: DiffCommentAnnotationEntry[];
+  imagePath?: string;
 }
 
 type DiffCommentLineAnnotation = DiffLineAnnotation<DiffCommentAnnotationGroup>;
@@ -72,6 +73,8 @@ function appendAnnotationEntry(
 }
 
 interface AnnotatableCodeViewProps {
+  environmentId?: EnvironmentId | undefined;
+  projectId?: ProjectId | null | undefined;
   codeViewKey: string;
   files: ReadonlyArray<{
     fileDiff: FileDiffMetadata;
@@ -86,6 +89,7 @@ interface AnnotatableCodeViewProps {
   composerDraftTarget: ScopedThreadRef | DraftId;
   options: StyledDiffCodeViewOptions<DiffCommentAnnotationGroup>;
   viewerRef?: Ref<AnnotatableCodeViewHandle>;
+  onScroll?: CodeViewProps<DiffCommentAnnotationGroup, undefined>["onScroll"];
   className?: string;
   renderCodeViewFooter?: () => ReactNode;
   unsafeCSSExtra?: string;
@@ -96,7 +100,10 @@ interface AnnotatableCodeViewProps {
     fileKey: string,
     collapsed: boolean,
   ) => ReactNode;
-  onRevealSearchMatch: (fileKey: string) => void;
+  onFileCollapsedChange: (fileKey: string, collapsed: boolean) => void;
+  /** Git sends no patch for an image, so its row can show the file at this path instead. */
+  imagePreviewPath?: (fileDiff: FileDiffMetadata) => string | null;
+  renderImagePreview?: (path: string) => ReactNode;
 }
 
 interface DiffSelectionContext {
@@ -104,6 +111,8 @@ interface DiffSelectionContext {
 }
 
 export function AnnotatableCodeView({
+  environmentId,
+  projectId,
   codeViewKey,
   files,
   pendingFiles,
@@ -112,13 +121,16 @@ export function AnnotatableCodeView({
   composerDraftTarget,
   options,
   viewerRef,
+  onScroll,
   className,
   renderCodeViewFooter,
   unsafeCSSExtra,
   renderHeaderMetadata,
   renderHeaderFilenameSuffix,
   renderHeaderPrefix,
-  onRevealSearchMatch,
+  onFileCollapsedChange,
+  imagePreviewPath,
+  renderImagePreview,
 }: AnnotatableCodeViewProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
@@ -172,7 +184,14 @@ export function AnnotatableCodeView({
             text: comment.text,
           });
         }, []);
-      const annotations = draft?.fileKey === fileKey ? [...persisted, draft.annotation] : persisted;
+      const imagePath = imagePreviewPath?.(fileDiff) ?? null;
+      const annotations = [
+        ...persisted,
+        ...(draft?.fileKey === fileKey ? [draft.annotation] : []),
+        ...(imagePath === null
+          ? []
+          : [{ side: "additions" as const, lineNumber: 0, metadata: { entries: [], imagePath } }]),
+      ];
       return {
         id: fileKey,
         type: "diff",
@@ -180,7 +199,7 @@ export function AnnotatableCodeView({
         annotations,
         collapsed,
         version: fnv1a32(
-          `${fileVersion}:${collapsed ? "1" : "0"}:${annotations
+          `${fileVersion}:${collapsed ? "1" : "0"}:${imagePath ?? ""}:${annotations
             .flatMap((annotation) =>
               annotation.metadata.entries.map(
                 (entry) => `${entry.id}:${entry.rangeLabel}:${entry.text}`,
@@ -256,6 +275,7 @@ export function AnnotatableCodeView({
     <StyledDiffCodeView<DiffCommentAnnotationGroup>
       key={codeViewKey}
       {...(viewerRef ? { viewerRef } : {})}
+      {...(onScroll ? { onScroll } : {})}
       {...(className ? { className } : {})}
       {...(unsafeCSSExtra ? { unsafeCSSExtra } : {})}
       {...(renderHeaderMetadata
@@ -268,12 +288,13 @@ export function AnnotatableCodeView({
       items={items}
       selectedLines={selectedLines}
       onSelectedLinesChange={setSelectedLines}
-      onRevealSearchMatch={(item) => onRevealSearchMatch(item.id)}
       options={{
         ...options,
         enableGutterUtility: draft === null,
         enableLineSelection: draft === null,
         onGutterUtilityClick: beginComment,
+        onItemCollapsedChange: (_item, nextItem) =>
+          onFileCollapsedChange(nextItem.id, nextItem.collapsed === true),
       }}
       renderHeaderFilenameSuffix={(item) =>
         item.type === "diff" ? renderHeaderFilenameSuffix(item.fileDiff) : null
@@ -284,6 +305,9 @@ export function AnnotatableCodeView({
           : null
       }
       renderAnnotation={(...[annotation]) => {
+        if (annotation.metadata.imagePath !== undefined) {
+          return renderImagePreview?.(annotation.metadata.imagePath) ?? null;
+        }
         const hasDraft = annotation.metadata.entries.some((entry) => entry.kind === "draft");
         return (
           <div
@@ -292,6 +316,14 @@ export function AnnotatableCodeView({
             {annotation.metadata.entries.map((entry) => (
               <DiffCommentAnnotation
                 key={entry.id}
+                environmentId={environmentId}
+                projectId={projectId}
+                ownerKey={JSON.stringify([
+                  environmentId,
+                  composerDraftTarget,
+                  codeViewKey,
+                  entry.id,
+                ])}
                 kind={entry.kind}
                 rangeLabel={entry.rangeLabel}
                 text={entry.kind === "draft" ? draftText : entry.text}

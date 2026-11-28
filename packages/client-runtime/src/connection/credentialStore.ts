@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
-import type * as Effect from "effect/Effect";
-import type * as Option from "effect/Option";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import type { ConnectionCredential } from "./catalog.ts";
 import type { ConnectionAttemptError } from "./model.ts";
@@ -21,3 +22,15 @@ export class ConnectionCredentialStore extends Context.Service<
 
 export const make = (service: ConnectionCredentialStore["Service"]) =>
   ConnectionCredentialStore.of(service);
+
+/** A store that lives only as long as its layer, for tests and other throwaway runtimes. */
+export const layerMemory = (initial: Iterable<readonly [string, ConnectionCredential]> = []) =>
+  Layer.sync(ConnectionCredentialStore, () => {
+    const stored = new Map(initial);
+    return make({
+      get: (connectionId) => Effect.sync(() => Option.fromNullishOr(stored.get(connectionId))),
+      put: (connectionId, credential) =>
+        Effect.sync(() => void stored.set(connectionId, credential)),
+      remove: (connectionId) => Effect.sync(() => void stored.delete(connectionId)),
+    });
+  });

@@ -88,10 +88,6 @@ export const RELAY_HTTP_ROUTER_CONFIG = {
   maxParamLength: 512,
 } as const;
 
-const decodeManagedTunnelRecoveryProof = Schema.decodeUnknownEffect(
-  RelayManagedEndpointRecoveryProofPayload,
-);
-
 const appendRelayCredentialResponseHeaders = HttpEffect.appendPreResponseHandler(
   (_request, response) =>
     Effect.succeed(
@@ -235,27 +231,20 @@ const traceRelayHttpRequest = Effect.fnUntraced(function* <E, R>(
   >,
 ) {
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const traced = annotateRelayEdgeLocation.pipe(
-    Effect.andThen(appendRelayTraceContextResponseHeader),
-    Effect.andThen(relayRequestDeadline(httpEffect)),
-  );
-  if (!isRelayHookPath(request.url)) {
-    return yield* HttpMiddleware.tracer(traced).pipe(
-      Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
-      // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
-      Effect.ensuring(Effect.yieldNow),
-    );
-  }
-  // Hook URLs carry a secret token: the tracer and deadline log see a redacted
-  // request, while the route itself still receives the original. A webhook
-  // sender's trace context is dropped, so it cannot pick the trace our relay
-  // and environment spans land in.
-  const redacted = request.modify({
-    url: redactRelayHookUrl(request.url),
+  const isHook = isRelayHookPath(request.url);
+  // The span sees a copy of the request without the caller's address or user agent: the edge
+  // location above is enough to tell where users are. Hook URLs carry a secret token, so their
+  // copy is redacted too, and a webhook sender's trace context is dropped so it cannot pick the
+  // trace our relay and environment spans land in. The route still receives the original.
+  const spanRequest = request.modify({
+    remoteAddress: Option.none(),
     headers: Headers.removeMany(
       request.headers,
-      Object.keys(request.headers).filter((name) => SENDER_TRACE_HEADER.test(name)),
+      Object.keys(request.headers).filter(
+        (name) => name.toLowerCase() === "user-agent" || (isHook && SENDER_TRACE_HEADER.test(name)),
+      ),
     ),
+    ...(isHook ? { url: redactRelayHookUrl(request.url) } : {}),
   });
   return yield* HttpMiddleware.tracer(
     annotateRelayEdgeLocation.pipe(
@@ -263,13 +252,14 @@ const traceRelayHttpRequest = Effect.fnUntraced(function* <E, R>(
       Effect.andThen(
         relayRequestDeadline(
           httpEffect.pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request)),
-          RELAY_HOOK_REQUEST_DEADLINE_MS,
+          isHook ? RELAY_HOOK_REQUEST_DEADLINE_MS : RELAY_REQUEST_DEADLINE_MS,
         ),
       ),
     ),
   ).pipe(
-    Effect.provideService(HttpServerRequest.HttpServerRequest, redacted),
+    Effect.provideService(HttpServerRequest.HttpServerRequest, spanRequest),
     Effect.provideService(HttpMiddleware.TracerDisabledWhen, () => false),
+    // HttpMiddleware finalizes its span on the dispatcher; do not close a request-scoped exporter first.
     Effect.ensuring(Effect.yieldNow),
   );
 });
@@ -397,11 +387,7 @@ export const layerDpopClientAuth = Layer.effect(
           return yield* relayAuthInvalidError("invalid_bearer");
         }
         const token = readHttpAuthorizationCredential(credential);
-        const now = yield* DateTime.now;
-        const verified = yield* relayTokens.verifyDpopAccessToken({
-          token,
-          nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
-        });
+        const verified = yield* relayTokens.verifyDpopAccessToken({ token });
         if (!verified) {
           return yield* relayAuthInvalidError("invalid_bearer");
         }
@@ -516,6 +502,7 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
     readonly userId: string;
     readonly environmentId: string;
     readonly managedEndpointNamespace?: string | undefined;
+    readonly forceDisconnect?: boolean;
   }) {
     const links = yield* EnvironmentLinks.EnvironmentLinks;
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
@@ -535,12 +522,7 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
             environmentId: link.environmentId,
             environmentPublicKey: link.environmentPublicKey,
           });
-    // Deprovision after revocation commits; retry even if already revoked to finish failed Cloudflare cleanup.
-    const deprovisioned = yield* managedEndpointProvider.deprovision({
-      userId: input.userId,
-      environmentId: input.environmentId,
-      target: deprovisionTarget,
-    });
+    // Cleared before teardown, which can fail: a later link under another key shares this inbox.
     const endpointKey =
       deprovisionTarget && input.managedEndpointNamespace
         ? HeldHooks.endpointKeyForTunnelName(
@@ -559,11 +541,23 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
         ),
       );
     }
+    // Deprovision after revocation commits; retry even if already revoked to finish failed Cloudflare cleanup.
+    const forceDisconnect = input.forceDisconnect === true;
+    const deprovisioned = yield* managedEndpointProvider.deprovision({
+      userId: input.userId,
+      environmentId: input.environmentId,
+      target: deprovisionTarget,
+      forceDisconnect,
+    });
     if (!deprovisioned) {
       const key = { userId: input.userId, environmentId: input.environmentId };
       const retryTarget = yield* managedEndpointProvider.prepareDeprovision(key);
       if (retryTarget !== null && (yield* links.getForUser(key)) === null) {
-        yield* managedEndpointProvider.deprovision({ ...key, target: retryTarget });
+        yield* managedEndpointProvider.deprovision({
+          ...key,
+          target: retryTarget,
+          forceDisconnect,
+        });
       }
     }
     return unlinked;
@@ -588,18 +582,13 @@ export const verifyEnvironmentTunnelRecoveryProof = Effect.fn(
   "relay.api.server.verifyEnvironmentTunnelRecoveryProof",
 )(function* (input: EnvironmentTunnelRecoveryProofInput) {
   const config = yield* RelayConfiguration.RelayConfiguration;
-  const now = yield* DateTime.now;
-  const verified = yield* verifyRelayJwt({
+  const verified = yield* verifyRelayJwt(RelayManagedEndpointRecoveryProofPayload, {
     publicKey: input.environmentPublicKey,
     token: input.proof,
     typ: RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
     issuer: `t3-env:${input.environmentId}`,
     audience: normalizeRelayIssuer(config.relayIssuer),
-    nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
-  }).pipe(
-    Effect.flatMap(decodeManagedTunnelRecoveryProof),
-    Effect.mapError(() => new HttpApiError.Unauthorized({})),
-  );
+  }).pipe(Effect.mapError(() => new HttpApiError.Unauthorized({})));
 
   if (
     verified.environmentId !== input.environmentId ||
@@ -908,6 +897,12 @@ export const layerClientApi = HttpApiBuilder.group(
               new RelayEnvironmentLinkProofInvalidError({
                 code: "environment_link_proof_invalid",
                 reason: "origin_not_allowed",
+                traceId,
+              }),
+            ManagedEndpointDeprovisioningFailed: (_error, traceId) =>
+              new RelayEnvironmentLinkUnavailableError({
+                code: "environment_link_unavailable",
+                reason: "managed_endpoint_provisioning_failed",
                 traceId,
               }),
             ManagedTunnelLimitExceeded: (limitError, traceId) =>
@@ -1437,6 +1432,21 @@ export const layerServerApi = HttpApiBuilder.group(
             holdWebhooksWhileOffline: payload.holdWebhooksWhileOffline,
           });
           return payload;
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "updateLiveActivityPreference",
+        Effect.fn("relay.api.server.updateLiveActivityPreference")(function* ({ params, payload }) {
+          yield* requireOwnEnvironment(params.environmentId);
+          const principal = yield* RelayEnvironmentPrincipal;
+          const links = yield* EnvironmentLinks.EnvironmentLinks;
+          const ok = yield* links.updateLiveActivityPreference({
+            userId: payload.cloudUserId,
+            environmentId: params.environmentId,
+            environmentPublicKey: principal.environmentPublicKey,
+            liveActivitiesEnabled: payload.liveActivitiesEnabled,
+          });
+          return { ok };
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(

@@ -8,6 +8,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
@@ -84,7 +87,98 @@ describe("ssh auth", () => {
       assert.include(yield* fs.readFileString(askpassPath), 'printf "%s\\n" "$T3_SSH_AUTH_SECRET"');
     }).pipe(
       Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "linux"))),
-      Effect.scoped,
+    ),
+  );
+
+  it.effect("picks the Windows askpass helper that the installed ssh client can start", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const temp = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-askpass-test-" });
+      const dir = path.join(temp, "askpass");
+      const cases = [
+        {
+          banner: "OpenSSH_for_Windows_9.5p2, LibreSSL 3.8.2",
+          isExecutable: false,
+          askpass: `"C:\\fake\\node.exe" "${dir}\\ssh-askpass.cjs"`,
+          nodeOptions: undefined,
+          runAsNode: "1",
+        },
+        {
+          banner: "OpenSSH_for_Windows_8.1p1, LibreSSL 2.9.2",
+          execPath: "C:\\a.exe b\\node.EXE",
+          isExecutable: false,
+          askpass: `"C:\\a.exe b\\node.EXE" "${dir}\\ssh-askpass.cjs"`,
+          nodeOptions: undefined,
+          runAsNode: "1",
+        },
+        {
+          banner: "OpenSSH_for_Windows_9.5p2, LibreSSL 3.8.2",
+          isExecutable: true,
+          askpass: `"C:\\fake\\node.exe" "${dir}\\ssh-askpass.cjs"`,
+          nodeOptions: `--require "${dir.replaceAll("\\", "/")}/ssh-askpass.cjs"`,
+          runAsNode: "1",
+        },
+        {
+          banner: "OpenSSH_10.6p1, OpenSSL 3.5.9 29 Sep 2026",
+          isExecutable: false,
+          askpass: `${dir}\\ssh-askpass.sh`,
+          nodeOptions: undefined,
+          runAsNode: undefined,
+        },
+      ];
+      for (const testCase of cases) {
+        const spawned: Array<ReadonlyArray<string>> = [];
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.sync(() => {
+            if (command._tag === "StandardCommand") {
+              spawned.push([command.command, ...command.args].map(String));
+            }
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(123),
+              stdout: Stream.empty,
+              stderr: Stream.make(new TextEncoder().encode(`${testCase.banner}\r\n`)),
+              all: Stream.empty,
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              stdin: Sink.drain,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+              unref: Effect.succeed(Effect.void),
+            });
+          }),
+        );
+        const env = yield* buildSshChildEnvironment({
+          authSecret: "super-secret",
+          interactiveAuth: true,
+          askpassDirectory: dir,
+          baseEnv: {},
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(HostProcess.IsExecutable, testCase.isExecutable),
+          Effect.provideService(
+            HostProcess.ExecutablePath,
+            testCase.execPath ?? "C:\\fake\\node.exe",
+          ),
+        );
+
+        assert.deepEqual(spawned, [["ssh.exe", "-V"]]);
+        assert.equal(env.SSH_ASKPASS, testCase.askpass);
+        assert.equal(env.NODE_OPTIONS, testCase.nodeOptions);
+        assert.equal(env.ELECTRON_RUN_AS_NODE, testCase.runAsNode);
+        assert.equal(env.SSH_ASKPASS_REQUIRE, "force");
+        assert.equal(env.T3_SSH_AUTH_SECRET, "super-secret");
+      }
+
+      assert.equal(yield* fs.exists(`${dir}\\ssh-askpass.cmd`), false);
+      assert.notInclude(yield* fs.readFileString(`${dir}\\ssh-askpass.cjs`), "process.argv");
+      assert.include(
+        yield* fs.readFileString(`${dir}\\ssh-askpass.sh`),
+        'printf "%s\\n" "$T3_SSH_AUTH_SECRET"',
+      );
+    }).pipe(
+      Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "win32"))),
     ),
   );
 
@@ -249,7 +343,6 @@ describe("ssh auth", () => {
       assert.include(yield* fs.readFileString(first), 'printf "%s\\n" "$T3_SSH_AUTH_SECRET"');
     }).pipe(
       Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "linux"))),
-      Effect.scoped,
     ),
   );
 });

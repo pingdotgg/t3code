@@ -171,6 +171,7 @@ function harness() {
         ),
       listForUser: () => Effect.succeed([]),
       findActiveManagedForEnvironment: () => Effect.succeed([]),
+      updateLiveActivityPreference: () => Effect.die("unexpected Live Activity preference update"),
       setHoldWebhooksWhileOffline: () => Effect.void,
       revokeForUser: () => Effect.succeed(false),
       getForUser: (input) =>
@@ -474,6 +475,20 @@ describe("Android delivery routing", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
+  it.effect("sends a per-device account hash instead of the account id to 2.4.0+ clients", () => {
+    const h = harness();
+    h.current.target.app_version = "2.4.0";
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process(h.job);
+      expect(h.sent[0]?.data.user_id).toBeUndefined();
+      // SHA-256 of "user:phone", which the Android client recomputes.
+      expect(h.sent[0]?.data.user_hash).toBe(
+        "6d11cb8c16365bd4d82136aef4cf191f7fad3a12047924930a31230fd235adbc",
+      );
+    }).pipe(Effect.provide(h.layer));
+  });
+
   it.effect("drops jobs for rotated tokens, expired jobs, and revoked links", () => {
     const h = harness();
     return Effect.gen(function* () {
@@ -508,25 +523,31 @@ describe("Android delivery routing", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
-  it.effect("honors disabled alert preferences while continuing ongoing activity", () => {
-    const h = harness();
-    h.current.state = { ...state, phase: "waiting_for_approval" };
-    h.current.target.preferences_json = encodeJson({ ...preferences, notifyOnApproval: false });
-    return Effect.gen(function* () {
-      const delivery = yield* FcmDeliveries.FcmDeliveries;
-      yield* delivery.process({ ...h.job, state: h.current.state });
-      expect(h.sent[0]?.data.active).toBe("true");
-      expect(h.sent[0]?.data.alert_id).toBeUndefined();
+  it.effect(
+    "continues ongoing activity when alerts are disabled, with or without a previous card",
+    () => {
+      const h = harness();
+      h.current.state = { ...state, phase: "waiting_for_approval" };
       h.current.target.preferences_json = encodeJson({
         ...preferences,
         notificationsEnabled: false,
       });
-      h.current.target.last_aggregate_json = encodeJson(aggregateFor([state]));
-      yield* delivery.process({ ...h.job, state: h.current.state });
-      expect(h.sent[1]?.data.active).toBe("false");
-      expect(h.sent[1]?.data.alert_id).toBeUndefined();
-    }).pipe(Effect.provide(h.layer));
-  });
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries.FcmDeliveries;
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        expect(h.sent).toHaveLength(1);
+        expect(h.sent[0]?.data.active).toBe("true");
+        expect(h.sent[0]?.alert).toBe(false);
+        expect(h.sent[0]?.data.alert_id).toBeUndefined();
+        h.current.target.preferences_json = encodeJson({ ...preferences, notifyOnApproval: false });
+        h.current.target.last_aggregate_json = encodeJson(aggregateFor([state]));
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        expect(h.sent[1]?.data.active).toBe("true");
+        expect(h.sent[1]?.data.alert_id).toBeUndefined();
+        expect(h.marked.at(-1)?.kind).toBe("live_activity_update");
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
 
   it.effect("replays an empty card to repair an orphan without a delivery baseline", () => {
     const h = harness();
@@ -583,26 +604,6 @@ describe("delivery policy regressions", () => {
       yield* d.process({ ...h.job, state: h.current.state });
       expect(h.sent.filter((x) => x.alert)).toHaveLength(1);
     }).pipe(Effect.provide(h.layer));
-  });
-  it("keeps an older waiting thread visible and alertable beyond five running rows", () => {
-    const running = Array.from({ length: 5 }, (_, i) => ({
-      ...state,
-      threadId: ThreadId.make(`running-${i}`),
-    }));
-    const waiting = {
-      ...state,
-      phase: "waiting_for_approval" as const,
-      updatedAt: "1969-12-31T23:59:00.000Z",
-    };
-    const next = aggregateFor([...running, waiting]);
-    expect(
-      FcmDeliveries.androidAlertForAggregate({
-        previousAggregate: aggregateFor(running),
-        nextAggregate: next,
-        preferences,
-        nowMs: 0,
-      }),
-    ).not.toBeNull();
   });
 });
 

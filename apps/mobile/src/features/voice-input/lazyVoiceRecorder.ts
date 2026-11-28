@@ -1,9 +1,13 @@
+import { msg } from "gt-react-native";
+
+import { m } from "../../i18n/messages";
 import {
   throwIfVoiceTranscriptionAborted,
   type VoiceRecorder,
 } from "@t3tools/client-runtime/voice-input";
 
 type Subscription = { remove(): void };
+type RecordingDestination = "local" | "environment";
 
 export interface VoiceRecordingInput {
   readonly uid: string;
@@ -34,11 +38,15 @@ export interface LazyVoiceRecorder<TRecorderState> extends VoiceRecorder {
 
 /** Construct lazily: cold startup blocks JS for tens of milliseconds and most composers never record. */
 export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
-  readonly create: () => NativeVoiceRecorder<TStatus, TRecorderState>;
+  readonly getDestination: () => RecordingDestination;
+  readonly create: (
+    destination: RecordingDestination,
+  ) => NativeVoiceRecorder<TStatus, TRecorderState>;
   readonly onStatus: (status: TStatus) => void;
   readonly selectInput?: (inputs: ReadonlyArray<VoiceRecordingInput>) => VoiceRecordingInput | null;
 }): LazyVoiceRecorder<TRecorderState> {
   let recorder: NativeVoiceRecorder<TStatus, TRecorderState> | null = null;
+  let destination: RecordingDestination | null = null;
   let subscription: Subscription | null = null;
   let retired: NativeVoiceRecorder<TStatus, TRecorderState> | null = null;
   let retiredUri: string | null = null;
@@ -50,14 +58,34 @@ export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
     return promise;
   };
 
+  const release = () => {
+    const released = recorder;
+    if (!released) return;
+    abandonInputSelection?.();
+    recorder = null;
+    subscription?.remove();
+    subscription = null;
+    retired = released;
+    void pending.then(() => {
+      if (retired === released) {
+        retiredUri = released.uri;
+        retired = null;
+      }
+      released.release();
+    });
+  };
+
   return {
     get uri() {
       if (recorder) return recorder.uri;
       return retired ? retired.uri : retiredUri;
     },
     prepareToRecordAsync(signal) {
+      const next = input.getDestination();
+      if (next !== destination) release();
       if (!recorder) {
-        recorder = input.create();
+        recorder = input.create(next);
+        destination = next;
         subscription = recorder.addListener("recordingStatusUpdate", input.onStatus);
       }
       const prepared = recorder;
@@ -95,7 +123,7 @@ export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
       );
     },
     record(options) {
-      if (!recorder) throw new Error("Voice recorder is not prepared.");
+      if (!recorder) throw new Error(m(msg("The voice recorder isn’t ready. Try again.")));
       recorder.record(options);
     },
     stop() {
@@ -104,21 +132,6 @@ export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
     getStatus() {
       return recorder ? recorder.getStatus() : null;
     },
-    release() {
-      const released = recorder;
-      if (!released) return;
-      abandonInputSelection?.();
-      recorder = null;
-      subscription?.remove();
-      subscription = null;
-      retired = released;
-      void pending.then(() => {
-        if (retired === released) {
-          retiredUri = released.uri;
-          retired = null;
-        }
-        released.release();
-      });
-    },
+    release,
   };
 }

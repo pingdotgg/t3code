@@ -168,6 +168,23 @@ export const providerHostEnvironment = (
       delete next[name];
     }
   }
+  // Drivers keep this object, so PATH reads through to the host for a refresh after launch to reach them.
+  const pathKeys = Object.keys(next).filter((name) => name.toUpperCase() === "PATH");
+  if (pathKeys.length > 0) {
+    for (const name of pathKeys) delete next[name];
+    Object.defineProperty(next, "PATH", {
+      enumerable: true,
+      configurable: true,
+      get: () => environment.PATH ?? environment.Path ?? environment.path,
+      set: (value) =>
+        Object.defineProperty(next, "PATH", {
+          value,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        }),
+    });
+  }
   return next;
 };
 
@@ -206,7 +223,8 @@ const sameVariable = (
   left === right ||
   (left !== undefined &&
     right !== undefined &&
-    left.value === right.value &&
+    // A secret reference is an object, and a decoded copy is never the stored one.
+    sameValue(left.value, right.value) &&
     left.sensitive === right.sensitive);
 
 const pinnedFields = (pin: ManagedProviderInstance): ReadonlyArray<PinnedConfigField> =>
@@ -388,6 +406,8 @@ export function makeManagedProviders(
     const result: ServerSettings = {
       ...settings,
       providerInstances: providerInstances as ServerSettings["providerInstances"],
+      // An allow-list names agent drivers; text generators would send code to any other API.
+      ...(allowed === undefined ? {} : { textGenerators: {} }),
       sourceControlWriterModelSelection: allowedSelection(
         settings,
         settings.sourceControlWriterModelSelection,

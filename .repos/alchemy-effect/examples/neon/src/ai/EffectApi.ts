@@ -1,14 +1,14 @@
-import * as Neon from "alchemy/Neon";
+import * as Neon from "@alchemy.run/neon";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
+import * as LanguageModel from "effect/ai/LanguageModel";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-import type * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
-import * as LanguageModel from "effect/ai/LanguageModel";
 import * as Sse from "effect/encoding/Sse";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { resources } from "../resources.ts";
 import { gateway } from "./resources.ts";
 
@@ -21,15 +21,12 @@ export const chat = (
     const request = yield* HttpServerRequest.HttpServerRequest;
     if (
       !environment.NEON_EXAMPLE_API_KEY ||
-      request.headers.authorization !==
-        `Bearer ${environment.NEON_EXAMPLE_API_KEY}`
+      request.headers.authorization !== `Bearer ${environment.NEON_EXAMPLE_API_KEY}`
     ) {
       return HttpServerResponse.text("Unauthorized", { status: 401 });
     }
     const body = yield* request.json.pipe(
-      Effect.flatMap(
-        Schema.decodeUnknownEffect(Schema.Struct({ prompt: Schema.String })),
-      ),
+      Effect.flatMap(Schema.decodeUnknownEffect(Schema.Struct({ prompt: Schema.String }))),
       Effect.catch(() => Effect.succeed(undefined)),
     );
     if (!body)
@@ -37,15 +34,11 @@ export const chat = (
         status: 400,
       });
     if (body.prompt.trim().length === 0 || body.prompt.length > 4000) {
-      return HttpServerResponse.text(
-        "Expected a nonempty prompt of at most 4000 characters",
-        { status: 400 },
-      );
+      return HttpServerResponse.text("Expected a nonempty prompt of at most 4000 characters", {
+        status: 400,
+      });
     }
-    if (
-      environment.NEON_AI_ALLOW_PAID !== "true" ||
-      !environment.NEON_AI_MODEL
-    ) {
+    if (environment.NEON_AI_ALLOW_PAID !== "true" || !environment.NEON_AI_MODEL) {
       return HttpServerResponse.text(
         "Explicit paid inference opt-in and a configured model are required",
         { status: 503 },
@@ -109,9 +102,7 @@ export const chat = (
           const abort = () => resume(Effect.void);
           if (native.signal.aborted) abort();
           else native.signal.addEventListener("abort", abort, { once: true });
-          return Effect.sync(() =>
-            native.signal.removeEventListener("abort", abort),
-          );
+          return Effect.sync(() => native.signal.removeEventListener("abort", abort));
         }),
       ),
     );

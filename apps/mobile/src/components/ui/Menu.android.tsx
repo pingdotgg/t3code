@@ -1,6 +1,6 @@
 import * as Haptics from "expo-haptics";
 import { cloneElement, isValidElement, type ReactElement } from "react";
-import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
+import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu.android";
 import type { MenuProps } from "./Menu.types";
 
 export function Menu(props: MenuProps) {
@@ -28,6 +28,7 @@ export function Menu(props: MenuProps) {
   return (
     <AndroidAnchoredMenu
       actions={props.actions}
+      accessibilityLabel={props.accessibilityLabel}
       className={props.className}
       title={props.title}
       style={props.style}

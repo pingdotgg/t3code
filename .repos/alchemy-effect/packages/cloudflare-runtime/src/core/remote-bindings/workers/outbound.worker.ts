@@ -1,9 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { decodeResponse } from "../../internal/response.shared.ts";
-import type {
-  RemoteWorkerConfig,
-  RemoteWorkerResult,
-} from "../RemoteWorkerConfig.shared.ts";
+import type { RemoteWorkerConfig, RemoteWorkerResult } from "../RemoteWorkerConfig.shared.ts";
 
 interface Env {
   PROXY: ColoLocalActorNamespace;
@@ -111,9 +108,7 @@ export class RemoteBindingProxy extends DurableObject<Env> {
   }
 
   private isUsable(session: Session, stale: Session | undefined): boolean {
-    return (
-      session !== stale && Date.now() - session.createdAt < SESSION_MAX_AGE_MS
-    );
+    return session !== stale && Date.now() - session.createdAt < SESSION_MAX_AGE_MS;
   }
 
   private async proxy(request: Request, session: Session): Promise<Response> {
@@ -123,9 +118,6 @@ export class RemoteBindingProxy extends DurableObject<Env> {
     for (const [key, value] of Object.entries(session.config.headers)) {
       proxiedHeaders.set(key, value);
     }
-    return await fetch(
-      target,
-      new Request(request, { headers: proxiedHeaders }),
-    );
+    return await fetch(target, new Request(request, { headers: proxiedHeaders }));
   }
 }

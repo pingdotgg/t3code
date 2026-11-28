@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { SecretProviderId, SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -9,6 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -20,6 +21,7 @@ import type * as SourceControlHost from "@t3tools/source-control-core/server/Sou
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
+import { userFacingSourceControlDetail } from "@t3tools/source-control-core/server/SourceControlProvider";
 
 type HostGit = SourceControlHost.SourceControlHost["Service"]["git"];
 
@@ -63,6 +65,14 @@ const repositoryJson = {
   mainbranch: { name: "main" },
 };
 
+const gitOutput = (stdout: string) => ({
+  exitCode: ChildProcessSpawner.ExitCode(0),
+  stdout,
+  stderr: "",
+  stdoutTruncated: false,
+  stderrTruncated: false,
+});
+
 function makeLayer(input: {
   readonly response: (request: HttpClientRequest.HttpClientRequest) => Response;
   /** Holds the answer until it resolves, in place of answering at once. */
@@ -85,6 +95,9 @@ function makeLayer(input: {
           ),
   );
   const gitMock = {
+    execute: vi.fn<HostGit["execute"]>(() =>
+      Effect.succeed(gitOutput("git@bitbucket.org:pingdotgg/t3code.git\n")),
+    ),
     readConfigValue: vi.fn<HostGit["readConfigValue"]>(() =>
       Effect.succeed<string | null>("git@bitbucket.org:pingdotgg/t3code.git"),
     ),
@@ -249,6 +262,44 @@ it.effect.each([false, true])("honors PR URL repositories, context=%s", (withCon
       branch: "feature/source-control",
       remoteName: "octocat",
       remoteBranch: "feature/source-control",
+    });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("adds a fork remote with the protocol of the URL origin fetches from", () => {
+  // `git remote -v` shows origin's SSH `insteadOf` rewrite; config holds HTTPS, then an SSH push URL.
+  const { git, layer } = makeLayer({
+    git: {
+      execute: () =>
+        Effect.succeed(
+          gitOutput(
+            "https://bitbucket.org/pingdotgg/t3code.git\ngit@bitbucket.org:pingdotgg/t3code.git\n",
+          ),
+        ),
+    },
+    response: (request) =>
+      Response.json(
+        request.url.endsWith("/pullrequests/42")
+          ? bitbucketPullRequest
+          : {
+              ...repositoryJson,
+              full_name: "octocat/t3code",
+              links: {
+                clone: [
+                  { name: "https", href: "https://bitbucket.org/octocat/t3code.git" },
+                  { name: "ssh", href: "git@bitbucket.org:octocat/t3code.git" },
+                ],
+              },
+            },
+      ),
+  });
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    yield* bitbucket.checkoutPullRequest({ cwd: "/repo", reference: "#42" });
+    assert.deepStrictEqual(git.ensureRemote.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      preferredName: "octocat",
+      url: "https://bitbucket.org/octocat/t3code.git",
     });
   }).pipe(Effect.provide(layer));
 });
@@ -619,7 +670,7 @@ it.effect("creates pull requests using the official REST payload shape", () => {
         branch: { name: "main" },
       },
     });
-  }).pipe(Effect.provide(layer), Effect.scoped);
+  }).pipe(Effect.provide(layer));
 });
 
 it.effect("reports the account Bitbucket confirms for the configured credential", () => {
@@ -669,6 +720,24 @@ it.effect("prefers credentials saved in settings over the environment, without a
     });
     yield* bitbucket.probeAuth;
     assert.strictEqual(lastAuthorization(), basic("user@example.com", "token"));
+
+    // A reference left in place by getWithSecrets is one its secret provider could not read.
+    const requests = execute.mock.calls.length;
+    yield* settings.update({
+      sourceControlHosts: {
+        bitbucket: {
+          accessToken: { provider: SecretProviderId.make("vault"), reference: "bb#token" },
+        },
+      },
+    });
+    const auth = yield* bitbucket.probeAuth;
+    assert.strictEqual(auth.status, "unauthenticated");
+    assert.include(Option.getOrThrow(auth.detail), '"vault"');
+    const error = yield* Effect.flip(
+      bitbucket.listPullRequests({ cwd: "/repo", headSelector: "feature", state: "open" }),
+    );
+    assert.strictEqual(error._tag, "SettingsSecretUnresolvedError");
+    assert.strictEqual(execute.mock.calls.length, requests);
   }).pipe(Effect.provide(layer));
 });
 
@@ -716,6 +785,26 @@ it.effect("reports saved credentials as configured when Bitbucket cannot confirm
       host: Option.some("bitbucket.org"),
       detail: Option.some("An access token is configured."),
     });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect.each([404, 403])("exposes repository lookup details only for HTTP 404 (%s)", (status) => {
+  const { layer } = makeLayer({
+    response: () => new Response("raw upstream response must not be shown", { status }),
+  });
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    for (const repository of ["team/project", "https://bitbucket.org/team/project.git"]) {
+      const error = yield* bitbucket
+        .getRepositoryCloneUrls({ cwd: "/repo", repository })
+        .pipe(Effect.flip);
+      assert.strictEqual(
+        userFacingSourceControlDetail(error),
+        status === 404
+          ? "Repository team/project was not found. Check the owner and name and try again."
+          : undefined,
+      );
+    }
   }).pipe(Effect.provide(layer));
 });
 
