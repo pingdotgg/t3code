@@ -66,9 +66,8 @@ const lineWidths = new WeakMap<Line, number>();
 const ZERO_WIDTH = /[\p{Mark}\p{Default_Ignorable_Code_Point}]/u;
 const ASCII = /^[\x00-\x7f]*$/u;
 
-function isDetachedTailStart(character: string): boolean {
-  return ZERO_WIDTH.test(character) || /[\p{Emoji_Modifier}\uDC00-\uDFFF]/u.test(character);
-}
+// A retained tail must not start on a character that belongs to the one before it.
+const DETACHED = /[\p{Mark}\p{Default_Ignorable_Code_Point}\p{Emoji_Modifier}\uDC00-\uDFFF]/u;
 
 function characterWidth(character: string): number {
   return ZERO_WIDTH.test(character) ? 0 : eastAsianWidth(character.codePointAt(0)!);
@@ -159,7 +158,7 @@ function trimLineStart(runs: Array<Run>, count: number): number {
     // A retained tail must start at a complete character, with no detached marks.
     while (cut < run.text.length) {
       const character = String.fromCodePoint(run.text.codePointAt(cut)!);
-      if (!isDetachedTailStart(character)) break;
+      if (!DETACHED.test(character)) break;
       cut += character.length;
     }
     removedWidth += textWidth(run.text.slice(0, cut));
@@ -707,7 +706,7 @@ export function terminalOutputTail(
       continue;
     }
     const character = String.fromCodePoint(text.codePointAt(start)!);
-    if (!isDetachedTailStart(character)) break;
+    if (!DETACHED.test(character)) break;
     start += character.length;
   }
   return { text: start < text.length ? prefix + text.slice(start) : "", truncated: true };
