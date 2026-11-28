@@ -2,6 +2,7 @@
 import * as NodeFSP from "node:fs/promises";
 
 import type { AntigravityAuthMethod, ProviderInstanceId } from "@t3tools/contracts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Digest from "effect/crypto/Digest";
@@ -21,6 +22,9 @@ import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStr
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityUserSkillDirectories,
+  readAntigravityBoundedFile,
+  readAntigravityUserPluginLinkTarget,
+  readAntigravityUserPlugins,
   resolveAntigravityUserHome,
 } from "./Drivers/AntigravitySkills.ts";
 
@@ -247,7 +251,10 @@ function antigravityEnvironment(
 
 class AntigravitySkillLinkError extends Schema.TaggedError<AntigravitySkillLinkError>()(
   "AntigravitySkillLinkError",
-  { link: Schema.String, cause: Schema.Defect() },
+  {
+    link: Schema.String,
+    cause: Schema.Defect(),
+  },
 ) {
   override get message(): string {
     return `Could not link Antigravity user configuration at ${this.link}.`;
@@ -259,6 +266,16 @@ const antigravityUserConfigFiles = [
   ["GEMINI.md"],
   ["config", "skills.json"],
 ] as const;
+
+const createAntigravitySymlink = (
+  target: string,
+  link: string,
+  type: "file" | "dir" | "junction",
+) =>
+  Effect.tryPromise({
+    try: () => NodeFSP.symlink(target, link, type),
+    catch: (cause) => new AntigravitySkillLinkError({ link, cause }),
+  });
 
 /** Private GEMINI_HOME isolates credentials/hooks/MCP; link global skills and rules from the real ~/.gemini. */
 const linkAntigravityUserConfig = Effect.fn("linkAntigravityUserConfig")(function* (input: {
@@ -317,10 +334,7 @@ const linkAntigravityUserConfig = Effect.fn("linkAntigravityUserConfig")(functio
         yield* fs.remove(link);
       }
       yield* fs.makeDirectory(path.dirname(link), { recursive: true });
-      yield* Effect.tryPromise({
-        try: () => NodeFSP.symlink(target, link, type),
-        catch: (cause) => new AntigravitySkillLinkError({ link, cause }),
-      });
+      yield* createAntigravitySymlink(target, link, type);
     }).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Antigravity user configuration is not linked into the profile.", {
@@ -332,6 +346,135 @@ const linkAntigravityUserConfig = Effect.fn("linkAntigravityUserConfig")(functio
     );
   }
 });
+
+const UnknownRecord = Schema.Record(Schema.String, Schema.Unknown);
+const ProfileConfigJson = Schema.fromJsonString(
+  Schema.StructWithRest(
+    Schema.Struct({ plugins: Schema.optional(Schema.Record(Schema.String, UnknownRecord)) }),
+    [UnknownRecord],
+  ),
+);
+const decodeProfileConfig = Schema.decodeUnknownEffect(ProfileConfigJson);
+const encodeProfileConfig = Schema.encodeSync(ProfileConfigJson);
+
+/** agy reads plugin overrides only from the profile's config.json, and an explicit profile value wins. */
+const enableAntigravityProfilePlugins = Effect.fn("enableAntigravityProfilePlugins")(
+  function* (configPath: string, names: ReadonlyArray<string>) {
+    const raw = (yield* readAntigravityBoundedFile(configPath))?.replace(/^\uFEFF/, "");
+    const config = yield* decodeProfileConfig(
+      raw === undefined || raw.trim().length === 0 ? "{}" : raw,
+    );
+    const plugins = { ...config.plugins };
+    const missing = names.filter((name) => plugins[name]?.enabled == null);
+    if (missing.length === 0) return;
+    for (const name of missing) plugins[name] = { ...plugins[name], enabled: true };
+    yield* writeFileStringAtomically({
+      filePath: configPath,
+      contents: encodeProfileConfig({ ...config, plugins }),
+    });
+  },
+  (effect, configPath) =>
+    effect.pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Antigravity plugin overrides are not carried into the profile.", {
+          configPath,
+          error,
+        }),
+      ),
+    ),
+);
+
+/** Link each enabled plugin instead of the folder, so plugins installed into the profile keep working. */
+const linkAntigravityUserPlugins = Effect.fn("linkAntigravityUserPlugins")(
+  function* (input: {
+    readonly profileDirectory: string;
+    readonly userHome: string;
+    readonly platform: NodeJS.Platform;
+  }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const userPlugins = path.resolve(input.userHome, ".gemini", "config", "plugins");
+    const profilePlugins = path.resolve(input.profileDirectory, "config", "plugins");
+    const normalizeEntryName = (name: string) =>
+      input.platform === "win32" || input.platform === "darwin" ? name.toLowerCase() : name;
+    const samePath = (left: string, right: string) =>
+      input.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+    const enabled = yield* readAntigravityUserPlugins(input.userHome);
+    const entries = yield* fs
+      .readDirectory(profilePlugins)
+      .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed([])));
+    const occupied = new Set<string>();
+    const enableByDefault: Array<string> = [];
+    for (const name of entries) {
+      const link = path.join(profilePlugins, name);
+      const target = yield* readAntigravityUserPluginLinkTarget(link, userPlugins);
+      // Only links into the user's plugins are ours. Real folders and other links stay.
+      if (target === undefined) {
+        occupied.add(normalizeEntryName(name));
+        continue;
+      }
+      const plugin = enabled.get(name);
+      if (plugin !== undefined && samePath(plugin.directory, target)) {
+        occupied.add(normalizeEntryName(name));
+        if (plugin.disabledByDefault) enableByDefault.push(name);
+        continue;
+      }
+      yield* fs.remove(link).pipe(
+        Effect.catchReason("PlatformError", "NotFound", () => Effect.void),
+        Effect.catch((error) =>
+          Effect.gen(function* () {
+            occupied.add(normalizeEntryName(name));
+            yield* Effect.logWarning("Could not remove stale Antigravity plugin link.", {
+              link,
+              error,
+            });
+          }),
+        ),
+      );
+    }
+    const toLink = [...enabled].filter(([name]) => !occupied.has(normalizeEntryName(name)));
+    if (toLink.length > 0) {
+      yield* fs.makeDirectory(profilePlugins, { recursive: true });
+      const directoryType = input.platform === "win32" ? "junction" : "dir";
+      for (const [name, plugin] of toLink) {
+        const link = path.join(profilePlugins, name);
+        const linked = yield* createAntigravitySymlink(plugin.directory, link, directoryType).pipe(
+          Effect.as(true),
+          Effect.catch((error) =>
+            Effect.gen(function* () {
+              const current = yield* readAntigravityUserPluginLinkTarget(link, userPlugins);
+              if (current !== undefined && samePath(plugin.directory, current)) return true;
+              yield* Effect.logWarning("Could not link Antigravity user plugin into the profile.", {
+                link,
+                target: plugin.directory,
+                error,
+              });
+              return false;
+            }),
+          ),
+        );
+        if (linked && plugin.disabledByDefault) enableByDefault.push(name);
+      }
+    }
+    // A profile folder with the same name shadows the user's plugin, so it keeps its own setting.
+    if (enableByDefault.length > 0) {
+      yield* enableAntigravityProfilePlugins(
+        path.join(input.profileDirectory, "config", "config.json"),
+        enableByDefault,
+      );
+    }
+  },
+  (effect, input) =>
+    effect.pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Antigravity user plugins are not linked into the profile.", {
+          profileDirectory: input.profileDirectory,
+          userHome: input.userHome,
+          error,
+        }),
+      ),
+    ),
+);
 
 const RuleCopiesJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const decodeRuleCopies = Schema.decodeUnknownOption(RuleCopiesJson);
@@ -541,6 +684,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   if (platform === "win32") {
     yield* copyAntigravityUserConfigFiles({ profileDirectory: geminiHome, userHome });
   }
+  yield* linkAntigravityUserPlugins({ profileDirectory: geminiHome, userHome, platform });
   return profile;
 });
 

@@ -38,6 +38,7 @@ API keys are stored outside `settings.json`, and ambient `GEMINI_API_KEY` / Goog
 
 - **Project skills**: Loaded in priority order from `.gemini/skills`, `.agents/skills`, then `.agent/skills`.
 - **Global skills**: Loaded from `~/.gemini/config/skills` or `~/.gemini/antigravity-cli/skills` (list `~/.agents/skills` in `~/.gemini/config/skills.json` or `.agents/skills.json` to include it).
+- **Plugins**: Enabled plugins in `~/.gemini/config/plugins` load their skills, hooks, and MCP servers (honoring `~/.gemini/config/config.json` and manifest `"disabled": true`), while top-level `~/.gemini/config/mcp_config.json` and `hooks.json` stay excluded. If an enabled plugin configures hooks or MCP servers, pick another [text generation model](./text-generation.md).
 - **Attachments**: Images and audio go directly to the model; PDFs and text files load as documents; videos and other files pass a saved file path (supported videos go natively to Gemini models).
 
 ## Multiple accounts and removal
