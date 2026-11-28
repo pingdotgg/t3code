@@ -158,7 +158,7 @@ function UsageAccessRows({
         return (
           <section key={environmentId} className="flex flex-col gap-2">
             {environments.length > 1 ? (
-              <h3 className="px-1 text-xs font-medium text-muted-foreground">
+              <h3 className="px-1 text-caption text-muted-foreground">
                 {group[0]?.prompt.environmentLabel}
               </h3>
             ) : null}
@@ -171,8 +171,8 @@ function UsageAccessRows({
                     accentColor={accentColor}
                   />
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="text-sm font-medium">{label}</span>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-meta">{label}</span>
+                    <span className="text-caption text-muted-foreground">
                       {usageAccessReadsLabel(prompt.driver, m)}
                     </span>
                   </div>
@@ -233,10 +233,10 @@ export function UsageAccessQuestion({
       className="mx-auto flex min-h-[min(34rem,70vh)] w-full max-w-sm flex-col justify-center gap-5"
     >
       <div className="flex flex-col gap-1">
-        <h2 id="usage-access-title" className="text-xl leading-snug font-semibold">
+        <h2 id="usage-access-title" className="text-title">
           <UsageAccessTitle />
         </h2>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-body text-muted-foreground">
           <UsageAccessIntro />
         </p>
       </div>

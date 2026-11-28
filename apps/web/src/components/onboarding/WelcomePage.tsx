@@ -858,10 +858,10 @@ function FindProjectsSection({
           <FolderSearchIcon className="size-4" />
         </RowIcon>
         <span className="min-w-0 flex-1">
-          <span className="block text-sm font-medium text-foreground">
+          <span className="block text-meta text-foreground">
             <T>Bring in your projects</T>
           </span>
-          <span className="block text-xs text-muted-foreground">
+          <span className="block text-caption text-muted-foreground">
             <T>
               T3 Code can read your <Var>{importSourcesLabel}</Var> session history to find the
               folders you worked in, and their git remotes.
@@ -872,7 +872,7 @@ function FindProjectsSection({
           <T>Find my projects</T>
         </Button>
       </div>
-      <label htmlFor={usageCheckboxId} className="flex items-center gap-3 py-1 ps-8 text-xs">
+      <label htmlFor={usageCheckboxId} className="flex items-center gap-3 py-1 ps-8 text-caption">
         <RowIcon>
           <Checkbox
             id={usageCheckboxId}

@@ -150,7 +150,7 @@ function KindExplanations(props: {
   return props.kinds.map((kind, index) => (
     <div key={kind} className={index === 0 ? undefined : "mt-3"}>
       <PopoverTitle>{kindTitle(gt, kind, props.machineName)}</PopoverTitle>
-      <p className="mt-1 max-w-64 text-2xs text-muted-foreground">
+      <p className="mt-1 max-w-64 text-caption text-muted-foreground">
         {kindExplanation(gt, kind, props.pressure)}
       </p>
     </div>
@@ -168,13 +168,13 @@ function MachinesDetails(props: { readonly strained: ReadonlyArray<Strained> }) 
       <KindExplanations kinds={kinds} pressure={null} machineName={null} />
       {props.strained.map((entry) => (
         <section key={entry.environmentId} className="mt-3 border-t border-border/60 pt-2">
-          <p className="truncate text-xs font-medium">{entry.label}</p>
+          <p className="truncate text-caption">{entry.label}</p>
           {kinds.length > 1 ? (
-            <p className="mt-0.5 text-2xs text-muted-foreground">
-              {severeHostPressureKinds(entry.pressure)
-                .map((kind) => kindTitle(gt, kind, null))
-                .join(" · ")}
-            </p>
+            <ul className="mt-0.5 text-caption text-muted-foreground">
+              {severeHostPressureKinds(entry.pressure).map((kind) => (
+                <li key={kind}>{kindTitle(gt, kind, null)}</li>
+              ))}
+            </ul>
           ) : null}
           <AgentList environmentId={entry.environmentId} pressure={entry.pressure} />
         </section>
@@ -229,7 +229,7 @@ function HostPressureAgentRow(props: {
     thread?.title ??
     (threadId === null ? gt("{agent} (shared)", { agent: props.agent.agent }) : props.agent.agent);
   return (
-    <li className="flex min-w-0 items-center gap-2 text-xs">
+    <li className="flex min-w-0 items-center gap-2 text-caption">
       {threadRef === null ? (
         <span className="min-w-0 flex-1 truncate">{name}</span>
       ) : (

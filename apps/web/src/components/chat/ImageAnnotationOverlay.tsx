@@ -346,26 +346,25 @@ export function ImageAnnotationOverlay({
           </ToggleGroup>
           <div role="radiogroup" aria-label={gt("Stroke color")} className="flex items-center px-1">
             {STROKE_COLORS.map((swatch) => (
-              <button
+              <Button
                 key={swatch}
                 type="button"
+                variant="ghost"
+                size="icon-sm"
                 role="radio"
                 aria-checked={color === swatch}
+                data-pressed={color === swatch ? "" : undefined}
                 aria-label={colorLabels[swatch]}
                 onClick={() => {
                   setColor(swatch);
                   setTool("draw");
                 }}
-                className={cn(
-                  "flex size-7 items-center justify-center rounded-md outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-                  color === swatch && "bg-accent",
-                )}
               >
                 <span
                   className="size-4 rounded-full ring-1 ring-foreground/20 ring-inset"
                   style={{ background: swatch }}
                 />
-              </button>
+              </Button>
             ))}
           </div>
           <Button
@@ -383,7 +382,7 @@ export function ImageAnnotationOverlay({
           </Button>
         </div>
         {failed ? (
-          <p role="alert" className="px-2 pb-1 text-xs text-destructive">
+          <p role="alert" className="px-2 pb-1 text-caption text-destructive">
             {gt("The drawing could not be saved. Try again or cancel.")}
           </p>
         ) : null}
