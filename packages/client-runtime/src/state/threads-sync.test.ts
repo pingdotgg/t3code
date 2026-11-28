@@ -2767,6 +2767,28 @@ describe("EnvironmentThreads", () => {
     ),
   );
 
+  it.effect("keeps receiving thread updates on the live stream after a brief mobile resume", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      yield* Queue.offer(harness.inputs, synchronized());
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+
+      yield* Queue.offer(harness.wakeups, "application-active-probe");
+      yield* TestClock.adjust(0);
+      yield* Queue.offerAll(harness.inputs, [
+        titleUpdated("After resume", CACHED_SNAPSHOT_SEQUENCE + 1),
+        synchronized(),
+      ]);
+      yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" && Option.getOrNull(value.data)?.thread.title === "After resume",
+      );
+
+      expect(yield* SubscriptionRef.get(harness.subscriptionCount)).toBe(1);
+    }),
+  );
+
   it.effect("skips an unknown event type and resumes after it", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });

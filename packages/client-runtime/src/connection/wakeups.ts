@@ -22,8 +22,10 @@ export function resetsRetryBackoff(reason: ConnectionWakeup): boolean {
   return isApplicationActiveWakeup(reason) || reason === "network-changed";
 }
 
+// A brief mobile app switch probes the live socket via the supervisor; tearing down healthy
+// streams on every unfocus causes needless sync churn unless the socket actually drops.
 export function shouldResubscribeAfterWakeup(reason: ConnectionWakeup): boolean {
-  return isApplicationActiveWakeup(reason);
+  return reason === "application-active" || reason === "application-active-long";
 }
 
 // A brief app switch (the mobile probe) does not justify listing the whole account again.
