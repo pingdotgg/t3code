@@ -198,6 +198,58 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
+  it.effect("parses plugin preferences with a UTF-8 BOM and null enabled fields", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const input = yield* makeWorkspace();
+      const config = path.join(input.profileDirectory, "config");
+      for (const plugin of ["ok", "off"]) {
+        yield* writeSkill(
+          path.join(config, "plugins", plugin, "skills", plugin),
+          `---\nname: ${plugin}\n---\n`,
+        );
+        yield* fileSystem.writeFileString(
+          path.join(config, "plugins", plugin, "plugin.json"),
+          JSON.stringify({ name: plugin }),
+        );
+      }
+      const names = () =>
+        discoverAntigravitySkills(input).pipe(
+          Effect.map((skills) => skills.map((skill) => skill.name)),
+        );
+      const writePreferences = (contents: unknown) =>
+        fileSystem.writeFileString(
+          path.join(config, "config.json"),
+          typeof contents === "string" ? contents : JSON.stringify(contents),
+        );
+
+      yield* writePreferences(`\uFEFF${JSON.stringify({ plugins: { off: { enabled: false } } })}`);
+      assert.deepEqual(yield* names(), ["ok"]);
+
+      yield* writePreferences({ plugins: { ok: { enabled: null }, off: { enabled: false } } });
+      assert.deepEqual(yield* names(), ["ok"]);
+
+      yield* writePreferences(
+        `\uFEFF${JSON.stringify({ plugins: { ok: { enabled: null }, off: { enabled: false } } })}`,
+      );
+      assert.deepEqual(yield* names(), ["ok"]);
+
+      yield* writePreferences({ plugins: null });
+      assert.deepEqual(yield* names(), ["off", "ok"]);
+
+      // agy fails open when config.json cannot decode, including null plugin entries.
+      for (const invalid of [
+        { plugins: { other: null, off: { enabled: false } } },
+        { plugins: { bad: { enabled: "no" }, off: { enabled: false } } },
+        "{broken",
+      ] as const) {
+        yield* writePreferences(invalid);
+        assert.deepEqual(yield* names(), ["off", "ok"]);
+      }
+    }),
+  );
+
   it.effect("uses native root order for duplicate names", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

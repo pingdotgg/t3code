@@ -81,7 +81,12 @@ const decodePluginPreferences = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
       plugins: Schema.optional(
-        Schema.Record(Schema.String, Schema.Struct({ enabled: Schema.optional(Schema.Boolean) })),
+        Schema.NullOr(
+          Schema.Record(
+            Schema.String,
+            Schema.Struct({ enabled: Schema.optional(Schema.NullOr(Schema.Boolean)) }),
+          ),
+        ),
       ),
     }),
   ),
@@ -486,7 +491,8 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
       configInfo?.type === "File"
         ? yield* readIfPresent(fileSystem.readFileString(configPath), configPath)
         : undefined;
-    const preferences = config === undefined ? undefined : decodePluginPreferences(config);
+    const preferences =
+      config === undefined ? undefined : decodePluginPreferences(config.replace(/^\uFEFF/, ""));
     const disabled = new Set(
       Object.entries(
         (preferences?._tag === "Some" ? preferences.value.plugins : undefined) ?? {},
