@@ -882,13 +882,15 @@ Third}`;
     );
     const result = await openDocument(archive, "ods");
     if (result.type !== "ods") throw new Error("Expected workbook");
-    expect(result.sheets[0]!.rows).toEqual([
-      ["Name", "", "Team"],
-      ["Ada", "", "North"],
-      [],
-      [],
-      ["Cy", "", "East"],
+    const sheet = result.sheets[0]!;
+    expect(sheet.rows).toEqual([
+      ["Name", "Team"],
+      ["Ada", "North"],
+      ["Cy", "East"],
     ]);
+    // Labels keep Calc's addresses: Team stays in column C, Cy in row 5.
+    expect(sheet.columnIndexes?.slice(0, 2)).toEqual([0, 2]);
+    expect(sheet.rowIndexes).toEqual([0, 1, 4]);
   });
 
   it("hides ODS sheets whose table style sets table:display to false", async () => {
