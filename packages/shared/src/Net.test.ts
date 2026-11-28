@@ -52,7 +52,7 @@ const ownIpv4 = Object.values(NodeOS.networkInterfaces())
 it.layer(NetService.layer)("NetService", (it) => {
   describe("Net helpers", () => {
     it.effect.each(["EAFNOSUPPORT", "EADDRNOTAVAIL"])(
-      "keeps ports available when IPv6 binds fail with %s",
+      "keeps optional IPv6 probes available on %s while failing explicit bind hosts",
       (code) =>
         Effect.gen(function* () {
           const net = yield* NetService.NetService;
@@ -63,7 +63,12 @@ it.layer(NetService.layer)("NetService", (it) => {
             ...args
           ) {
             const [options] = args;
-            if (options?.host === "::1" || options?.host === "::") {
+            if (
+              options?.host === "::1" ||
+              options?.host === "::" ||
+              options?.host === "192.0.2.123" ||
+              options?.host === "2001:db8::1"
+            ) {
               process.nextTick(() => this.emit("error", Object.assign(new Error(code), { code })));
               return this;
             }
@@ -72,6 +77,18 @@ it.layer(NetService.layer)("NetService", (it) => {
           try {
             assert.equal(yield* net.isPortAvailableOnLoopback(port), true);
             assert.equal(yield* net.canListenOnHost(port, "::"), true);
+            assert.equal(yield* net.canListenOnHost(port, "192.0.2.123"), false);
+            assert.equal(yield* net.canListenOnHost(port, "2001:db8::1"), false);
+            const ipv4Error = yield* net.probeListenOnHost(port, "192.0.2.123").pipe(Effect.flip);
+            assert.equal(ipv4Error._tag, "NetListenError");
+            assert.equal(ipv4Error.host, "192.0.2.123");
+            assert.equal(ipv4Error.port, port);
+            assert.equal(ipv4Error.code, code);
+            const ipv6Error = yield* net.probeListenOnHost(port, "2001:db8::1").pipe(Effect.flip);
+            assert.equal(ipv6Error._tag, "NetListenError");
+            assert.equal(ipv6Error.host, "2001:db8::1");
+            assert.equal(ipv6Error.port, port);
+            assert.equal(ipv6Error.code, code);
           } finally {
             spy.mockRestore();
           }
