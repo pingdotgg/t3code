@@ -29,6 +29,8 @@ const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 
 const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+|-\d+)?$/;
 
+const INLINE_CODE_POSITION_PATTERN = /(?::\d+(?::\d+|-\d+)?|#L\d+(?:C\d+|-L?\d+)?)$/i;
+
 const POSITION_ONLY_PATTERN = /^\d+(?::\d+|-\d+)?$/;
 
 const INLINE_CODE_WHITESPACE_PATTERN = /\s/;
@@ -44,7 +46,7 @@ const SPACED_PATH_BODY_PATTERN =
 function isSpacedAbsoluteFilePath(text: string): boolean {
   const root = SPACED_ABSOLUTE_PATH_ROOT_PATTERN.exec(text)?.[0];
   if (root === undefined) return false;
-  const body = text.slice(root.length).replace(POSITION_SUFFIX_PATTERN, "");
+  const body = text.slice(root.length).replace(INLINE_CODE_POSITION_PATTERN, "");
   if (!SPACED_PATH_BODY_PATTERN.test(body)) return false;
   const firstSpace = body.indexOf(" ");
   const foldersBeforeSpace = body.slice(0, firstSpace).split(PATH_SEPARATOR_PATTERN).slice(0, -1);
@@ -208,16 +210,23 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
   }
 
   const candidate = isWindowsAbsolutePath(trimmed) ? trimmed : trimmed.replaceAll("\\", "/");
-  const hasPosition = POSITION_SUFFIX_PATTERN.test(candidate);
+  const position = INLINE_CODE_POSITION_PATTERN.exec(candidate)?.[0];
+  const hasPosition = position !== undefined;
+  const withoutPosition = candidate.replace(INLINE_CODE_POSITION_PATTERN, "");
+  if (
+    position?.startsWith("#") &&
+    withoutPosition.split(PATH_SEPARATOR_PATTERN).at(-1)?.includes("#")
+  ) {
+    return null;
+  }
   if (!hasPosition && !PATH_SEPARATOR_PATTERN.test(candidate)) return null;
-  if (ELIDED_PATH_SEGMENT_PATTERN.test(candidate.replace(POSITION_SUFFIX_PATTERN, ""))) return null;
+  if (ELIDED_PATH_SEGMENT_PATTERN.test(withoutPosition)) return null;
 
   const hasExplicitPathShape =
     RELATIVE_PATH_PREFIX_PATTERN.test(candidate) ||
     candidate.startsWith("/") ||
     isWindowsAbsolutePath(candidate);
   if (!hasExplicitPathShape) {
-    const withoutPosition = candidate.replace(POSITION_SUFFIX_PATTERN, "");
     // Markdown destinations accept `patches/`. Inline code still needs a
     // file-shaped final segment, so a trailing slash stays plain code.
     if (withoutPosition.endsWith("/")) return null;

@@ -11,6 +11,7 @@ import {
   inlineCodeFilePathCandidate,
   isMarkdownFileLinkLabel,
   parseMarkdownFileLink,
+  resolveMarkdownFileLink,
 } from "./markdownLinks.ts";
 
 describe("isMarkdownFileLinkLabel", () => {
@@ -42,6 +43,11 @@ describe("inlineCodeFilePathCandidate", () => {
     ["allocator.cc:217", "allocator.cc:217"],
     ["src/http.ts:42-64", "src/http.ts:42-64"],
     ["http.ts:42-64", "http.ts:42-64"],
+    ["src/a.ts#section", null],
+    ["src/a.ts#section#L10", null],
+    ["C#/a.cs#L10", "C#/a.cs#L10"],
+    ["src/a.ts#L10-L20-extra", null],
+    [String.raw`C:\My Files\a.ts#section`, null],
     ["origin/main", null],
     ["z-ai/glm-5.3", null],
     ["share/man/ls.1", "share/man/ls.1"],
@@ -88,6 +94,20 @@ describe("inlineCodeFilePathCandidate", () => {
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
+
+  it.each(["src/a.ts", String.raw`C:\My Files\a.ts`])(
+    "recognizes inline GitHub line ranges in %s like colon ranges",
+    (path) => {
+      const anchored = `${path}#L10-L20`;
+      expect(inlineCodeFilePathCandidate(anchored)).toBe(anchored);
+      expect(resolveMarkdownFileLink(anchored, "/work")).toEqual(
+        resolveMarkdownFileLink(`${path}:10-20`, "/work"),
+      );
+      expect(resolveMarkdownFileLink(anchored, "/work")).toMatchObject({
+        position: { line: 10, endLine: 20 },
+      });
+    },
+  );
 });
 
 describe("parseMarkdownFileLink", () => {

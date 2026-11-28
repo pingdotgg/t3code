@@ -22,8 +22,11 @@ describe("Enriched link presentation", () => {
       "app.tsx:12:3",
       "src/http.ts:42-64",
       "http.ts:42-64",
+      "src/a.ts#L10-L20",
+      "a.ts#L10-L20",
       "app/(auth)/login/page.tsx",
       "src/routes/[id]/+page.svelte",
+      "src/routes/[id]/+page.svelte#L10-L20",
       "app/routes/posts.$id.tsx",
       "node_modules/@scope/pkg/index.js",
     ]) {
@@ -41,6 +44,8 @@ describe("Enriched link presentation", () => {
       "Dockerfile",
       "docker/Dockerfiles",
       "/app/settings",
+      "src/a.ts#section",
+      "src/a.ts#L10-L20-extra",
     ]) {
       expect(ENRICHED_INLINE_FILE_LINK_REGEX.test(text), text).toBe(false);
     }
