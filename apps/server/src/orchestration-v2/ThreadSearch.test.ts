@@ -515,6 +515,12 @@ it.layer(layerTest)("ThreadSearch", (it) => {
             "assistant",
             "Run it with https://relay.test/v1/hooks/0123456789abcdef/scheduled-task:7f3a9c1e/whk_secretvalue",
           ),
+          message(
+            parent,
+            "hook-file",
+            "assistant",
+            "The signature check is in app/api/hooks/stripe/verifySignature.ts",
+          ),
           thread(subagent, project, { subagentOf: parent }),
           message(subagent, "subagent", "assistant", "ThreadSearchService renamed"),
           thread(sideChat, project, { sideChatOf: parent, title: "ThreadSearchService question" }),
@@ -535,6 +541,10 @@ it.layer(layerTest)("ThreadSearch", (it) => {
         ["…89abcdef/scheduled-task:7f3a9c1e/[withheld]"],
       );
       assert.deepEqual((yield* search.search({ query: "whk_secretvalue" })).matches, []);
+      assert.deepEqual(
+        (yield* search.search({ query: "verifySignature" })).matches.map((match) => match.snippet),
+        ["…app/api/hooks/stripe/verifySignature.ts"],
+      );
       // "ab" alone cannot use the index; with a longer token it narrows the hits.
       assert.deepEqual((yield* search.search({ query: "ab" })).matches, []);
       assert.lengthOf((yield* search.search({ query: "renam be" })).matches, 1);
