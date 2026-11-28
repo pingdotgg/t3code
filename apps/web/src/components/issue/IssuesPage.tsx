@@ -625,6 +625,7 @@ export function IssuesPage() {
                 <IssueRow
                   key={`${row.environmentId}:${key}`}
                   entry={row}
+                  deferDecorations={group.rows.length > 100}
                   selected={selected}
                   showScope={showScope}
                   showTracker={showTracker}
