@@ -191,6 +191,25 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.updatedAt).toEqual(archivedAt);
   });
 
+  it.each([
+    "thread.active-reordered",
+    "thread.pull-request-synced",
+    "thread.issue-synced",
+  ] as const)("preserves payload.updatedAt on %s", (type) => {
+    const occurredAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+    const payload = { ...emptyProjection.thread, updatedAt: now };
+    const next = applyOrchestrationV2ProjectionEvent(emptyProjection, {
+      id: `event-${type}`,
+      type,
+      threadId,
+      occurredAt,
+      payload,
+    } as OrchestrationV2DomainEvent);
+
+    expect(next?.thread).toEqual(payload);
+    expect(next?.updatedAt).toEqual(now);
+  });
+
   it("preserves visible row identity when run updates do not change membership", () => {
     const item = commandItem("item-stable");
     const visibleTurnItems = [
