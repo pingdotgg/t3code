@@ -1,3 +1,4 @@
+import { AssistantForkButton } from "./AssistantForkButton";
 import { CollapsibleUserMessageBody } from "./CollapsibleUserMessageBody";
 import { msg, T, useGT, useLocale, useMessages } from "gt-react-native";
 import { m } from "../../i18n/messages";
@@ -64,7 +65,6 @@ import {
   resolveUserMessageFileCards,
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
-import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   AuthFilesystemReadScope,
@@ -105,7 +105,6 @@ import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import {
   executeAtomQuery,
-  isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
@@ -232,7 +231,6 @@ import {
   deriveThreadWorkLogSizing,
   type LayoutVariant,
 } from "../../lib/layout";
-import { uuidv4 } from "../../lib/uuid";
 import { resolveNativeMarkdownTypography } from "../../lib/appearancePreferences";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
@@ -316,7 +314,6 @@ import {
 } from "../../state/threads";
 import { ThreadWorkflowOpening, useWorkflowOpening } from "./thread-workflow-opening";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { useV2ItemSupport } from "../../state/v2-item-support";
 import {
   fileRoutePathSegments,
   isAbsolutePath,
@@ -324,7 +321,6 @@ import {
   resolveWorkspaceFilePath,
   resolveWorkspaceRelativeFilePath,
 } from "../files/filePath";
-import { waitForThreadShell } from "./threadForkNavigation";
 import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
 import { fileChipClipboardPath, fileChipMenu, resolveFileChipTarget } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
@@ -340,7 +336,6 @@ import { ZoomableImagePressable } from "./ZoomableImagePressable";
 import { openSettings } from "../settings/settings-navigation";
 import { loopbackUrlForDevice } from "../browser/browserTabs";
 import { useOpenLocalPreview } from "../browser/useOpenLocalPreview";
-import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import {
   THREAD_FEED_MAINTAIN_SCROLL_AT_END,
   THREAD_FEED_MAINTAIN_SCROLL_AT_END_THRESHOLD,
@@ -460,99 +455,6 @@ function UserMessageCopyButton(props: {
     >
       {button}
     </Menu>
-  );
-}
-
-function AssistantForkButton(props: {
-  readonly environmentId: EnvironmentId;
-  readonly iconColor: ColorValue;
-  readonly buttonSize: number;
-  readonly iconSize: number;
-  readonly projectedItem: OrchestrationV2ProjectedTurnItem;
-  readonly sourceTitle: string;
-}) {
-  const support = useV2ItemSupport({
-    environmentId: props.environmentId,
-    sourceThreadId: props.projectedItem.sourceThreadId,
-    sourceItemId: props.projectedItem.sourceItemId,
-  });
-  const gt = useGT();
-  const forkFromRun = useAtomCommand(threadEnvironment.forkFromRun, "fork from response");
-  const selectDetail = useSelectWorkspaceDetail();
-  const [busy, setBusy] = useState(false);
-  const canFork = canForkProjectedAssistantItem({
-    projectedItem: props.projectedItem,
-    capabilities: support.providerSession?.capabilities,
-  });
-  const runId = props.projectedItem.item.runId;
-
-  if (!canFork || runId === null) return null;
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={gt("Fork from this response")}
-      disabled={busy}
-      onPress={() => {
-        const targetThreadId = ThreadId.make(uuidv4());
-        setBusy(true);
-        void Haptics.selectionAsync();
-        void forkFromRun({
-          environmentId: props.environmentId,
-          input: {
-            sourceThreadId: props.projectedItem.sourceThreadId,
-            targetThreadId,
-            runId,
-            title: `${props.sourceTitle} fork`,
-            creationSource: "mobile",
-          },
-        })
-          .then(async (result) => {
-            if (isAtomCommandInterrupted(result)) return;
-            if (result._tag !== "Success") {
-              Dialog.alert(
-                gt("Could not confirm fork"),
-                gt("Reconnect and check the thread list before trying again."),
-              );
-              return;
-            }
-            const targetThreadReady = await waitForThreadShell(
-              scopeThreadRef(props.environmentId, targetThreadId),
-            );
-            if (!targetThreadReady) {
-              Dialog.alert(
-                gt("Fork created"),
-                gt(
-                  "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
-                ),
-              );
-              return;
-            }
-            selectDetail({
-              name: "Thread",
-              params: { environmentId: props.environmentId, threadId: targetThreadId },
-            });
-          })
-          .finally(() => setBusy(false));
-      }}
-      className="h-7 w-7 items-center justify-center disabled:opacity-40"
-      style={
-        Platform.OS === "android"
-          ? { width: props.buttonSize, height: props.buttonSize }
-          : undefined
-      }
-    >
-      {busy ? (
-        <AppActivityIndicator size="small" />
-      ) : (
-        <SymbolView
-          name="arrow.triangle.branch"
-          size={props.iconSize}
-          tintColor={props.iconColor}
-          type="monochrome"
-        />
-      )}
-    </Pressable>
   );
 }
 

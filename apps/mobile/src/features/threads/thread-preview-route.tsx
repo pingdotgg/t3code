@@ -5,6 +5,7 @@ import {
   StackRouter,
   useNavigation,
   useNavigationBuilder,
+  type NavigationContainerRef,
   type NavigatorTypeBagBase,
   type ParamListBase,
   type RouteProp,
@@ -20,9 +21,13 @@ import type {
   NativeStackNavigatorProps,
   NativeStackTypeBag,
 } from "@react-navigation/native-stack";
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 
 import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
+import {
+  PreviewHostNavigationContext,
+  useCaptureThreadNavigation,
+} from "./thread-navigation-capture";
 
 function ThreadPreviewNavigator({
   id,
@@ -84,17 +89,31 @@ export function ThreadPreviewRoute(
   },
 ) {
   const host = useNavigation();
+  const captureHostNavigation = useCaptureThreadNavigation();
+  const previewRef = useRef<NavigationContainerRef<{ Thread: ThreadPreviewParams }> | null>(null);
+  const capturePreviewHost = () => {
+    const preview = previewRef.current;
+    const isHostCurrent = captureHostNavigation();
+    return () => preview !== null && previewRef.current === preview && isHostCurrent();
+  };
   const theme = useMobileNavigationTheme();
   const { environmentId, threadId } = props;
   return (
-    <NavigationIndependentTree>
-      <NavigationContainer theme={theme} onUnhandledAction={host.dispatch}>
-        <Preview.Navigator key={`${environmentId}:${threadId}`}>
-          <Preview.Screen name="Thread" initialParams={{ environmentId, threadId }}>
-            {(screen) => props.children(screen.route)}
-          </Preview.Screen>
-        </Preview.Navigator>
-      </NavigationContainer>
-    </NavigationIndependentTree>
+    <PreviewHostNavigationContext value={capturePreviewHost}>
+      <NavigationIndependentTree>
+        <NavigationContainer
+          key={`${environmentId}:${threadId}`}
+          ref={previewRef}
+          theme={theme}
+          onUnhandledAction={host.dispatch}
+        >
+          <Preview.Navigator>
+            <Preview.Screen name="Thread" initialParams={{ environmentId, threadId }}>
+              {(screen) => props.children(screen.route)}
+            </Preview.Screen>
+          </Preview.Navigator>
+        </NavigationContainer>
+      </NavigationIndependentTree>
+    </PreviewHostNavigationContext>
   );
 }
