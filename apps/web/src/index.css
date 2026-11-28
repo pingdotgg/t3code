@@ -2043,9 +2043,19 @@ code {
 /* Spaces a user typed at the start of a line, which Markdown would otherwise drop. pre-wrap, not
    pre, so an indent wider than the bubble wraps instead of pushing the line's text out of view.
    Not selectable, so a selection, a drag or a copy carries the text as it did before. */
-.chat-markdown.user-message-markdown [data-leading-whitespace] {
+.chat-markdown:is(.user-message-markdown, .question-option-preview) [data-leading-whitespace] {
   white-space: pre-wrap;
   user-select: none;
+}
+
+/* Runs of spaces inside a line, such as aligned `=` signs, stay as typed. A line after a <br>
+   starts with the newline pre-wrap shows, so the <br> would add a second break. */
+.chat-markdown.question-option-preview p {
+  white-space: pre-wrap;
+
+  & br {
+    display: none;
+  }
 }
 
 .chat-markdown li + li {

@@ -570,23 +570,9 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 
   it("projects AskUserQuestion input with question text as the answer key", () => {
     const preview = "\n  **Proposed change**\n\n```ts\n\tconst enabled = true;\n```\n  ";
-    assert.deepEqual(
-      ClaudeAdapterV2.claudeUserInputQuestions({
-        questions: [
-          {
-            header: "Approach",
-            question: "Which approach?",
-            options: [
-              { label: "Simple", description: "Use fewer moving parts", preview },
-              { label: "Safe", description: "Keep the current setup" },
-            ],
-            multiSelect: true,
-          },
-        ],
-      }),
-      [
+    const questions = ClaudeAdapterV2.claudeUserInputQuestions({
+      questions: [
         {
-          id: "Which approach?",
           header: "Approach",
           question: "Which approach?",
           options: [
@@ -596,7 +582,19 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
           multiSelect: true,
         },
       ],
-    );
+    });
+    assert.deepEqual(questions, [
+      {
+        id: "Which approach?",
+        header: "Approach",
+        question: "Which approach?",
+        options: [
+          { label: "Simple", description: "Use fewer moving parts", preview },
+          { label: "Safe", description: "Keep the current setup" },
+        ],
+        multiSelect: true,
+      },
+    ]);
     const sdkAnswers: NonNullable<AskUserQuestionInput["answers"]> =
       ClaudeAdapterV2.claudeSdkUserInputAnswers({
         "Which approach?": ["Simple", "Safe"],
@@ -606,6 +604,40 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       "Which approach?": "Simple, Safe",
       "Deploy now?": "Yes",
     });
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeSdkUserInputAnnotations(questions, { "Which approach?": "Simple" }),
+      { "Which approach?": { preview } },
+    );
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeSdkUserInputAnnotations(questions, { "Which approach?": ["Simple"] }),
+      { "Which approach?": { preview } },
+    );
+    for (const answer of ["Safe", "Something else entirely", ["Simple", "Safe"]]) {
+      assert.deepEqual(
+        ClaudeAdapterV2.claudeSdkUserInputAnnotations(questions, { "Which approach?": answer }),
+        {},
+      );
+    }
+    const accessQuestions = ClaudeAdapterV2.claudeUserInputQuestions({
+      questions: [
+        {
+          header: "Access",
+          question: "Which access?",
+          options: [
+            { label: "Read", description: "Read only" },
+            { label: "Write", description: "Write only" },
+            { label: "Read, Write", description: "Both", preview },
+          ],
+          multiSelect: true,
+        },
+      ],
+    });
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeSdkUserInputAnnotations(accessQuestions, {
+        "Which access?": ["Read", "Write"],
+      }),
+      {},
+    );
     assert.isTrue(
       ClaudeAdapterV2.ClaudeProviderCapabilitiesV2.planning.supportsStructuredQuestions,
     );

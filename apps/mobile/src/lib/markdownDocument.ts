@@ -296,6 +296,44 @@ export function markdownWithHtml(markdown: string): string {
   return applyMarkdownEdits(markdown, edits);
 }
 
+/**
+ * A question preview as Claude wrote it for a monospace box: raw HTML such as `<Nav>` stays typed
+ * text, and each paragraph line keeps its indent as no-break spaces, which Markdown does not strip.
+ */
+export function questionPreviewMarkdown(markdown: string): string {
+  const literal = markdownWithLiteralHtml(markdown);
+  const edits: MarkdownEdit[] = [];
+  for (const block of parser.parse(literal).children) {
+    const start = block.position?.start.offset;
+    const end = block.position?.end.offset;
+    if (block.type !== "paragraph" || start === undefined || end === undefined) continue;
+    const lineStart = literal.lastIndexOf("\n", start - 1) + 1;
+    for (const indent of literal.slice(lineStart, end).matchAll(/^[ \t]+/gm)) {
+      const offset = lineStart + indent.index;
+      const content = indent[0].replaceAll("\t", "    ").replaceAll(" ", "\u00a0");
+      edits.push({ start: offset, end: offset + indent[0].length, content });
+    }
+  }
+  return applyMarkdownEdits(literal, edits);
+}
+
+function markdownWithLiteralHtml(markdown: string): string {
+  if (!markdown.includes("<")) return markdown;
+  const edits: MarkdownEdit[] = [];
+  const visit = (node: MarkdownNode) => {
+    if (node.type === "html") {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (start !== undefined && end !== undefined)
+        edits.push({ start, end, content: markdown.slice(start, end).replaceAll("<", "\\<") });
+      return;
+    }
+    if ("children" in node) for (const child of node.children) visit(child);
+  };
+  visit(parser.parse(markdown));
+  return applyMarkdownEdits(markdown, edits);
+}
+
 /** Reference definitions as authored, one line each, so a Windows destination keeps its backslashes. */
 export function markdownReferenceDefinitions(markdown: string): string[] {
   if (!markdown.includes("]:")) return [];

@@ -4,6 +4,7 @@ import {
   markdownForNativeRendering,
   markdownHtmlContent,
   markdownWithHtml,
+  questionPreviewMarkdown,
   markdownWithFileEmbeds,
   parseMarkdownDocument,
   type MarkdownNode,
@@ -16,6 +17,18 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
 
 describe("HTML in native Markdown", () => {
+  it("keeps a question preview's tags and indentation as typed", async () => {
+    const preview = "  Name    Value\n  width   10\n| <Nav> |\n\n`<b>` <div>x</div>";
+    const native = JSON.stringify(
+      await parseMarkdown(markdownForNativeParsing(questionPreviewMarkdown(preview))),
+    );
+    expect(native).toContain("\u00a0\u00a0Name    Value");
+    expect(native).toContain("\u00a0\u00a0width   10");
+    expect(native).toContain("<Nav>");
+    expect(native).toContain("<div>x</div>");
+    expect(native).toContain('"content":"<b>"');
+  });
+
   it("preserves screenshot URLs and captions from GitHub HTML image embeds", () => {
     expect(
       markdownHtmlContent(
