@@ -2559,7 +2559,7 @@ export function ChatComposer(props: ChatComposerProps) {
   useLayoutEffect(() => {
     submitComposerRef.current = (mode, intent, options) =>
       submitComposerStable(undefined, mode, intent, options);
-  }, [submitComposerStable]);
+  }, [submitComposerRef, submitComposerStable]);
   useDictationSubmissionShortcut({
     enabled: voiceInputActive && !speechInput.preparing,
     formRef: composerFormRef,
