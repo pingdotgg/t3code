@@ -57,8 +57,10 @@ const FAILED_READ_BACKOFF_MS = 60 * 1_000;
 
 // Where a shell starts a command, past `NAME=value` assignments and wrappers like `timeout 60`.
 // A create command anywhere else, as in `echo "gh pr create"`, is text, not a command that runs.
-const COMMAND_START =
-  "(?:^|[;&|({`\\n]|\\b(?:do|then|else)\\s)\\s*(?:(?:\\w+=\\S*|env|time|nohup|timeout\\s+\\S+)\\s+)*";
+// A compound header (`[[...]]`, `((...))`, `{ ...; }`) may also precede `do`/`then`/`else` without `;`.
+const COMPOUND_HEADER =
+  "(?:(?:for|if|elif|while|until|then|else|do)\\s+)?(?:!\\s+)?(?:\\[\\[(?:[^\\]]|\\](?!\\]))*\\]\\]|\\(\\((?:[^)]|\\)(?!\\)))*\\)\\)|\\{\\s[^{}]*[;&\\n]\\s*\\})";
+const COMMAND_START = `(?:^|[;&|({\`\\n])\\s*(?:(?:do|then|else)\\s+|${COMPOUND_HEADER}\\s*(?:do|then|else)\\s+)?(?:(?:\\w+=\\S*|env|time|nohup|timeout\\s+\\S+)\\s+)*`;
 const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap(
   ({ kind, changeRequestCreateCommand: command }) =>
     command === undefined
@@ -204,8 +206,8 @@ function replaceCarriedText(script: string, replace: (piece: CarriedText) => str
 
 /** The commands a script runs, without the text it carries. */
 const shellCode = (script: string) =>
-  replaceCarriedText(script, ({ start, end, kind }) =>
-    kind === "escape" ? script.slice(start, end) : kind === "heredoc" ? "<<" : "''",
+  replaceCarriedText(script, ({ start, kind }) =>
+    kind === "escape" && script[start + 1] === "\n" ? "" : kind === "heredoc" ? "<<" : "''",
   );
 
 /** A script split at the command separators in its code, leaving carried text intact. */
@@ -232,9 +234,9 @@ type CommandExecution = Extract<OrchestrationV2TurnItem, { readonly type: "comma
  * some, such as `gh pr list`, so none are taken.
  */
 export function changeRequestsCreatedBy(input: string, output: string) {
-  if (!CREATE_COMMANDS.some(({ command }) => command.test(input))) return [];
   const script = shellScript(input);
   const code = shellCode(script);
+  if (!CREATE_COMMANDS.some(({ command }) => command.test(code))) return [];
   const creates = createCommandCount(code);
   if (creates === 0) return [];
   const otherCommands = code

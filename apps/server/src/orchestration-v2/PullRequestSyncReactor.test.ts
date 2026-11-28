@@ -2089,8 +2089,11 @@ describe("PullRequestSyncReactor", () => {
           commandRan(ThreadId.make("unread"), "git push", undefined, "unread-push"),
           commandRan(agent, "cd app && git -C . push --force-with-lease", undefined, "push"),
           commandRan(agent, '/bin/zsh -lc "gh stack submit --auto"', undefined, "stack"),
+          commandRan(agent, "for ((i=0;i<1;i++)) do git push; done", undefined, "loop"),
+          commandRan(agent, "while [[ 1 ]] do git push; break; done", undefined, "while"),
+          commandRan(agent, "if { true; } then git push; fi", undefined, "brace"),
         ]);
-        for (const item of ["push", "stack"]) {
+        for (const item of ["push", "stack", "loop", "while", "brace"]) {
           const command = yield* Queue.take(fixture.reopenCommands);
           assert.deepStrictEqual(
             [command.threadId, command.commandId],
@@ -2377,6 +2380,72 @@ describe("PullRequestSyncReactor", () => {
       name: "another host's URL beside a create command",
       input: "gh pr create --fill",
       output: "https://gitlab.com/owner/repository/-/merge_requests/3",
+      linked: [],
+    },
+    {
+      name: "a create after a conditional then",
+      input: "if true; then gh pr create --fill; fi",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [31],
+    },
+    {
+      name: "a create in an arithmetic for loop",
+      input: "for ((i=0;i<1;i++)) do gh pr create --fill; done",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [31],
+    },
+    {
+      name: "a create after a compact test",
+      input: 'if [[ -z "$PR" ]] then gh pr create --fill; fi',
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [31],
+    },
+    {
+      name: "a create split across lines with a backslash continuation",
+      input: "gh pr \\\ncreate --fill",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [31],
+    },
+    {
+      name: "a create command after then following an expansion",
+      input: "echo ${X} then gh pr create $(date) then gh pr create; printf '%s\\n' \"$PR\"",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
+      name: "a create command after an arithmetic expansion before do",
+      input: "printf '%s\\n' $((1)) do gh pr create \"$PR\"",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
+      name: "a create command after a literal closing brace before then",
+      input: "printf '%s\\n' } then gh pr create \"$PR\"",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
+      name: "a create command after a literal ]] before then",
+      input: "printf '%s\\n' ]] then gh pr create \"$PR\"",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
+      name: "a create command after then used as an ordinary argument",
+      input: "echo example then gh pr create; printf '%s\\n' \"$PR\"",
+      output: "example then gh pr create\nhttps://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
+      name: "a create command after an escaped semicolon",
+      input: "echo example\\;gh pr create; printf '%s\\n' \"$PR\"",
+      output: "example;gh pr create\nhttps://github.com/owner/repository/pull/31",
+      linked: [],
+    },
+    {
+      name: "a create command after an escaped hyphen in a command word",
+      input: "PR\\-URL=unused gh pr create; printf '%s\\n' \"$PR\"",
+      output: "https://github.com/owner/repository/pull/31",
       linked: [],
     },
     {
