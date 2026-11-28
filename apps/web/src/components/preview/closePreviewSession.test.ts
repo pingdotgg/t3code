@@ -1,3 +1,4 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type {
   EnvironmentId,
   PreviewCloseInput,
@@ -14,9 +15,11 @@ import {
 } from "~/previewStateStore";
 
 import { useClosedViewStore } from "~/closedViewStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
+import { followPreviewSessions } from "./agentOpenedPreviews";
 import { closePreviewSession } from "./closePreviewSession";
 
 vi.mock("~/env", async (importOriginal) => ({
@@ -111,5 +114,47 @@ describe("closePreviewSession", () => {
     expect(readThreadPreviewState(threadRef).sessions).toEqual({});
     applyPreviewServerSnapshot(threadRef, desktopSnapshot);
     expect(readThreadPreviewState(threadRef).sessions).toEqual({});
+  });
+
+  it("keeps a closed desktop tab out of the panel while its close is in flight", async () => {
+    setPrimaryEnvironment(threadRef.environmentId);
+    useRightPanelStore.setState({ byThreadKey: {} });
+    const closingTab = { ...snapshot, runtime: "server" as const };
+    const otherTab = { ...closingTab, tabId: "tab-2" };
+    applyPreviewServerSnapshot(threadRef, closingTab);
+    applyPreviewServerSnapshot(threadRef, otherTab);
+    followPreviewSessions(threadRef, readThreadPreviewState(threadRef));
+    const browserTabs = () =>
+      useRightPanelStore
+        .getState()
+        .byThreadKey[scopedThreadKey(threadRef)]?.surfaces.filter(
+          (surface) => surface.kind === "preview",
+        )
+        .map((surface) => surface.id);
+    expect(browserTabs()).toEqual(["browser:tab-1", "browser:tab-2"]);
+
+    useRightPanelStore.getState().closeSurfaces(threadRef, ["browser:tab-1"]);
+    let finishClose: (() => void) | undefined;
+    const closing = closePreviewSession({
+      closePreview: () =>
+        new Promise<ReturnType<typeof AsyncResult.success<void>>>((resolve) => {
+          finishClose = () => resolve(AsyncResult.success(undefined));
+        }),
+      snapshot: closingTab,
+      tabId: closingTab.tabId,
+      threadRef,
+    });
+    expect(browserTabs()).toEqual(["browser:tab-2"]);
+
+    // Another tab's update arrives while the server is still unloading the closed page.
+    applyPreviewServerSnapshot(threadRef, {
+      ...otherTab,
+      updatedAt: "2026-06-18T19:00:01.000Z",
+    });
+    followPreviewSessions(threadRef, readThreadPreviewState(threadRef));
+    expect(browserTabs()).toEqual(["browser:tab-2"]);
+
+    finishClose?.();
+    await closing;
   });
 });
