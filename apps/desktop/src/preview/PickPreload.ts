@@ -1547,7 +1547,7 @@ function startAnnotation(
       if (tool !== "erase" || event.target !== host) return;
       // Window listeners see the host when the pointer lands inside its closed shadow root.
       const hit = shadowRoot.elementFromPoint(event.clientX, event.clientY);
-      if (!hit?.hasAttribute("data-eraser-stroke-id") || !eraserHits.contains(hit)) return;
+      if (!hit?.hasAttribute("data-eraser-stroke-id")) return;
       strokeHit = hit;
     }
     event.preventDefault();
