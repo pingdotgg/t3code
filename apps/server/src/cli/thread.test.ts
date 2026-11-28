@@ -168,10 +168,20 @@ it.effect(
       const workspaceRoot = path.join(home, "My Project");
       const aliasRoot = path.join(home, "My Project Alias");
       const nestedRoot = path.join(workspaceRoot, "nested");
+      const linkedModels = path.join(workspaceRoot, "src", "models");
+      const outsideDir = path.join(root, "outside");
       const baseDir = path.join(root, "state");
       yield* fs.makeDirectory(nestedRoot, { recursive: true });
+      yield* fs.makeDirectory(linkedModels, { recursive: true });
+      yield* fs.makeDirectory(outsideDir);
       yield* fs.makeDirectory(cwd);
       yield* Effect.promise(() => NodeFSP.symlink(workspaceRoot, aliasRoot, "junction"));
+      yield* Effect.promise(() =>
+        NodeFSP.symlink(linkedModels, path.join(cwd, "models"), "junction"),
+      );
+      yield* Effect.promise(() =>
+        NodeFSP.symlink(outsideDir, path.join(cwd, "outside"), "junction"),
+      );
       const projects = [
         { id: ProjectId.make("current-project"), title: "Current", workspaceRoot: cwd },
         { id: ProjectId.make("home-project"), title: "Home", workspaceRoot: home },
@@ -187,6 +197,11 @@ it.effect(
           id: ProjectId.make("physical-absent-project"),
           title: "Physical absent",
           workspaceRoot: path.join(workspaceRoot, "absent"),
+        },
+        {
+          id: ProjectId.make("outside-absent-project"),
+          title: "Outside absent",
+          workspaceRoot: path.join(cwd, "outside", "absent"),
         },
         { id: ProjectId.make("~/literal-id"), title: "Exact id", workspaceRoot: cwd },
       ];
@@ -226,6 +241,8 @@ it.effect(
         [path.join(aliasRoot, "absent", "plan.ts"), "absent-project"],
         [path.join(aliasRoot, "absent"), "absent-project"],
         [path.join(workspaceRoot, "absent", "plan.ts"), "physical-absent-project"],
+        [path.join(cwd, "outside", "absent", "new.ts"), "outside-absent-project"],
+        [path.join(cwd, "models", "new.ts"), "intended-project"],
         [".", "current-project"],
         ["~/My Project", "intended-project"],
         ["~", "home-project"],
@@ -249,6 +266,20 @@ it.effect(
           identifier,
         );
       }
+
+      const outsideError = yield* Command.runWith(threadCommand, { version: "0.0.0" })([
+        "start",
+        path.join(cwd, "outside", "new.ts"),
+        "Inspect this project",
+        "--json",
+        "--base-dir",
+        baseDir,
+      ]).pipe(
+        Effect.provideService(HostProcess.HomeDirectory, home),
+        Effect.provideService(HostProcess.WorkingDirectory, cwd),
+        Effect.flip,
+      );
+      assert.strictEqual(outsideError._tag, "ThreadProjectNotFoundError");
     }).pipe(
       Effect.scoped,
       Effect.provide(

@@ -195,12 +195,13 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
     ...entries.filter((entry) => entry.kind === "directory").map((entry) => entry.path),
   ]);
 
-  // Reads the root again and leaves every other listed folder to `revalidate`, so a refresh costs
-  // what is on screen rather than every folder the tree has listed.
+  // Reads the root and every failed folder with its ancestors, so Retry reaches collapsed folders.
+  // Every other listed folder waits for `revalidate`, so a refresh costs what is on screen.
   const refresh = () => {
     if (!active.current) return;
     for (const path of requested.current) if (path !== "") stale.current.add(path);
     void load("", true);
+    for (const path of errors.keys()) revalidate(path);
   };
 
   /** Reads again the stale listings that put a row on screen: `directoryPath` and its ancestors. */
