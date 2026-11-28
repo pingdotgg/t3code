@@ -79,7 +79,7 @@ import {
 } from "@t3tools/shared/toolOutput";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
-import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
 
 import {
@@ -771,7 +771,9 @@ const sameModel = (left: ModelRef, right: ModelRef | undefined) =>
   (left.variant ?? "default") === (right?.variant ?? "default");
 
 const agentFor = (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
-  input.runtimePolicy.interactionMode === "plan" ? "plan" : "build";
+  input.runtimePolicy.interactionMode === "plan"
+    ? "plan"
+    : (getModelSelectionStringOptionValue(input.modelSelection, "agent") ?? "build");
 
 const commandOf = (text: string) => {
   const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());

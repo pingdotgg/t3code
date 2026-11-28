@@ -514,6 +514,23 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  it.effect("switches the session to the agent picked for the turn", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.switchAgent", { sessionID: SESSION, agent: "reviewer" }),
+        reply("session.switchAgent", null),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(
+        turnInput(thread, { ...bigPickle, options: [{ id: "agent", value: "reviewer" }] }),
+      );
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }),
+  );
+
   it.effect("drops context usage carried over from before a completed compaction", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed(

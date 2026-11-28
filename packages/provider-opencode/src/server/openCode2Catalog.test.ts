@@ -95,6 +95,32 @@ describe("loadOpenCode2Catalog", () => {
     }),
   );
 
+  it.effect("offers each model the visible primary agents OpenCode lists", () =>
+    Effect.gen(function* () {
+      const agent = (id: string, mode: string, hidden = false) =>
+        `{"id":"${id}","name":"${id}","request":{"settings":{},"headers":{},"body":{}},"mode":"${mode}","hidden":${hidden},"permissions":[]}`;
+      const models = yield* readCatalog({
+        "/api/model": MODELS_BODY,
+        "/api/provider": PROVIDERS_BODY,
+        "/api/agent": `{"location":{"directory":"/project"},"data":[${[
+          agent("build", "primary"),
+          agent("plan", "primary"),
+          agent("general", "subagent"),
+          agent("title", "primary", true),
+          agent("reviewer", "all"),
+        ].join(",")}]}`,
+      });
+
+      assert.deepStrictEqual(
+        models.map((model) => model.agents),
+        [
+          ["build", "plan", "reviewer"],
+          ["build", "plan", "reviewer"],
+        ],
+      );
+    }),
+  );
+
   // regression: #17424 only the provider list is optional; a model-list failure fails the read
   it.effect("fails the read when the model list fails", () =>
     Effect.gen(function* () {
