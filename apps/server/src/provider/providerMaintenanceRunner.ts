@@ -622,7 +622,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               });
             const startupFailure = verifiedProviders.find(
               (verifiedProvider) =>
-                verifiedProvider.status === "error" && verifiedProvider.message?.trim(),
+                verifiedProvider.status === "error" &&
+                !verifiedProvider.probeTimedOut &&
+                verifiedProvider.message?.trim(),
             )?.message;
             const stillOutdated =
               targetVersion === undefined &&
