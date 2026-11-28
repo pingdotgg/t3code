@@ -1016,7 +1016,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const supportsPlanMode =
     planModeEnabled &&
     selectedProviderEntry !== undefined &&
-    selectedProviderEntry.snapshot.showInteractionModeToggle !== false &&
+    selectedProviderEntry.snapshot.showInteractionModeToggle === true &&
     multipleModelSelections === null;
   const interactionMode = supportsPlanMode
     ? (composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE)
