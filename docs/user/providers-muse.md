@@ -16,7 +16,7 @@ Run [Muse Code](https://dev.meta.ai/docs/muse-code) on your T3 Code server. Muse
 ## Models, permissions, and limitations
 
 - **Models**: Reported by Muse on the host (refresh provider status after config changes). If a listed model fails with an access error, pick another or add an allowed ID under **Custom models**.
-- **Permission modes**: Supports **Supervised** and **Full access** only (**Auto** and **Auto-accept edits** are unavailable).
+- **Permission modes**: **Supervised** asks before commands and edits; **Auto** uses Muse's own reviewer; **Full access** runs without approval prompts. **Auto-accept edits** is unavailable.
 - **Skills**: Muse loads its own skills (`muse skills` on the host); they do not appear in the composer's `$` menu.
 - **Forks & rewind**: Forking starts a new session with copied conversation context; conversation rewind is not supported.
 - **T3 tools**: Muse can use T3 Code's MCP tools when reachable (turns continue without them if unavailable).
