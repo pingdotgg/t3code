@@ -962,7 +962,13 @@ async function wordExpansion(
       }
       if (tag.local === "altChunk") cost.bytes = Infinity;
       if (tag.local !== "blip" && tag.local !== "imagedata") return;
-      const target = parts.relationships.get(path)?.get(attr("embed") || attr("id"));
+      // VML imagedata also carries an unprefixed shape `id`; only `r:id` names the relationship.
+      const relId =
+        attr("embed") ||
+        Object.values(tag.attributes).find(
+          (a) => a.local === "id" && a.uri === WORD_RELATIONSHIP.slice(0, -1),
+        )?.value;
+      const target = parts.relationships.get(path)?.get(relId ?? "");
       if (target) {
         cost.media += mediaSizes.get(target) ?? OFFICE_PREVIEW_MAX_BYTES + 1;
         cost.images.add(target);
@@ -1113,6 +1119,7 @@ export async function boundedArchive(
   for (const entry of entries) {
     const document = input.kind === "docx" && entry.name === "word/document.xml";
     const media = input.kind === "docx" && partTypes.binary(entry.name);
+    const isXmlEntry = entry.name.toLowerCase().endsWith(".xml");
     const chunks: Uint8Array[] = [];
     const sections = document ? wordSections() : null;
     let decoder: TextDecoder | undefined;
@@ -1166,7 +1173,7 @@ export async function boundedArchive(
             total > (spreadsheet ? 128 * 1024 * 1024 : OFFICE_PREVIEW_MAX_BYTES) ||
             (spreadsheet && total > Math.max(bytes.byteLength * 200, 8 * 1024 * 1024)) ||
             (!document &&
-              (spreadsheet || media || entry.name.endsWith(".xml")) &&
+              (spreadsheet || media || isXmlEntry) &&
               length > (spreadsheet ? 64 * 1024 * 1024 : 8 * 1024 * 1024))
           ) {
             stream.pause();

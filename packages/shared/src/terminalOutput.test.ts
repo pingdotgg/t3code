@@ -32,6 +32,24 @@ describe("terminalOutputCollapseRedraws", () => {
 });
 
 describe("appendTerminalOutput", () => {
+  const red = "\u001b[0;31mX\u001b[0m";
+  it.each([
+    ["abc\u001b[\r31mX", red + "bc"],
+    ["abc\u001b\r[31mX", red + "bc"],
+    ["abc\u001b[\u0007\r31mX", red + "bc"],
+    ["abc\u001b\n[31mX", "abc\n" + red],
+    ["abcde\u001b\b\b[31mX", "abc" + red + "e"],
+    ["abc\u001b\r\u001b[31mX", red + "bc"],
+    ["abc\u001b\rXhidden\u001b\\Z", "Zbc"],
+  ])("applies line controls inside an escape across every split: %j", (input, expected) => {
+    for (let cut = 0; cut <= input.length; cut += 1) {
+      const state = appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, input.slice(0, cut));
+      const resumed = feed([terminalOutputResumeText(state)]);
+      expect(appendTerminalOutput(state, input.slice(cut)).text).toBe(expected);
+      expect(appendTerminalOutput(resumed, input.slice(cut)).text).toBe(expected);
+    }
+  });
+
   it("keeps only the latest frame of a carriage-return progress bar", () => {
     expect(feed(["[1/3]", "\r[2/3]", "\r[3/3] done\nnext"]).text).toBe("[3/3] done\nnext");
   });
@@ -96,6 +114,17 @@ describe("appendTerminalOutput", () => {
       }
     },
   );
+
+  it.each([
+    ["构建失败\nError", "before建失败\nError"],
+    ["😀 ok", "before ok"],
+    ["\ud83dX", "beforeX"],
+  ])("keeps output after non-ASCII %j aborts an unfinished CSI", (tail, expected) => {
+    const input = `before\u001b[3${tail}`;
+    for (let cut = 0; cut <= input.length; cut += 1) {
+      expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe(expected);
+    }
+  });
 
   it("keeps a bounded tail that starts on a fresh line", () => {
     const lines = Array.from({ length: 2_000 }, (_, index) => `line ${index}`).join("\n");

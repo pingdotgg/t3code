@@ -65,7 +65,7 @@ const adapter = {
 const layerDatabase = SqlitePersistence.layerMemory;
 const layerOrchestrator = Layer.mergeAll(
   layerDatabase,
-  ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layer), Layer.provide(layerDatabase)),
   ProviderReplayHarness.layerWithRegistry(
     { name: "link-origin" },
     ProviderAdapterRegistry.layerFromAdapters([adapter]),

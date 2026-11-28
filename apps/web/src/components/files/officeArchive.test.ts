@@ -2,6 +2,7 @@ import JSZip from "jszip";
 import { describe, expect, it } from "vite-plus/test";
 
 import { prepareOffice } from "./officeArchive";
+import { unlockOpenDocument } from "./openDocumentEncryption";
 
 const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
 const V = 'xmlns:v="urn:schemas-microsoft-com:vml"';
@@ -178,6 +179,17 @@ describe("Word preview limits", () => {
     expect(await result.part("word/document.xml")).toContain("Before");
     expect(await result.part("word/media/image1.svg")).toBe(svg);
   });
+
+  it("keeps a VML picture whose imagedata carries a shape id before r:id", async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>';
+    const body = `<w:p><w:r><w:pict><v:shape><v:imagedata id="_x0000_i1025" r:id="image"/></v:shape></w:pict></w:r></w:p>`;
+    const result = await prepared(
+      await wordFile(body, {}, "", relationship("image", "media/image1.svg"), {
+        "word/media/image1.svg": svg,
+      }),
+    );
+    expect(await result.part("word/media/image1.svg")).toBe(svg);
+  });
 });
 
 async function workbookFile(
@@ -267,5 +279,34 @@ describe("Workbook preview limits", () => {
     expect(result.truncated).toBe(true);
     expect(sheet).toContain(`<t>${prefix}</t>`);
     expect(sheet).not.toContain("\ufffd");
+  });
+});
+
+describe("Case-insensitive XML size limits", () => {
+  it("rejects uppercase .XML entries exceeding 8 MiB in office archives", async () => {
+    const zip = new JSZip();
+    zip.file("ppt/slides/slide1.XML", new Uint8Array(8 * 1024 * 1024 + 1));
+    const bytes = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
+    await expect(prepareOffice(bytes, "pptx")).rejects.toMatchObject({
+      code: "office-too-large-expanded",
+    });
+  });
+
+  it("rejects uppercase .XML entries exceeding 8 MiB in encrypted OpenDocument manifests", async () => {
+    const zip = new JSZip();
+    const manifestXml =
+      `<?xml version="1.0" encoding="UTF-8"?>` +
+      `<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">` +
+      `<manifest:file-entry manifest:full-path="content.XML" manifest:size="${8 * 1024 * 1024 + 1}">` +
+      `<manifest:encryption-data manifest:checksum-type="SHA1/1K" manifest:checksum="AAAAAAAAAAAAAAAAAAAAAAAAAAA=">` +
+      `<manifest:algorithm manifest:algorithm-name="http://www.w3.org/2001/04/xmlenc#aes256-cbc" manifest:initialisation-vector="AAAAAAAAAAAAAAAAAAAAAA=="/>` +
+      `<manifest:key-derivation manifest:key-derivation-name="PBKDF2" manifest:iteration-count="1" manifest:salt="AAAAAAAAAAAAAAAAAAAAAA=="/>` +
+      `</manifest:encryption-data>` +
+      `</manifest:file-entry>` +
+      `</manifest:manifest>`;
+    zip.file("META-INF/manifest.xml", manifestXml);
+    await expect(unlockOpenDocument(zip, "open me")).rejects.toMatchObject({
+      code: "office-too-large-expanded",
+    });
   });
 });

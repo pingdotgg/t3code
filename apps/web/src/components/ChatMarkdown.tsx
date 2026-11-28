@@ -185,6 +185,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { textDirection } from "~/textDirection";
 import { useOpenLink } from "../browser/useOpenLink";
+import { loopbackWebPort, useOpenInSystemBrowser } from "../browser/useOpenInSystemBrowser";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
 import {
@@ -792,6 +793,18 @@ function useChatMarkdownState(
   const openChangeRequestLink = useOpenChangeRequestLink(threadRef, pullRequestPanelRef);
   const openIssueLink = useOpenIssueLink(threadRef, pullRequestPanelRef);
   const openDeferredMarkdownLink = useOpenLink(threadRef);
+  const openInSystemBrowser = useOpenInSystemBrowser(environmentId);
+  const openExternalLink = (href: string) =>
+    openInSystemBrowser(href).catch((cause: unknown) => {
+      reportMarkdownActionFailure({ operation: "open-link-external", target: href }, cause);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: gt("Unable to open in browser"),
+          description: thrownErrorMessage(cause, m) ?? gt("An error occurred."),
+        }),
+      );
+    });
   // Subscribe so hydrated settings apply before the anchor synchronously decides whether to intercept _blank.
   const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
   const mathEnabled = useClientSettings((settings) => settings.mathRenderingEnabled);
@@ -1122,6 +1135,7 @@ function useChatMarkdownState(
     openChangeRequestLink,
     openIssueLink,
     openDeferredMarkdownLink,
+    openExternalLink,
     openExternalLinkInPreview,
     openMarkdownMedia,
     projects,
@@ -1295,6 +1309,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       openIssueLink,
       openDeferredMarkdownLink,
       linkTargetPreference,
+      openExternalLink,
       openExternalLinkInPreview,
       projects,
       issueProjects,
@@ -1444,17 +1459,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
             ) {
               // Open desktop Alt-clicks before Chromium downloads them so link routers can read the held key.
               // Editor links also go over IPC: the desktop popup handler only passes web links.
-              if (isElectron && (event.altKey || isLocalEditorFileHref(href))) {
+              // Localhost links too, on every client: the environment's loopback may be another machine's.
+              if (
+                (isElectron && (event.altKey || isLocalEditorFileHref(href))) ||
+                loopbackWebPort(href) !== null
+              ) {
                 event.preventDefault();
                 event.stopPropagation();
-                void readLocalApi()
-                  ?.shell.openExternal(href)
-                  .catch((cause) =>
-                    reportMarkdownActionFailure(
-                      { operation: "open-link-external", target: href },
-                      cause,
-                    ),
-                  );
+                void openExternalLink(href);
               }
               return;
             }
@@ -1467,21 +1479,19 @@ const CHAT_MARKDOWN_COMPONENTS = {
                 result.cause,
               );
               if (isBrowserSettingsReadError(squashAtomCommandFailure(result))) return;
-              void readLocalApi()?.shell.openExternal(href);
+              void openExternalLink(href);
             });
           }}
           onAuxClick={(event) => {
             // A middle-click raises no click event, and the desktop popup handler only passes web links.
-            if (!isElectron || event.button !== 1 || !href || !isLocalEditorFileHref(href)) return;
+            if (
+              event.button !== 1 ||
+              !href ||
+              !((isElectron && isLocalEditorFileHref(href)) || loopbackWebPort(href) !== null)
+            )
+              return;
             event.preventDefault();
-            void readLocalApi()
-              ?.shell.openExternal(href)
-              .catch((cause) =>
-                reportMarkdownActionFailure(
-                  { operation: "open-link-external", target: href },
-                  cause,
-                ),
-              );
+            void openExternalLink(href);
           }}
           onKeyDown={(event) => {
             if (href && faviconHost) openContextMenuFromKeyboard(event);
@@ -1515,7 +1525,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
                   );
                 }
               },
-              openExternal: (target) => api.shell.openExternal(target),
+              openExternal: (target) => openExternalLink(target),
               copyLink: (target) =>
                 writeTextToClipboard(target, {
                   target: "link",

@@ -65,7 +65,7 @@ export function parseGrepOutput(
     if (ripgrepFormat !== "inline" && /^\S/.test(line) && RIPGREP_NUMBERED_LINE.test(nextLine)) {
       // Two inline rows can also look like a bare heading and its numbered match.
       if (ripgrepFormat === undefined && inline && PATH_LINE_TEXT.test(nextLine)) return undefined;
-      file = line.trimEnd();
+      file = line;
       ripgrepFormat = "heading";
       continue;
     }
@@ -85,7 +85,7 @@ export function parseGrepOutput(
     }
     // With no numbered match after it, only a space-free bare path can be a heading.
     if (!/\s/.test(line.trimEnd())) {
-      file = line.trimEnd();
+      file = line;
       ripgrepFormat = undefined;
       continue;
     }

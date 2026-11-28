@@ -1,8 +1,8 @@
-import { assert, it } from "@effect/vitest"
+import { assert, it, vi } from "@effect/vitest"
 import { Result } from "effect"
 import * as Base64Url from "effect/encoding/Base64Url"
 import type * as EncodingError from "effect/encoding/EncodingError"
-import { describeWithFallback } from "../utils/encoding.ts"
+import { describeWithFallback, describeWithoutNatives } from "../utils/encoding.ts"
 
 describeWithFallback("Base64Url", () => {
   it("encodes strings and bytes without padding", () => {
@@ -129,6 +129,22 @@ describeWithFallback("Base64Url", () => {
       // Long enough for size-gated decoders
       const long = `${"Zm9v".repeat(64)}Zm9${char}`
       assertFailure(long, long, "Invalid input")
+    }
+  })
+})
+
+describeWithoutNatives("Base64Url Buffer fallback", () => {
+  it("encodes and decodes padded input with Buffer", () => {
+    const bytes = Uint8Array.from({ length: 97 }, (_, i) => (i * 151) & 0xff)
+    const padded = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_")
+    const from = vi.spyOn(Buffer, "from")
+    try {
+      assert.strictEqual(Base64Url.encodePadded(bytes), padded)
+      assert.strictEqual(from.mock.calls.length, 1)
+      assert.deepStrictEqual(Result.getOrThrow(Base64Url.decode(padded)), bytes)
+      assert.strictEqual(from.mock.calls.length, 2)
+    } finally {
+      from.mockRestore()
     }
   })
 })

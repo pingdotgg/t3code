@@ -48,10 +48,13 @@ describe("parseGrepOutput", () => {
       { fileName: "src/a.ts", line: 7, preview: "a();" },
     ]);
     expect(
-      parseGrepOutput("docs/Release notes.md\n2:match\n\nREADME.md\n6:another match", "."),
+      parseGrepOutput(
+        "docs/Release notes.md \n2:match\n\ndocs/Release notes.md\n6:another match",
+        ".",
+      ),
     ).toEqual([
-      { fileName: "docs/Release notes.md", line: 2, preview: "match" },
-      { fileName: "README.md", line: 6, preview: "another match" },
+      { fileName: "docs/Release notes.md ", line: 2, preview: "match" },
+      { fileName: "docs/Release notes.md", line: 6, preview: "another match" },
     ]);
   });
 

@@ -219,6 +219,56 @@ function ProviderAuthEmail(props: { readonly email: string | undefined }) {
   );
 }
 
+type ProviderVersionAdvisory = NonNullable<
+  ReturnType<typeof getProviderVersionAdvisoryPresentation>
+>;
+
+// The popover and the Status row both offer the same update action, so the
+// label, busy state and progress line live in one place.
+function ProviderVersionUpdateAction(props: {
+  readonly advisory: ProviderVersionAdvisory;
+  readonly isUpdating: boolean;
+  readonly progress: string | null;
+  readonly problem: string | null;
+  readonly stretch: boolean;
+  readonly onRun: () => void;
+}) {
+  const { advisory, isUpdating, progress, problem, stretch, onRun } = props;
+  const gt = useGT();
+  return (
+    <>
+      <Button
+        type="button"
+        size="xs"
+        variant="outline"
+        className={cn(stretch ? "w-full" : "w-fit")}
+        disabled={isUpdating}
+        onClick={onRun}
+      >
+        {isUpdating ? <Spinner /> : <DownloadIcon />}
+        {isUpdating
+          ? gt("Updating")
+          : advisory.targetVersion
+            ? gt("Install {version}", {
+                version: getProviderVersionLabel(advisory.targetVersion),
+              })
+            : gt("Update now")}
+      </Button>
+      {progress || problem ? (
+        <p
+          aria-live="polite"
+          className={cn(
+            "text-xs leading-snug [overflow-wrap:anywhere]",
+            problem ? "text-warning" : "text-muted-foreground",
+          )}
+        >
+          {progress ?? problem}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
 function readProviderEnvironmentVariable(
   environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
   name: string,
@@ -1090,34 +1140,14 @@ export function ProviderInstanceCard({
             </p>
           </div>
           {onRunVersionAction ? (
-            <Button
-              type="button"
-              size="xs"
-              variant="outline"
-              className="w-full"
-              disabled={isUpdating}
-              onClick={onRunVersionAction}
-            >
-              {isUpdating ? <Spinner /> : <DownloadIcon />}
-              {isUpdating
-                ? gt("Updating")
-                : versionAdvisory.targetVersion
-                  ? gt("Install {version}", {
-                      version: getProviderVersionLabel(versionAdvisory.targetVersion),
-                    })
-                  : gt("Update now")}
-            </Button>
-          ) : null}
-          {updateProgress || updateProblem ? (
-            <p
-              aria-live="polite"
-              className={cn(
-                "text-xs leading-snug [overflow-wrap:anywhere]",
-                updateProblem ? "text-warning" : "text-muted-foreground",
-              )}
-            >
-              {updateProgress ?? updateProblem}
-            </p>
+            <ProviderVersionUpdateAction
+              advisory={versionAdvisory}
+              isUpdating={isUpdating}
+              progress={updateProgress}
+              problem={updateProblem}
+              stretch
+              onRun={onRunVersionAction}
+            />
           ) : null}
           {onRunVersionAction && updateCommand ? (
             <div className="flex items-center gap-2 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -1289,6 +1319,18 @@ export function ProviderInstanceCard({
         <p aria-live="polite" className="text-xs leading-snug [overflow-wrap:anywhere]">
           {restartNotice}
         </p>
+      ) : null}
+      {versionAdvisory && onRunVersionAction ? (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <ProviderVersionUpdateAction
+            advisory={versionAdvisory}
+            isUpdating={isUpdating}
+            progress={updateProgress}
+            problem={updateProblem}
+            stretch={false}
+            onRun={onRunVersionAction}
+          />
+        </div>
       ) : null}
       {urlAuthAction && onAcceptUrlAuth ? (
         <div className="grid max-w-xl gap-1.5 pt-1 text-xs">
