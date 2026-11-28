@@ -1302,6 +1302,59 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("imports a reftable worktree's sessions on its checked-out branch", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const repo = yield* makeTempDir("t3code-workspace-repo-");
+        const worktree = path.join(repo, ".claude", "worktrees", "feature");
+        yield* Effect.sync(() => {
+          const git = (...args: string[]) =>
+            NodeChildProcess.execFileSync("git", ["-C", repo, ...args], { stdio: "ignore" });
+          git("init", "--ref-format=reftable");
+          git(
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Initial commit",
+          );
+          git("worktree", "add", "-b", "feature", worktree);
+        });
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-slug", "in-worktree.jsonl"),
+          contents: `${JSON.stringify({
+            type: "user",
+            cwd: worktree,
+            sessionId: "in-worktree",
+            message: { role: "user", content: "Fix the project" },
+          })}\n${JSON.stringify({
+            type: "assistant",
+            sessionId: "in-worktree",
+            message: { role: "assistant", content: [{ type: "text", text: "Done" }] },
+          })}\n`,
+          mtimeMs: nowMs - 60 * 60 * 1000,
+        });
+
+        const outcomes = yield* runRecentThreadOutcomes({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: repo,
+        });
+        expect(
+          outcomes.flatMap((outcome) => (outcome._tag === "Importable" ? [outcome.worktree] : [])),
+        ).toEqual([{ path: worktree, branch: "feature" }]);
+      }),
+    );
+
     it.effect("excludes sandboxes under the configured worktrees dir without .t3 in the path", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
