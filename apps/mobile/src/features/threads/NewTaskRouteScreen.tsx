@@ -52,6 +52,8 @@ type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
   /** An existing draft whose project is gone; the chosen project takes it over. */
   readonly draftId?: string | string[];
+  /** Carried to the draft this picker opens, so a request made for it (such as dictation) follows. */
+  readonly requestId?: string;
   readonly prompt?: string | string[];
   readonly repo?: string | string[];
   readonly pr?: string | string[];
@@ -293,6 +295,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       name: "Thread",
       params: {
         draft: {
+          requestId: route.params?.requestId,
           environmentId: String(project.environmentId),
           projectId: String(project.id),
           draftId,
