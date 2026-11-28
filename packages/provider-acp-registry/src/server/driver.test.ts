@@ -567,7 +567,9 @@ describe("acpRegistrySnapshotReadiness", () => {
     });
 
     expect(provider.subProviders).toEqual([{ name: "nodecode" }, { name: "nodecode-free" }]);
-    expect(provider.models.map((m) => ({ slug: m.slug, name: m.name, subProvider: m.subProvider }))).toEqual([
+    expect(
+      provider.models.map((m) => ({ slug: m.slug, name: m.name, subProvider: m.subProvider })),
+    ).toEqual([
       { slug: "nodecode/nodecode-cyber-v1", name: "Cyber v1", subProvider: "nodecode" },
       { slug: "nodecode/nodecode-decide-v1", name: "nodecode-decide-v1", subProvider: "nodecode" },
       { slug: "nodecode-free/nodecode-cyber-v1", name: "Cyber v1", subProvider: "nodecode-free" },
