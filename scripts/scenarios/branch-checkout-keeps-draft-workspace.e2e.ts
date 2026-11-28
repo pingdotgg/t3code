@@ -7,7 +7,7 @@ import { runPromise, test, WEB } from "./t3.ts";
 test(
   "A late branch checkout leaves the draft in the workspace chosen while it was pending",
   WEB,
-  async ({ t3, browser, screen }) => {
+  async ({ t3, app, browser, screen }) => {
     const settings = { "t3.json": JSON.stringify({ defaultThreadEnvMode: "local" }) };
     const project = await t3.project("demo", settings);
     await t3.project("other-project", settings);
@@ -116,6 +116,7 @@ test(
         return null;
       });
       await expect(branchPicker).toBeEnabled();
+      await app.screenshot(`draft-after-held-${branch}-checkout`);
       if (roundTrip) {
         await workspace.tap();
         await screen.getByRole("option", "New worktree", { exact: true }).tap();

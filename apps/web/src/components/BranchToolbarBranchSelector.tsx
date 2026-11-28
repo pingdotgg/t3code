@@ -103,7 +103,7 @@ interface BranchToolbarBranchSelectorProps {
 const WORKTREE_CHANGE_BLOCKED_MESSAGE = msg("Stop the current turn to switch worktrees.");
 
 // Both branch pickers for a draft share the latest selection.
-const latestDraftPicks = new Map<DraftId, symbol>();
+const latestDraftPicks = new Map<DraftId, { token: symbol; stop: () => void }>();
 
 // Picker checkouts by environment and checkout: null while in flight, then the branch it landed
 // on. Shared because a draft thread mounts two selectors on one checkout, and the switch's own
@@ -453,14 +453,19 @@ export function BranchToolbarBranchSelector({
   };
 
   const latestSelectionRef = useRef<symbol | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates pending picks on every draft workspace change, even if the draft moves back before the next render
-  useEffect(() => {
-    if (hasServerThread) return;
+  const beginBranchPick = () => {
+    const token = Symbol();
+    latestSelectionRef.current = token;
+    if (hasServerThread) return () => latestSelectionRef.current === token;
     const store = useComposerDraftStore.getState();
-    const target = draftId ?? scopeThreadRef(environmentId, threadId);
-    const targetId = draftId ?? store.getDraftIdByRef(scopeThreadRef(environmentId, threadId));
+    const target = draftId ?? threadRef;
+    const targetId = draftId ?? store.getDraftIdByRef(threadRef);
+    if (!targetId) return () => latestSelectionRef.current === token;
+    latestDraftPicks.get(targetId)?.stop();
+    // Watches the draft for the pick's own lifetime, not the selector's: closing Thread Details
+    // must not drop a checkout that lands later, but any workspace change in between must.
     let previous = store.getDraftThread(target);
-    const unsubscribe = useComposerDraftStore.subscribe((state) => {
+    const stop = useComposerDraftStore.subscribe((state) => {
       const current = state.getDraftThread(target);
       if (
         current?.environmentId !== previous?.environmentId ||
@@ -469,30 +474,13 @@ export function BranchToolbarBranchSelector({
         current?.worktreePath !== previous?.worktreePath ||
         current?.promotedTo !== previous?.promotedTo
       ) {
-        latestSelectionRef.current = null;
-        if (targetId) latestDraftPicks.delete(targetId);
+        stop();
+        if (latestDraftPicks.get(targetId)?.token === token) latestDraftPicks.delete(targetId);
       }
       previous = current;
     });
-    return () => {
-      unsubscribe();
-      if (targetId && latestDraftPicks.get(targetId) === latestSelectionRef.current) {
-        latestDraftPicks.delete(targetId);
-      }
-      latestSelectionRef.current = null;
-    };
-  }, [draftId, environmentId, hasServerThread, threadId]);
-
-  const beginBranchPick = () => {
-    const token = Symbol();
-    const targetId = hasServerThread
-      ? null
-      : (draftId ?? useComposerDraftStore.getState().getDraftIdByRef(threadRef));
-    latestSelectionRef.current = token;
-    if (targetId) latestDraftPicks.set(targetId, token);
-    return () =>
-      latestSelectionRef.current === token &&
-      (!targetId || latestDraftPicks.get(targetId) === token);
+    latestDraftPicks.set(targetId, { token, stop });
+    return () => latestDraftPicks.get(targetId)?.token === token;
   };
 
   // The picker's list, and the server's coalesced ref listing, can predate a checkout an agent
