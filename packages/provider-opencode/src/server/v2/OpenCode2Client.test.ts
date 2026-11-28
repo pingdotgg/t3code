@@ -286,6 +286,7 @@ describe("OpenCode2Client usage limits", () => {
     Effect.gen(function* () {
       let workspace = "wrk_remote";
       let usageURL: string | undefined;
+      let monthlyResetsAt = 1793491200000;
       const transport = HttpClient.make((request) => {
         assert.strictEqual(request.headers.authorization, utf8Basic("remote-password"));
         assert.deepStrictEqual(Array.from(request.urlParams), [
@@ -324,7 +325,7 @@ describe("OpenCode2Client usage limits", () => {
                 go: {
                   rolling: { percent: 23, limited: false, resetsAt: 1793491200000 },
                   weekly: { percent: 99, limited: true, resetsAt: 1793491200000 },
-                  monthly: { percent: 12, limited: false, resetsAt: 1793491200000 },
+                  monthly: { percent: 12, limited: false, resetsAt: monthlyResetsAt },
                 },
                 budgets: [
                   {
@@ -402,6 +403,7 @@ describe("OpenCode2Client usage limits", () => {
       assert.isTrue(
         first?.windows.every((window) => window.resetsAt === "2026-11-01T00:00:00.000Z"),
       );
+      assert.strictEqual(first?.windows[2]?.windowDurationMins, 31 * 24 * 60);
       assert.include(first?.windows[3]?.label ?? "", "Shared");
       assert.include(first?.windows[4]?.label ?? "", "Model A");
       assert.deepStrictEqual(first?.windows[4]?.modelIds, ["opencode/a"]);
@@ -439,6 +441,10 @@ describe("OpenCode2Client usage limits", () => {
       }
       usageURL = "http://console.example/workspace/usage";
       assert.strictEqual((yield* api.usageLimits("/remote/project"))?.externalUsage?.url, usageURL);
+      monthlyResetsAt = Date.parse("2026-12-26T15:51:00.000Z");
+      const midMonth = yield* api.usageLimits("/remote/project");
+      assert.strictEqual(midMonth?.windows[2]?.resetsAt, "2026-12-26T15:51:00.000Z");
+      assert.strictEqual(midMonth?.windows[2]?.windowDurationMins, 30 * 24 * 60);
     }),
   );
 

@@ -10,6 +10,8 @@ import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
+import { monthlyWindowDurationMins } from "../usageLimits.ts";
+
 const Instant = Schema.Finite.check(
   Schema.isBetween({ minimum: -8640000000000000, maximum: 8640000000000000 }),
 );
@@ -134,13 +136,15 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
         ["monthly", "monthly", "Monthly", undefined],
       ] as const) {
         const meter = go[key];
+        const windowDurationMins =
+          duration ?? monthlyWindowDurationMins(DateTime.makeUnsafe(meter.resetsAt));
         windows.push({
           id: `go_${key}`,
           kind,
           label: `Go · ${label}`,
           usedPercent: meter.limited ? 100 : clampPercent(meter.percent),
           resetsAt: resetTime(meter.resetsAt),
-          ...(duration === undefined ? {} : { windowDurationMins: duration }),
+          windowDurationMins,
         });
       }
     }

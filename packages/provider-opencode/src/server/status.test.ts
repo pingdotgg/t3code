@@ -102,6 +102,45 @@ it.effect("reads Go limits with the instance's XDG credentials and preserves res
         { kind: "monthly", usedPercent: 100, reset: resetsAt },
       ],
     );
+    for (const [monthlyResetsAt, days] of [
+      ["2026-12-26T15:51:00.000Z", 30],
+      ["2027-01-26T15:51:00.000Z", 31],
+      ["2027-03-26T15:51:00.000Z", 28],
+      ["2028-03-26T15:51:00.000Z", 29],
+      ["2026-12-01T00:00:00.000Z", 30],
+      ["2026-11-30T19:00:00.000-05:00", 30],
+      ["2026-12-26T16:51:00.000+01:00", 30],
+      ["2027-03-31T12:00:00.000Z", 31],
+    ] as const) {
+      const paced = yield* readOpenCodeGoUsageLimits({
+        enabled: true,
+        serverUrl: "",
+        environment: { OPENCODE_AUTH_CONTENT: '{"opencode-go":{"type":"api","key":"go-key"}}' },
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  usage: {
+                    rolling: { percent: 0, resetsAt: monthlyResetsAt },
+                    weekly: { percent: 10, resetsAt: monthlyResetsAt },
+                    monthly: { percent: 125, resetsAt: monthlyResetsAt },
+                  },
+                }),
+              ),
+            ),
+          ),
+        ),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      );
+      NodeAssert.equal(
+        paced.windows.find((window) => window.id === "go_monthly")?.windowDurationMins,
+        days * 24 * 60,
+      );
+    }
   }),
 );
 

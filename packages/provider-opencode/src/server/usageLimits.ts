@@ -41,6 +41,13 @@ const UsageResponse = Schema.Struct({
   usage: Schema.Struct({ rolling: UsageWindow, weekly: UsageWindow, monthly: UsageWindow }),
 });
 
+/** Go monthly resets on the paid period anniversary; the preceding UTC month sets its length. */
+export const monthlyWindowDurationMins = (resetsAt: DateTime.DateTime): number => {
+  const end = DateTime.toUtc(resetsAt);
+  const start = DateTime.subtract(end, { months: 1 });
+  return Math.round((DateTime.toEpochMillis(end) - DateTime.toEpochMillis(start)) / 60_000);
+};
+
 // Select before decoding so an OAuth or self-hosted connection cannot fall
 // through to another stored account. NULL-active rows predate the selection flag.
 class OpenCodeCredentialReadError extends Schema.TaggedError<OpenCodeCredentialReadError>()(
@@ -172,6 +179,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
         id: "go_monthly",
         kind: "monthly",
         label: "Go · Monthly",
+        windowDurationMins: monthlyWindowDurationMins(body.usage.monthly.resetsAt),
         usedPercent: clampPercent(body.usage.monthly.percent),
         resetsAt: DateTime.formatIso(body.usage.monthly.resetsAt),
       },
