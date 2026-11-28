@@ -440,7 +440,7 @@ export interface ProjectionRecordFilter {
   readonly sinceLastCompaction?: {
     readonly keepRunIds: ReadonlyArray<RunId>;
     /** Keeps the run that already holds this message, for a message that is sent again. */
-    readonly keepMessageId: MessageId;
+    readonly keepMessageId?: MessageId;
   };
 }
 
@@ -3909,12 +3909,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
             OR run.completed_at IS NULL
             OR run.completed_at >= compaction.requested_at
             OR run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+          ${
+            keep.keepMessageId === undefined
+              ? sql``
+              : sql`
           UNION
           SELECT message.run_id
           FROM compaction
           INNER JOIN orchestration_v2_projection_messages AS message
             ON message.message_id = ${keep.keepMessageId}
-          WHERE message.thread_id = ${threadId} AND message.run_id IS NOT NULL
+          WHERE message.thread_id = ${threadId} AND message.run_id IS NOT NULL`
+          }
         `;
         // The compaction's own run is always recent, so no rows means no compaction.
         return recent.length === 0
