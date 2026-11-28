@@ -74,7 +74,6 @@ test(
                 configurable: true,
               });
               player.dispatchEvent(new Event("error"));
-              player.dataset.decodeErrorDelivered = "true";
             },
             { once: true },
           );
@@ -84,15 +83,8 @@ test(
       return null;
     });
     await read.tap();
-    await browser
-      .locator('audio[data-decode-error-delivered="true"]')
-      .waitFor({ state: "attached" });
-    await expect(
-      await browser.evaluate(() =>
-        document.body.textContent?.includes("Could not play narration."),
-      ),
-    ).toBe(true);
-    await read.waitFor();
+    await expect(screen.getByText("Could not play narration.")).toBeVisible();
+    await expect(read).toBeVisible();
     await app.screenshot("epub-after-narration-error");
   },
 );
