@@ -32,6 +32,21 @@ it.each([
 ])("preserves timeline anchor %s", (anchor) => {
   expect(parsePullRequestAnchor(`${url}#${anchor}`)).toEqual({ kind: "timeline", anchor });
 });
+it("normalizes and matches mixed-case timeline anchors", () => {
+  for (const [raw, canonical] of [
+    ["ISSUECOMMENT-123", "issuecomment-123"],
+    ["PullRequestReview-9", "pullrequestreview-9"],
+    ["DISCUSSION_R123", "discussion_r123"],
+    ["NOTE_5", "note_5"],
+  ] as const) {
+    expect(parsePullRequestAnchor(`${url}#${raw}`)).toEqual({
+      kind: "timeline",
+      anchor: canonical,
+    });
+    expect(pullRequestAnchorMatchesUrl(raw, `${url}#${canonical}`)).toBe(true);
+    expect(pullRequestAnchorMatchesUrl(canonical, `${url}#${raw}`)).toBe(true);
+  }
+});
 it.each(["a".repeat(32), "b".repeat(64)])(
   "reads file and cross-side line ranges for %s",
   (digest) => {
@@ -181,6 +196,7 @@ it("finds a review with no text of its own through the earliest comment it poste
     },
   ];
   expect(resolvePullRequestReviewAnchor("pullrequestreview-9", [], threads)).toBe("discussion_r2");
+  expect(resolvePullRequestReviewAnchor("PullRequestReview-9", [], threads)).toBe("discussion_r2");
   // A review shown in its own right, an unknown review and other anchors are kept.
   expect(resolvePullRequestReviewAnchor("pullrequestreview-9", [{ url: review }], threads)).toBe(
     "pullrequestreview-9",

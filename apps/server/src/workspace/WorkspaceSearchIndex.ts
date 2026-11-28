@@ -354,20 +354,37 @@ function locateRegexMatches(
   return ranges;
 }
 
-// `git grep -z` records: NUL-separated fields, one record per line; a truncated last line is dropped.
+// `git grep -z` records: NUL-terminated metadata fields (filenames may contain LF), then LF-terminated text.
 function parseGitGrepRecords(
   stdout: string,
   fieldCount: number,
   truncated: boolean,
 ): Array<Array<string>> {
-  const lines = stdout.split("\n");
-  if (truncated || lines.at(-1) === "") lines.pop();
   const records: Array<Array<string>> = [];
-  for (const line of lines) {
-    const fields = line.split("\0");
-    if (fields.length < fieldCount) continue;
-    // Only the last field (the line or match text) can contain NUL bytes.
-    records.push([...fields.slice(0, fieldCount - 1), fields.slice(fieldCount - 1).join("\0")]);
+  let offset = 0;
+  while (offset < stdout.length) {
+    const fields: Array<string> = [];
+    let complete = true;
+    for (let index = 0; index < fieldCount - 1; index += 1) {
+      const delimiter = stdout.indexOf("\0", offset);
+      if (delimiter === -1) {
+        complete = false;
+        break;
+      }
+      fields.push(stdout.slice(offset, delimiter));
+      offset = delimiter + 1;
+    }
+    if (!complete) break;
+    const lineEnd = stdout.indexOf("\n", offset);
+    if (lineEnd === -1) {
+      if (truncated) break;
+      fields.push(stdout.slice(offset));
+      records.push(fields);
+      break;
+    }
+    fields.push(stdout.slice(offset, lineEnd));
+    records.push(fields);
+    offset = lineEnd + 1;
   }
   return records;
 }
