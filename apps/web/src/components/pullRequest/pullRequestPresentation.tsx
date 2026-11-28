@@ -475,7 +475,7 @@ export function PullRequestReviewOutcomeBadge({
 }
 
 /** Where to fetch avatars a host shows only to its signed-in users, such as Azure DevOps. */
-export const PullRequestAvatarSourceContext = createContext<{
+const PullRequestAvatarSourceContext = createContext<{
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
 } | null>(null);
