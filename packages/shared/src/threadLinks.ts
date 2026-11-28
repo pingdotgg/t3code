@@ -159,6 +159,7 @@ const decodeEnvironmentId = Schema.decodeUnknownOption(EnvironmentId);
 export interface ThreadLink {
   readonly environmentId: EnvironmentId | null;
   readonly threadId: ThreadId;
+  readonly hosted?: boolean;
 }
 
 // Escapes even URL-safe punctuation, so a sentence's closing period never reads as part of an id.
@@ -182,7 +183,9 @@ function parseHostedThreadLink(href: string): ThreadLink | null {
   try {
     const environmentId = Option.getOrNull(decodeEnvironmentId(decodeURIComponent(match[1]!)));
     const threadId = Option.getOrNull(decodeThreadId(decodeURIComponent(match[2]!)));
-    return environmentId === null || threadId === null ? null : { environmentId, threadId };
+    return environmentId === null || threadId === null
+      ? null
+      : { environmentId, threadId, hosted: true };
   } catch {
     return null;
   }
@@ -216,14 +219,15 @@ function percentDecodedThreadLinkId(threadId: ThreadId): ThreadId | null {
   }
 }
 
-/** The threads a link can name, in its own environment or else the message's: as written, then decoded. */
+/** The threads a link can name, in its own environment or else the message's: as written, then decoded for custom-scheme links. */
 export function threadLinkCandidates(
   link: ThreadLink,
   messageEnvironmentId: EnvironmentId,
 ): ReadonlyArray<ScopedThreadRef> {
   const environmentId = link.environmentId ?? messageEnvironmentId;
-  const decodedId = percentDecodedThreadLinkId(link.threadId);
   const written = { environmentId, threadId: link.threadId };
+  if (link.hosted) return [written];
+  const decodedId = percentDecodedThreadLinkId(link.threadId);
   return decodedId === null ? [written] : [written, { environmentId, threadId: decodedId }];
 }
 
