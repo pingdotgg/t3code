@@ -21,6 +21,7 @@ import {
   MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
   ContextHandoffBudgetError,
   ContextHandoffBackgroundWorkError,
+  providerProcessExitGuidance,
 } from "./failure.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -201,6 +202,109 @@ it("tells the user to sign in only when an ACP agent answers auth_required", () 
     "The provider needs you to sign in. Sign in from its provider settings or with its own CLI or app, then retry the turn.",
   );
   assert.isUndefined(knownProviderFailureMessage(sessionOpenFailure(-32603)));
+});
+
+it("reports disk-full evidence without exposing provider output or retrying automatically", () => {
+  const message =
+    "The provider's disk or database is full. Free space on the machine running the T3 Code server, then retry the turn. If disk space is available, check the provider's database size limit.";
+  for (const text of [
+    "ENOSPC: mkdtemp '/private/provider-temp' token=private-token",
+    "write /private/transcript: no space left on device",
+    "disk I/O error: no space left on device",
+    "database or disk is full",
+    "SQLITE_FULL: database is full",
+  ]) {
+    for (const cause of [
+      new Error(text),
+      { _tag: "AcpRequestError", code: -32603, errorMessage: text },
+      { _tag: "AcpProcessExitedError", code: 2, stderr: text },
+      { _tag: "CodexAppServerProcessExitedError", code: 1, stderr: text },
+      new ProviderSetupError({
+        instanceId: ProviderInstanceId.make("antigravity"),
+        operation: "runtime",
+        detail: "Could not prepare the provider.",
+        cause: new Error(text),
+      }),
+    ]) {
+      const wrapped = Cause.fail({ _tag: "ProviderAdapterOpenSessionError", cause });
+      assert.equal(knownProviderFailureMessage(wrapped), message);
+      const failure = makeProviderFailure({ cause: wrapped, retryable: true });
+      assert.equal(failure.class, "provider_error");
+      assert.equal(failure.message, message);
+      assert.equal(failure.code, "provider_storage_full");
+      assert.equal(failure.retryable, false);
+    }
+    assert.equal(makeProviderFailure({ message: text }).message, message);
+    assert.equal(providerProcessExitGuidance(text), message);
+  }
+  assert.equal(
+    makeProviderFailure({
+      cause: new Error("Startup failed", { cause: { code: "ENOSPC", syscall: "mkdtemp" } }),
+      message: "Could not start provider.",
+    }).message,
+    message,
+  );
+  for (const code of ["ENOSPC", "SQLITE_FULL"]) {
+    assert.deepEqual(
+      makeProviderFailure({ code, class: "usage_limit", retryable: true, resetAt: "2030-01-01" }),
+      { class: "provider_error", message, code: "provider_storage_full", retryable: false },
+    );
+  }
+  const mixedStderr =
+    "ENOSPC: System limit for number of file watchers reached, watch '/private/project'\nSQLITE_FULL: database is full";
+  assert.deepEqual(
+    makeProviderFailure({
+      cause: { _tag: "AcpProcessExitedError", code: 2, stderr: mixedStderr },
+      retryable: true,
+    }),
+    { class: "provider_error", message, code: "provider_storage_full", retryable: false },
+  );
+  assert.equal(providerProcessExitGuidance(mixedStderr), message);
+});
+
+it("keeps auth, quota, watcher limits, and ordinary exits distinct from disk-full failures", () => {
+  for (const text of [
+    "401 invalid credentials",
+    "429 individual quota reached",
+    "RESOURCE_EXHAUSTED: quota exceeded",
+    "disk I/O error",
+    "Error: process crashed",
+    "ENOSPC: System limit for number of file watchers reached, watch '/private/project'",
+  ]) {
+    const failure = makeProviderFailure({
+      cause: { _tag: "AcpProcessExitedError", code: 2, stderr: text },
+    });
+    assert.equal(
+      failure.message,
+      "The provider process exited with code 2. Check the server logs for the provider's output, then retry the turn.",
+    );
+    assert.isNull(failure.code);
+    assert.equal(makeProviderFailure({ message: text }).message, text);
+  }
+  assert.equal(
+    makeProviderFailure({
+      cause: { code: "ENOSPC", syscall: "watch", message: "System limit reached" },
+    }).message,
+    "Provider turn failed.",
+  );
+  const forwardedWatcherMessage = "ENOSPC: watch '/private/project'";
+  const forwardedWatcherFailure = makeProviderFailure({
+    message: forwardedWatcherMessage,
+    cause: { code: "ENOSPC", syscall: "watch" },
+    retryable: true,
+  });
+  assert.equal(forwardedWatcherFailure.message, forwardedWatcherMessage);
+  assert.equal(forwardedWatcherFailure.code, "ENOSPC");
+  assert.equal(forwardedWatcherFailure.retryable, true);
+  const watcherMessage = "ENOSPC: System limit for number of file watchers reached";
+  assert.equal(
+    makeProviderFailure({ code: "ENOSPC", message: watcherMessage }).message,
+    watcherMessage,
+  );
+  assert.equal(
+    makeProviderFailure({ cause: { _tag: "AcpProcessExitedError", code: 2 } }).message,
+    "The provider process exited with code 2. Check the server logs for the provider's output, then retry the turn.",
+  );
 });
 
 it("keeps unrecognized reasons and provider text out of category messages", () => {

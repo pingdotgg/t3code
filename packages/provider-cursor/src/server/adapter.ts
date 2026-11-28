@@ -3335,7 +3335,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                               transportFailure === undefined
                                 ? makeProviderFailure({
                                     cause: result.error,
-                                    // makeProviderFailure never reads a cause's own text.
                                     message: result.error?.message,
                                     class: CursorAgentSdk.isCursorUsageLimitError(result.error)
                                       ? "usage_limit"

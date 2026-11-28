@@ -42,6 +42,75 @@ export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
+const PROVIDER_STORAGE_FULL_MESSAGE =
+  "The provider's disk or database is full. Free space on the machine running the T3 Code server, then retry the turn. If disk space is available, check the provider's database size limit.";
+const STORAGE_FULL_OUTPUT =
+  /\b(?:ENOSPC|SQLITE_FULL|no space left on device|database (?:or disk )?is full|disk is full)\b/iu;
+// inotify also reports ENOSPC when its watch limit is exhausted.
+const WATCH_LIMIT_OUTPUT = /\bSystem limit for number of file watchers reached\b/iu;
+
+function isStorageFullOutput(output: unknown): boolean {
+  return (
+    typeof output === "string" &&
+    output
+      .split(/\r?\n/u)
+      .some((line) => STORAGE_FULL_OUTPUT.test(line) && !WATCH_LIMIT_OUTPUT.test(line))
+  );
+}
+
+function hasWatchLimitSyscall(cause: unknown): boolean {
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {
+    seen.add(cause);
+    try {
+      if (Cause.isCause(cause)) {
+        cause = Cause.squash(cause);
+        continue;
+      }
+      if (typeof cause !== "object") return false;
+      const syscall = stringField(cause, "syscall");
+      if (syscall === "watch" || syscall === "inotify_add_watch") return true;
+      cause = (cause as Record<string, unknown>).cause;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function hasStorageFullCause(cause: unknown): boolean {
+  if (hasWatchLimitSyscall(cause)) return false;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {
+    seen.add(cause);
+    try {
+      if (Cause.isCause(cause)) {
+        cause = Cause.squash(cause);
+        continue;
+      }
+      if (typeof cause !== "object") return isStorageFullOutput(cause);
+      const error = cause as Record<string, unknown>;
+      const message = stringField(cause, "message");
+      const code = stringField(cause, "code");
+      if (
+        isStorageFullOutput(message) ||
+        ((code === "ENOSPC" || code === "SQLITE_FULL") &&
+          !WATCH_LIMIT_OUTPUT.test(message ?? "")) ||
+        (error._tag === "AcpRequestError" &&
+          isStorageFullOutput(stringField(cause, "errorMessage"))) ||
+        ((error._tag === "AcpProcessExitedError" ||
+          error._tag === "CodexAppServerProcessExitedError") &&
+          isStorageFullOutput(stringField(cause, "stderr")))
+      ) {
+        return true;
+      }
+      cause = error.cause;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
 
 // Gateways answer an oversized body with a 413 page; resending the same history fails identically.
 const REQUEST_TOO_LARGE_STATUS = /^\s*(?:(?:API Error|Error|HTTP|status)(?:\s*:)?\s*)?413\b/iu;
@@ -78,6 +147,7 @@ const PERMISSION_DENIED_OUTPUT = /\bEPERM\b|Operation not permitted/u;
  * output; the output itself stays out of the message.
  */
 export function providerProcessExitGuidance(output: unknown): string {
+  if (isStorageFullOutput(output)) return PROVIDER_STORAGE_FULL_MESSAGE;
   return typeof output === "string" && PERMISSION_DENIED_OUTPUT.test(output)
     ? "It was denied access to a file or folder (EPERM). On macOS, allow T3 Code under System Settings > Privacy & Security > Files and Folders, or move the project out of Desktop, Documents, or Downloads, then retry the turn."
     : "Check the server logs for the provider's output, then retry the turn.";
@@ -253,10 +323,12 @@ function processExitStatus(exited: object): string {
  * first, so a known reason is not hidden behind a wrapper's text.
  */
 export function knownProviderFailureMessage(cause: unknown): string | undefined {
-  return curatedCauseMessages(cause).known;
+  return hasStorageFullCause(cause)
+    ? PROVIDER_STORAGE_FULL_MESSAGE
+    : curatedCauseMessages(cause).known;
 }
 
-function stringField(value: unknown, key: "message" | "code"): string | undefined {
+function stringField(value: unknown, key: string): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   try {
     const candidate = (value as Record<string, unknown>)[key];
@@ -335,13 +407,16 @@ export function makeProviderFailure(input: {
   readonly resetAt?: string | null;
   readonly verificationUrl?: unknown;
 }): OrchestrationV2ProviderFailure {
+  const storageFull = hasStorageFullCause(input);
   const curated = curatedCauseMessages(input.cause);
   const requestTooLarge =
     input.message !== undefined &&
     (REQUEST_TOO_LARGE_STATUS.test(input.message) || REQUEST_TOO_LARGE_REASON.test(input.message));
-  const rawMessage = requestTooLarge
-    ? REQUEST_TOO_LARGE_MESSAGE
-    : (input.message ?? curated.known ?? curated.category ?? DEFAULT_PROVIDER_FAILURE_MESSAGE);
+  const rawMessage = storageFull
+    ? PROVIDER_STORAGE_FULL_MESSAGE
+    : requestTooLarge
+      ? REQUEST_TOO_LARGE_MESSAGE
+      : (input.message ?? curated.known ?? curated.category ?? DEFAULT_PROVIDER_FAILURE_MESSAGE);
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
   const rawCode = input.code ?? stringField(input.cause, "code") ?? null;
   const code =
@@ -349,11 +424,12 @@ export function makeProviderFailure(input: {
   const verificationUrl = Option.getOrUndefined(decodeVerificationUrl(input.verificationUrl));
 
   return {
-    class: input.class ?? "unknown",
+    class: storageFull ? "provider_error" : (input.class ?? "unknown"),
     message: message || DEFAULT_PROVIDER_FAILURE_MESSAGE,
-    code,
-    retryable: requestTooLarge ? false : (input.retryable ?? null),
-    ...(input.class === "usage_limit" &&
+    code: storageFull ? "provider_storage_full" : code,
+    retryable: storageFull || requestTooLarge ? false : (input.retryable ?? null),
+    ...(!storageFull &&
+    input.class === "usage_limit" &&
     input.resetAt != null &&
     Number.isFinite(Date.parse(input.resetAt))
       ? { resetAt: DateTime.formatIso(DateTime.makeUnsafe(input.resetAt)) }
