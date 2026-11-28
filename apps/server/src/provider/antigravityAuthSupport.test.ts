@@ -702,6 +702,8 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         yield* fs.makeDirectory(path.join(userGemini, "config"), { recursive: true });
         yield* fs.writeFileString(path.join(userGemini, "AGENTS.md"), "global agents rule");
         yield* fs.writeFileString(path.join(userGemini, "GEMINI.md"), "global gemini rule");
+        yield* fs.writeFileString(path.join(userGemini, "config", "AGENTS.md"), "config agents");
+        yield* fs.writeFileString(path.join(userGemini, "config", "GEMINI.md"), "config gemini");
         yield* fs.writeFileString(
           path.join(userGemini, "config", "skills.json"),
           JSON.stringify({ entries: [{ path: "/tmp/shared-skills" }] }),
@@ -710,6 +712,12 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
         expect(yield* fs.readLink(path.join(profileDirectory, "AGENTS.md"))).toBe(
           path.join(userGemini, "AGENTS.md"),
+        );
+        expect(yield* fs.readLink(path.join(profileDirectory, "config", "AGENTS.md"))).toBe(
+          path.join(userGemini, "config", "AGENTS.md"),
+        );
+        expect(yield* fs.readLink(path.join(profileDirectory, "config", "GEMINI.md"))).toBe(
+          path.join(userGemini, "config", "GEMINI.md"),
         );
         expect(yield* fs.readLink(path.join(profileDirectory, "GEMINI.md"))).toBe(
           path.join(userGemini, "GEMINI.md"),
@@ -748,9 +756,13 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       yield* fs.writeFileString(path.join(userGemini, "AGENTS.md"), "global agents rule");
       yield* fs.writeFileString(path.join(userGemini, "GEMINI.md"), "global gemini rule");
       yield* fs.writeFileString(userSkillsJson, '{"entries":[]}');
+      yield* fs.writeFileString(path.join(userGemini, "config", "AGENTS.md"), "config agents");
 
       yield* prepare;
       expect(yield* fs.readFileString(profileAgents)).toBe("global agents rule");
+      expect(yield* fs.readFileString(path.join(profileDirectory, "config", "AGENTS.md"))).toBe(
+        "config agents",
+      );
       expect(yield* fs.readFileString(profileGemini)).toBe("global gemini rule");
       expect(yield* fs.readFileString(profileSkillsJson)).toBe('{"entries":[]}');
 

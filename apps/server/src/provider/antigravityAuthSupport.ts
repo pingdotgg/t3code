@@ -257,6 +257,8 @@ class AntigravitySkillLinkError extends Schema.TaggedError<AntigravitySkillLinkE
 const antigravityUserConfigFiles = [
   ["AGENTS.md"],
   ["GEMINI.md"],
+  ["config", "AGENTS.md"],
+  ["config", "GEMINI.md"],
   ["config", "skills.json"],
 ] as const;
 
