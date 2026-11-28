@@ -37,13 +37,20 @@ const isUnsupportedSync = (error: PlatformError.PlatformError) => {
 export const writeFileStringAtomically = (input: {
   readonly filePath: string;
   readonly contents: string | Iterable<string>;
+  /** Permission bits for the replacement; ignored on Windows. */
+  readonly mode?: number;
+  /** False renames onto `filePath` itself, replacing a link there instead of writing through it. */
+  readonly followSymlinks?: boolean;
 }) =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const platform = yield* HostProcess.Platform;
-      const targetPath = yield* resolveSymlinkTarget(input.filePath);
+      const targetPath =
+        input.followSymlinks === false
+          ? path.resolve(input.filePath)
+          : yield* resolveSymlinkTarget(input.filePath);
       const targetDirectory = path.dirname(targetPath);
 
       yield* fs.makeDirectory(targetDirectory, { recursive: true });
@@ -81,7 +88,7 @@ export const writeFileStringAtomically = (input: {
             if (batchLength > 0) yield* file.writeAll(encoder.encode(batch.join("")));
           }
           if (platform !== "win32") {
-            yield* fs.chmod(tempPath, yield* replacedMode(fs, targetPath));
+            yield* fs.chmod(tempPath, input.mode ?? (yield* replacedMode(fs, targetPath)));
           }
           yield* file.sync;
         }),
