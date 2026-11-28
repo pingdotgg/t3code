@@ -621,7 +621,7 @@ const make = Effect.gen(function* () {
     const scope = yield* McpInvocationContext.requireMcpCapability("pull-requests");
     if (scope.thread === undefined) {
       if (input.repository === undefined || input.number === undefined) {
-        return yield* new PullRequestOutsideThreadError();
+        return yield* new PullRequestOutsideThreadError({ needs: "repository and number" });
       }
       const project = yield* projectNamed(input.repository);
       const target = yield* resolveTarget(
@@ -1129,10 +1129,16 @@ const make = Effect.gen(function* () {
     ),
     pull_request_list: McpToolAccess.reads((input) =>
       Effect.gen(function* () {
-        const thread = yield* requireThread(PullRequestForgeError, undefined);
+        const scope = yield* McpInvocationContext.requireMcpCapability("pull-requests");
+        const projectId =
+          input.repository !== undefined
+            ? (yield* projectNamed(input.repository)).id
+            : scope.thread === undefined
+              ? yield* new PullRequestOutsideThreadError({ needs: "repository" })
+              : (yield* requireThread(PullRequestForgeError, undefined)).projectId;
         const listed = yield* pullRequests
           .list({
-            projectId: thread.projectId,
+            projectId,
             state: input.state ?? "open",
             involvement: input.involvement ?? "all",
             limit: input.limit ?? 30,
