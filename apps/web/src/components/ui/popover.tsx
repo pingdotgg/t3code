@@ -1,4 +1,5 @@
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
+import { useRender } from "@base-ui/react/use-render";
 
 import { cn } from "~/lib/utils";
 
@@ -29,6 +30,25 @@ const popoverViewportPaddingClassName = {
   none: "rounded-[calc(var(--radius-lg)-1px)] py-0 [--viewport-inline-padding:0px]",
 } as const;
 
+function PopoverPopupSurface({
+  className,
+  render,
+  ref,
+  ...props
+}: useRender.ComponentProps<"div">) {
+  return useRender({
+    ref,
+    render,
+    props: {
+      ...props,
+      className: cn(
+        "origin-[var(--transform-origin,top_right)] transition-[scale,opacity] motion-reduce:transition-none data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0",
+        className,
+      ),
+    },
+  });
+}
+
 function PopoverPopup({
   children,
   className,
@@ -44,6 +64,7 @@ function PopoverPopup({
   keepMounted = false,
   anchor,
   touchBackdrop = false,
+  render,
   ...props
 }: PopoverPrimitive.Popup.Props & {
   padding?: keyof typeof popoverViewportPaddingClassName;
@@ -92,7 +113,7 @@ function PopoverPopup({
       >
         <PopoverPrimitive.Popup
           className={cn(
-            "relative flex h-(--popup-height,auto) w-(--popup-width,auto) origin-(--transform-origin) rounded-lg text-popover-foreground outline-none transition-[width,height,scale,opacity] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] has-data-[slot=calendar]:rounded-xl has-data-[slot=calendar]:before:rounded-[calc(var(--radius-xl)-1px)] data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0 dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
+            "relative flex h-(--popup-height,auto) w-(--popup-width,auto) rounded-lg text-popover-foreground outline-none transition-[width,height,scale,opacity] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] has-data-[slot=calendar]:rounded-xl has-data-[slot=calendar]:before:rounded-[calc(var(--radius-xl)-1px)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
             variant !== "panel" && "dropdown-glass",
             // Without it, Chromium re-snaps text after the scale-in at fractional zoom, so hovered rows jump a pixel.
             "will-change-[scale]",
@@ -109,6 +130,16 @@ function PopoverPopup({
             className,
           )}
           data-slot="popover-popup"
+          render={(popupProps, state) => (
+            <PopoverPopupSurface
+              {...popupProps}
+              render={
+                typeof render === "function"
+                  ? (surfaceProps) => render(surfaceProps, state)
+                  : render
+              }
+            />
+          )}
           {...props}
         >
           <Viewport
@@ -150,6 +181,7 @@ export {
   Popover,
   PopoverTrigger,
   PopoverPopup,
+  PopoverPopupSurface,
   PopoverPopup as PopoverContent,
   PopoverTitle,
   PopoverClose,
