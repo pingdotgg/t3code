@@ -54,8 +54,8 @@ vi.mock("~/state/server", () => ({
 }));
 vi.mock("~/state/review", () => ({
   reviewEnvironment: {
-    diffPreview: ({ input }: { input: { baseRef?: string } }) =>
-      state.previews.get(input.baseRef ?? null)!,
+    diffPreview: ({ input }: { input: { baseRef?: string; commitSha?: string } }) =>
+      state.previews.get(input.commitSha ?? input.baseRef ?? null)!,
     branchCommits: () => state.commits,
     diffFilePatch: () => state.patch,
     diffFileContents: {},
@@ -570,13 +570,37 @@ it("opens a file from a tool call's diff by the path its agent recorded", async 
 });
 
 it("steps to the older and newer commit from the header", async () => {
+  const viewport = { width: window.innerWidth, height: window.innerHeight };
+  await page.viewport(1280, 800);
+  await using _viewport = {
+    [Symbol.asyncDispose]: () => page.viewport(viewport.width, viewport.height),
+  };
   using context = setup(null);
-  const commits = ["c3", "c2", "c1"].map((sha) => ({
+  const commits = ["c3", "c2", "c1"].map((sha, index) => ({
     sha: sha.padEnd(40, "0"),
-    subject: `Commit ${sha}`,
+    subject: `Commit ${sha}${" with a longer subject".repeat(index)}`,
     committedAt: "2026-10-30T00:00:00Z",
   }));
   state.commits = Atom.make(AsyncResult.success({ commits, truncated: false }));
+  for (const commit of commits) {
+    const [source] = preview().sources;
+    state.previews.set(
+      commit.sha,
+      Atom.make(
+        AsyncResult.success({
+          ...preview(),
+          sources: [
+            {
+              ...source!,
+              kind: "commit" as const,
+              headRef: commit.sha,
+              commitSubject: commit.subject,
+            },
+          ],
+        }),
+      ),
+    );
+  }
   useDiffPanelStore.getState().selectCommit(context.threadRef, commits[1]!.sha);
   await using screen = await render(
     <RegistryContext.Provider value={context.registry}>
@@ -595,8 +619,14 @@ it("steps to the older and newer commit from the header", async () => {
   await vi.waitFor(() => expect(selectedSha()).toBe(commits[2]!.sha));
   await expect.element(older).toBeDisabled();
 
+  // The stepper must not move as the scope label takes each commit's subject.
+  const newerLeft = newer.element().getBoundingClientRect().left;
   await userEvent.click(newer);
+  await expect.element(screen.getByText(commits[1]!.subject)).toBeVisible();
+  expect(newer.element().getBoundingClientRect().left).toBe(newerLeft);
   await userEvent.click(newer);
-  await vi.waitFor(() => expect(selectedSha()).toBe(commits[0]!.sha));
+  await expect.element(screen.getByText(commits[0]!.subject)).toBeVisible();
+  expect(selectedSha()).toBe(commits[0]!.sha);
+  expect(newer.element().getBoundingClientRect().left).toBe(newerLeft);
   await expect.element(newer).toBeDisabled();
 });

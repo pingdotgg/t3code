@@ -1156,6 +1156,60 @@ export default function DiffPanel({
   const headerRow = (
     <>
       <div className="@container/diff-refs flex min-w-0 flex-1 items-center gap-3 [-webkit-app-region:no-drag]">
+        {/* Leads the row so the steppers stay put while the scope label changes width. */}
+        {headerCommitSha !== null ? (
+          <ButtonGroup
+            aria-label={gt("Commit", { $context: "noun, a git commit" })}
+            className="shrink-0"
+          >
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label={gt("Previous commit")}
+              disabled={olderCommitSha === null}
+              onClick={() => olderCommitSha && selectScopeValue(`commit:${olderCommitSha}`)}
+            >
+              <ChevronLeftIcon />
+            </Button>
+            <DropdownMenu onOpenChange={onCommitMenuOpenChange}>
+              <DropdownMenuTrigger
+                render={<Button size="xs" variant="ghost" />}
+                aria-label={gt("Commit {sha}", { sha: headerCommitSha.slice(0, 7) })}
+              >
+                <span className="font-mono @max-[14rem]/diff-refs:hidden">
+                  {headerCommitSha.slice(0, 7)}
+                </span>
+                <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="max-h-80 max-w-96">
+                {commitMenuItems}
+                {selectedCommitUrl &&
+                !branchCommits?.commits.some((commit) => commit.sha === headerCommitSha) ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      render={
+                        <a href={selectedCommitUrl} target="_blank" rel="noopener noreferrer" />
+                      }
+                      onClick={(event) => openCommitUrl(event, selectedCommitUrl)}
+                    >
+                      {gt("Open {sha} on code host", { sha: headerCommitSha.slice(0, 7) })}
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label={gt("Next commit")}
+              disabled={newerCommitSha === null}
+              onClick={() => newerCommitSha && selectScopeValue(`commit:${newerCommitSha}`)}
+            >
+              <ChevronRightIcon />
+            </Button>
+          </ButtonGroup>
+        ) : null}
         <DropdownMenu>
           <DropdownMenuTrigger
             render={<Button size="xs" variant="secondary" />}
@@ -1307,59 +1361,6 @@ export default function DiffPanel({
             </DropdownMenuContent>
           </DropdownMenu>
         )}
-        {headerCommitSha !== null ? (
-          <ButtonGroup
-            aria-label={gt("Commit", { $context: "noun, a git commit" })}
-            className="shrink-0"
-          >
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              aria-label={gt("Previous commit")}
-              disabled={olderCommitSha === null}
-              onClick={() => olderCommitSha && selectScopeValue(`commit:${olderCommitSha}`)}
-            >
-              <ChevronLeftIcon />
-            </Button>
-            <DropdownMenu onOpenChange={onCommitMenuOpenChange}>
-              <DropdownMenuTrigger
-                render={<Button size="xs" variant="ghost" />}
-                aria-label={gt("Commit {sha}", { sha: headerCommitSha.slice(0, 7) })}
-              >
-                <span className="font-mono @max-[14rem]/diff-refs:hidden">
-                  {headerCommitSha.slice(0, 7)}
-                </span>
-                <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="max-h-80 max-w-96">
-                {commitMenuItems}
-                {selectedCommitUrl &&
-                !branchCommits?.commits.some((commit) => commit.sha === headerCommitSha) ? (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      render={
-                        <a href={selectedCommitUrl} target="_blank" rel="noopener noreferrer" />
-                      }
-                      onClick={(event) => openCommitUrl(event, selectedCommitUrl)}
-                    >
-                      {gt("Open {sha} on code host", { sha: headerCommitSha.slice(0, 7) })}
-                    </DropdownMenuItem>
-                  </>
-                ) : null}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              aria-label={gt("Next commit")}
-              disabled={newerCommitSha === null}
-              onClick={() => newerCommitSha && selectScopeValue(`commit:${newerCommitSha}`)}
-            >
-              <ChevronRightIcon />
-            </Button>
-          </ButtonGroup>
-        ) : null}
         {canSelectBranchBase && (
           <div
             className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden text-xs text-muted-foreground"
