@@ -589,8 +589,10 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       "settings_failed",
       "hub_rejected",
       "package_manager_missing",
+      "release_age_blocked",
     ]),
     exitCode: Schema.optional(Schema.Number),
+    releaseAgeCutoff: Schema.optional(Schema.String),
     cause: Schema.Defect(),
   },
 ) {
@@ -603,6 +605,7 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       hub_rejected: "The device hub could not complete the request.",
       package_manager_missing:
         "Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.",
+      release_age_blocked: `npm blocked installing device tools because of your npm release-age policy (${this.releaseAgeCutoff ? `min-release-age / before cutoff: ${this.releaseAgeCutoff}` : "min-release-age / before"}). If using min-release-age, wait until the release ages past that cutoff; if using a fixed before date, adjust your npm config, then retry.`,
     }[this.reason];
     return `Device ${this.operation} failed: ${explanation}`;
   }

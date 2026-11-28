@@ -118,10 +118,25 @@ const isToolchainInstallError = Schema.is(DeviceToolchainInstallError);
 
 const actionableHostFailure = (error: DeviceHost.DeviceHostError): string | undefined => {
   if (error.step === "probe") return sshProbeFailureMessage(error);
-  if (isToolchainInstallError(error.cause) && error.cause.reason === "npm_not_found")
+  if (isToolchainInstallError(error.cause) && error.cause.reason !== undefined)
     return error.cause.message;
   return undefined;
 };
+
+const toolchainOperationError = (operation: string, cause: DeviceToolchainInstallError) =>
+  new DeviceOperationError({
+    operation,
+    reason:
+      cause.reason === "npm_not_found"
+        ? "package_manager_missing"
+        : cause.reason === "release_age_blocked"
+          ? "release_age_blocked"
+          : "command_failed",
+    // npm's stderr can carry registry credentials; expose only the reason, cutoff, and exit code.
+    ...(cause.exitCode !== undefined ? { exitCode: cause.exitCode } : {}),
+    ...(cause.releaseAgeCutoff !== undefined ? { releaseAgeCutoff: cause.releaseAgeCutoff } : {}),
+    cause,
+  });
 
 export interface DeviceScreenshot {
   readonly device: DeviceSummary;
@@ -1319,11 +1334,7 @@ export const make = Effect.gen(function* () {
             reason: nodeRuntimeUnavailableMessage("Device automation"),
             cause: error,
           })
-        : new DeviceOperationError({
-            operation: "install agent CLI",
-            reason: "command_failed",
-            cause: error,
-          }),
+        : toolchainOperationError("install agent CLI", error),
     ),
   );
   const launchers: AgentDeviceLaunchers = {
@@ -1430,17 +1441,7 @@ export const make = Effect.gen(function* () {
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
         Effect.provideService(ProcessRunner.ProcessRunner, runner),
-        Effect.mapError(
-          (cause) =>
-            new DeviceOperationError({
-              operation: "update device tool",
-              reason:
-                cause.reason === "npm_not_found" ? "package_manager_missing" : "command_failed",
-              // npm's stderr can carry registry credentials; expose only the reason and exit code.
-              ...(cause.exitCode !== undefined ? { exitCode: cause.exitCode } : {}),
-              cause,
-            }),
-        ),
+        Effect.mapError((cause) => toolchainOperationError("update device tool", cause)),
       ),
     launchers,
   );

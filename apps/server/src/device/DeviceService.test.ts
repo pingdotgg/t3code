@@ -538,6 +538,54 @@ describe("device setup consent", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect(
+    "names npm's release-age policy in host status when min-release-age blocks install",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-release-age-" });
+        const installError = yield* ensureDeviceHub(baseDir).pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: () =>
+              Effect.succeed({
+                code: ChildProcessSpawner.ExitCode(1),
+                stdout: "",
+                stderr: [
+                  "npm error code ETARGET",
+                  "npm error notarget No matching version found for expo-device-hub@0.26.1 with a date before 20/11/2026, 10:56:49 am.",
+                ].join("\n"),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              }),
+          }),
+          Effect.flip,
+        );
+        const { service, settings } = yield* fixture(
+          Effect.void,
+          undefined,
+          false,
+          new DeviceHost.DeviceHostError({
+            hostId: LOCAL_DEVICE_HOST_ID,
+            step: "installing device support",
+            cause: installError,
+          }),
+        );
+        yield* Ref.update(settings, (current) => ({ ...current, enableDeviceSupport: true }));
+        const detail = (yield* service.list).hostStatuses[LOCAL_DEVICE_HOST_ID]?.detail;
+        expect(detail).toContain("min-release-age");
+        expect(detail).toContain("20/11/2026, 10:56:49 am");
+        const unavailable = yield* service.readiness(LOCAL_DEVICE_HOST_ID).pipe(Effect.flip);
+        expect(unavailable._tag).toBe("DeviceHostUnavailableError");
+        if (unavailable._tag === "DeviceHostUnavailableError") {
+          expect(unavailable.reason).toContain("min-release-age");
+          expect(unavailable.reason).toContain("20/11/2026, 10:56:49 am");
+        }
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect.each([
     {
       name: "a Windows host",
@@ -1967,7 +2015,7 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
   ),
 );
 
-it.effect.each(["exit", "missing"] as const)(
+it.effect.each(["exit", "missing", "release_age"] as const)(
   "a failed tool update reports a safe %s failure",
   (failure) =>
     Effect.gen(function* () {
@@ -1999,24 +2047,40 @@ it.effect.each(["exit", "missing"] as const)(
         stdoutInvalidUtf8: false,
         stderrInvalidUtf8: false,
       };
+      const releaseAgeFailure = {
+        code: ChildProcessSpawner.ExitCode(1),
+        stdout: "",
+        stderr: [
+          "npm warn registry https://private:credential@registry.example.test/expo-device-hub",
+          "npm error code ETARGET",
+          "npm error notarget No matching version found for expo-device-hub@0.26.1 with a date before 20/11/2026, 10:56:49 am.",
+        ].join("\n"),
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      };
       const service = yield* DeviceService.make.pipe(
         Effect.provideService(DeviceHost.DeviceHost, host),
         Effect.provideService(ProcessRunner.ProcessRunner, {
           run: ({ command, args }) =>
             failure === "exit"
               ? Effect.succeed(npmFailure)
-              : Effect.fail(
-                  new ProcessRunner.ProcessSpawnError({
-                    command,
-                    argumentCount: args.length,
-                    cause: PlatformError.systemError({
-                      _tag: "NotFound",
-                      module: "ChildProcess",
-                      method: "spawn",
-                      description: "private diagnostic text",
+              : failure === "release_age"
+                ? Effect.succeed(releaseAgeFailure)
+                : Effect.fail(
+                    new ProcessRunner.ProcessSpawnError({
+                      command,
+                      argumentCount: args.length,
+                      cause: PlatformError.systemError({
+                        _tag: "NotFound",
+                        module: "ChildProcess",
+                        method: "spawn",
+                        description: "private diagnostic text",
+                      }),
                     }),
-                  }),
-                ),
+                  ),
         }),
         Effect.provideService(
           HttpClient.HttpClient,
@@ -2027,13 +2091,25 @@ it.effect.each(["exit", "missing"] as const)(
       const error = yield* service.updateTool("hub").pipe(Effect.flip);
       expect(error).toMatchObject({
         _tag: "DeviceOperationError",
-        reason: failure === "exit" ? "command_failed" : "package_manager_missing",
+        reason:
+          failure === "exit"
+            ? "command_failed"
+            : failure === "release_age"
+              ? "release_age_blocked"
+              : "package_manager_missing",
+        ...(failure === "release_age" ? { releaseAgeCutoff: "20/11/2026, 10:56:49 am" } : {}),
       });
-      expect(error.message).toBe(
-        failure === "exit"
-          ? "Device update device tool failed: The device command failed (exit code 243)."
-          : "Device update device tool failed: Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.",
-      );
+      if (failure === "release_age") {
+        expect(error.message).toContain("min-release-age");
+        expect(error.message).toContain("20/11/2026, 10:56:49 am");
+      } else {
+        expect(error.message).toBe(
+          failure === "exit"
+            ? "Device update device tool failed: The device command failed (exit code 243)."
+            : "Device update device tool failed: Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.",
+        );
+      }
+      expect(error.message).not.toContain("private:credential");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

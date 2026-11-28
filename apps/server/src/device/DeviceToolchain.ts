@@ -37,13 +37,20 @@ export class DeviceToolchainInstallError extends Schema.TaggedError<DeviceToolch
     tool: Schema.String,
     step: Schema.String,
     exitCode: Schema.optional(Schema.Number),
-    reason: Schema.optional(Schema.Literal("npm_not_found")),
+    reason: Schema.optional(Schema.Literals(["npm_not_found", "release_age_blocked"])),
+    releaseAgeCutoff: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
     if (this.reason === "npm_not_found")
       return "Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.";
+    if (this.reason === "release_age_blocked") {
+      const policy = this.releaseAgeCutoff
+        ? `min-release-age / before cutoff: ${this.releaseAgeCutoff}`
+        : "min-release-age / before";
+      return `npm blocked installing ${this.tool} because of your npm release-age policy (${policy}). If using min-release-age, wait until the release ages past that cutoff; if using a fixed before date, adjust your npm config, then retry.`;
+    }
     const suffix = this.exitCode === undefined ? "" : ` (exit code ${this.exitCode})`;
     return `Installing ${this.tool} failed while ${this.step}${suffix}.`;
   }
@@ -100,6 +107,24 @@ const isCommandNotFound = (error: ProcessRunner.ProcessRunError) =>
   error._tag === "ProcessSpawnError" &&
   error.cause instanceof PlatformError.PlatformError &&
   error.cause.reason._tag === "NotFound";
+
+const NPM_ETARGET_PATTERN = /^npm (?:error|ERR!) code ETARGET\b/m;
+const NPM_RELEASE_AGE_CUTOFF_PATTERN =
+  /^npm (?:error|ERR!) notarget No matching version found for [^\s]+ with a date before ([^\r\n]+?)\.?$/m;
+
+const parseReleaseAgeCutoff = (
+  stderr: string,
+): { readonly blocked: true; readonly cutoff?: string } | null => {
+  if (!NPM_ETARGET_PATTERN.test(stderr)) return null;
+  const match = NPM_RELEASE_AGE_CUTOFF_PATTERN.exec(stderr);
+  if (!match) return null;
+  const rawCutoff = match[1]?.trim();
+  const cutoff =
+    rawCutoff && rawCutoff.length <= 64 && !rawCutoff.includes("://") && !rawCutoff.includes("@")
+      ? rawCutoff
+      : undefined;
+  return cutoff ? { blocked: true, cutoff } : { blocked: true };
+};
 
 const installTool = Effect.fn("DeviceToolchain.installTool")(function* (
   spec: ToolSpec,
@@ -158,10 +183,17 @@ const installTool = Effect.fn("DeviceToolchain.installTool")(function* (
         ),
       );
     if (result.code !== 0) {
+      const releaseAge = parseReleaseAgeCutoff(result.stderr);
       return yield* new DeviceToolchainInstallError({
         tool: spec.name,
         step: "running npm install",
         exitCode: Number(result.code),
+        ...(releaseAge
+          ? {
+              reason: "release_age_blocked" as const,
+              ...(releaseAge.cutoff !== undefined ? { releaseAgeCutoff: releaseAge.cutoff } : {}),
+            }
+          : {}),
         cause: result,
       });
     }

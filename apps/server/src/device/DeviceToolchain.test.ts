@@ -44,6 +44,42 @@ it.effect("failed installation cleans staging and exposes only a safe failure me
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect(
+  "names npm's release-age cutoff on ETARGET date-cutoff failures without leaking stderr",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-release-age-" });
+      const result = {
+        code: ChildProcessSpawner.ExitCode(1),
+        stdout: "",
+        stderr: [
+          "npm warn registry https://private:credential@example.test/package",
+          "npm error code ETARGET",
+          "npm error notarget No matching version found for expo-device-hub@0.26.1 with a date before 20/11/2026, 10:56:49 am.",
+          "npm error notarget In most cases you or one of your dependencies are requesting a package version that doesn't exist.",
+        ].join("\n"),
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      };
+      const error = yield* ensureDeviceHub(baseDir).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: () => Effect.succeed(result),
+        }),
+        Effect.flip,
+      );
+      expect(error.reason).toBe("release_age_blocked");
+      expect(error.releaseAgeCutoff).toBe("20/11/2026, 10:56:49 am");
+      expect(error.message).toContain("min-release-age");
+      expect(error.message).toContain("20/11/2026, 10:56:49 am");
+      expect(error.message).not.toContain("private:credential");
+      expect(error.cause).toBe(result);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("inventory reports only completed versions without installing the required version", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
