@@ -27,10 +27,19 @@ const CursorUsageResponse = Schema.Struct({
   ),
 });
 
+const CursorPlanInfoResponse = Schema.Struct({
+  planInfo: Schema.optional(
+    Schema.Struct({
+      planName: Schema.optional(Schema.String),
+    }),
+  ),
+});
+
 /** Cursor's dashboard percentages include bonus usage; spend / limit does not. */
 export function cursorUsageResponseToLimits(
   response: typeof CursorUsageResponse.Type,
   checkedAt: string,
+  plan?: string,
 ) {
   const reset = DateTime.make(Number(response.billingCycleEnd));
   const resetsAt =
@@ -57,10 +66,33 @@ export function cursorUsageResponseToLimits(
       });
     }
   }
+  const named = plan?.trim();
   return windows.length > 0
-    ? makeUsageLimits({ checkedAt, windows })
+    ? makeUsageLimits({ checkedAt, windows, ...(named ? { plan: named } : {}) })
     : makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
 }
+
+const readCursorPlanName = Effect.fn("readCursorPlanName")(
+  function* (client: HttpClient.HttpClient, endpoint: string, token: string) {
+    const response = yield* client.execute(
+      HttpClientRequest.post(`${endpoint}/aiserver.v1.DashboardService/GetPlanInfo`).pipe(
+        HttpClientRequest.bearerToken(token),
+        HttpClientRequest.setHeaders({
+          "connect-protocol-version": "1",
+          "x-cursor-client-type": "cli",
+        }),
+        HttpClientRequest.bodyJsonUnsafe({}),
+      ),
+    );
+    const body = yield* HttpClientResponse.schemaBodyJson(CursorPlanInfoResponse)(
+      yield* HttpClientResponse.filterStatusOk(response),
+    );
+    const planName = body.planInfo?.planName?.trim();
+    return planName || undefined;
+  },
+  Effect.timeout("10 seconds"),
+  Effect.orElseSucceed(() => undefined),
+);
 
 export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function* (
   settings: Pick<CursorSettings, "apiEndpoint">,
@@ -100,7 +132,8 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
     const body = yield* HttpClientResponse.schemaBodyJson(CursorUsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );
-    return cursorUsageResponseToLimits(body, checkedAt);
+    const plan = yield* readCursorPlanName(client, endpoint, token);
+    return cursorUsageResponseToLimits(body, checkedAt, plan);
   }).pipe(
     Effect.timeout("10 seconds"),
     Effect.orElseSucceed(() =>

@@ -28,8 +28,13 @@ function sortWindows(
 export function makeUsageLimits(input: {
   readonly checkedAt: string;
   readonly windows: Iterable<ServerProviderUsageWindow>;
+  readonly plan?: string;
 }): ServerProviderUsageLimits {
-  return { checkedAt: input.checkedAt, windows: sortWindows(input.windows) };
+  return {
+    checkedAt: input.checkedAt,
+    windows: sortWindows(input.windows),
+    ...(input.plan ? { plan: input.plan } : {}),
+  };
 }
 
 export function makeUnavailableUsageLimits(input: {
