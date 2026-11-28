@@ -246,11 +246,96 @@ describe("serializeRenderedMarkdownFragment", () => {
     String.raw`C:\work\a-_b.txt`,
     "a*word*b and a_word_b; ~~literal~~ and ~single~",
     String.raw`before\ after\	end`,
+    "- item\n+ item\n* item",
+    "# heading\n> quote",
+    "> quote\nfirst\n- item\n# heading",
+    "first\n1. ordered\n1) ordered",
+    "---\nfirst\n---\n--\n- - -\nlast",
+    "===\nfirst\n===\n=",
+    "___\n***\nfirst\n* * *\n_ _ _\nlast",
+    "~~~\nfirst\n~~~ js\n~~~\n~~~\nlast",
+    "a | b\n---|---",
+    "| a | b |\n| --- | --- |",
+    "a | b\n:--- | ---:\nc | d",
+    "| a |\n| - |",
+    "a\n:---\nb\n---:",
   ])("copies prose that parses back unchanged: %s", (value) => {
     const container = new FakeElement("DIV").append(new FakeText(value));
     const paragraph = readUserBack(serializeRenderedMarkdownFragment(asNode(container)));
     expect(paragraph.tagName).toBe("p");
     expect(paragraph.children.map(inline)).toEqual([["text", value]]);
+  });
+
+  it("escapes literal block starts across containers without escaping real blocks or verbatim spans", () => {
+    const el = (tag: string, ...children: Array<FakeElement | string>) =>
+      new FakeElement(tag).append(
+        ...children.map((c) => (typeof c === "string" ? new FakeText(c) : c)),
+      );
+    const copy = (node: FakeElement) => serializeRenderedMarkdownFragment(asNode(node));
+    const displayMath = new FakeElement("SPAN", [], {
+      "data-markdown-math": "display",
+      "data-markdown-copy": "\\[\n- x\n\\]\n\n",
+    }).append(new FakeText("- x"));
+    const rawCopy = new FakeElement("SPAN", [], { "data-markdown-copy": "- raw" }).append(
+      new FakeText("raw"),
+    );
+
+    for (const [node, expected] of [
+      [el("P", "first", el("BR"), "- second"), [["text", "first\n- second"]]],
+      [el("DIV", "# literal"), [["text", "# literal"]]],
+      [el("P", el("SPAN", "#"), " not a heading"), [["text", "# not a heading"]]],
+      [el("P", el("SPAN", "1"), ". not numbered"), [["text", "1. not numbered"]]],
+      [el("P", el("STRONG", "a", el("BR"), "- b")), [["strong", "a\n- b"]]],
+      [
+        el("P", "- prose ", el("CODE", "x\u2028- flag"), " ", el("CODE", "x\u2029# title")),
+        [
+          ["text", "- prose "],
+          ["code", "x\u2028- flag"],
+          ["text", " "],
+          ["code", "x\u2029# title"],
+        ],
+      ],
+    ] as const) {
+      expect(readUserBack(copy(el("DIV", node))).children.map(inline)).toEqual(expected);
+    }
+
+    for (const [node, tag, children] of [
+      [el("UL", el("LI", "- literal"), el("LI", "1. literal")), "ul", ["- literal", "1. literal"]],
+      [el("BLOCKQUOTE", "- literal"), "blockquote", ["- literal"]],
+      [el("BLOCKQUOTE", el("P", "# literal")), "blockquote", ["# literal"]],
+    ] as const) {
+      const parsed = readUserBack(copy(el("DIV", node)));
+      expect(parsed.tagName).toBe(tag);
+      expect(elementsOf(parsed).map(textOf)).toEqual(children);
+    }
+
+    const table = renderedTable(
+      [new FakeText("- col"), new FakeText("# col")],
+      [new FakeText("- cell"), new FakeText("1. cell")],
+    );
+    const expectedTable = "| - col | # col |\n| --- | --- |\n| - cell | 1. cell |";
+    for (const [node, expected] of [
+      [el("DIV", el("H2", "Title", el("BR"), "- x")), "## Title\n\\- x"],
+      [el("BODY", "- item"), "\\- item"],
+      [
+        el("DIV", el("DL", el("DT", "Term"), el("DD", "\n", el("UL", el("LI", "item"))))),
+        "Term\n- item",
+      ],
+      [el("DIV", el("P", el("SPAN", el("CODE", "# c\n- d")))), "# c\n- d"],
+      [el("DIV", el("P", el("CODE", "a\nb"), "- x")), "a\nb- x"],
+      [el("DIV", el("P", el("CODE", "a\nb\n"), "- x")), "a\nb\n\\- x"],
+      [el("DIV", el("P", "a", el("BR"), "\u0003- x")), "a\n\u0003- x"],
+      [el("DIV", rawCopy), "- raw"],
+      [el("P", "See ", renderedFormula("a\n- b"), " - end"), "See \\(a\n- b\\) - end"],
+      [el("DIV", displayMath, "- after"), "\\[\n- x\n\\]\n\n\\- after"],
+      [el("P", "See ", el("CODE", "x"), " - not a list"), "See `x` - not a list"],
+      [el("P", "intro", el("BR"), el("BR"), "    - literal"), "intro\n\n    - literal"],
+      ...["#123", "-flag", "1.5", "1234567890. ten", "= foo"].map((s) => [el("DIV", s), s]),
+      [el("DIV", table), expectedTable],
+    ] as Array<[FakeElement, string]>) {
+      expect(copy(node)).toBe(expected);
+    }
+    expect(serializeTableElementToMarkdown(table as unknown as Element)).toBe(expectedTable);
   });
 
   it.each([
