@@ -180,7 +180,14 @@ export const preparePairingRegistration = Effect.fn(
       credential: target.credential,
       clientMetadata: presentation.metadata,
       dpopProof: dpopProof.value,
-    }).pipe(Effect.mapError((error) => mapRemoteDpopEnvironmentError(error, "direct")));
+    }).pipe(
+      // A rejected pairing code carries no DPoP reason; only a reported DPoP failure gets its hint.
+      Effect.mapError((error) =>
+        error._tag === "EnvironmentAuthInvalidError" && error.dpopFailureReason !== undefined
+          ? mapRemoteDpopEnvironmentError(error, "direct")
+          : mapRemoteEnvironmentError(error),
+      ),
+    );
     return new BearerConnectionRegistration({
       ...route,
       credential: new DpopConnectionCredential({

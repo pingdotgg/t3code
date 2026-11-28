@@ -634,6 +634,22 @@ describe("connection onboarding", () => {
     ),
   );
 
+  const layerDpopPairing = (failExchangeDpopReason?: DpopFailureReason) =>
+    Layer.merge(
+      layerPairingOnboarding({
+        accessTokenRenewal: true,
+        failExchange: true,
+        ...(failExchangeDpopReason !== undefined ? { failExchangeDpopReason } : {}),
+      }),
+      Layer.succeed(
+        ManagedRelay.ManagedRelayDpopSigner,
+        ManagedRelay.ManagedRelayDpopSigner.of({
+          thumbprint: Effect.succeed("device-key"),
+          createProof: (proof) => Effect.succeed(`proof:${proof.url}`),
+        }),
+      ),
+    );
+
   it.effect("preserves DPoP clock-skew diagnostics during direct pairing", () =>
     Effect.gen(function* () {
       const error = yield* preparePairingRegistration({
@@ -652,24 +668,24 @@ describe("connection onboarding", () => {
       expect(error.message).toContain(
         "Hint: Check that automatic date and time is enabled on both devices, then try again.",
       );
-    }).pipe(
-      Effect.provide(
-        Layer.merge(
-          layerPairingOnboarding({
-            accessTokenRenewal: true,
-            failExchange: true,
-            failExchangeDpopReason: "time_window",
-          }),
-          Layer.succeed(
-            ManagedRelay.ManagedRelayDpopSigner,
-            ManagedRelay.ManagedRelayDpopSigner.of({
-              thumbprint: Effect.succeed("device-key"),
-              createProof: (proof) => Effect.succeed(`proof:${proof.url}`),
-            }),
-          ),
-        ),
-      ),
-    ),
+    }).pipe(Effect.provide(layerDpopPairing("time_window"))),
+  );
+
+  it.effect("does not blame the clock for a rejected pairing code", () =>
+    Effect.gen(function* () {
+      const error = yield* preparePairingRegistration({
+        host: "remote.example.test",
+        pairingCode: "pairing-token",
+      }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "ConnectionBlockedError",
+        reason: "authentication",
+        traceId: "trace-pairing-test",
+      });
+      expect(error).not.toHaveProperty("failureCause");
+      expect(error.message).not.toContain("clock skew");
+    }).pipe(Effect.provide(layerDpopPairing())),
   );
 
   it.effect("refuses to add a route that reaches a different machine, keeping the code", () =>
