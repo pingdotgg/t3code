@@ -59,7 +59,7 @@ export interface CursorAuthOptions {
   readonly apiKey?: string;
   readonly store: SdkCredentialStore;
   readonly credentialBinding?: NonNullable<ProviderAuthController["credentialBinding"]>;
-  readonly onChanged: (signedIn: boolean) => Effect.Effect<void, ProviderSetupError>;
+  readonly onChanged: (signedIn: boolean) => Effect.Effect<void | string, ProviderSetupError>;
   readonly login?: (options: SdkLoginOptions) => Promise<SdkLoginResult>;
 }
 
@@ -264,7 +264,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
             phase: "succeeded",
             authorizationUrl: null,
             expiresAt: null,
-            message: "Signed in with Cursor.",
+            message: verified.value ?? "Signed in with Cursor.",
           });
         }).pipe(Effect.uninterruptible),
       );
