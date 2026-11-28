@@ -26,6 +26,7 @@ import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -635,6 +636,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     // Scopes close in reverse order. Forking this before the group kill is
     // registered forgets the ledger entry only once the group is stopped.
     const ledgerScope = yield* Scope.fork(runtimeScope);
+    const marker = yield* Effect.sync(() => SecureRandom.uuidV4Unsafe());
     const child = yield* spawner
       .spawn(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
@@ -646,6 +648,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             // The value is set explicitly (rather than relying on inheritance) because
             // `extendEnv` is false whenever `input.environment` is provided.
             OPENCODE_CONFIG_CONTENT: resolveOpenCodeConfigContent(input.environment),
+            [OpenCodeServerLedger.SERVER_MARKER_ENV]: marker,
           },
           extendEnv: input.environment === undefined,
         }),
@@ -670,7 +673,12 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     // Registered before recording, so an interrupt while the ledger writes
     // still stops the group.
     yield* Scope.addFinalizer(runtimeScope, terminateChild);
-    const forgetServer = yield* serverLedger.track({ pid: Number(child.pid), port, args });
+    const forgetServer = yield* serverLedger.track({
+      pid: Number(child.pid),
+      port,
+      args,
+      marker,
+    });
     yield* Scope.addFinalizer(ledgerScope, forgetServer);
 
     const stdoutRef = yield* Ref.make<string | null>("");
