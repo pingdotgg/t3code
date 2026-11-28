@@ -1139,3 +1139,106 @@ it.effect("repeated imports reach linked-worktree sessions behind the scan budge
     expect(oldest.worktreePath).toBe(worktree);
   }).pipe(Effect.scoped, Effect.provide(Layer.merge(persistence, NodeServices.layer))),
 );
+
+const deleteImportedThreadAfterRun = Effect.fn(function* (threadId: ThreadId) {
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const sink = yield* EventSink.EventSinkV2;
+  const { thread } = yield* projections.getThreadRecords(threadId, []);
+  yield* sink.write({
+    events: [
+      {
+        id: EventId.make(`${threadId}:run`),
+        type: "run.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: RunId.make(`${threadId}:run`),
+          threadId,
+          ordinal: 1,
+          providerInstanceId: thread.providerInstanceId,
+          modelSelection: thread.modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make(`${threadId}:prompt`),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      },
+      {
+        id: EventId.make(`${threadId}:deleted`),
+        type: "thread.deleted",
+        threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: { ...thread, deletedAt: now, updatedAt: now },
+      },
+    ],
+  });
+});
+
+it.effect.each([
+  ["unchanged", false],
+  ["changed", true],
+] as const)(
+  "re-import brings back a session whose imported thread was deleted, with its transcript %s",
+  ([, transcriptChanged]) =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const first = candidate(
+        CLAUDE_MODEL_SELECTION,
+        "8b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
+        "claudeAgent",
+      );
+      const threadId = importId(first);
+      expect(yield* (yield* makeImporter([first])).run).toEqual({
+        importedCount: 1,
+        skippedCount: 0,
+      });
+      yield* deleteImportedThreadAfterRun(threadId);
+      expect(yield* projections.listActiveThreads(projectId)).toEqual([]);
+
+      const again = candidate(
+        CLAUDE_MODEL_SELECTION,
+        first.source.providerSessionId,
+        "claudeAgent",
+      );
+      if (transcriptChanged) {
+        again.source.size = 200;
+        again.source.mtimeMs = 3;
+        again.thread.messages.push(
+          { role: "user", text: "Continue in the CLI", createdAt: timestamp },
+          { role: "assistant", text: "Continued in the CLI", createdAt: timestamp },
+        );
+      }
+      // Stand-in for the scanner: a transcript the project already recorded is AlreadyImported.
+      const scanned: AgentSessionScanner.AgentSessionScanner["Service"] = {
+        scan: Effect.die("unused"),
+        recentThreads: (_root, completed = []) =>
+          Stream.make(
+            completed.some(
+              (source) =>
+                source.filePath === again.source.filePath && source.size === again.source.size,
+            )
+              ? { _tag: "AlreadyImported" as const, source: again.source }
+              : again,
+          ),
+      };
+      yield* (yield* makeImporter([], Effect.void, undefined, undefined, undefined, {
+        workspaceRoot: "/workspace/project",
+        scanner: scanned,
+      })).run;
+
+      const visible = yield* projections.listActiveThreads(projectId);
+      expect(visible).toHaveLength(1);
+      expect(
+        (yield* projections.getThreadRecords(visible[0]!.id, ["messages"])).messages.map(
+          (message) => message.text,
+        ),
+      ).toEqual(again.thread.messages.map((message) => message.text));
+    }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
