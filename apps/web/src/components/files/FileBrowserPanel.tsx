@@ -294,7 +294,9 @@ export default function FileBrowserPanel({
               signal: AbortSignal.any([pending.signal, AbortSignal.timeout(400)]),
             },
           );
-          const dismissed = pending.signal.aborted || !panelRef.current?.getClientRects().length;
+          const panel = panelRef.current;
+          const dismissed =
+            pending.signal.aborted || !panel?.getClientRects().length || panel.closest("[inert]");
           pending.abort();
           if (pendingMenuRef.current === pending) pendingMenuRef.current = null;
           if (dismissed) return;
