@@ -298,6 +298,7 @@ export function makeAntigravityAcpAdapterFlavor(
         readAntigravityClientTextFile({
           fileSystem: options.fileSystem,
           path: options.path,
+          cwd: context.policy.cwd,
           allowedRoots: antigravityClientFileRoots(context.policy),
           attachmentsDir: options.host.paths.attachmentsDir,
           isAllowedAttachment: context.canReadAttachment,

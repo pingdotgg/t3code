@@ -25,6 +25,20 @@ const WORDPROCESSINGML_NAMESPACES = new Set([
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
   "http://purl.oclc.org/ooxml/wordprocessingml/main",
 ]);
+const WORD_STYLE_ELEMENTS = new Set([
+  "styles",
+  "docDefaults",
+  "rPrDefault",
+  "style",
+  "basedOn",
+  "p",
+  "pPr",
+  "pStyle",
+  "rPr",
+  "rStyle",
+  "vanish",
+]);
+const WORD_STYLE_ATTRIBUTES = new Set(["val", "type", "styleId", "default"]);
 const PPTX_DRAWING_PROPERTIES = new Map([
   ["sp", "nvSpPr"],
   ["grpSp", "nvGrpSpPr"],
@@ -35,6 +49,7 @@ const PPTX_DRAWING_PROPERTIES = new Map([
 const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
 const ODF_DRAW_NS = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
+const ODF_STYLE_NS = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
 const ODF_TEXT_NS = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
 type TextPart =
   | string
@@ -95,6 +110,8 @@ interface XmlNode {
   pptxHidden?: boolean;
   spaceCount?: number;
   wordOutlineHeadingLevel?: number;
+  wordMergeCovered?: boolean;
+  wordStyleAttrs?: Record<string, string>;
   hasText?: boolean;
   hasTextChoice?: boolean;
   markupCompatibility?: boolean;
@@ -103,7 +120,10 @@ interface XmlNode {
   mathmlFirstChildSeen?: boolean;
   epubBlock?: boolean;
   odfInlineParagraphs?: boolean;
+  odfFloating?: boolean;
   odfParagraphHidden?: boolean;
+  odfStyleHidden?: boolean;
+  odfSpanHidden?: boolean;
 }
 
 // ODF 1.3 Part 3 §6.1.2: paragraph character data turns TAB, CR and LF into spaces, collapses
@@ -158,19 +178,60 @@ function namespaceOf(tagName: string, scope: readonly XmlNode[]) {
   return scope.findLast((node) => Object.hasOwn(node.attrs, binding))?.attrs[binding];
 }
 
-function odfTextAttribute(
+function odfAttribute(
   attributes: Record<string, string>,
   localName: string,
   scope: readonly XmlNode[],
+  namespace = ODF_TEXT_NS,
 ) {
   return Object.entries(attributes).find(
-    ([name]) => name.endsWith(`:${localName}`) && namespaceOf(name, scope) === ODF_TEXT_NS,
+    ([name]) => name.endsWith(`:${localName}`) && namespaceOf(name, scope) === namespace,
   )?.[1];
+}
+
+interface OdfTextStyle {
+  parent: string | undefined;
+  hidden: boolean | undefined;
+  resolved?: boolean | undefined;
+}
+
+// ODF 1.3 Part 3 §19.510: parent-style-name names a common style, never an automatic one.
+interface OdfTextStyles {
+  common: Map<string, OdfTextStyle>;
+  automatic: Map<string, OdfTextStyle>;
+}
+
+function odfTextStyleHidden(styles: OdfTextStyles, name: string) {
+  const automatic = styles.automatic.get(name);
+  if (!automatic) return odfCommonTextStyleHidden(styles.common, name);
+  if (automatic.hidden !== undefined) return automatic.hidden;
+  return automatic.parent === undefined
+    ? undefined
+    : odfCommonTextStyleHidden(styles.common, automatic.parent);
+}
+
+function odfCommonTextStyleHidden(styles: Map<string, OdfTextStyle>, name: string) {
+  let style = styles.get(name);
+  if (!style || "resolved" in style) return style?.resolved;
+  const visited = new Set<OdfTextStyle>();
+  let hidden: boolean | undefined;
+  while (style && !visited.has(style)) {
+    if ("resolved" in style) {
+      hidden = style.resolved;
+      break;
+    }
+    visited.add(style);
+    hidden = style.hidden;
+    if (hidden !== undefined) break;
+    style = style.parent === undefined ? undefined : styles.get(style.parent);
+  }
+  for (const visitedStyle of visited) visitedStyle.resolved = hidden;
+  return hidden;
 }
 
 function isHiddenOdfField(attributes: Record<string, string>, scope: readonly XmlNode[]) {
   return /^[\t\n\r ]*(?:true|1)[\t\n\r ]*$/u.test(
-    odfTextAttribute(attributes, "is-hidden", scope) ?? "",
+    odfAttribute(attributes, "is-hidden", scope) ?? "",
   );
 }
 
@@ -232,12 +293,18 @@ function hasImportantDisplayNone(style: string): boolean {
   return hidden;
 }
 
-type WordStyleRunHidden = (id: string, ancestors: readonly XmlNode[]) => boolean;
+type WordStyleRunHidden = (id: string | undefined, ancestors: readonly XmlNode[]) => boolean;
 
-function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRunHidden): XmlNode {
+function xml(
+  source: string,
+  extension: string,
+  wordStyles?: WordStyleRunHidden | "definitions",
+  odfTextStyles?: OdfTextStyles,
+): XmlNode {
   const odf = [".odt", ".ods", ".odp"].includes(extension);
   const root: XmlNode = { name: "root", attrs: {}, children: [] };
   const stack = [root];
+  const wordMergeTables = new WeakSet<XmlNode>();
   let rootTagName: string | undefined;
   let nodes = 0;
   const parser = new SaxesParser();
@@ -253,7 +320,7 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
           // A foreign attribute must not shadow an XHTML table span or a namespace declaration.
           return (extension === ".epub" &&
             (local === "colspan" || local === "rowspan" || local === "xmlns")) ||
-            (extension === ".odt" && local === "xmlns")
+            ((extension === ".odt" || wordStyles !== undefined) && local === "xmlns")
             ? [[key, String(value)]]
             : [
                 [key, String(value)],
@@ -265,10 +332,55 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
     };
     if (extension === ".epub" && node.name === "table") node.epubTable = true;
     if (odf && node.name === "s") node.spaceCount = repeatCount(node.attrs.c);
-    stack.at(-1)!.children.push(node);
+    const parent = stack.at(-1)!;
+    parent.children.push(node);
     stack.push(node);
+    if (
+      wordStyles !== undefined &&
+      WORD_STYLE_ELEMENTS.has(node.name) &&
+      WORDPROCESSINGML_NAMESPACES.has(namespaceOf(tag.name, stack) ?? "")
+    ) {
+      node.wordStyleAttrs = {};
+      for (const [name, value] of Object.entries(tag.attributes)) {
+        const colon = name.indexOf(":");
+        const local = name.slice(colon + 1);
+        if (
+          colon !== -1 &&
+          WORD_STYLE_ATTRIBUTES.has(local) &&
+          WORDPROCESSINGML_NAMESPACES.has(namespaceOf(name, stack) ?? "")
+        )
+          node.wordStyleAttrs[local] = value;
+      }
+    }
+    if (odfTextStyles) {
+      if (parent.odfSpanHidden) node.odfSpanHidden = true;
+      if (
+        node.name === "span" &&
+        odfTextStyles.common.size + odfTextStyles.automatic.size > 0 &&
+        namespaceOf(tag.name, stack) === ODF_TEXT_NS
+      ) {
+        const style = odfAttribute(tag.attributes, "style-name", stack);
+        const hidden = style === undefined ? undefined : odfTextStyleHidden(odfTextStyles, style);
+        if (hidden !== undefined) node.odfSpanHidden = hidden;
+      }
+      if (
+        node.name === "text-properties" &&
+        parent.name === "style" &&
+        namespaceOf(tag.name, stack) === ODF_STYLE_NS
+      ) {
+        const display = odfAttribute(tag.attributes, "display", stack)?.trim();
+        if (display === "none" || display === "true") parent.odfStyleHidden = display === "none";
+      }
+    }
     if (odf && node.name === "text-box" && namespaceOf(tag.name, stack) === ODF_DRAW_NS)
       node.odfInlineParagraphs = true;
+    const anchor =
+      odf && namespaceOf(tag.name, stack) === ODF_DRAW_NS
+        ? odfAttribute(tag.attributes, "anchor-type", stack)?.trim()
+        : undefined;
+    // Only a character-anchored drawing sits in the line; other anchors float beside the text.
+    if (anchor === "as-char") node.odfInlineParagraphs = true;
+    else if (anchor) node.odfFloating = true;
     if (
       extension === ".odt" &&
       node.name === "hidden-paragraph" &&
@@ -303,6 +415,30 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
   parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
+    if (extension === ".docx" && node.name === "vMerge" && parent.name === "tcPr") {
+      const table = stack.findLast((ancestor) => ancestor.name === "tbl");
+      if (table) wordMergeTables.add(table);
+    }
+    if (wordMergeTables.has(node)) markWordMergeContinuations(node);
+    if (
+      odfTextStyles &&
+      node.name === "style" &&
+      (parent.name === "styles" || parent.name === "automatic-styles")
+    ) {
+      const scope = [...stack, node];
+      if (
+        namespaceOf(tag.name, scope) === ODF_STYLE_NS &&
+        odfAttribute(tag.attributes, "family", scope, ODF_STYLE_NS) === "text"
+      ) {
+        const name = odfAttribute(tag.attributes, "name", scope, ODF_STYLE_NS);
+        if (name !== undefined) {
+          odfTextStyles[parent.name === "styles" ? "common" : "automatic"].set(name, {
+            parent: odfAttribute(tag.attributes, "parent-style-name", scope, ODF_STYLE_NS),
+            hidden: node.odfStyleHidden,
+          });
+        }
+      }
+    }
     const isOdfHiddenText =
       extension === ".odt" &&
       node.name === "hidden-text" &&
@@ -335,14 +471,15 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
       const properties = children(node).flatMap((child) =>
         child.name === "rPr" ? children(child) : [],
       );
-      const direct = wordVanish(properties.find((property) => property.name === "vanish"));
-      const style = properties.find((property) => property.name === "rStyle")?.attrs.val;
+      const direct = wordVanish(properties.find((property) => property.name === "vanish")?.attrs);
       wordRunHidden =
         direct ??
-        (style !== undefined &&
-          wordStyleRunHidden !== undefined &&
+        (typeof wordStyles === "function" &&
           WORDPROCESSINGML_NAMESPACES.has(namespaceOf(tag.name, [...stack, node]) ?? "") &&
-          wordStyleRunHidden(style, stack));
+          wordStyles(
+            wordStyleChild(wordStyleChild(node, "rPr"), "rStyle")?.wordStyleAttrs?.val,
+            stack,
+          ));
     }
     const isCompatibilityChoice =
       node.name === "Choice" &&
@@ -350,8 +487,10 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
       parent.name === "AlternateContent" &&
       parent.markupCompatibility;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
+    // Hidden spans may contain a nested style that explicitly makes its text visible.
     if (
       node.pptxHidden ||
+      (node.odfSpanHidden && node.children.length === 0) ||
       (node.odfParagraphHidden && namespaceOf(tag.name, [...stack, node]) === ODF_TEXT_NS) ||
       isMathmlAlternative ||
       (extension === ".epub" &&
@@ -405,9 +544,9 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
         node.children = ["[", citation, ": ", body, "]"];
       }
     }
-    if (isOdfHiddenText) {
+    if (isOdfHiddenText && !node.odfSpanHidden) {
       // ODF stores the visible field value in text:string-value when present.
-      const value = odfTextAttribute(tag.attributes, "string-value", [...stack, node]);
+      const value = odfAttribute(tag.attributes, "string-value", [...stack, node]);
       if (value !== undefined) {
         node.children = [value];
         node.hasText = value.trim() !== "";
@@ -449,6 +588,7 @@ function xml(source: string, extension: string, wordStyleRunHidden?: WordStyleRu
   });
   const text = (value: string) => {
     const node = stack.at(-1)!;
+    if (node.odfSpanHidden) return;
     node.children.push(value);
     if (value.trim() !== "") node.hasText = true;
   };
@@ -464,6 +604,13 @@ const children = (node: XmlNode | undefined) =>
 function childNamed(node: XmlNode | undefined, name: string) {
   return node?.children.find(
     (child): child is XmlNode => typeof child !== "string" && child.name === name,
+  );
+}
+
+function wordStyleChild(node: XmlNode | undefined, name: string) {
+  return node?.children.find(
+    (child): child is XmlNode =>
+      typeof child !== "string" && child.name === name && child.wordStyleAttrs !== undefined,
   );
 }
 
@@ -519,8 +666,8 @@ function* text(node: XmlNode): Generator<TextPart, void> {
     yield { imageDescription: node.imageDescription };
     return;
   }
-  // Word text boxes hold their own paragraphs inside the anchoring paragraph.
-  if (node.name === "txbxContent") yield* paragraphs(node);
+  // Word text boxes and floating ODF drawings hold their own paragraphs inside the anchoring one.
+  if (node.name === "txbxContent" || node.odfFloating) yield* paragraphs(node);
   else if (node.odfInlineParagraphs) {
     // ODF boxes and notes can sit inline, so only add breaks between their own paragraphs.
     let seenParagraph = false;
@@ -621,53 +768,63 @@ function wordStyleToggled(styles: Map<string, WordStyleToggle>, id: string): boo
   return toggled;
 }
 
-function wordVanish(property: XmlNode | undefined): boolean | undefined {
-  if (!property) return;
-  const value = property.attrs.val?.trim() ?? "true";
+function wordVanish(attrs: XmlNode["attrs"] | undefined): boolean | undefined {
+  if (!attrs) return;
+  const value = attrs.val?.trim() ?? "true";
   if (["true", "1", "on"].includes(value)) return true;
   if (["false", "0", "off"].includes(value)) return false;
 }
 
-function wordCharacterStyleVisibility(styles: XmlNode): WordStyleRunHidden | undefined {
-  const definitions = childNamed(styles, "styles");
-  const runDefaults = childNamed(childNamed(definitions, "docDefaults"), "rPrDefault");
-  if (wordVanish(childNamed(childNamed(runDefaults, "rPr"), "vanish"))) return;
+function wordStyleVisibility(styles: XmlNode): WordStyleRunHidden | undefined {
+  const definitions = wordStyleChild(styles, "styles");
+  const runDefaults = wordStyleChild(wordStyleChild(definitions, "docDefaults"), "rPrDefault");
+  if (wordVanish(wordStyleChild(wordStyleChild(runDefaults, "rPr"), "vanish")?.wordStyleAttrs))
+    return;
   const character = new Map<string, WordStyleToggle>();
   const paragraph = new Map<string, WordStyleToggle>();
   let defaultParagraph: string | undefined;
   let tableCanToggle = false;
   for (const style of children(definitions)) {
-    const { styleId, type } = style.attrs;
-    if (style.name !== "style" || !styleId) continue;
+    if (style.name !== "style" || !style.wordStyleAttrs?.styleId) continue;
+    const { styleId, type } = style.wordStyleAttrs;
     if (type === "table") {
-      tableCanToggle ||= [...all(style, "vanish", ["rPrChange"])].some(wordVanish);
+      tableCanToggle ||= [...all(style, "vanish", ["rPrChange"])].some((node) =>
+        wordVanish(node.wordStyleAttrs),
+      );
       continue;
     }
     const defined = {
-      vanish: wordVanish(childNamed(childNamed(style, "rPr"), "vanish")),
-      basedOn: childNamed(style, "basedOn")?.attrs.val,
+      vanish: wordVanish(wordStyleChild(wordStyleChild(style, "rPr"), "vanish")?.wordStyleAttrs),
+      basedOn: wordStyleChild(style, "basedOn")?.wordStyleAttrs?.val,
     };
     if (type === "character") character.set(styleId, defined);
     else if ((type ?? "paragraph") === "paragraph") {
       paragraph.set(styleId, defined);
-      if (["true", "1", "on"].includes(style.attrs.default ?? "")) defaultParagraph = styleId;
+      if (["true", "1", "on"].includes(style.wordStyleAttrs.default ?? ""))
+        defaultParagraph = styleId;
     }
   }
-  if (![...character.values()].some((style) => style.vanish)) return;
+  const paragraphCanToggle = [...paragraph.values()].some((style) => style.vanish);
+  if (!paragraphCanToggle && ![...character.values()].some((style) => style.vanish)) return;
   // pPr precedes a paragraph's runs, so the first run settles its style for the rest.
   const paragraphStyles = new WeakMap<XmlNode, string | undefined>();
   return (id, ancestors) => {
-    if (!wordStyleToggled(character, id)) return false;
+    const characterToggles = id === undefined ? false : wordStyleToggled(character, id);
+    if (characterToggles === undefined || (!characterToggles && !paragraphCanToggle)) return false;
     // Table styles also toggle; leave those combinations to the editor.
     if (tableCanToggle && ancestors.some((ancestor) => ancestor.name === "tbl")) return false;
-    const owner = ancestors.findLast((ancestor) => ancestor.name === "p");
+    const owner = ancestors.findLast(
+      (ancestor) => ancestor.name === "p" && ancestor.wordStyleAttrs,
+    );
     let paragraphId = owner && paragraphStyles.get(owner);
     if (!owner || !paragraphStyles.has(owner)) {
-      const named = childNamed(childNamed(owner, "pPr"), "pStyle")?.attrs.val;
+      const named = wordStyleChild(wordStyleChild(owner, "pPr"), "pStyle")?.wordStyleAttrs?.val;
       paragraphId = named && paragraph.has(named) ? named : defaultParagraph;
       if (owner) paragraphStyles.set(owner, paragraphId);
     }
-    return paragraphId === undefined || wordStyleToggled(paragraph, paragraphId) === false;
+    const paragraphToggles =
+      paragraphId === undefined ? false : wordStyleToggled(paragraph, paragraphId);
+    return paragraphToggles !== undefined && paragraphToggles !== characterToggles;
   };
 }
 
@@ -774,7 +931,39 @@ function odfValue(cell: XmlNode): string {
       return attr("value");
   }
 }
-const covered = (cell: XmlNode) => cell.name === "covered-table-cell";
+function wordSkippedColumns(row: XmlNode) {
+  const before = childNamed(childNamed(row, "trPr"), "gridBefore")?.attrs.val;
+  return before ? Math.max(0, Number.parseInt(before, 10) || 0) : 0;
+}
+
+function wordColumnSpan(properties: XmlNode | undefined) {
+  const span = childNamed(properties, "gridSpan")?.attrs.val;
+  return span ? Math.max(1, Number.parseInt(span, 10) || 1) : 1;
+}
+
+function markWordMergeContinuations(table: XmlNode) {
+  let previous = new Map<number, number>();
+  let current = new Map<number, number>();
+  // Empty cells and rows still participate in the Word table grid.
+  for (const row of all(table, "tr")) {
+    let column = wordSkippedColumns(row);
+    for (const cell of all(row, "tc")) {
+      const properties = childNamed(cell, "tcPr");
+      const span = wordColumnSpan(properties);
+      const merge = childNamed(properties, "vMerge");
+      if (merge) {
+        const value = merge.attrs.val?.trim() ?? "continue";
+        if (value === "continue" && previous.get(column) === span) cell.wordMergeCovered = true;
+        if (value === "restart" || cell.wordMergeCovered) current.set(column, span);
+      }
+      column += span;
+    }
+    previous.clear();
+    [previous, current] = [current, previous];
+  }
+}
+
+const covered = (cell: XmlNode) => cell.name === "covered-table-cell" || cell.wordMergeCovered;
 function hasCellText(cell: XmlNode): boolean {
   if (covered(cell)) return false;
   if (cell.imageDescription !== undefined || odfValue(cell).trim() || cell.name === "noBreakHyphen")
@@ -876,9 +1065,7 @@ function* table(node: XmlNode): Generator<TextPart, void> {
     if (!cells.length) continue;
     const repeat = repeatCount(row.attrs["number-rows-repeated"]);
     // Word emits no cells for the grid columns w:gridBefore skips at the start of a row.
-    const trPr = row.name === "tr" ? children(row).find((c) => c.name === "trPr") : undefined;
-    const before = trPr && children(trPr).find((c) => c.name === "gridBefore")?.attrs.val;
-    const skipped = before ? Math.max(0, Number.parseInt(before, 10) || 0) : 0;
+    const skipped = row.name === "tr" ? wordSkippedColumns(row) : 0;
     for (let index = 0; index < repeat; index++) {
       if (++rowCount > 10_000) throw new Truncation("Row limit");
       let column = skipped;
@@ -886,15 +1073,13 @@ function* table(node: XmlNode): Generator<TextPart, void> {
       for (const cell of cells) {
         const count = repeatCount(cell.attrs["number-columns-repeated"]);
         // Word emits no cell for columns covered by w:gridSpan; pad before the next cell.
-        const tcPr = cell.name === "tc" ? children(cell).find((c) => c.name === "tcPr") : undefined;
-        const val = tcPr && children(tcPr).find((c) => c.name === "gridSpan")?.attrs.val;
-        const span = val ? Math.max(1, Number.parseInt(val, 10) || 1) : 1;
+        const span = cell.name === "tc" ? wordColumnSpan(childNamed(cell, "tcPr")) : 1;
         for (let i = 0; i < count; i++) {
           column += span;
           if (column > 512) throw new Truncation("Column limit");
           if (gap) yield { columnGap: gap };
           gap = span;
-          // LibreOffice hides the contents a merge covers; the cell still holds its column.
+          // A merge hides the covered contents while preserving grid columns.
           if (covered(cell)) continue;
           yield CELL_START;
           yield* paragraphs(cell);
@@ -1292,6 +1477,9 @@ function* rtfParts(
             "pict",
             "object",
             "fldinst",
+            // Shape properties, and the drawing that repeats a shape for older readers.
+            "sp",
+            "shprslt",
             "header",
             "headerf",
             "headerl",
@@ -1351,7 +1539,8 @@ function* rtfParts(
           yield* emitByte(rest[0]!.charCodeAt(0));
         else {
           yield* flushBytes();
-          if (rest[0] === "*") state.skip = true;
+          // Shape instructions are an optional destination, but a text box keeps its text there.
+          if (rest[0] === "*" && !/^\*[\r\n]*\\shpinst(?![a-z])/i.test(rest)) state.skip = true;
           // A backslash before a line break is \par; TextEdit ends paragraphs this way.
           else if (!hidden() && (rest[0] === "\n" || rest[0] === "\r")) yield "\n";
           else if (!hidden() && symbols.has(rest[0]!)) yield symbols.get(rest[0]!)!;
@@ -1381,11 +1570,15 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
     const notes: string[] = [];
     const skip = (name: string) =>
       notes.push(`\n[Skipped document part: ${name} (missing or invalid XML).]\n`);
-    const read = (name: string, wordStyleRunHidden?: WordStyleRunHidden): XmlNode => {
+    const read = (
+      name: string,
+      wordStyles?: WordStyleRunHidden | "definitions",
+      odfTextStyles?: OdfTextStyles,
+    ): XmlNode => {
       try {
         const data = files.get(part(name));
         if (!data) throw new Error("Missing document part");
-        return xml(data, extension, wordStyleRunHidden);
+        return xml(data, extension, wordStyles, odfTextStyles);
       } catch (error) {
         if (error instanceof Truncation) throw error;
         skip(name);
@@ -1418,15 +1611,37 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
     if (extension === ".docx") {
       const main = mainPart("word/document.xml");
       const rels = partRels(main);
-      const target = has(rels)
-        ? all(read(rels), "Relationship").find(
-            (rel) => rel.attrs.Type?.endsWith("/styles") && rel.attrs.TargetMode !== "External",
-          )?.attrs.Target
-        : undefined;
+      const mainRelations = has(rels) ? [...all(read(rels), "Relationship")] : [];
+      const relationTarget = (type: string) =>
+        mainRelations.find(
+          (rel) => rel.attrs.Type?.endsWith(`/${type}`) && rel.attrs.TargetMode !== "External",
+        )?.attrs.Target;
       const dir = `/${NodePath.posix.dirname(main)}`;
-      const stylesPath = NodePath.posix.resolve(dir, target || "styles.xml").slice(1);
-      const styles = has(stylesPath) ? read(stylesPath) : undefined;
-      const doc = read(main, styles && wordCharacterStyleVisibility(styles));
+      const stylesPath = NodePath.posix
+        .resolve(dir, relationTarget("styles") || "styles.xml")
+        .slice(1);
+      const styles = has(stylesPath) ? read(stylesPath, "definitions") : undefined;
+      const styleRunHidden = styles && wordStyleVisibility(styles);
+      const doc = read(main, styleRunHidden);
+      // Footnotes and endnotes live in their own parts; put each inline where it is referenced.
+      for (const kind of ["footnote", "endnote"]) {
+        const noteTarget = relationTarget(`${kind}s`);
+        const notePath = noteTarget && NodePath.posix.resolve(dir, noteTarget).slice(1);
+        if (!notePath || !has(notePath)) continue;
+        const bodies = new Map<string, string>();
+        for (const note of all(read(notePath, styleRunHidden), kind)) {
+          const body = Array.from(all(note, "p"), (paragraph) =>
+            [...text(paragraph)].filter((part) => typeof part === "string").join(""),
+          )
+            .join("\n")
+            .trim();
+          if (note.attrs.id !== undefined && body) bodies.set(note.attrs.id, body);
+        }
+        for (const reference of all(doc, `${kind}Reference`)) {
+          const body = bodies.get(reference.attrs.id ?? "");
+          if (body) reference.children = [`[Note: ${body}]`];
+        }
+      }
       if (styles) {
         const outlines = new Map<string, number | string | undefined>();
         const headings = new Map<string, string>();
@@ -1456,7 +1671,21 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       }
       yield* paragraphs(doc);
     } else if ([".odt", ".ods", ".odp"].includes(extension)) {
-      const content = read("content.xml");
+      const odfTextStyles: OdfTextStyles | undefined =
+        extension === ".odt" ? { common: new Map(), automatic: new Map() } : undefined;
+      if (odfTextStyles) {
+        const namedStyles = files.get(part("styles.xml"));
+        if (namedStyles !== undefined) {
+          try {
+            xml(namedStyles, extension, undefined, odfTextStyles);
+          } catch {
+            // A partial or oversized optional styles part must not hide otherwise readable text.
+            odfTextStyles.common.clear();
+            odfTextStyles.automatic.clear();
+          }
+        }
+      }
+      const content = read("content.xml", undefined, odfTextStyles);
       if (extension === ".odt")
         yield* paragraphs(
           children(children(content)[0]).find((child) => child.name === "body") ?? content,
@@ -1630,6 +1859,10 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       try {
         const decoded = decodeURIComponent(rootfile);
         if (files.has(decoded)) rootfile = decoded;
+        else if (!has(rootfile)) {
+          const normalized = NodePath.posix.normalize(decoded);
+          if (files.has(normalized)) rootfile = normalized;
+        }
       } catch {}
       const packageXml = read(rootfile);
       const items = new Map(

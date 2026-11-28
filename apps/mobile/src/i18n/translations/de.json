@@ -4027,6 +4027,8 @@
   "b18d8b097eb4a3c2": "übersicht",
   "a8675ab06a18c426": "checkouts",
   "e44e1efba0742a8c": "projekt löschen",
+  "a71afe1099a59acd": "anheften",
+  "2d3005e2cd158d2d": "angeheftete projekte",
   "3358b338bb494339": "sprache",
   "a3ff3275026d0318": "gebietsschema",
   "bbcff924e7734cee": "übersetzung",
@@ -5725,5 +5727,6 @@
   "46d614fa7b4bf1e5": "Workflow-Ausführungen",
   "f6cf1627f4acc5ef": "Sichtbarkeit des Kommentars",
   "eb1fd384ad5919dd": "Interne Notiz",
-  "b45f0b467e9406d0": "Dem Kunden antworten"
+  "b45f0b467e9406d0": "Dem Kunden antworten",
+  "15e5597f8f93ce12": "{start} bis {end}"
 }

@@ -4029,6 +4029,8 @@
   "b18d8b097eb4a3c2": "overview",
   "a8675ab06a18c426": "checkouts",
   "e44e1efba0742a8c": "delete project",
+  "a71afe1099a59acd": "pin",
+  "2d3005e2cd158d2d": "pinned projects",
   "3358b338bb494339": "language",
   "a3ff3275026d0318": "locale",
   "bbcff924e7734cee": "translation",
@@ -5727,5 +5729,6 @@
   "46d614fa7b4bf1e5": "Workflow runs",
   "f6cf1627f4acc5ef": "Comment audience",
   "eb1fd384ad5919dd": "Internal note",
-  "b45f0b467e9406d0": "Reply to customer"
+  "b45f0b467e9406d0": "Reply to customer",
+  "15e5597f8f93ce12": "{start} to {end}"
 }

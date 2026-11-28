@@ -28,6 +28,7 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
   function* (input: {
     readonly fileSystem: FileSystem.FileSystem;
     readonly path: Path.Path;
+    readonly cwd?: string | null;
     readonly allowedRoots: ReadonlyArray<string>;
     readonly attachmentsDir?: string;
     readonly isAllowedAttachment?: (canonicalPath: string) => Effect.Effect<boolean>;
@@ -41,10 +42,15 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
     if (raw.trim().length === 0 || raw.includes("\0")) {
       return yield* outside;
     }
-    const cwd = process.cwd();
-    const initial = path.isAbsolute(raw)
-      ? raw
-      : `${cwd}${cwd.endsWith(path.sep) ? "" : path.sep}${raw}`;
+    let initial: string;
+    if (path.isAbsolute(raw)) {
+      initial = raw;
+    } else if (input.cwd !== null && input.cwd !== undefined && input.cwd.trim().length > 0) {
+      const cwdRoot = path.resolve(input.cwd);
+      initial = `${cwdRoot}${cwdRoot.endsWith(path.sep) ? "" : path.sep}${raw}`;
+    } else {
+      return yield* outside;
+    }
     // Node's JS `fs.realpath` (used by Effect FileSystem) folds `..` lexically before following
     // symlinks; resolve the prefix at each `..` segment first so symlink-first semantics hold.
     const rootPrefix = path.parse(initial).root;
@@ -111,6 +117,7 @@ export const readAntigravityClientTextFile = Effect.fn("AntigravityClientFiles.r
   function* (input: {
     readonly fileSystem: FileSystem.FileSystem;
     readonly path: Path.Path;
+    readonly cwd?: string | null;
     readonly allowedRoots: ReadonlyArray<string>;
     readonly attachmentsDir?: string;
     readonly isAllowedAttachment?: (canonicalPath: string) => Effect.Effect<boolean>;

@@ -299,9 +299,19 @@ describe("searchSettings", () => {
       ["Native sessions", "providers"],
       ["CODEX_HOME path", "providers"],
       ["Shadow home path", "providers"],
+      ["ChatGPT account", "providers"],
       ["Your dictionary", "speech-dictionary"],
     ] as const) {
       expect(searchSettings(title)[0]?.id, title).toBe(id);
+    }
+  });
+
+  it("finds the project page for its Pin switch", () => {
+    for (const query of ["pin", "pin project", "pinned projects"]) {
+      expect(
+        searchSettings(query).map((item) => item.id),
+        query,
+      ).toContain("project-overview");
     }
   });
 

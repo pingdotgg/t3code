@@ -4022,6 +4022,8 @@
   "b18d8b097eb4a3c2": "vue d’ensemble",
   "a8675ab06a18c426": "checkouts",
   "e44e1efba0742a8c": "supprimer le projet",
+  "a71afe1099a59acd": "épingler",
+  "2d3005e2cd158d2d": "projets épinglés",
   "3358b338bb494339": "langue",
   "a3ff3275026d0318": "paramètres régionaux",
   "bbcff924e7734cee": "traduction",
@@ -5719,5 +5721,6 @@
   "46d614fa7b4bf1e5": "Exécutions de workflow",
   "f6cf1627f4acc5ef": "Visibilité du commentaire",
   "eb1fd384ad5919dd": "Note interne",
-  "b45f0b467e9406d0": "Répondre au client"
+  "b45f0b467e9406d0": "Répondre au client",
+  "15e5597f8f93ce12": "{start} à {end}"
 }

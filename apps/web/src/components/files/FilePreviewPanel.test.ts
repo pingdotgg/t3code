@@ -324,6 +324,28 @@ Third}`;
     );
   });
 
+  it.each([
+    ["LibreOffice", ""],
+    // Word adds a drawing that repeats the box for older readers.
+    [
+      "Word",
+      String.raw`{\shprslt{\*\do\dobxcolumn{\dptxbx{\dptxbxtext\pard Trucks leave at noon\par}}}}`,
+    ],
+    ["a plain fallback", String.raw`{\shprslt\pard Trucks leave at noon\par}`],
+  ])("shows the text of a %s rich text box once, without shape properties", (_writer, result) => {
+    const html = openRtf(
+      bytes(
+        String.raw`{\rtf1\ansi Before\par{\shp{\*\shpinst\shpleft0{\sp{\sn shapeType}{\sv 202}}{\shptxt\pard Trucks leave at noon\par}}` +
+          result +
+          String.raw`}After\par}`,
+      ),
+    );
+    if (html.type !== "document") throw new Error("Expected document");
+    expect(html.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace>Before<br>Trucks leave at noon<br>After<br></p>",
+    );
+  });
+
   it("preserves rich text page breaks and formatting without splitting hidden destinations", () => {
     const result = openRtf(
       bytes(String.raw`{\rtf1\b First\page Second\b0{\*\unknown \page hidden}\page Third\page}`),
@@ -789,17 +811,41 @@ Third}`;
     { styleStart: "5", itemStart: undefined, expected: '<ol start="5"><li>' },
     { styleStart: "0", itemStart: "4", expected: '<ol start="0"><li value="4">' },
     { styleStart: "7", itemStart: "1.5", expected: '<ol start="7"><li>' },
+    { styleStart: "3", itemStart: undefined, format: "I", expected: '<ol start="3" type="I"><li>' },
+    { styleStart: "1", itemStart: undefined, format: "a", expected: '<ol start="1" type="a"><li>' },
   ])(
     "keeps ODT list numbers for style start $styleStart and item start $itemStart",
-    async ({ styleStart, itemStart, expected }) => {
+    async ({ styleStart, itemStart, format = "1", expected }) => {
       const item = itemStart === undefined ? "" : ` text:start-value="${itemStart}"`;
       const content =
         '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">' +
-        `<office:automatic-styles><text:list-style style:name="Steps"><text:list-level-style-number text:level="1" style:num-format="1" text:start-value="${styleStart}"/></text:list-style></office:automatic-styles>` +
+        `<office:automatic-styles><text:list-style style:name="Steps"><text:list-level-style-number text:level="1" style:num-format="${format}" text:start-value="${styleStart}"/></text:list-style></office:automatic-styles>` +
         `<office:body><office:text><text:list text:style-name="Steps"><text:list-item${item}><text:p>Review</text:p></text:list-item><text:list-item><text:p>Send</text:p></text:list-item></text:list></office:text></office:body></office:document-content>`;
       const result = await openDocument(new JSZip().file("content.xml", content), "odt");
       if (result.type !== "document") throw new Error("Expected document");
       expect(result.pages[0]!.html).toBe(`${expected}<p>Review</p></li><li><p>Send</p></li></ol>`);
+    },
+  );
+
+  it.each([
+    { continued: 'text:continue-numbering="true"', expected: '<ol start="3">' },
+    { continued: 'text:continue-list="list1"', expected: '<ol start="3">' },
+    { continued: "", expected: "<ol>" },
+  ])(
+    "numbers a continued ODT list after the paragraph that splits it ($continued)",
+    async ({ continued, expected }) => {
+      // LibreOffice splits a numbered list around a plain paragraph and marks the second part as continued.
+      const list = (id: string, items: string[], attrs = "") =>
+        `<text:list xml:id="${id}" ${attrs} text:style-name="Steps">${items.map((item) => `<text:list-item><text:p>${item}</text:p></text:list-item>`).join("")}</text:list>`;
+      const content =
+        '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:xml="http://www.w3.org/XML/1998/namespace">' +
+        '<office:automatic-styles><text:list-style style:name="Steps"><text:list-level-style-number text:level="1" style:num-format="1"/></text:list-style></office:automatic-styles>' +
+        `<office:body><office:text>${list("list1", ["Review", "Send"])}<text:p>Wait for a reply.</text:p>${list("list2", ["Merge", "Deploy"], continued)}</office:text></office:body></office:document-content>`;
+      const result = await openDocument(new JSZip().file("content.xml", content), "odt");
+      if (result.type !== "document") throw new Error("Expected document");
+      expect(result.pages[0]!.html).toBe(
+        `<ol><li><p>Review</p></li><li><p>Send</p></li></ol><p>Wait for a reply.</p>${expected}<li><p>Merge</p></li><li><p>Deploy</p></li></ol>`,
+      );
     },
   );
 
@@ -819,7 +865,7 @@ Third}`;
   it.each(["odt", "odp"] as const)("reads %s text and rejects unsupported XML", async (kind) => {
     const archive = new JSZip().file(
       "content.xml",
-      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"><office:body>${kind === "odt" ? `<office:text><text:p>Field notes</text:p>${indexes.join("")}</office:text>` : '<draw:page draw:name="Overview"><text:h>Launch plan</text:h><presentation:notes><draw:frame><draw:text-box><text:p>Speaker only</text:p></draw:text-box></draw:frame></presentation:notes></draw:page>'}</office:body></office:document-content>`,
+      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"><office:body>${kind === "odt" ? `<office:text><text:p>Field notes<text:note text:id="ftn1" text:note-class="footnote"><text:note-citation>1</text:note-citation><text:note-body>\n  <text:p>Sourced on site</text:p></text:note-body></text:note> today<text:note text:id="edn1" text:note-class="endnote"><text:note-citation>i</text:note-citation><text:note-body><text:h>Appendix</text:h></text:note-body></text:note></text:p>${indexes.join("")}</office:text>` : '<draw:page draw:name="Overview"><text:h>Launch plan</text:h><presentation:notes><draw:frame><draw:text-box><text:p>Speaker only</text:p></draw:text-box></draw:frame></presentation:notes></draw:page>'}</office:body></office:document-content>`,
     );
     const result = await openDocument(archive, kind);
     expect(result.type).toBe("document");
@@ -828,7 +874,7 @@ Third}`;
     expect(result.pages[0]!.html).not.toContain("Speaker only");
     if (kind === "odt")
       expect(result.pages[0]!.html).toBe(
-        `<p>Field notes</p>${"<p>Index</p><p>Field notes: 1</p>".repeat(indexes.length)}`,
+        `<p>Field notes<sup>1</sup> today<sup>i</sup></p>${"<p>Index</p><p>Field notes: 1</p>".repeat(indexes.length)}<hr><p><sup>1</sup>Sourced on site</p><p><sup>i</sup></p><h2>Appendix</h2>`,
       );
     for (const source of [
       '<!DOCTYPE x [<!ENTITY external SYSTEM "file:///etc/passwd">]><x>&external;</x>',
@@ -843,6 +889,16 @@ Third}`;
       archive.file("content.xml", source);
       await expect(openDocument(archive, kind)).rejects.toMatchObject({ code: "xml-invalid" });
     }
+  });
+
+  it("counts ODT footnote marks against the preview size limit", async () => {
+    const archive = new JSZip().file(
+      "content.xml",
+      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:p>Lead<text:note text:id="ftn1" text:note-class="footnote"><text:note-citation>${'"'.repeat(1_450_000)}</text:note-citation><text:note-body><text:p>Body</text:p></text:note-body></text:note></text:p></office:text></office:body></office:document-content>`,
+    );
+    await expect(openDocument(archive, "odt")).rejects.toMatchObject({
+      code: "rendered-too-large",
+    });
   });
 
   it("keeps OpenDocument image descriptions in image alt text", async () => {

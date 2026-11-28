@@ -4022,6 +4022,8 @@
   "b18d8b097eb4a3c2": "resumen",
   "a8675ab06a18c426": "checkouts",
   "e44e1efba0742a8c": "eliminar proyecto",
+  "a71afe1099a59acd": "fijar",
+  "2d3005e2cd158d2d": "proyectos fijados",
   "3358b338bb494339": "idioma",
   "a3ff3275026d0318": "configuración regional",
   "bbcff924e7734cee": "traducción",
@@ -5719,5 +5721,6 @@
   "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo",
   "f6cf1627f4acc5ef": "Visibilidad del comentario",
   "eb1fd384ad5919dd": "Nota interna",
-  "b45f0b467e9406d0": "Responder al cliente"
+  "b45f0b467e9406d0": "Responder al cliente",
+  "15e5597f8f93ce12": "{start} a {end}"
 }
