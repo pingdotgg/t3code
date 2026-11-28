@@ -1243,7 +1243,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
         const repo = yield* makeTempDir("t3code-workspace-repo-");
         const branch = "feat\u00a0";
-        const worktree = path.join(repo, ".claude", "worktrees", "feature");
+        const worktree = path.join(repo, ".claude", "worktrees", "feature\u2028tools");
         yield* Effect.sync(() => {
           const git = (...args: string[]) =>
             NodeChildProcess.execFileSync("git", ["-C", repo, ...args], { stdio: "ignore" });
