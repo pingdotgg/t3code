@@ -109,6 +109,9 @@ describe("HtmlRender", () => {
         "<div style='height:calc(100dvmax - 1rem)'></div>",
         "<style>main{block-size:100vb}</style>",
         "<div style='margin-top:-50vh'></div>",
+        "<main style='min-height:+100vh'></main>",
+        "<main style='min-height:1e2vh'></main>",
+        "<style>main{min-height:1e+2vh}</style>",
       ]) {
         const error = yield* htmlRender.prepare(page).pipe(Effect.flip);
         expect(error).toBeInstanceOf(HtmlRender.HtmlRenderViewportHeightError);
