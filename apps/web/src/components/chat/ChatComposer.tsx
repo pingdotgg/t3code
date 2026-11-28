@@ -1526,6 +1526,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
     if (preview) onExpandImage(preview);
   };
+  // A save can finish after a thread switch; the preview would then open over the wrong thread.
+  const finishComposerImageAnnotationStable = useStableCallback((imageId: string) => {
+    if (annotatingImage?.id === imageId) closeComposerImageAnnotation(imageId);
+    else setAnnotatingImageId(null);
+  });
   const saveAnnotatedComposerImage = async (imageId: string, file: File) => {
     if (questionAttachmentTarget && activePendingIsResponding) return false;
     const prepared = await prepareImageForAttachment(
@@ -1537,7 +1542,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // The edited bytes replace the old ones under the same id, so its finished upload is stale.
     releaseAttachmentUpload(imageId);
     if (!replaceComposerDraftImageFile(attachmentDraftTarget, imageId, prepared.file)) return false;
-    closeComposerImageAnnotation(imageId);
+    finishComposerImageAnnotationStable(imageId);
     return true;
   };
   const buildContextClipboardFragmentStable = useStableCallback(buildContextClipboardFragment);
