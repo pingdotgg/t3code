@@ -16,13 +16,13 @@ export function useTallEnoughToFold(enabled = true) {
   useLayoutEffect(() => {
     const content = ref.current;
     if (!enabled || !content) return;
-    const measure = () => {
+    // The observer reports after the browser's own layout and flushes before paint, so the first
+    // frame is already folded. Measuring here instead would force a layout mid-commit.
+    return observeResize(content, (entries) => {
+      const height = entries.at(-1)?.borderBoxSize[0]?.blockSize ?? content.offsetHeight;
       const remPx = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-      setTallEnough(content.offsetHeight >= FOLDED_HEIGHT_REM * 2 * remPx);
-    };
-    // Measured here too: waiting for the observer would paint one unfolded frame.
-    measure();
-    return observeResize(content, measure);
+      setTallEnough(height >= FOLDED_HEIGHT_REM * 2 * remPx);
+    });
   }, [enabled]);
   return { ref, tallEnough: enabled && tallEnough };
 }

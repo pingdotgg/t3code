@@ -43,6 +43,18 @@ describe("filterComposerPullRequestMatches", () => {
     });
     expect(result.map((match) => match.number)).toEqual([499]);
   });
+
+  it("matches a zero-padded numeric query to its exact pull request ahead of substring matches", () => {
+    const result = filterComposerPullRequestMatches({
+      keyOf,
+      entries: [entry(10042, "2026-01-03"), entry(42, "2026-01-01"), entry(420, "2026-01-04")],
+      projectId: "p1",
+      repository: "owner/repo",
+      query: "0042",
+      limit: 10,
+    });
+    expect(result.map((match) => match.number)).toEqual([42, 10042]);
+  });
 });
 
 describe("linked pull requests", () => {
@@ -83,6 +95,22 @@ describe("linked pull requests", () => {
     expect(result.map((match) => `${match.repository}#${match.number}`)).toEqual([
       "owner/repo-b#4",
       "owner/repo#4",
+    ]);
+  });
+
+  it("matches linked pull requests for zero-padded numeric queries", () => {
+    const result = filterComposerPullRequestMatches({
+      keyOf,
+      entries: [entry(42, "2026-01-03")],
+      linked: composerPullRequestsFromLinks([link("owner/repo-b", 42)], "p1"),
+      projectId: "p1",
+      repository: "owner/repo",
+      query: "0042",
+      limit: 10,
+    });
+    expect(result.map((match) => `${match.repository}#${match.number}`)).toEqual([
+      "owner/repo-b#42",
+      "owner/repo#42",
     ]);
   });
 

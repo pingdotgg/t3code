@@ -24,9 +24,22 @@ describe("HistorySwipeNavigation", () => {
       false,
     ],
     ["scrolling left inside a scroller keeps the thread", "light", 100, -130, false],
-    ["swiping back at a shadow-root scroller's left edge navigates", "shadow", 0, -130, true],
+    ["scrolling at a shadow-root scroller's left edge keeps the thread", "shadow", 0, -130, false],
+    [
+      "scrolling at a shadow-root scroller's right edge keeps the thread",
+      "shadow",
+      800,
+      130,
+      false,
+    ],
+    ["scrolling at a scroller's left edge keeps the thread", "light", 0, -130, false],
+    ["scrolling at a scroller's right edge keeps the thread", "light", 800, 130, false],
+    ["scrolling over a preview panel keeps the thread", "preview-panel", 0, -130, false],
+    ["scrolling over a desktop preview keeps the thread", "preview-viewport", 0, 130, false],
+    ["scrolling over a streamed preview keeps the thread", "server-browser", 0, -130, false],
     ["swiping back over a panel without overflow navigates", "none", 0, -130, true],
     ["a swipe that started in a closed dialog keeps the thread", "closed-dialog", 0, -130, false],
+    ["swiping back over an open alert dialog keeps the thread", "alertdialog", 0, -130, false],
   ] as const)("%s", async (_name, scroller, scrollLeft, deltaX, navigates) => {
     navigateHistory.mockReset();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
@@ -34,7 +47,11 @@ describe("HistorySwipeNavigation", () => {
     const panel = screen.container.appendChild(document.createElement("div"));
     const root = scroller.startsWith("shadow") ? panel.attachShadow({ mode: "open" }) : panel;
     const viewport = root.appendChild(document.createElement("div"));
-    const noOverflow = scroller === "none" || scroller === "closed-dialog";
+    const noOverflow = !scroller.startsWith("shadow") && scroller !== "light";
+    if (scroller === "preview-panel") panel.setAttribute("data-preview-panel-mode", "inline");
+    if (scroller === "preview-viewport") panel.setAttribute("data-preview-viewport", "tab");
+    if (scroller === "server-browser") panel.setAttribute("data-server-browser-surface", "tab");
+    if (scroller === "alertdialog") panel.setAttribute("role", "alertdialog");
     viewport.style.cssText = `width: 200px; overflow-x: ${noOverflow ? "visible" : "auto"}`;
     const content = viewport.appendChild(document.createElement("div"));
     content.style.cssText = `height: 20px; width: ${noOverflow ? 100 : 1000}px`;
@@ -69,6 +86,32 @@ describe("HistorySwipeNavigation", () => {
 
     swipe(content, -120);
 
+    expect(navigateHistory).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Shift-scroll keeps the thread", [[-130, true]]],
+    [
+      "pressing Shift during a swipe cancels navigation",
+      [
+        [-130, false],
+        [-1, true],
+      ],
+    ],
+    [
+      "releasing Shift during a scroll keeps the thread",
+      [
+        [-1, true],
+        [-130, false],
+      ],
+    ],
+  ] as const)("%s", async (_name, events) => {
+    navigateHistory.mockReset();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    await using screen = await render(<HistorySwipeNavigation />);
+    for (const [deltaX, shiftKey] of [...events, [0, false] as const]) {
+      screen.container.dispatchEvent(new WheelEvent("wheel", { deltaX, shiftKey, bubbles: true }));
+    }
     expect(navigateHistory).not.toHaveBeenCalled();
   });
 

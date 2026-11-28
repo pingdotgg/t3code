@@ -49,9 +49,18 @@ export interface Parser<A = Uint8Array | null> {
   readField: FieldReader<A> | undefined
 
   /**
+   * Receives an error other than `ParseError` thrown by `readField`. The
+   * `DataRow` is fully consumed, so the parser drops it and carries on with
+   * the next message. Without a handler, the default, such errors are
+   * terminal, like parse errors.
+   */
+  onFieldError: ((error: unknown) => void) | undefined
+
+  /**
    * Decodes a chunk and returns every complete message. A partial message is
-   * retained for the next call. Parse and field-reader errors are terminal and
-   * discard messages decoded earlier in the same call.
+   * retained for the next call. Parse errors are terminal and discard
+   * messages decoded earlier in the same call, as are field-reader errors
+   * when no `onFieldError` handler is set.
    *
    * **Details**
    *
@@ -129,6 +138,7 @@ export const makeParser = <A = Uint8Array | null>(options?: {
 
   const parser: Parser<A> = {
     readField: options?.readField,
+    onFieldError: undefined,
     push(chunk) {
       const messages: Array<BackendMessage<A>> = []
       parser.pushEach(chunk, (message) => {
@@ -160,7 +170,17 @@ export const makeParser = <A = Uint8Array | null>(options?: {
           start = limit
           if (type === BackendType.DataRow) {
             // `buffer` always starts at byte 0 of `store`, so offsets index both.
-            onMessage(decodeDataRow<A>(buffer, store, 0, body, limit, parser.readField))
+            let row: DataRow<A>
+            try {
+              row = decodeDataRow<A>(buffer, store, 0, body, limit, parser.readField)
+            } catch (error) {
+              // `start` is already past the row, so the stream stays framed.
+              const onFieldError = parser.onFieldError
+              if (onFieldError === undefined || error instanceof ParseError) throw error
+              onFieldError(error)
+              continue
+            }
+            onMessage(row)
           } else {
             reader.reset(buffer, body, limit)
             const message = decodeBackend(type, reader)
@@ -373,7 +393,7 @@ export class EncodeError extends Data.TaggedError("PgProtocolEncodeError")<{
 }> {}
 
 const textEncoder = new TextEncoder()
-const textDecoder = new TextDecoder("utf-8", { fatal: true })
+const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
 
 /**
  * Above this length `TextEncoder.encodeInto` beats a per-character loop, below
@@ -870,7 +890,8 @@ const valueWriterUnsafe = Symbol.for("@effect/sql-pg/PgProtocol/ValueWriter/unsa
  * **Details**
  *
  * `textFormat` identifies parameters encoded as text. All other parameters
- * use the binary format.
+ * use the binary format. Result columns use binary format unless
+ * `textResults` is `true`, which requests text format for all columns.
  *
  * **Example** (Encoding a `Bind` message)
  *
@@ -893,6 +914,7 @@ export const makeBindEncoder = <A, E = never>(
   readonly portal: string
   readonly statement: string
   readonly parameters: ReadonlyArray<A>
+  readonly textResults?: boolean | undefined
 }): Result.Result<Uint8Array, EncodeError | E> => {
   try {
     const writer = begin(0x42)
@@ -952,7 +974,7 @@ export const makeBindEncoder = <A, E = never>(
     trailer[trailerOffset] = 0
     trailer[trailerOffset + 1] = 1
     trailer[trailerOffset + 2] = 0
-    trailer[trailerOffset + 3] = 1
+    trailer[trailerOffset + 3] = options.textResults === true ? 0 : 1
     writer.offset = trailerOffset + 4
     return Result.succeed(end())
   } catch (error) {

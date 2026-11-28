@@ -1,6 +1,7 @@
-import { T, useGT } from "gt-react-native";
+import { T, useGT, msg, useMessages } from "gt-react-native";
 import { Button } from "../../components/ui/Button";
 import {
+  type AgentFeedbackMode,
   AuthSettingsWriteScope,
   isManagedSettingPath,
   type ServerSettingsPatch,
@@ -8,7 +9,7 @@ import {
 import { useEnvironmentsWithScope } from "../../state/session";
 import { AutoSettleDaysField } from "./components/AutoSettleDaysField";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import type { ComponentProps } from "react";
 import { View } from "react-native";
@@ -18,9 +19,10 @@ import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useEnvironments } from "../../state/environments";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -63,6 +65,7 @@ export function SettingsLabsRouteScreen() {
             "On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
           )}
         />
+        <AgentFeedbackSection />
       </ScrollView>
     </SettingsScreen>
   );
@@ -211,7 +214,7 @@ export function AutoSettleSettingsRows(props: {
 
 export function WorkingSectionSettings() {
   const gt = useGT();
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const workingShelfEnabled =
     AsyncResult.isSuccess(preferences) && preferences.value.workingShelfEnabled !== false;
@@ -223,7 +226,9 @@ export function WorkingSectionSettings() {
           icon="bolt.circle"
           label={gt("Working section")}
           value={workingShelfEnabled}
-          onValueChange={(value) => savePreferences({ workingShelfEnabled: value })}
+          onValueChange={(value) => {
+            void savePreferences({ workingShelfEnabled: value });
+          }}
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
@@ -239,7 +244,7 @@ export function WorkingSectionSettings() {
 
 export function NewThreadSettingsSection() {
   const gt = useGT();
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const useLastProject =
     AsyncResult.isSuccess(preferences) && preferences.value.useLastProjectForNewThreads !== false;
@@ -251,13 +256,97 @@ export function NewThreadSettingsSection() {
         label={gt("Use last project")}
         subtitle={gt("Start new threads in the last project you used on this device.")}
         value={useLastProject}
-        onValueChange={(value) => savePreferences({ useLastProjectForNewThreads: value })}
+        onValueChange={(value) => {
+          void savePreferences({ useLastProjectForNewThreads: value });
+        }}
       />
     </SettingsSection>
   );
 }
 
 type MachineBetaSetting = "linkedEnvironmentsEnabled" | "fastWorktreeCheckout";
+
+const AGENT_FEEDBACK_CHOICES: ReadonlyArray<{
+  readonly mode: AgentFeedbackMode;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  { mode: "off", label: msg("Off"), description: msg("Agents send no feedback to the T3 team.") },
+  {
+    mode: "on-request",
+    label: msg("When I ask"),
+    description: msg("When you ask, you see a short report and send it if you approve."),
+  },
+  {
+    mode: "auto",
+    label: msg("Automatic"),
+    description: msg("Agents also report T3 Code problems they hit on their own."),
+  },
+];
+
+/** One choice list per connected machine that offers it, since each machine's own setting decides. */
+function AgentFeedbackSection() {
+  const gt = useGT();
+  const m = useMessages();
+  const { environments } = useEnvironments();
+  const supported = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" &&
+      environment.serverConfig?.environment.capabilities.agentFeedback === true,
+  );
+  const writable = useEnvironmentsWithScope(supported, AuthSettingsWriteScope);
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "agentFeedback beta update",
+    reportFailure: true,
+  });
+  if (supported.length === 0) return null;
+  return (
+    <View className="gap-3">
+      {supported.map((environment) => {
+        const policy = environment.serverConfig?.managedPolicy;
+        const managed = isManagedSettingPath(policy, "agentFeedback");
+        const mode = environment.serverConfig?.settings.agentFeedback.mode;
+        return (
+          <SettingsSection
+            key={environment.environmentId}
+            title={
+              supported.length === 1
+                ? gt("Beta: Agent feedback")
+                : gt("Beta: Agent feedback · {label}", { label: environment.label })
+            }
+            {...(managed
+              ? { footer: gt("Managed by {organization}.", { organization: policy?.organization }) }
+              : {})}
+          >
+            {AGENT_FEEDBACK_CHOICES.map((choice, index) => (
+              <SettingsChoiceRow
+                key={choice.mode}
+                label={m(choice.label)}
+                description={m(choice.description)}
+                selected={mode === choice.mode}
+                separated={index > 0}
+                disabled={managed || !writable.has(environment.environmentId)}
+                onPress={() =>
+                  void updateSettings({
+                    environmentId: environment.environmentId,
+                    input: { patch: { agentFeedback: { mode: choice.mode } } },
+                  })
+                }
+              />
+            ))}
+          </SettingsSection>
+        );
+      })}
+      <Text className="px-2 text-sm text-foreground-muted">
+        <T>
+          Reports go to the T3 team. A report you ask for is shown to you first in a card, with an
+          outline of recent turns. Turn on Include the conversation there to add the messages of the
+          turns the report is about.
+        </T>
+      </Text>
+    </View>
+  );
+}
 
 /** One switch per connected machine that offers the beta, since each machine's own setting decides. */
 function MachineBetaSection({

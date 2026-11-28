@@ -80,13 +80,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CLI deferred imp
       const runtimeStatePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
       yield* persistServerRuntimeState({
         path: runtimeStatePath,
-        state: yield* makePersistedServerRuntimeState({
-          config: { host: "127.0.0.1", devUrl: undefined },
-          port: 3_773,
-        }),
+        // An owner id skips the legacy liveness probe, so only the free lock decides.
+        state: {
+          ...(yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: 3_773,
+          })),
+          ownerId: "dead-server",
+        },
       });
       const unreachable: typeof globalThis.fetch = () =>
-        Promise.reject(new Error("connection refused"));
+        Promise.reject(
+          new TypeError("fetch failed", {
+            cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+          }),
+        );
 
       const exit = yield* runCli(["project", "add", root, "--base-dir", baseDir]).pipe(
         Effect.provideService(FetchHttpClient.Fetch, unreachable),

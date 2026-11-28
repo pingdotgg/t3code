@@ -1,8 +1,9 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
 import type { PullRequestActivityVisibility } from "../../persistence/mobile-preferences";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { DEFAULT_ACTIVITY_FILTER, type ActivityFilter } from "./pullRequestActivityFilter";
 
 const SHOW_EVERYTHING: PullRequestActivityVisibility = { bots: true, resolved: true };
@@ -13,7 +14,7 @@ const SHOW_EVERYTHING: PullRequestActivityVisibility = { bots: true, resolved: t
  */
 export function usePullRequestActivityFilter(link: string | undefined) {
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const [view, setView] = useState(() => ({
     kind: link === "commits" ? ("commits" as const) : DEFAULT_ACTIVITY_FILTER.kind,
     newestFirst: DEFAULT_ACTIVITY_FILTER.newestFirst,
@@ -35,7 +36,7 @@ export function usePullRequestActivityFilter(link: string | undefined) {
     filter,
     setFilter: (next: ActivityFilter) => {
       if (visibilityChanged(next)) {
-        savePreferences({
+        void savePreferences({
           pullRequestActivityVisibility: { bots: next.bots, resolved: next.resolved },
         });
       }
