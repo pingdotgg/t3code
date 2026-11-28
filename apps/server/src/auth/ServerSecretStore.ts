@@ -190,30 +190,82 @@ export const make = Effect.gen(function* () {
   const emptySecretRepair = yield* Semaphore.make(1);
   const isMissingOrNonEmpty = (secret: Option.Option<Uint8Array>) =>
     Option.isNone(secret) || secret.value.byteLength > 0;
+  const cache = new Map<string, Option.Option<Uint8Array>>();
+  const generations = new Map<string, number>();
+  const bumpGeneration = (name: string): number => {
+    const next = (generations.get(name) ?? 0) + 1;
+    generations.set(name, next);
+    return next;
+  };
+  const copyOptionBytes = (secret: Option.Option<Uint8Array>): Option.Option<Uint8Array> =>
+    Option.map(secret, (bytes) => Uint8Array.from(bytes));
+
+  const readAtPath = (
+    name: string,
+    secretPath: string,
+  ): Effect.Effect<Option.Option<Uint8Array>, SecretStoreError> =>
+    Effect.suspend(() => {
+      const startGen = generations.get(name) ?? 0;
+      return fileSystem.readFile(secretPath).pipe(
+        Effect.map((bytes) => {
+          const copy = Uint8Array.from(bytes);
+          if ((generations.get(name) ?? 0) === startGen) {
+            cache.set(name, Option.some(copy));
+          }
+          return Option.some(Uint8Array.from(copy));
+        }),
+        Effect.catch((cause) => {
+          if (cause.reason._tag !== "NotFound") {
+            return Effect.fail(
+              new SecretStoreReadError({
+                resource: `secret ${name}`,
+                cause,
+              }),
+            );
+          }
+          if ((generations.get(name) ?? 0) === startGen) {
+            cache.set(name, Option.none());
+          }
+          return Effect.succeedNone;
+        }),
+      );
+    });
+
+  const readUncached = (name: string): Effect.Effect<Option.Option<Uint8Array>, SecretStoreError> =>
+    resolveSecretPath(name).pipe(
+      Effect.flatMap((secretPath) => readAtPath(name, secretPath)),
+      Effect.withSpan("ServerSecretStore.get", { attributes: routineSpan }),
+    );
 
   const get: ServerSecretStore["Service"]["get"] = (name) =>
     resolveSecretPath(name).pipe(
-      Effect.flatMap((secretPath) =>
-        fileSystem.readFile(secretPath).pipe(
-          Effect.map((bytes) => Option.some(Uint8Array.from(bytes))),
-          Effect.catch((cause) =>
-            cause.reason._tag === "NotFound"
-              ? Effect.succeedNone
-              : Effect.fail(
-                  new SecretStoreReadError({
-                    resource: `secret ${name}`,
-                    cause,
-                  }),
-                ),
-          ),
-        ),
-      ),
+      Effect.flatMap((secretPath) => {
+        const cached = cache.get(name);
+        if (cached !== undefined) {
+          return Effect.succeed(copyOptionBytes(cached));
+        }
+        return readAtPath(name, secretPath);
+      }),
       Effect.withSpan("ServerSecretStore.get", { attributes: routineSpan }),
     );
 
   const set: ServerSecretStore["Service"]["set"] = (name, value) =>
     resolveSecretPath(name).pipe(
-      Effect.flatMap((secretPath) => setAt(name, secretPath, value)),
+      Effect.flatMap((secretPath) => {
+        const copy = Uint8Array.from(value);
+        const writeGen = bumpGeneration(name);
+        return setAt(name, secretPath, copy).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              if ((generations.get(name) ?? 0) === writeGen) {
+                cache.set(name, Option.some(copy));
+              } else {
+                cache.delete(name);
+              }
+            }),
+          ),
+        );
+      }),
       Effect.withSpan("ServerSecretStore.set"),
     );
 
@@ -254,7 +306,31 @@ export const make = Effect.gen(function* () {
   // `link` publishes the fully written temp file under the final name, or fails with
   // AlreadyExists, so a concurrent reader never observes a partially written secret.
   const create: ServerSecretStore["Service"]["create"] = (name, value) =>
-    resolveSecretPath(name).pipe(Effect.flatMap((secretPath) => createAt(name, secretPath, value)));
+    resolveSecretPath(name).pipe(
+      Effect.flatMap((secretPath) => {
+        const copy = Uint8Array.from(value);
+        const writeGen = bumpGeneration(name);
+        return createAt(name, secretPath, copy).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              if ((generations.get(name) ?? 0) === writeGen) {
+                cache.set(name, Option.some(copy));
+              } else {
+                cache.delete(name);
+              }
+            }),
+          ),
+          Effect.tapError((error) =>
+            Effect.sync(() => {
+              if (isSecretAlreadyExistsError(error)) {
+                bumpGeneration(name);
+                cache.delete(name);
+              }
+            }),
+          ),
+        );
+      }),
+    );
 
   const createAt = (name: string, secretPath: string, value: Uint8Array) =>
     crypto.uuidV4().pipe(
@@ -292,12 +368,15 @@ export const make = Effect.gen(function* () {
 
   const getOrCreateRandom: ServerSecretStore["Service"]["getOrCreateRandom"] = (name, bytes) =>
     get(name).pipe(
+      // Empty secrets trigger concurrent repair barriers; re-read from disk before taking
+      // the repair permit so racing callers observe the same persisted empty file first.
+      Effect.filterOrElse(isMissingOrNonEmpty, () => readUncached(name)),
       // Older builds could persist a 0-byte secret, which is never a usable key. Re-read under
       // the permit, and keep it until an interrupted removal settles, so a caller that saw the
       // empty file cannot remove a key another caller created.
       Effect.filterOrElse(isMissingOrNonEmpty, () =>
         emptySecretRepair.withPermits(1)(
-          get(name).pipe(
+          readUncached(name).pipe(
             Effect.filterOrElse(isMissingOrNonEmpty, () =>
               remove(name).pipe(Effect.as(Option.none<Uint8Array>())),
             ),
@@ -322,7 +401,7 @@ export const make = Effect.gen(function* () {
                   Effect.as(Uint8Array.from(generated)),
                   Effect.catchIf(isSecretStoreError, (error) =>
                     isSecretAlreadyExistsError(error)
-                      ? get(name).pipe(
+                      ? readUncached(name).pipe(
                           Effect.flatMap(
                             Option.match({
                               onSome: Effect.succeed,
@@ -347,8 +426,9 @@ export const make = Effect.gen(function* () {
 
   const remove: ServerSecretStore["Service"]["remove"] = (name) =>
     resolveSecretPath(name).pipe(
-      Effect.flatMap((secretPath) =>
-        fileSystem.remove(secretPath).pipe(
+      Effect.flatMap((secretPath) => {
+        const writeGen = bumpGeneration(name);
+        return fileSystem.remove(secretPath).pipe(
           Effect.catch((cause) =>
             cause.reason._tag === "NotFound"
               ? Effect.void
@@ -359,8 +439,17 @@ export const make = Effect.gen(function* () {
                   }),
                 ),
           ),
-        ),
-      ),
+          Effect.tap(() =>
+            Effect.sync(() => {
+              if ((generations.get(name) ?? 0) === writeGen) {
+                cache.set(name, Option.none());
+              } else {
+                cache.delete(name);
+              }
+            }),
+          ),
+        );
+      }),
       Effect.withSpan("ServerSecretStore.remove"),
     );
 

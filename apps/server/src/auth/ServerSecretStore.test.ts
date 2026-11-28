@@ -272,4 +272,59 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerSecretStor
       assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "PermissionDenied");
     }).pipe(Effect.provide(layerRenameFailureSecretStore())),
   );
+
+  it.effect("caches reads in memory and refreshes cached values on write and remove", () =>
+    Effect.gen(function* () {
+      let secretReads = 0;
+      const encode = (value: string) => new TextEncoder().encode(value);
+      const layerCountingFileSystem = Layer.effect(
+        FileSystem.FileSystem,
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          return {
+            ...fileSystem,
+            readFile: (path) => {
+              if (/[\\/]cached-secret\.bin$/.test(String(path))) {
+                secretReads += 1;
+              }
+              return fileSystem.readFile(path);
+            },
+          } satisfies FileSystem.FileSystem;
+        }),
+      ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+
+      const layerCountingStore = ServerSecretStore.layer.pipe(
+        Layer.provide(layerServerConfig()),
+        Layer.provideMerge(layerCountingFileSystem),
+      );
+
+      yield* Effect.gen(function* () {
+        const secretStore = yield* ServerSecretStore.ServerSecretStore;
+
+        // First missing read hits disk once, then stays cached as None.
+        assert.isTrue(Option.isNone(yield* secretStore.get("cached-secret")));
+        assert.isTrue(Option.isNone(yield* secretStore.get("cached-secret")));
+        assert.equal(secretReads, 1);
+
+        // `create` and `set` populate the cache so reads never re-hit disk.
+        yield* secretStore.create("cached-secret", encode("initial"));
+        const firstRead = Option.getOrThrow(yield* secretStore.get("cached-secret"));
+        assert.equal(new TextDecoder().decode(firstRead), "initial");
+        // Mutating the caller's slice must not corrupt the cached secret.
+        firstRead[0] = 0;
+        const secondRead = Option.getOrThrow(yield* secretStore.get("cached-secret"));
+        assert.equal(new TextDecoder().decode(secondRead), "initial");
+        assert.equal(secretReads, 1);
+
+        yield* secretStore.set("cached-secret", encode("updated"));
+        const updatedRead = Option.getOrThrow(yield* secretStore.get("cached-secret"));
+        assert.equal(new TextDecoder().decode(updatedRead), "updated");
+        assert.equal(secretReads, 1);
+
+        yield* secretStore.remove("cached-secret");
+        assert.isTrue(Option.isNone(yield* secretStore.get("cached-secret")));
+        assert.equal(secretReads, 1);
+      }).pipe(Effect.provide(layerCountingStore));
+    }),
+  );
 });

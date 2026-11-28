@@ -365,4 +365,57 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
       }).pipe(Effect.provide(layerTest));
     }),
   );
+
+  it.effect("serves repeated getDescriptor calls without re-reading secret files from disk", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-cache-test-",
+      });
+      let secretReads = 0;
+      const layerCountingFileSystem = Layer.effect(
+        FileSystem.FileSystem,
+        Effect.succeed({
+          ...fileSystem,
+          readFile: (path) => {
+            if (String(path).includes("cloud-")) {
+              secretReads += 1;
+            }
+            return fileSystem.readFile(path);
+          },
+        } satisfies FileSystem.FileSystem),
+      );
+      const layerTest = Layer.mergeAll(
+        ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer)),
+        ServerSecretStore.layer,
+      ).pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+        Layer.provide(layerCountingFileSystem),
+      );
+
+      yield* Effect.gen(function* () {
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        const encode = (value: string) => new TextEncoder().encode(value);
+
+        const first = yield* serverEnvironment.getDescriptor;
+        expect(first.capabilities.agentActivityPublishing).toBe(false);
+        const readsAfterColdProbe = secretReads;
+        expect(readsAfterColdProbe).toBe(3);
+
+        // Subsequent descriptor probes hit memory and never touch disk again.
+        const second = yield* serverEnvironment.getDescriptor;
+        expect(second.capabilities.agentActivityPublishing).toBe(false);
+        expect(secretReads).toBe(readsAfterColdProbe);
+
+        // Updating secrets refreshes the cache in memory; descriptor stays off disk.
+        yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("true"));
+        yield* secrets.set(RELAY_URL_SECRET, encode("https://relay.example"));
+        yield* secrets.set(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, encode("credential"));
+        const updated = yield* serverEnvironment.getDescriptor;
+        expect(updated.capabilities.agentActivityPublishing).toBe(true);
+        expect(secretReads).toBe(readsAfterColdProbe);
+      }).pipe(Effect.provide(layerTest));
+    }),
+  );
 });
