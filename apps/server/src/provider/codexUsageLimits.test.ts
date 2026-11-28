@@ -16,6 +16,29 @@ import {
 const checkedAt = "2026-07-18T10:00:00.000Z";
 
 describe("codexRateLimitsToLimits", () => {
+  it("keeps each available expiry in order without changing count-only balances", () => {
+    const limits = codexRateLimitsToLimits({
+      checkedAt,
+      snapshot: {},
+      resetCredits: {
+        availableCount: 3,
+        credits: [
+          { status: "available", expiresAt: 1_784_500_000 },
+          { status: "available", expiresAt: 1_784_000_000 },
+          { status: "redeemed", expiresAt: 1_783_000_000 },
+          { status: "available" },
+        ],
+      },
+    });
+    expect(limits.resetCredits).toEqual({
+      availableCount: 3,
+      nextExpiresAt: "2026-07-14T03:33:20.000Z",
+      expiries: ["2026-07-14T03:33:20.000Z", "2026-07-19T22:26:40.000Z"],
+    });
+    expect(codexRateLimitsToLimits({ checkedAt, snapshot: {}, resetCredits: { availableCount: 2 } }).resetCredits)
+      .toEqual({ availableCount: 2 });
+  });
+
   it("shows an Enterprise monthly credit allowance in reads and notifications without a duration", () => {
     const snapshot = {
       limitId: "codex",

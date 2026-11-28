@@ -30,12 +30,16 @@ export const ServerProviderResetCreditOption = Schema.Struct({
   description: TrimmedNonEmptyString,
   availableCount: NonNegativeInt,
   expiresAt: Schema.optional(IsoDateTime),
+  /** Known expiries of individual banked resets, soonest first (up to 20). */
+  expiries: Schema.optional(ForwardCompatibleArray(IsoDateTime)),
 });
 export type ServerProviderResetCreditOption = typeof ServerProviderResetCreditOption.Type;
 
 export const ServerProviderResetCredits = Schema.Struct({
   availableCount: NonNegativeInt,
   nextExpiresAt: Schema.optional(IsoDateTime),
+  /** Known expiries of individual banked resets, soonest first (up to 20). */
+  expiries: Schema.optional(ForwardCompatibleArray(IsoDateTime)),
   /** Pins hub redemption to the displayed credit, including retries from another client. */
   nextCreditId: Schema.optional(TrimmedNonEmptyString),
   /** Present when resets differ in what they refill; redeem one by its `creditId`. */

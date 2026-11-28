@@ -38,7 +38,7 @@ import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { PaceIcon, ResetCreditDialog, barColor, usePaceMark, useResetCredit } from "./UsageLimits";
+import { PaceIcon, ResetCreditDialog, ResetCreditExpiries, barColor, usePaceMark, useResetCredit } from "./UsageLimits";
 import {
   collectExternalUsageLinks,
   collectLimitNotices,
@@ -218,7 +218,8 @@ function SegmentPopover({
       {choices.length > 0 && redeem ? (
         <div className="flex flex-col gap-1.5 border-t border-border/60 pt-2.5 text-muted-foreground">
           {choices.map((choice) => (
-            <span key={choice.key} className="flex items-center gap-3">
+            <div key={choice.key} className="flex flex-col gap-1">
+              <span className="flex items-center gap-3">
               <span className="tabular-nums">{choice.summary}</span>
               {choice.availableCount > 0 ? (
                 <Button
@@ -231,7 +232,9 @@ function SegmentPopover({
                   {redeem.busy ? gt("Using…") : choice.actionLabel}
                 </Button>
               ) : null}
-            </span>
+              </span>
+              <ResetCreditExpiries expiries={choice.expiries} now={now} />
+            </div>
           ))}
         </div>
       ) : null}

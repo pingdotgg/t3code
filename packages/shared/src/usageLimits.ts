@@ -11,6 +11,7 @@ import {
   isProviderAvailable,
   PROVIDER_DISPLAY_NAMES,
   type ServerProvider,
+  type ServerProviderResetCredits,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceAccount,
@@ -805,6 +806,11 @@ function paceOfShares(usedPercent: number, elapsed: number): LimitPace {
   return "on";
 }
 
+/** Bound expiry details on the existing usage-poll payload. */
+export function resetCreditExpiries(expiries: readonly string[]): readonly string[] {
+  return expiries.filter((at) => Number.isFinite(Date.parse(at))).sort().slice(0, 20);
+}
+
 /** One redeemable reset as clients offer it; `input` already names the chosen credit. */
 export interface ResetCreditChoice {
   readonly key: string;
@@ -813,6 +819,7 @@ export interface ResetCreditChoice {
   readonly confirmDescription: string;
   readonly availableCount: number;
   readonly input: ProviderConsumeResetCreditInput;
+  readonly expiries?: ServerProviderResetCredits["expiries"];
 }
 
 export type ResetCountdown =

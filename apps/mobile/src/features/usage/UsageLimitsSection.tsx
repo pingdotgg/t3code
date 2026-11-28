@@ -18,7 +18,7 @@ import {
   remainingPercent,
   resetCountdown,
 } from "@t3tools/shared/usageLimits";
-import { formatDuration, limitsNotice, resetCreditChoices } from "@t3tools/shared/usageLimitsCopy";
+import { formatDuration, limitsNotice, resetCreditChoices, resetCreditExpiryText } from "@t3tools/shared/usageLimitsCopy";
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
 import { type ReactNode, useContext, useRef, useState } from "react";
 import { Atom } from "effect/reactivity";
@@ -33,6 +33,7 @@ import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNowMinuteMs } from "../../lib/clock";
+import { useMessageTimeFormatter } from "../threads/useMessageTimeFormatter";
 import {
   environmentIdsKey,
   limitsAutoRefreshSetAtom,
@@ -252,6 +253,7 @@ export function ResetCredits(props: {
   readonly dense?: boolean;
 }) {
   const { environmentId, input, credits, now, dense = false } = props;
+  const formatTimestamp = useMessageTimeFormatter();
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
     reportFailure: false,
@@ -312,6 +314,16 @@ export function ResetCredits(props: {
                   : choice.actionLabel}
               </Text>
             </Pressable>
+          ) : null}
+          {choice.expiries?.length ? (
+            <View className="w-full gap-0.5">
+              {choice.expiries.map((at, index) => (
+                // oxlint-disable-next-line react/no-array-index-key -- Identical expiry timestamps have no individual identity; these rows contain only text.
+                <Text key={`${at}:${index}`} className="text-xs tabular-nums text-foreground-tertiary">
+                  {resetCreditExpiryText(at, now, (at) => formatTimestamp(at, now), m)}
+                </Text>
+              ))}
+            </View>
           ) : null}
         </View>
       ))}

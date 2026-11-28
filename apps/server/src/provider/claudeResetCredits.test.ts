@@ -68,6 +68,7 @@ describe("claudeResetCreditsToContract", () => {
           label: "Full reset",
           availableCount: 2,
           expiresAt: "2026-10-01T00:00:00.000Z",
+          expiries: ["2026-10-01T00:00:00.000Z", "2026-10-01T00:00:00.000Z"],
         }),
       ],
     });

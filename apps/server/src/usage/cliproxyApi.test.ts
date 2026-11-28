@@ -213,8 +213,8 @@ describe("CLIProxyAPI built-in management API", () => {
         const api = yield* test.api;
         const { accounts: result } = yield* api.readAccounts(config);
         expect(result.map((account) => account.usageLimits.resetCredits)).toEqual([
-          { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z" },
-          { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z" },
+          { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z", expiries: ["2099-01-01T00:00:00.000Z", "2099-02-01T00:00:00.000Z"] },
+          { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z", expiries: ["2099-01-01T00:00:00.000Z", "2099-02-01T00:00:00.000Z"] },
         ]);
         expect(result[0]?.usageLimits.windows).toMatchObject([
           { id: "secondary", usedPercent: 78, kind: "weekly" },
