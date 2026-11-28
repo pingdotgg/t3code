@@ -1123,6 +1123,34 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   // starts the script of the hook's name one directory up.
   const SHIM_FOR_SCRIPT_ABOVE = '#!/usr/bin/env sh\n. "$(dirname "$0")/h"';
 
+  // How husky 9.1's and Vite+'s runner starts. It ends there, having run nothing, when the
+  // script is not a file: the usual case, as the shim is installed for each hook they know.
+  const RUNNER_START = [
+    "#!/usr/bin/env sh",
+    'n=$(basename "$0")',
+    's=$(dirname "$(dirname "$0")")/$n',
+    '[ ! -f "$s" ] && exit 0',
+  ];
+  const RUNNER_TRACING = new Set([
+    '[ "$HUSKY" = "2" ] && set -x',
+    '{ [ "$HUSKY" = "2" ] || [ "$VP_GIT_HOOKS" = "2" ] || [ "$VITE_GIT_HOOKS" = "2" ]; } && set -x',
+  ]);
+  /** Comments, blank lines and the tracing switch aside, the runner starts as above. */
+  const runnerEndsWithoutScript = (runner: string) => {
+    const lines = runner.split("\n");
+    const end = lines.indexOf(RUNNER_START.at(-1)!);
+    const start = lines
+      .slice(0, end + 1)
+      .filter(
+        (line, index) =>
+          line !== "" && (index === 0 || !line.startsWith("#")) && !RUNNER_TRACING.has(line),
+      );
+    return (
+      start.length === RUNNER_START.length &&
+      start.every((line, index) => line === RUNNER_START[index])
+    );
+  };
+
   /** A `hook.<name>` section of Git's configuration: Git 2.54 and later run these beside the hook files. */
   interface ConfiguredHook {
     readonly name: string;
@@ -1234,18 +1262,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
     const hooks: Array<{ readonly name: string; readonly file: string }> = [];
     const covered = new Map<string, Uint8Array>();
+    const decoder = new TextDecoder();
     for (const name of PUSH_HOOK_NAMES) {
       const file = path.join(hooksDir, name);
       const contents = yield* read(file, true);
       if (contents === null) continue;
+      const isShim =
+        decoder.decode(contents).replaceAll("\r\n", "\n").trim() === SHIM_FOR_SCRIPT_ABOVE;
+      const runnerFile = path.join(hooksDir, "h");
+      const scriptFile = path.join(path.dirname(hooksDir), name);
+      const runner = isShim ? yield* read(runnerFile, false) : null;
+      const script = isShim ? yield* read(scriptFile, false) : null;
+      // Git starts the shim and nothing comes of it: not a hook to ask a person about.
+      if (runner !== null && script === null && runnerEndsWithoutScript(decoder.decode(runner))) {
+        continue;
+      }
       hooks.push({ name, file });
       covered.set(file, contents);
-      const text = new TextDecoder().decode(contents).replaceAll("\r\n", "\n").trim();
-      if (text !== SHIM_FOR_SCRIPT_ABOVE) continue;
-      for (const named of [path.join(hooksDir, "h"), path.join(path.dirname(hooksDir), name)]) {
-        const more = yield* read(named, false);
-        if (more !== null) covered.set(named, more);
-      }
+      if (runner !== null) covered.set(runnerFile, runner);
+      if (script !== null) covered.set(scriptFile, script);
     }
     const configured = yield* readConfiguredHooks(cwd);
     const onPush = configured.filter((hook) => hook.pushEvents.length > 0);

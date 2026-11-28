@@ -99,7 +99,9 @@ model.
   Windows has no such permission and is not checked. The digest covers what it names and no more: each configured
   hook's name, command and the points of the push that start it, each hook file Git starts and, where that file is the shim husky 9
   and Vite+ install (`. "$(dirname "$0")/h"`), the runner `h` beside it and the script of the
-  hook's name one directory up, such as `.husky/pre-push`. A named file edited after that last
+  hook's name one directory up, such as `.husky/pre-push`. Both install that shim for each hook
+  they know, so one whose script is missing is no hook at all, provided the runner is one known to
+  end before it runs anything in that case; any other runner keeps it a hook. A named file edited after that last
   read and before Git starts it runs as edited, as does a configured hook added in that time.
   Only hooks are limited: other programs Git's configuration can name for a push, such as
   `core.sshCommand`, a credential helper or a remote helper, run as configured.
@@ -109,7 +111,12 @@ model.
   be safe to run from the start twice. It reads that reply before any push
   (`McpClientInput.answered`): a decline pushes nothing, whatever the hooks are by then. A call
   asks at most three times; the request's state carries the count, so it holds across a
-  sessionless client's calls. A client that cannot be asked gets the push with hooks off.
+  sessionless client's calls. A client that cannot be asked gets the push with hooks off. So does
+  a thread whose adapter shows none of T3 Code's own requests (all but Claude and Codex): the
+  person never sees the request, so only the agent could answer it, and some declare elicitation
+  and answer it themselves. So does a sessionless client that reaches the tool through
+  `tool_call`: Effect's `callTool` hands on neither the request nor the reply, so the proxied
+  tool is told the client takes no elicitation.
   The Claude and Codex adapters never answer a request T3 Code's own tool made, whatever the
   turn's runtime mode and whatever was allowed for the session: it always reaches the person.
   In those threads the approval is the person's answer in the app, not the client's reply. The
@@ -121,9 +128,8 @@ model.
   or one that is gone because the server restarted or the thread's session was replaced, pushes
   nothing: the tool fails saying T3 Code has no approval from the person, and the next call
   asks again. A decline or cancel in the reply pushes nothing whatever the app recorded.
-  For a client T3 Code shows no request for (an outside MCP client that declared elicitation,
-  or a provider whose adapter does not pass on the person's answer), the client's reply is all
-  there is and is taken as the person's answer.
+  For an outside MCP client that declared elicitation, the client's reply is all there is and is
+  taken as the person's answer.
   What those files go on to run, such as a package script or a file they source, is not part of
   the digest, so an approval is for the named files and not for everything the push executes.
 - **Peer-link client pairing.** Only a full-access peer link may mint a one-time client pairing on

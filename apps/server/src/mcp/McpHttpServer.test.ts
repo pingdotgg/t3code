@@ -1125,22 +1125,25 @@ it.effect(
         );
         let runs = 0;
         const layerServer = McpHttpServer.layerMcpTransport(
-          McpHttpServer.toolkitRegistration(
-            AskToolkit,
-            McpToolAccess.toLayer(AskToolkit, {
-              ask: McpToolAccess.reads(() =>
-                Effect.sync(() => runs++).pipe(
-                  Effect.andThen(
-                    McpClientInput.askApproval({
-                      key: "go",
-                      state: "state-1",
-                      message: "Run it?",
-                    }),
+          Layer.mergeAll(
+            McpHttpServer.toolkitRegistration(
+              AskToolkit,
+              McpToolAccess.toLayer(AskToolkit, {
+                ask: McpToolAccess.reads(() =>
+                  Effect.sync(() => runs++).pipe(
+                    Effect.andThen(
+                      McpClientInput.askApproval({
+                        key: "go",
+                        state: "state-1",
+                        message: "Run it?",
+                      }),
+                    ),
+                    Effect.map((answer) => ({ answer })),
                   ),
-                  Effect.map((answer) => ({ answer })),
                 ),
-              ),
-            }),
+              }),
+            ),
+            McpHttpServer.layerToolSearch,
           ),
         ).pipe(
           Layer.provide(ServerSettings.layerTest()),
@@ -1162,13 +1165,17 @@ it.effect(
         const httpClient = (yield* HttpClient.HttpClient).pipe(
           HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
         );
-        const call = (clientCapabilities: object, continuation: object = {}) =>
+        const call = (
+          clientCapabilities: object,
+          continuation: object = {},
+          through: "ask" | "tool_call" = "ask",
+        ) =>
           httpClient
             .post("/mcp", {
               headers: {
                 accept: "application/json, text/event-stream",
                 "mcp-method": "tools/call",
-                "mcp-name": "ask",
+                "mcp-name": through,
                 "mcp-protocol-version": "2026-07-28",
               },
               body: HttpBody.text(
@@ -1177,8 +1184,8 @@ it.effect(
                   id: 1,
                   method: "tools/call",
                   params: {
-                    name: "ask",
-                    arguments: {},
+                    name: through,
+                    arguments: through === "ask" ? {} : { name: "ask", arguments: {} },
                     ...continuation,
                     _meta: {
                       "io.modelcontextprotocol/protocolVersion": "2026-07-28",
@@ -1226,7 +1233,12 @@ it.effect(
         expect(yield* call({ elicitation: { url: {} } })).toMatchObject({
           structuredContent: { answer: "unavailable" },
         });
-        expect(runs).toBe(6);
+        // tool_call cannot hand on the question: the tool learns the client cannot be asked,
+        // not that the person declined.
+        expect(yield* call(canAsk, {}, "tool_call")).toMatchObject({
+          structuredContent: { answer: "unavailable" },
+        });
+        expect(runs).toBe(7);
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

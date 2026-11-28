@@ -54,9 +54,9 @@ const threadRequests = Effect.gen(function* () {
 });
 
 /**
- * Ends the request `id` and reads the client's "accept" for it. Where the thread's adapter shows
- * T3 Code's own requests, only the person's answer in the app, for this request and `state`, is
- * an approval, and a request that is gone has none. Any other client's reply is all there is.
+ * Ends the request `id` and reads the client's "accept" for it. In a thread only the person's
+ * answer in the app, for this request and `state`, is an approval, and a request that is gone
+ * has none. A client's reply outside a thread is all there is.
  */
 const accepted = Effect.fnUntraced(function* (id: string | undefined, state?: string) {
   const requests = yield* threadRequests;
@@ -64,9 +64,6 @@ const accepted = Effect.fnUntraced(function* (id: string | undefined, state?: st
   const { sessions, thread } = requests;
   const request =
     id === undefined ? undefined : yield* sessions.takeApprovalRequest(thread.threadId, id);
-  if (!(yield* sessions.areApprovalRequestsShown(thread.providerInstanceId))) {
-    return "accepted" as const;
-  }
   return request?.approved === true && (state === undefined || request.state === state)
     ? ("accepted" as const)
     : ("unconfirmed" as const);
@@ -115,6 +112,14 @@ export const askApproval = Effect.fn("McpClientInput.askApproval")(function* (in
   const params = { mode: "form", message: input.message, requestedSchema: consentForm } as const;
   const pending = Option.getOrUndefined(yield* Effect.serviceOption(McpClientInput));
   const requests = yield* threadRequests;
+  // A thread's person sees only what its adapter shows. Where it shows none of T3 Code's own
+  // requests, an agent that declares elicitation can only answer it itself.
+  if (
+    requests !== undefined &&
+    !(yield* requests.sessions.areApprovalRequestsShown(requests.thread.providerInstanceId))
+  ) {
+    return "unavailable";
+  }
   // A thread's client hands its adapter the message and a server name to show. The request is
   // left with the thread's MCP session too, so the adapter knows T3 Code asked it and what it
   // names, and has where to leave the person's answer.
