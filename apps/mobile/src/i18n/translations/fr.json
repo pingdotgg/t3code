@@ -5739,7 +5739,7 @@
   "175fd48b1f788f46": "Autorisez l'accès à l'utilisation pour afficher les limites de cet agent.",
   "e374560884a7e12b": "{environment} · {detail}",
   "04ce6b74fccf8b83": "Afficher l’utilisation des agents ?",
-  "58ee58317a1ff1c6": "T3 Code lit ces données auprès de chaque agent pour afficher le coût, les tokens et les limites.",
+  "e38d50448a1f4929": "Choisissez les agents que T3 Code peut lire.",
   "0ef08693f1224444": "Historique de sessions et connexion",
   "bb9866823586b67a": "Base de données d’utilisation et clé Go",
   "8380d6f1828fe191": "Historique de conversations",

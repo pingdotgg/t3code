@@ -13,7 +13,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { T, useGT, useMessages } from "gt-react";
-import { ChartColumnIcon } from "lucide-react";
 import { useState } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -32,14 +31,6 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "../ui/empty";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 
@@ -206,7 +197,7 @@ function UsageAccessTitle() {
 }
 
 function UsageAccessIntro() {
-  return <T>T3 Code reads this from each agent to chart cost, tokens, and limits.</T>;
+  return <T>Pick which agents T3 Code may read.</T>;
 }
 
 function UsageAccessActions({ choices }: { readonly choices: UsageAccessChoices }) {
@@ -237,32 +228,28 @@ export function UsageAccessQuestion({
 }) {
   const choices = useUsageAccessChoices(prompts, () => {});
   return (
-    <Empty role="region" aria-labelledby="usage-access-title" className="min-h-[min(34rem,70vh)]">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <ChartColumnIcon />
-        </EmptyMedia>
-        <EmptyTitle id="usage-access-title" role="heading" aria-level={2}>
+    <section
+      aria-labelledby="usage-access-title"
+      className="mx-auto flex min-h-[min(34rem,70vh)] w-full max-w-sm flex-col justify-center gap-5"
+    >
+      <div className="flex flex-col gap-1">
+        <h2 id="usage-access-title" className="text-xl leading-snug font-semibold">
           <UsageAccessTitle />
-        </EmptyTitle>
-        <EmptyDescription>
+        </h2>
+        <p className="text-sm text-muted-foreground">
           <UsageAccessIntro />
-        </EmptyDescription>
-      </EmptyHeader>
-      <EmptyContent>
-        <div className="w-full text-start">
-          <UsageAccessRows
-            prompts={prompts}
-            declined={choices.declined}
-            disabled={choices.saving}
-            onToggle={choices.toggle}
-          />
-        </div>
-        <div className="flex gap-2">
-          <UsageAccessActions choices={choices} />
-        </div>
-      </EmptyContent>
-    </Empty>
+        </p>
+      </div>
+      <UsageAccessRows
+        prompts={prompts}
+        declined={choices.declined}
+        disabled={choices.saving}
+        onToggle={choices.toggle}
+      />
+      <div className="flex justify-end gap-2">
+        <UsageAccessActions choices={choices} />
+      </div>
+    </section>
   );
 }
 

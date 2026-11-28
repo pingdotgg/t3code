@@ -5747,7 +5747,7 @@
   "175fd48b1f788f46": "Zezwól na dostęp do użycia, aby zobaczyć limity tego agenta.",
   "e374560884a7e12b": "{environment} · {detail}",
   "04ce6b74fccf8b83": "Pokazać użycie agentów?",
-  "58ee58317a1ff1c6": "T3 Code odczytuje to z każdego agenta, aby pokazać wykresy kosztów, tokenów i limitów.",
+  "e38d50448a1f4929": "Wybierz, których agentów T3 Code może odczytywać.",
   "0ef08693f1224444": "Historia sesji i dane logowania",
   "bb9866823586b67a": "Baza danych użycia i klucz Go",
   "8380d6f1828fe191": "Historia konwersacji",
