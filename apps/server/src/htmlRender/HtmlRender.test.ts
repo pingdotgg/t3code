@@ -113,6 +113,7 @@ describe("HtmlRender", () => {
         "<script>box.innerHTML = \"<div style='height:100vh'></div>\";</script>",
         '<script type="text/plain" style="display:block;height:100vh">example</script>',
         `<div title=it's style="height:100vh">hi</div>`,
+        '<div data-x=foo="bar style="height:100vh">hi</div>',
       ]) {
         const error = yield* htmlRender.prepare(page).pipe(Effect.flip);
         expect(error).toBeInstanceOf(HtmlRender.HtmlRenderViewportHeightError);
@@ -131,6 +132,9 @@ describe("HtmlRender", () => {
       );
       yield* htmlRender.prepare(
         "<style-guide title=\"Example style='height:100vh'\">ok</style-guide>",
+      );
+      yield* htmlRender.prepare(
+        "<script>const markup = '<!-- <div style=\"height:100vh\"></div> -->';</script>",
       );
       yield* htmlRender.prepare(`<style>${"1".repeat(200_000)}vx</style>`);
     }).pipe(Effect.provide(layerTest)),
