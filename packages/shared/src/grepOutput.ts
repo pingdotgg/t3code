@@ -22,7 +22,7 @@ const COLON_HEADING = /^(\S.*):$/;
 const OPENCODE_NUMBERED_LINE = /^\s+Line \d+:/;
 const RIPGREP_NUMBERED_LINE = /^\d+:/;
 
-function isValidInlineMatch(line: string): boolean {
+function isValidInlineMatch(line: string) {
   const match = PATH_LINE_TEXT.exec(line);
   return match !== null && Number(match[2]) >= 1;
 }
