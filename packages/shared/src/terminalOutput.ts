@@ -339,9 +339,9 @@ function escapeLength(input: string, index: number): number {
     return -1;
   }
   if (STRING_SEQUENCE_INTRODUCERS.has(next)) {
-    // BEL/ST ends string sequences; also stop at newlines so stray binary introducers cannot hide later output.
+    // ST (and BEL for OSC) ends string sequences; also stop at newlines so stray binary introducers cannot hide later output.
     for (let cursor = index + 2; cursor < input.length; cursor += 1) {
-      if (input[cursor] === "\u0007") return cursor - index + 1;
+      if (next === "]" && input[cursor] === "\u0007") return cursor - index + 1;
       if (input[cursor] === "\u0018" || input[cursor] === "\u001a") return cursor - index + 1;
       if (input[cursor] === "\n") return cursor - index;
       // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.
