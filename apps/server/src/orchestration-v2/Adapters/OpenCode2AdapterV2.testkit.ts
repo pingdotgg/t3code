@@ -227,6 +227,10 @@ export const replayServer = (
     readonly onPrompt?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
+    /** Replaces the connection lent to every borrow after the first, as a reconnect sees it. */
+    readonly relend?: (
+      connection: OpenCode2Server.OpenCode2Connection,
+    ) => Effect.Effect<OpenCode2Server.OpenCode2Connection>;
   },
 ) =>
   Effect.gen(function* () {
@@ -256,15 +260,20 @@ export const replayServer = (
       ...(options?.external ? {} : { processExit: options?.processExit ?? Effect.never }),
     };
     const borrowers = options?.borrowers;
+    const relend = options?.relend;
+    let lent = 0;
+    const lend = Effect.suspend(() =>
+      lent++ === 0 || relend === undefined ? Effect.succeed(connection) : relend(connection),
+    );
     return OpenCode2Server.OpenCode2Server.of({
       withConnection: (use) =>
         borrowers === undefined
-          ? use(connection)
+          ? Effect.flatMap(lend, use)
           : Effect.acquireUseRelease(
               Effect.sync(() => {
                 borrowers.current += 1;
               }),
-              () => use(connection),
+              () => Effect.flatMap(lend, use),
               () =>
                 Effect.sync(() => {
                   borrowers.current -= 1;
@@ -284,6 +293,9 @@ const makeReplayAdapter = (
     readonly onPrompt?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
+    readonly relend?: (
+      connection: OpenCode2Server.OpenCode2Connection,
+    ) => Effect.Effect<OpenCode2Server.OpenCode2Connection>;
   },
 ) =>
   Effect.gen(function* () {
@@ -340,6 +352,9 @@ export const openCode2ReplayRuntime = (
     readonly onPrompt?: (input: unknown) => void;
     readonly borrowers?: { current: number };
     readonly replayGate?: ProviderReplayGate;
+    readonly relend?: (
+      connection: OpenCode2Server.OpenCode2Connection,
+    ) => Effect.Effect<OpenCode2Server.OpenCode2Connection>;
     readonly attachmentsDir?: string;
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
