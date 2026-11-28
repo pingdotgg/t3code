@@ -16,6 +16,8 @@ function dataDir() {
   return process.env.T3_EXTENSION_HOST_HOME || path.join(configHome(), 't3-extension-host');
 }
 
+const ASSETS_URL = 'https://raw.githubusercontent.com/5djr/t3code/discord-assets';
+
 const DEFAULTS = {
   extensions: '*',
   exclude: [
@@ -52,6 +54,19 @@ const DEFAULTS = {
   ignoreOutsideWorkspace: true,
   ignoreProjects: [],
   reconnectDiscordSeconds: 30,
+  discordClientId: null,
+  discordSmallImage: `${ASSETS_URL}/t3-circle-512.png`,
+  discordSmallText: 'T3 Code',
+  discordLargeImages: {
+    idle: `${ASSETS_URL}/t3-logo-512.png`,
+    working: `${ASSETS_URL}/t3-logo-512.png`,
+    editing: 'language',
+  },
+  discordStatus: {
+    idle: { details: 'Idling in T3 Code', state: '{project}', largeText: 'T3 Code' },
+    working: { details: 'Agent working in {project}', state: '{thread}', largeText: 'Agent working' },
+    editing: { details: 'Agent editing {file}', state: '{thread}', largeText: 'Editing a {language} file' },
+  },
   logLevel: 'info',
 };
 
@@ -65,6 +80,16 @@ function loadConfig() {
     if (error.code !== 'ENOENT') console.error(`Ignoring ${file}: ${error.message}`);
   }
   const config = { ...DEFAULTS, ...user, dataDir: dir, configFile: file };
+  const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+  if (isObject(user.discordLargeImages)) config.discordLargeImages = { ...DEFAULTS.discordLargeImages, ...user.discordLargeImages };
+  if (isObject(user.discordStatus)) {
+    config.discordStatus = Object.fromEntries(
+      Object.entries(DEFAULTS.discordStatus).map(([mode, texts]) => {
+        const custom = user.discordStatus[mode];
+        return [mode, custom === null ? null : isObject(custom) ? { ...texts, ...custom } : texts];
+      }),
+    );
+  }
   if (process.env.T3_EXTENSION_HOST_LOG_LEVEL) config.logLevel = process.env.T3_EXTENSION_HOST_LOG_LEVEL;
   config.logFile = path.join(dir, 'logs', 'host.log');
   config.stateDir = process.env.T3_EXTENSION_HOST_SANDBOX || dir;

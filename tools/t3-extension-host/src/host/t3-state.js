@@ -61,6 +61,23 @@ function describeFileChange(payload, root) {
   }));
 }
 
+const REQUIRED_SCHEMA = {
+  orchestration_v2_projection_runs: ['run_id', 'thread_id', 'status', 'requested_at', 'completed_at'],
+  orchestration_v2_projection_turn_items: ['turn_item_id', 'thread_id', 'run_id', 'type', 'status', 'payload_json'],
+  orchestration_v2_projection_threads: ['thread_id', 'project_id', 'title', 'payload_json', 'deleted_at', 'archived_at'],
+  projection_projects: ['project_id', 'title', 'workspace_root'],
+};
+
+function missingSchema(db) {
+  const missing = [];
+  for (const [table, columns] of Object.entries(REQUIRED_SCHEMA)) {
+    const present = new Set(db.prepare('select name from pragma_table_info(?)').all(table).map((row) => row.name));
+    if (!present.size) missing.push(table);
+    else for (const column of columns) if (!present.has(column)) missing.push(`${table}.${column}`);
+  }
+  return missing;
+}
+
 class T3State {
   constructor({ t3Home, logger }) {
     this.dbPath = path.join(t3Home, 'userdata', 'statev2.sqlite');
@@ -74,6 +91,8 @@ class T3State {
   open() {
     const db = new DatabaseSync(this.dbPath, { readOnly: true, timeout: 250 });
     try {
+      const missing = missingSchema(db);
+      if (missing.length) throw new Error(`T3 Code's database layout changed (missing ${missing.join(', ')}); update t3-extension-host`);
       this.queries = this.prepare(db);
     } catch (error) {
       db.close();

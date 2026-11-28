@@ -2,12 +2,12 @@
 
 const childProcess = require('node:child_process');
 const fs = require('node:fs');
-const net = require('node:net');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { loadConfig } = require('../config');
 const { createLogger } = require('../logger');
 const { isDiscordAvailable, readT3Runtime } = require('../runtime');
+const { installDiscordOverrides, languageName } = require('./discord');
 const { ExtensionHost, discoverAll, installVscodeModule, readDisabled, selectExtensions } = require('./extensions');
 const { FocusWatcher } = require('./focus-watcher');
 const { createGitExtension } = require('./git');
@@ -86,23 +86,6 @@ function traceHeartbeats() {
   };
 }
 
-function traceDiscord() {
-  const log = logger.child('discord');
-  const original = net.Socket.prototype.write;
-  net.Socket.prototype.write = function write(chunk, ...rest) {
-    if (Buffer.isBuffer(chunk) && chunk.length > 8 && chunk.readUInt32LE(4) === chunk.length - 8) {
-      try {
-        const frame = JSON.parse(chunk.subarray(8).toString('utf8'));
-        if (frame.cmd === 'SET_ACTIVITY') {
-          const activity = frame.args?.activity;
-          log.debug(activity ? `Presence: ${[activity.details, activity.state].filter(Boolean).join(' / ')}` : 'Presence cleared');
-        }
-      } catch {}
-    }
-    return original.call(this, chunk, ...rest);
-  };
-}
-
 class Bridge {
   constructor({ workbench, state }) {
     this.workbench = workbench;
@@ -112,6 +95,9 @@ class Bridge {
     this.lingerMs = config.editorLingerSeconds * 1000;
     this.pulseMs = config.agentPulseSeconds * 1000;
     this.threadId = null;
+    this.thread = null;
+    this.agentRunning = false;
+    this.onTick = null;
     this.lastEditAt = 0;
     this.lastEditThread = null;
     this.lastPulseAt = 0;
@@ -124,8 +110,12 @@ class Bridge {
   }
 
   focus(thread) {
-    if ((thread?.threadId ?? null) === this.threadId) return;
+    if ((thread?.threadId ?? null) === this.threadId) {
+      if (thread) this.thread = thread;
+      return;
+    }
     this.threadId = thread?.threadId ?? null;
+    this.thread = thread ?? null;
     const folder = thread && !this.isIgnored(thread) ? { root: thread.root, name: thread.projectTitle } : null;
     if (!this.workbench.setWorkspace(folder)) return;
     this.workbench.clearEditor();
@@ -173,6 +163,7 @@ class Bridge {
     this.focus(editIsRecent ? this.lastEditThread : snapshot.focus);
 
     const agentRunning = Boolean(this.threadId && snapshot.runningThreadIds.has(this.threadId));
+    this.agentRunning = agentRunning;
     this.workbench.setAgentActive(agentRunning);
     if (agentRunning) {
       if (now - this.lastPulseAt >= this.pulseMs) {
@@ -185,6 +176,23 @@ class Bridge {
 
     this.reconnectDiscord(now);
     this.logStatus();
+    try {
+      this.onTick?.();
+    } catch (error) {
+      this.log.debug(`Discord status refresh failed: ${error.message}`);
+    }
+  }
+
+  presenceContext() {
+    const doc = this.workbench.activeEditor?.document;
+    const shared = Boolean(this.workbench.workspaceRoot);
+    return {
+      mode: !this.agentRunning ? 'idle' : doc ? 'editing' : 'working',
+      project: this.workbench.workspaceName ?? 'T3 Code',
+      thread: shared ? (this.thread?.title ?? '') : '',
+      file: doc ? path.basename(doc.fileName) : '',
+      language: languageName(doc?.languageId),
+    };
   }
 
   reconnectDiscord(now) {
@@ -287,7 +295,6 @@ async function main() {
   if (SCAN_TARGET) return scan(SCAN_TARGET, { workbench, settings, registry });
 
   traceHeartbeats();
-  if (logger.isDebug) traceDiscord();
 
   const disabled = config.respectVSCodeDisabled ? readDisabled(config.vscodeStateDb) : new Set();
   const enabled = selectExtensions(config, registry, disabled);
@@ -304,6 +311,16 @@ async function main() {
 
   const state = new T3State({ t3Home: config.t3Home, logger: logger.child('t3') });
   const bridge = new Bridge({ workbench, state });
+  bridge.onTick = await installDiscordOverrides({
+    clientId: config.discordClientId,
+    smallImage: config.discordSmallImage,
+    smallText: config.discordSmallText,
+    largeImages: config.discordLargeImages,
+    status: config.discordStatus,
+    getContext: () => bridge.presenceContext(),
+    cacheDir: config.stateDir,
+    logger: logger.child('discord'),
+  });
   let lastPollError = null;
   const poll = () => {
     try {

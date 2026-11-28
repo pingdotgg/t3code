@@ -13,5 +13,21 @@
   "ignoreOutsideWorkspace": true,
   "ignoreProjects": ["No project"],
   "reconnectDiscordSeconds": 30,
+  // Application ID from https://discord.com/developers/applications; Discord shows that app's name.
+  "discordClientId": null,
+  "discordSmallImage": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-circle-512.png",
+  "discordSmallText": "T3 Code",
+  // "language" keeps the file-type icon.
+  "discordLargeImages": {
+    "idle": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-logo-512.png",
+    "working": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/t3-logo-512.png",
+    "editing": "language"
+  },
+  // Placeholders: {project}, {thread}, {file}, {language}. Only list what you change.
+  "discordStatus": {
+    "idle": { "details": "Idling in T3 Code", "state": "{project}", "largeText": "T3 Code" },
+    "working": { "details": "Agent working in {project}", "state": "{thread}", "largeText": "Agent working" },
+    "editing": { "details": "Agent editing {file}", "state": "{thread}", "largeText": "Editing a {language} file" }
+  },
   "logLevel": "info"
 }

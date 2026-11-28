@@ -83,13 +83,18 @@ Optional files in `%APPDATA%\t3-extension-host\`:
 | `ignoreOutsideWorkspace` | `true` | Ignore agent edits outside the thread's project or worktree |
 | `ignoreProjects` | `[]` | T3 project titles to ignore completely, e.g. `["No project"]` |
 | `reconnectDiscordSeconds` | `30` | Retry Discord automatically if it wasn't running when T3 started (`0` to disable) |
+| `discordClientId` | `null` | Application ID of your own Discord application. Discord shows that application's name (for example "T3 Code") instead of "Visual Studio Code". Language images keep working |
+| `discordSmallImage` | Round T3 Code logo | Image link used as Discord's small image. Set to `""` to keep the extension's VS Code icon |
+| `discordSmallText` | `"T3 Code"` | Hover text of the small image |
+| `discordLargeImages` | T3 logo, T3 logo, `"language"` | Large image per mode: `idle`, `working` (agent running, no file yet) and `editing`. `"language"` keeps the file-type icon |
+| `discordStatus` | see `config.example.json` | `details`, `state` and `largeText` per mode. Placeholders: `{project}`, `{thread}`, `{file}`, `{language}`. A mode set to `null` keeps the extension's own texts. Thread titles are hidden for projects in `ignoreProjects` |
 | `logLevel` | `"info"` | `debug`, `info`, `warn` or `error` |
 
 ## Limitations
 
 - Only agent activity is tracked. Time spent reading threads or typing prompts produces no editor events.
 - Extensions report `vscode.version` as your installed VS Code version (or the newest one any extension requires), because many refuse older versions.
-- Discord Presence has VS Code's Discord application ID built in, so your profile says **Visual Studio Code**.
+- Discord Presence has VS Code's Discord application ID built in, so your profile says **Visual Studio Code** until you set `discordClientId`. Discord takes the name from the application, so it can't be changed any other way.
 - Extension state saved with `globalState` is kept separately from VS Code's, so some extensions treat their first run here as a fresh install.
 - Secrets that extensions store are kept in memory only and are gone after a restart.
 - Commands from the command palette, quick picks and input boxes can't be shown; extensions see them as cancelled.
