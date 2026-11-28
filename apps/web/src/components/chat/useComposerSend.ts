@@ -913,6 +913,8 @@ export function useComposerSend(input: ComposerSendInput) {
           },
           clearDraft: () => {
             clearComposerDraftContent(composerDraftTarget);
+            // The reply waits in the bar for the next message.
+            if (replyTo) useComposerDraftStore.getState().setReplyTo(composerDraftTarget, replyTo);
             if (currentRouteThreadKeyRef.current === routeThreadKey) {
               promptRef.current = "";
               composerRef.current?.resetCursorState();
