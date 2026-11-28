@@ -786,13 +786,72 @@ describe("EnvironmentThreads", () => {
           yield* awaitThreadState(first.observed, (value) => value.status === "deleted");
         }),
       );
-      const resumed = yield* makeHarness({ cached: BASE_PROJECTION, resumeCache });
+      const resumed = yield* makeHarness({
+        cached: BASE_PROJECTION,
+        resumeCache,
+        httpSnapshot: { _tag: "missing" },
+      });
       const state = yield* awaitThreadState(
         resumed.observed,
         (value) => value.status === "deleted",
       );
       expect(Option.isNone(state.data)).toBe(true);
-      expect(yield* Ref.get(resumed.loaderCalls)).toBe(0);
+    }),
+  );
+
+  it.effect("opens a thread a re-import recreated after an earlier mount saw it deleted", () =>
+    Effect.gen(function* () {
+      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+        snapshot: undefined,
+        owner: undefined,
+      };
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const first = yield* makeHarness({ cached: BASE_PROJECTION, resumeCache });
+          yield* Queue.offer(first.inputs, deleted(8));
+          yield* awaitThreadState(first.observed, (value) => value.status === "deleted");
+        }),
+      );
+      const resumed = yield* makeHarness({
+        resumeCache,
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: 10, projection: BASE_PROJECTION },
+        },
+      });
+      const state = yield* awaitThreadState(resumed.observed, (value) => value.status === "live");
+      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+      expect(yield* Ref.get(resumed.lastSubscribeAfterSequence)).toBe(10);
+    }),
+  );
+
+  it.effect("reloads a mounted deleted thread when a re-import recreates it", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        cached: BASE_PROJECTION,
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: 10, projection: BASE_PROJECTION },
+        },
+      });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      yield* Queue.offer(harness.inputs, deleted(8));
+      yield* awaitThreadState(harness.observed, (value) => value.status === "deleted");
+      const occurredAt = DateTime.makeUnsafe("2026-06-20T03:00:00.000Z");
+      yield* Queue.offer(harness.inputs, {
+        kind: "event",
+        sequence: 9,
+        event: {
+          id: EventId.make("event-recreated"),
+          type: "thread.created",
+          threadId: THREAD_ID,
+          occurredAt,
+          payload: { ...v2Projection.thread, updatedAt: occurredAt, deletedAt: null },
+        },
+      });
+      const state = yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
     }),
   );
 

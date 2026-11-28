@@ -590,6 +590,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     type EventApplyResult =
       | { readonly _tag: "noop" }
       | { readonly _tag: "delete" }
+      | { readonly _tag: "recreated" }
       | {
           readonly _tag: "applied";
           readonly projection: OrchestrationV2ThreadProjection;
@@ -601,7 +602,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       item: EventItem,
     ): readonly [EventApplyResult, EnvironmentThreadState] => {
       if (current.status === "deleted") {
-        return [{ _tag: "noop" }, current];
+        // A session re-import recreates a deleted thread under its id.
+        return [
+          item.event.type === "thread.created" ? { _tag: "recreated" } : { _tag: "noop" },
+          current,
+        ];
       }
       if (Option.isNone(current.data)) {
         return [
@@ -654,7 +659,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           const [applied, next] = applyEvent(current, item);
           current = next;
           if (applied._tag !== "noop") result = applied;
-          if (applied._tag === "delete") break;
+          if (applied._tag === "delete" || applied._tag === "recreated") break;
         }
         // A batch that changed nothing keeps its state object, so readers do not re-render.
         return [result, result._tag === "noop" ? current : { ...current, sequence }];
@@ -663,6 +668,17 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
     if (result._tag === "delete") {
       yield* setDeleted();
+      return;
+    }
+    if (result._tag === "recreated") {
+      yield* SubscriptionRef.set(state, {
+        data: Option.none(),
+        status: "synchronizing",
+        error: Option.none(),
+        history: EMPTY_THREAD_HISTORY_META,
+        sequence,
+      });
+      yield* Queue.offer(resubscribes, undefined);
       return;
     }
     if (result._tag === "applied" && shouldPersistThread(result.projection, result.history)) {
@@ -1078,6 +1094,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   yield* markSynchronizing;
   // A 404 can arrive before the thread exists, so a miss asks HTTP again while mounted.
   let httpMisses = 0;
+  // A deletion an earlier mount saw is checked once, since a re-import can recreate the thread.
+  let recheckDeletion = initialState.status === "deleted";
   let defectRetries = 0;
   const backOffAfterDefect = Effect.suspend(() => {
     const retryDelay = subscriptionRetryDelay(THREAD_SUBSCRIPTION_RETRY_DELAY, defectRetries);
@@ -1094,8 +1112,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
         yield* startAttempt;
         let current = yield* SubscriptionRef.get(state);
+        const rechecking = recheckDeletion;
+        recheckDeletion = false;
         // A delete event already cleared this thread. Park without opening the socket.
-        if (current.status === "deleted" && httpMisses === 0) {
+        if (current.status === "deleted" && httpMisses === 0 && !rechecking) {
           return yield* Effect.never;
         }
 
@@ -1108,6 +1128,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         // socket, so a cold open can skip the HTTP round trip.
         const socketOnly =
           Option.isNone(current.data) &&
+          current.status !== "deleted" &&
           canLoadHistory &&
           Option.exists(config, (value) => value.threadSnapshotPagination === true) &&
           !(yield* Ref.getAndSet(socketOpenTried, true));
@@ -1161,6 +1182,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               break;
             }
             case "missing": {
+              if (rechecking) return yield* Effect.never;
               if (current.status !== "deleted") yield* setDeleted();
               // A 404 also means "not created yet". Only a delete event may outlive this mount.
               if (resumeCache?.owner === owner) resumeCache.snapshot = undefined;
@@ -1174,6 +1196,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               break;
             }
           }
+        }
+        if (rechecking && current.status === "deleted") {
+          recheckDeletion = true;
+          return yield* Effect.never;
         }
 
         const sequence = yield* SubscriptionRef.get(lastSequence);
