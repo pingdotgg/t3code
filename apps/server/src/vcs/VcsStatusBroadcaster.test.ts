@@ -88,6 +88,7 @@ function layerTestFor(state: {
   backgroundWorkEnabled?: boolean;
   automaticFetchInterval?: Effect.Effect<Duration.Duration>;
   beforeRemoteStatus?: Effect.Effect<void, GitManagerError>;
+  beforeRefSnapshot?: Effect.Effect<void>;
   beforeLocalStatus?: Effect.Effect<void>;
   beforeCurrentBranch?: Effect.Effect<void>;
   beforeInvalidate?: Effect.Effect<void>;
@@ -177,7 +178,7 @@ function layerTestFor(state: {
             return localRefs === null || state.worktreeStamp === null
               ? null
               : `${localRefs}\0${state.worktreeStamp ?? ""}`;
-          }),
+          }).pipe(Effect.tap(() => state.beforeRefSnapshot ?? Effect.void)),
         upstreamDivergence: () =>
           Effect.sync(() => {
             const refName = state.currentLocalStatus.refName;
@@ -440,44 +441,109 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 
-  it.effect("refreshes queued behind a running one share the next git status read", () => {
-    const state: Parameters<typeof layerTestFor>[0] = {
-      currentLocalStatus: baseLocalStatus,
-      currentRemoteStatus: baseRemoteStatus,
-      localStatusCalls: 0,
-      remoteStatusCalls: 0,
-      localInvalidationCalls: 0,
-      remoteInvalidationCalls: 0,
-      fileSystem: FileSystem.makeNoop({ realPath: (cwd) => Effect.succeed(cwd) }),
-    };
+  it.effect.each(["turn-end", "picker"] as const)(
+    "%s refreshes queued behind a running one share the next git status read",
+    (source) => {
+      const state: Parameters<typeof layerTestFor>[0] = {
+        currentLocalStatus: baseLocalStatus,
+        currentRemoteStatus: baseRemoteStatus,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+        backgroundWorkEnabled: false,
+        fileSystem: FileSystem.makeNoop({ realPath: (cwd) => Effect.succeed(cwd) }),
+      };
 
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const refresh =
+          source === "picker"
+            ? () => broadcaster.refreshStatus("/repo", { localOnly: true })
+            : () => broadcaster.refreshLocalStatus("/repo");
+        if (source === "picker") {
+          yield* broadcaster.getStatus({ cwd: "/repo" });
+          const pull = yield* Stream.toPull(broadcaster.streamStatus({ cwd: "/repo" }));
+          yield* pull;
+          state.localStatusCalls = 0;
+        }
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        state.beforeLocalStatus = Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+        );
+        const running = yield* broadcaster
+          .refreshLocalStatus("/repo")
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(started);
+        // Requested while the first read runs, so that read may predate their change.
+        state.currentLocalStatus = { ...baseLocalStatus, hasWorkingTreeChanges: true };
+        const queued = yield* Effect.all([refresh(), refresh()], { concurrency: "unbounded" }).pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(release, undefined);
+
+        assert.isFalse((yield* Fiber.join(running)).hasWorkingTreeChanges);
+        const [second, third] = yield* Fiber.join(queued);
+        assert.isTrue(second.hasWorkingTreeChanges);
+        assert.isTrue(third.hasWorkingTreeChanges);
+        assert.strictEqual(state.localStatusCalls, 2);
+
+        yield* broadcaster.refreshLocalStatus("/repo");
+        assert.strictEqual(state.localStatusCalls, 3);
+      }).pipe(Effect.provide(layerTestFor(state)));
+    },
+  );
+
+  it.effect("cancels abandoned picker reads and keeps a follow-up with a live caller", () => {
+    const state = newState();
     return Effect.gen(function* () {
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      state.beforeLocalStatus = Deferred.succeed(started, undefined).pipe(
-        Effect.andThen(Deferred.await(release)),
+      const refsStarted = yield* Deferred.make<void>();
+      const refsInterrupted = yield* Deferred.make<void>();
+      const localStarted = yield* Deferred.make<void>();
+      const localInterrupted = yield* Deferred.make<void>();
+      state.beforeRefSnapshot = Deferred.succeed(refsStarted, undefined).pipe(
+        Effect.andThen(Effect.never),
+        Effect.onInterrupt(() => Deferred.succeed(refsInterrupted, undefined)),
       );
-      const running = yield* broadcaster
-        .refreshLocalStatus("/repo")
-        .pipe(Effect.forkScoped({ startImmediately: true }));
-      yield* Deferred.await(started);
-      // Requested while the first read runs, so that read may predate their change.
-      state.currentLocalStatus = { ...baseLocalStatus, hasWorkingTreeChanges: true };
-      const queued = yield* Effect.all(
-        [broadcaster.refreshLocalStatus("/repo"), broadcaster.refreshLocalStatus("/repo")],
-        { concurrency: "unbounded" },
-      ).pipe(Effect.forkScoped({ startImmediately: true }));
-      yield* Deferred.succeed(release, undefined);
+      state.beforeLocalStatus = Deferred.succeed(localStarted, undefined).pipe(
+        Effect.andThen(Effect.never),
+        Effect.onInterrupt(() => Deferred.succeed(localInterrupted, undefined)),
+      );
+      const refresh = broadcaster.refreshStatus("/repo", { localOnly: true });
+      const first = yield* refresh.pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* Deferred.await(refsStarted);
+      yield* Deferred.await(localStarted);
 
-      assert.isFalse((yield* Fiber.join(running)).hasWorkingTreeChanges);
-      const [second, third] = yield* Fiber.join(queued);
-      assert.isTrue(second.hasWorkingTreeChanges);
-      assert.isTrue(third.hasWorkingTreeChanges);
-      assert.strictEqual(state.localStatusCalls, 2);
+      const followUpStarted = yield* Deferred.make<void>();
+      const followUpInterrupted = yield* Deferred.make<void>();
+      const finishFollowUp = yield* Deferred.make<void>();
+      let followUpReads = 0;
+      state.beforeRefSnapshot = Effect.sync(() => {
+        followUpReads += 1;
+      }).pipe(
+        Effect.andThen(Deferred.succeed(followUpStarted, undefined)),
+        Effect.andThen(Deferred.await(finishFollowUp)),
+        Effect.onInterrupt(() => Deferred.succeed(followUpInterrupted, undefined)),
+      );
+      state.beforeLocalStatus = Effect.void;
+      const abandoned = yield* refresh.pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* Fiber.interrupt(abandoned);
+      const queued = yield* refresh.pipe(Effect.forkScoped({ startImmediately: true }));
+      const remaining = yield* refresh.pipe(Effect.forkScoped({ startImmediately: true }));
+      assert.isFalse(yield* Deferred.isDone(refsInterrupted));
+      assert.equal(followUpReads, 0);
 
-      yield* broadcaster.refreshLocalStatus("/repo");
-      assert.strictEqual(state.localStatusCalls, 3);
+      yield* Fiber.interrupt(first);
+      assert.isTrue(yield* Deferred.isDone(refsInterrupted));
+      assert.isTrue(yield* Deferred.isDone(localInterrupted));
+      yield* Deferred.await(followUpStarted);
+      yield* Fiber.interrupt(queued);
+      assert.isFalse(yield* Deferred.isDone(followUpInterrupted));
+      yield* Deferred.succeed(finishFollowUp, undefined);
+      assert.equal((yield* Fiber.join(remaining)).refName, baseLocalStatus.refName);
+      assert.equal(followUpReads, 1);
     }).pipe(Effect.provide(layerTestFor(state)));
   });
 

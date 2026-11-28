@@ -22,6 +22,7 @@ import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ChildProcessSpawner } from "effect/process";
 import { expect } from "vite-plus/test";
@@ -806,7 +807,144 @@ const layerGitManagerTest = layerGitFixtureTemplates.pipe(
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
+const layerStatusWorkflow = GitWorkflowService.layer.pipe(
+  Layer.provide(
+    VcsDriverRegistry.layer.pipe(
+      Layer.provide(VcsProjectConfig.layer),
+      Layer.provide(VcsProcess.layer),
+    ),
+  ),
+);
+
 it.layer(layerGitManagerTest)("GitManager", (it) => {
+  it.effect("bounds branch-picker ref reads and refreshes after a checkout during the burst", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cwd = yield* fs.realPath(yield* makeTempDir("t3code-branch-picker-"));
+      const sibling = yield* fs.realPath(yield* makeTempDir("t3code-linked-picker-"));
+      const alias = cwd + NodePath.sep + ".";
+      yield* initRepo(cwd);
+      yield* runGit(cwd, ["worktree", "add", "-b", "linked", sibling]);
+      const { manager } = yield* makeManager();
+      const localRead = yield* Deferred.make<void>();
+      const refsRead = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let holdMainRefresh = false;
+      const layerWorkflow = Layer.effect(
+        GitWorkflowService.GitWorkflowService,
+        Effect.gen(function* () {
+          const workflow = yield* GitWorkflowService.GitWorkflowService;
+          return GitWorkflowService.GitWorkflowService.of({
+            ...workflow,
+            localStatus: (input, options) =>
+              workflow
+                .localStatus(input, options)
+                .pipe(
+                  Effect.tap(() =>
+                    holdMainRefresh && input.cwd === cwd
+                      ? Deferred.succeed(localRead, undefined)
+                      : Effect.void,
+                  ),
+                ),
+            readRefSnapshot: (path, refs) =>
+              workflow
+                .readRefSnapshot(path, refs)
+                .pipe(
+                  Effect.tap(() =>
+                    holdMainRefresh && path === cwd && !Deferred.isDoneUnsafe(refsRead)
+                      ? Deferred.succeed(refsRead, undefined).pipe(
+                          Effect.andThen(Deferred.await(release)),
+                        )
+                      : Effect.void,
+                  ),
+                ),
+          });
+        }),
+      ).pipe(
+        Layer.provide(layerStatusWorkflow),
+        Layer.provide(Layer.succeed(GitManager.GitManager, manager)),
+      );
+      const context = yield* Layer.build(
+        VcsStatusBroadcaster.layer.pipe(
+          Layer.provide(layerWorkflow),
+          Layer.provide(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
+          Layer.provide(
+            Layer.succeed(FileSystem.FileSystem, {
+              ...fs,
+              // Let each immediately started caller reach the queue before the gate opens.
+              realPath: (path) =>
+                path === cwd || path === alias ? Effect.succeed(cwd) : fs.realPath(path),
+            }),
+          ),
+        ),
+      );
+      const broadcaster = Context.get(context, VcsStatusBroadcaster.VcsStatusBroadcaster);
+      let refCommands = 0;
+      const tracer = Tracer.make({
+        span: (options) => {
+          const parent = options.parent;
+          if (
+            options.name === "runGitCommand" &&
+            Option.isSome(parent) &&
+            parent.value._tag === "Span" &&
+            parent.value.name === "GitVcsDriver.readBranchPickerRefs"
+          ) {
+            refCommands += 1;
+          }
+          return new Tracer.NativeSpan(options);
+        },
+      });
+      const refresh = (path: string) =>
+        broadcaster.refreshStatus(path, { localOnly: true }).pipe(Effect.withTracer(tracer));
+
+      const cold = yield* refresh(cwd);
+      expect(cold.refName).toBe("main");
+      expect(cold.refsDigest).toBeDefined();
+      expect(refCommands).toBe(2);
+      for (const subscriberCount of [1, 8]) {
+        yield* Effect.gen(function* () {
+          const pulls = yield* Effect.forEach(Array.from({ length: subscriberCount }), () =>
+            Stream.toPull(broadcaster.streamStatus({ cwd, includeRemote: false })),
+          );
+          yield* Effect.all(pulls);
+          refCommands = 0;
+          const noOp = yield* refresh(cwd);
+          expect(noOp.refsDigest).toBe(cold.refsDigest);
+          expect(refCommands).toBe(2);
+        }).pipe(Effect.scoped);
+      }
+
+      refCommands = 0;
+      holdMainRefresh = true;
+      const first = yield* refresh(cwd).pipe(Effect.forkScoped);
+      yield* Deferred.await(refsRead);
+      yield* Deferred.await(localRead);
+      const linked = yield* broadcaster.refreshStatus(sibling, { localOnly: true });
+      expect(linked.refName).toBe("linked");
+      expect(linked.refsDigest).not.toBe(cold.refsDigest);
+      yield* runGit(cwd, ["checkout", "-b", "next"]);
+      yield* fs.writeFileString(NodePath.join(cwd, "README.md"), "hello\nnext\n");
+      const waiters = yield* Effect.forEach(
+        [cwd, alias, cwd, alias, cwd, alias, cwd, alias],
+        (path) => refresh(path).pipe(Effect.forkScoped({ startImmediately: true })),
+      );
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Fiber.join(first)).toMatchObject({
+        refName: "main",
+        refsDigest: cold.refsDigest,
+        workingTree: { insertions: 0 },
+      });
+      const later = yield* Effect.forEach(waiters, Fiber.join);
+      for (const status of later) {
+        expect(status.refName).toBe("next");
+        expect(status.refsDigest).toBeDefined();
+        expect(status.refsDigest).not.toBe(cold.refsDigest);
+        expect(status.workingTree.insertions).toBe(1);
+      }
+      expect(refCommands).toBe(4);
+    }),
+  );
+
   it.effect(
     "publishes local Git changes during a held PR lookup without caching its old branch",
     () =>
@@ -833,14 +971,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const context = yield* Layer.build(
           VcsStatusBroadcaster.layer.pipe(
             Layer.provide(
-              GitWorkflowService.layer.pipe(
+              layerStatusWorkflow.pipe(
                 Layer.provide(Layer.succeed(GitManager.GitManager, manager)),
-                Layer.provide(
-                  VcsDriverRegistry.layer.pipe(
-                    Layer.provide(VcsProjectConfig.layer),
-                    Layer.provide(VcsProcess.layer),
-                  ),
-                ),
               ),
             ),
             Layer.provide(
@@ -886,6 +1018,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(pending._tag).toBe("snapshot");
         if (pending._tag === "snapshot") expect(pending.local.hasWorkingTreeChanges).toBe(true);
         yield* Deferred.await(published);
+        expect(yield* Deferred.isDone(completed)).toBe(false);
+        const pickerRefresh = yield* broadcaster.refreshStatus(repoDir, { localOnly: true });
+        expect(pickerRefresh.hasWorkingTreeChanges).toBe(true);
         expect(yield* Deferred.isDone(completed)).toBe(false);
 
         yield* runGit(repoDir, ["checkout", "-b", "heads/release"]);

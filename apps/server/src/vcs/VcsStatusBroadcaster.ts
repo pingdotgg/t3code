@@ -560,10 +560,15 @@ export const make = Effect.gen(function* () {
     );
   }, Effect.scoped);
 
+  const requestLocalRefresh = (cwd: string) => {
+    const requestedAt = (localRefreshRequests.get(cwd) ?? 0) + 1;
+    localRefreshRequests.set(cwd, requestedAt);
+    return requestedAt;
+  };
+
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
-    function* (cwd: string) {
-      const requestedAt = (localRefreshRequests.get(cwd) ?? 0) + 1;
-      localRefreshRequests.set(cwd, requestedAt);
+    function* (cwd: string, pickerRequestedAt?: number) {
+      const requestedAt = pickerRequestedAt ?? requestLocalRefresh(cwd);
       return yield* localRefreshLocks.withLock(
         cwd,
         Effect.gen(function* () {
@@ -579,8 +584,11 @@ export const make = Effect.gen(function* () {
           yield* workflow.invalidateLocalStatus(cwd);
           const observation = ++branchObservation;
           const read = yield* readLocalStatus(cwd);
-          localRefreshResults.set(cwd, { startedAt, ...read });
-          return yield* updateCachedLocalStatus(cwd, read, observation, { publish: true });
+          // A cancelled picker must not leave a reusable result that was never published.
+          return yield* Effect.gen(function* () {
+            localRefreshResults.set(cwd, { startedAt, ...read });
+            return yield* updateCachedLocalStatus(cwd, read, observation, { publish: true });
+          }).pipe(Effect.uninterruptible);
         }),
       );
     },
@@ -794,28 +802,31 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
-    "VcsStatusBroadcaster.refreshStatus",
-  )(function* (rawCwd, options) {
+  // Lets the client keep its cached branch list when refs and worktree paths match its last refresh.
+  const withRefsDigest = (status: VcsStatusResult, refs: string | null) =>
+    refs === null
+      ? status
+      : {
+          ...status,
+          refsDigest: NodeCrypto.createHash("sha256").update(refs).digest("hex").slice(0, 32),
+        };
+
+  const refreshPickerStatus = Effect.fn("VcsStatusBroadcaster.refreshPickerStatus")(function* (
+    cwd: string,
+    requestedAt: number,
+  ) {
+    const [refs] = yield* Effect.all(
+      [workflow.readRefSnapshot(cwd), refreshLocalStatusCore(cwd, requestedAt)],
+      { concurrency: "unbounded" },
+    );
+    // Never cache a remote here: readers take `value: null` as "read and found no PR".
+    const parts = yield* getStatusParts(cwd);
+    return withRefsDigest(mergeGitStatusParts(parts.local, parts.remote), refs);
+  });
+
+  const refreshStatus = Effect.fn("VcsStatusBroadcaster.refreshStatus")(function* (rawCwd: string) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
     yield* acquireBranchChangesDemand(cwd);
-    // Lets the client keep its cached branch list when refs and worktree paths match its last refresh.
-    const withRefsDigest = (status: VcsStatusResult, refs: string | null) =>
-      refs === null
-        ? status
-        : {
-            ...status,
-            refsDigest: NodeCrypto.createHash("sha256").update(refs).digest("hex").slice(0, 32),
-          };
-    if (options?.localOnly) {
-      const [refs] = yield* Effect.all(
-        [workflow.readRefSnapshot(cwd), refreshLocalStatusCore(cwd)],
-        { concurrency: "unbounded" },
-      );
-      // Never cache a remote here: readers take `value: null` as "read and found no PR".
-      const parts = yield* getStatusParts(cwd);
-      return withRefsDigest(mergeGitStatusParts(parts.local, parts.remote), refs);
-    }
     const refsBeforeLocalRead = yield* workflow.readStatusRefreshRefs(cwd);
     yield* refreshLocalStatusCore(cwd);
     const { status, refs } = yield* refreshRemoteAndLocalTotals(cwd, rawCwd, refsBeforeLocalRead);
@@ -1030,6 +1041,63 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  // The newest batch can accept callers until it starts its read. Earlier batches stay alive
+  // only while their own callers need them.
+  type PickerRefresh = {
+    readonly request: { started: boolean; requestedAt: number };
+    readonly fiber: Fiber.Fiber<VcsRefreshStatusResult, GitManagerServiceError>;
+    waiterCount: number;
+  };
+  const pickerRefreshes = yield* SynchronizedRef.make(new Map<string, PickerRefresh>());
+  const pickerRefreshLocks = yield* KeyedLock.make<string>();
+
+  const sharePickerRefreshStatus = Effect.fn("VcsStatusBroadcaster.sharePickerRefreshStatus")(
+    function* (rawCwd: string) {
+      const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+      yield* acquireBranchChangesDemand(cwd);
+      return yield* Effect.acquireUseRelease(
+        SynchronizedRef.modifyEffect(pickerRefreshes, (refreshes) =>
+          Effect.gen(function* () {
+            // Record arrival before waiting so a status read that starts in the meantime can serve it.
+            const requestedAt = requestLocalRefresh(cwd);
+            const latest = refreshes.get(cwd);
+            if (latest && !latest.request.started) {
+              latest.request.requestedAt = requestedAt;
+              latest.waiterCount += 1;
+              return [latest, refreshes] as const;
+            }
+            const request = { started: false, requestedAt };
+            const fiber = yield* pickerRefreshLocks
+              .withLock(
+                cwd,
+                Effect.suspend(() => {
+                  request.started = true;
+                  return refreshPickerStatus(cwd, request.requestedAt);
+                }),
+              )
+              .pipe(Effect.forkIn(broadcasterScope, { uninterruptible: false }));
+            const batch = { request, fiber, waiterCount: 1 };
+            return [batch, new Map(refreshes).set(cwd, batch)] as const;
+          }),
+        ),
+        (batch) => Fiber.join(batch.fiber),
+        (batch) =>
+          Effect.gen(function* () {
+            const lastWaiter = yield* SynchronizedRef.modify(pickerRefreshes, (refreshes) => {
+              batch.waiterCount -= 1;
+              if (batch.waiterCount > 0) return [false, refreshes] as const;
+              if (refreshes.get(cwd) !== batch) return [true, refreshes] as const;
+              const next = new Map(refreshes);
+              next.delete(cwd);
+              return [true, next] as const;
+            });
+            if (lastWaiter) yield* Fiber.interrupt(batch.fiber);
+          }),
+      );
+    },
+    Effect.scoped,
+  );
+
   // A request made during a refresh needs a read that starts after it, so overlapping requests
   // share one follow-up. Keyed by raw cwd because auto-pull policy depends on it.
   // Missing means idle; null means running with no follow-up queued.
@@ -1059,7 +1127,7 @@ export const make = Effect.gen(function* () {
   const shareQueuedRefreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
     "VcsStatusBroadcaster.shareQueuedRefreshStatus",
   )(function* (rawCwd, options) {
-    if (options?.localOnly) return yield* refreshStatus(rawCwd, options);
+    if (options?.localOnly) return yield* sharePickerRefreshStatus(rawCwd);
     const requested = yield* Deferred.make<VcsRefreshStatusResult, GitManagerServiceError>();
     // Registering and forking together keeps an interrupt from leaving an entry with no worker.
     const shared = yield* Effect.uninterruptible(
