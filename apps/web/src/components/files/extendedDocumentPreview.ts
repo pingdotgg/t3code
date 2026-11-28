@@ -279,7 +279,15 @@ export async function openDocument(
             const value =
               cell.name === "table:covered-table-cell"
                 ? ""
-                : find(cell, "text:p", "office:annotation").map(text).join("\n") ||
+                : cell.children
+                    // Shapes anchored to a cell float over the sheet; their text is not the cell's value.
+                    .filter(
+                      (child) =>
+                        child.name !== "office:annotation" && !child.name.startsWith("draw:"),
+                    )
+                    .flatMap((child) => (child.name === "text:p" ? [child] : find(child, "text:p")))
+                    .map(text)
+                    .join("\n") ||
                   cell.attrs["office:value"] ||
                   cell.attrs["office:date-value"] ||
                   cell.attrs["office:time-value"] ||
