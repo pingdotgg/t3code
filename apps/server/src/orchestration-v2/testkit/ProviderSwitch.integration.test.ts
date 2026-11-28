@@ -33,6 +33,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -4930,6 +4931,156 @@ describe("orchestration v2 provider switching", () => {
                 modelSelection: secondSelection,
                 responseByRunOrdinal: {},
                 capturedTurns,
+              }),
+            ]),
+          ),
+        ),
+      );
+    }),
+  );
+
+  // regression: #42024 a runtime mode change must not close the session under a running turn
+  it.live("keeps a running Claude turn alive when the runtime mode changes", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("runtime-mode-running-turn");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const backgroundWork = yield* Ref.make(false);
+      const threadId = ThreadId.make("thread:runtime-mode-running-turn");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:runtime-mode-running-turn:create"),
+          threadId,
+          projectId: ProjectId.make("project:runtime-mode-running-turn"),
+          title: "Runtime mode change during a turn",
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        const sessionAttached = yield* orchestrator.streamStoredEvents.pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "provider-session.attached" && event.threadId === threadId,
+          ),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:runtime-mode-running-turn:send"),
+          threadId,
+          messageId: MessageId.make("message:runtime-mode-running-turn:send"),
+          text: "Long task",
+          attachments: [],
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* Deferred.await(started);
+        yield* Fiber.join(sessionAttached);
+        yield* worker.drain();
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          before.providerSessions.map((session) => session.status),
+          ["ready"],
+        );
+
+        // Background work the turn started would end with the session, so the change is refused.
+        yield* Ref.set(backgroundWork, true);
+        const refused = yield* orchestrator
+          .dispatch({
+            type: "thread.runtime-mode.set",
+            commandId: CommandId.make("command:runtime-mode-running-turn:refused"),
+            threadId,
+            runtimeMode: "approval-required",
+          })
+          .pipe(Effect.flip);
+        assert.include(
+          refused._tag === "OrchestratorDispatchError" ? String(refused.cause) : "",
+          "still running background agents or commands",
+        );
+        yield* worker.drain();
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).thread.runtimeMode,
+          "full-access",
+        );
+        yield* Ref.set(backgroundWork, false);
+
+        yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("command:runtime-mode-running-turn:change"),
+          threadId,
+          runtimeMode: "approval-required",
+        });
+        yield* worker.drain();
+
+        // The running turn keeps its old-mode session; the next turn applies the new mode.
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(projection.thread.runtimeMode, "approval-required");
+        assert.deepEqual(
+          projection.providerSessions.map((session) => [session.id, session.status]),
+          [[before.providerSessions[0]!.id, "ready"]],
+        );
+        assert.deepEqual(
+          projection.runs.map((run) => run.status),
+          ["running"],
+        );
+
+        // Once the run ends, the old-mode session closes so no later turn or wake reuses it.
+        const detached = yield* orchestrator.streamStoredEvents.pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "provider-session.detached" && event.threadId === threadId,
+          ),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        yield* Deferred.succeed(release, undefined);
+        const detachedEvent = Option.getOrThrow(yield* Fiber.join(detached)).event;
+        assert.equal(
+          detachedEvent.type === "provider-session.detached" && detachedEvent.payload.reason,
+          "Runtime mode changed.",
+        );
+        const settled = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          settled.runs.map((run) => run.status),
+          ["completed"],
+        );
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "runtime-mode-running-turn",
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
+                },
+              },
+            },
+            ProviderAdapterRegistry.layerFromAdapters([
+              makeTestAdapter({
+                instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+                driver: CLAUDE_DRIVER,
+                capabilities: ClaudeProviderCapabilitiesV2,
+                modelSelection: CLAUDE_MODEL_SELECTION,
+                responseByRunOrdinal: { 1: "Long task finished" },
+                capturedTurns,
+                holdFirstTurn: started,
+                releaseFirstTurn: release,
+                backgroundWork,
               }),
             ]),
           ),
