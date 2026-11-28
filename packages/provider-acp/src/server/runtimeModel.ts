@@ -1109,7 +1109,144 @@ export interface AcpMcpToolCallIdentity {
   readonly input?: Record<string, unknown>;
 }
 
-const ACP_MCP_FALLBACK_CALL = /(?:^|[\s"'=])acp-mcp-call[\s"']+([A-Za-z0-9_.-]+)(?:\s+(.+?))?\s*$/u;
+const ACP_MCP_SHELL_EXECUTABLE = /(?:^|\/)(?:ba|z|da|k)?sh$/;
+const ACP_MCP_SHELL_COMMAND_FLAG = /^-[a-z]*c[a-z]*$/;
+const ACP_MCP_SHELL_SEPARATOR = /[\s;&|()<>]/;
+
+interface ShellWord {
+  readonly text: string;
+  readonly start: number;
+}
+
+function shellWords(command: string): ReadonlyArray<ShellWord> {
+  const words: Array<ShellWord> = [];
+  let text = "";
+  let hasWord = false;
+  let start = -1;
+  let index = 0;
+
+  while (index < command.length) {
+    const char = command[index]!;
+    if (char === "'") {
+      if (!hasWord) {
+        hasWord = true;
+        start = index;
+      }
+      index += 1;
+      while (index < command.length && command[index] !== "'") {
+        text += command[index]!;
+        index += 1;
+      }
+      if (index < command.length) index += 1;
+      continue;
+    }
+    if (char === '"') {
+      if (!hasWord) {
+        hasWord = true;
+        start = index;
+      }
+      index += 1;
+      while (index < command.length && command[index] !== '"') {
+        if (command[index] === "\\") {
+          const next = command[index + 1];
+          if (next === "\n") {
+            index += 2;
+            continue;
+          }
+          if (next === "\r" && command[index + 2] === "\n") {
+            index += 3;
+            continue;
+          }
+          if (next === '"' || next === "\\" || next === "$" || next === "`") {
+            text += next;
+            index += 2;
+            continue;
+          }
+        }
+        text += command[index]!;
+        index += 1;
+      }
+      if (index < command.length) index += 1;
+      continue;
+    }
+    if (char === "\\") {
+      const next = command[index + 1];
+      if (next === "\n") {
+        index += 2;
+        continue;
+      }
+      if (next === "\r" && command[index + 2] === "\n") {
+        index += 3;
+        continue;
+      }
+      if (!hasWord) {
+        hasWord = true;
+        start = index;
+      }
+      if (next !== undefined) {
+        text += next;
+        index += 2;
+      } else {
+        text += "\\";
+        index += 1;
+      }
+      continue;
+    }
+    if (ACP_MCP_SHELL_SEPARATOR.test(char)) {
+      if (hasWord) {
+        words.push({ text, start });
+        text = "";
+        hasWord = false;
+        start = -1;
+      }
+      index += 1;
+      continue;
+    }
+    if (!hasWord) {
+      hasWord = true;
+      start = index;
+    }
+    text += char;
+    index += 1;
+  }
+  if (hasWord) {
+    words.push({ text, start });
+  }
+  return words;
+}
+
+function acpMcpFallbackCall(command: string, nested = false): AcpMcpToolCallIdentity | undefined {
+  const words = shellWords(command);
+  for (let index = 0; index < words.length; index++) {
+    const word = words[index]!;
+    const tool = words[index + 1]?.text;
+    if (
+      word.text === "acp-mcp-call" &&
+      tool !== undefined &&
+      (T3_MCP_TOOL_NAMES.has(tool) || tool === T3_MCP_TOOL_CALL_PROXY || tool === "tool_search")
+    ) {
+      const arg = words[index + 2];
+      const input =
+        arg === undefined
+          ? undefined
+          : (acpMcpFallbackInput(arg.text) ?? acpMcpFallbackInput(command.slice(arg.start)));
+      return unwrapT3ToolCallProxy(
+        { server: "t3-code", tool, ...(input === undefined ? {} : { input }) },
+        input,
+      );
+    }
+    if (
+      !nested &&
+      tool !== undefined &&
+      ACP_MCP_SHELL_COMMAND_FLAG.test(word.text) &&
+      ACP_MCP_SHELL_EXECUTABLE.test(words[index - 1]?.text ?? "")
+    ) {
+      const found = acpMcpFallbackCall(tool, true);
+      if (found !== undefined) return found;
+    }
+  }
+  return undefined;
+}
 
 function acpMcpFallbackInput(value: string | undefined): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
@@ -1306,14 +1443,8 @@ export function extractMcpToolCallIdentity(
     ...(options?.embeddedTerminalCommands ?? []),
   ];
   for (const command of commands) {
-    const match = ACP_MCP_FALLBACK_CALL.exec(command);
-    if (match?.[1] !== undefined) {
-      const input = acpMcpFallbackInput(match[2]);
-      return unwrapT3ToolCallProxy(
-        { server: "t3-code", tool: match[1], ...(input === undefined ? {} : { input }) },
-        input,
-      );
-    }
+    const found = acpMcpFallbackCall(command);
+    if (found !== undefined) return found;
   }
   return undefined;
 }

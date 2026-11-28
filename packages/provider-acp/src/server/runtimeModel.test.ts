@@ -1669,13 +1669,85 @@ describe("extractMcpToolCallIdentity", () => {
       status: "in_progress",
     });
 
-    expect(
-      extractMcpToolCallIdentity(toolCall, {
-        embeddedTerminalCommands: [
-          '/usr/bin/node /srv/t3/bin.ts acp-mcp-call delegate_task {"task":"x"}',
-        ],
-      }),
-    ).toEqual({ server: "t3-code", tool: "delegate_task", input: { task: "x" } });
+    const cases = [
+      {
+        name: "joined argv JSON",
+        command: '/usr/bin/node /srv/t3/bin.ts acp-mcp-call delegate_task {"task":"x"}',
+        expected: { server: "t3-code", tool: "delegate_task", input: { task: "x" } },
+      },
+      {
+        name: "heredoc stdin",
+        command:
+          'ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" ${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call html_render - <<\'EOF\'\n{"path":"/abs/page.html","title":"Report","height":420}\nEOF',
+        expected: { server: "t3-code", tool: "html_render" },
+      },
+      {
+        name: "multi-line single-quoted JSON",
+        command:
+          '"$T3_ACP_MCP_NODE" acp-mcp-call html_render \'{\n  "path": "/abs/page.html",\n  "title": "Report"\n}\'',
+        expected: {
+          server: "t3-code",
+          tool: "html_render",
+          input: { path: "/abs/page.html", title: "Report" },
+        },
+      },
+      {
+        name: "shell line continuation",
+        command: '"$T3_ACP_MCP_NODE" acp-mcp-call \\\n  html_render \'{"path":"/abs/page.html"}\'',
+        expected: {
+          server: "t3-code",
+          tool: "html_render",
+          input: { path: "/abs/page.html" },
+        },
+      },
+      {
+        name: "truncated command",
+        command:
+          '"$T3_ACP_MCP_NODE" acp-mcp-call html_render \'{"html":"<p>...\n\n[Command truncated]',
+        expected: { server: "t3-code", tool: "html_render" },
+      },
+      {
+        name: "nested bash -lc",
+        command:
+          'bash -lc "\\"$T3_ACP_MCP_NODE\\" acp-mcp-call html_render \'{\\"path\\":\\"/p\\"}\'"',
+        expected: { server: "t3-code", tool: "html_render", input: { path: "/p" } },
+      },
+      {
+        name: "tool_call proxy",
+        command: 'acp-mcp-call tool_call \'{"name":"html_render","arguments":{"path":"/p"}}\'',
+        expected: { server: "t3-code", tool: "html_render", input: { path: "/p" } },
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      expect(
+        extractMcpToolCallIdentity(toolCall, {
+          embeddedTerminalCommands: [testCase.command],
+        }),
+        testCase.name,
+      ).toEqual(testCase.expected);
+    }
+  });
+
+  it("ignores shell commands that merely search for acp-mcp-call", () => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "exec-search",
+      kind: "execute",
+      title: "Ran command",
+      status: "in_progress",
+    });
+
+    for (const command of [
+      'rg "acp-mcp-call" --hidden',
+      "rg -n 'acp-mcp-call html_render' .",
+      "grep -c 'acp-mcp-call html_render' f",
+    ]) {
+      expect(
+        extractMcpToolCallIdentity(toolCall, { embeddedTerminalCommands: [command] }),
+        command,
+      ).toBeUndefined();
+    }
   });
 
   it("recovers T3 identity from pi-acp title-only fallback execs", () => {

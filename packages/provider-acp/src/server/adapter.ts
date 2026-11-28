@@ -105,6 +105,7 @@ import {
   withTrackedChangedPaths,
   withUnknownChangedPaths,
   withTrackedPermissionToolCall,
+  type AcpMcpToolCallIdentity,
   type AcpPlanUpdate,
   type AcpAgentTerminalState,
   type AcpSessionModeState,
@@ -1457,6 +1458,37 @@ function textFromUnknown(value: unknown): string | undefined {
   return undefined;
 }
 
+const HTML_RENDER_IDENTITY: AcpMcpToolCallIdentity = {
+  server: "t3-code",
+  tool: HTML_RENDER_TOOL_NAME,
+};
+
+function terminalMcpResult(rawOutput: unknown): Record<string, unknown> | undefined {
+  const text = textFromUnknown(rawOutput);
+  if (text === undefined) return undefined;
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return undefined;
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = unknownRecord(JSON.parse(trimmed));
+      if (parsed !== undefined) return parsed;
+    } catch {
+      // Multi-line output can start with `{` before the trailing JSON result line.
+    }
+  }
+  const lines = trimmed.split(/\r?\n/u);
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index]?.trim();
+    if (line === undefined || !line.startsWith("{")) continue;
+    try {
+      return unknownRecord(JSON.parse(line));
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 function commandExitCode(value: unknown): number | undefined {
   const record = unknownRecord(value);
   for (const key of ["exitCode", "exit_code", "code"]) {
@@ -1924,6 +1956,7 @@ interface ActiveAcpTurn {
   readonly blockedInputRecoveryKeys: Set<string>;
   /** `${toolCallId}\0${tool}\0${inputHash}` keys already tried for input-only recovery. */
   readonly attemptedInputRecoveryKeys: Set<string>;
+  readonly terminalHtmlRenderCalls: Set<string>;
   /** Tools the agent failed after Stop; later updates keep them interrupted. */
   readonly stoppedToolCallIds: Set<string>;
   readonly toolUpdatesSkipped: Map<string, number>;
@@ -5849,12 +5882,40 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             rawOutputRecord.type.trim().toLowerCase() === "bash" &&
             commandExitCode(rawOutput) !== undefined;
           const projectAsCommandExecution = inputVariant === "monitor" || outputIsBashResult;
-          const mcpIdentity = extractMcpToolCallIdentity(toolCall, {
-            embeddedTerminalCommands: embeddedTerminalCommands(
-              context.nativeThreadId,
-              toolCall.toolCallId,
-            ),
+          const terminalHtmlRenderIdentity = Effect.fnUntraced(function* (
+            active: ActiveAcpTurn,
+            call: AcpToolCallState,
+            callStatus: OrchestrationV2TurnItem["status"],
+            callRawOutput: unknown,
+          ) {
+            if (call.kind !== "execute") return undefined;
+            if (active.terminalHtmlRenderCalls.has(call.toolCallId)) {
+              return HTML_RENDER_IDENTITY;
+            }
+            if (callStatus !== "completed") return undefined;
+            if (!textFromUnknown(callRawOutput)?.includes('"htmlRender"')) return undefined;
+            const reported = htmlRenderFromToolItem({
+              toolName: `t3-code.${HTML_RENDER_TOOL_NAME}`,
+              output: terminalMcpResult(callRawOutput),
+            });
+            const page =
+              reported === undefined
+                ? undefined
+                : yield* mcpSessions.takeHtmlRender(active.input.threadId, {}, reported);
+            if (page === undefined) return undefined;
+            active.terminalHtmlRenderCalls.add(call.toolCallId);
+            return {
+              ...HTML_RENDER_IDENTITY,
+              input: { title: page.title, height: page.height },
+            };
           });
+          const mcpIdentity =
+            extractMcpToolCallIdentity(toolCall, {
+              embeddedTerminalCommands: embeddedTerminalCommands(
+                context.nativeThreadId,
+                toolCall.toolCallId,
+              ),
+            }) ?? (yield* terminalHtmlRenderIdentity(context, toolCall, status, rawOutput));
           let turnItem: OrchestrationV2TurnItem;
           if (toolCall.toolCallId.startsWith("acp-compaction:")) {
             const summary =
@@ -5888,9 +5949,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const toolName = `${mcpIdentity.server}.${mcpIdentity.tool}`;
             const input =
               mcpIdentity.input ?? unknownRecord(rawInputRecord?.arguments) ?? rawInputRecord ?? {};
-            let output = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
             const resolvedT3Tool = resolveT3McpToolId(toolName);
             const isHtmlRender = resolvedT3Tool === HTML_RENDER_TOOL_NAME;
+            let output =
+              (isHtmlRender && toolCall.kind === "execute"
+                ? terminalMcpResult(rawOutput)
+                : undefined) ??
+              (rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput));
             const isError =
               compactDynamicToolOutput(output)?.isError === true ||
               compactDynamicToolOutput(rawOutputRecord?.result)?.isError === true;
@@ -5964,15 +6029,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 toolName,
                 output: acpMcpToolCallOutput(previous?.data.rawOutput ?? previous?.data.content),
               });
-              const page = reportedPage
-                ? yield* mcpSessions.takeHtmlRender(context.input.threadId, input, reportedPage)
-                : (previousPage ??
-                  (yield* mcpSessions.takeHtmlRender(context.input.threadId, input)));
-              if (reportedPage === undefined && page !== undefined) {
-                output = { htmlRender: page };
+              if (reportedPage !== undefined) {
+                yield* mcpSessions.takeHtmlRender(context.input.threadId, input, reportedPage);
+              }
+              const page =
+                reportedPage ??
+                previousPage ??
+                (yield* mcpSessions.takeHtmlRender(context.input.threadId, input));
+              if (page !== undefined) {
+                if (reportedPage === undefined) {
+                  output = { htmlRender: page };
+                }
                 context.tools.set(toolCall.toolCallId, {
                   ...toolCall,
-                  data: { ...toolCall.data, rawOutput: output },
+                  data: { ...toolCall.data, rawOutput: { htmlRender: page } },
                 });
               }
             }
@@ -10875,6 +10945,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               drainedToolResultKeys: new Set(),
               blockedInputRecoveryKeys: new Set(),
               attemptedInputRecoveryKeys: new Set(),
+              terminalHtmlRenderCalls: new Set(),
               stoppedToolCallIds: new Set(),
               toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),
