@@ -138,6 +138,24 @@ describe("appendTerminalOutput", () => {
     expect(feed(["abcdefgh\nijk\nlmnop"], 8).text).toBe("jk\nlmnop");
   });
 
+  it("keeps the first complete line when output exactly fills the tail", () => {
+    const exactDefault = `ok\n${"x".repeat(TERMINAL_OUTPUT_TAIL_CHARS - 3)}`;
+    expect(normalizeTerminalOutput(`junk\n${exactDefault}`)).toEqual({
+      text: exactDefault,
+      truncated: true,
+    });
+
+    // Cut landing right between a settled part ending in "\n", an empty settledTail, and the window.
+    const seeded = feed([`${"old\n".repeat(70)}`], 20);
+    const nextWindow =
+      seeded.screen.lines.map((line) => line.map((run) => run.text).join("")).join("\n") + "z";
+    const exactWindow = appendTerminalOutput(seeded, "z", nextWindow.length);
+    expect(seeded.screen.settled[0].endsWith("\n")).toBe(true);
+    expect(seeded.screen.settled[1]).toBe("");
+    expect(exactWindow.text).toBe(nextWindow);
+    expect(exactWindow.truncated).toBe(true);
+  });
+
   it("keeps Unicode tails bounded without shifting saved cursor columns", () => {
     const source = feed(["界界e\u0301\u001b7ab"], 4);
     expect(source.text).toBe("e\u0301ab");
@@ -453,6 +471,27 @@ describe("terminalOutputTail", () => {
     const text = `${"a".repeat(10)}😀${"b".repeat(4)}`;
     const tail = terminalOutputTail(text, 5);
     expect(tail.text).toBe("bbbb");
+  });
+
+  it("never begins a styled tail on a detached combining mark", () => {
+    const red = { color: TERMINAL_PALETTES.dark[1] };
+    const output = normalizeTerminalOutput(`\u001b[31m${"e\u0301".repeat(8)}A`, 16);
+    expect(terminalOutputSpans(output.text, TERMINAL_PALETTES.dark)).toEqual([
+      { text: `${"e\u0301".repeat(5)}A`, style: red },
+    ]);
+
+    const crossStyle = terminalOutputTail("\u001b[0;32me\u001b[0;31m\u0301A\u001b[0m", 13);
+    expect(terminalOutputSpans(crossStyle.text, TERMINAL_PALETTES.dark)).toEqual([
+      { text: "A", style: red },
+    ]);
+  });
+
+  it("keeps the first complete line when the cut falls immediately after a newline", () => {
+    const expected = `abc\n${"x".repeat(30)}`;
+    expect(terminalOutputTail(`junk\n${expected}`, 34)).toEqual({
+      text: expected,
+      truncated: true,
+    });
   });
 });
 

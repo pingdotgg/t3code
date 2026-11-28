@@ -50,7 +50,7 @@ const SETEXT_UNDERLINE = /^(?:-+|=+)[ \t]*\r?$/;
 const ESCAPED_CHARACTER = String.raw`\\[!-/:-@[-\`{-~]`;
 const LINK_PATTERNS = [
   // A labeled link's destination may be angle-bracketed, as CommonMark allows: [label](<href>).
-  String.raw`\[(?<label>${LABEL})\]\((?:<(?<angleHref>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>|(?<href>${THREAD_HREF}[^\s>)]+|${HOSTED_LINK}))\)`,
+  String.raw`\[(?<label>${LABEL})\]\((?:<(?<angleHref>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>\)|(?<href>${HOSTED_LINK})\)|(?<customHref>${THREAD_HREF}))`,
   String.raw`\[${LABEL}\]\((?:<[^<>\n]*>|[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\)`,
   String.raw`<(?<autolink>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>`,
   // After a URL character the hosted link is part of a longer URL, such as a redirect target.
@@ -342,6 +342,22 @@ function parsedSkippedRanges(markdown: string) {
   return ranges;
 }
 
+function readDestination(markdown: string, match: RegExpExecArray) {
+  const start = match.index + match[0].length - match.groups!.customHref!.length;
+  for (let i = start, depth = 0; i < markdown.length; i++) {
+    const ch = markdown[i]!;
+    if (ch === "\\" && /[!-/:-@[-`{-~]/.test(markdown[i + 1] ?? "")) i++;
+    else if (ch === "(") depth++;
+    else if (ch === ")" && depth-- === 0)
+      return { href: markdown.slice(start, i).replace(/\\([!-/:-@[-`{-~])/g, "$1"), end: i + 1 };
+    else if (/[\s\p{Cc}]/u.test(ch)) {
+      const skip = depth === 0 ? /^[ \t]+(?:"[^"\n]*"|'[^'\n]*')\)/.exec(markdown.slice(i)) : null;
+      return { href: undefined, end: skip ? i + skip[0].length : match.index + 1 };
+    }
+  }
+  return { href: undefined, end: match.index + 1 };
+}
+
 /** Rewrites each link outside code `replace` answers for. `label` is a Markdown link's own text. */
 export function replaceThreadLinks(
   markdown: string,
@@ -378,8 +394,10 @@ export function replaceThreadLinks(
       if (spanEnd !== -1) pattern.lastIndex = spanEnd;
       continue;
     }
-    const href =
+    let href =
       match.groups?.angleHref ?? match.groups?.href ?? match.groups?.autolink ?? match.groups?.bare;
+    if (match.groups?.customHref)
+      ({ href, end: pattern.lastIndex } = readDestination(markdown, match));
     const link = href === undefined ? null : parseThreadLinkHref(href);
     const label = match.groups?.label;
     const rewritten =
@@ -388,7 +406,7 @@ export function replaceThreadLinks(
         : replace(link, label && markdown.slice(match.index + 1, match.index + 1 + label.length));
     if (rewritten === undefined) continue;
     result += markdown.slice(cursor, match.index) + rewritten;
-    cursor = match.index + match[0].length;
+    cursor = pattern.lastIndex;
   }
   return cursor === 0 ? markdown : result + markdown.slice(cursor);
 }

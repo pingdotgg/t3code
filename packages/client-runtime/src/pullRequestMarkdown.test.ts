@@ -199,6 +199,26 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
+  it("splits a lone-CR body into lines, so a video after its fence still lifts out", () => {
+    const crLines = ["```text", "https://example.com/sample.mp4", "```"];
+    const crBody = [...crLines, "", "https://example.com/actual.mp4", "", "- [ ] Done"].join("\r");
+    expect(split(crBody)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: crLines.join("\n"), sourceOffset: 0 },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/actual.mp4",
+        media: "video",
+      },
+      {
+        id: "markdown:2",
+        kind: "markdown",
+        text: "- [ ] Done",
+        sourceOffset: crBody.indexOf("- [ ] Done"),
+      },
+    ]);
+  });
+
   it("does not let a different fence marker close an open fence", () => {
     const body = "```\n~~~\nhttps://example.com/demo.mp4\n```";
     expect(split(body)).toEqual([
