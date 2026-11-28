@@ -133,7 +133,6 @@ export function BranchToolbarBranchSelector({
   const composerFloatingLayerProps = useComposerMenuProps();
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
-  const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, "thread session stop");
   const updateThreadMetadata = useAtomCommand(
     threadEnvironment.updateMetadata,
     "thread metadata update",
@@ -220,12 +219,6 @@ export function BranchToolbarBranchSelector({
         stackedThreadToast({ type: "warning", title: messages(WORKTREE_CHANGE_BLOCKED_MESSAGE) }),
       );
       return false;
-    }
-    if (latest.runtime && worktreePath !== latest.worktreePath) {
-      void stopThreadSession({
-        environmentId,
-        input: { threadId: activeThreadId },
-      });
     }
     if (hasServerThread) {
       void (automatic ? updateEmptyThreadMetadata : updateThreadMetadata)({

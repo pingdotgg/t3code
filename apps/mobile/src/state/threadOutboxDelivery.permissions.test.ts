@@ -17,6 +17,7 @@ import { threadOutboxRetryDelayMs, type QueuedThreadMessage } from "./thread-out
 const state = vi.hoisted(() => ({
   draftText: "Keep this draft separate",
   cleanups: [] as Array<() => void>,
+  hexCount: 0,
   delivery: null as {
     readonly drain: () => void;
     readonly dispose: () => void;
@@ -122,7 +123,7 @@ vi.mock("./git", async () => ({
   },
 }));
 vi.mock("../lib/modelOptions", () => ({ isModelSelectionUnavailable: state.modelUnavailable }));
-vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "abcd" }));
+vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => `hex${++state.hexCount}` }));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: state.prepare }));
 vi.mock("./composer-attachment-uploads", () => ({ uploadComposerAttachmentShared: vi.fn() }));
 vi.mock("./thread-outbox", async () => {
@@ -429,6 +430,26 @@ describe("queued task operation access", () => {
     expect(state.prepare).not.toHaveBeenCalled();
     expect(state.start).not.toHaveBeenCalled();
     expect(remaining()).toEqual([queued]);
+  });
+
+  it("retries a refused runtime-mode change under a new command id", async () => {
+    setOperateGrant("secondary", true);
+    const queued = message({ runtimeMode: "approval-required" });
+    await state.manager.enqueue(queued);
+    state.runtime.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("Background work is still running."))),
+    );
+    await runDrain();
+    expect(remaining()).toEqual([queued]);
+
+    // The server keeps the refusal under the first id, so reusing it could never succeed.
+    state.cleanups.splice(0).forEach((cleanup) => cleanup());
+    await runDrain();
+    const [first, second] = state.runtime.mock.calls.map(([call]) => call.input.commandId);
+    expect(first).toMatch(/^command:runtime-mode:/);
+    expect(second).toMatch(/^command:runtime-mode:/);
+    expect(second).not.toBe(first);
+    expect(remaining()).toEqual([]);
   });
 
   it.each([

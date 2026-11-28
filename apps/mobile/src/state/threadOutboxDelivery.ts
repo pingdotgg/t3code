@@ -216,8 +216,10 @@ function findCreationProject(
   );
 }
 
+// The server keeps a refusal under its command id, and refuses a mode change while background
+// work runs, so each attempt needs its own id. Both callers skip when the mode already matches.
 function settingsCommandId(message: QueuedThreadMessage, setting: string): CommandId {
-  return CommandId.make(`${message.commandId}:${setting}`);
+  return CommandId.make(`${message.commandId}:${setting}:${randomHex(8)}`);
 }
 
 /** Outbox or draft storage refused a step; the step decides what that means for the message. */
@@ -977,7 +979,7 @@ export function createThreadOutboxDelivery(): {
       const compactionResult = yield* deliveryCommand(threadEnvironment.startTurn, {
         environmentId: queuedMessage.environmentId,
         input: {
-          commandId: settingsCommandId(queuedMessage, "compact"),
+          commandId: CommandId.make(`${queuedMessage.commandId}:compact`),
           creationSource: "mobile",
           threadId: queuedMessage.threadId,
           message: {
