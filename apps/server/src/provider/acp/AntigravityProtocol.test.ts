@@ -4,6 +4,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as AcpWireSchema from "effect-acp/schema-v1";
 
 import {
+  extractAntigravityElicitationForm,
   extractAntigravityUserInputQuestion,
   antigravityApprovalOptions,
   antigravitySubagentOutput,
@@ -193,6 +194,37 @@ function parseToolUpdate(notification: EffectAcpSchema.SessionNotification) {
 }
 
 describe("Antigravity permissions and questions", () => {
+  it("asks a multi-select ask_question with its Other text field as one question", () => {
+    // agy sends `is_multi_select: true` as an optional array `q1` plus an optional `q1_other`.
+    const form = extractAntigravityElicitationForm({
+      sessionId: "session-1",
+      mode: "form",
+      message: "The agent has 1 question.",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          q1: {
+            type: "array",
+            title: "Which export formats do you want?",
+            items: {
+              anyOf: [
+                { const: "1", title: "CSV" },
+                { const: "2", title: "JSON" },
+              ],
+            },
+          },
+          q1_other: {
+            type: "string",
+            title: "Other",
+            description: "Optional free-form answer to: Which export formats do you want?",
+          },
+        },
+      },
+    } as Parameters<typeof extractAntigravityElicitationForm>[0]);
+    expect(form?.questions.map((question) => question.id)).toEqual(["q1"]);
+    expect(form?.questions[0]?.allowCustomAnswer).not.toBe(false);
+  });
+
   const permissionRequest = {
     sessionId: "session-1",
     toolCall: { toolCallId: "command-1", kind: "execute", title: "Run command" },
