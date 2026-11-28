@@ -69,6 +69,7 @@ The server automatically links open PRs matching an unsettled thread's branch. O
 
 - **Command palette** (`Cmd/Ctrl+K`): Searches threads across connected environments by title, branch, PR, project, and message contents (use `"exact phrase"` for exact matches). On mobile, use the thread list search (or `Cmd+K` on iPad with a keyboard).
 - **Copy reference**: Copies the linked PR URL if one exists, otherwise a thread link that pastes into any composer as a thread chip. Use **Copy → Thread** (or **Copy thread** on mobile) to force a thread link, or **Thread ID** for scripts and the `t3` CLI.
+- **Project filter** (web/desktop): Pick a project at the top of the sidebar to show only its threads, or `Cmd/Ctrl`-click it (`Cmd/Ctrl+Enter` from the keyboard) to add or remove it and keep the menu open. On mobile, the filter holds one project.
 
 ## Usage limits, subagents, and thread details
 
