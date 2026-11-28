@@ -714,6 +714,14 @@ const T3_TOOL_SENTENCES: ReadonlyMap<string, T3ToolSentence> = new Map<string, T
     },
   ],
   [
+    "Read\nReading\nRead\nenvironment identity",
+    {
+      detail: msg(
+        "{status, select, inProgress {Reading environment identity} completed {Read environment identity} failed {Failed to read environment identity} declined {Declined to read environment identity} stopped {Stopped reading environment identity} other {Reading environment identity}}",
+      ),
+    },
+  ],
+  [
     "Read\nReading\nRead\nenvironment preferences",
     {
       detail: msg(

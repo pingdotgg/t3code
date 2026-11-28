@@ -1,4 +1,5 @@
 import * as Predicate from "effect/Predicate";
+import type * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
 
 type Json = unknown;
@@ -91,29 +92,31 @@ const preferObjectMapOverItemArray = (branches: ReadonlyArray<Json>): JsonObject
   return objectMap && itemArray ? objectMap : undefined;
 };
 
-const compact = (schema: Json, optional: boolean): Json => {
-  if (Array.isArray(schema)) return schema.map((item) => compact(item, false));
+const compact = (schema: Json, optional: boolean, toolInput = true): Json => {
+  if (Array.isArray(schema)) return schema.map((item) => compact(item, false, toolInput));
   if (!Predicate.isObject(schema)) return schema;
   const required = new Set(Array.isArray(schema.required) ? schema.required : []);
   let result: JsonObject = {};
   for (const [key, value] of Object.entries(schema)) {
     if (key === "additionalProperties" && value === true) continue;
     if (SAFE_INTEGER_BOUNDS[key] === value) continue;
-    if (isNonStringEnum(key, value)) continue;
+    if (toolInput && isNonStringEnum(key, value)) continue;
     result[key] =
       key === "properties" && Predicate.isObject(value)
         ? Object.fromEntries(
             Object.entries(value).map(([name, property]) => [
               name,
-              compact(property, !required.has(name)),
+              compact(property, !required.has(name), toolInput),
             ]),
           )
-        : compact(value, false);
+        : compact(value, false, toolInput);
   }
   if (Array.isArray(result.anyOf)) {
     const branches = result.anyOf
       .flatMap((branch) => (isBareAnyOf(branch) ? branch.anyOf : [branch]))
-      .filter((branch) => !(optional && isNullSchema(branch)) && !isJsonStringSchema(branch));
+      .filter(
+        (branch) => !(toolInput && optional && isNullSchema(branch)) && !isJsonStringSchema(branch),
+      );
     const { anyOf: _anyOf, ...rest } = result;
     const only =
       branches.length === 1
@@ -132,3 +135,9 @@ const compact = (schema: Json, optional: boolean): Json => {
  */
 export const advertisedJsonSchema = (tool: Tool.Any) =>
   compact(Tool.getJsonSchema(tool), false) as ReturnType<typeof Tool.getJsonSchema>;
+
+/** For a schema a tool returns: keeps `null` and non-string enums, which tool inputs drop. */
+export const advertisedSchemaOf = (schema: Schema.Constraint) =>
+  compact(Tool.getJsonSchemaFromSchema(schema), false, false) as ReturnType<
+    typeof Tool.getJsonSchema
+  >;

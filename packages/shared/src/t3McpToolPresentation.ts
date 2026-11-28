@@ -401,7 +401,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_preview_list: tool(["List", "Listing", "Listed", "preview tabs"], "browser", "browser"),
   t3_preview_close: tool(["Close", "Closing", "Closed", "a preview tab"], "browser", "browser"),
   t3_environment_read: tool(
-    ["Read", "Reading", "Read", "environment preferences"],
+    ["Read", "Reading", "Read", "environment identity"],
     "environment-read",
   ),
   t3_environment_links: tool(
@@ -416,7 +416,11 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Forget", "Forgetting", "Forgot", "a linked environment"],
     "environment-unlink",
   ),
-  t3_environment_preferences_update: tool(
+  t3_settings_read: tool(
+    ["Read", "Reading", "Read", "environment preferences"],
+    "environment-read",
+  ),
+  t3_settings_update: tool(
     ["Update", "Updating", "Updated", "environment preferences"],
     "environment-update",
   ),

@@ -100,6 +100,7 @@ const DISPLAY_NAMES: ReadonlyMap<string, string> = new Map([
   ["List preview tabs", msg("List preview tabs")],
   ["Close a preview tab", msg("Close a preview tab")],
   ["Read environment preferences", msg("Read environment preferences")],
+  ["Read environment identity", msg("Read environment identity")],
   ["List linked environments", msg("List linked environments")],
   ["Ask to link an environment", msg("Ask to link an environment")],
   ["Forget a linked environment", msg("Forget a linked environment")],
