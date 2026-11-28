@@ -28,9 +28,11 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
+import { sendPageCommand } from "./GuestInput.ts";
 import * as PreviewManager from "./Manager.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 
@@ -151,11 +153,12 @@ const {
   mkdir,
   previewSession,
   showItemInFolder,
+  showMessageBox,
   webviewSend,
   writeFile,
   writeClipboard,
 } = vi.hoisted(() => ({
-  browserWindowConstructor: vi.fn(),
+  browserWindowConstructor: Object.assign(vi.fn(), { fromWebContents: vi.fn(() => null) }),
   clipboardItemConstructor: vi.fn(),
   createFromPath: vi.fn((): { readonly isEmpty: () => boolean; readonly toPNG: () => Buffer } => ({
     isEmpty: () => false,
@@ -166,6 +169,12 @@ const {
   mkdir: vi.fn((_path: string) => undefined),
   previewSession: { on: vi.fn() },
   showItemInFolder: vi.fn(),
+  showMessageBox: vi.fn(
+    async (_options: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> => ({
+      response: 1,
+      checkboxChecked: false,
+    }),
+  ),
   webviewSend: vi.fn(),
   writeFile: vi.fn((_path: string, _data: Uint8Array) => undefined),
   writeClipboard: vi.fn(async () => undefined),
@@ -210,6 +219,10 @@ const layerBrowserSession = Layer.succeed(
   }),
 );
 
+const layerElectronDialog = Layer.mock(ElectronDialog.ElectronDialog)({
+  showMessageBox: (options) => Effect.promise(() => showMessageBox(options)),
+});
+
 const layerEnvironment = Layer.succeed(
   DesktopEnvironment.DesktopEnvironment,
   DesktopEnvironment.DesktopEnvironment.of({
@@ -243,6 +256,7 @@ const managerLayer = (platform: NodeJS.Platform = "darwin") =>
     ),
     Layer.provideMerge(DesktopBrowserHost.layer),
     Layer.provideMerge(layerBrowserSession),
+    Layer.provideMerge(layerElectronDialog),
     Layer.provideMerge(
       Layer.mock(PreviewPasskeys.PreviewPasskeys)({
         bridgeEnabled: false,
@@ -493,6 +507,7 @@ const makeFaviconWebContents = (options?: {
       listeners.set(event, listener);
     }),
     off,
+    once: vi.fn(),
     ipc: { on: vi.fn(), off: vi.fn() },
     send: webviewSend,
     session: { fetch },
@@ -680,6 +695,7 @@ describe("PreviewManager", () => {
             Layer.mergeAll(
               layerEnvironment,
               layerBrowserSession,
+              layerElectronDialog,
               Layer.mock(DesktopBrowserHost.DesktopBrowserHost)({
                 attach: () => {},
                 detach: () => {},
@@ -848,6 +864,7 @@ describe("PreviewManager", () => {
           navigationHistory: {
             canGoBack: () => true,
             canGoForward: () => true,
+            getActiveIndex: () => 1,
             goBack: navigated,
             goForward: navigated,
           },
@@ -894,6 +911,7 @@ describe("PreviewManager", () => {
           navigationHistory: {
             canGoBack: () => canGoBack,
             canGoForward: () => true,
+            getActiveIndex: () => 1,
             goBack,
             goForward,
           },
@@ -1358,15 +1376,6 @@ describe("PreviewManager", () => {
         );
         yield* manager.navigate("tab_redirect", "https://example.com/reload");
 
-        preview.loadURL.mockImplementationOnce(async () => {
-          preview.listeners.get("will-prevent-unload")?.();
-          throw loadError(-3, "ERR_ABORTED", "https://example.com/blocked");
-        });
-        const blocked = yield* Effect.exit(
-          manager.navigate("tab_redirect", "https://example.com/blocked"),
-        );
-        expect(Exit.isFailure(blocked)).toBe(true);
-
         preview.loadURL.mockRejectedValueOnce(
           loadError(-105, "ERR_NAME_NOT_RESOLVED", "https://missing.invalid/"),
         );
@@ -1383,6 +1392,260 @@ describe("PreviewManager", () => {
       }),
     ),
   );
+
+  describe("a page that blocks unload", () => {
+    const blockUnload = (preview: ReturnType<typeof makeFaviconWebContents>) => {
+      const event = { preventDefault: vi.fn() };
+      preview.listeners.get("will-prevent-unload")?.(event as never);
+      return event;
+    };
+    const openGuardedTab = (manager: PreviewManager.PreviewManager["Service"], tabId: string) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.createTab(tabId);
+        yield* manager.registerWebview(tabId, 42);
+        showMessageBox.mockClear();
+        return preview;
+      });
+
+    effectIt.effect("asks before a refresh leaves it and repeats the refresh on Leave", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const changes = makeChangeSignal();
+          const preview = yield* openGuardedTab(manager, "tab_guarded_leave");
+          showMessageBox.mockResolvedValueOnce({ response: 0, checkboxChecked: false });
+          const unloads: Array<{ readonly preventDefault: () => void }> = [];
+          preview.reload.mockImplementation(() => {
+            unloads.push(blockUnload(preview));
+            changes.notify();
+          });
+
+          yield* manager.refresh("tab_guarded_leave");
+          yield* changes.until(() => unloads.length === 2);
+
+          expect(showMessageBox).toHaveBeenCalledTimes(1);
+          expect(showMessageBox.mock.calls[0]?.[0]).toMatchObject({
+            message: "Leave this page?",
+            buttons: ["Leave", "Stay"],
+            cancelId: 1,
+          });
+          expect(unloads[0]?.preventDefault).not.toHaveBeenCalled();
+          expect(unloads[1]?.preventDefault).toHaveBeenCalledTimes(1);
+        }),
+      ),
+    );
+
+    effectIt.effect("asks before a streamed hard reload leaves it", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const changes = makeChangeSignal();
+          const preview = yield* openGuardedTab(manager, "tab_guarded_streamed");
+          showMessageBox.mockResolvedValueOnce({ response: 0, checkboxChecked: false });
+          const unloads: Array<{ readonly preventDefault: () => void }> = [];
+          Object.assign(preview.webContents, {
+            reloadIgnoringCache: () => {
+              unloads.push(blockUnload(preview));
+              changes.notify();
+            },
+          });
+
+          yield* Effect.promise(() =>
+            sendPageCommand(preview.webContents as never, {} as never, "Page.reload", {
+              ignoreCache: true,
+            }),
+          );
+          yield* changes.until(() => unloads.length === 2);
+
+          expect(showMessageBox).toHaveBeenCalledTimes(1);
+          expect(unloads[1]?.preventDefault).toHaveBeenCalledTimes(1);
+        }),
+      ),
+    );
+
+    effectIt.effect("keeps the page on Stay and puts the address back", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const changes = makeChangeSignal();
+          const preview = yield* openGuardedTab(manager, "tab_guarded_stay");
+          let answered = false;
+          showMessageBox.mockImplementationOnce(async () => {
+            answered = true;
+            changes.notify();
+            return { response: 1, checkboxChecked: false };
+          });
+          const statuses: PreviewManager.PreviewNavStatus[] = [];
+          yield* manager.subscribeStateChanges((_tabId, state) =>
+            Effect.sync(() => {
+              statuses.push(state.navStatus);
+              changes.notify();
+            }),
+          );
+          preview.loadURL.mockImplementation(async (url: string) => {
+            blockUnload(preview);
+            throw Object.assign(new Error(`ERR_ABORTED (-3) loading '${url}'`), {
+              errno: -3,
+              code: "ERR_ABORTED",
+              url,
+            });
+          });
+
+          const opened = yield* manager.navigate(
+            "tab_guarded_stay",
+            "https://example.com/elsewhere",
+          );
+          yield* changes.until(() => answered && statuses.at(-1)?.kind === "Success");
+          yield* flushMicrotasks();
+
+          expect(opened).toBe(false);
+          expect(preview.loadURL).toHaveBeenCalledTimes(1);
+          expect(statuses.at(-1)).toMatchObject({ kind: "Success", url: "http://localhost:3200/" });
+        }),
+      ),
+    );
+
+    const startNavigation = (
+      preview: ReturnType<typeof makeFaviconWebContents>,
+      isSameDocument: boolean,
+    ) =>
+      preview.listeners.get("did-start-navigation")?.({
+        isMainFrame: true,
+        isSameDocument,
+      } as never);
+
+    effectIt.effect("keeps the guard when the page moved its history while asking", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const changes = makeChangeSignal();
+          const preview = yield* openGuardedTab(manager, "tab_guarded_history");
+          let activeIndex = 1;
+          const goBack = vi.fn(() => void blockUnload(preview));
+          Object.assign(preview.webContents, {
+            navigationHistory: {
+              canGoBack: () => true,
+              canGoForward: () => false,
+              getActiveIndex: () => activeIndex,
+              goBack,
+            },
+          });
+          let answered = false;
+          showMessageBox.mockImplementationOnce(async () => {
+            activeIndex = 2;
+            answered = true;
+            changes.notify();
+            return { response: 0, checkboxChecked: false };
+          });
+
+          yield* manager.goBack("tab_guarded_history");
+          yield* changes.until(() => answered);
+          yield* flushMicrotasks();
+
+          expect(goBack).toHaveBeenCalledTimes(1);
+          const later = blockUnload(preview);
+          expect(later.preventDefault).not.toHaveBeenCalled();
+        }),
+      ),
+    );
+
+    effectIt.effect("ignores Leave once the page has navigated away on its own", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const changes = makeChangeSignal();
+          const preview = yield* openGuardedTab(manager, "tab_guarded_moved");
+          preview.reload.mockImplementation(() => void blockUnload(preview));
+          let answered = false;
+          showMessageBox.mockImplementationOnce(async () => {
+            startNavigation(preview, false);
+            answered = true;
+            changes.notify();
+            return { response: 0, checkboxChecked: false };
+          });
+
+          yield* manager.refresh("tab_guarded_moved");
+          yield* changes.until(() => answered);
+          yield* flushMicrotasks();
+
+          expect(preview.reload).toHaveBeenCalledTimes(1);
+        }),
+      ),
+    );
+
+    effectIt.effect("opens the typed address on Leave", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const preview = yield* openGuardedTab(manager, "tab_guarded_address");
+          showMessageBox.mockResolvedValueOnce({ response: 0, checkboxChecked: false });
+          const unloads: Array<ReturnType<typeof blockUnload>> = [];
+          preview.loadURL.mockImplementation(async (url: string) => {
+            const unload = blockUnload(preview);
+            unloads.push(unload);
+            if (unload.preventDefault.mock.calls.length > 0) return;
+            throw Object.assign(new Error(`ERR_ABORTED (-3) loading '${url}'`), {
+              errno: -3,
+              code: "ERR_ABORTED",
+              url,
+            });
+          });
+
+          const opened = yield* manager.navigate("tab_guarded_address", "https://example.com/next");
+
+          expect(opened).toBe(true);
+          expect(preview.loadURL.mock.calls.map(([url]) => url)).toEqual([
+            "https://example.com/next",
+            "https://example.com/next",
+          ]);
+          expect(unloads[1]?.preventDefault).toHaveBeenCalledTimes(1);
+        }),
+      ),
+    );
+
+    effectIt.effect("reports a load error that follows Leave", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const preview = yield* openGuardedTab(manager, "tab_guarded_missing");
+          showMessageBox.mockResolvedValueOnce({ response: 0, checkboxChecked: false });
+          preview.loadURL.mockImplementation(async (url: string) => {
+            const unload = blockUnload(preview);
+            const [errno, code] =
+              unload.preventDefault.mock.calls.length > 0
+                ? [-105, "ERR_NAME_NOT_RESOLVED"]
+                : [-3, "ERR_ABORTED"];
+            throw Object.assign(new Error(`${code} (${errno}) loading '${url}'`), {
+              errno,
+              code,
+              url,
+            });
+          });
+
+          const failed = yield* Effect.exit(
+            manager.navigate("tab_guarded_missing", "https://missing.invalid/"),
+          );
+
+          expect(Exit.isFailure(failed)).toBe(true);
+          if (Exit.isSuccess(failed)) return;
+          expect(Option.getOrThrow(Cause.findErrorOption(failed.cause))).toMatchObject({
+            _tag: "PreviewOperationError",
+            operation: "navigate.loadURL",
+            cause: { errno: -105 },
+          });
+        }),
+      ),
+    );
+
+    effectIt.effect("does not ask when the page blocked a navigation of its own", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const preview = yield* openGuardedTab(manager, "tab_guarded_page");
+
+          const unload = blockUnload(preview);
+          yield* flushMicrotasks();
+
+          expect(showMessageBox).not.toHaveBeenCalled();
+          expect(unload.preventDefault).not.toHaveBeenCalled();
+        }),
+      ),
+    );
+  });
 
   effectIt.effect("detaches through the pinned debugger after the webview is destroyed", () =>
     withManager((manager) =>

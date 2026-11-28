@@ -124,10 +124,10 @@ const registerWebview = DesktopIpc.makeIpcMethod({
 const navigate = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_NAVIGATE_CHANNEL,
   payload: DesktopPreviewNavigateInputSchema,
-  result: Schema.Void,
+  result: Schema.Boolean,
   handler: Effect.fn("desktop.ipc.preview.navigate")(function* ({ tabId, url }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.navigate(tabId, url);
+    return yield* manager.navigate(tabId, url);
   }),
 });
 

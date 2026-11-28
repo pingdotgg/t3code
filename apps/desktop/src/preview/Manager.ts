@@ -64,6 +64,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import { msg } from "gt-i18n";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import { m } from "../i18n/messages.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import {
@@ -94,6 +95,7 @@ import {
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS, type RecordingInputOptions } from "./RecordingInput.ts";
+import { setGuardedReload } from "./GuestInput.ts";
 
 export type PreviewNavStatus =
   | { kind: "Idle" }
@@ -139,6 +141,17 @@ const CAPTURE_PAGE_RETRY_ATTEMPTS = 3;
 const CAPTURE_PAGE_RETRY_DELAY_MS = 120;
 const CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS = 1_000;
 const BUSY_PAGE_PROBE_MS = 1_000;
+// Long enough for a page's beforeunload handler to answer; an older attempt is not retried.
+const LEAVE_ATTEMPT_TTL_MS = 10_000;
+
+interface LeaveAttempt {
+  /** Returns false when the action no longer applies, so Leave must not skip the guard. */
+  readonly retry: () => boolean;
+  readonly expiresAt: number;
+  /** Set once the page's guard blocked this attempt; `decision` then settles with the answer. */
+  blocked: boolean;
+  readonly decision?: Deferred.Deferred<boolean>;
+}
 const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
 const PICTURE_IN_PICTURE_INITIAL_HEIGHT = 320;
 const PICTURE_IN_PICTURE_MIN_WIDTH = 240;
@@ -572,9 +585,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const browserHost = yield* DesktopBrowserHost.DesktopBrowserHost;
   const browserSession = yield* BrowserSession.BrowserSession;
   const passkeys = yield* PreviewPasskeys.PreviewPasskeys;
+  const electronDialog = yield* ElectronDialog.ElectronDialog;
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
+  const runSync = Effect.runSyncWith(context);
   const resolvedArtifactDirectory = path.resolve(artifactDirectory);
 
   let forwardedShortcuts: ReadonlyArray<PreviewForwardedShortcut> = [];
@@ -603,6 +618,46 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const pictureInPictureAspectRatiosRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const pictureInPictureMutationSemaphore = yield* Semaphore.make(1);
   const closingTabIdsRef = yield* Ref.make<ReadonlySet<string>>(new Set());
+  // Electron cancels a beforeunload-guarded unload unless `will-prevent-unload` calls preventDefault
+  // synchronously, and a sync dialog would stall the main process. So a person's blocked action is
+  // recorded here, the prompt is async, and Leave repeats the action with the guard skipped once.
+  const leaveAttempts = new Map<number, LeaveAttempt>();
+  const confirmedLeaves = new Map<number, number>();
+  const leavePromptsOpen = new Set<number>();
+  const armLeave = (
+    wc: Electron.WebContents,
+    retry: () => boolean,
+    decision?: Deferred.Deferred<boolean>,
+  ) => {
+    const leave: LeaveAttempt = {
+      retry,
+      expiresAt: runSync(Clock.currentTimeMillis) + LEAVE_ATTEMPT_TTL_MS,
+      blocked: false,
+      ...(decision ? { decision } : {}),
+    };
+    leaveAttempts.set(wc.id, leave);
+    return leave;
+  };
+  const navigateAway = (wc: Electron.WebContents, action: () => void) => {
+    armLeave(wc, () => {
+      action();
+      return true;
+    });
+    action();
+  };
+  const traverseHistory = (wc: Electron.WebContents, direction: "back" | "forward") => {
+    const history = wc.navigationHistory;
+    if (direction === "back" ? !history.canGoBack() : !history.canGoForward()) return;
+    const go = () => (direction === "back" ? history.goBack() : history.goForward());
+    const from = history.getActiveIndex();
+    // The page may move its history while the prompt is open; Leave must not land elsewhere.
+    armLeave(wc, () => {
+      if (history.getActiveIndex() !== from) return false;
+      go();
+      return true;
+    });
+    go();
+  };
   // Legacy tab capture is unsupported (electron/electron#44618); recording uses setDisplayMediaRequestHandler.
   let pendingRecording: PendingRecording | null = null;
   const displayMediaHandlerSessions = new WeakSet<Session>();
@@ -1278,7 +1333,82 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const navigationStarted = (
       event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
     ) => {
-      if (event.isMainFrame && !event.isSameDocument) cancelFaviconCapture();
+      if (!event.isMainFrame) return;
+      leaveAttempts.delete(wc.id);
+      confirmedLeaves.delete(wc.id);
+      if (!event.isSameDocument) cancelFaviconCapture();
+    };
+    const tabDestroyed = Effect.callback<void>((resume) => {
+      const done = () => resume(Effect.void);
+      wc.once("destroyed", done);
+      return Effect.sync(() => void wc.off("destroyed", done));
+    });
+    const askToLeave = Effect.gen(function* () {
+      const signal = yield* Effect.abortSignal;
+      const { response } = yield* electronDialog.showMessageBox(
+        {
+          type: "question",
+          signal,
+          buttons: [
+            m(msg("Leave", { $context: "button, leaves a web page" })),
+            m(msg("Stay", { $context: "button, stays on a web page" })),
+          ],
+          defaultId: 1,
+          cancelId: 1,
+          message: m(msg("Leave this page?")),
+          detail: m(msg("Changes you made may not be saved.")),
+        },
+        // An unowned box runs synchronously on macOS; an owned one froze mouse input on Windows.
+        hostPlatform === "win32" ? undefined : BrowserSession.previewHostWindow(wc),
+      );
+      return response === 0;
+    }).pipe(Effect.scoped);
+    const confirmLeave = Effect.fn("PreviewManager.confirmLeave")(function* (
+      retry: () => boolean,
+      askedDocumentId: number,
+    ) {
+      const leave = yield* Effect.raceFirst(askToLeave, tabDestroyed.pipe(Effect.as(false))).pipe(
+        Effect.orElseSucceed(() => false),
+        Effect.ensuring(Effect.sync(() => void leavePromptsOpen.delete(wc.id))),
+      );
+      // Navigation and detach both advance documentId; Leave answers only the page that asked.
+      if (!leave || wc.isDestroyed() || documentId !== askedDocumentId) return false;
+      confirmedLeaves.set(wc.id, (yield* Clock.currentTimeMillis) + LEAVE_ATTEMPT_TTL_MS);
+      const retried = yield* attempt(
+        { operation: "leavePage.retry", tabId, webContentsId: wc.id },
+        retry,
+      ).pipe(Effect.orElseSucceed(() => false));
+      if (!retried) confirmedLeaves.delete(wc.id);
+      return retried;
+    });
+    const unloadPrevented = (event: Electron.Event) => {
+      const now = runSync(Clock.currentTimeMillis);
+      const confirmedUntil = confirmedLeaves.get(wc.id);
+      confirmedLeaves.delete(wc.id);
+      if (confirmedUntil !== undefined && now <= confirmedUntil) {
+        event.preventDefault();
+        return;
+      }
+      const pending = leaveAttempts.get(wc.id);
+      leaveAttempts.delete(wc.id);
+      // A blocked loadURL already set the tab to Loading the new address.
+      sync();
+      if (!pending) return;
+      pending.blocked = true;
+      const settle = (left: boolean) => {
+        if (pending.decision) Deferred.doneUnsafe(pending.decision, Effect.succeed(left));
+      };
+      if (now > pending.expiresAt || leavePromptsOpen.has(wc.id)) {
+        settle(false);
+        return;
+      }
+      leavePromptsOpen.add(wc.id);
+      runFork(
+        confirmLeave(pending.retry, documentId).pipe(
+          Effect.onExit((exit) => Effect.sync(() => settle(Exit.isSuccess(exit) && exit.value))),
+          Effect.ignore,
+        ),
+      );
     };
     const audioStateChanged = (
       event: Electron.Event<Electron.WebContentsAudioStateChangedEventParams>,
@@ -1540,13 +1670,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       if (phase !== "up") return;
       runFork(
-        attempt({ operation: "mouseNavigate", tabId, webContentsId: wc.id }, () => {
-          if (button === "back") {
-            if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
-          } else if (wc.navigationHistory.canGoForward()) {
-            wc.navigationHistory.goForward();
-          }
-        }).pipe(Effect.ignore),
+        attempt({ operation: "mouseNavigate", tabId, webContentsId: wc.id }, () =>
+          traverseHistory(wc, button === "back" ? "back" : "forward"),
+        ).pipe(Effect.ignore),
       );
     };
     // Every guest of a focused window reports focus; GuestInput handles guests without a focused frame.
@@ -1619,7 +1745,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         event.preventDefault();
         runFork(
           attempt({ operation: "shortcut.refresh", tabId, webContentsId: wc.id }, () =>
-            wc.reload(),
+            navigateAway(wc, () => wc.reload()),
           ).pipe(Effect.ignore),
         );
         return;
@@ -1638,6 +1764,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       scope,
       attempt({ operation: "detachListeners", tabId, webContentsId: wc.id }, () => {
         cancelFaviconCapture();
+        leaveAttempts.delete(wc.id);
+        confirmedLeaves.delete(wc.id);
+        setGuardedReload(wc, undefined);
+        wc.off("will-prevent-unload", unloadPrevented);
         wc.off("did-start-navigation", navigationStarted);
         wc.off("did-navigate", syncNavigation);
         wc.off("did-navigate-in-page", syncInPageNavigation);
@@ -1661,6 +1791,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const install = Effect.fn("PreviewManager.installWebContentsListeners")(function* () {
       yield* attempt({ operation: "attachListeners", tabId, webContentsId: wc.id }, () => {
         wc.setIgnoreMenuShortcuts(true);
+        wc.on("will-prevent-unload", unloadPrevented);
+        setGuardedReload(wc, (ignoreCache) =>
+          navigateAway(wc, () => (ignoreCache ? wc.reloadIgnoringCache() : wc.reload())),
+        );
         wc.on("did-start-navigation", navigationStarted);
         wc.on("did-navigate", syncNavigation);
         wc.on("did-navigate-in-page", syncInPageNavigation);
@@ -2190,38 +2324,49 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       ] as const;
     });
     yield* emitIfCurrent(tabId, pending);
-    if (pending.webContentsId == null) return;
+    if (pending.webContentsId == null) return true;
     const webContentsId = pending.webContentsId;
     const wc = webContents.fromId(webContentsId);
     if (!wc || wc.isDestroyed()) {
       yield* detachDestroyedWebContents(tabId, webContentsId);
-      return;
+      return true;
     }
     yield* leaveBusyPage(wc);
     if (wc.getURL() === url) {
       yield* attempt({ operation: "navigate.reload", tabId, webContentsId: wc.id }, () =>
-        wc.reload(),
+        navigateAway(wc, () => wc.reload()),
       );
-      return;
+      return true;
     }
-    let unloadPrevented = false;
-    const onPreventUnload = () => {
-      unloadPrevented = true;
-    };
-    yield* attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, () => {
-      wc.on("will-prevent-unload", onPreventUnload);
+    const decision = yield* Deferred.make<boolean>();
+    let leave: LeaveAttempt | undefined;
+    let retryLoad: Promise<void> | undefined;
+    const loadUrl = (start: () => Promise<void>) =>
+      attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, start).pipe(
+        Effect.as(true),
+        // A blocked unload and a superseding navigation both reject with ERR_ABORTED.
+        Effect.catchIf(
+          (error) => Predicate.hasProperty(error.cause, "errno") && error.cause.errno === -3,
+          () => Effect.succeed(false),
+        ),
+      );
+    const loaded = yield* loadUrl(() => {
+      leave = armLeave(
+        wc,
+        () => {
+          retryLoad = wc.loadURL(url);
+          void retryLoad.catch(() => undefined);
+          return true;
+        },
+        decision,
+      );
       return wc.loadURL(url);
-    }).pipe(
-      // Blocked unloads and superseding navigations both reject with ERR_ABORTED.
-      Effect.catchIf(
-        (error) =>
-          !unloadPrevented &&
-          Predicate.hasProperty(error.cause, "errno") &&
-          error.cause.errno === -3,
-        () => Effect.void,
-      ),
-      Effect.ensuring(Effect.sync(() => wc.off("will-prevent-unload", onPreventUnload))),
-    );
+    });
+    // Only a load the page's guard blocked waits for its prompt; a superseded load still counts.
+    if (loaded || !leave?.blocked) return true;
+    if (!(yield* Deferred.await(decision))) return false;
+    yield* loadUrl(() => retryLoad ?? Promise.resolve());
+    return true;
   });
 
   const withWebContents = Effect.fn("PreviewManager.withWebContents")(function* (
@@ -2243,18 +2388,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* attempt({ operation, tabId, webContentsId: wc.id }, () => use(wc));
   });
 
-  const goBack = (tabId: string) =>
-    leavePage("goBack", tabId, (wc) => {
-      if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
-    });
+  const goBack = (tabId: string) => leavePage("goBack", tabId, (wc) => traverseHistory(wc, "back"));
   const goForward = (tabId: string) =>
-    leavePage("goForward", tabId, (wc) => {
-      if (wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
-    });
-  const refresh = (tabId: string) => leavePage("refresh", tabId, (wc) => wc.reload());
+    leavePage("goForward", tabId, (wc) => traverseHistory(wc, "forward"));
+  const refresh = (tabId: string) =>
+    leavePage("refresh", tabId, (wc) => navigateAway(wc, () => wc.reload()));
   const stopLoading = (tabId: string) => withWebContents("stopLoading", tabId, (wc) => wc.stop());
   const hardReload = (tabId: string) =>
-    leavePage("hardReload", tabId, (wc) => wc.reloadIgnoringCache());
+    leavePage("hardReload", tabId, (wc) => navigateAway(wc, () => wc.reloadIgnoringCache()));
   const findInPage = (
     tabId: string,
     text: string,
@@ -3965,7 +4106,8 @@ export class PreviewManager extends Context.Service<
       webContentsId: number,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly prepareWebview: (webContents: Electron.WebContents) => Effect.Effect<void>;
-    readonly navigate: (tabId: string, url: string) => Effect.Effect<void, PreviewManagerError>;
+    /** Fails on load errors; resolves false when the page's leave prompt kept it (Stay). */
+    readonly navigate: (tabId: string, url: string) => Effect.Effect<boolean, PreviewManagerError>;
     readonly goBack: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly goForward: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly refresh: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
