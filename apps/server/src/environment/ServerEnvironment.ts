@@ -337,7 +337,7 @@ export const make = Effect.gen(function* () {
       Effect.forkIn(scope),
       Effect.as(read),
     );
-  });
+  }).pipe(Effect.uninterruptible);
   const agentActivityPublishing = startRead.pipe(
     Effect.flatMap((read) => Deferred.await(read).pipe(Effect.timeoutOption("1 second"))),
     Effect.map(Option.getOrElse(() => lastAgentActivityPublishing)),
