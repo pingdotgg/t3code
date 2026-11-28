@@ -52,6 +52,7 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import { checkpointRefForScopeOrdinal } from "./orchestration-v2/CheckpointService.ts";
+import { providerThreadLogPath } from "./provider/EventNdjsonLogger.ts";
 import * as PendingSettleScripts from "./orchestration-v2/PendingSettleScripts.ts";
 import { threadHasQueuedTurnStart } from "./orchestration-v2/ThreadSettlementService.ts";
 import { MAX_OVERDUE_ARM_MS } from "./orchestration-v2/UsageLimitRecoveryWorker.ts";
@@ -1983,6 +1984,26 @@ const make = Effect.gen(function* () {
     return { waiting, kept };
   });
 
+  // A deleted thread's base provider log is never rotated, so only its tombstone marks it as expired.
+  const deletedThreadProviderLogs = Effect.fn("StorageCleanup.deletedThreadProviderLogs")(
+    function* (logsRoot: string) {
+      const rows = yield* sql<{ threadId: string; deleted: number }>`
+        SELECT thread_id AS "threadId", deleted_at IS NOT NULL AS deleted
+        FROM orchestration_v2_projection_threads
+      `.pipe(NodeSqliteClient.readOnly);
+      const relative = (threadId: string) =>
+        path.relative(logsRoot, providerThreadLogPath(config.providerEventLogPath, threadId));
+      // Thread ids that normalize to the same file name keep it while any of them is live.
+      const live = new Set(rows.filter((row) => !row.deleted).map((row) => relative(row.threadId)));
+      return new Set(
+        rows
+          .filter((row) => row.deleted)
+          .map((row) => relative(row.threadId))
+          .filter((file) => !live.has(file)),
+      );
+    },
+  );
+
   const cleanFiles = Effect.fn("StorageCleanup.cleanFiles")(function* (
     root: string,
     days: number | null,
@@ -1991,6 +2012,7 @@ const make = Effect.gen(function* () {
     removed: { files: number; bytes: number },
   ) {
     if (days === null || !(yield* fs.exists(root))) return removed;
+    const deletedThreadLogs = rotatedLogs ? yield* deletedThreadProviderLogs(root) : new Set();
     // A symlinked parent (a linked T3 home) is fine; a symlinked folder is not.
     const realRoot = yield* fs.realPath(root);
     const realParent = yield* fs.realPath(path.dirname(root));
@@ -2006,7 +2028,12 @@ const make = Effect.gen(function* () {
         if ((yield* fs.realPath(target)) !== target) continue;
         if (stat.type === "Directory" && rotatedLogs) {
           yield* visit(target);
-        } else if (stat.type === "File" && (!rotatedLogs || /\.(?:log|ndjson)\.\d+$/.test(name))) {
+        } else if (
+          stat.type === "File" &&
+          (!rotatedLogs ||
+            /\.(?:log|ndjson)\.\d+$/.test(name) ||
+            deletedThreadLogs.has(path.relative(realRoot, target)))
+        ) {
           const modified = Option.getOrNull(stat.mtime);
           if (modified !== null && modified.getTime() < now - days * DAY_MS) {
             const current = (yield* settingsService.getSettings).storageCleanup;
