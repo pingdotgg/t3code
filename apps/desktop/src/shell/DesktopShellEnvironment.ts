@@ -1,7 +1,5 @@
 import { DesktopShellEnvironmentSnapshot, ShellEnvironmentPatch } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
-  anchorCurrentDirectoryEntry,
   applyShellEnvironment,
   buildEnvironmentCaptureCommand,
   listLoginShellCandidates,
@@ -532,10 +530,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     ]);
 
     if (Option.isSome(mergedPath)) {
-      config.env.PATH = anchorCurrentDirectoryEntry(
-        mergedPath.value,
-        yield* HostProcess.WorkingDirectory,
-      );
+      config.env.PATH = mergedPath.value;
     }
     if (!config.env.SSH_AUTH_SOCK && shellEnvironment.SSH_AUTH_SOCK) {
       config.env.SSH_AUTH_SOCK = shellEnvironment.SSH_AUTH_SOCK;

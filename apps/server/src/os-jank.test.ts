@@ -126,7 +126,7 @@ effectIt.effect("waits longer for only one hung login shell", () =>
   ),
 );
 
-effectIt.effect("adds the server's cwd before the login shell's current-directory entry", () =>
+effectIt.effect("keeps the login shell's current-directory entry for each child's cwd", () =>
   Effect.acquireUseRelease(
     Effect.sync(() =>
       vi
@@ -140,11 +140,10 @@ effectIt.effect("adds the server's cwd before the login shell's current-director
         yield* fixPath().pipe(
           Effect.provideService(HostProcess.Platform, "linux"),
           Effect.provideService(HostProcess.Environment, env),
-          Effect.provideService(HostProcess.WorkingDirectory, "/srv/launch"),
           Effect.provide(NodeServices.layer),
         );
 
-        assert.equal(env.PATH, "/srv/launch::/opt/tools/bin:/usr/bin");
+        assert.equal(env.PATH, ":/opt/tools/bin:/usr/bin");
       }),
     (probe) => Effect.sync(() => probe.mockRestore()),
   ),

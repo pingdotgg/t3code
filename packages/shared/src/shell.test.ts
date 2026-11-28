@@ -17,7 +17,6 @@ import * as NodePath from "node:path";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  anchorCurrentDirectoryEntry,
   applyShellEnvironment,
   pathSetup,
   pathSetupCommand,
@@ -268,19 +267,6 @@ describe("mergePathEntries", () => {
     expect(mergePathEntries("::", undefined, "linux")).toBe(":");
     expect(mergePathEntries("", undefined, "linux")).toBeUndefined();
     expect(mergePathEntries("; C:\\bin ;;", undefined, "win32")).toBe("C:\\bin");
-  });
-});
-
-describe("anchorCurrentDirectoryEntry", () => {
-  it.each([
-    [":/usr/bin", "/srv/project", "/srv/project::/usr/bin"],
-    ["/usr/bin:", "/srv/project", "/usr/bin:/srv/project:"],
-    [":", "/srv/project", "/srv/project:"],
-    ["/srv/project::/usr/bin", "/srv/project", "/srv/project::/usr/bin"],
-    [":/usr/bin", "/srv/project:one", ":/usr/bin"],
-    ["/usr/bin", "/srv/project", "/usr/bin"],
-  ])("anchors %s from %s and keeps the current-directory entry", (path, cwd, expected) => {
-    expect(anchorCurrentDirectoryEntry(path, cwd)).toBe(expected);
   });
 });
 
