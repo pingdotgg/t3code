@@ -53,14 +53,41 @@ const detail = vi.hoisted(() => ({
   linkedPullRequests: [],
 })) as unknown as IssueDetail;
 
-const state = vi.hoisted(() => ({ openLink: vi.fn(async () => {}) }));
+const state = vi.hoisted(() => ({
+  openLink: vi.fn(async () => {}),
+  comment: vi.fn(async (_value: unknown) => ({ _tag: "Success" })),
+}));
 
 vi.mock(import("~/browser/useOpenLink"), () => ({ useOpenLink: () => state.openLink }));
+vi.mock(import("~/state/use-atom-command"), async (original) => {
+  const actual = await original();
+  const { issueEnvironment } = await import("~/state/issues");
+  return {
+    useAtomCommand: ((command, options) =>
+      command.label === issueEnvironment.comment.label
+        ? state.comment
+        : actual.useAtomCommand(command, options)) as typeof actual.useAtomCommand,
+  };
+});
 vi.mock(import("./IssueThreadLinks"), () => ({ IssueThreadLinks: (() => null) as never }));
 vi.mock(import("~/state/issues"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   const actual = await original();
   const detailAtom = Atom.make(AsyncResult.success(detail));
+  const serviceDeskAtom = Atom.make(
+    AsyncResult.success({
+      ...detail,
+      tracker: "jira",
+      host: "example.atlassian.net",
+      scope: "SUP",
+      key: "SUP-12",
+      displayKey: "SUP-12",
+      url: "https://example.atlassian.net/browse/SUP-12",
+      capabilities: { ...detail.capabilities, comment: true },
+      viewerPermissions: { ...detail.viewerPermissions, comment: true },
+      commentAudiences: true,
+    }),
+  );
   const candidatesAtom = Atom.make(
     AsyncResult.success({
       labels: [
@@ -79,7 +106,8 @@ vi.mock(import("~/state/issues"), async (original) => {
     ...actual,
     issueEnvironment: {
       ...actual.issueEnvironment,
-      detail: (() => detailAtom) as never,
+      detail: (({ input }: { input: { key: string } }) =>
+        input.key === "SUP-12" ? serviceDeskAtom : detailAtom) as never,
       candidates: (() => candidatesAtom) as never,
       comment: { ...actual.issueEnvironment.comment, permissionAtom: () => allowed },
     },
@@ -196,5 +224,32 @@ describe("IssueDetailPanel", () => {
 
     await expect.element(page.getByRole("option", { name: "alice" })).toBeInTheDocument();
     await expect.element(page.getByRole("option", { name: "bob" })).not.toBeInTheDocument();
+  });
+
+  it("goes back to an internal note after a reply to the customer is posted", async () => {
+    state.comment.mockClear();
+    await using _screen = await render(
+      <IssueDetailPanel
+        environmentId={"env-1" as never}
+        reference={{ ...reference, tracker: "jira" as never, scope: "SUP", key: "SUP-12" }}
+      />,
+    );
+    const field = page.getByRole("textbox", { name: "Add a comment" });
+    const send = page.getByRole("button", { name: "Comment", exact: true });
+
+    await page.getByRole("button", { name: "Internal note" }).click();
+    await page.getByRole("menuitemradio", { name: "Reply to customer" }).click();
+    await userEvent.fill(field, "We have shipped a fix.");
+    await send.click();
+    await expect.element(page.getByRole("button", { name: "Internal note" })).toBeInTheDocument();
+    await userEvent.fill(field, "Customer confirmed on a call.");
+    await send.click();
+    await vi.waitFor(() =>
+      expect(
+        state.comment.mock.calls.map(
+          ([value]) => (value as { input: { audience?: string } }).input.audience,
+        ),
+      ).toEqual(["public", "internal"]),
+    );
   });
 });
