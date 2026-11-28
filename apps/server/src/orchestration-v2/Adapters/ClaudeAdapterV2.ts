@@ -5259,6 +5259,15 @@ function claudePromptLifecycle(
   return typeof uuid === "string" && typeof state === "string" ? { uuid, state } : null;
 }
 
+// The SDK does not declare prompt_submit_outcome; the CLI sets it on a UserPromptSubmit drop.
+function isClaudePromptDroppedByHook(message: SDKMessage): boolean {
+  if (message.type !== "system" || message.subtype !== "informational") return false;
+  const outcome: unknown = Reflect.get(message, "prompt_submit_outcome");
+  return (
+    typeof outcome === "object" && outcome !== null && Reflect.get(outcome, "prompt_kept") === false
+  );
+}
+
 // Without an echo, non-human origin proves a foreign turn only on CLIs known to echo prompts.
 function isClaudeResultForOtherTurn(input: {
   readonly message: SDKResultMessage;
@@ -5710,6 +5719,7 @@ interface ActiveClaudeTurnContext {
   // MCP app notes this turn's prompt carries, recorded as delivered only if the turn completes.
   appContextOffered?: ReadonlyMap<string, string> | undefined;
   promptStarted: boolean;
+  promptCompleted: boolean;
   nativeWakeStarted: boolean;
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
@@ -13377,6 +13387,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           const lifecycle = claudePromptLifecycle(message);
+          if (lifecycle !== null) {
+            context.promptCompleted =
+              lifecycle.uuid === context.promptUuid && lifecycle.state === "completed";
+          }
           if (lifecycle?.uuid === context.promptUuid) {
             if (liveQuery.promptEchoMode === "unknown") {
               liveQuery.promptEchoMode = "acknowledged";
@@ -13401,6 +13415,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               });
               return;
             }
+          }
+          // A prompt Claude takes into its own wake turn and a hook then drops never gets a
+          // result; settle it and leave the wake output to its run. Idle drops settle on their
+          // zero-turn result.
+          if (
+            context.promptCompleted &&
+            context.heldRootFrames.length > 0 &&
+            isClaudePromptDroppedByHook(message)
+          ) {
+            yield* handleRoutedSdkMessage(input);
+            for (const frame of context.heldRootFrames.splice(0)) {
+              yield* bufferWakeMessage({
+                nativeThreadId: liveQuery.nativeThreadId,
+                message: frame,
+              });
+            }
+            yield* finalizeActiveTurn({
+              context,
+              status: "completed",
+              completedAt: yield* DateTime.now,
+            });
+            return;
           }
           if (!isClaudePromptEchoGatedFrame(message)) {
             if (
@@ -14820,6 +14856,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ? "confirmed"
                   : "pending",
               promptStarted: false,
+              promptCompleted: false,
               nativeWakeStarted: false,
               gatedFramesBeforeEcho: 0,
               heldRootFrames: [],
