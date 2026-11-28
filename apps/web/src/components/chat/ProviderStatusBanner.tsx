@@ -4,7 +4,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { msg, T, useGT, useMessages } from "gt-react";
+import { msg, useGT, useMessages } from "gt-react";
 import { memo, useRef, useState, useSyncExternalStore } from "react";
 import { InfoIcon, XIcon } from "lucide-react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
@@ -212,9 +212,11 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
               {message}
             </SharedTooltipTrigger>
             <div className="flex flex-wrap items-center justify-end gap-3">
-              {onOpenProviderSetup && hasProviderSetup(status) ? (
+              {onOpenProviderSetup ? (
                 <InlineButton onClick={() => onOpenProviderSetup(status.instanceId)}>
-                  <T>Open provider setup</T>
+                  {hasProviderSetup(status)
+                    ? gt("Open provider setup")
+                    : gt("Open {provider} settings", { provider: providerName })}
                 </InlineButton>
               ) : null}
               <Button
