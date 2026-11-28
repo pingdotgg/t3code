@@ -32,6 +32,7 @@ import {
   deriveResumableRunId,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
+  pendingProviderStartup,
   deriveThreadRuntime,
   formatModelSelectionEffort,
   formatProviderSubagentStatus,
@@ -454,6 +455,54 @@ describe("thread execution presentation", () => {
       instanceId: openRun.providerInstanceId,
       driver: session.driver,
     });
+    // A live session reaches its turn at once, so only a reported step shows before it.
+    const live = { ...starting, providerSessions: [{ ...session, status: "ready" as const }] };
+    expect(deriveThreadActivityRun(live)?.providerStartingLabel).toBeUndefined();
+    expect(
+      deriveThreadActivityRun({
+        ...live,
+        providerSessions: [{ ...session, status: "ready" as const, startupPhase: "launch" }],
+      })?.providerStartingLabel,
+    ).toBe("Starting Claude");
+    expect(
+      deriveThreadActivityRun({
+        ...starting,
+        providerSessions: [{ ...session, status: "stopped" as const }],
+      })?.providerStartingLabel,
+    ).toBe("Starting Claude");
+    expect(pendingProviderStartup(live, openRun.providerInstanceId)).toBeNull();
+    // Another provider's live session does not launch the one a send switches to.
+    expect(pendingProviderStartup(live, ProviderInstanceId.make("other-provider"))).toEqual({
+      phase: undefined,
+    });
+    expect(pendingProviderStartup(starting, openRun.providerInstanceId)).toEqual({
+      phase: undefined,
+    });
+    expect(pendingProviderStartup(null, openRun.providerInstanceId)).toEqual({ phase: undefined });
+    // A live session whose process is gone says so before the send reaches the server.
+    expect(
+      pendingProviderStartup(
+        { ...live, providerSessions: [{ ...session, status: "ready", startupPhase: "launch" }] },
+        openRun.providerInstanceId,
+      ),
+    ).toEqual({ phase: "launch" });
+    // A step another thread's start reported does not hold this thread's send.
+    expect(
+      pendingProviderStartup(
+        {
+          ...live,
+          providerSessions: [
+            {
+              ...session,
+              status: "ready",
+              startupPhase: "mcp",
+              startupPhaseThreadId: ThreadId.make("another-thread"),
+            },
+          ],
+        },
+        openRun.providerInstanceId,
+      ),
+    ).toBeNull();
 
     const providerTurnId = ProviderTurnId.make("provider-turn-starting");
     const turnStarted = {
