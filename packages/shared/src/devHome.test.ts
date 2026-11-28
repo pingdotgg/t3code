@@ -16,7 +16,8 @@ const makeRepo = (
     | "submodule"
     | "unreadable-git-file"
     | "bare-repo-worktree"
-    | "custom-common-dir-worktree",
+    | "custom-common-dir-worktree"
+    | "newline-common-dir-worktree",
 ) =>
   Effect.acquireRelease(
     Effect.sync(() => {
@@ -27,6 +28,11 @@ const makeRepo = (
         NodeFS.writeFileSync(NodePath.join(root, ".git"), "gitdir: /srv/myrepo.git/worktrees/x\n");
       } else if (kind === "custom-common-dir-worktree") {
         NodeFS.writeFileSync(NodePath.join(root, ".git"), "gitdir: /srv/store/worktrees/x\n");
+      } else if (kind === "newline-common-dir-worktree") {
+        NodeFS.writeFileSync(
+          NodePath.join(root, ".git"),
+          "gitdir: /srv/bare\nstore/worktrees/tree\n",
+        );
       } else if (kind === "submodule") {
         NodeFS.writeFileSync(NodePath.join(root, ".git"), "gitdir: ../.git/modules/sub\n");
       } else if (kind === "unreadable-git-file") {
@@ -78,6 +84,16 @@ describe("resolveWorktreeT3Home", () => {
       const home = yield* resolveWorktreeT3Home(nested);
       assert.equal(home, NodePath.join(NodePath.resolve(root), ".t3"));
       assert.isFalse(NodeFS.existsSync(home ?? ""));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps worktree state isolated when the Git directory contains a newline", () =>
+    Effect.gen(function* () {
+      const { root, nested } = yield* makeRepo("newline-common-dir-worktree");
+      assert.equal(
+        yield* resolveWorktreeT3Home(nested),
+        NodePath.join(NodePath.resolve(root), ".t3"),
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

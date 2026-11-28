@@ -7,13 +7,14 @@ import * as Path from "effect/Path";
 
 // Match worktrees/<name>; bare repos and GIT_COMMON_DIR need not use a directory named .git.
 const pointsAtLinkedWorktree = (gitFileContents: string, path: Path.Path): boolean => {
+  if (!gitFileContents.startsWith("gitdir:")) {
+    return false;
+  }
   const gitdir = gitFileContents
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line.startsWith("gitdir:"))
-    ?.slice("gitdir:".length)
-    .trim();
-  if (gitdir === undefined || gitdir.length === 0) {
+    .slice("gitdir:".length)
+    .replace(/^[ \t]+/, "")
+    .replace(/\r?\n$/, "");
+  if (gitdir.length === 0) {
     return false;
   }
   const segments = path
