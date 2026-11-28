@@ -470,7 +470,7 @@ export function markdownWithTableBreaks(markdown: string): string {
 const WORD_CHAR = /[\p{L}\p{N}]/u;
 
 /**
- * Offsets of the single tildes in a text node's source, outside `$…$`, `$$…$$`, `\(…\)` and
+ * Offsets of the single tildes in a block's source, outside `$…$`, `$$…$$`, `\(…\)` and
  * `\[…\]` (flanked as md4c does): md4c hands math to LaTeX unescaped, where `\~` would be an
  * accent. A closer search that fails is not repeated, so the scan stays linear.
  */
@@ -515,14 +515,42 @@ function markdownWithLiteralSingleTildes(markdown: string): string {
   const edits: MarkdownEdit[] = [];
   const visit = (node: MarkdownNode) => {
     const start = node.position?.start.offset;
-    if (node.type === "text" && start !== undefined) {
-      for (const offset of singleTildeOffsets(source.slice(start, node.position?.end.offset)))
-        edits.push({ start: start + offset, end: start + offset, content: "\\" });
+    const end = node.position?.end.offset;
+    if (
+      !(node.type === "paragraph" || node.type === "heading" || node.type === "tableCell") ||
+      start === undefined ||
+      end === undefined
+    ) {
+      if ("children" in node) node.children.forEach(visit);
       return;
     }
-    // An autolink's text is its URL, which an escape would change.
-    if (node.type === "link" && start !== undefined && source[start] !== "[") return;
-    if ("children" in node) node.children.forEach(visit);
+    // Math can span emphasis and other inline nodes, so it is found in the whole block's source.
+    const textRanges: Array<readonly [number, number]> = [];
+    const parts: string[] = [];
+    let masked = start;
+    const collect = (child: MarkdownNode) => {
+      const from = child.position?.start.offset;
+      const to = child.position?.end.offset;
+      if (from === undefined || to === undefined) return;
+      if (child.type === "text") textRanges.push([from, to]);
+      // md4c resolves code spans first, so their `$` and `\(` open no math.
+      else if (child.type === "inlineCode") {
+        parts.push(source.slice(masked, from), " ".repeat(to - from));
+        masked = to;
+      }
+      // An autolink's text is its URL, which an escape would change.
+      else if (child.type === "link" && source[from] !== "[") return;
+      else if ("children" in child) child.children.forEach(collect);
+    };
+    node.children.forEach(collect);
+    parts.push(source.slice(masked, end));
+    let range = 0;
+    for (const offset of singleTildeOffsets(parts.join(""))) {
+      const at = start + offset;
+      while (textRanges[range] && textRanges[range]![1] <= at) range += 1;
+      if (textRanges[range] && textRanges[range]![0] <= at)
+        edits.push({ start: at, end: at, content: "\\" });
+    }
   };
   visit(parser.parse(markdown));
   return applyMarkdownEdits(markdown, edits);

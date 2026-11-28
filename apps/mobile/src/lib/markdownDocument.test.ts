@@ -57,4 +57,11 @@ describe("single tildes", () => {
     expect(render(prose)).not.toMatch(unescapedSingleTildes);
     expect(render("Real ~~strike~~ here.")).toContain("~~strike~~");
   });
+
+  it.each(["$a *b~c* d$ x~y", "\\(a *b~c* d\\) x~y"])(
+    "stay raw in math that spans emphasis: %s",
+    (markdown) => {
+      expect(render(markdown)).toBe(markdown.replace("x~y", "x\\~y"));
+    },
+  );
 });
