@@ -251,6 +251,13 @@ export function deriveProviderThread(input: {
   );
 }
 
+export function deriveReimportedProviderThread(
+  providerThreadId: ProviderThreadId,
+  threadId: ThreadId,
+): ProviderThreadId {
+  return ProviderThreadId.make(joinId("provider-thread", "reimport", threadId, providerThreadId));
+}
+
 const randomId =
   <Id, Input>(input: {
     readonly kind: IdAllocatorV2Kind;

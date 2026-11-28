@@ -4220,6 +4220,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: thread,
     });
     if (command.importedNativeThread !== undefined) {
+      const providerThreadId = idAllocator.derive.providerThread({
+        driver: command.importedNativeThread.ref.driver,
+        providerInstanceId: command.modelSelection.instanceId,
+        nativeThreadId: command.importedNativeThread.ref.nativeId,
+      });
+      // Deleted threads retain provider records referenced by their runs.
+      const retained = yield* projectionStore
+        .hasProviderThread(command.threadId, providerThreadId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
       yield* emitEvent({
         type: "provider-thread.updated",
         threadId: command.threadId,
@@ -4227,11 +4240,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: command.modelSelection.instanceId,
         occurredAt: now,
         payload: {
-          id: idAllocator.derive.providerThread({
-            driver: command.importedNativeThread.ref.driver,
-            providerInstanceId: command.modelSelection.instanceId,
-            nativeThreadId: command.importedNativeThread.ref.nativeId,
-          }),
+          id: retained
+            ? IdAllocator.deriveReimportedProviderThread(providerThreadId, command.threadId)
+            : providerThreadId,
           driver: command.importedNativeThread.ref.driver,
           providerInstanceId: command.modelSelection.instanceId,
           providerSessionId: null,

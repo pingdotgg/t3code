@@ -182,6 +182,7 @@ const make = Effect.gen(function* () {
         historyOrigin: existing.historyOrigin,
         hasRun: existing.latestRunId !== null,
       });
+      if (!repairing) return { threadId, imported: false } as const;
       yield* agentSessionImporter.importNativeHistory({ threadId, workspaceRoot }).pipe(
         Effect.mapError(
           (cause) =>
@@ -192,7 +193,7 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-      return { threadId, imported: repairing } as const;
+      return { threadId, imported: true } as const;
     }
 
     const provider = (yield* providerRegistry.getProviders).find(
