@@ -668,6 +668,31 @@ it.effect.each([
   }),
 );
 
+it.effect.each([
+  ["HTTPS://github.com/OctoCat/T3Code.git", "https://github.com/OctoCat/T3Code.git"],
+  ["Http://github.com/OctoCat/T3Code.git", "http://github.com/OctoCat/T3Code.git"],
+  ["SSH://git@github.com/OctoCat/T3Code.git", "ssh://git@github.com/OctoCat/T3Code.git"],
+  ["HTTPS://github.com?access_token=abc@secret", "https://github.com/?access_token=abc@secret"],
+  ["CustomHelper://host/repo.git", "CustomHelper://host/repo.git"],
+] as const)(
+  "lowercases standard URI schemes and preserves custom transports in %s before invoking git clone",
+  ([remoteUrl, expectedUrl]) =>
+    Effect.gen(function* () {
+      const cloneUrls: Array<string> = [];
+      yield* cloneInTemporaryDirectory(
+        {
+          execute: (input) => {
+            cloneUrls.push(input.args.at(-2)!);
+            return Effect.succeed(processOutput());
+          },
+        },
+        { remoteUrl },
+      );
+
+      assert.deepStrictEqual(cloneUrls, [expectedUrl]);
+    }),
+);
+
 it.effect("strips embedded credentials from the remote URL it reports", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

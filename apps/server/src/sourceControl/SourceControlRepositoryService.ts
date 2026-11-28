@@ -384,8 +384,11 @@ export const make = Effect.gen(function* () {
         if (stderrTail.length > 4) stderrTail.shift();
       });
     };
-    // Git misreads @ in a pathless URL's query as userinfo and echoes its suffix as the host.
-    const normalizedCloneUrl = cloneUrl.replace(/^([a-z][a-z0-9+.-]*:\/\/[^/?#]+)\?/i, "$1/?");
+    // Git rejects uppercase http/https/ssh schemes (looking up `git-remote-<SCHEME>`) and misreads
+    // `@` in a pathless URL's query as userinfo, echoing its suffix as the host.
+    const normalizedCloneUrl = cloneUrl
+      .replace(/^(https?|ssh):\/\//i, (_match, scheme: string) => `${scheme.toLowerCase()}://`)
+      .replace(/^([a-z][a-z0-9+.-]*:\/\/[^/?#]+)\?/i, "$1/?");
     const provider = input.provider ?? SourceControlProviderKind.make("unknown");
     const timeoutMs = options?.timeoutMs === undefined ? CLONE_TIMEOUT_MS : options.timeoutMs;
     const clone = git
