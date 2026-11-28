@@ -127,6 +127,38 @@ describe("tailClaudeTaskOutput", () => {
       assert.deepEqual(chunks, ["one\n", "two\n"]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("reads nothing when a session or task id leaves the Claude task directory", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* fileSystem.makeTempDirectoryScoped({ prefix: "claude-task-output-" });
+        const root = path.join(base, "claude-root");
+        yield* fileSystem.makeDirectory(path.join(root, "-private-tmp-project"), {
+          recursive: true,
+        });
+        const outside = path.join(base, "outside", "tasks");
+        yield* fileSystem.makeDirectory(outside, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(outside, `${TASK_ID}.output`), "secret\n");
+        const chunks: Array<string> = [];
+        const stop = yield* Deferred.make<void>();
+        yield* Deferred.succeed(stop, undefined);
+        for (const ids of [
+          { sessionId: "../../outside", taskId: TASK_ID },
+          { sessionId: SESSION_ID, taskId: `../../../../outside/tasks/${TASK_ID}` },
+        ]) {
+          yield* tailClaudeTaskOutput({
+            root,
+            ...ids,
+            stop,
+            onChunk: (chunk) => Effect.sync(() => chunks.push(chunk)),
+          });
+        }
+        assert.deepEqual(chunks, []);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("claudeTaskOutputRoot", () => {
