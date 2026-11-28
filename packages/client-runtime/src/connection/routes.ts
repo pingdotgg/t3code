@@ -102,9 +102,13 @@ function routeHostname(route: ConnectionRoute): string | null {
   }
 }
 
+function isTailnetAddress(hostname: string, tailscale = false): boolean {
+  return isTailnetHost(hostname) || (tailscale && isSharedAddressSpaceHost(hostname));
+}
+
 function directAddressKind(hostname: string, tailscale = false) {
   if (isLocalLoopbackHost(hostname)) return "loopback";
-  if (tailscale || isTailnetHost(hostname)) return "tailnet";
+  if (isTailnetAddress(hostname, tailscale)) return "tailnet";
   if (isSharedAddressSpaceHost(hostname)) return "vpn";
   return isPrivateNetworkHost(hostname) ? "lan" : "public";
 }
@@ -310,7 +314,9 @@ export function mergeLearnedRoutes(input: {
     // A loopback address names whichever device opens it, never the server.
     if (isLocalLoopbackHost(url.hostname)) continue;
     reported.set(url.origin, url);
-    if (endpoint.kind === "tailnet") tailscaleOrigins.add(url.origin);
+    if (endpoint.kind === "tailnet" && isTailnetAddress(url.hostname, true)) {
+      tailscaleOrigins.add(url.origin);
+    }
   }
   const normalized = (url: string) => url.replace(/\/+$/, "");
   const known = new Set(
@@ -410,7 +416,10 @@ export function sendsTokenInClear(
   if (profile?._tag !== "BearerConnectionProfile" || profile.authorization === "t3-connect") {
     return false;
   }
-  if ((tailscale ?? profile.network === "tailscale") || !profile.httpBaseUrl.startsWith("http:")) {
+  const hostname = routeHostname(route);
+  const onTailnet =
+    hostname !== null && isTailnetAddress(hostname, tailscale ?? profile.network === "tailscale");
+  if (onTailnet || !profile.httpBaseUrl.startsWith("http:")) {
     return false;
   }
   const credentialId = credentialConnectionId(connectionRouteId(route.target));
