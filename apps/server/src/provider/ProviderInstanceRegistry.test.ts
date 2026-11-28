@@ -42,6 +42,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ClaudeAdapter from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -621,6 +622,76 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(snapshot.auth).toMatchObject({ status: "authenticated", email: "test@example.com" });
       expect(snapshot.usageLimits?.windows[0]?.usedPercent).toBe(100);
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live(
+    "does not report a rejected Claude subscription as authenticated after a usage refresh",
+    () =>
+      Effect.gen(function* () {
+        if (yield* HostProcess.isWindows) return;
+
+        const fixtures = yield* makeTildeProviderFixtures();
+        const adapter = vi.spyOn(ClaudeAdapter, "createClaudeAdapterV2");
+        yield* Effect.addFinalizer(() => Effect.sync(() => adapter.mockRestore()));
+        const fetchUsage = vi.fn(async () => ({
+          rate_limits_available: true,
+          rate_limits: {
+            five_hour: { utilization: 12, resets_at: "2026-11-28T05:00:00Z" },
+          },
+        }));
+        const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+          () =>
+            ({
+              initializationResult: async () => ({
+                commands: [],
+                account: { subscriptionType: "max", tokenSource: "oauth" },
+              }),
+              usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: fetchUsage,
+            }) as unknown as ReturnType<typeof ClaudeSdk.query>,
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+
+        const claudeId = ProviderInstanceId.make("claude_rejected_subscription");
+        const { registry } = yield* makeProviderInstanceRegistry<ClaudeDriverEnv>({
+          drivers: [ClaudeDriver],
+          configMap: {
+            [claudeId]: {
+              driver: ClaudeDriver.driverKind,
+              enabled: true,
+              config: makeClaudeConfig({
+                enabled: true,
+                binaryPath: fixtures.claudeBinaryPath,
+                homePath: fixtures.claudeHomePath,
+              }),
+            },
+          },
+        });
+        const claude = (yield* registry.getInstance(claudeId))!;
+        expect(yield* claude.snapshot.refresh).toMatchObject({
+          status: "ready",
+          auth: { status: "authenticated" },
+        });
+
+        const report = adapter.mock.calls.find(([input]) => input.instanceId === claudeId)?.[1]
+          ?.onModelAuthentication;
+        yield* report?.("rejected", null) ?? Effect.void;
+        fetchUsage.mockClear();
+        yield* claude.invalidateCaches ?? Effect.void;
+        expect(yield* claude.snapshot.refresh).toMatchObject({
+          status: "warning",
+          auth: { status: "unknown" },
+          modelsRetained: true,
+          usageLimits: { windows: [expect.objectContaining({ usedPercent: 12 })] },
+        });
+
+        expect(fetchUsage).toHaveBeenCalled();
+
+        yield* report?.("accepted", null) ?? Effect.void;
+        expect(yield* claude.snapshot.getSnapshot).toMatchObject({
+          status: "ready",
+          auth: { status: "authenticated" },
+        });
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("scopes Claude's one-probe fallback to the logged-in organization", () =>

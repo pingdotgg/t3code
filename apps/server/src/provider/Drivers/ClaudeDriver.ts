@@ -11,7 +11,9 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
@@ -68,6 +70,7 @@ import {
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { hasClaudeAuthenticationOverride } from "./ClaudeSkills.ts";
 import { makeClaudeMaintenanceResolution } from "./ClaudeMaintenance.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
@@ -182,6 +185,33 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     // Retain reports until the registry subscribes; end its listener on teardown.
     const workspaceRescans = yield* Queue.unbounded<string, Cause.Done>();
     yield* Effect.addFinalizer(() => Queue.end(workspaceRescans));
+    const authenticationRejected = yield* SubscriptionRef.make(false);
+    const authenticationUpdates = yield* Semaphore.make(1);
+    const inheritedHome = processEnv.CLAUDE_CONFIG_DIR?.trim();
+    const canReportSavedLogin =
+      !/--settings(?:[=\s]|$)/.test(effectiveConfig.launchArgs) &&
+      (effectiveConfig.homePath.trim().length > 0 ||
+        !inheritedHome ||
+        path.isAbsolute(inheritedHome));
+    const withModelAuthentication = (provider: ServerProvider): ServerProvider => {
+      if (
+        !authenticationRejected.value ||
+        provider.status !== "ready" ||
+        provider.auth.type === undefined ||
+        provider.auth.type === "apiKey" ||
+        provider.auth.type === "bedrock" ||
+        provider.auth.type === "customEndpoint"
+      )
+        return provider;
+      // Usage limits and account metadata can still load after a model request returns 401.
+      return {
+        ...provider,
+        status: "warning",
+        auth: { ...provider.auth, status: "unknown" },
+        modelsRetained: true,
+        message: "Claude rejected the saved sign-in. Run `claude auth login` and try again.",
+      };
+    };
     const orchestrationAdapter = yield* createClaudeAdapterV2(
       {
         instanceId,
@@ -194,6 +224,28 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       {
         scopedLimitNames,
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+        ...(canReportSavedLogin
+          ? {
+              onModelAuthentication: Effect.fn("ClaudeDriver.onModelAuthentication")(
+                function* (state, cwd) {
+                  const rejected = state === "rejected";
+                  if (authenticationRejected.value === rejected) return;
+                  if (
+                    yield* hasClaudeAuthenticationOverride(
+                      effectiveConfig,
+                      cwd ?? undefined,
+                      processEnv,
+                    )
+                  )
+                    return;
+                  yield* SubscriptionRef.set(authenticationRejected, rejected);
+                },
+                (effect) => authenticationUpdates.withPermit(effect),
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+              ),
+            }
+          : {}),
         onSessionInit: (cwd) => Queue.offer(workspaceRescans, cwd).pipe(Effect.asVoid),
         modelCatalog,
         routeModelCatalog: modelRoutes.route,
@@ -490,6 +542,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       ),
     );
 
+    const getSnapshot = snapshot.getSnapshot.pipe(Effect.map(withModelAuthentication));
     return {
       instanceId,
       driverKind: DRIVER_KIND,
@@ -500,7 +553,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       displayName,
       accentColor,
       enabled,
-      snapshot,
+      snapshot: {
+        ...snapshot,
+        getSnapshot,
+        refresh: snapshot.refresh.pipe(Effect.map(withModelAuthentication)),
+        streamChanges: Stream.merge(
+          snapshot.streamChanges.pipe(Stream.map(withModelAuthentication)),
+          SubscriptionRef.changes(authenticationRejected).pipe(Stream.mapEffect(() => getSnapshot)),
+        ),
+      },
       invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
       workspaceRescans: Stream.fromQueue(workspaceRescans),
       // Unreadable settings report no limit; the thread's own notice covers a refused mode.
@@ -522,7 +583,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           Effect.provideService(HostProcess.HomeDirectory, homeDirectory),
         ),
       snapshotForCwd: (cwd: string) =>
-        snapshot.getSnapshot.pipe(
+        getSnapshot.pipe(
           Effect.flatMap((machineSnapshot) =>
             probeClaudeWorkspaceSnapshot(effectiveConfig, machineSnapshot, cwd, processEnv),
           ),

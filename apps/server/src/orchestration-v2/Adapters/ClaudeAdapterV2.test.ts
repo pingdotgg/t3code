@@ -3879,6 +3879,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     > &
       Partial<Pick<ClaudeAdapterV2.ClaudeAgentSdkQuerySession, "listPermissionRules">>;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly onModelAuthentication?: ClaudeAdapterV2.ClaudeAdapterV2Options["onModelAuthentication"];
     readonly onSessionInit?: (cwd: string) => Effect.Effect<void>;
     readonly subagentLaunchToolUseId?: string;
     readonly subagentModel?: string;
@@ -3956,6 +3957,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         random: yield* SecureRandom.SecureRandom,
         idAllocator,
         ...(options?.onSessionInit ? { onSessionInit: options.onSessionInit } : {}),
+        ...(options?.onModelAuthentication
+          ? { onModelAuthentication: options.onModelAuthentication }
+          : {}),
         ...(options?.routeModelCatalog ? { routeModelCatalog: options.routeModelCatalog } : {}),
         continuationRequests: {
           offer: (request) =>
@@ -10048,8 +10052,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const configDir = "/synthetic/Claude config";
       // The adapter resolves the cwd on the host, which adds a drive letter on Windows.
       const cwd = NodePath.resolve("/synthetic/project");
+      const reports: Array<[string, string | null]> = [];
       const harness = yield* makeWakeHarnessWithOptions({
         environment: { CLAUDE_CONFIG_DIR: configDir },
+        onModelAuthentication: (state, cwd) =>
+          Effect.sync(() => {
+            reports.push([state, cwd]);
+          }),
       });
       const now = yield* DateTime.now;
       yield* harness.runtime.startTurn(
@@ -10086,6 +10095,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.include(terminal.failure.message, configDir);
       assert.include(terminal.failure.message, JSON.stringify(cwd));
       assert.notInclude(terminal.failure.message, "repeated API errors");
+      assert.deepEqual(reports, [["rejected", cwd]]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -10100,7 +10110,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   it.effect("shows a 403 permission error instead of the login hint", () =>
     Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
+      const reports: string[] = [];
+      const harness = yield* makeWakeHarnessWithOptions({
+        onModelAuthentication: (state) =>
+          Effect.sync(() => {
+            reports.push(state);
+          }),
+      });
       const now = yield* DateTime.now;
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
@@ -10134,6 +10150,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       if (terminal.status !== "failed") return;
       assert.equal(terminal.failure.message, cliText);
       assert.equal(terminal.failure.code, "api_error_403");
+      assert.deepEqual(reports, []);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
