@@ -48,6 +48,7 @@ const PPTX_DRAWING_PROPERTIES = new Map([
 ]);
 const MARKUP_COMPATIBILITY_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
+const SVG_NS = "http://www.w3.org/2000/svg";
 const ODF_DRAW_NS = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
 const ODF_STYLE_NS = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
 const ODF_TEXT_NS = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
@@ -404,7 +405,7 @@ function xml(
       node.mathmlFirstChildSeen = false;
     if (
       extension === ".epub" &&
-      ["nav", "main", "details", "summary"].includes(node.name) &&
+      ["nav", "main", "details", "summary", "center"].includes(node.name) &&
       isXhtmlElement(tag.name, stack, rootTagName)
     )
       node.epubBlock = true;
@@ -520,6 +521,9 @@ function xml(
       (extension === ".epub" &&
         node.name === "template" &&
         isXhtmlElement(tag.name, [...stack, node], rootTagName)) ||
+      (extension === ".epub" &&
+        node.name === "metadata" &&
+        namespaceOf(tag.name, [...stack, node]) === SVG_NS) ||
       (extension === ".epub" &&
         (stack[1] ?? node).name === "html" &&
         ((Object.hasOwn(tag.attributes, "hidden") &&
