@@ -1012,6 +1012,15 @@ export function collectProviderUsageLimits(
   );
   const accounts: Array<UsageLimitsReport["accounts"][number]> = [];
   const notices: string[] = [];
+  const selectedUnavailable = selected.usageLimits?.unavailable;
+  if (
+    selected.auth.endpoint &&
+    selectedUnavailable?.reason === "unsupported" &&
+    selectedUnavailable.message &&
+    !native.some(({ usage }) => usage.provider.instanceId === instanceId)
+  ) {
+    notices.push(selectedUnavailable.message);
+  }
   for (const {
     usage: { provider, limits },
     credits,

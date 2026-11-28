@@ -1281,10 +1281,33 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
           ? expandHomePath(codexSettings.homePath, yield* HostProcess.HomeDirectory)
           : undefined,
       );
+  const hasChatGptLogin = snapshot.account.account?.type === "chatgpt";
   // Sign-in guidance still applies when Codex itself says it needs an OpenAI login.
   const usageLimits =
     !snapshot.nativeUsage && !accountStatus.message
-      ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
+      ? {
+          ...makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "unsupported",
+            ...(snapshot.endpoint
+              ? {
+                  message:
+                    "Codex uses a custom endpoint. Check your proxy or provider for its limits." +
+                    (hasChatGptLogin
+                      ? " To view your Codex account limits in ChatGPT, sign in with the same account you use for Codex."
+                      : ""),
+                }
+              : {}),
+          }),
+          ...(snapshot.endpoint && hasChatGptLogin
+            ? {
+                externalUsage: {
+                  label: "Codex account usage",
+                  url: "https://chatgpt.com/codex/settings/usage",
+                },
+              }
+            : {}),
+        }
       : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
         ? makeUnavailableUsageLimits({
             checkedAt,
