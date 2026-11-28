@@ -202,64 +202,90 @@ const isWin32Failure = Schema.is(Win32Failure);
  * Each app passes how it loads ffi-rs: a server single-executable resolves packages on disk only
  * through `require`, and the desktop's CommonJS bundle loads them with `import()`.
  */
-export const layerWindowsRegistry = (loadFfi: () => Promise<typeof import("ffi-rs")>) =>
+export const layerWindowsRegistry = (
+  loadFfi: () => typeof import("ffi-rs") | Promise<typeof import("ffi-rs")>,
+) =>
   Layer.effect(
     WindowsRegistry,
     Effect.gen(function* () {
       const architecture = yield* HostProcess.Architecture;
+      const createApi = (ffi: typeof import("ffi-rs")) => {
+        const { DataType, load, open } = ffi;
+        open({ library: "t3-advapi32", path: "advapi32.dll" });
+        const call = (
+          funcName: string,
+          paramsType: Array<(typeof DataType)[keyof typeof DataType]>,
+          paramsValue: Array<unknown>,
+        ): number =>
+          load({
+            library: "t3-advapi32",
+            funcName,
+            retType: DataType.I32,
+            paramsType,
+            paramsValue,
+          } as Parameters<typeof load>[0]) as number;
+        const { BigInt: Handle, U32, U8Array: Out, WString } = DataType;
+        return {
+          open: (subkey: string, handle: Buffer) =>
+            call(
+              "RegOpenKeyExW",
+              [Handle, WString, U32, U32, Out],
+              [HKEY_LOCAL_MACHINE, subkey, 0, KEY_READ | KEY_WOW64_64KEY, handle],
+            ),
+          enumValue: (
+            key: bigint,
+            index: number,
+            name: Buffer,
+            nameChars: Buffer,
+            type: Buffer,
+            data: Buffer,
+            dataBytes: Buffer,
+          ) =>
+            call(
+              "RegEnumValueW",
+              [Handle, U32, Out, Out, Handle, Out, Out, Out],
+              [key, index, name, nameChars, 0n, type, data, dataBytes],
+            ),
+          enumKey: (key: bigint, index: number, name: Buffer, nameChars: Buffer) =>
+            call(
+              "RegEnumKeyExW",
+              [Handle, U32, Out, Out, Handle, Handle, Handle, Handle],
+              [key, index, name, nameChars, 0n, 0n, 0n, 0n],
+            ),
+          close: (key: bigint) => call("RegCloseKey", [Handle], [key]),
+        };
+      };
       const loadApi = yield* Effect.cached(
-        Effect.tryPromise({
-          try: async () => {
-            // HKEY_LOCAL_MACHINE, key handles, and the null pointers below are 64-bit.
-            if (architecture !== "x64" && architecture !== "arm64") {
-              throw new Error(`no registry access on ${architecture}`);
-            }
-            const { DataType, load, open } = await loadFfi();
-            open({ library: "t3-advapi32", path: "advapi32.dll" });
-            const call = (
-              funcName: string,
-              paramsType: Array<(typeof DataType)[keyof typeof DataType]>,
-              paramsValue: Array<unknown>,
-            ): number =>
-              load({
-                library: "t3-advapi32",
-                funcName,
-                retType: DataType.I32,
-                paramsType,
-                paramsValue,
-              } as Parameters<typeof load>[0]) as number;
-            const { BigInt: Handle, U32, U8Array: Out, WString } = DataType;
-            return {
-              open: (subkey: string, handle: Buffer) =>
-                call(
-                  "RegOpenKeyExW",
-                  [Handle, WString, U32, U32, Out],
-                  [HKEY_LOCAL_MACHINE, subkey, 0, KEY_READ | KEY_WOW64_64KEY, handle],
-                ),
-              enumValue: (
-                key: bigint,
-                index: number,
-                name: Buffer,
-                nameChars: Buffer,
-                type: Buffer,
-                data: Buffer,
-                dataBytes: Buffer,
-              ) =>
-                call(
-                  "RegEnumValueW",
-                  [Handle, U32, Out, Out, Handle, Out, Out, Out],
-                  [key, index, name, nameChars, 0n, type, data, dataBytes],
-                ),
-              enumKey: (key: bigint, index: number, name: Buffer, nameChars: Buffer) =>
-                call(
-                  "RegEnumKeyExW",
-                  [Handle, U32, Out, Out, Handle, Handle, Handle, Handle],
-                  [key, index, name, nameChars, 0n, 0n, 0n, 0n],
-                ),
-              close: (key: bigint) => call("RegCloseKey", [Handle], [key]),
-            };
-          },
-          catch: (cause) => new WindowsRegistryError({ cause }),
+        Effect.suspend(() => {
+          // HKEY_LOCAL_MACHINE, key handles, and the null pointers below are 64-bit.
+          if (architecture !== "x64" && architecture !== "arm64") {
+            return Effect.fail(
+              new WindowsRegistryError({
+                cause: new Error(`no registry access on ${architecture}`),
+              }),
+            );
+          }
+          let loaded: typeof import("ffi-rs") | Promise<typeof import("ffi-rs")>;
+          try {
+            loaded = loadFfi();
+          } catch (cause) {
+            return Effect.fail(new WindowsRegistryError({ cause }));
+          }
+          const ffiEffect =
+            typeof (loaded as PromiseLike<typeof import("ffi-rs")>)?.then === "function"
+              ? Effect.tryPromise({
+                  try: () => loaded as Promise<typeof import("ffi-rs")>,
+                  catch: (cause) => new WindowsRegistryError({ cause }),
+                })
+              : Effect.succeed(loaded as typeof import("ffi-rs"));
+          return ffiEffect.pipe(
+            Effect.flatMap((ffi) =>
+              Effect.try({
+                try: () => createApi(ffi),
+                catch: (cause) => new WindowsRegistryError({ cause }),
+              }),
+            ),
+          );
         }),
       );
 
@@ -492,10 +518,15 @@ function unwrapForced(json: string): unknown {
     : preferences;
 }
 
+export type PlutilRunner = (
+  path: string,
+) => Effect.Effect<{ readonly stdout: string; readonly exitCode: number }, ManagedPolicyFileError>;
+
 /** Read the policy a configuration profile or Group Policy set; absent means no such policy. */
 const readPlatformPolicy = Effect.fnUntraced(function* (
   platform: NodeJS.Platform,
   knownDrivers: ReadonlyArray<string>,
+  runPlutil?: PlutilRunner,
 ) {
   if (platform === "darwin") {
     const path = MACOS_MANAGED_PREFERENCES_PATH;
@@ -508,12 +539,14 @@ const readPlatformPolicy = Effect.fnUntraced(function* (
         ),
       );
     if (!exists) return undefined;
-    const converted = yield* run(PLUTIL, ["-convert", "json", "-o", "-", path]).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ManagedPolicyFileError({ path, reason: "the profile cannot be read", cause }),
-      ),
-    );
+    const converted = yield* runPlutil
+      ? runPlutil(path)
+      : run(PLUTIL, ["-convert", "json", "-o", "-", path]).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ManagedPolicyFileError({ path, reason: "the profile cannot be read", cause }),
+          ),
+        );
     if (converted.exitCode !== 0) {
       return yield* new ManagedPolicyFileError({ path, reason: "the profile cannot be read" });
     }
@@ -588,10 +621,11 @@ const readPlatformPolicy = Effect.fnUntraced(function* (
 export const readManagedPolicy = Effect.fn("readManagedPolicy")(function* (
   platform: NodeJS.Platform,
   knownDrivers: ReadonlyArray<string> = [],
+  options?: { readonly runPlutil?: PlutilRunner },
 ) {
   const filePath = managedPolicyPath(platform);
   const [platformPolicy, file] = yield* Effect.all([
-    readPlatformPolicy(platform, knownDrivers),
+    readPlatformPolicy(platform, knownDrivers, options?.runPlutil),
     readManagedPolicyFile(filePath),
   ]);
   if (platformPolicy !== undefined && file !== undefined) {

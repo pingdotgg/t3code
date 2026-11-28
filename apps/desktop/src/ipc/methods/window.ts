@@ -124,6 +124,25 @@ export const installRelayTelemetryEnabled = Effect.fn("desktop.ipc.window.instal
   },
 );
 
+/**
+ * T3 Connect uses Clerk in the renderer, so a policy with `connect: false`, or one that cannot be
+ * read, stops it before the renderer mounts `<ClerkProvider>`. Read once here: a sync IPC handler
+ * cannot wait on the filesystem.
+ */
+export const installConnectEnabled = Effect.fn("desktop.ipc.window.installConnectEnabled")(
+  function* () {
+    const ipc = yield* DesktopIpc.DesktopIpc;
+    const policyAllows = yield* DesktopManagedPolicy.isConnectAllowed();
+    yield* ipc.handleSync(
+      DesktopIpc.makeSyncIpcMethod({
+        channel: IpcChannels.GET_CONNECT_ENABLED_CHANNEL,
+        result: Schema.Boolean,
+        handler: () => Effect.succeed(policyAllows),
+      }),
+    );
+  },
+);
+
 export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_SYSTEM_LOCALE_CHANNEL,
   result: Schema.String,

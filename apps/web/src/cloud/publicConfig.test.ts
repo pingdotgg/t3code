@@ -74,5 +74,14 @@ describe("hasCloudPublicConfig", () => {
 
       expect(hasCloudPublicConfig()).toBe(true);
     });
+
+    it("disables cloud auth in Electron when Managed Policy disables Connect", () => {
+      vi.stubGlobal("window", {
+        location: new URL("file:///app/index.html"),
+        desktopBridge: { getConnectEnabled: () => false },
+      });
+
+      expect(hasCloudPublicConfig()).toBe(false);
+    });
   });
 });

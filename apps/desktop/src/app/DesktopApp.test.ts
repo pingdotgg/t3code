@@ -222,7 +222,7 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
                 Effect.as("token"),
               ),
           }),
-          Layer.mock(DesktopManagedPolicy.DesktopManagedPolicy, {}),
+          DesktopManagedPolicy.layerTest(),
           Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
           Layer.mock(DesktopSshEnvironment.DesktopSshEnvironment, {}),
           Layer.mock(DesktopSshPasswordPrompts.DesktopSshPasswordPrompts, {}),
