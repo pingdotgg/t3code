@@ -444,6 +444,20 @@ describe("Antigravity permissions and questions", () => {
     });
   });
 
+  it("keeps a multi-select's qN_other as its own question unless it is agy's Other field", () => {
+    const form = askQuestion({
+      q1: multiChoiceField,
+      q1_other: { type: "string", title: "Which stage is flaky?" },
+    });
+    const followUp = askQuestion({
+      q1: multiChoiceField,
+      q1_other: otherField("Why are checks disabled in production?"),
+    });
+
+    expect(form?.questions.map((question) => question.id)).toEqual(["q1", "q1_other"]);
+    expect(followUp?.questions.map((question) => question.id)).toEqual(["q1", "q1_other"]);
+  });
+
   it.each([
     ["an array for a single choice", { q1: ["1"], q2: ["1"] }],
     ["an unknown option in a multi-select", { q1: "1", q2: ["1", "unknown"] }],

@@ -186,9 +186,11 @@ const isAskQuestionForm = Schema.is(
 const isAskQuestionField = Schema.is(
   Schema.Struct({ title: Schema.String, description: Schema.optional(Schema.String) }),
 );
-const isTextField = Schema.is(
+const isOtherTextField = Schema.is(
   Schema.Struct({
     type: Schema.Literal("string"),
+    title: Schema.Literal("Other"),
+    description: Schema.String,
     enum: Schema.optional(Schema.Null),
     oneOf: Schema.optional(Schema.Null),
   }),
@@ -219,12 +221,16 @@ export const extractAntigravityElicitationForm: NonNullable<
   for (const question of form.questions) {
     const companionId = `${question.id}_other`;
     if (question.options.length === 0 || !Object.hasOwn(properties, companionId)) continue;
+    const field = properties[question.id];
+    const companion = properties[companionId];
     if (!question.multiSelect) {
       if (!askedIds.has(companionId)) companions.set(question.id, companionId);
     } else if (
       !required.has(question.id) &&
       !required.has(companionId) &&
-      isTextField(properties[companionId])
+      isOtherTextField(companion) &&
+      isAskQuestionField(field) &&
+      companion.description === `Optional free-form answer to: ${field.title}`
     ) {
       companions.set(question.id, companionId);
       foldedIds.add(companionId);
