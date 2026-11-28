@@ -2270,6 +2270,59 @@ describe("EnvironmentRegistry routes", () => {
     }),
   );
 
+  it.effect("a renamed environment keeps its label when a route is added or re-paired", () =>
+    Effect.gen(function* () {
+      const environmentId = LAN_TARGET.environmentId;
+      const harness = yield* makeHarness(
+        [LAN_TARGET],
+        [LAN_PROFILE],
+        [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* awaitConnectionState(
+          registry,
+          environmentId,
+          (state) => state.phase === "connected",
+        );
+        yield* registry.setLabel(environmentId, "Studio");
+
+        const secondTarget = new BearerConnectionTarget({
+          ...LAN_TARGET,
+          label: "server-name",
+          connectionId: "bearer:lan-2",
+        });
+        yield* registry.register(
+          lanRegistration(
+            secondTarget,
+            new BearerConnectionProfile({
+              ...LAN_PROFILE,
+              connectionId: secondTarget.connectionId,
+              label: secondTarget.label,
+              httpBaseUrl: "http://192.168.1.11:3773/",
+              wsBaseUrl: "ws://192.168.1.11:3773/",
+            }),
+          ),
+        );
+        yield* registry.register(
+          lanRegistration(
+            new BearerConnectionTarget({ ...LAN_TARGET, label: "server-name" }),
+            new BearerConnectionProfile({ ...LAN_PROFILE, label: "server-name" }),
+          ),
+        );
+
+        expect(
+          routesOf(yield* Ref.get(harness.storedTargets), environmentId).map(
+            (target) => target.label,
+          ),
+        ).toEqual(["Studio", "Studio"]);
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(environmentId)?.target.label,
+        ).toBe("Studio");
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("removing the last route forgets the environment", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness(

@@ -583,7 +583,7 @@ export const make = Effect.gen(function* () {
   ) {
     const registered = connectionRegistrationCatalogEntry(registration);
     const environmentId = registered.target.environmentId;
-    const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
+    const incoming: ConnectionRoute = { target: registered.target, profile: registered.profile };
     return yield* withLeaseLock(
       environmentId,
       Effect.gen(function* () {
@@ -591,11 +591,16 @@ export const make = Effect.gen(function* () {
           return false;
         }
         if (options?.knownAddressOnly === true) {
-          yield* assertKnownAddress(route);
+          yield* assertKnownAddress(incoming);
         }
         const previous = (yield* SubscriptionRef.get(entries)).get(environmentId);
         let entry = registered;
         if (previous !== undefined) {
+          // Keep the saved label (a local rename) unless T3 Connect, which owns relay labels, sent it.
+          const route =
+            incoming.target._tag === "RelayConnectionTarget"
+              ? incoming
+              : { ...incoming, target: targetWithLabel(incoming.target, previous.target.label) };
           const existing = connectionRoutes(previous);
           const sameAddress = findRouteToSameAddress(existing, route);
           const routes = existing.filter(
