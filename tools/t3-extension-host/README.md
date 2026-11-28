@@ -88,6 +88,8 @@ Optional files in `%APPDATA%\t3-extension-host\`:
 | `discordSmallImage` | Round T3 Code logo on the same background color as that mode's large image (black while editing) | Small image: one link for every mode, or one per mode. `""` keeps the extension's VS Code icon |
 | `discordSmallText` | `"T3 Code · {model}"` (`"T3 Code"` when idle) | Hover text of the small image: one text, or one per mode |
 | `discordLanguageImages` | `{}` | Your own file-type images, keyed by file extension (`".ts"`) or language ID (`"typescript"`). Files without an entry keep Discord Presence's icon |
+| `discordPresenceImages` | `discord-assets/presence` on the fork | Where the 205 Discord Presence images live, recolored onto black (file-type icons such as `ts`, `python`, `vue`). `""` uses Discord Presence's original colored versions |
+| `discordShowButtons` | `false` | Discord Presence adds a "View Repository" button with your git remote. The host removes it and any other links unless this is `true` |
 | `discordSwapImages` | `false` | Swap the large and small images and their hover texts, like Discord Presence's `swapBigAndSmallImage` |
 | `discordStatus` | see `config.example.json` | `details`, `state` and `largeText` per mode. Placeholders: `{project}`, `{thread}`, `{file}`, `{language}`, `{model}`, `{agent}`. A mode set to `null` keeps the extension's own texts. Thread titles are hidden for projects in `ignoreProjects` |
 

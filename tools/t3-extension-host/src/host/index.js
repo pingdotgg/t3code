@@ -326,6 +326,8 @@ async function main() {
     largeImages: config.discordLargeImages,
     languageImages: config.discordLanguageImages,
     swapImages: config.discordSwapImages,
+    presenceImagesUrl: config.discordPresenceImages,
+    showButtons: config.discordShowButtons,
     status: config.discordStatus,
     getContext: () => bridge.presenceContext(),
     cacheDir: config.stateDir,

@@ -34,6 +34,10 @@
   "discordSmallText": { "idle": "T3 Code", "working": "T3 Code · {model}", "waiting": "T3 Code · {model}", "editing": "T3 Code · {model}" },
   // Your own file-type images, by file extension or language ID.
   "discordLanguageImages": { ".ts": "https://example.com/my-typescript.png", "python": "py" },
+  // Discord Presence's 205 file-type images, recolored onto black. "" uses the original colors.
+  "discordPresenceImages": "https://raw.githubusercontent.com/5djr/t3code/discord-assets/presence",
+  // false removes the "View Repository" button and every other link, so your git remote stays private.
+  "discordShowButtons": false,
   "discordSwapImages": false,
   // Placeholders: {project}, {thread}, {file}, {language}, {model}, {agent}.
   "discordStatus": {

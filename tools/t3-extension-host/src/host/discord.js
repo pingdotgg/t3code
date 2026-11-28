@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const net = require('node:net');
 const path = require('node:path');
+const PRESENCE_IMAGES = require('./presence-images');
 
 const VSCODE_CLIENT_ID = '383226320970055681';
 const HANDSHAKE = 0;
@@ -141,16 +142,35 @@ function languageImage(languageImages, context) {
   return undefined;
 }
 
-function resolveImage(image, assetUrls) {
-  if (!assetUrls || /^(https?|mp):/.test(image)) return image;
-  return assetUrls.get(image) ?? image;
+function resolveImage(image, { assetUrls, presenceImages } = {}) {
+  if (/^(https?|mp):/.test(image)) return image;
+  if (presenceImages?.base && presenceImages.names.has(image)) return `${presenceImages.base}/${encodeURIComponent(image)}.png`;
+  return assetUrls?.get(image) ?? image;
 }
 
-function rewriteActivity(activity, { context, status, largeImages, languageImages, smallImage, smallText, swapImages, assetUrls }) {
+// Buttons and links would publish the workspace's git remote (Discord Presence's "View Repository").
+function removeLinks(activity) {
+  delete activity.buttons;
+  delete activity.url;
+  delete activity.details_url;
+  delete activity.state_url;
+  delete activity.assets.large_url;
+  delete activity.assets.small_url;
+  if (activity.metadata) {
+    const { button_urls: _urls, ...metadata } = activity.metadata;
+    if (Object.keys(metadata).length) activity.metadata = metadata;
+    else delete activity.metadata;
+  }
+}
+
+function rewriteActivity(activity, options) {
+  const { context, status, largeImages, languageImages, smallImage, smallText, swapImages, showButtons } = options;
+  const resolve = (image) => resolveImage(image, options);
   const next = { ...activity, assets: { ...(activity.assets ?? {}) } };
   const assets = next.assets;
+  if (!showButtons) removeLinks(next);
   for (const key of ['large_image', 'small_image']) {
-    if (typeof assets[key] === 'string') assets[key] = resolveImage(assets[key], assetUrls);
+    if (typeof assets[key] === 'string') assets[key] = resolve(assets[key]);
   }
   const mode = context?.mode;
   const values = context ?? {};
@@ -162,14 +182,14 @@ function rewriteActivity(activity, { context, status, largeImages, languageImage
   }
   const largeImage = forMode(largeImages, mode);
   if (typeof largeImage === 'string' && largeImage) {
-    if (largeImage !== 'language') assets.large_image = resolveImage(largeImage, assetUrls);
+    if (largeImage !== 'language') assets.large_image = resolve(largeImage);
     else {
       const custom = languageImage(languageImages, context);
-      if (custom) assets.large_image = resolveImage(custom, assetUrls);
+      if (custom) assets.large_image = resolve(custom);
     }
   }
   const small = forMode(smallImage, mode);
-  if (typeof small === 'string' && small) assets.small_image = resolveImage(small, assetUrls);
+  if (typeof small === 'string' && small) assets.small_image = resolve(small);
   const smallLabel = forMode(smallText, mode);
   if (smallLabel !== undefined) setText(assets, 'small_text', smallLabel, values);
   if (swapImages) {
@@ -187,6 +207,8 @@ async function installDiscordOverrides({
   largeImages,
   languageImages,
   swapImages,
+  presenceImagesUrl,
+  showButtons,
   status,
   getContext,
   cacheDir,
@@ -197,7 +219,18 @@ async function installDiscordOverrides({
   const customApp = Boolean(clientId);
   const assetUrls = customApp ? await loadAssetUrls(path.join(cacheDir, 'discord-assets.json'), logger) : null;
   const original = net.Socket.prototype.write;
-  const options = { status, largeImages, languageImages, smallImage, smallText, swapImages: Boolean(swapImages), assetUrls };
+  const presenceImages = typeof presenceImagesUrl === 'string' && presenceImagesUrl ? { base: presenceImagesUrl.replace(/\/+$/, ''), names: PRESENCE_IMAGES } : null;
+  const options = {
+    status,
+    largeImages,
+    languageImages,
+    smallImage,
+    smallText,
+    swapImages: Boolean(swapImages),
+    showButtons: showButtons === true,
+    presenceImages,
+    assetUrls,
+  };
   let last = null;
   let refreshes = 0;
 

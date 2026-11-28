@@ -74,6 +74,8 @@ const DEFAULTS = {
     editing: 'language',
   },
   discordLanguageImages: {},
+  discordPresenceImages: `${ASSETS_URL}/presence`,
+  discordShowButtons: false,
   discordSwapImages: false,
   discordStatus: {
     idle: { details: 'Idling in T3 Code', state: '{project}', largeText: 'Idling' },
