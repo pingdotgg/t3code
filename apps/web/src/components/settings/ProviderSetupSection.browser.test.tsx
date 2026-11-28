@@ -13,6 +13,7 @@ import { act, render } from "../../../test/render";
 
 const setup = vi.hoisted(() => ({
   auth: null as ProviderAuthState | null,
+  authError: null as string | null,
   installation: null as ProviderInstallState | null,
   authState: vi.fn(() => "auth"),
   installState: vi.fn(() => "installation"),
@@ -63,7 +64,7 @@ vi.mock(import("../../state/query"), async (original) => {
       data: useSyncExternalStore(subscribe, () =>
         atom === "auth" ? setup.auth : setup.installation,
       ),
-      error: null,
+      error: useSyncExternalStore(subscribe, () => (atom === "auth" ? setup.authError : null)),
       isPending: false,
       refresh: vi.fn(),
     })) as never,
@@ -155,6 +156,7 @@ async function renderSetup(options: SectionOptions = {}) {
 function resetSetup() {
   vi.clearAllMocks();
   setup.auth = authState();
+  setup.authError = null;
   setup.installation = {
     driver: ProviderDriverKind.make("antigravity"),
     operationId: null,
@@ -271,14 +273,83 @@ describe("Antigravity setup", () => {
     setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
     setup.installation = {
       ...setup.installation!,
-      installedVersion: "test-version",
+      installedVersion: "1.5.16",
+      version: "1.5.18",
       canRemove: true,
+      message: "Managed runtime failed.",
     };
     await using screen = await renderSetup({
-      provider: { ...provider, installed: false },
+      provider: {
+        ...provider,
+        installed: false,
+        setup: { canAuthenticate: true, canInstall: false },
+      },
       binaryPath: "/missing/antigravity",
     });
     expect(screen.button("Sign in")?.disabled).toBe(true);
     expect(setup.startAuth).not.toHaveBeenCalled();
+    expect(screen.button("Remove downloaded runtime")).toBeNull();
+    expect(screen.occurrences("Automatic installation unavailable.")).toBe(0);
+    expect(screen.occurrences("Managed runtime failed.")).toBe(0);
+  });
+
+  it("hides a shared managed download for an installed custom binary path", async () => {
+    resetSetup();
+    setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
+    setup.installation = {
+      ...setup.installation!,
+      phase: "downloading",
+      operationId: "install-1",
+      downloadedBytes: 1_000_000,
+      totalBytes: 2_000_000,
+      installedVersion: "1.5.16",
+      version: "1.5.18",
+      canRemove: true,
+      message: "Downloading Google's official Antigravity runtime.",
+    };
+    await using screen = await renderSetup({
+      provider: {
+        ...provider,
+        installed: true,
+        setup: { canAuthenticate: true, canInstall: true },
+      },
+      binaryPath: "/custom/agy",
+    });
+    expect(screen.occurrences("Installed.")).toBe(1);
+    expect(screen.occurrences("Downloading")).toBe(0);
+    expect(screen.button("Cancel installation")).toBeNull();
+    expect(screen.button("Update Antigravity")).toBeNull();
+    expect(screen.button("Remove downloaded runtime")).toBeNull();
+  });
+
+  it("hides a prior managed install error after switching to a custom binary path", async () => {
+    resetSetup();
+    setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
+    setup.startInstall.mockRejectedValueOnce(new Error("network error"));
+    await using screen = await renderSetup({ provider: { ...provider, installed: false } });
+
+    await screen.click("Install Antigravity");
+    await expect
+      .element(screen.getByRole("alert"))
+      .toHaveTextContent("Provider setup failed. Try again.");
+
+    await screen.rerender(
+      section({
+        provider: {
+          ...provider,
+          installed: true,
+          setup: { canAuthenticate: true, canInstall: false },
+        },
+        binaryPath: "/custom/agy",
+      }),
+    );
+    await expect.element(screen.getByRole("alert")).not.toBeInTheDocument();
+
+    setup.authError = "Auth status unavailable.";
+    await publish();
+    await expect.element(screen.getByRole("button", { name: "Retry setup status" })).toBeVisible();
+    await expect
+      .element(screen.getByRole("alert").last())
+      .toHaveTextContent("Auth status unavailable.");
   });
 });

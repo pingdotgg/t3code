@@ -9620,7 +9620,7 @@
   "1d7a0b2b595d80c0": "Installer Antigravity",
   "e605ad0c8e73b87b": "Supprimer l’environnement d’exécution téléchargé",
   "1608adbee6a360c8": "Activer Antigravity",
-  "38ba1e4df20cf7d1": "Utilise le chemin de binaire personnalisé ci-dessous. L’installation conserve ce chemin.",
+  "0bf285ea2ce288c6": "Utilise le chemin de binaire personnalisé ci-dessous. Effacez-le pour gérer l’installation dans T3 Code.",
   "562e6d8722eaec1e": "Installation automatique indisponible. Définissez un chemin de binaire ou utilisez un autre environnement.",
   "b66d68c080ce9070": "Annuler l’installation",
   "5970e844f127f37f": "Supprimer l’environnement d’exécution téléchargé",

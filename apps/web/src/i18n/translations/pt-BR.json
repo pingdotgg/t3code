@@ -9620,7 +9620,7 @@
   "1d7a0b2b595d80c0": "Instalar Antigravity",
   "e605ad0c8e73b87b": "Remover runtime baixado",
   "1608adbee6a360c8": "Ativar Antigravity",
-  "38ba1e4df20cf7d1": "Usa o caminho de binário personalizado abaixo. A instalação mantém esse caminho.",
+  "0bf285ea2ce288c6": "Usa o caminho de binário personalizado abaixo. Limpe-o para gerenciar a instalação no T3 Code.",
   "562e6d8722eaec1e": "Instalação automática indisponível. Defina um caminho de binário ou use outro ambiente.",
   "b66d68c080ce9070": "Cancelar instalação",
   "5970e844f127f37f": "Remover runtime baixado",

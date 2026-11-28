@@ -9627,7 +9627,7 @@
   "1d7a0b2b595d80c0": "Install Antigravity",
   "e605ad0c8e73b87b": "Remove downloaded runtime",
   "1608adbee6a360c8": "Enable Antigravity",
-  "38ba1e4df20cf7d1": "Uses the custom binary path below. Installation keeps that path.",
+  "0bf285ea2ce288c6": "Uses the custom binary path below. Clear it to manage installation in T3 Code.",
   "562e6d8722eaec1e": "Automatic installation unavailable. Set a binary path or use another environment.",
   "b66d68c080ce9070": "Cancel installation",
   "5970e844f127f37f": "Remove downloaded runtime",

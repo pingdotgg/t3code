@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
@@ -69,6 +70,7 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
   const lastRefreshes = yield* Queue.unbounded<void>();
   const observed = yield* Deferred.make<void>();
   const listening = yield* Deferred.make<void>();
+  const updateChecked = yield* Deferred.make<void>();
   const installationState = yield* SubscriptionRef.make(state);
   let protectedPaths: ReadonlyArray<string> = [];
   const configured = input.instance ?? instance();
@@ -116,7 +118,9 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
     }),
     Layer.mock(AntigravityInstallation.AntigravityInstallation)({
       managedDirectory: "/unused-managed-runtime",
-      checkForUpdate: Effect.void,
+      checkForUpdate: Effect.sync(() => {
+        calls.push("checkForUpdate");
+      }).pipe(Effect.andThen(Deferred.succeed(updateChecked, undefined)), Effect.asVoid),
       start: Effect.sync(() => {
         calls.push("start");
         return { ...state, operationId: "install-1", phase: "downloading" as const };
@@ -159,6 +163,7 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
     lastRefreshes,
     watches: () => watches,
     observed,
+    updateChecked,
     installationState,
     refreshedInstances,
     protectedPaths: () => protectedPaths,
@@ -281,8 +286,11 @@ describe("provider installation routing", () => {
 
   it.effect("keeps external installs manual without hiding shared install status", () =>
     Effect.gen(function* () {
+      const managedId = ProviderInstanceId.make("antigravity_managed");
       const harness = yield* makeHarness({
+        others: [instance(driver, managedId)],
         settings: {
+          enableProviderUpdateChecks: true,
           providerInstances: {
             [ProviderInstanceId.make("antigravity")]: {
               driver: ProviderDriverKind.make("antigravity"),
@@ -297,7 +305,14 @@ describe("provider installation routing", () => {
       assert.include(remove.detail, "custom executable");
       const observed = yield* Stream.runCollect(harness.router.subscribe({ instanceId }));
       assert.deepEqual(Array.from(observed), [state]);
+      yield* TestClock.adjust("1 millis");
       assert.deepEqual(harness.calls, []);
+      const observedManaged = yield* Stream.runCollect(
+        harness.router.subscribe({ instanceId: managedId }),
+      );
+      assert.deepEqual(Array.from(observedManaged), [state]);
+      yield* Deferred.await(harness.updateChecked);
+      assert.deepEqual(harness.calls, ["checkForUpdate"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

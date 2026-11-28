@@ -232,6 +232,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   settings: AntigravitySettings,
   options: AntigravityProviderOptions,
 ) {
+  const usesCustomBinary = settings.binaryPath.trim().length > 0;
   const usesCredentials =
     options.auth?.type === "gemini-api-key" || options.auth?.type === "agent-platform";
   const signInMessage = usesCredentials
@@ -261,7 +262,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           : "Antigravity is disabled in T3 Code settings.",
       },
     }),
-    setup: { canAuthenticate: true, canInstall: true },
+    setup: { canAuthenticate: true, canInstall: !usesCustomBinary },
     supportsConversationRollback: true,
     supportsTextGeneration: false,
     workspaceSnapshots: [],

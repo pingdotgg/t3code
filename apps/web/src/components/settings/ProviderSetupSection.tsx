@@ -131,21 +131,27 @@ function ProviderSetupActions({
   const [pendingLabel, setPendingLabel] = useState<string | null>(null);
   const pendingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  const usesCustomBinary = Boolean(binaryPath?.trim());
   const authActive =
     auth?.phase === "starting" || auth?.phase === "waiting" || auth?.phase === "verifying";
   const installActive =
     installation?.phase === "downloading" ||
     installation?.phase === "extracting" ||
     installation?.phase === "verifying";
-  const usesCustomBinary = Boolean(binaryPath?.trim());
   const installed =
     provider.installed || (!usesCustomBinary && installation?.installedVersion != null);
-  const queryError = authQuery.error ?? installQuery.error;
+  const queryError = authQuery.error ?? (usesCustomBinary ? null : installQuery.error);
+  const setupError = (usesCustomBinary ? null : error) || queryError;
   const actionsDisabled = pendingLabel !== null || queryError !== null;
-  const installationStatusMessage =
-    installation === null
+  const installationStatusMessage = usesCustomBinary
+    ? installed
+      ? gt("Installed.")
+      : enabled
+        ? gt("The configured Antigravity runtime is unavailable.")
+        : gt("The configured Antigravity runtime has not been checked.")
+    : installation === null
       ? gt("Checking the Antigravity runtime.")
-      : installation?.phase === "downloading"
+      : installation.phase === "downloading"
         ? installation.totalBytes === null
           ? gt("Downloading {downloaded} MB.", {
               downloaded: (installation.downloadedBytes / 1_000_000).toFixed(1),
@@ -154,21 +160,17 @@ function ProviderSetupActions({
               downloaded: (installation.downloadedBytes / 1_000_000).toFixed(1),
               total: (installation.totalBytes / 1_000_000).toFixed(1),
             })
-        : installation?.phase === "extracting"
+        : installation.phase === "extracting"
           ? gt("Extracting Antigravity.")
-          : installation?.phase === "verifying"
+          : installation.phase === "verifying"
             ? gt("Checking the downloaded runtime.")
             : installed
               ? gt("Installed.")
-              : usesCustomBinary
-                ? enabled
-                  ? gt("The configured Antigravity runtime is unavailable.")
-                  : gt("The configured Antigravity runtime has not been checked.")
-                : installation?.totalBytes
-                  ? gt("{size} MB download.", {
-                      size: Math.ceil(installation.totalBytes / 1_000_000),
-                    })
-                  : gt("Not installed.");
+              : installation.totalBytes
+                ? gt("{size} MB download.", {
+                    size: Math.ceil(installation.totalBytes / 1_000_000),
+                  })
+                : gt("Not installed.");
 
   async function runCommand<A, E>(
     label: string,
@@ -227,10 +229,12 @@ function ProviderSetupActions({
           <div className="space-y-2">
             {usesCustomBinary ? (
               <p className="text-muted-foreground">
-                <T>Uses the custom binary path below. Installation keeps that path.</T>
+                <T>
+                  Uses the custom binary path below. Clear it to manage installation in T3 Code.
+                </T>
               </p>
             ) : null}
-            {!installed && !provider.setup?.canInstall ? (
+            {!installed && !usesCustomBinary && !provider.setup?.canInstall ? (
               <p className="text-muted-foreground">
                 <T>
                   Automatic installation unavailable. Set a binary path or use another environment.
@@ -244,90 +248,94 @@ function ProviderSetupActions({
             <p role="status" className="min-h-4 text-muted-foreground tabular-nums">
               {installationStatusMessage}
             </p>
-            <div className="h-1">
-              {installation?.phase === "downloading" &&
-              installation.totalBytes !== null &&
-              installation.totalBytes > 0 ? (
-                <progress
-                  aria-label={gt("Antigravity download")}
-                  // Forced-colors mode repaints the track and fill as Canvas, and
-                  // appearance:auto cannot bring the native widget back: the
-                  // preflight border reset marks every <progress> as author-styled,
-                  // so Chromium keeps its fallback paint. Use system colors instead.
-                  className="block h-1 w-full appearance-none overflow-hidden rounded-full bg-muted forced-colors:border [&::-moz-progress-bar]:rounded-full [&::-moz-progress-bar]:bg-primary forced-colors:[&::-moz-progress-bar]:bg-[Highlight] [&::-webkit-progress-bar]:rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary forced-colors:[&::-webkit-progress-value]:bg-[Highlight]"
-                  value={installation.downloadedBytes}
-                  max={installation.totalBytes}
-                />
-              ) : null}
-            </div>
-            {!installActive &&
-            installation?.message &&
-            installation.message !== installationStatusMessage ? (
-              <p className="text-muted-foreground [overflow-wrap:anywhere]">
-                {installation.message}
-              </p>
-            ) : null}
-            <div className="grid min-h-7 grid-cols-[1.75rem_minmax(0,1fr)] gap-2">
-              <div className="col-start-2 row-start-1 grid">
-                {installActive && installation.operationId ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={actionsDisabled}
-                    onClick={() => {
-                      const operationId = installation.operationId;
-                      if (!operationId) return;
-                      void runCommand(gt("Cancelling installation"), () =>
-                        cancelInstall({ environmentId, input: { instanceId, operationId } }),
-                      );
-                    }}
-                  >
-                    <T>Cancel installation</T>
-                  </Button>
-                ) : !installActive && provider.setup?.canInstall ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={actionsDisabled || authActive}
-                    onClick={() =>
-                      void runCommand(gt("Starting installation"), () => startInstall(target))
-                    }
-                  >
-                    {installation?.installedVersion
-                      ? installation.version &&
-                        installation.version !== installation.installedVersion
-                        ? gt("Update Antigravity")
-                        : gt("Reinstall Antigravity")
-                      : installation?.phase === "failed" || installation?.phase === "cancelled"
-                        ? gt("Retry installation")
-                        : installed
-                          ? gt("Install managed runtime")
-                          : gt("Install Antigravity")}
-                  </Button>
-                ) : null}
-              </div>
-              {installation?.canRemove && !installActive ? (
-                <SharedTooltipTrigger
-                  render={
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      className="col-start-1 row-start-1"
-                      aria-label={gt("Remove downloaded runtime")}
-                      disabled={actionsDisabled || authActive}
-                      onClick={() => void removeRuntime()}
+            {!usesCustomBinary ? (
+              <>
+                <div className="h-1">
+                  {installation?.phase === "downloading" &&
+                  installation.totalBytes !== null &&
+                  installation.totalBytes > 0 ? (
+                    <progress
+                      aria-label={gt("Antigravity download")}
+                      // Forced-colors mode repaints the track and fill as Canvas, and
+                      // appearance:auto cannot bring the native widget back: the
+                      // preflight border reset marks every <progress> as author-styled,
+                      // so Chromium keeps its fallback paint. Use system colors instead.
+                      className="block h-1 w-full appearance-none overflow-hidden rounded-full bg-muted forced-colors:border [&::-moz-progress-bar]:rounded-full [&::-moz-progress-bar]:bg-primary forced-colors:[&::-moz-progress-bar]:bg-[Highlight] [&::-webkit-progress-bar]:rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary forced-colors:[&::-webkit-progress-value]:bg-[Highlight]"
+                      value={installation.downloadedBytes}
+                      max={installation.totalBytes}
                     />
-                  }
-                  label={
-                    <>
-                      <T>Remove downloaded runtime</T>
-                    </>
-                  }
-                >
-                  <Trash2Icon className="size-3.5" />
-                </SharedTooltipTrigger>
-              ) : null}
-            </div>
+                  ) : null}
+                </div>
+                {!installActive &&
+                installation?.message &&
+                installation.message !== installationStatusMessage ? (
+                  <p className="text-muted-foreground [overflow-wrap:anywhere]">
+                    {installation.message}
+                  </p>
+                ) : null}
+                <div className="grid min-h-7 grid-cols-[1.75rem_minmax(0,1fr)] gap-2">
+                  <div className="col-start-2 row-start-1 grid">
+                    {installActive && installation.operationId ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={actionsDisabled}
+                        onClick={() => {
+                          const operationId = installation.operationId;
+                          if (!operationId) return;
+                          void runCommand(gt("Cancelling installation"), () =>
+                            cancelInstall({ environmentId, input: { instanceId, operationId } }),
+                          );
+                        }}
+                      >
+                        <T>Cancel installation</T>
+                      </Button>
+                    ) : !installActive && provider.setup?.canInstall ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={actionsDisabled || authActive}
+                        onClick={() =>
+                          void runCommand(gt("Starting installation"), () => startInstall(target))
+                        }
+                      >
+                        {installation?.installedVersion
+                          ? installation.version &&
+                            installation.version !== installation.installedVersion
+                            ? gt("Update Antigravity")
+                            : gt("Reinstall Antigravity")
+                          : installation?.phase === "failed" || installation?.phase === "cancelled"
+                            ? gt("Retry installation")
+                            : installed
+                              ? gt("Install managed runtime")
+                              : gt("Install Antigravity")}
+                      </Button>
+                    ) : null}
+                  </div>
+                  {installation?.canRemove && !installActive ? (
+                    <SharedTooltipTrigger
+                      render={
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          className="col-start-1 row-start-1"
+                          aria-label={gt("Remove downloaded runtime")}
+                          disabled={actionsDisabled || authActive}
+                          onClick={() => void removeRuntime()}
+                        />
+                      }
+                      label={
+                        <>
+                          <T>Remove downloaded runtime</T>
+                        </>
+                      }
+                    >
+                      <Trash2Icon className="size-3.5" />
+                    </SharedTooltipTrigger>
+                  ) : null}
+                </div>
+              </>
+            ) : null}
           </div>
         }
       />
@@ -340,10 +348,10 @@ function ProviderSetupActions({
         readOnly={false}
       />
 
-      {error || queryError ? (
+      {setupError ? (
         <div className="grid gap-2 px-3 py-3 sm:px-4">
           <p role="alert" className="text-destructive [overflow-wrap:anywhere]">
-            {error ?? queryError}
+            {setupError}
           </p>
           {queryError ? (
             <Button
