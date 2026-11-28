@@ -106,6 +106,17 @@ describe("orderDiffFilesForReview", () => {
     ]);
   });
 
+  it("does not fall back to the basename for a relative specifier outside the diff", () => {
+    expect(order([file("src/a.ts", ['import "./z";']), file("zzz/z.ts")])).toEqual([
+      "src/a.ts",
+      "zzz/z.ts",
+    ]);
+    expect(order([file("src/sub/a.ts", ['import "../z";']), file("zzz/z.ts")])).toEqual([
+      "src/sub/a.ts",
+      "zzz/z.ts",
+    ]);
+  });
+
   it("falls back to the whole dotted module name, not its first segment", () => {
     expect(
       order([file("src/a.ts", ['import { b } from "~/z/b.logic";']), file("z/b.logic.ts")]),

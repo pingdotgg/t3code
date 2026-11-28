@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { mFallback } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
-import type { Definition } from "mdast";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
@@ -545,29 +544,20 @@ describe("hosted thread links", () => {
   });
 
   it("keeps Markdown reference link definitions intact when relabeling", () => {
-    const parser = unified().use(remarkParse);
-    const definitionUrl = (markdown: string) =>
-      parser.parse(markdown).children.find((node): node is Definition => node.type === "definition")
-        ?.url;
-
     const hosted = "https://app.t3.codes/threads/local/demo";
-    for (const [markdown, expectedUrl] of [
-      [`[Review][thread]\n\n[thread]: ${hosted}`, hosted],
-      [`[Review][thread]\n\n[thread]:${hosted}`, hosted],
-      [`[Review][thread]\n\n[thread]: <${hosted}>`, hosted],
-      [`[Review][thread]\n\n[thread]: <t3-thread://v2/local/demo>`, "t3-thread://v2/local/demo"],
-      [`[Review][thread]\n\n[thread]:\n  ${hosted}`, hosted],
-      [`[Review][thread]\n\n  [thread]: ${hosted} "Demo"`, hosted],
-    ] as const) {
+    for (const markdown of [
+      `[Review][thread]\n\n[thread]: ${hosted}`,
+      `[Review][thread]\n\n[thread]:${hosted}`,
+      `[Review][thread]\n\n[thread]: <${hosted}>`,
+      `[Review][thread]\n\n[thread]: <t3-thread://v2/local/demo>`,
+      `[Review][thread]\n\n[thread]:\n  ${hosted}`,
+      `[Review][thread]\n\n  [thread]: ${hosted} "Demo"`,
+      `> [Review][thread]\n>\n> [thread]: ${hosted}`,
+    ]) {
       for (const title of [() => "Demo", () => undefined]) {
-        const relabeled = relabelThreadLinks(markdown, local, title);
-        expect(relabeled).toBe(markdown);
-        expect(definitionUrl(relabeled)).toBe(expectedUrl);
+        expect(relabelThreadLinks(markdown, local, title)).toBe(markdown);
       }
     }
-
-    const quoted = `> [Review][thread]\n>\n> [thread]: ${hosted}`;
-    expect(relabelThreadLinks(quoted, local, () => "Demo")).toBe(quoted);
 
     const withLiveAfter = `[Review][thread]\n\n[thread]: ${hosted}\n\nSee ${hosted}`;
     expect(relabelThreadLinks(withLiveAfter, local, () => "Demo")).toBe(
@@ -578,5 +568,23 @@ describe("hosted thread links", () => {
     expect(relabelThreadLinks(paragraphContinuation, local, () => "Demo")).toBe(
       `Intro\n[thread]: [Demo](t3-thread://v2/local/demo)`,
     );
+  });
+
+  it("keeps relabeled links navigable when the thread id contains a space", () => {
+    const linkUrl = (markdown: string) => {
+      const paragraph = unified().use(remarkParse).parse(markdown).children[0];
+      const node = paragraph?.type === "paragraph" ? paragraph.children[0] : undefined;
+      return node?.type === "link" ? node.url : undefined;
+    };
+    const thread = ref("local", "work item");
+    const titles = titlesIn({ local: { "work item": "Review", "work%20item": "Encoded" } });
+
+    const relabeled = relabelThreadLinks(hostedThreadLink(thread), local, titles);
+    expect(parseThreadLinkHref(linkUrl(relabeled) ?? "")).toEqual(thread);
+    expect(threadLinkRefs(relabeled, local)).toEqual([thread]);
+
+    const v1Relabeled = relabelThreadLinks("[old](t3-thread://v1/work%20item)", local, titles);
+    expect(linkUrl(v1Relabeled)).toBe("t3-thread://v1/work%20item");
+    expect(formatThreadLink(v1("work item"))).toBe("<t3-thread://v1/work%20item>");
   });
 });

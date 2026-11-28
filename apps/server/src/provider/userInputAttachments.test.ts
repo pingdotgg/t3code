@@ -360,7 +360,7 @@ describe("question answer paths", () => {
 \pard\intbl\itap2 Four\nestcell
 {\*\nesttableprops\trowd\cellx1000\cellx2000\nestrow}{\nonesttables\par}
 \pard\intbl\itap1 Peer\cell\row}`,
-      "One Two Tail\tThree Four\nPeer",
+      "One Two Tail\tThree Four Peer",
     ],
     [
       "hidden text",
@@ -459,6 +459,16 @@ describe("question answer paths", () => {
       "text box shapes",
       String.raw`{\rtf1\ansi Shipping update.\par {\shp{\*\shpinst\shpleft4724\shptop0{\sp{\sn shapeType}{\sv 202}}{\sp{\sn wzName}{\sv Text Box 1}}{\shptxt \pard\plain Call the dock manager\par before noon\par}}{\shprslt{\*\do\dobxcolumn{\*\dptxbxtext\pard Call the dock manager\par before noon\par}}}}Trucks leave at six.\par}`,
       "Shipping update.\nCall the dock manager\nbefore noon\nTrucks leave at six.",
+    ],
+    [
+      "table cells with several paragraphs",
+      String.raw`{\rtf1\ansi Stock\par\trowd\cellx2000\cellx4000\pard\intbl Item\cell Qty\cell\row\trowd\cellx2000\cellx4000\pard\intbl Apples\par\pard\intbl green\cell 3\cell\row\pard After\par}`,
+      "Stock\nItem\tQty\t\nApples green\t3\t\nAfter",
+    ],
+    [
+      "table cells with TextEdit paragraphs",
+      "{\\rtf1\\ansi Stock\\\n\\trowd\\cellx2000\\cellx4000\\pard\\intbl Item\\cell Qty\\cell\\row\\trowd\\cellx2000\\cellx4000\\pard\\intbl Apples\\\ngreen\\cell 3\\cell\\row\\pard After\\\n}",
+      "Stock\nItem\tQty\t\nApples green\t3\t\nAfter",
     ],
     ["destination symbol", String.raw`{\rtf1\ansi\u945\*Z}`, "αZ"],
     ["multiple units", String.raw`{\rtf1\ansi\uc4\u945?\tab\'3f\~Z}`, "αZ"],
