@@ -83,6 +83,8 @@ it("relays a message once the document that handed over the port confirms it", (
     },
   };
 
+  // A filtering proxy's script, added ahead of the bootstrap, messages first.
+  relay.fromFrame("proxy-handshake", [{ postMessage: () => {} }]);
   relay.fromFrame({ t3: MCP_APP_DOCUMENT_MESSAGE }, [port]);
   relay.fromFrame(REQUEST);
   expect(relay.relayed).toEqual([]);

@@ -187,8 +187,15 @@ describe("McpAppFrame", () => {
     expect(commands.labels).toEqual([]);
   });
 
-  it("answers an app whose document carries the bootstrap", async () => {
-    setup(injectMcpAppDocumentBootstrap(`<script>${HOST_REQUESTS}</script>`));
+  it.each([
+    ["carries the bootstrap", ""],
+    // Stands in for the script AdGuard's local proxy adds to a page served over HTTP.
+    [
+      "gets a filtering proxy's script ahead of the bootstrap",
+      `<script>parent.postMessage("proxy-handshake", "*", [new MessageChannel().port2]);</script>`,
+    ],
+  ])("answers an app whose document %s", async (_document, ahead) => {
+    setup(`${ahead}${injectMcpAppDocumentBootstrap(`<script>${HOST_REQUESTS}</script>`)}`);
     await using screen = await render(
       <McpAppFrame
         environmentId={EnvironmentId.make("environment")}
