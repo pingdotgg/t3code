@@ -5622,9 +5622,34 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
               SELECT payload_json FROM orchestration_v2_projection_checkpoint_scopes
               WHERE thread_id = ${threadId} AND scope_id IN ${sql.in(nodes.flatMap((node) => (node.checkpointScopeId === null ? [] : [node.checkpointScopeId])))} ORDER BY ordinal_within_parent ASC, scope_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeCheckpointScopePayload, threadId)));
+            // A handoff lists the ID of every item it omitted, and its delivery copies the list. On a
+            // long thread those are megabytes per handoff, so cut what this turn can't use before it
+            // reaches the JS heap. Delivery reads history's list, only of a handoff it may still send.
+            // Coverage reads delivery's list, only of handoffs to this run's provider thread.
             const contextHandoffs = yield* sql<PayloadRow>`
-              SELECT payload_json FROM orchestration_v2_projection_context_handoffs
-              WHERE thread_id = ${threadId} ORDER BY rowid ASC
+              SELECT CASE
+                WHEN handoff.target_run_id = ${runId}
+                  OR json_type(handoff.payload_json, '$.delivery') IS NULL
+                  THEN handoff.payload_json
+                WHEN handoff.to_provider_thread_id IS (
+                  SELECT provider_thread_id FROM orchestration_v2_projection_runs
+                  WHERE thread_id = ${threadId} AND run_id = ${runId}
+                ) THEN CASE
+                  WHEN json_extract(handoff.payload_json, '$.delivery.status') = 'pending'
+                    OR EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_runs AS target
+                      WHERE target.thread_id = handoff.thread_id
+                        AND target.run_id = handoff.target_run_id
+                        AND target.status IN ('failed', 'interrupted', 'cancelled')
+                    ) THEN handoff.payload_json
+                  ELSE json_remove(handoff.payload_json, '$.history.omittedItemIds')
+                END
+                ELSE json_remove(
+                  handoff.payload_json, '$.history.omittedItemIds', '$.delivery.omittedItemIds'
+                )
+              END AS payload_json
+              FROM orchestration_v2_projection_context_handoffs AS handoff
+              WHERE handoff.thread_id = ${threadId} ORDER BY handoff.rowid ASC
             `.pipe(Effect.flatMap(decodeRows(decodeContextHandoffPayload, threadId)));
             // The fork into this thread and the transfers its handoffs came from, not the thousands of delegated results.
             const contextTransfers = yield* sql<PayloadRow>`
