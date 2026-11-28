@@ -7,7 +7,10 @@ import {
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  backgroundWorkHoldsCompletion,
+  isPullRequestWatchTask,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { T, useGT } from "gt-react";
 import { useState } from "react";
 
@@ -117,7 +120,7 @@ export function BackgroundWorkDetails(props: {
                   <div className="flex items-baseline justify-between gap-3">
                     <h3 className="font-medium">{title}</h3>
                     <span className="shrink-0 text-xs text-muted-foreground">
-                      {backgroundWorkHoldsCompletion([task])
+                      {backgroundWorkHoldsCompletion([task]) || isPullRequestWatchTask(task)
                         ? gt("Waiting", { $context: "status of background work" })
                         : gt("Running", { $context: "status of background work" })}
                     </span>
