@@ -142,4 +142,59 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
         }),
     ),
   );
+
+  it.effect("maps ACP failures to safe details and preserves their cause", () =>
+    Effect.gen(function* () {
+      const promptError = (code: number) => ({
+        T3_ACP_PROMPT_ERROR_MESSAGE: "private provider payload",
+        T3_ACP_PROMPT_ERROR_CODE: String(code),
+      });
+      for (const [env, code, detail] of [
+        [promptError(-32003), -32003, "Grok usage limit reached. Try again later."],
+        [promptError(-32000), -32000, "Grok authentication is required."],
+        [promptError(-32602), -32602, "Grok ACP request failed."],
+        // The agent advertises no method T3 can run, so its own auth error must surface.
+        [{ T3_ACP_SESSION_NEW_AUTH_REQUIRED: "1" }, -32000, "Grok authentication is required."],
+      ] as const) {
+        yield* withFakeAcpGrok(env, (textGeneration) =>
+          Effect.gen(function* () {
+            const error = yield* textGeneration
+              .generateThreadTitle({
+                cwd: process.cwd(),
+                message: "the lint job is red",
+                modelSelection: createModelSelection(
+                  ProviderInstanceId.make("grok"),
+                  "grok-mock-alt",
+                ),
+              })
+              .pipe(Effect.flip);
+            expect(error.detail).toBe(detail);
+            expect(error.cause).toMatchObject({
+              code,
+              errorMessage: "private provider payload",
+            });
+          }),
+        );
+      }
+    }),
+  );
+
+  it.effect("explains rejected model settings without copying provider text", () =>
+    withFakeAcpGrok({}, (textGeneration) =>
+      Effect.gen(function* () {
+        const error = yield* textGeneration
+          .generateThreadTitle({
+            cwd: process.cwd(),
+            message: "the lint job is red",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("grok"),
+              "grok-mock-missing",
+            ),
+          })
+          .pipe(Effect.flip);
+        expect(error.cause).toMatchObject({ code: -32602, errorMessage: "Unknown Grok model" });
+        expect(error.detail).toBe("Grok rejected the text generation model settings.");
+      }),
+    ),
+  );
 });

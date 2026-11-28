@@ -2422,10 +2422,11 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           initializeResult.authMethods !== undefined &&
           authMethod === undefined
         ) {
-          return yield* new EffectAcpErrors.AcpTransportError({
-            detail: `ACP agent did not advertise configured authentication method "${configuredAuthMethodId}"`,
-            cause: { configuredAuthMethodId, authMethods: initializeResult.authMethods },
+          yield* Effect.logWarning("ACP agent did not advertise configured authentication method", {
+            configuredAuthMethodId,
+            authMethods: initializeResult.authMethods.map((method) => method.id),
           });
+          return yield* authRequiredError;
         }
         if (
           authMethod !== undefined &&
