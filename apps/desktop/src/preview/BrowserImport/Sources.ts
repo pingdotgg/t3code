@@ -188,6 +188,8 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
       return context.path.join(context.home, ".mozilla", "firefox");
     },
     alternateLinuxRoots: (context) => [
+      // Firefox 147+ creates new Linux profiles under the XDG config directory.
+      context.path.join(context.linuxConfigHome, "mozilla", "firefox"),
       context.path.join(context.home, "snap", "firefox", "common", ".mozilla", "firefox"),
     ],
   },
