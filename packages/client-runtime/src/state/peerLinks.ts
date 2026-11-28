@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  type OrchestrationV2ThreadShell,
   type PeerLinkSummary,
   type PeerLinkThreadInput,
   WS_METHODS,
@@ -168,6 +169,49 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
     }),
   };
 }
+
+/** Moving threads to linked environments, as one environment's server does it. */
+export function createThreadHandoffEnvironmentAtoms<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+) {
+  const sameThread = {
+    mode: "singleFlight" as const,
+    key: (target: {
+      readonly environmentId: EnvironmentId;
+      readonly input: { threadId: string };
+    }) => JSON.stringify([target.environmentId, target.input.threadId]),
+  };
+  return {
+    options: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:thread-handoff:options",
+      tag: WS_METHODS.threadHandoffOptions,
+      // Each read asks every linked environment for a matching project.
+      staleTimeMs: 15_000,
+    }),
+    start: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:thread-handoff:start",
+      tag: WS_METHODS.threadHandoffStart,
+      concurrency: sameThread,
+    }),
+    cancel: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:thread-handoff:cancel",
+      tag: WS_METHODS.threadHandoffCancel,
+      concurrency: sameThread,
+    }),
+  };
+}
+
+type ThreadHandoff = NonNullable<OrchestrationV2ThreadShell["handoff"]>;
+
+/** A thread can start a move unless one is waiting, under way or done. */
+export const threadCanStartHandoff = (handoff: ThreadHandoff | null | undefined): boolean =>
+  handoff == null || handoff.state === "failed";
+
+/** The copy left behind takes no messages once the move is under way. */
+export const threadHandoffClosesComposer = (
+  handoff: ThreadHandoff | null | undefined,
+): handoff is Extract<ThreadHandoff, { state: "departing" | "departed" }> =>
+  handoff?.state === "departing" || handoff?.state === "departed";
 
 const EXPIRY_WARNING_DAYS = 5;
 

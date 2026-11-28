@@ -166,6 +166,8 @@ import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
+import { threadCanStartHandoff } from "@t3tools/client-runtime/state/peerLinks";
+import { openThreadHandoffDialog, readCanMoveThreads } from "../state/threadHandoff";
 import {
   buildThreadRouteParams,
   resolveActiveThreadRouteRef,
@@ -2781,6 +2783,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               canShareWithGuest: appAtomRegistry.get(
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
+              canContinueElsewhere:
+                threadCanStartHandoff(thread.handoff) &&
+                readCanMoveThreads(threadRef.environmentId),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
               canRename: !fromSearch,
               supports: {
@@ -2912,6 +2917,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           case "share-guest":
             openGuestShareDialog(threadRef);
+            return;
+          case "continue-elsewhere":
+            openThreadHandoffDialog(threadRef);
             return;
           case "regenerate-title": {
             if (isRegeneratingTitle) return;

@@ -72,6 +72,8 @@ import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regenerati
 import { canTurnThreadIntoProject, turnThreadIntoProject } from "./turnThreadIntoProject";
 import { threadCanArchive } from "../home/threadArchive";
 import { useCanShareWithGuest } from "./useCanShareWithGuest";
+import { threadCanStartHandoff } from "@t3tools/client-runtime/state/peerLinks";
+import { useCanMoveThreads } from "../../state/threadHandoff";
 import {
   threadListV2ShowMoreAccessibilityLabel,
   resolveThreadListV2SnoozeGateExpiryMs,
@@ -926,6 +928,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     !useEnvironmentScopeDenied(thread.environmentId, AuthOrchestrationOperateScope) &&
     !canOperateThread;
   const canShareWithGuest = useCanShareWithGuest(thread.environmentId);
+  const canContinueElsewhere =
+    useCanMoveThreads(thread.environmentId) && threadCanStartHandoff(thread.handoff);
   const navigation = useNavigation();
   const handleRegenerateTitle = useCallback(
     () => onRegenerateThreadTitle(thread),
@@ -1110,6 +1114,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ...(canShareWithGuest
         ? [{ id: "share-guest", title: gt("Share with guest"), image: "person.badge.plus" }]
         : []),
+      ...(canContinueElsewhere
+        ? [
+            {
+              id: "continue-elsewhere",
+              title: gt("Continue on another machine"),
+              image: "arrow.up.right",
+              // The server refuses a move while a turn runs.
+              attributes: { disabled: !threadCanArchive(thread.runtime) },
+            } satisfies MenuAction,
+          ]
+        : []),
     ];
     if (snoozedRow) {
       return layoutThreadListV2RowMenuActions(
@@ -1190,6 +1205,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   }, [
     autoSettleMenuItems,
     canShareWithGuest,
+    canContinueElsewhere,
+    thread.runtime,
     canUnsettle,
     pinMenuItems,
     props.settlementSupported,
@@ -1241,6 +1258,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       }
       if (nativeEvent.event === "share-guest") {
         navigation.navigate("ThreadGuestShare", {
+          environmentId: thread.environmentId,
+          threadId: thread.id,
+        });
+      }
+      if (nativeEvent.event === "continue-elsewhere") {
+        navigation.navigate("ThreadHandoff", {
           environmentId: thread.environmentId,
           threadId: thread.id,
         });

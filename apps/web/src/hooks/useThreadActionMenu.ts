@@ -31,6 +31,8 @@ import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import { m } from "../i18n/messages";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
+import { threadCanStartHandoff } from "@t3tools/client-runtime/state/peerLinks";
+import { openThreadHandoffDialog, readCanMoveThreads } from "../state/threadHandoff";
 import { threadEnvironment } from "../state/threads";
 import { threadTriagePermitted, useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope } from "../state/session";
@@ -152,6 +154,8 @@ export function useThreadActionMenu(input: {
       supports,
       snoozePresets,
       canShareWithGuest,
+      canContinueElsewhere:
+        threadCanStartHandoff(thread.handoff) && readCanMoveThreads(threadRef.environmentId),
       canTurnIntoProject: canTurnThreadIntoProject(threadRef),
     });
     const run = async (action: ThreadActionMenuId) => {
@@ -270,6 +274,9 @@ export function useThreadActionMenu(input: {
         }
         case "mark-unread":
           markThreadUnread(threadRef);
+          return;
+        case "continue-elsewhere":
+          openThreadHandoffDialog(threadRef);
           return;
         case "share-guest":
           openGuestShareDialog(threadRef);

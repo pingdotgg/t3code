@@ -103,6 +103,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksPairClient]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksPairLink]: AuthAccessWriteScope,
+  // Moving a thread ends its work here and starts it on the linked environment.
+  [WS_METHODS.threadHandoffStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.threadHandoffCancel]: AuthOrchestrationOperateScope,
   // Send stores and sends a report from a thread's turn: the bar of running that thread.
   [WS_METHODS.agentFeedbackAnswerRequest]: AuthOrchestrationOperateScope,
 } as const;

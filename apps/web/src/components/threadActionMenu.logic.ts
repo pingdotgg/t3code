@@ -24,6 +24,7 @@ export type ThreadActionMenuId =
   | "regenerate-title"
   | "mark-unread"
   | "share-guest"
+  | "continue-elsewhere"
   | "copy"
   | "copy-path"
   | "copy-branch"
@@ -125,6 +126,8 @@ export interface ThreadActionMenuState {
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
   /** Guest links need their own grant, so the caller checks it instead of `canOperate`. */
   readonly canShareWithGuest?: boolean;
+  /** The thread's machine offers links, this client may move threads, and no move is under way. */
+  readonly canContinueElsewhere?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
 }
@@ -248,6 +251,17 @@ export function buildThreadActionMenuItems(
       : []),
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: resolve(msg("Share with guest")), icon: "user-plus" }]
+      : []),
+    ...(state.canContinueElsewhere
+      ? [
+          {
+            id: "continue-elsewhere" as const,
+            label: resolve(msg("Continue on another machine…")),
+            icon: "monitor-up",
+            // A move waits for nothing: the server refuses one while a turn runs.
+            disabled: state.isRunning,
+          },
+        ]
       : []),
     ...(state.projectFilter
       ? [
