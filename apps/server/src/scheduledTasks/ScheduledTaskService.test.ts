@@ -422,15 +422,26 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
 );
 
 it.effect.each([
-  { status: "failed", error: "Weekly usage limit reached", heldWarning: false },
-  { status: "failed", error: "Weekly usage limit reached", heldWarning: true },
-  { status: "interrupted", error: "The run was stopped.", heldWarning: false },
-  { status: "cancelled", error: "The run was cancelled.", heldWarning: false },
-] as const)("a run that ends $status after its message was accepted records it", (outcome) =>
+  { status: "failed", error: "Weekly usage limit reached", mode: "queue", heldWarning: false },
+  { status: "failed", error: "Weekly usage limit reached", mode: "queue", heldWarning: true },
+  { status: "failed", error: "Weekly usage limit reached", mode: "steer", heldWarning: false },
+  { status: "failed", error: "Weekly usage limit reached", mode: "auto", heldWarning: false },
+  {
+    status: "interrupted",
+    error: "The run was stopped.",
+    mode: "auto",
+    heldWarning: false,
+    followUp: true,
+  },
+  { status: "interrupted", error: "The run was stopped.", mode: "queue", heldWarning: false },
+  { status: "cancelled", error: "The run was cancelled.", mode: "queue", heldWarning: false },
+] as const)("a $mode run that ends $status after its message was accepted records it", (outcome) =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:test");
     const ended = yield* Deferred.make<void>();
     const sent = yield* Ref.make("");
+    const messageRun = yield* Ref.make("run:2");
+    const followUp = "followUp" in outcome;
     const run = { id: "run:2", status: outcome.status, rootNodeId: "node:root" };
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
@@ -442,14 +453,17 @@ it.effect.each([
             getThreadShell: () => Effect.succeed(threadShell(projectId)),
             getProjectThreadRecords: () =>
               Effect.map(
-                Ref.get(sent),
-                (userMessageId) =>
+                Effect.all([Ref.get(sent), Ref.get(messageRun)]),
+                ([userMessageId, runId]) =>
                   ({
                     runs: [
                       { id: "run:1", status: "completed", userMessageId: "message:earlier" },
-                      { ...run, userMessageId },
+                      {
+                        ...run,
+                        userMessageId: outcome.mode === "queue" ? userMessageId : "message:active",
+                      },
                     ],
-                    messages: [{ id: userMessageId, runId: "run:2" }],
+                    messages: [{ id: userMessageId, runId }],
                     turnItems: [
                       {
                         type: "error",
@@ -463,9 +477,15 @@ it.effect.each([
               ),
             waitForThread: (input) =>
               Deferred.await(ended).pipe(
+                Effect.andThen(Ref.set(messageRun, followUp ? "run:3" : "run:2")),
                 Effect.as({
                   threadId: input.threadId,
-                  run: { ...run, id: input.runId, userMessageId: "" },
+                  run: {
+                    ...run,
+                    id: input.runId,
+                    userMessageId: "",
+                    status: followUp && input.runId === "run:2" ? "completed" : outcome.status,
+                  },
                   timedOut: false,
                 } as never),
               ),
@@ -485,6 +505,7 @@ it.effect.each([
       const { task } = yield* service.upsert({
         id: ScheduledTaskId.make("task:quota"),
         title: "Quota bookkeeping",
+        sendMode: outcome.mode,
         prompt: "Update the notes",
         enabled: true,
         schedule: { type: "interval", everyMs: 60_000 },
@@ -534,7 +555,7 @@ it.effect("a one-time task is removed once its turn completes", () =>
             getProjectThreadRecords: () =>
               Effect.map(
                 Ref.get(sent),
-                (userMessageId) => ({ runs: [{ ...run, userMessageId }] }) as never,
+                (userMessageId) => ({ runs: [{ ...run, userMessageId }], messages: [] }) as never,
               ),
             waitForThread: (input) =>
               Deferred.await(ended).pipe(
@@ -606,7 +627,7 @@ it.effect("a paused one-time task run by hand before its time is kept", () =>
             getProjectThreadRecords: () =>
               Effect.map(
                 Ref.get(sent),
-                (userMessageId) => ({ runs: [{ ...run, userMessageId }] }) as never,
+                (userMessageId) => ({ runs: [{ ...run, userMessageId }], messages: [] }) as never,
               ),
             waitForThread: (input) =>
               Deferred.await(ended).pipe(
@@ -657,7 +678,11 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
   Effect.gen(function* () {
     const scratch = ProjectId.make("project:scratch");
     const promoted = ProjectId.make("project:promoted");
-    const sends = yield* Ref.make<Array<{ projectId: ProjectId; commandId: string }>>([]);
+    const saving = yield* Deferred.make<void>();
+    const resumeSave = yield* Deferred.make<void>();
+    const sends = yield* Ref.make<Array<{ projectId: ProjectId; commandId: string; mode: string }>>(
+      [],
+    );
     // Saving reads it first. Then the rebind lands, and the promotion commits between the shell
     // read and the retry.
     const shellProjects = yield* Ref.make([promoted, scratch, promoted]);
@@ -670,7 +695,7 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
             sendToThread: (input) =>
               Ref.updateAndGet(sends, (all) => [
                 ...all,
-                { projectId: input.projectId, commandId: input.commandId },
+                { projectId: input.projectId, commandId: input.commandId, mode: input.mode },
               ]).pipe(
                 Effect.flatMap((all) =>
                   all.length < 3
@@ -689,7 +714,11 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
-            isScratchProject: () => Effect.succeed(false),
+            isScratchProject: () =>
+              Deferred.succeed(saving, undefined).pipe(
+                Effect.andThen(Deferred.await(resumeSave)),
+                Effect.as(true),
+              ),
           }),
           NodeCrypto.layer,
           Scheduler.layer,
@@ -699,7 +728,7 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       const threadId = ThreadId.make("thread:promoted-during-run");
-      const { task } = yield* service.upsert({
+      const input: ScheduledTaskUpsertInput = {
         id: ScheduledTaskId.make("task:promoted-during-run"),
         title: "Check in",
         prompt: "Check progress",
@@ -711,7 +740,10 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         runtimeMode: "full-access",
         interactionMode: "default",
-      });
+      };
+      yield* service.upsert({ ...input, sendMode: "auto" });
+      // A save from a client or tool that predates the mode keeps it.
+      const { task } = yield* service.upsert(input);
 
       const result = yield* service.runNow({ id: task.id });
 
@@ -722,6 +754,17 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
         [promoted, scratch, promoted],
       );
       assert.equal(new Set(attempts.map((attempt) => attempt.commandId)).size, 1);
+      assert.deepEqual(new Set(attempts.map((attempt) => attempt.mode)), new Set(["auto"]));
+      const staleSave = yield* service
+        .upsert({
+          ...input,
+          workspaceStrategy: { type: "worktree", branch: "task", baseRef: "main" },
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(saving);
+      yield* service.upsert({ ...input, sendMode: "restart" });
+      yield* Deferred.succeed(resumeSave, undefined);
+      assert.equal((yield* Fiber.join(staleSave)).task.sendMode, "restart");
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

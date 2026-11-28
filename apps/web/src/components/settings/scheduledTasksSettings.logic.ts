@@ -7,6 +7,7 @@ import {
   type ScheduledTask,
   type ScheduledTaskSchedule,
   type ScheduledTaskThreadMode,
+  type ScheduledTaskSendMode,
   type ScheduledTaskUpsertSchedule,
   scheduledTaskThreadMode,
   type ModelSelection,
@@ -132,6 +133,7 @@ export interface DraftState {
   /** The thread the form opened with, so a save can tell a cleared destination from an unbound one. */
   readonly savedThreadId: string;
   readonly threadMode: ScheduledTaskThreadMode;
+  readonly sendMode: ScheduledTaskSendMode;
   readonly workspaceMode: WorkspaceMode;
   readonly baseRef: string;
   readonly startFromOrigin: boolean;
@@ -332,6 +334,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     threadId: task.threadId ?? "",
     savedThreadId: task.threadId ?? "",
     threadMode: scheduledTaskThreadMode(task),
+    sendMode: task.sendMode,
     workspaceMode: task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "",
     startFromOrigin:

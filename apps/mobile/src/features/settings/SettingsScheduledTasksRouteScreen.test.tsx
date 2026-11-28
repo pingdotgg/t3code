@@ -175,6 +175,7 @@ beforeEach(() => {
     schedule: { type: "fixed_time", timeOfDay: "05:00" },
     projectId: ProjectId.make("project"),
     threadId: null,
+    sendMode: "queue",
     workspaceStrategy: { type: "root" },
     modelSelection: {
       instanceId: ProviderInstanceId.make("codex"),

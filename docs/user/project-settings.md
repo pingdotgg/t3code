@@ -54,6 +54,7 @@ Create and manage scheduled tasks in **Settings → Scheduled tasks** (web, desk
 
 - **Schedules**: Recurring fixed-time schedules use the target environment's time zone. **Once** uses your local time zone (runs on reconnect if offline).
 - **Destination**: Choose **New thread each run**, **One thread (continue conversation)**, or **One thread (fresh session each run)**. Deleting a target thread deletes tasks bound to it; archiving a target thread causes runs to fail (settle it instead).
+- **Delivery** (one thread, continue conversation): Sets what a run does while the agent is still working there. **Queue** (default) waits for the current turn to finish. **Steer or start** adds the prompt to the current turn when it can take input, otherwise queues. **Steer only** and **Restart** act on the current turn like steering or restarting from the composer; with no turn to act on, nothing is sent and the run fails. The first run always starts the thread.
 - **Controls**: Edit, pause, resume, run now (except webhook tasks), or delete from the list.
 
 ### Webhook automations

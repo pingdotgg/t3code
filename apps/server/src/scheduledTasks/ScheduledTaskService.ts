@@ -233,6 +233,7 @@ interface ScheduledTaskRow {
   readonly project_id: string;
   readonly thread_id: string | null;
   readonly thread_mode: string;
+  readonly send_mode: string;
   readonly workspace_strategy_json: string;
   readonly model_selection_json: string;
   readonly runtime_mode: string;
@@ -424,6 +425,7 @@ const decodeRow = Effect.fnUntraced(
       projectId: row.project_id,
       threadId: row.thread_id,
       threadMode: row.thread_mode,
+      sendMode: row.send_mode,
       workspaceStrategy,
       modelSelection,
       runtimeMode: row.runtime_mode,
@@ -548,6 +550,7 @@ export const layer = Layer.effect(
         project_id,
         thread_id,
         thread_mode,
+        send_mode,
         workspace_strategy_json,
         model_selection_json,
         runtime_mode,
@@ -590,6 +593,7 @@ export const layer = Layer.effect(
         project_id,
         thread_id,
         thread_mode,
+        send_mode,
         workspace_strategy_json,
         model_selection_json,
         runtime_mode,
@@ -650,6 +654,7 @@ export const layer = Layer.effect(
     const saveTask = (
       task: ScheduledTask,
       requireExisting: boolean,
+      sendMode: ScheduledTaskUpsertInput["sendMode"],
       /** The schedule this save read, when it left the schedule unchanged. */
       keptSchedule: ScheduledTask["schedule"] | null,
       /** The thread this save unbinds; any other stored thread is kept. */
@@ -670,6 +675,7 @@ export const layer = Layer.effect(
           project_id,
           thread_id,
           thread_mode,
+          send_mode,
           workspace_strategy_json,
           model_selection_json,
           runtime_mode,
@@ -695,6 +701,7 @@ export const layer = Layer.effect(
           ${task.projectId},
           ${task.threadId},
           ${scheduledTaskThreadMode(task)},
+          ${task.sendMode},
           ${JSON.stringify(task.workspaceStrategy)},
           ${JSON.stringify(task.modelSelection)},
           ${task.runtimeMode},
@@ -727,6 +734,7 @@ export const layer = Layer.effect(
             ELSE COALESCE(excluded.thread_id, NULLIF(scheduled_tasks.thread_id, ${unboundThreadId}))
           END,
           thread_mode = excluded.thread_mode,
+          send_mode = COALESCE(${sendMode ?? null}, scheduled_tasks.send_mode),
           workspace_strategy_json = excluded.workspace_strategy_json,
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
@@ -922,56 +930,65 @@ export const layer = Layer.effect(
       const shell = yield* threadManagement.getThreadShell(threadId);
       if (shell === null) return;
       const thread = { projectId: shell.projectId, threadId };
-      const { runs } = yield* threadManagement.getProjectThreadRecords(thread, ["runs"]);
-      const dispatched = runs.find((run) => run.userMessageId === messageId);
+      const { runs, messages: dispatchedMessages } =
+        yield* threadManagement.getProjectThreadRecords(thread, ["runs", "messages"], {
+          messageIds: [messageId],
+        });
+      const messageRunId = dispatchedMessages.find((message) => message.id === messageId)?.runId;
+      const dispatched =
+        runs.find((run) => run.userMessageId === messageId) ??
+        runs.find((run) => run.id === messageRunId);
       if (dispatched === undefined) return;
-      const { run } = yield* threadManagement.waitForThread({
-        ...thread,
-        runId: dispatched.id,
-        timeoutMs: RUN_OUTCOME_WAIT_MS,
-      });
-      if (run === null || !ThreadManagementService.isTerminalRunStatus(run.status)) return;
-      if (run.status === "completed") {
-        const removed = yield* sql`
-          DELETE FROM scheduled_tasks
+      let runId = dispatched.id;
+      while (true) {
+        const { run } = yield* threadManagement.waitForThread({
+          ...thread,
+          runId,
+          timeoutMs: RUN_OUTCOME_WAIT_MS,
+        });
+        if (run === null || !ThreadManagementService.isTerminalRunStatus(run.status)) return;
+        const { messages } = yield* threadManagement.getProjectThreadRecords(thread, ["messages"], {
+          messageIds: [messageId],
+        });
+        const currentRunId = messages.find((message) => message.id === messageId)?.runId;
+        // A declined steer or a promoted queued message can move into another run.
+        if (currentRunId != null && currentRunId !== runId) {
+          runId = currentRunId;
+          continue;
+        }
+        if (run.status === "completed") {
+          const removed = yield* sql`
+            DELETE FROM scheduled_tasks
+            WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso}
+              AND last_run_status = 'succeeded' AND next_run_at IS NULL
+              AND json_extract(schedule_json, '$.type') = 'once'
+              AND julianday(last_run_at) >= julianday(json_extract(schedule_json, '$.runAt'))
+            RETURNING task_id
+          `;
+          if (removed.length > 0) yield* notifyChanged;
+          return;
+        }
+        if (run.status === "cancelled" && currentRunId == null) return;
+        // Only the run's failed errors feed latestRootProviderFailure; a long-lived task
+        // thread holds tens of thousands of items.
+        const { turnItems } = yield* threadManagement.getProjectThreadRecords(
+          thread,
+          ["turnItems"],
+          { turnItemRunId: run.id, turnItemTypes: ["error"], turnItemStatuses: ["failed"] },
+        );
+        const error =
+          latestRootProviderFailure(run, turnItems)?.message ?? UNSUCCESSFUL_RUN_ERRORS[run.status];
+        const updated = yield* sql`
+          UPDATE scheduled_tasks
+          SET last_run_status = 'failed', last_run_error = ${error}
           WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso}
-            AND last_run_status = 'succeeded' AND next_run_at IS NULL
-            AND json_extract(schedule_json, '$.type') = 'once'
-            AND julianday(last_run_at) >= julianday(json_extract(schedule_json, '$.runAt'))
+            AND (last_run_status = 'succeeded'
+              OR (last_run_status = 'failed' AND last_run_error = ${HELD_OCCURRENCE_ERROR}))
           RETURNING task_id
         `;
-        if (removed.length > 0) yield* notifyChanged;
+        if (updated.length > 0) yield* notifyChanged;
         return;
       }
-      // Only the run's failed errors feed latestRootProviderFailure; a long-lived task
-      // thread holds tens of thousands of items.
-      const { turnItems, messages } = yield* threadManagement.getProjectThreadRecords(
-        thread,
-        ["turnItems", "messages"],
-        {
-          messageIds: [messageId],
-          turnItemRunId: run.id,
-          turnItemTypes: ["error"],
-          turnItemStatuses: ["failed"],
-        },
-      );
-      // A queued message promoted to a steer cancels its run and joins the active one.
-      if (
-        run.status === "cancelled" &&
-        messages.find((message) => message.id === messageId)?.runId !== run.id
-      )
-        return;
-      const error =
-        latestRootProviderFailure(run, turnItems)?.message ?? UNSUCCESSFUL_RUN_ERRORS[run.status];
-      const updated = yield* sql`
-        UPDATE scheduled_tasks
-        SET last_run_status = 'failed', last_run_error = ${error}
-        WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso}
-          AND (last_run_status = 'succeeded'
-            OR (last_run_status = 'failed' AND last_run_error = ${HELD_OCCURRENCE_ERROR}))
-        RETURNING task_id
-      `;
-      if (updated.length > 0) yield* notifyChanged;
     });
 
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
@@ -1100,7 +1117,7 @@ export const layer = Layer.effect(
               scheduledTaskId: active.id,
               text: prompt,
               attachments: [],
-              mode: "queue",
+              mode: active.sendMode,
               ...(threadMode === "fresh_session" ? { freshContext: true } : {}),
               createdBy: active.createdBy,
               creationSource: active.creationSource,
@@ -1610,6 +1627,8 @@ export const layer = Layer.effect(
         projectId: input.projectId,
         threadId,
         threadMode,
+        // Omitted keeps the stored mode, so clients and tools that predate it keep it on re-save.
+        sendMode: input.sendMode ?? existingTask?.sendMode ?? "queue",
         workspaceStrategy,
         modelSelection: input.modelSelection,
         runtimeMode: input.runtimeMode,
@@ -1629,6 +1648,7 @@ export const layer = Layer.effect(
       yield* saveTask(
         task,
         input.requireExisting === true,
+        input.sendMode,
         scheduleUnchanged ? existingTask.schedule : null,
         threadId === null && input.unbindThread === true ? (existingTask?.threadId ?? null) : null,
         webhook,
