@@ -37,6 +37,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -72,7 +73,10 @@ declare module "node:sqlite" {
 }
 
 const layerTest = Layer.mergeAll(
-  ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+  ProjectionStore.layer.pipe(
+    Layer.provide(NodeCrypto.layerDigest),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
+  ),
   SqlitePersistence.layerMemory,
 );
 const modelSelection = {
@@ -413,7 +417,14 @@ it.effect("routes full projection reads to readers and retains uncommitted write
         );
       }),
     );
-  }).pipe(Effect.provide(ProjectionStore.layer.pipe(Layer.provideMerge(layerReaderDatabase)))),
+  }).pipe(
+    Effect.provide(
+      ProjectionStore.layer.pipe(
+        Layer.provide(NodeCrypto.layerDigest),
+        Layer.provideMerge(layerReaderDatabase),
+      ),
+    ),
+  ),
 );
 
 it.effect("record reads restrict provider histories to delivery identities", () =>
@@ -764,7 +775,7 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
     const found = yield* store
       .getThreadRecords(
         threadId,
-        ["runs", "nodes", "subagents", "messages", "attempts", "providerTurns"],
+        ["runs", "nodes", "subagents", "messages", "attempts", "providerTurns", "checkpoints"],
         {
           runIds: [RunId.make("run:idle-compaction:4")],
           nodeIds: [nodeId],
@@ -772,6 +783,7 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
           messageIds: [MessageId.make("message:idle-compaction:4")],
           attemptIds: [RunAttemptId.make("attempt:idle-compaction")],
           providerTurnIds: [ProviderTurnId.make("turn:idle-old")],
+          checkpointIds: [CheckpointId.make("checkpoint:idle-compaction")],
         },
       )
       .pipe(Effect.withTracer(byId.tracer));
@@ -791,9 +803,15 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
       })
       .pipe(Effect.withTracer(byId.tracer));
     for (const [table, index] of [
-      ...["runs", "nodes", "subagents", "messages", "run_attempts", "provider_turns"].map(
-        (name) => [name, `sqlite_autoindex_orchestration_v2_projection_${name}_1`] as const,
-      ),
+      ...[
+        "runs",
+        "nodes",
+        "subagents",
+        "messages",
+        "run_attempts",
+        "provider_turns",
+        "checkpoints",
+      ].map((name) => [name, `sqlite_autoindex_orchestration_v2_projection_${name}_1`] as const),
       ["subagents", "orchestration_v2_projection_subagents_child_thread_idx"],
       ["turn_items", "orchestration_v2_projection_turn_items_node_ordinal_idx"],
     ] as const) {
@@ -838,6 +856,81 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
         .map((row) => row.detail)
         .join("\n");
       for (const seek of seeks) assert.include(plan, seek);
+    }
+    // Live items found by status alone: sorted by ordinal, SQLite would fetch every row of the thread.
+    const live = traceSqlStatements();
+    const liveItems = yield* store
+      .getThreadRecords(threadId, ["turnItems"], {
+        turnItemStatuses: ["pending", "running", "waiting"],
+      })
+      .pipe(Effect.withTracer(live.tracer));
+    assert.deepEqual(
+      liveItems.turnItems.map((item) => item.id),
+      ["item:idle-compaction:rolled-back"],
+    );
+    const liveQuery = live.statements.find((statement) =>
+      statement.includes("FROM orchestration_v2_projection_turn_items"),
+    );
+    assert.isDefined(liveQuery);
+    assert.include(
+      (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${liveQuery}`))
+        .map((row) => row.detail)
+        .join("\n"),
+      "USING COVERING INDEX orchestration_v2_projection_turn_items_thread_type_idx",
+    );
+    // Turn starts and checkpoints read one run's items; sorted, SQLite would walk the thread too.
+    const rolledBackRun = RunId.make("run:idle-compaction:rolled-back");
+    const rolledBackItem = TurnItemId.make("item:idle-compaction:rolled-back");
+    const runlessItem = TurnItemId.make("item:idle-compaction:runless");
+    yield* store.apply({
+      id: EventId.make("event:idle-compaction:runless-item"),
+      type: "turn-item.updated",
+      threadId,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: runlessItem,
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 2,
+        status: "completed",
+        title: "run-less note",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "command_execution",
+        input: "true",
+      },
+    });
+    for (const [runFilter, expectedIds] of [
+      [{ turnItemRunIds: [rolledBackRun] }, [rolledBackItem]],
+      [{ turnItemRunIds: [null] }, [runlessItem]],
+      [{ turnItemRunIds: [rolledBackRun, null] }, [rolledBackItem, runlessItem]],
+      [{ turnItemRunId: rolledBackRun }, [rolledBackItem]],
+    ] as const) {
+      const byRun = traceSqlStatements();
+      const runItems = yield* store
+        .getThreadRecords(threadId, ["turnItems"], runFilter)
+        .pipe(Effect.withTracer(byRun.tracer));
+      assert.deepEqual(
+        runItems.turnItems.map((item) => item.id),
+        [...expectedIds],
+      );
+      const runQuery = byRun.statements.find((statement) =>
+        statement.includes("FROM orchestration_v2_projection_turn_items"),
+      );
+      assert.isDefined(runQuery);
+      assert.include(
+        (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${runQuery}`))
+          .map((row) => row.detail)
+          .join("\n"),
+        "USING COVERING INDEX orchestration_v2_projection_turn_items_thread_run_idx (thread_id=? AND run_id=?)",
+      );
     }
     assert.deepEqual(
       records.providerTurns.map((turn) => turn.id),
@@ -3981,6 +4074,29 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
   it.effect(
     "keeps restart-cancelled work through a stale run.updated",
     () => restartCancelledWorkSurvivesStaleRunUpdate,
+  );
+  it.effect("keeps a run's explicit queue marker through a run.updated that omits it", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("explicit-queue-stale-update");
+      const run = (yield* store.getThreadProjection(threadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      const update = (id: string, payload: typeof run) =>
+        store.apply({
+          id: EventId.make(`event:explicit-queue-stale-update:${id}`),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          providerInstanceId,
+          occurredAt: now,
+          payload,
+        });
+      yield* update("marked", { ...run, explicitQueue: true });
+      yield* update("completed", { ...run, status: "completed", completedAt: now });
+      const updated = (yield* store.getThreadProjection(threadId)).runs[0];
+      assert.equal(updated?.status, "completed");
+      assert.equal(updated?.explicitQueue, true);
+    }),
   );
   it.effect("records restart-cancelled work without regressing a run that completed since", () =>
     Effect.gen(function* () {

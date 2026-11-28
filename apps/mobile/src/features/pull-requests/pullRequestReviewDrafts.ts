@@ -14,6 +14,14 @@ export type ReviewDraft = {
   readonly comments: readonly PendingReviewComment[];
 };
 export const EMPTY_REVIEW_DRAFT: ReviewDraft = { summary: "", comment: "", comments: [] };
+
+export function reviewDraftReplacement(draft: ReviewDraft, headSha: string | null, id?: string) {
+  if (!id || headSha === null) return {};
+  return draft.comments.some((comment) => comment.id === id && comment.headSha !== headSha)
+    ? { draftId: id }
+    : { resetOnReload: { replacingDraftId: undefined } };
+}
+
 export function pullRequestReviewKey(params: PullRequestParams) {
   return JSON.stringify([
     params.environmentId,

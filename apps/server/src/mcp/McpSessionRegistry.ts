@@ -12,6 +12,7 @@ import * as NetAddress from "effect/net/NetAddress";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
+import { routineSpan } from "@t3tools/shared/observability";
 
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
@@ -33,6 +34,8 @@ export interface McpSessionRegistryShape {
   ) => Effect.Effect<McpInvocationContext.McpThreadInvocationScope | undefined>;
   /** True once `/mcp` has authenticated at least one request for this provider session. */
   readonly isConnected: (providerSessionId: string) => Effect.Effect<boolean>;
+  /** Record that `/mcp` authenticated a live client request for this provider session. */
+  readonly markConnected: (providerSessionId: string) => Effect.Effect<void>;
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
@@ -174,25 +177,38 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     },
   );
 
-  const resolve: McpSessionRegistryShape["resolve"] = Effect.fn("McpSessionRegistry.resolve")(
-    function* (rawToken) {
-      if (rawToken.length === 0) return undefined;
-      const tokenHash = yield* hashToken(rawToken);
-      const alive = yield* currentAliveMark;
-      return yield* SynchronizedRef.modify(state, ({ records }) => {
-        const record = records.get(tokenHash);
-        if (!record || record.expired) return [undefined, { records }] as const;
-        if (idleMs(record.lastAlive, alive) > livenessWindowMs) {
-          const next = new Map(records);
-          next.set(tokenHash, { ...record, expired: true });
-          return [undefined, { records: next }] as const;
-        }
+  const resolve: McpSessionRegistryShape["resolve"] = Effect.fn("McpSessionRegistry.resolve", {
+    attributes: routineSpan,
+  })(function* (rawToken) {
+    if (rawToken.length === 0) return undefined;
+    const tokenHash = yield* hashToken(rawToken);
+    const alive = yield* currentAliveMark;
+    return yield* SynchronizedRef.modify(state, ({ records }) => {
+      const record = records.get(tokenHash);
+      if (!record || record.expired) return [undefined, { records }] as const;
+      if (idleMs(record.lastAlive, alive) > livenessWindowMs) {
         const next = new Map(records);
-        next.set(tokenHash, { ...record, lastAlive: alive, connected: true });
-        return [record.scope, { records: next }] as const;
-      });
-    },
-  );
+        next.set(tokenHash, { ...record, expired: true });
+        return [undefined, { records: next }] as const;
+      }
+      const next = new Map(records);
+      next.set(tokenHash, { ...record, lastAlive: alive });
+      return [record.scope, { records: next }] as const;
+    });
+  });
+
+  const markConnected: McpSessionRegistryShape["markConnected"] = (providerSessionId) =>
+    SynchronizedRef.update(state, ({ records }) => {
+      let changed = false;
+      const next = new Map(records);
+      for (const [tokenHash, record] of records) {
+        if (record.scope.thread.providerSessionId === providerSessionId && !record.connected) {
+          next.set(tokenHash, { ...record, connected: true });
+          changed = true;
+        }
+      }
+      return changed ? { records: next } : { records };
+    });
 
   const isConnected: McpSessionRegistryShape["isConnected"] = (providerSessionId) =>
     SynchronizedRef.get(state).pipe(
@@ -230,6 +246,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     issue,
     resolve,
     isConnected,
+    markConnected,
     touch,
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {

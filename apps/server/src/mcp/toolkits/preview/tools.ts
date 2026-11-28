@@ -93,7 +93,7 @@ const PreviewOpenTool = browserTool(
 const PreviewDialogTool = browserTool(
   Tool.make("preview_dialog", {
     description:
-      "Accept or dismiss the dialog `preview_status` reports. Pass `promptText` to accept a prompt. Needs your own tab, or an unclaimed one. Desktop hosts may not support this.",
+      "Answer `preview_status` dialogs with `promptText` for prompts. HTTP sign-in is user-only. Dismiss it with its `authChallengeId`.",
     parameters: PreviewAutomationDialogInput,
     success: PreviewAutomationStatus,
     failure: PreviewToolFailure,

@@ -43,6 +43,32 @@ const BAD_GATEWAY_ERROR = Buffer.concat([
   ),
   Buffer.from("\nThe model is currently unreachable."),
 ]);
+const VERIFICATION_URL =
+  "https://accounts.google.com/v3/signin/continue?plt=fixture&flowName=GlifWebSignIn";
+const CLASSIC_VERIFICATION_URL =
+  "https://accounts.google.com/signin/continue?sarp=1&scc=1&plt=fixture&flowName=GlifWebSignIn";
+const verificationError = (url: string | undefined, compact = false) => {
+  const response = {
+    error: {
+      code: 403,
+      details: [
+        { "@type": "type.googleapis.com/google.rpc.Help", links: [] },
+        {
+          "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+          domain: "cloudcode-pa.googleapis.com",
+          metadata: { validation_url: url },
+          reason: "VALIDATION_REQUIRED",
+        },
+      ],
+      message: "Verify your account to continue.",
+      status: "PERMISSION_DENIED",
+    },
+  };
+  const body = compact ? JSON.stringify(response) : JSON.stringify(response, null, 2);
+  return errorPayload(
+    `Verification Required\u0012PERMISSION_DENIED (code 403): Verify your account to continue.\u001aHTTP 403 Forbidden\n\n${body}\n`,
+  );
+};
 // Vertex Claude rejects a resumed history whose saved thinking block lost its signature.
 const MISSING_SIGNATURE_ERROR = errorPayload(
   'Error 400, Message: {"type":"error","error":{"type":"invalid_request_error","message":"messages.1.content.0.thinking.signature: Field required"},"request_id":"req_vrtx_test"}, Status: INVALID_ARGUMENT, Details: []',
@@ -73,6 +99,8 @@ const QUOTED_NOTICE = Buffer.from(
 );
 const reusable = (failure: OrchestrationV2ProviderFailure) =>
   ({ failure, threadDisposition: "reusable" }) as const;
+const failureOf = <A>(outcome: A | "completed") =>
+  outcome === "completed" ? assert.fail("expected no completed outcome") : outcome;
 
 describe("watchAntigravityPromptOutcome", () => {
   it.effect("fails only turns whose own steps end in an upstream error", () =>
@@ -104,7 +132,7 @@ describe("watchAntigravityPromptOutcome", () => {
         Effect.gen(function* () {
           const check = yield* watchAntigravityPromptOutcome(profileDirectory, sessionId);
           appendSteps(steps);
-          return yield* check(result, options);
+          return failureOf(yield* check(result, options));
         });
       const input = Buffer.from("Run the fixture.");
       const reply = Buffer.from("FIXTURE_OK");
@@ -236,6 +264,34 @@ describe("watchAntigravityPromptOutcome", () => {
         ]))?.failure.retryable,
         false,
       );
+      // Google account verification errors surface the verified continuation link on both
+      // pretty-printed and compact HTTP bodies, while rejecting untrusted or malformed URLs.
+      for (const [url, compact, accepted] of [
+        [VERIFICATION_URL, false, true],
+        [CLASSIC_VERIFICATION_URL, true, true],
+        [undefined, false, false],
+        [
+          "https://accounts.google.com.example.invalid/v3/signin/continue?plt=fixture",
+          false,
+          false,
+        ],
+        ["https://accounts.google.com/v3/signin/continue?plt=fixture\u0007", false, false],
+      ] as const) {
+        assert.deepEqual(
+          yield* turn([
+            [USER_INPUT, input],
+            [ERROR_MESSAGE, verificationError(url, compact)],
+          ]),
+          reusable({
+            class: "permission_error",
+            message: "Verify your Google account, then retry this turn.",
+            code: "VALIDATION_REQUIRED",
+            retryable: false,
+            ...(accepted && url !== undefined ? { verificationUrl: url } : {}),
+          }),
+        );
+      }
+      assert.isUndefined(yield* turn([[PLANNER_RESPONSE, verificationError(VERIFICATION_URL)]]));
       // A saved thinking block without a valid signature fails every later prompt.
       for (const error of [MISSING_SIGNATURE_ERROR, INVALID_SIGNATURE_ERROR]) {
         const outcome = yield* turn([
@@ -312,7 +368,10 @@ describe("watchAntigravityPromptOutcome", () => {
       const linked = yield* watchAntigravityPromptOutcome(profileDirectory, own);
       append(peer, ERROR_MESSAGE, QUOTA_ERROR);
       assert.isUndefined(yield* linked({ stopReason: "end_turn" }));
-      assert.equal((yield* linked({ stopReason: "refusal" }))?.failure.class, "usage_limit");
+      assert.equal(
+        failureOf(yield* linked({ stopReason: "refusal" }))?.failure.class,
+        "usage_limit",
+      );
 
       // An unreadable log gives no evidence, but the agent's typed refusal still fails the turn.
       yield* fs.remove(path.join(conversations, `${own}.db`));

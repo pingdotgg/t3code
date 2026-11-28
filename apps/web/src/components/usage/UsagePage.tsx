@@ -263,7 +263,7 @@ export function UsagePage() {
           if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
             return refreshUsageLimits(
               environmentId,
-              () => refreshProviders({ environmentId, input: {} }),
+              () => refreshProviders({ environmentId, input: { limitsOnly: true } }),
               automatic,
             );
           }
@@ -702,7 +702,7 @@ function UsageOverview({
             <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <span>
                 <span className={figureClass(loadingPartial)}>
-                  {gt("{count, plural, one {{formatted} sessions} other {{formatted} sessions}}", {
+                  {gt("{count, plural, one {{formatted} session} other {{formatted} sessions}}", {
                     count: merged.sessions,
                     formatted: formatCount(merged.sessions, locale),
                   })}

@@ -316,6 +316,18 @@ export function materializeReplayTranscriptRuntimeInstructions(
           compact: false,
           compactionsAtSend: compactionCounts.get(promptSessionId) ?? 0,
         };
+        if (recordedNotes !== undefined && recordedNotes !== expected) {
+          return {
+            ...entry,
+            frame: {
+              ...frame,
+              params: {
+                ...frame.params,
+                prompt: [...prompt.slice(0, -1), { type: "text", text: expected }],
+              },
+            },
+          };
+        }
         if (!resend) return entry;
         return {
           ...entry,

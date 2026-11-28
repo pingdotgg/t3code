@@ -17,7 +17,6 @@ import {
   SnapShotContentsButton,
   snapShotAccessibilityDetails,
 } from "./SnapShotAttachmentDetails";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ZoomableImage, type ZoomableImageHandle } from "./ZoomableImage";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { useAtomValue } from "@effect/atom-react";
@@ -27,6 +26,7 @@ import { expandedImageKey } from "./ExpandedImagePreview";
 import { registerThreadOverlay } from "./threadOverlayRetention";
 import { mediaReferenceFileName } from "@t3tools/client-runtime/media-reference";
 import { mediaMimeType, mediaMimeTypeFromExtension } from "@t3tools/shared/mediaPreview";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 interface ExpandedImageDialogProps {
   preview: ExpandedImagePreview;
@@ -250,28 +250,26 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                 {preview.images.length > 1 ? ` (${index + 1}/${preview.images.length})` : ""}
               </span>
               {accessibilityDetails && item.source ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        aria-label={contentsLabel}
-                        aria-pressed={showingAccessibilityDetails}
-                        onClick={() =>
-                          setAccessibilityDetailsSrc(showingAccessibilityDetails ? null : item.src)
-                        }
-                        size="icon-micro"
-                        variant="overlay"
-                      />
-                    }
-                  >
-                    {showingAccessibilityDetails ? (
-                      <ImageIcon className="size-3" aria-hidden="true" />
-                    ) : (
-                      <TextIcon className="size-3" aria-hidden="true" />
-                    )}
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">{contentsLabel}</TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger
+                  render={
+                    <Button
+                      aria-label={contentsLabel}
+                      aria-pressed={showingAccessibilityDetails}
+                      onClick={() =>
+                        setAccessibilityDetailsSrc(showingAccessibilityDetails ? null : item.src)
+                      }
+                      size="icon-micro"
+                      variant="overlay"
+                    />
+                  }
+                  label={contentsLabel}
+                >
+                  {showingAccessibilityDetails ? (
+                    <ImageIcon className="size-3" aria-hidden="true" />
+                  ) : (
+                    <TextIcon className="size-3" aria-hidden="true" />
+                  )}
+                </SharedTooltipTrigger>
               ) : item.source ? (
                 <SnapShotContentsButton source={item.source} side="top" />
               ) : null}

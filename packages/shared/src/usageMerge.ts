@@ -121,8 +121,8 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
 // Sources are one directory when either their legacy key or their physicalSourceId matches.
 // physicalSourceId joins a directory read natively by Windows and through a WSL mount (path
 // and dev:ino both differ); the legacy key still joins installs whose host scopes differ.
-function sourceIdentity(
-  environments: readonly EnvironmentUsage[],
+export function sourceIdentity(
+  fingerprints: Iterable<UsageSourceFingerprint>,
 ): (fingerprint: UsageSourceFingerprint) => string {
   const parent = new Map<string, string>();
   const find = (key: string): string => {
@@ -132,13 +132,11 @@ function sourceIdentity(
     parent.set(key, root);
     return root;
   };
-  for (const environment of environments) {
-    for (const { fingerprint } of environment.summary.sources) {
-      if (fingerprint.physicalSourceId === undefined) continue;
-      const legacy = find(fingerprintKey(fingerprint));
-      const physical = find(`\u0000${fingerprint.provider}\u0000${fingerprint.physicalSourceId}`);
-      if (legacy !== physical) parent.set(legacy, physical);
-    }
+  for (const fingerprint of fingerprints) {
+    if (fingerprint.physicalSourceId === undefined) continue;
+    const legacy = find(fingerprintKey(fingerprint));
+    const physical = find(`\u0000${fingerprint.provider}\u0000${fingerprint.physicalSourceId}`);
+    if (legacy !== physical) parent.set(legacy, physical);
   }
   return (fingerprint) => find(fingerprintKey(fingerprint));
 }
@@ -353,7 +351,11 @@ export function mergeUsage(
     }
   }
 
-  const sourceKey = sourceIdentity(current);
+  const sourceKey = sourceIdentity(
+    current.flatMap((environment) =>
+      environment.summary.sources.map((source) => source.fingerprint),
+    ),
+  );
   const {
     ownerScanByFingerprint,
     supplementalBucketsByEnvironment,

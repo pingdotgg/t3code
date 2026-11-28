@@ -304,8 +304,10 @@ it.layer(
       const nonGitDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runtime-policy-nongit-" });
       const gitRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runtime-policy-git-" });
       const nestedDir = path.join(gitRoot, "packages", "app");
+      const symlinkDir = path.join(nonGitDir, "linked-app");
       yield* fs.makeDirectory(path.join(gitRoot, ".git"), { recursive: true });
       yield* fs.makeDirectory(nestedDir, { recursive: true });
+      yield* fs.symlink(nestedDir, symlinkDir);
 
       const nonGitPolicy = yield* policy.resolve({
         thread: makeThread({ now, worktreePath: nonGitDir }),
@@ -315,9 +317,14 @@ it.layer(
         thread: makeThread({ now, worktreePath: nestedDir }),
         modelSelection,
       });
+      const symlinkPolicy = yield* policy.resolve({
+        thread: makeThread({ now, worktreePath: symlinkDir }),
+        modelSelection,
+      });
 
       assert.equal(nonGitPolicy.isGitRepository, false);
       assert.equal(gitPolicy.isGitRepository, true);
+      assert.equal(symlinkPolicy.isGitRepository, true);
     }),
   );
 });

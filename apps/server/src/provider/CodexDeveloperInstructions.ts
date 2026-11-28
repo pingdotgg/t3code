@@ -14,6 +14,7 @@ export interface T3CodeToolAvailability {
   readonly browser: boolean;
   readonly device: boolean;
   readonly linkedEnvironments?: boolean;
+  readonly nativeSubagents?: boolean;
 }
 
 const normalizeAvailability = (
@@ -40,6 +41,7 @@ export function buildCodexAdditionalContext(
   const orchestrationSections = buildT3OrchestrationSections({
     browser: tools.browser,
     linkedEnvironments: tools.linkedEnvironments === true,
+    nativeSubagents: tools.nativeSubagents !== false,
   });
   const runtimePolicy =
     runtime.isGitRepository === undefined

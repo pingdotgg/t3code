@@ -224,6 +224,18 @@ describe("agentWorkingDirectories", () => {
     ).toEqual(["/work/d"]);
   });
 
+  it("reads cd through every sh-family wrapper an agent runs", () => {
+    expect(
+      directories(
+        `bash -c -- "cd /work/a"`,
+        `bash -Ec 'cd /work/b'`,
+        `ksh -c 'cd /work/c'`,
+        `/bin/ash -c "cd /work/d"`,
+        `mksh -c 'cd /work/e'`,
+      ),
+    ).toEqual(["/work/e", "/work/d", "/work/c", "/work/b", "/work/a"]);
+  });
+
   it("leaves network shares out of the search roots", () => {
     expect(
       directories(

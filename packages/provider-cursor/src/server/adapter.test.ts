@@ -939,6 +939,12 @@ describe("CursorAdapterV2", () => {
       assert.equal(checkpointed.terminal?.status, "failed");
       assert.isUndefined(checkpointed.terminal?.promptDropped);
       assert.isUndefined(checkpointed.turn?.promptDropped);
+
+      // After a restart no turn ends to report it, so the next turn start asks instead.
+      const kept = (nativeTurnId: string) =>
+        runtime.nativeTurnKept!({ providerThread, nativeTurnId });
+      assert.isFalse(yield* kept("native-cursor-run-1"));
+      assert.isTrue(yield* kept("native-cursor-run-2"));
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -1410,6 +1416,13 @@ describe("CursorAdapterV2", () => {
       );
       assert(started.type === "provider_turn.updated");
       yield* runtime.interruptTurn({ providerThread, providerTurnId: started.providerTurn.id });
+      assert.isTrue(
+        yield* runtime.nativeTurnKept!({
+          providerThread,
+          nativeTurnId: started.providerTurn.nativeTurnRef!.nativeId!,
+        }),
+        "a live session replays the stopped request itself, so the server must not resend it too",
+      );
       yield* runtime.startTurn(turnInput(2, steerText));
 
       assert.lengthOf(sentMessages, 2);

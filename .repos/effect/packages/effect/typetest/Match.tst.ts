@@ -91,6 +91,38 @@ describe("Match", () => {
     >()
   })
 
+  it("fn threads arguments through record and discriminator combinators", () => {
+    type Event = { readonly _tag: "A" } | { readonly _tag: "B" } | { readonly _tag: "C" }
+    const tags = Match.fn((_context: boolean, event: Event) => event).pipe(
+      Match.tags({ A: (_event, context) => context }),
+      Match.tagStartsWith("B", (_event, context) => context),
+      Match.tagsExhaustive({ C: (_event, context) => context })
+    )
+    expect(tags).type.toBe<(context: boolean, event: Event) => boolean>()
+
+    type Kind = { readonly kind: "A" } | { readonly kind: "B" } | { readonly kind: "C" } | { readonly kind: "D" }
+    const kinds = Match.fn((_context: boolean, input: Kind) => input).pipe(
+      Match.discriminator("kind")("A", (_input, context) => context),
+      Match.discriminatorStartsWith("kind")("B", (_input, context) => context),
+      Match.discriminators("kind")({ C: (_input, context) => context }),
+      Match.discriminatorsExhaustive("kind")({ D: (_input, context) => context })
+    )
+    expect(kinds).type.toBe<(context: boolean, input: Kind) => boolean>()
+
+    const literals = Match.fn((_context: boolean, value: "a" | "b") => value).pipe(
+      Match.literals({ a: (_value, context) => context }),
+      Match.literalsExhaustive({ b: (_value, context) => context })
+    )
+    expect(literals).type.toBe<(context: boolean, value: "a" | "b") => boolean>()
+
+    type ExplicitEvent = { readonly _tag: "A" }
+    const explicitFields = { A: (event: ExplicitEvent) => event._tag }
+    const explicit = Match.type<ExplicitEvent>().pipe(
+      Match.tagsExhaustive<ExplicitEvent, string, typeof explicitFields>(explicitFields)
+    )
+    expect(explicit).type.toBe<(u: ExplicitEvent) => "A">()
+  })
+
   it("value matchers resolve terminals for generic inputs", () => {
     // https://github.com/Effect-TS/effect/issues/7315
     const orElse = <Open extends { readonly _tag: "Open" }>(

@@ -162,7 +162,7 @@ export const layerFromProjectStore: Layer.Layer<
           fs.exists(target).pipe(Effect.orElseSucceed(() => false));
         // Synthetic paths in unit tests do not exist on disk; leave them unset.
         if (!(yield* exists(cwd))) return undefined;
-        let current = path.resolve(cwd);
+        let current = yield* fs.realPath(cwd).pipe(Effect.orElseSucceed(() => path.resolve(cwd)));
         for (let depth = 0; depth < 64; depth += 1) {
           if (yield* exists(path.join(current, ".git"))) return true;
           const parent = path.dirname(current);
