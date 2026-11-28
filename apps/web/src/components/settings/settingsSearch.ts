@@ -1377,6 +1377,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "project-actions",
     title: msg("Actions"),
     to: "/settings/projects",
+    scope: "project-defaults",
     searchTerms: [msg("commands scripts setup run dev server checkout worktree t3.json import")],
   },
   {
