@@ -95,6 +95,9 @@ const decodeRequestPaused = Schema.decodeUnknownOption(
     resourceType: Schema.optional(Schema.String),
   }),
 );
+const decodeNetworkRequest = Schema.decodeUnknownOption(
+  Schema.Struct({ requestId: Schema.String }),
+);
 const decodeLogEntryAdded = Schema.decodeUnknownOption(
   Schema.Struct({
     entry: Schema.Struct({
@@ -173,6 +176,8 @@ interface PageEvents {
   loaded: Deferred.Deferred<void, BrowserFailure> | undefined;
   readonly consoleMessages: Array<ConsoleMessage>;
   omittedConsoleMessages: number;
+  requests: number;
+  readonly loading: Set<string>;
 }
 
 // CDP pipe uses fd 3 in, fd 4 out and NUL-delimited JSON.
@@ -294,6 +299,20 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     const sessionId = message?.sessionId;
     const page = sessionId === undefined ? undefined : pages.get(sessionId);
     if (sessionId === undefined || !page || !message?.method) return yield* Effect.void;
+    if (message.method.startsWith("Network.")) {
+      const requestId = Option.getOrUndefined(decodeNetworkRequest(message.params))?.requestId;
+      if (requestId === undefined) return yield* Effect.void;
+      if (message.method === "Network.requestWillBeSent") {
+        page.requests += 1;
+        page.loading.add(requestId);
+      } else if (
+        message.method === "Network.loadingFinished" ||
+        message.method === "Network.loadingFailed"
+      ) {
+        page.loading.delete(requestId);
+      }
+      return yield* Effect.void;
+    }
     if (message.method === "Page.loadEventFired") {
       return yield* page.loaded ? Deferred.succeed(page.loaded, undefined) : Effect.void;
     }
@@ -443,11 +462,20 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       loaded: undefined,
       consoleMessages: [],
       omittedConsoleMessages: 0,
+      requests: 0,
+      loading: new Set(),
     };
     pages.set(sessionId, events);
     yield* send("Page.enable", {}, Ignored, sessionId);
     yield* send("Runtime.enable", {}, Ignored, sessionId);
     yield* send("Log.enable", {}, Ignored, sessionId);
+    // Counts requests only; buffering no bodies keeps a 25 MiB page out of memory twice.
+    yield* send(
+      "Network.enable",
+      { maxTotalBufferSize: 0, maxResourceBufferSize: 0 },
+      Ignored,
+      sessionId,
+    );
     yield* send(
       "Emulation.setEmulatedMedia",
       { features: [{ name: "prefers-color-scheme", value: appearance }] },
@@ -504,13 +532,37 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
         Ignored,
         sessionId,
       );
-      const measured = yield* send(
-        "Runtime.evaluate",
-        { expression: MEASURE_EXPRESSION, returnByValue: true },
-        Measured,
+      return yield* height;
+    });
+
+    const height = send(
+      "Runtime.evaluate",
+      { expression: MEASURE_EXPRESSION, returnByValue: true },
+      Measured,
+      sessionId,
+    ).pipe(Effect.map((measured) => Math.max(0, Math.ceil(measured.result.value))));
+
+    /**
+     * Undefined when the resize made the page fetch anything, such as a
+     * responsive image or a font, which a fresh load would have waited for. A
+     * resize can also adopt a request already in flight, so one must not start.
+     */
+    const resize = Effect.fnUntraced(function* (width: number) {
+      if (events.loading.size > 0) return undefined;
+      const requests = events.requests;
+      yield* send(
+        "Emulation.setDeviceMetricsOverride",
+        { width, height: VIEWPORT_HEIGHT, deviceScaleFactor: 1, mobile: false },
+        Ignored,
         sessionId,
       );
-      return Math.max(0, Math.ceil(measured.result.value));
+      yield* send(
+        "Runtime.evaluate",
+        { expression: SETTLE_EXPRESSION, awaitPromise: true },
+        Ignored,
+        sessionId,
+      );
+      return events.requests === requests ? yield* height : undefined;
     });
 
     const screenshot = (height: number) =>
@@ -541,7 +593,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       Effect.ignore,
     );
 
-    return { load, screenshot, consoleMessages, close };
+    return { load, resize, screenshot, consoleMessages, close };
   });
 
   // Each capture opens one page per browser, so this note belongs to that page alone.
@@ -608,7 +660,11 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
   }),
 );
 
-/** Fresh load per width, since pages may lay out only at load. */
+/**
+ * Resizing is exact for CSS layout and far cheaper than reloading. Pages may lay
+ * out only at load, so each resized run ends on a width another lane loads fresh;
+ * a mismatch, or a resize that makes the page fetch, reloads that run fresh.
+ */
 export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")(function* (input: {
   readonly executable: string;
   readonly noSandbox: boolean;
@@ -624,15 +680,46 @@ export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")
     profileDirectory: path.join(directory, "profile"),
   });
   const body = pageBody(input.html);
-  return yield* Effect.forEach(
-    input.widths,
-    (width) =>
-      browser.openPage(width, "dark").pipe(
-        Effect.flatMap((page) =>
-          page.load(body, input.urlFragment).pipe(Effect.ensuring(page.close)),
-        ),
-        Effect.map((height) => [width, height] as const),
+  // Each run shrinks from a fresh load: some pages, such as Chart.js charts, never grow back.
+  const run = (widths: ReadonlyArray<number>) =>
+    browser.openPage(widths[0]!, "dark").pipe(
+      Effect.flatMap((page) =>
+        Effect.gen(function* () {
+          const heights: Array<readonly [number, number]> = [
+            [widths[0]!, yield* page.load(body, input.urlFragment)],
+          ];
+          for (const width of widths.slice(1)) {
+            const height = yield* page.resize(width);
+            if (height === undefined) break;
+            heights.push([width, height]);
+          }
+          return heights;
+        }).pipe(Effect.ensuring(page.close)),
       ),
-    { concurrency: MEASURE_CONCURRENCY },
+    );
+  const widths = input.widths.toSorted((left, right) => right - left);
+  // Runs share their end widths; the last lane loads the narrowest width fresh.
+  const step = Math.max(1, Math.ceil((widths.length - 1) / (MEASURE_CONCURRENCY - 1)));
+  const runs = Array.from({ length: Math.ceil((widths.length - 1) / step) }, (_, index) =>
+    widths.slice(index * step, index * step + step + 1),
   );
+  const measured = yield* Effect.forEach([...runs, widths.slice(-1)], run, {
+    concurrency: "unbounded",
+  });
+  const fresh = new Map(measured.map((heights) => heights[0]!));
+  const heights = new Map(fresh);
+  const reload: Array<number> = [];
+  for (const [index, resized] of measured.slice(0, -1).entries()) {
+    const [endWidth, endHeight] = resized.at(-1)!;
+    if (resized.length === runs[index]!.length && fresh.get(endWidth) === endHeight) {
+      for (const [width, height] of resized) heights.set(width, height);
+    } else {
+      reload.push(...runs[index]!.slice(1, -1));
+    }
+  }
+  const reloaded = yield* Effect.forEach(reload, (width) => run([width]), {
+    concurrency: MEASURE_CONCURRENCY,
+  });
+  for (const [width, height] of reloaded.flat()) heights.set(width, height);
+  return [...heights];
 }, Effect.scoped);
