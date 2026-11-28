@@ -473,6 +473,19 @@ describe("terminalOutputTail", () => {
     expect(tail.text).toBe("bbbb");
   });
 
+  it("never begins a styled tail on a detached combining mark", () => {
+    const red = { color: TERMINAL_PALETTES.dark[1] };
+    const output = normalizeTerminalOutput(`\u001b[31m${"e\u0301".repeat(8)}A`, 16);
+    expect(terminalOutputSpans(output.text, TERMINAL_PALETTES.dark)).toEqual([
+      { text: `${"e\u0301".repeat(5)}A`, style: red },
+    ]);
+
+    const crossStyle = terminalOutputTail("\u001b[0;32me\u001b[0;31m\u0301A\u001b[0m", 13);
+    expect(terminalOutputSpans(crossStyle.text, TERMINAL_PALETTES.dark)).toEqual([
+      { text: "A", style: red },
+    ]);
+  });
+
   it("keeps the first complete line when the cut falls immediately after a newline", () => {
     const expected = `abc\n${"x".repeat(30)}`;
     expect(terminalOutputTail(`junk\n${expected}`, 34)).toEqual({
