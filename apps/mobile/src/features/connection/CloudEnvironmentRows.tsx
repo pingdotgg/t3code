@@ -4,6 +4,7 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ConnectionTraceId } from "./ConnectionTraceId";
 import { useAuth } from "@clerk/expo";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../components/ui/ForwardChevron";
 import {
   hasSavedBearerRoute,
   type EnvironmentConnectionPhase,
@@ -441,7 +442,7 @@ function CloudEnvironmentRowShell(props: {
             justifyContent: "center",
           }}
         >
-          <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
+          <ForwardChevron size={12} tintColorClassName="accent-icon-subtle" />
         </ChevronContainer>
       ) : null}
     </View>

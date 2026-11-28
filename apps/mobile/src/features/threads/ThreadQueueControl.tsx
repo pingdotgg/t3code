@@ -22,6 +22,8 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import ReanimatedSwipeable, {
   type SwipeableMethods,
 } from "react-native-gesture-handler/ReanimatedSwipeable";
+import { useInterfaceDirection } from "../../i18n/direction";
+import { SWIPEABLE_DIRECTION } from "../../i18n/swipeableDirection";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -391,7 +393,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     })}
                     disabled={!controls.canSend}
                     onPress={() => void act(run.id, "steer")}
-                    className="shrink-0 justify-center self-stretch pl-4 active:opacity-70 disabled:opacity-40"
+                    className="shrink-0 justify-center self-stretch ps-4 active:opacity-70 disabled:opacity-40"
                   >
                     <View className="min-h-9 flex-row items-center gap-1.5 rounded-full bg-primary px-4">
                       <SymbolView
@@ -436,40 +438,45 @@ function QueueRowSwipeable(props: {
   const swipeableRef = useRef<SwipeableMethods | null>(null);
   const gt = useGT();
   const m = useMessages();
+  const interfaceDirection = useInterfaceDirection();
+  const isRtl = interfaceDirection === "rtl";
+  const renderRemoveAction = () => (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={m(REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL)}
+      disabled={!props.enabled}
+      onPress={() => {
+        swipeableRef.current?.close();
+        props.onRemove();
+      }}
+      className="items-center justify-center bg-danger active:opacity-70 disabled:opacity-40"
+      style={{ width: REMOVE_ACTION_WIDTH }}
+    >
+      <SymbolView name="trash" size={16} tintColorClassName="accent-danger-foreground" />
+      <Text className="pt-1 text-2xs font-t3-medium text-danger-foreground">
+        {gt("Remove", { $context: "verb, menu action" })}
+      </Text>
+    </Pressable>
+  );
   return (
     <ReanimatedSwipeable
       ref={swipeableRef}
       enabled={props.enabled}
       friction={2}
-      rightThreshold={40}
+      leftThreshold={isRtl ? 40 : undefined}
+      rightThreshold={isRtl ? undefined : 40}
+      overshootLeft={false}
       overshootRight={false}
       // Require a clearly sideways swipe to avoid competing with sheet scroll.
       failOffsetY={[-12, 12]}
-      containerStyle={{ backgroundColor: props.background, flex: 1 }}
-      childrenContainerStyle={{ backgroundColor: props.background }}
-      onSwipeableOpen={(direction) => {
-        if (direction !== "right") return;
-        swipeableRef.current?.close();
-        props.onRemove();
+      containerStyle={{
+        backgroundColor: props.background,
+        flex: 1,
+        direction: SWIPEABLE_DIRECTION,
       }}
-      renderRightActions={() => (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={m(REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL)}
-          disabled={!props.enabled}
-          onPress={() => {
-            swipeableRef.current?.close();
-            props.onRemove();
-          }}
-          className="items-center justify-center bg-danger active:opacity-70 disabled:opacity-40"
-          style={{ width: REMOVE_ACTION_WIDTH }}
-        >
-          <SymbolView name="trash" size={16} tintColorClassName="accent-danger-foreground" />
-          <Text className="pt-1 text-2xs font-t3-medium text-danger-foreground">
-            {gt("Remove", { $context: "verb, menu action" })}
-          </Text>
-        </Pressable>
-      )}
+      childrenContainerStyle={{ backgroundColor: props.background, direction: interfaceDirection }}
+      renderLeftActions={isRtl ? renderRemoveAction : undefined}
+      renderRightActions={isRtl ? undefined : renderRemoveAction}
     >
       {props.children}
     </ReanimatedSwipeable>

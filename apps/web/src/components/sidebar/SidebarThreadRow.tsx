@@ -306,7 +306,7 @@ function SidebarThreadTooltip({
         title={thread.title}
         footer={
           supportsMultiplePullRequests && thread.pullRequests.length > 0 ? (
-            <div className="border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
+            <div className="border-t border-border/60 pt-2 ps-0.5 text-xs text-muted-foreground">
               <ThreadPullRequestsMiniList pullRequests={thread.pullRequests} />
             </div>
           ) : null
@@ -1049,7 +1049,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
 
   const rowSurfaceClassName = cn(
-    "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+    "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-start outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
     variantAction === "unsettle" &&
       !props.isActive &&
       "[&:not(:hover):not(:focus-within)_*:not(.live-activity-focus_*)]:text-secondary-label",
@@ -1096,7 +1096,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     destinationVerb !== null ? (
       <span
         role="status"
-        className="pointer-events-none ml-auto inline-flex h-5 shrink-0 items-center gap-1 rounded-sm border border-primary/40 bg-primary/10 px-1.5 text-2xs font-medium text-primary"
+        className="pointer-events-none ms-auto inline-flex h-5 shrink-0 items-center gap-1 rounded-sm border border-primary/40 bg-primary/10 px-1.5 text-2xs font-medium text-primary"
       >
         {dropVerbBadge[destinationVerb]}
       </span>
@@ -1171,7 +1171,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         status={prStatus}
         onOpenList={openLinkedItems}
         onOpenPullRequest={handlePrClick}
-        side="right"
+        side="inline-end"
       />
     ) : null;
   const firstIssue = thread.issues?.[0];
@@ -1208,7 +1208,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       Icon={issueStatus?.Icon ?? IssueGlyph.issue}
       toneClassName={issueStatus?.toneClassName ?? "text-muted-foreground"}
       text={issueCount === 1 ? firstIssue.displayKey.replace(/^#/, "") : issueCount}
-      side="right"
+      side="inline-end"
     >
       <ThreadDetailsIssueRows
         links={(thread.issues ?? []).slice(0, LINKED_ITEMS_PREVIEW_LIMIT)}
@@ -1336,14 +1336,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       {prBadge}
       {issueBadge}
       {diff ? (
-        <span className="shrink-0 font-mono">
+        <span dir="ltr" className="shrink-0 font-mono">
           <span className="text-diff-addition-foreground">+{formatDiffCount(diff.insertions)}</span>{" "}
           <span className="text-diff-deletion-foreground">−{formatDiffCount(diff.deletions)}</span>
         </span>
       ) : null}
       <span
         aria-hidden
-        className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
+        className="pointer-events-none ms-auto inline-flex shrink-0 items-center gap-1"
       >
         <SidebarProviderIcon
           thread={thread}
@@ -1439,7 +1439,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             ) : (
               <span
                 className={cn(
-                  "relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end",
+                  "relative ms-auto flex h-6 min-w-8 shrink-0 items-center justify-end",
                   props.sweepAction !== null && "hidden",
                   jumpHintLabel && JUMP_HINT_SLOT_CLASS_NAME,
                 )}
@@ -1512,7 +1512,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       onClick={handleUnsnoozeClick}
                       onPointerDown={handleActionPointerDown}
                       className={cn(
-                        "pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
+                        "pointer-events-none absolute inset-y-0 end-0 -me-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
                         isWoke && "group-any-hover/sidebar-row:static",
                       )}
                     >
@@ -1521,7 +1521,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   )
                 ) : !props.settlementSupported ? null : variantAction === "unsettle" ? (
                   <SharedTooltipTrigger
-                    side="right"
+                    side="inline-end"
                     render={
                       <button
                         type="button"
@@ -1529,7 +1529,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         onClick={handleUnsettleClick}
                         onPointerDown={handleActionPointerDown}
                         className={cn(
-                          "pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
+                          "pointer-events-none absolute inset-y-0 end-0 -me-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
                           isWoke && "group-any-hover/sidebar-row:static",
                         )}
                       />
@@ -1544,7 +1544,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   </SharedTooltipTrigger>
                 ) : (
                   <SharedTooltipTrigger
-                    side="right"
+                    side="inline-end"
                     render={
                       <button
                         type="button"
@@ -1552,7 +1552,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         onClick={handleSettleClick}
                         onPointerDown={handleActionPointerDown}
                         className={cn(
-                          "pointer-events-none absolute inset-y-0 right-0 -mr-2 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
+                          "pointer-events-none absolute inset-y-0 end-0 -me-2 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
                           isWoke && "group-any-hover/sidebar-row:static",
                         )}
                       />
@@ -1645,7 +1645,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             ) : (
               <span
                 className={cn(
-                  "group/sidebar-status-slot relative ml-auto flex h-5 min-w-8 shrink-0 items-stretch justify-end text-xs",
+                  "group/sidebar-status-slot relative ms-auto flex h-5 min-w-8 shrink-0 items-stretch justify-end text-xs",
                   props.sweepAction !== null && "hidden",
                   jumpHintLabel && JUMP_HINT_SLOT_CLASS_NAME,
                 )}
@@ -1654,9 +1654,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   className={cn(
                     isWokeStatus
                       ? "pointer-events-auto"
-                      : "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:right-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-any-hover/sidebar-row:absolute group-any-hover/sidebar-row:right-0 group-any-hover/sidebar-row:opacity-0",
+                      : "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:end-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-any-hover/sidebar-row:absolute group-any-hover/sidebar-row:end-0 group-any-hover/sidebar-row:opacity-0",
                     "flex items-center self-center justify-self-end tabular-nums text-secondary-label",
-                    snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
+                    snoozeMenuOpen && "pointer-events-none absolute end-0 opacity-0",
                   )}
                 >
                   {pendingSync ? (
@@ -1722,7 +1722,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     className={cn(
                       // Mouse clicks leave Settle focused; focus-within would pin controls over
                       // the status label after the pointer leaves. Use focus-visible instead.
-                      "pointer-events-none absolute inset-y-0 right-0 flex items-stretch opacity-0 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:static has-[:focus-visible]:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:static group-any-hover/sidebar-row:opacity-100",
+                      "pointer-events-none absolute inset-y-0 end-0 flex items-stretch opacity-0 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:static has-[:focus-visible]:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:static group-any-hover/sidebar-row:opacity-100",
                       snoozeMenuOpen && "pointer-events-auto static opacity-100",
                     )}
                   >
@@ -1756,14 +1756,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     ) : null}
                     {props.settlementSupported ? (
                       <SharedTooltipTrigger
-                        side="right"
+                        side="inline-end"
                         render={
                           <button
                             type="button"
                             aria-label={gt("Settle thread")}
                             onClick={handleSettleClick}
                             onPointerDown={handleActionPointerDown}
-                            className="-mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                            className="-me-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
                           />
                         }
                         label={
@@ -1964,7 +1964,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
               );
             }}
             className={cn(
-              "group/sidebar-row group/v2-row flex min-h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1 text-left text-sm outline-none",
+              "group/sidebar-row group/v2-row flex min-h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1 text-start text-sm outline-none",
               props.isHighlighted || props.isRouteActive
                 ? "bg-sidebar-row-active text-sidebar-foreground"
                 : "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
@@ -2013,7 +2013,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
                 settled={props.isSettled}
               />
             </span>
-            <span className="min-w-8 shrink-0 text-right text-xs text-muted-foreground/55 tabular-nums">
+            <span className="min-w-8 shrink-0 text-end text-xs text-muted-foreground/55 tabular-nums">
               <RelativeTimeLabel timestamp={resolveThreadActivityTimestamp(thread)} />
             </span>
           </span>

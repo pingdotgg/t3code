@@ -514,7 +514,7 @@ function PullRequestBadge({
   );
 }
 
-type ThreadLinkBadgeSide = "top" | "right";
+type ThreadLinkBadgeSide = "top" | "inline-end";
 
 export function ThreadLinkBadge({
   control,
@@ -536,10 +536,10 @@ export function ThreadLinkBadge({
     <SharedTooltipTrigger
       render={control}
       side={side}
-      {...(side === "right" ? { align: "start" as const } : {})}
+      {...(side === "inline-end" ? { align: "start" as const } : {})}
       sideOffset={0}
       variant="glass"
-      className="w-80 max-w-[calc(100vw-2rem)] text-left whitespace-normal"
+      className="w-80 max-w-[calc(100vw-2rem)] text-start whitespace-normal"
       label={
         <div className="-mx-1 max-h-[calc(var(--available-height)-0.5rem-2px)] overflow-y-auto overscroll-contain">
           {children}
@@ -629,7 +629,7 @@ export function ThreadPullRequestsMiniList({
               onOpenPullRequest={onOpenPullRequest}
             >
               {line.stack ? (
-                <span className="ml-auto shrink-0 pl-1 text-3xs">
+                <span className="ms-auto shrink-0 ps-1 text-3xs">
                   {line.stack.kind === "native" ? (
                     <T context="a native stack of pull requests">stack</T>
                   ) : (
@@ -680,7 +680,7 @@ function ThreadPullRequestMiniListItem({
     </>
   );
   return (
-    <li style={{ paddingLeft: `${Math.min(depth, 3) * 0.75}rem` }}>
+    <li style={{ paddingInlineStart: `${Math.min(depth, 3) * 0.75}rem` }}>
       {onOpenPullRequest ? (
         <a
           href={url}
@@ -739,9 +739,9 @@ export function ChangeRequestStatusIcon({
 function PrStatusTooltipContent({ status }: { status: PrStatusIndicator }) {
   return (
     <span className="flex max-w-[min(34rem,calc(100vw-2rem))] items-stretch overflow-hidden whitespace-nowrap">
-      <span className="shrink-0 pr-2 font-medium">{status.tooltipLead}</span>
-      <span className="min-h-4 shrink-0 border-border/70 border-l" aria-hidden="true" />
-      <span className="min-w-0 truncate pl-2">{status.tooltipTitle}</span>
+      <span className="shrink-0 pe-2 font-medium">{status.tooltipLead}</span>
+      <span className="min-h-4 shrink-0 border-border/70 border-s" aria-hidden="true" />
+      <span className="min-w-0 truncate ps-2">{status.tooltipTitle}</span>
     </span>
   );
 }

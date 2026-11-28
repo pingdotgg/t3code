@@ -23,6 +23,7 @@ import { useAppearancePreferences } from "../../features/settings/appearance/App
 import type { AppBarMenu, AppBarMenuItem, AppBarProps } from "./AppBar.types";
 import type { AppSymbolName } from "./AppSymbol";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
+import { useInterfaceDirection } from "../../i18n/direction";
 import { useControlTheme } from "./useControlTheme";
 
 function iosIcon(icon: AppSymbolName) {
@@ -46,6 +47,7 @@ function mailMenuItems(items: ReadonlyArray<AppBarMenuItem>): MailMenu["items"] 
 
 export function AppBar(props: AppBarProps) {
   const gt = useGT();
+  const backIcon = useInterfaceDirection() === "rtl" ? "chevron.right" : "chevron.left";
   const m = useMessages();
   const locale = useLocale();
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
@@ -65,7 +67,7 @@ export function AppBar(props: AppBarProps) {
   const splitBackPress = props.backInSplitView?.onPress ?? props.onBack;
   const splitBack =
     layout.usesSplitView && props.backInSplitView && splitBackPress
-      ? { ...props.backInSplitView, onPress: splitBackPress }
+      ? { ...props.backInSplitView, icon: backIcon, onPress: splitBackPress }
       : null;
   const navigation = use(NavigationContext);
   const route = use(NavigationRouteContext);
@@ -229,7 +231,7 @@ export function AppBar(props: AppBarProps) {
           {rootBack ? (
             <ScreenHeaderButton
               accessibilityLabel={gt("Back")}
-              icon="chevron.left"
+              icon={backIcon}
               onPress={rootBack}
               separateBackground
             />

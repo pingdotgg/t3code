@@ -28,6 +28,7 @@ import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { AppBar } from "../../components/ui/AppBar";
 import { useContentBottomInset, useContentTopInset } from "../../components/ui/useBarInset";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { useForwardChevron } from "../../i18n/direction";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { EmptyState } from "../../components/ui/EmptyState";
@@ -288,19 +289,20 @@ function ZipTreeRowView(props: {
   const gt = useGT();
   const messages = useMessages();
   const folder = entry ? null : zipFolderLabel(node.label);
+  const collapsedChevron = useForwardChevron();
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={entry ? entry.path : gt("{path} folder", { path: node.path })}
       accessibilityState={entry ? undefined : { expanded: !props.collapsed }}
       onPress={() => (entry ? props.onOpen(entry) : props.onToggle(node.path))}
-      className="mx-2 min-h-[44px] flex-row items-center gap-1.5 rounded-lg pr-2.5 active:bg-subtle android:min-h-[48px]"
-      style={{ paddingLeft: 8 + depth * 18 }}
+      className="mx-2 min-h-[44px] flex-row items-center gap-1.5 rounded-lg pe-2.5 active:bg-subtle android:min-h-[48px]"
+      style={{ paddingStart: 8 + depth * 18 }}
     >
       <View className="w-4 items-center">
         {entry ? null : (
           <SymbolView
-            name={props.collapsed ? "chevron.right" : "chevron.down"}
+            name={props.collapsed ? collapsedChevron : "chevron.down"}
             size={12}
             tintColorClassName="accent-icon-muted"
             type="monochrome"

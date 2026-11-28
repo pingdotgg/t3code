@@ -20,6 +20,7 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ControlPill } from "../../components/ui/ControlPill";
+import { useInterfaceDirection } from "../../i18n/direction";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { BrowserPreviewButton } from "../browser/browser-preview-button";
 import { DevicePreviewButton } from "../devices/device-preview-button";
@@ -121,9 +122,14 @@ export function FloatingWorkingControl(props: {
   const liftStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: -(lift?.value ?? 0) }],
   }));
-  const arrowTransformStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: -CONTROL_SEPARATION * (1 - separationProgress.value) }],
-  }));
+  // Transforms are physical while the flex row mirrors, so the separation flips in RTL.
+  const separation = useInterfaceDirection() === "rtl" ? -CONTROL_SEPARATION : CONTROL_SEPARATION;
+  const arrowTransformStyle = useAnimatedStyle(
+    () => ({
+      transform: [{ translateX: -separation * (1 - separationProgress.value) }],
+    }),
+    [separation],
+  );
   const arrowContentStyle = useAnimatedStyle(() => ({
     opacity: separationProgress.value,
   }));
@@ -149,9 +155,12 @@ export function FloatingWorkingControl(props: {
       capsuleWidth.set(null);
     }
   }, [capsuleWidth, hasStatus]);
-  const capsuleStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: CONTROL_SEPARATION * (1 - separationProgress.value) }],
-  }));
+  const capsuleStyle = useAnimatedStyle(
+    () => ({
+      transform: [{ translateX: separation * (1 - separationProgress.value) }],
+    }),
+    [separation],
+  );
   const capsuleSizerStyle = useAnimatedStyle(() => ({
     width: capsuleWidth.value ?? 0,
   }));
@@ -216,7 +225,7 @@ export function FloatingWorkingControl(props: {
           style={{ maxWidth: availableLabelWidth * 0.5 }}
           className="h-11 flex-row items-center px-3 active:opacity-70"
         >
-          {hasStatus ? <View className="absolute left-0 h-4 w-px bg-border" /> : null}
+          {hasStatus ? <View className="absolute start-0 h-4 w-px bg-border" /> : null}
           <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
             {extensionStatus.label}
           </Text>
@@ -269,7 +278,9 @@ export function FloatingWorkingControl(props: {
           onLayout={(event) => setAgentsWidth(settleWidth(event.nativeEvent.layout.width))}
           className="h-11 flex-row items-center gap-1.5 px-3 active:opacity-70"
         >
-          {hasStatus || hasPreview ? <View className="absolute left-0 h-4 w-px bg-border" /> : null}
+          {hasStatus || hasPreview ? (
+            <View className="absolute start-0 h-4 w-px bg-border" />
+          ) : null}
           <SymbolView name="person.2" size={13} tintColorClassName="accent-foreground" />
           <Text className="font-t3-medium text-xs tabular-nums" numberOfLines={1}>
             {agents.label}
@@ -289,7 +300,7 @@ export function FloatingWorkingControl(props: {
           className="h-11 flex-row items-center gap-2 px-3 active:opacity-70"
         >
           {hasStatus || hasPreview || hasAgents ? (
-            <View className="absolute left-0 h-4 w-px bg-border" />
+            <View className="absolute start-0 h-4 w-px bg-border" />
           ) : null}
           <SymbolView name="list.number" size={13} tintColorClassName="accent-foreground" />
           <Text className="shrink font-t3-medium text-xs tabular-nums" numberOfLines={1}>

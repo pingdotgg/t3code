@@ -9,6 +9,7 @@ import { NativeAppBar } from "./NativeAppBar.android";
 import { IconButton } from "./IconButton";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu.android";
 import { splitAndroidHeaderActions } from "./headerMenu.android";
+import { useInterfaceDirection } from "../../i18n/direction";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
 import { useToolbarLayout } from "./useToolbarLayout";
 import { useControlTheme } from "./useControlTheme";
@@ -50,6 +51,7 @@ export function AndroidScreenHeader(props: {
   readonly hideBottomBorder?: boolean;
 }) {
   const gt = useGT();
+  const isRtl = useInterfaceDirection() === "rtl";
   const { colors } = useControlTheme();
   const titleTypography = useScaledTextRole("title");
   const subtitleTypography = useScaledTextRole("label");
@@ -84,7 +86,7 @@ export function AndroidScreenHeader(props: {
               {props.onBack ? (
                 <IconButton
                   accessibilityLabel={gt("Navigate up")}
-                  icon="arrow.left"
+                  icon={isRtl ? "arrow.right" : "arrow.left"}
                   tintColorClassName="accent-header-foreground"
                   onPress={props.onBack}
                 />

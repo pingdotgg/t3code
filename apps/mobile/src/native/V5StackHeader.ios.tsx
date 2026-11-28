@@ -3,11 +3,13 @@ import type {
   NativeStackHeaderItemMenu,
   NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
+import { requireNativeView } from "expo";
 import { useGT } from "gt-react-native";
 import { isValidElement, useEffect, useRef } from "react";
-import { StyleSheet } from "react-native";
+import { StyleSheet, type ViewProps } from "react-native";
 import { KeyboardController, useKeyboardState } from "react-native-keyboard-controller";
 import { isDuoDevice } from "../lib/device-type";
+import { useInterfaceDirection } from "../i18n/direction";
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
 import { useDeviceType, useNativeLayoutMetrics } from "./native-layout-metrics";
 import { HeaderItemsWidthContext } from "./header-items-width";
@@ -27,6 +29,10 @@ import {
 // UIKit's bar margins, and the width of a glass bar button.
 const BAR_MARGINS = 32;
 const BAR_BUTTON_WIDTH = 44;
+const NavigationBarDirection = requireNativeView<ViewProps & { readonly rightToLeft: boolean }>(
+  "T3NativeControls",
+  "NavigationBarDirection",
+);
 
 type HeaderItem = NonNullable<NonNullable<StackHeaderConfigProps["ios"]>["leadingItems"]>[number];
 type ToolbarItem =
@@ -162,6 +168,7 @@ export function V5StackHeader(props: {
 }) {
   const { options } = props;
   const gt = useGT();
+  const rightToLeft = useInterfaceDirection() === "rtl";
   const theme = useMobileNavigationTheme();
   const nativeMetrics = useNativeLayoutMetrics();
   const deviceType = useDeviceType();
@@ -334,6 +341,11 @@ export function V5StackHeader(props: {
   };
   return (
     <HeaderItemsWidthContext value={itemsWidth}>
+      <NavigationBarDirection
+        rightToLeft={rightToLeft}
+        pointerEvents="none"
+        style={styles.directionMarker}
+      />
       <Stack.HeaderConfig
         hidden={options.headerShown === false}
         transparent={options.headerTransparent}
@@ -392,3 +404,7 @@ export function V5StackHeader(props: {
     </HeaderItemsWidthContext>
   );
 }
+
+const styles = StyleSheet.create({
+  directionMarker: { position: "absolute", width: 1, height: 1 },
+});

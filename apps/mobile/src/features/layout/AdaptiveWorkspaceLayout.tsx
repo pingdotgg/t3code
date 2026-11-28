@@ -15,6 +15,7 @@ import {
 } from "./adaptive-workspace-context";
 import { threadSelectionDeferral } from "./deferred-navigation";
 import { uuidv4 } from "../../lib/uuid";
+import { useInterfaceDirection } from "../../i18n/direction";
 import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -355,6 +356,7 @@ function AdaptiveWorkspaceLayoutContent(
   const floatingTabs = floatingTabsMetrics(enabledTabs.length + 1, scale, fabSize);
   // The rail stays whether or not the sidebar shows; only the list pane comes and goes.
   const navigationRailWidth = shouldRenderNavigationRail ? ANDROID_WORKSPACE_RAIL_WIDTH : 0;
+  const isRTL = useInterfaceDirection() === "rtl";
   const [hinge, setHinge] = useState<VerticalHinge | null>(null);
   const [windowHinge, setWindowHinge] = useState<VerticalHinge | null>(null);
   const handleHingeChange = (next: VerticalHinge | null, nextWindow: VerticalHinge | null) => {
@@ -367,6 +369,7 @@ function AdaptiveWorkspaceLayoutContent(
       hinge,
       viewportWidth,
       leadingWidth: navigationRailWidth,
+      isRTL,
     });
     if (
       !floatingTabsEnabled ||
@@ -381,6 +384,7 @@ function AdaptiveWorkspaceLayoutContent(
   }, [
     baseLayout,
     hinge,
+    isRTL,
     navigationRailWidth,
     viewportWidth,
     floatingTabs.row,
@@ -839,7 +843,7 @@ function AdaptiveWorkspaceLayoutContent(
   ]);
   const railAnimatedStyle = useAnimatedStyle(() => ({ width: renderedRailWidth.value }));
   const floatingSidebarAnimatedStyle = useAnimatedStyle(() => ({
-    left: sidebarFloats ? renderedRailWidth.value : 0,
+    start: sidebarFloats ? renderedRailWidth.value : 0,
   }));
   const floatingSidebarOpen = sidebarFloats && panes.primarySidebarVisible;
   // Its own value, so a sidebar that was beside a list doesn't dim the page as it leaves.
@@ -875,9 +879,11 @@ function AdaptiveWorkspaceLayoutContent(
       ),
     ),
   }));
-  // How far the strip has slid: 0 with the sidebar shown, minus its width with it gone.
+  // How far the strip has slid: 0 with the sidebar shown, its width toward the start edge with it
+  // gone. Transforms are physical, so a right-to-left strip slides right.
+  const stripSlideSign = isRTL ? -1 : 1;
   const stripOffset = useDerivedValue(() =>
-    stripSidebar ? renderedSidebarWidth.value - sidebarSlotWidth : 0,
+    stripSidebar ? (renderedSidebarWidth.value - sidebarSlotWidth) * stripSlideSign : 0,
   );
   const sidebarAnimatedStyle = useAnimatedStyle(() => ({
     // Fading a UIKit glass ancestor can leave remounted header effects missing.
@@ -908,7 +914,7 @@ function AdaptiveWorkspaceLayoutContent(
   // Reanimated keeps a key a branch drops, so a fold mid-slide would leave the column shifted.
   const androidContentSlotStyle = useAnimatedStyle(() =>
     !androidSplit
-      ? { width: "100%" as const, marginRight: 0, transform: [{ translateX: 0 }] }
+      ? { width: "100%" as const, marginEnd: 0, transform: [{ translateX: 0 }] }
       : stripSidebar
         ? {
             // Wide enough for the pane at either width; the margin gives the sidebar's share
@@ -917,10 +923,10 @@ function AdaptiveWorkspaceLayoutContent(
               0,
               viewportWidth - renderedRailWidth.value - renderedInspectorWidth.value,
             ),
-            marginRight: -sidebarSlotWidth,
+            marginEnd: -sidebarSlotWidth,
             transform: [{ translateX: stripOffset.value }],
           }
-        : { width: renderedContentWidth.value, marginRight: 0, transform: [{ translateX: 0 }] },
+        : { width: renderedContentWidth.value, marginEnd: 0, transform: [{ translateX: 0 }] },
   );
   // While the sidebar animates, clip the settled navigator instead of reflowing its text every frame.
   // In the strip it lifts entirely: the content outgrows its column, and a cap that follows
@@ -1035,7 +1041,7 @@ function AdaptiveWorkspaceLayoutContent(
           // lists never lay out at zero size and are ready, unchanged, on the way back. The
           // content pane, laid out after it, covers it, in the same mount as the page.
           style={[
-            workspacePage ? { position: "absolute", top: 0, bottom: 0, left: 0 } : null,
+            workspacePage ? { position: "absolute", top: 0, bottom: 0, start: 0 } : null,
             sidebarFloats
               ? { position: "absolute", top: 0, bottom: 0, zIndex: 2, elevation: 8 }
               : null,
@@ -1089,7 +1095,7 @@ function AdaptiveWorkspaceLayoutContent(
                   width: contentTargetWidth,
                   // The strip's column is wider than the pane; the pane sits at its start.
                   alignSelf: contentAnchor.end && !stripSidebar ? "flex-end" : "flex-start",
-                  marginRight: contentAnchor.end && !stripSidebar ? contentEndGap : 0,
+                  marginEnd: contentAnchor.end && !stripSidebar ? contentEndGap : 0,
                 }
               : { flex: 1 },
             Platform.OS === "android" ? androidNavigatorLimit : undefined,
@@ -1168,11 +1174,15 @@ function AdaptiveWorkspaceLayoutContent(
       {shouldRenderNavigationRail && navigationRailWidth > 0 ? (
         // Its trailing inset clips the old rail as soon as Android fits the workspace to a cover display.
         <View
-          className="absolute inset-y-0 left-0 overflow-hidden"
+          className="absolute inset-y-0 overflow-hidden"
           style={[
             railOverlay
-              ? { right: 0 }
-              : { right: viewportWidth - navigationRailWidth, maxWidth: navigationRailWidth },
+              ? { start: 0, end: 0 }
+              : {
+                  start: 0,
+                  end: viewportWidth - navigationRailWidth,
+                  maxWidth: navigationRailWidth,
+                },
             sidebarFloats ? { zIndex: 3, elevation: 8 } : null,
           ]}
         >

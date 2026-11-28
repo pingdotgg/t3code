@@ -1299,6 +1299,7 @@ function TerminalSessionViewport({
   return (
     <div
       ref={attachContainer}
+      dir="ltr"
       tabIndex={-1}
       className="relative h-full w-full overflow-hidden bg-(--terminal-background)"
     />
@@ -1431,7 +1432,7 @@ function TerminalSplitPanes({
             className={`min-h-0 min-w-0 ${
               splitDirection === "vertical"
                 ? "border-t first:border-t-0"
-                : "border-l first:border-l-0"
+                : "border-s first:border-s-0"
             } ${terminalId === activeTerminalId ? "border-border" : "border-border/70"}`}
             onPointerDown={() => {
               if (terminalId !== activeTerminalId) {
@@ -1516,7 +1517,7 @@ function TerminalSidebarGroup({
           onClick={() => onActiveTerminalChange(groupActiveTerminalId)}
         >
           <GroupIcon className="size-3 shrink-0" />
-          <span className="min-w-0 flex-1 truncate text-left">{groupLabel}</span>
+          <span className="min-w-0 flex-1 truncate text-start">{groupLabel}</span>
           <span className="text-muted-foreground/70 text-3xs tabular-nums">{terminalCount}</span>
         </button>
       )}
@@ -1536,7 +1537,7 @@ function TerminalSidebarGroup({
             <div
               key={terminalId}
               className={cn(
-                "group/tab flex h-6 w-full items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
+                "group/tab flex h-6 w-full items-center gap-0.5 rounded-md ps-1.5 pe-2 text-xs",
                 isActive
                   ? "bg-accent text-foreground"
                   : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
@@ -1555,7 +1556,7 @@ function TerminalSidebarGroup({
               )}
               <button
                 type="button"
-                className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left"
+                className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-start"
                 onClick={() => onActiveTerminalChange(terminalId)}
               >
                 <span className="truncate">{terminalLabel}</span>
@@ -2034,7 +2035,7 @@ export default function ThreadTerminalDrawer({
                   </TerminalActionButton>
                   <TerminalActionButton
                     disabled={!canOperateTerminal}
-                    className={`inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors ${
+                    className={`inline-flex h-full items-center border-s border-border/70 px-1 text-foreground/90 transition-colors ${
                       hasReachedSplitLimit
                         ? "cursor-not-allowed opacity-64 hover:bg-transparent"
                         : "hover:bg-accent/70"
@@ -2046,7 +2047,7 @@ export default function ThreadTerminalDrawer({
                   </TerminalActionButton>
                   <TerminalActionButton
                     disabled={!canOperateTerminal}
-                    className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
+                    className="inline-flex h-full items-center border-s border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
                     onClick={onNewTerminalAction}
                     label={newTerminalActionLabel}
                   >
@@ -2054,7 +2055,7 @@ export default function ThreadTerminalDrawer({
                   </TerminalActionButton>
                   <TerminalActionButton
                     disabled={!canOperateTerminal}
-                    className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
+                    className="inline-flex h-full items-center border-s border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
                     onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
                     label={closeTerminalActionLabel}
                   >

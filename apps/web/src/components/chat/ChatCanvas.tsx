@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties } from "react";
 import { useStore } from "zustand";
+import { useDirection } from "@base-ui/react/direction-provider";
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import type { ChatCanvasPreview } from "./chatCanvasLayout";
 import {
@@ -66,6 +67,7 @@ export function ChatCanvas({
   composerOverlayElement: HTMLElement | null;
   detailsCardTopInset?: number;
 }) {
+  const direction = useDirection();
   const elementRef = useRef<HTMLDivElement | null>(null);
   const widthProbeRef = useRef<HTMLDivElement | null>(null);
   const htmlPreviewWidthProbeRef = useRef<HTMLDivElement | null>(null);
@@ -113,6 +115,7 @@ export function ChatCanvas({
       const styles = getComputedStyle(probe);
       store.getState().setMeasurements(
         {
+          direction,
           findBar:
             detailsCardTopInset > 0
               ? {
@@ -124,7 +127,7 @@ export function ChatCanvas({
           width,
           narrowestWidth: transitionWidths?.narrowestWidth ?? width,
           height: element.clientHeight,
-          padding: Number.parseFloat(styles.paddingLeft),
+          padding: Number.parseFloat(styles.paddingInlineStart),
           maxChatWidth: Number.parseFloat(styles.width),
           maxHtmlPreviewWidth: Number.parseFloat(getComputedStyle(htmlPreviewProbe).width),
           minChatWidth: Number.parseFloat(styles.minWidth),
@@ -146,7 +149,14 @@ export function ChatCanvas({
       disposed = true;
       stopObserving();
     };
-  }, [store, composerOverlayElement, timelineElement, detailsCardTopInset, rightPanelOpen]);
+  }, [
+    store,
+    composerOverlayElement,
+    timelineElement,
+    detailsCardTopInset,
+    rightPanelOpen,
+    direction,
+  ]);
   const detailsCardInlineOpen = useRightPanelStore((state) =>
     threadRef === null
       ? false

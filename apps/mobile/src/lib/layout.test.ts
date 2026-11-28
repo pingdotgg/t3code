@@ -232,14 +232,27 @@ describe("alignListPaneToHinge", () => {
       hinge: { x: 300, width: 0 },
       viewportWidth: 852,
       leadingWidth: 96,
+      isRTL: false,
     };
     const narrowDetail = {
       layout,
       hinge: { x: 600, width: 0 },
       viewportWidth: 852,
       leadingWidth: 0,
+      isRTL: false,
     };
     expect(alignListPaneToHinge(narrowList)).toBe(layout);
     expect(alignListPaneToHinge(narrowDetail)).toBe(layout);
+  });
+
+  it("ends the list pane at the hinge's start-side edge in either direction", () => {
+    const wide = deriveLayout({ width: 1000, height: 880 });
+    const offCenter = { layout: wide, hinge: { x: 430, width: 20 }, viewportWidth: 1000 };
+    expect(
+      alignListPaneToHinge({ ...offCenter, leadingWidth: 0, isRTL: false }).listPaneWidth,
+    ).toBe(430);
+    expect(alignListPaneToHinge({ ...offCenter, leadingWidth: 0, isRTL: true }).listPaneWidth).toBe(
+      550,
+    );
   });
 });

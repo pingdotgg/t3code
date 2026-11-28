@@ -145,7 +145,6 @@ function FileHeader(props: {
         props.fileInspectorSupported
           ? {
               accessibilityLabel: gt("Return to chat"),
-              icon: "chevron.left",
               onPress: props.onReturnToThread,
             }
           : undefined

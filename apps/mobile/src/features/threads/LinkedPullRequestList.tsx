@@ -141,10 +141,10 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
             );
         });
       }}
-      style={{ paddingLeft: 16 + Math.min(depth, 3) * 16 }}
-      className="flex-row gap-3 rounded-xl pr-4 active:bg-row-hover"
+      style={{ paddingStart: 16 + Math.min(depth, 3) * 16 }}
+      className="flex-row gap-3 rounded-xl pe-4 active:bg-row-hover"
     >
-      {depth > 0 ? <View className="-ml-2 w-px self-stretch bg-border" /> : null}
+      {depth > 0 ? <View className="-ms-2 w-px self-stretch bg-border" /> : null}
       <View className="self-start pt-2.5">
         <SymbolView
           name={status?.icon ?? PullRequestGlyph.pullRequest}
@@ -187,7 +187,7 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
           ) : null}
           {additions + deletions > 0 || snapshot?.updatedAt ? (
             <View
-              className="-ml-1.5 flex-row flex-wrap items-center gap-x-1.5 overflow-hidden"
+              className="-ms-1.5 flex-row flex-wrap items-center gap-x-1.5 overflow-hidden"
               style={{ height: metaLineHeight, flexShrink: 100 }}
             >
               <View className="w-0" />

@@ -2,6 +2,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { Platform, Pressable, View } from "react-native";
 
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
+import { useInterfaceDirection } from "../../i18n/direction";
 import { cn } from "../../lib/cn";
 import { AppText } from "./AppText";
 import { SymbolView } from "./AppSymbol";
@@ -26,6 +27,7 @@ export function NavigationRow({
   readonly leading?: ReactNode;
   readonly trailing?: ReactNode;
 }) {
+  const direction = useInterfaceDirection();
   const { themeVariables } = useAppearancePreferences();
   const { smallIconSize } = useAndroidControlSizing();
   return (
@@ -60,7 +62,11 @@ export function NavigationRow({
       {trailing !== undefined ? (
         trailing
       ) : !props.disabled ? (
-        <SymbolView name="chevron.right" size={smallIconSize} tintColorClassName="accent-chevron" />
+        <SymbolView
+          name={direction === "rtl" ? "chevron.left" : "chevron.right"}
+          size={smallIconSize}
+          tintColorClassName="accent-chevron"
+        />
       ) : null}
     </Pressable>
   );

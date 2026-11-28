@@ -371,7 +371,7 @@ export function SettingInheritance({
                         <Button
                           variant="ghost"
                           size="sm-multiline"
-                          className="w-full justify-start text-left"
+                          className="w-full justify-start text-start"
                         />
                       }
                     >
@@ -387,7 +387,7 @@ export function SettingInheritance({
                           </span>
                           <ChevronRightIcon
                             aria-hidden
-                            className="size-3 shrink-0 text-muted-foreground [[data-panel-open]_&]:rotate-90"
+                            className="size-3 shrink-0 text-muted-foreground rtl:rotate-180 [[data-panel-open]_&]:rotate-90"
                           />
                         </span>
                         <span className="flex min-w-0 flex-col gap-0.5 text-xs text-muted-foreground">
@@ -430,10 +430,13 @@ export function SettingInheritance({
                   const header = (
                     <div className="flex items-center justify-between gap-3 px-2 text-xs text-muted-foreground">
                       {foldOverrides ? (
-                        <CollapsibleTrigger render={<InlineButton tone="muted" />}>
+                        <CollapsibleTrigger
+                          className="group"
+                          render={<InlineButton tone="muted" />}
+                        >
                           <ChevronRightIcon
                             aria-hidden
-                            className="size-3 [[data-panel-open]_&]:rotate-90"
+                            className="size-3 group-data-panel-open:rotate-90 rtl:group-aria-[expanded=false]:rotate-180"
                           />
                           <T>Overridden by</T>
                         </CollapsibleTrigger>

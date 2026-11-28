@@ -15,9 +15,15 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
+import { vi } from "vite-plus/test";
 
 import { createInitialDesktopUpdateState } from "../updates/updateMachine.ts";
 import { listen, resolveStartupRecoveryOffer } from "./DesktopStartupRecovery.ts";
+
+vi.mock("../i18n/messages.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../i18n/messages.ts")>()),
+  activeUiLocale: () => "he",
+}));
 
 const updateState = (patch: Partial<DesktopUpdateState>): DesktopUpdateState => ({
   ...createInitialDesktopUpdateState(
@@ -98,11 +104,11 @@ describe("resolveStartupRecoveryOffer", () => {
 });
 
 it.effect.each([
-  { visible: false, started: false, closeMain: false },
-  { visible: true, started: false, closeMain: false },
-  { visible: true, started: true, closeMain: false },
-  { visible: true, started: false, closeMain: true },
-])("closes recovery safely with closeMain=$closeMain", ({ visible, started, closeMain }) =>
+  { visible: false, started: false, closeMain: false, output: "Failure details" },
+  { visible: true, started: false, closeMain: false, output: "" },
+  { visible: true, started: true, closeMain: false, output: "Failure details" },
+  { visible: true, started: false, closeMain: true, output: "Failure details" },
+])("closes recovery safely with closeMain=$closeMain", ({ visible, started, closeMain, output }) =>
   Effect.scoped(
     Effect.gen(function* () {
       const checked = yield* Deferred.make<void>();
@@ -182,12 +188,17 @@ it.effect.each([
         _tag: "Failing",
         reason: "Server failed before readiness",
         managedPolicy: false,
-        output: "Failure details",
+        output,
       });
       yield* Deferred.await(checked);
       expect(loaded.length).toBe(shouldRecover ? 1 : 0);
       if (shouldRecover) {
-        expect(decodeURIComponent(loaded[0]!)).toContain("Failure details");
+        const html = decodeURIComponent(loaded[0]!);
+        expect(html).toContain('<html lang="he" dir="rtl">');
+        expect(html).toContain('<p dir="auto">Server failed before readiness</p>');
+        expect(html).toContain("\u2066/task/logs\u2069");
+        if (output) expect(html).toContain('<pre dir="ltr">Failure details</pre>');
+        else expect(html).toMatch(/<pre>[^<]+<\/pre>/);
         if (closeMain) yield* Ref.set(mainRef, Option.none());
         yield* SubscriptionRef.set(state.primaryBackendStartup, { _tag: "Ready" });
         yield* Deferred.await(remembered);

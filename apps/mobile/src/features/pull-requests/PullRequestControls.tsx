@@ -24,6 +24,7 @@ import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { usePullRequestAgentActions } from "./usePullRequestAgentActions";
+import { useForwardChevron } from "../../i18n/direction";
 
 export function PullRequestCardGroup(props: { readonly children: ReactNode }) {
   return (
@@ -51,6 +52,7 @@ export function PullRequestCardRow(props: {
   readonly expanded?: boolean;
   readonly children?: ReactNode;
 }) {
+  const forwardChevron = useForwardChevron();
   return (
     <Pressable
       accessibilityRole={props.onPress || props.menu ? "button" : undefined}
@@ -96,7 +98,7 @@ export function PullRequestCardRow(props: {
         <SymbolView
           name={
             props.expanded === undefined
-              ? "chevron.right"
+              ? forwardChevron
               : props.expanded
                 ? "chevron.up"
                 : "chevron.down"

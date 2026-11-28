@@ -1,3 +1,4 @@
+import { useDirection } from "@base-ui/react/direction-provider";
 import { useEffect, useId, useState } from "react";
 import { T, useGT } from "gt-react";
 import { useNavigate } from "@tanstack/react-router";
@@ -67,6 +68,7 @@ export function CustomSnoozeDialogHost() {
 function CustomSnoozeDialog() {
   const gt = useGT();
   const locale = useFormattingLocale();
+  const direction = useDirection();
   const id = useId();
   const navigate = useNavigate();
   const [initial] = useState(() => new Date(Date.now() + 3_600_000));
@@ -163,6 +165,7 @@ function CustomSnoozeDialog() {
                             required
                             selected={date}
                             defaultMonth={date}
+                            dir={direction}
                             {...(weekStartsOn === undefined ? {} : { weekStartsOn })}
                             disabled={{ before: today }}
                             onSelect={(selected) => {
@@ -252,7 +255,7 @@ function CustomSnoozeDialog() {
             <Button
               type="button"
               variant="ghost-muted"
-              className="sm:mr-auto"
+              className="sm:me-auto"
               onClick={() => {
                 finish(null);
                 void navigate({

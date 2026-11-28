@@ -80,6 +80,7 @@ import {
   buildToolCallExpandedBody,
   workEntryIconName,
   sliceThoughtPreviewSource,
+  splitWorkEntryPathTokens,
   thoughtPreviewMarkdown,
 } from "./TimelineWorkEntryRow.logic";
 
@@ -193,6 +194,24 @@ export function ThreadReadLabel({
       )}
     </span>
   );
+}
+
+function renderWorkEntryLabel(text: string) {
+  const parts = splitWorkEntryPathTokens(text);
+  if (parts.length === 1 && !parts[0]!.isPath) return text;
+
+  let offset = 0;
+  return parts.map((part) => {
+    const key = offset;
+    offset += part.text.length;
+    return part.isPath ? (
+      <bdi key={key} dir="ltr">
+        {part.text}
+      </bdi>
+    ) : (
+      part.text
+    );
+  });
 }
 
 const toolCallExpandedBodyClassName =
@@ -621,7 +640,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   linked
                 />
               ) : (
-                previewText
+                renderWorkEntryLabel(previewText)
               )}
             </span>
             {answerPreview ? (
@@ -692,7 +711,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               <ChevronRightIcon
                 className={cn(
                   "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
-                  expanded && "rotate-90",
+                  expanded ? "rotate-90" : "rtl:rotate-180",
                 )}
               />
             </span>

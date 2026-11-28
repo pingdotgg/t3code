@@ -342,11 +342,11 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       {item.type === "file_change" ? (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-muted-foreground">
+            <span dir="ltr" className="font-mono text-muted-foreground">
               {formatWorkspaceRelativePath(item.fileName, props.workspaceRoot)}
             </span>
             {item.additions !== undefined || item.deletions !== undefined ? (
-              <span>
+              <span dir="ltr">
                 <span className="text-diff-addition">+{formatDiffCount(item.additions ?? 0)}</span>{" "}
                 <span className="text-diff-deletion">-{formatDiffCount(item.deletions ?? 0)}</span>
               </span>
@@ -455,14 +455,18 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       {item.type === "system_notice" ? <StructuredValue value={item.message} /> : null}
       {item.type === "error" ? <StructuredValue value={item.failure.message} /> : null}
       {item.type === "todo_list" ? (
-        <StructuredValue
-          value={item.steps
-            .map(
-              (step) =>
-                `${step.status === "completed" ? "✓" : step.status === "running" ? "◉" : "○"} ${step.text}`,
-            )
-            .join("\n")}
-        />
+        <ul
+          className={cn("max-h-80 overflow-auto text-start text-muted-foreground", monoClassName)}
+        >
+          {item.steps.map((step) => (
+            <li key={step.id} className="flex min-w-0 items-baseline gap-2">
+              <span className="shrink-0">
+                {step.status === "completed" ? "✓" : step.status === "running" ? "◉" : "○"}
+              </span>
+              <bdi className="min-w-0">{step.text}</bdi>
+            </li>
+          ))}
+        </ul>
       ) : null}
     </div>
   );

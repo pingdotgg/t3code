@@ -10,6 +10,7 @@ import {
 import { defaultMinSize, padding, size, width } from "@expo/ui/jetpack-compose/modifiers";
 import type { MenuAction } from "@react-native-menu/menu";
 import { Pressable } from "react-native";
+import { useInterfaceDirection } from "../../i18n/direction";
 import { resolveScaledTextRole } from "../../lib/appearancePreferences";
 
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
@@ -64,6 +65,7 @@ export function MenuPopupItems(
   const caption = resolveScaledTextRole("caption", appearance.baseFontSize);
   const foreground = colors["--color-foreground"];
   const muted = colors["--color-foreground-muted"];
+  const isRTL = useInterfaceDirection() === "rtl";
   // A fixed native item height clips wrapped labels; a minimum lets each row grow.
   const itemModifiers = [width(props.menuWidth), defaultMinSize({ minHeight: menuItemHeight })];
   return (
@@ -71,7 +73,7 @@ export function MenuPopupItems(
       {props.parent ? (
         <DropdownMenuItem onClick={props.onBack} modifiers={itemModifiers}>
           <DropdownMenuItem.LeadingIcon>
-            <MenuIcon name="arrow.left" onPress={props.onBack} />
+            <MenuIcon name={isRTL ? "arrow.right" : "arrow.left"} onPress={props.onBack} />
           </DropdownMenuItem.LeadingIcon>
           <DropdownMenuItem.Text>
             <Text color={foreground} style={{ typography: "bodyLarge", ...body }}>
@@ -130,7 +132,7 @@ export function MenuPopupItems(
           {(action.subactions?.length ?? 0) > 0 ? (
             <DropdownMenuItem.TrailingIcon>
               <MenuIcon
-                name="chevron.right"
+                name={isRTL ? "chevron.left" : "chevron.right"}
                 onPress={() => props.onPress(action)}
                 disabled={action.attributes?.disabled}
               />

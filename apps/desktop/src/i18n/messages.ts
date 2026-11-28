@@ -14,6 +14,7 @@ const CATALOGS: Readonly<Record<string, () => Promise<{ readonly default: Catalo
   de: () => import("./translations/de.json", { with: { type: "json" } }),
   es: () => import("./translations/es.json", { with: { type: "json" } }),
   fr: () => import("./translations/fr.json", { with: { type: "json" } }),
+  he: () => import("./translations/he.json", { with: { type: "json" } }),
   ja: () => import("./translations/ja.json", { with: { type: "json" } }),
   ko: () => import("./translations/ko.json", { with: { type: "json" } }),
   pl: () => import("./translations/pl.json", { with: { type: "json" } }),
@@ -46,6 +47,10 @@ export function m(message: string, variables: Readonly<Record<string, string>> =
   return target === undefined
     ? gtFallback(source, { ...options, $locale: DEFAULT_LOCALE })
     : gtFallback(target, { ...options, $locale: activeLocale, $_fallback: source });
+}
+
+export function activeUiLocale(): string {
+  return activeLocale;
 }
 
 /** Runs `listener` after each switch to a different UI language. */

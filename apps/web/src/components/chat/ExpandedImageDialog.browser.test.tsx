@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { cdp, page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { ExpandedImageDialog } from "./ExpandedImageDialog";
 
 const PIXEL =
@@ -287,4 +287,47 @@ describe("ExpandedImageDialog", () => {
       }
     },
   );
+
+  it("preserves cursor-anchored zoom in an RTL document", async () => {
+    const previousDir = document.documentElement.getAttribute("dir");
+    document.documentElement.dir = "rtl";
+    using _restoreDir = {
+      [Symbol.dispose]: () => {
+        if (previousDir === null) document.documentElement.removeAttribute("dir");
+        else document.documentElement.setAttribute("dir", previousDir);
+      },
+    };
+    const canvas = document.createElement("canvas");
+    canvas.width = 1600;
+    canvas.height = 1200;
+    await using _screen = await render(
+      <ExpandedImageDialog
+        preview={{ images: [{ src: canvas.toDataURL(), name: "rtl-large.png" }], index: 0 }}
+        onClose={() => {}}
+      />,
+      { router: false },
+    );
+    const viewportLocator = page.getByRole("region", { name: "rtl-large.png, zoomable image" });
+    const viewport = viewportLocator.element() as HTMLElement;
+    const image = page.getByRole("img", { name: "rtl-large.png" }).element() as HTMLElement;
+    await vi.waitFor(() => expect(image.style.width).not.toBe(""));
+    expect(getComputedStyle(document.documentElement).direction).toBe("rtl");
+    expect(getComputedStyle(viewport).direction).toBe("ltr");
+
+    const bounds = viewport.getBoundingClientRect();
+    const clickX = bounds.left + bounds.width * 0.4;
+    const clickY = bounds.top + bounds.height * 0.5;
+    const imageBefore = image.getBoundingClientRect();
+    const expectedFractionX = (clickX - imageBefore.left) / imageBefore.width;
+
+    await act(() => {
+      viewport.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, clientX: clickX, clientY: clickY }),
+      );
+    });
+    const imageAfter = image.getBoundingClientRect();
+    const actualFractionX = (clickX - imageAfter.left) / imageAfter.width;
+    expect(imageAfter.width).toBeGreaterThan(imageBefore.width);
+    expect(actualFractionX).toBeCloseTo(expectedFractionX, 2);
+  });
 });

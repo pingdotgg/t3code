@@ -16,6 +16,7 @@ import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu.android";
 import { AndroidHeaderIconButton } from "./AndroidScreenHeader.android";
 import { AppText } from "./AppText";
 import { NativeAppBar } from "./NativeAppBar.android";
+import { useInterfaceDirection } from "../../i18n/direction";
 import { useControlTheme } from "./useControlTheme";
 import { useToolbarLayout } from "./useToolbarLayout";
 
@@ -129,6 +130,7 @@ export function WorkspaceAppBar(props: WorkspaceAppBarProps) {
  */
 function WorkspaceAppBarView(props: WorkspaceAppBarProps) {
   const gt = useGT();
+  const isRtl = useInterfaceDirection() === "rtl";
   const { search, filter } = props;
   const searching = search?.active === true;
   const { colors } = useControlTheme();
@@ -172,7 +174,7 @@ function WorkspaceAppBarView(props: WorkspaceAppBarProps) {
         >
           <AndroidHeaderIconButton
             accessibilityLabel={gt("Close search")}
-            icon="arrow.left"
+            icon={isRtl ? "arrow.right" : "arrow.left"}
             onPress={search.onClose}
           />
           {search.field}
@@ -225,7 +227,7 @@ function WorkspaceAppBarView(props: WorkspaceAppBarProps) {
           {filter ? (
             <View
               className="absolute"
-              style={{ right: ACTION_END_INSET, top: (height - ACTION_SIZE) / 2 }}
+              style={{ end: ACTION_END_INSET, top: (height - ACTION_SIZE) / 2 }}
             >
               {filterMenu}
             </View>

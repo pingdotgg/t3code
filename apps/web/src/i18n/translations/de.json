@@ -346,6 +346,7 @@
   "cbba2216dafdd91d": "{count, plural, one {Anhänge {count}-mal gesendet} other {Anhänge {count}-mal gesendet}}",
   "f6589d3539e5e4b0": "{count, plural, one {Versucht, Anhänge {count}-mal zu senden} other {Versucht, Anhänge {count}-mal zu senden}}",
   "bba19d414974a12c": "Verknüpfte Pull Requests",
+  "4eb908d895a28c5f": "Verknüpfte Pull Requests",
   "3ab4b1ee5133f899": "Versucht, Pull Requests zu verknüpfen",
   "72d699ac25327b32": "{count, plural, one {{count} Pull Request verknüpft} other {{count} Pull Requests verknüpft}}",
   "c4c26dc511a3e964": "{count, plural, one {Versucht, {count} Pull Request zu verknüpfen} other {Versucht, {count} Pull Requests zu verknüpfen}}",

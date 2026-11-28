@@ -230,7 +230,7 @@ function NativeSourceFileSurface(
     : NATIVE_SOURCE_CONTENT_WIDTH;
 
   return (
-    <View className="relative flex-1 bg-sheet">
+    <View className="relative flex-1 bg-sheet" style={{ direction: "ltr" }}>
       <SourceHighlightStatusView status={status} />
       <NativeView
         collapsable={false}
@@ -321,6 +321,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
         fontFamily: monoFontFamily,
         fontSize: codeSurface.fontSize,
         lineHeight: codeSurface.rowHeight,
+        textAlign: "left",
       }}
     >
       {selectableTokens
@@ -431,7 +432,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   );
 
   return (
-    <View className="relative flex-1 bg-sheet">
+    <View className="relative flex-1 bg-sheet" style={{ direction: "ltr" }}>
       {usesWebSelection ? null : <SourceHighlightStatusView status={status} />}
       {usesLineList ? (
         codeWordBreak ? (

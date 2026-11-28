@@ -87,6 +87,7 @@ export default function VirtualTablePreview(props: {
   return (
     <div
       ref={ref}
+      dir="ltr"
       className="relative min-h-0 flex-1 overflow-x-auto contain-strict"
       onScroll={(event) => {
         event.currentTarget.style.setProperty(

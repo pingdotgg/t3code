@@ -16,7 +16,7 @@ import { useMobileSidebarSheetMounted } from "../ui/sidebar";
 import { Toggle } from "../ui/toggle";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
-/** Matches the right inset of `ThreadPanelHeaderControl`. */
+/** Matches the inline-end inset of `ThreadPanelHeaderControl`. */
 const THREAD_PANEL_HEADER_INSET_PX = 12;
 
 export interface PanelLayoutControlsProps {
@@ -142,7 +142,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
             size="sm"
             disabled={!rightPanelAvailable}
           >
-            <PanelRightIcon className="size-4" />
+            <PanelRightIcon className="size-4 rtl:rotate-180" />
           </Toggle>
         </SharedTooltipTrigger>
       ) : null}
@@ -186,13 +186,13 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
   );
 });
 
-/** The thread panel toggle on a header whose right side the inline right panel covers. */
+/** The thread panel toggle while the inline panel owns the window controls. */
 export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
   const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   return (
     <div
       className={cn(
-        "absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]",
+        "absolute top-[var(--workspace-controls-top)] end-[calc(env(safe-area-inset-right)+0.75rem)] rtl:end-[calc(env(safe-area-inset-left)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]",
         mobileSidebarSheetMounted && "hidden",
       )}
       data-workspace-titlebar-controls
@@ -202,7 +202,7 @@ export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
   );
 }
 
-/** The window's top-right panel controls, with the maximize toggle while the panel is open. */
+/** The window's trailing panel controls, with the maximize toggle while the panel is open. */
 export function WorkspaceTitlebarControls(props: {
   readonly showMaximizeControl: boolean;
   readonly rightPanelOpen: boolean;
@@ -225,8 +225,12 @@ export function WorkspaceTitlebarControls(props: {
     const timing = panel?.getAnimations()[0]?.effect?.getTiming();
     if (!toggle || !panel || !timing) return;
     // The header's toggle was just removed, so slide this one in from where it sat.
-    const headerRight = panel.getBoundingClientRect().left - THREAD_PANEL_HEADER_INSET_PX;
-    const offset = headerRight - toggle.getBoundingClientRect().right;
+    const panelBounds = panel.getBoundingClientRect();
+    const toggleBounds = toggle.getBoundingClientRect();
+    const offset =
+      getComputedStyle(toggle).direction === "rtl"
+        ? panelBounds.right + THREAD_PANEL_HEADER_INSET_PX - toggleBounds.left
+        : panelBounds.left - THREAD_PANEL_HEADER_INSET_PX - toggleBounds.right;
     const animation = toggle.animate(
       [{ transform: `translateX(${offset}px)` }, { transform: "none" }],
       { ...timing, easing: getComputedStyle(panel).transitionTimingFunction },
@@ -239,7 +243,7 @@ export function WorkspaceTitlebarControls(props: {
     <div
       ref={controlsRef}
       className={cn(
-        "pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+        "pointer-events-none fixed top-[var(--workspace-controls-top)] end-[var(--workspace-controls-right)] rtl:end-[var(--workspace-controls-left)] z-50 me-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
         mobileSidebarSheetMounted && "hidden",
       )}
       data-workspace-titlebar-controls
@@ -255,7 +259,7 @@ export function WorkspaceTitlebarControls(props: {
               "motion-safe:transition-opacity motion-safe:duration-(--panel-animation-duration) motion-safe:ease-out",
             props.rightPanelOpen
               ? "pointer-events-auto opacity-100"
-              : "pointer-events-none absolute right-full mr-1 opacity-0",
+              : "pointer-events-none absolute end-full me-1 opacity-0",
           )}
           inert={!props.rightPanelOpen}
         >

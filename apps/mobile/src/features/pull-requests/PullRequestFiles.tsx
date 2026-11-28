@@ -10,6 +10,8 @@ import Animated from "react-native-reanimated";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../components/ui/ForwardChevron";
+import { useForwardChevron } from "../../i18n/direction";
 import { Button } from "../../components/ui/Button";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { IconButton } from "../../components/ui/IconButton";
@@ -176,7 +178,7 @@ const FileRow = memo(function FileRow(props: {
           tintColorClassName="accent-adaptive-emerald-600-400"
         />
       ) : null}
-      <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
+      <ForwardChevron size={12} tintColorClassName="accent-icon-muted" />
     </RowPressable>
   );
 });
@@ -428,6 +430,7 @@ function DirectoryRow(props: {
 }) {
   const gt = useGT();
   const label = props.directory || gt("Repository root");
+  const collapsedChevron = useForwardChevron();
   return (
     <RowPressable
       accessibilityRole="button"
@@ -437,7 +440,7 @@ function DirectoryRow(props: {
       className="min-h-11 flex-row items-center gap-2 pt-4 pb-2 active:opacity-70"
     >
       <SymbolView
-        name={props.collapsed ? "chevron.right" : "chevron.down"}
+        name={props.collapsed ? collapsedChevron : "chevron.down"}
         size={11}
         tintColorClassName="accent-icon-muted"
       />

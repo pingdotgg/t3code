@@ -1,4 +1,4 @@
-import { resolveLocaleSelection } from "@t3tools/client-runtime/locales";
+import { localeDirection, resolveLocaleSelection } from "@t3tools/client-runtime/locales";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { GTProvider, initializeGT, useLocale } from "gt-react-native";
@@ -6,6 +6,7 @@ import { createContext, use, useDeferredValue, useEffect, useMemo, type ReactNod
 import { Platform, TurboModuleRegistry, View, type TurboModule } from "react-native";
 
 import { mobilePreferencesAtom } from "../state/preferences";
+import { InterfaceDirectionContext } from "./direction";
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./locales";
 import { setActiveLocale } from "./messages";
 
@@ -29,6 +30,7 @@ const CATALOGS: Readonly<Record<string, () => unknown>> = {
   pl: () => require("./translations/pl.json"),
   ru: () => require("./translations/ru.json"),
   sv: () => require("./translations/sv.json"),
+  he: () => require("./translations/he.json"),
 };
 
 initializeGT({
@@ -75,13 +77,16 @@ export function I18nProvider(props: { readonly children: ReactNode }) {
   const selection = useDeferredValue(
     useMemo(() => ({ catalogLocale, formattingLocale }), [catalogLocale, formattingLocale]),
   );
+  const direction = localeDirection(selection.catalogLocale);
   return (
-    <GTProvider locale={selection.catalogLocale} fallback={<View className="flex-1 bg-screen" />}>
-      <ActiveLocale />
-      <FormattingLocaleContext value={selection.formattingLocale}>
-        {props.children}
-      </FormattingLocaleContext>
-    </GTProvider>
+    <InterfaceDirectionContext value={direction}>
+      <GTProvider locale={selection.catalogLocale} fallback={<View className="flex-1 bg-screen" />}>
+        <ActiveLocale />
+        <FormattingLocaleContext value={selection.formattingLocale}>
+          <View style={{ flex: 1, direction }}>{props.children}</View>
+        </FormattingLocaleContext>
+      </GTProvider>
+    </InterfaceDirectionContext>
   );
 }
 

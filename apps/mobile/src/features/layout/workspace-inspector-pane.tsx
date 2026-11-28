@@ -10,6 +10,7 @@ import Animated, {
   type SharedValue,
 } from "react-native-reanimated";
 
+import { useInterfaceDirection } from "../../i18n/direction";
 import type { WorkspacePaneLayout } from "../../lib/layout";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspacePaneDivider } from "./workspace-pane-divider";
@@ -36,6 +37,9 @@ export function WorkspaceInspectorPane(props: {
   const inspectorVisible =
     inspectorSupported && panes.auxiliaryPaneVisible && (props.active ?? true);
   const resizeStartWidth = useRef(0);
+  const isRTL = useInterfaceDirection() === "rtl";
+  const resizeDirection = isRTL ? 1 : -1;
+  const slideInFrom = isRTL ? -24 : 24;
   const [resizing, setResizing] = useState(false);
 
   const inspectorProgress = useSharedValue(inspectorVisible ? 1 : 0);
@@ -68,10 +72,10 @@ export function WorkspaceInspectorPane(props: {
   const inspectorStyle = useAnimatedStyle(
     () => ({
       opacity: inspectorProgress.value,
-      transform: [{ translateX: (1 - inspectorProgress.value) * 24 }],
+      transform: [{ translateX: (1 - inspectorProgress.value) * slideInFrom }],
       width: renderedInspectorWidth.value,
     }),
-    [],
+    [slideInFrom],
   );
   // A hidden or resizing pane takes its width at once; a visible one eases with the column.
   const inspectorContentStyle = {
@@ -98,7 +102,7 @@ export function WorkspaceInspectorPane(props: {
         <WorkspacePaneDivider
           accessibilityLabel={gt("Resize detail pane")}
           currentWidth={inspectorWidth ?? 0}
-          resizeDirection={-1}
+          resizeDirection={resizeDirection}
           onResizeStart={beginResize}
           onResizeBy={resizeBy}
           onResizeEnd={endResize}

@@ -20,6 +20,7 @@ import * as Haptics from "expo-haptics";
 import { T, useGT, useMessages } from "gt-react-native";
 import { Image } from "expo-image";
 import { type AppSymbolName, SymbolView } from "../../components/ui/AppSymbol";
+import { useInterfaceDirection } from "../../i18n/direction";
 import { MaskedView } from "@expo/ui/community/masked-view";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
@@ -171,11 +172,19 @@ function WorkLogIcon(props: {
 
 export function ThreadDisclosureChevron(props: {
   readonly expanded: boolean;
-  readonly collapsedDirection: "right" | "down";
+  readonly collapsedDirection: "down" | "inline-end";
   readonly size: number;
   readonly tintColor: ColorValue;
 }) {
-  const expandedAngle = props.collapsedDirection === "right" ? 90 : 180;
+  const direction = useInterfaceDirection();
+  const collapsedIcon =
+    props.collapsedDirection === "down"
+      ? "chevron.down"
+      : props.collapsedDirection === "inline-end" && direction === "rtl"
+        ? "chevron.left"
+        : "chevron.right";
+  const expandedAngle =
+    collapsedIcon === "chevron.down" ? 180 : collapsedIcon === "chevron.left" ? -90 : 90;
   const rotation = useSharedValue(props.expanded ? expandedAngle : 0);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drives the chevron's Reanimated rotation value when the expanded state changes
@@ -201,7 +210,7 @@ export function ThreadDisclosureChevron(props: {
       style={[{ width: props.size, height: props.size }, rotationStyle]}
     >
       <SymbolView
-        name={props.collapsedDirection === "right" ? "chevron.right" : "chevron.down"}
+        name={collapsedIcon}
         size={props.size}
         tintColor={props.tintColor}
         type="monochrome"
@@ -301,13 +310,15 @@ export function ShimmeringWorkContent(props: {
 
   // The React Compiler memoizes these, so re-renders don't rebuild the native
   // animation nodes.
+  // Transforms are physical, so the sweep runs right to left over an RTL label.
+  const sweepSign = useInterfaceDirection() === "rtl" ? -1 : 1;
   const sweepTranslateX = progress.interpolate({
     inputRange: [0, 1],
-    outputRange: [-SHIMMER_WIDTH, contentWidth],
+    outputRange: [-SHIMMER_WIDTH * sweepSign, contentWidth * sweepSign],
   });
   const counterSweepTranslateX = progress.interpolate({
     inputRange: [0, 1],
-    outputRange: [SHIMMER_WIDTH, -contentWidth],
+    outputRange: [SHIMMER_WIDTH * sweepSign, -contentWidth * sweepSign],
   });
 
   return (
@@ -339,7 +350,7 @@ export function ShimmeringWorkContent(props: {
             position: "absolute",
             top: 0,
             bottom: 0,
-            left: 0,
+            start: 0,
             overflow: "hidden",
             width: SHIMMER_WIDTH,
             transform: [{ translateX: sweepTranslateX }],
@@ -584,7 +595,7 @@ function ThreadReasoningGroup(props: {
   }));
 
   return (
-    <View className="ml-7">
+    <View className="ms-7">
       <Animated.ScrollView
         nestedScrollEnabled
         className="max-h-96"
@@ -797,7 +808,7 @@ function WorkspacePreparationRetryButton(props: {
   const [busy, setBusy] = useState(false);
   if (!retryable) return null;
   return (
-    <View className="ml-7 mt-2">
+    <View className="ms-7 mt-2">
       <Button
         label={gt("Retry")}
         tone="secondary"
@@ -969,7 +980,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               {label}
             </Text>
             {props.copied ? (
-              <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
+              <Text className="pe-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
                 <T>Copied</T>
               </Text>
             ) : null}
@@ -986,7 +997,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
             </Text>
           </View>
           {!warning ? (
-            <Text selectable className="ml-7 text-sm text-foreground">
+            <Text selectable className="ms-7 text-sm text-foreground">
               {failureItem.failure.message}
             </Text>
           ) : null}
@@ -1007,7 +1018,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     ) : (
       <View>
         {errorRow}
-        <View className="ml-7 mt-1.5 pb-1">
+        <View className="ms-7 mt-1.5 pb-1">
           <Button
             label={gt("Verify Google account")}
             size="compact"
@@ -1215,13 +1226,13 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
 
         <View className="shrink-0 flex-row items-center gap-px">
           {props.copied ? (
-            <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
+            <Text className="pe-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
               <T>Copied</T>
             </Text>
           ) : mcpSignInTarget !== null ? (
             <Text
               className={cn(
-                "pr-1 font-t3-medium text-sm",
+                "pe-1 font-t3-medium text-sm",
                 mcpSignedIn ? "text-adaptive-emerald-600-400" : "text-primary",
               )}
             >
@@ -1274,7 +1285,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
           exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
           layout={WORK_LOG_LAYOUT_TRANSITION}
-          className={reasoning ? "ml-7 py-1" : "pb-1 pt-0.5"}
+          className={reasoning ? "ms-7 py-1" : "pb-1 pt-0.5"}
         >
           {row.workEntry.questionAnswer ? (
             <QuestionAnswerHistory

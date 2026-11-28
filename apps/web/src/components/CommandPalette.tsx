@@ -1235,7 +1235,7 @@ function OpenCommandPaletteDialog(props: {
       const disabledHint = readiness.hint;
 
       const titleTrailingContent = readiness.ready ? undefined : (
-        <span className="ml-auto">
+        <span className="ms-auto">
           <SharedTooltipTrigger
             render={
               <Button
@@ -2626,7 +2626,7 @@ function OpenCommandPaletteDialog(props: {
               description: gt("Open a folder or clone a repository"),
               icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
               titleTrailingContent: (
-                <ChevronRightIcon className="-me-0.5 ms-auto size-4 shrink-0 text-muted-foreground/70" />
+                <ChevronRightIcon className="-me-0.5 ms-auto size-4 shrink-0 text-muted-foreground/70 rtl:rotate-180" />
               ),
               keepOpen: true,
               run: async () => {
@@ -3256,7 +3256,7 @@ function OpenCommandPaletteDialog(props: {
                   aria-label={gt("Back")}
                   onClick={popView}
                 >
-                  <ArrowLeftIcon />
+                  <ArrowLeftIcon className="rtl:rotate-180" />
                 </button>
               ),
             }

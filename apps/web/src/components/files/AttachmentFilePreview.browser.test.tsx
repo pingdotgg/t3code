@@ -834,6 +834,33 @@ describe("large text preview recovery", () => {
     );
   });
 
+  it("renders later columns when scrolled horizontally inside an RTL parent", async () => {
+    const header = Array.from({ length: 12 }, (_, index) => `Col ${index + 1}`);
+    const dataRow = Array.from({ length: 12 }, (_, index) => `Val ${index + 1}`);
+    await using screen = await render(
+      <div dir="rtl" style={{ display: "flex", height: 300, width: 400 }}>
+        <VirtualTablePreview
+          name="rtl.csv"
+          count={2}
+          columns={12}
+          header={header}
+          getRows={() => [header, dataRow]}
+        />
+      </div>,
+    );
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("Col 1"));
+    const scroller = screen.container.querySelector<HTMLElement>(".overflow-x-auto")!;
+    expect(scroller.getAttribute("dir")).toBe("ltr");
+    await act(() => {
+      scroller.scrollLeft = 600;
+      scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await vi.waitFor(() => {
+      expect(screen.container.textContent).toContain("Col 6");
+      expect(screen.container.textContent).toContain("Val 6");
+    });
+  });
+
   it("scrolls every tall row in the final virtual viewport", async () => {
     const view = (loaded: boolean) => (
       <div style={{ display: "flex", height: 400, width: 600 }}>

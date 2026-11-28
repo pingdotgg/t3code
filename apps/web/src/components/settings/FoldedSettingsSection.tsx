@@ -50,7 +50,7 @@ export function FoldedSettingsSection({
                     aria-hidden
                     className={cn(
                       "size-4 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
-                      open && "rotate-90",
+                      open ? "rotate-90" : "rtl:rotate-180",
                     )}
                   />
                 </CollapsibleTrigger>
@@ -71,12 +71,12 @@ export function FoldedSettingsSection({
       <Collapsible open={open} onOpenChange={setOpen} render={<SettingsGroup divided={false} />}>
         {/* On a narrow screen the controls drop below the title instead of covering it. */}
         <div className="flex flex-wrap items-center gap-x-4 px-3 sm:px-4">
-          <CollapsibleTrigger className="flex min-h-11 min-w-0 flex-1 basis-40 items-center gap-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring rounded-md">
+          <CollapsibleTrigger className="flex min-h-11 min-w-0 flex-1 basis-40 items-center gap-2 py-2 text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring rounded-md">
             <ChevronRightIcon
               aria-hidden
               className={cn(
                 "size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
-                open && "rotate-90",
+                open ? "rotate-90" : "rtl:rotate-180",
               )}
             />
             <span className="shrink-0 text-sm font-medium">{title}</span>

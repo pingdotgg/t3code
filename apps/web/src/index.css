@@ -994,6 +994,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .settings-slider {
+    --settings-slider-fill-direction: to right;
     --settings-slider-progress: 0%;
     --settings-slider-fill-offset: 0.5rem;
     --settings-slider-fill-position: calc(
@@ -1005,11 +1006,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     cursor: pointer;
   }
 
+  .settings-slider:dir(rtl) {
+    --settings-slider-fill-direction: to left;
+  }
+
   .settings-slider::-webkit-slider-runnable-track {
     height: 0.375rem;
     border-radius: 9999px;
     background: linear-gradient(
-      to right,
+      var(--settings-slider-fill-direction),
       var(--primary) 0 var(--settings-slider-fill-position),
       color-mix(in srgb, var(--contrast-muted-foreground) 22%, transparent)
         var(--settings-slider-fill-position) 100%
@@ -2678,12 +2683,16 @@ code {
 
 @layer components {
   .chat-composer-lane {
+    --chat-lane-safe-start: env(safe-area-inset-left);
+    --chat-lane-safe-end: env(safe-area-inset-right);
     padding-inline-start: calc(
-      env(safe-area-inset-left) + 0.75rem + var(--chat-lane-inset-start, 0px)
+      var(--chat-lane-safe-start) + 0.75rem + var(--chat-lane-inset-start, 0px)
     );
-    padding-inline-end: calc(
-      env(safe-area-inset-right) + 0.75rem + var(--chat-lane-inset-end, 0px)
-    );
+    padding-inline-end: calc(var(--chat-lane-safe-end) + 0.75rem + var(--chat-lane-inset-end, 0px));
+  }
+  .chat-composer-lane:dir(rtl) {
+    --chat-lane-safe-start: env(safe-area-inset-right);
+    --chat-lane-safe-end: env(safe-area-inset-left);
   }
   [data-chat-canvas] .messages-timeline-scroll {
     padding-inline-start: calc(
@@ -2701,9 +2710,9 @@ code {
   @media (min-width: 640px) {
     .chat-composer-lane {
       padding-inline-start: calc(
-        env(safe-area-inset-left) + 3rem + var(--chat-lane-inset-start, 0px)
+        var(--chat-lane-safe-start) + 3rem + var(--chat-lane-inset-start, 0px)
       );
-      padding-inline-end: calc(env(safe-area-inset-right) + 3rem + var(--chat-lane-inset-end, 0px));
+      padding-inline-end: calc(var(--chat-lane-safe-end) + 3rem + var(--chat-lane-inset-end, 0px));
     }
     [data-chat-canvas] .messages-timeline-scroll {
       padding-inline-start: calc(
@@ -2732,4 +2741,12 @@ code {
 
 .messages-timeline-scroll:focus-visible {
   outline: none;
+}
+
+/* Code and diff surfaces stay left-to-right in an RTL interface without overriding utilities. */
+@layer base {
+  :is(pre, code, kbd, samp, diffs-container) {
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
 }

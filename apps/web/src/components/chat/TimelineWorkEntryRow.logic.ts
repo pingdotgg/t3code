@@ -229,3 +229,30 @@ export function thoughtPreviewMarkdown(fallback: string): MarkdownExtensions {
   }
   return extensions;
 }
+
+const PATH_TOKEN_PATTERN =
+  /(^|[\s־\-([{'"`])((?:(?:~\/|\.{1,2}\/|\/|[A-Za-z]:\\)[^\s"'`<>()[\]{}]+|[A-Za-z0-9_.@-]+\/(?:[^\s"'`<>()[\]{}/]+\/[^\s"'`<>()[\]{}]+|[^\s"'`<>()[\]{}/]+\.[A-Za-z0-9]{1,10})))/g;
+
+export function splitWorkEntryPathTokens(
+  text: string,
+): Array<{ readonly text: string; readonly isPath: boolean }> {
+  const matches = [...text.matchAll(PATH_TOKEN_PATTERN)];
+  if (matches.length === 0) return [{ text, isPath: false }];
+
+  const parts: Array<{ readonly text: string; readonly isPath: boolean }> = [];
+  let cursor = 0;
+  for (const match of matches) {
+    const prefix = match[1] ?? "";
+    const token = match[2] ?? "";
+    const tokenStart = match.index + prefix.length;
+    if (tokenStart > cursor) {
+      parts.push({ text: text.slice(cursor, tokenStart), isPath: false });
+    }
+    parts.push({ text: token, isPath: true });
+    cursor = tokenStart + token.length;
+  }
+  if (cursor < text.length) {
+    parts.push({ text: text.slice(cursor), isPath: false });
+  }
+  return parts;
+}

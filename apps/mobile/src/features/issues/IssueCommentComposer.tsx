@@ -233,7 +233,7 @@ export function IssueCommentComposer(props: {
             <View className="h-[44px] flex-row items-center">
               <Text
                 className="min-w-0 flex-1 text-base text-foreground-muted"
-                style={{ paddingLeft: EDITOR_LEADING_INSET }}
+                style={{ paddingStart: EDITOR_LEADING_INSET }}
                 numberOfLines={1}
                 ellipsizeMode="tail"
               >

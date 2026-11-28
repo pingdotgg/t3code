@@ -15,6 +15,7 @@ import { useWorkspaceState } from "../../state/workspace";
 import { FabScrollContext, FabTopContext } from "./FabScrollContext";
 import { updateFabScroll } from "./fab-scroll";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
+import { useEndSafeAreaInset, useStartSafeAreaInset } from "../../i18n/startSafeAreaInset";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { FLOATING_TABS, floatingTabsMetrics } from "../layout/workspace/floating-workspace-tabs";
 import { useEnabledNavigationTabs } from "../layout/workspace/navigation-tabs";
@@ -26,6 +27,8 @@ import {
 export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidHomeFabLayout>) {
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const insets = useSafeAreaInsets();
+  const startInset = useStartSafeAreaInset();
+  const endInset = useEndSafeAreaInset();
   const { appearance } = useAppearancePreferences();
   const { fontScale } = useWindowDimensions();
   const [layoutWidth, setLayoutWidth] = useState<number | null>(null);
@@ -36,7 +39,7 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
   const barWidth =
     layoutWidth === null
       ? undefined
-      : layoutWidth - (Math.max(insets.left, FLOATING_TABS.edge) - FLOATING_TABS.edge);
+      : layoutWidth - (Math.max(startInset, FLOATING_TABS.edge) - FLOATING_TABS.edge);
   const size = floatingTabsEnabled
     ? floatingTabsMetrics(enabledTabs.length + 1, scale, fabSize, barWidth).height
     : fabSize;
@@ -60,7 +63,7 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
     (!props.sidebar || floatingTabsEnabled) &&
     state.hasConnections &&
     layoutWidth !== null;
-  const fabPosition = androidHomeFabPosition(insets.bottom, props.sidebar);
+  const fabPosition = androidHomeFabPosition(insets.bottom, props.sidebar, endInset);
   // Floating navigation already reports its row, FAB included, through bottomClearance.
   const fabTop = showFab && !floatingTabsEnabled ? fabPosition.bottom + size : undefined;
 
@@ -83,7 +86,7 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
           style={
             floatingTabsEnabled
               ? {
-                  right: FLOATING_TABS.edge,
+                  end: Math.max(FLOATING_TABS.edge, endInset),
                   bottom: insets.bottom + FLOATING_TABS.bottom,
                 }
               : fabPosition

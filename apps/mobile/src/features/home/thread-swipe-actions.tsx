@@ -43,6 +43,8 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { useInterfaceDirection } from "../../i18n/direction";
+import { SWIPEABLE_DIRECTION, swipeRevealSign } from "../../i18n/swipeableDirection";
 import type { MessageResolver } from "../../i18n/messages";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { SwipeRowActivationContext, type SwipeRowActivation } from "./swipe-row-activation";
@@ -256,6 +258,8 @@ interface ThreadSwipeableProps {
 }
 
 const COLLAPSED_ROW_STYLE = { height: 0, overflow: "hidden" } as const;
+// The action strip positions and animates its buttons with physical offsets.
+const PHYSICAL_ACTION_STRIP = { direction: "ltr" } as const;
 
 export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const m = useMessages();
@@ -289,6 +293,9 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const onDelete = props.onDelete;
   const onSwipeableClose = props.onSwipeableClose;
   const listAnimatesLayout = props.listAnimatesLayout === true;
+  const interfaceDirection = useInterfaceDirection();
+  const isRtl = interfaceDirection === "rtl";
+  const revealSign = swipeRevealSign(interfaceDirection);
 
   const restoreRow = useCallback(() => {
     if (!mountedRef.current) return;
@@ -364,20 +371,26 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
       };
       actionOpacity.set(withTiming(0, timing));
       translation.set(
-        withTiming(Math.min(translation.value, -rowWidth.value), timing, (finished) => {
-          if (!finished) return;
-          // LegendList re-measures rows only on React commits, so a UI-thread height animation
-          // reaches it in late jumps. Collapse through React and let its transition move rows.
-          if (listAnimatesLayout) {
-            runOnJS(collapseInList)(id);
-            return;
-          }
-          collapse.set(
-            withTiming(1, { ...timing, duration: 180 }, (collapsed) => {
-              if (collapsed) runOnJS(finishDismiss)(id);
-            }),
-          );
-        }),
+        withTiming(
+          isRtl
+            ? Math.max(translation.value, rowWidth.value)
+            : Math.min(translation.value, -rowWidth.value),
+          timing,
+          (finished) => {
+            if (!finished) return;
+            // LegendList re-measures rows only on React commits, so a UI-thread height animation
+            // reaches it in late jumps. Collapse through React and let its transition move rows.
+            if (listAnimatesLayout) {
+              runOnJS(collapseInList)(id);
+              return;
+            }
+            collapse.set(
+              withTiming(1, { ...timing, duration: 180 }, (collapsed) => {
+                if (collapsed) runOnJS(finishDismiss)(id);
+              }),
+            );
+          },
+        ),
       );
     },
     [
@@ -386,6 +399,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
       collapseInList,
       dismissing,
       finishDismiss,
+      isRtl,
       listAnimatesLayout,
       rowWidth,
     ],
@@ -441,13 +455,13 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     (translation: SharedValue<number>, canceled: boolean) => {
       "worklet";
       if (dismissing.value) return true;
-      if (!canceled && -translation.value >= fullSwipeThreshold) {
+      if (!canceled && translation.value * revealSign >= fullSwipeThreshold) {
         runOnJS(commitFullSwipe)();
         return true;
       }
       return false;
     },
-    [commitFullSwipe, dismissing, fullSwipeThreshold],
+    [commitFullSwipe, dismissing, fullSwipeThreshold, revealSign],
   );
   const handleFullSwipeArmedChange = useCallback(
     (armed: boolean) => {
@@ -475,8 +489,8 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const { secondaryAction, threadTitle } = props;
   // Swipeable calls this on every render; returning the previous element while nothing it shows
   // changed keeps a selection change from re-rendering the hidden actions.
-  const rightActions = useRef<{ deps: readonly unknown[]; element: ReactNode } | null>(null);
-  const renderRightActions = (
+  const trailingActions = useRef<{ deps: readonly unknown[]; element: ReactNode } | null>(null);
+  const renderTrailingActions = (
     _progress: SharedValue<number>,
     translation: SharedValue<number>,
     methods: SwipeableMethods,
@@ -488,6 +502,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
       actionStyle,
       backgroundColor,
       compactActions,
+      interfaceDirection,
       measuredRowHeight,
       fullSwipeAction,
       fullSwipeThreshold,
@@ -498,7 +513,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
       secondaryAction,
       threadTitle,
     ];
-    const cached = rightActions.current;
+    const cached = trailingActions.current;
     if (cached && deps.every((dep, index) => Object.is(dep, cached.deps[index]))) {
       return cached.element;
     }
@@ -507,11 +522,13 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
         ref={() => {
           activeTranslationRef.current = translation;
         }}
-        style={actionStyle}
+        style={[actionStyle, PHYSICAL_ACTION_STRIP]}
       >
         <ThreadSwipeActions
           backgroundColor={backgroundColor}
           compact={compactActions}
+          isRtl={isRtl}
+          revealSign={revealSign}
           rowHeight={measuredRowHeight}
           fullSwipeAction={fullSwipeAction}
           fullSwipeThreshold={fullSwipeThreshold}
@@ -528,12 +545,15 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
         />
       </Animated.View>
     );
-    rightActions.current = { deps, element };
+    trailingActions.current = { deps, element };
     return element;
   };
-  const childrenContainerStyle = useMemo(() => ({ backgroundColor }), [backgroundColor]);
+  const childrenContainerStyle = useMemo(
+    () => ({ backgroundColor, direction: interfaceDirection }),
+    [backgroundColor, interfaceDirection],
+  );
   const swipeableContainerStyle = useMemo(
-    () => [{ backgroundColor }, containerStyle],
+    () => [{ backgroundColor, direction: SWIPEABLE_DIRECTION }, containerStyle],
     [backgroundColor, containerStyle],
   );
 
@@ -552,20 +572,24 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
             animationOptions={THREAD_SWIPE_SPRING}
             childrenContainerStyle={childrenContainerStyle}
             containerStyle={swipeableContainerStyle}
-            dragOffsetFromRight={-8}
+            dragOffsetFromLeft={isRtl ? 8 : 10}
+            dragOffsetFromRight={isRtl ? -10 : -8}
             enabled={!props.dormant && !isDismissing && props.enabled !== false && gateEnabled}
             enableTrackpadTwoFingerGesture={props.enableTrackpadSwipe ?? true}
             // Reject vertical pans via patched RNGH failOffsetY; simultaneous trackpad scrolls otherwise open rows on horizontal drift.
             failOffsetY={FAIL_OFFSET_Y}
             friction={1}
+            leftThreshold={isRtl ? actionsWidth * 0.42 : undefined}
             onSwipeableClose={handleSwipeableClose}
             onSwipeableRelease={handleRelease}
             onSwipeableOpenStartDrag={handleWillOpen}
             onSwipeableWillOpen={handleWillOpen}
             overshootFriction={1}
-            overshootRight
-            renderRightActions={renderRightActions}
-            rightThreshold={actionsWidth * 0.42}
+            overshootLeft={isRtl}
+            overshootRight={!isRtl}
+            renderLeftActions={isRtl ? renderTrailingActions : undefined}
+            renderRightActions={isRtl ? undefined : renderTrailingActions}
+            rightThreshold={isRtl ? undefined : actionsWidth * 0.42}
             // Only iPad trackpad pans need rows to swipe while the list scrolls; on Android touch it
             // lets a diagonal swipe scroll the list, which the scroll gate turns into a closed row.
             simultaneousWith={Platform.OS === "ios" ? props.simultaneousWith : undefined}
@@ -590,11 +614,13 @@ function SwipeActionButton(props: {
   readonly entryRange: readonly [number, number];
   readonly fullSwipeThreshold: number;
   readonly icon: ComponentProps<typeof SymbolView>["name"];
+  readonly isRtl: boolean;
   readonly label: string;
   readonly menu?: ThreadSwipeAction["menu"];
   readonly onPress: () => void;
+  readonly revealSign: 1 | -1;
   readonly rowHeight: number;
-  /** A trailing action slides left under the stretching action's pill on a full swipe. */
+  /** A trailing action slides under the stretching action's pill on a full swipe. */
   readonly slidesUnderStretch: boolean;
   readonly stretchesOnFullSwipe: boolean;
   readonly translation: SharedValue<number>;
@@ -603,6 +629,8 @@ function SwipeActionButton(props: {
     actionsWidth,
     entryRange: [entryRangeStart, entryRangeEnd],
     fullSwipeThreshold,
+    isRtl,
+    revealSign,
     slidesUnderStretch,
     stretchesOnFullSwipe,
     translation,
@@ -625,7 +653,7 @@ function SwipeActionButton(props: {
         : labelLineHeight,
   };
   const actionStyle = useAnimatedStyle(() => {
-    const reveal = Math.max(-translation.value, 0);
+    const reveal = Math.max(translation.value * revealSign, 0);
     const entryProgress = interpolate(
       reveal,
       [entryRangeStart, entryRangeEnd],
@@ -645,23 +673,24 @@ function SwipeActionButton(props: {
       transform: [
         {
           translateX:
-            interpolate(entryProgress, [0, 1], [22, 0]) - (stretchesOnFullSwipe ? 0 : stretch),
+            -revealSign *
+            (interpolate(entryProgress, [0, 1], [22, 0]) - (stretchesOnFullSwipe ? 0 : stretch)),
         },
         { scale: interpolate(entryProgress, [0, 1], [0.78, 1]) },
       ],
     };
   });
   const circleStyle = useAnimatedStyle(() => {
-    const reveal = Math.max(-translation.value, 0);
+    const reveal = Math.max(translation.value * revealSign, 0);
     const stretch = stretchesOnFullSwipe ? Math.max(reveal - actionsWidth, 0) : 0;
 
     return {
-      transform: [{ translateX: -stretch }],
+      transform: [{ translateX: isRtl ? 0 : -stretch }],
       width: circleSize + stretch,
     };
   });
   const iconStyle = useAnimatedStyle(() => {
-    const reveal = Math.max(-translation.value, 0);
+    const reveal = Math.max(translation.value * revealSign, 0);
     const stretch = stretchesOnFullSwipe ? Math.max(reveal - actionsWidth, 0) : 0;
     const armedProgress = interpolate(
       reveal,
@@ -671,11 +700,11 @@ function SwipeActionButton(props: {
     );
 
     return {
-      transform: [{ translateX: -stretch * (0.5 + armedProgress * 0.5) }],
+      transform: [{ translateX: revealSign * stretch * (0.5 + armedProgress * 0.5) }],
     };
   });
   const labelStyle = useAnimatedStyle(() => {
-    const reveal = Math.max(-translation.value, 0);
+    const reveal = Math.max(translation.value * revealSign, 0);
     const stretch = Math.max(reveal - actionsWidth, 0);
     if (!stretchesOnFullSwipe) {
       // The pill covers this action's circle but not its label, so hide the label before its
@@ -694,7 +723,7 @@ function SwipeActionButton(props: {
         [1, 0],
         Extrapolation.CLAMP,
       ),
-      transform: [{ translateX: -stretch * 0.5 }],
+      transform: [{ translateX: revealSign * stretch * 0.5 }],
     };
   });
 
@@ -816,30 +845,39 @@ function ThreadSwipeActions(props: {
   readonly compact: boolean;
   readonly fullSwipeAction?: "delete" | "primary";
   readonly fullSwipeThreshold: number;
+  readonly isRtl: boolean;
   readonly onFullSwipeArmedChange: (armed: boolean) => void;
   readonly primaryAction: ThreadSwipeAction;
+  readonly revealSign: 1 | -1;
   readonly rowHeight: number;
   readonly secondaryAction: ThreadSwipeSecondaryAction | null;
   readonly translation: SharedValue<number>;
 }) {
-  const { fullSwipeThreshold, onFullSwipeArmedChange, secondaryAction, translation } = props;
+  const {
+    fullSwipeThreshold,
+    isRtl,
+    onFullSwipeArmedChange,
+    revealSign,
+    secondaryAction,
+    translation,
+  } = props;
   const fullSwipeIsPrimary = props.fullSwipeAction === "primary" || secondaryAction === null;
   const actionsWidth = swipeActionsWidth(secondaryAction !== null);
   useAnimatedReaction(
-    () => -translation.value >= fullSwipeThreshold,
+    () => translation.value * revealSign >= fullSwipeThreshold,
     (armed, previous) => {
       if (armed !== previous) {
         runOnJS(onFullSwipeArmedChange)(armed);
       }
     },
-    [fullSwipeThreshold, onFullSwipeArmedChange, translation],
+    [fullSwipeThreshold, onFullSwipeArmedChange, revealSign, translation],
   );
 
   return (
     <View
       style={{
         backgroundColor: props.backgroundColor,
-        flexDirection: "row",
+        flexDirection: isRtl ? "row-reverse" : "row",
         height: "100%",
         width: actionsWidth,
       }}
@@ -856,8 +894,10 @@ function ThreadSwipeActions(props: {
         }
         fullSwipeThreshold={props.fullSwipeThreshold}
         icon={props.primaryAction.icon}
+        isRtl={isRtl}
         label={props.primaryAction.label}
         onPress={props.primaryAction.onPress}
+        revealSign={revealSign}
         rowHeight={props.rowHeight}
         slidesUnderStretch={false}
         stretchesOnFullSwipe={fullSwipeIsPrimary}
@@ -872,9 +912,11 @@ function ThreadSwipeActions(props: {
           entryRange={[8, ACTION_ITEM_WIDTH * 0.72]}
           fullSwipeThreshold={props.fullSwipeThreshold}
           icon={secondaryAction.icon}
+          isRtl={isRtl}
           label={secondaryAction.label}
           menu={secondaryAction.menu}
           onPress={secondaryAction.onPress}
+          revealSign={revealSign}
           rowHeight={props.rowHeight}
           slidesUnderStretch={fullSwipeIsPrimary}
           stretchesOnFullSwipe={!fullSwipeIsPrimary}

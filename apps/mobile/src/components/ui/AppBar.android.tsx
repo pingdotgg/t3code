@@ -10,6 +10,7 @@ import { useSidebarToggle } from "../../features/layout/useSidebarToggle";
 import { useAdaptiveWorkspaceLayout } from "../../features/layout/adaptive-workspace-context";
 import { InspectorCloseContext } from "../../features/layout/inspector-bar-store";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
+import { useInterfaceDirection } from "../../i18n/direction";
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "./AndroidScreenHeader.android";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu.android";
 import { ScreenHeaderButton } from "./ScreenHeaderButton.android";
@@ -78,6 +79,7 @@ function SearchableAppBar(props: AppBarProps & { readonly search: AppBarSearch }
 
 function AppBarView(props: AppBarProps & { readonly searchState?: SearchState }) {
   const gt = useGT();
+  const isRtl = useInterfaceDirection() === "rtl";
   const { search, searchState } = props;
   const inFormSheet = use(RoutedFormSheetContext);
   const { height, paddingTop, paddingBottom } = useToolbarLayout(props.sheet || inFormSheet);
@@ -273,14 +275,14 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
               ) : props.onBack ? (
                 <ScreenHeaderButton
                   accessibilityLabel={gt("Navigate up")}
-                  icon="arrow.left"
+                  icon={isRtl ? "arrow.right" : "arrow.left"}
                   onPress={props.onBack}
                 />
               ) : null
             ) : (
               <ScreenHeaderButton
                 accessibilityLabel={search.closeAccessibilityLabel ?? gt("Close search")}
-                icon="arrow.left"
+                icon={isRtl ? "arrow.right" : "arrow.left"}
                 onPress={closeSearch}
               />
             )}

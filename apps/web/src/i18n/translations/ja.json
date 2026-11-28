@@ -346,6 +346,7 @@
   "cbba2216dafdd91d": "{count, plural, other {添付ファイルを {count} 回送信しました}}",
   "f6589d3539e5e4b0": "{count, plural, other {添付ファイルを {count} 回送信しようとしました}}",
   "bba19d414974a12c": "リンクされたプルリクエスト",
+  "4eb908d895a28c5f": "リンクされたプルリクエスト",
   "3ab4b1ee5133f899": "プルリクエストをリンクしようとしました",
   "72d699ac25327b32": "{count, plural, other {{count} 件のプルリクエストをリンクしました}}",
   "c4c26dc511a3e964": "{count, plural, other {{count} 件のプルリクエストをリンクしようとしました}}",

@@ -4,6 +4,7 @@ import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import type { DetailsCardMeasurement } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout, type ChatCanvasPreview } from "./chatCanvasLayout";
 import { resolveThreadDetailsCardLayout } from "./threadDetailsCardLayout";
+import { resolvePreviewMiniPlayerFrame } from "../preview/previewMiniPlayerLayout";
 
 interface CanvasEdges {
   readonly left: number;
@@ -12,6 +13,7 @@ interface CanvasEdges {
 }
 
 export interface ChatCanvasMeasurements {
+  readonly direction: "ltr" | "rtl";
   readonly width: number;
   readonly narrowestWidth?: number;
   readonly height: number;
@@ -42,6 +44,7 @@ interface ChatCanvasStoreState {
 }
 
 const INITIAL_MEASUREMENTS: ChatCanvasMeasurements = {
+  direction: "ltr",
   width: 0,
   height: 0,
   padding: 48,
@@ -58,6 +61,7 @@ const sameEdges = (a: CanvasEdges | null, b: CanvasEdges | null) =>
   (a !== null && b !== null && a.left === b.left && a.right === b.right && a.bottom === b.bottom);
 
 const sameMeasurements = (a: ChatCanvasMeasurements, b: ChatCanvasMeasurements) =>
+  a.direction === b.direction &&
   a.width === b.width &&
   a.narrowestWidth === b.narrowestWidth &&
   a.height === b.height &&
@@ -121,7 +125,29 @@ export function resolveChatCanvasModel({
   detailsCardInlineOpen: boolean;
 }) {
   const container = { width: measurements.width, height: measurements.height };
-  const { findBar } = measurements;
+  const rtl = measurements.direction === "rtl";
+  // Layout uses inline coordinates; DOM measurements and preview gestures use physical coordinates.
+  const findBar =
+    rtl && measurements.findBar
+      ? {
+          ...measurements.findBar,
+          left: container.width - measurements.findBar.right,
+          right: container.width - measurements.findBar.left,
+        }
+      : measurements.findBar;
+  const logicalPreview =
+    rtl && preview?.position
+      ? {
+          ...preview,
+          position: {
+            ...preview.position,
+            x:
+              container.width -
+              preview.position.x -
+              resolvePreviewMiniPlayerFrame({ ...preview, container }).width,
+          },
+        }
+      : preview;
   const detailsCardTopInset = findBar?.bottom ?? 0;
   const lane = { padding: measurements.padding, minChatWidth: measurements.minChatWidth };
   // The preview avoids where an open inline card would sit, whether or not a
@@ -157,7 +183,7 @@ export function resolveChatCanvasModel({
       : null;
   const layout = resolveChatCanvasLayout({
     container,
-    preview,
+    preview: logicalPreview,
     padding: measurements.padding,
     maxChatWidth: measurements.maxChatWidth,
     maxHtmlPreviewWidth: measurements.maxHtmlPreviewWidth,
@@ -175,13 +201,22 @@ export function resolveChatCanvasModel({
     topInset: detailsCardTopInset,
   });
   const detailsCardMode: ThreadPanelPresentation = detailsCardPlacement ? "inline" : "popover";
+  const physicalCard = (card: typeof preferredDetailsCard) =>
+    rtl && card ? { ...card, x: container.width - card.x - card.width } : card;
   return {
     container,
     lane,
-    layout,
+    layout: rtl
+      ? {
+          ...layout,
+          frame: layout.frame
+            ? { ...layout.frame, x: container.width - layout.frame.x - layout.frame.width }
+            : null,
+        }
+      : layout,
     detailsCardTopInset,
-    preferredDetailsCard,
-    detailsCardPlacement,
+    preferredDetailsCard: physicalCard(preferredDetailsCard),
+    detailsCardPlacement: physicalCard(detailsCardPlacement),
     detailsCardMode,
   };
 }

@@ -123,6 +123,7 @@ import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3too
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../components/ui/ForwardChevron";
 import { textDirection } from "@t3tools/shared/textDirection";
 import { useFocusEffect, useIsFocused, useNavigation } from "@react-navigation/native";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
@@ -926,8 +927,7 @@ function MessageAttachmentFile(props: {
               {fileTypeLabel} · {sizeLabel}
             </Text>
           </View>
-          <SymbolView
-            name="chevron.right"
+          <ForwardChevron
             size={12}
             tintColorClassName="accent-foreground-muted"
             type="monochrome"
@@ -939,7 +939,7 @@ function MessageAttachmentFile(props: {
             accessibilityLabel={gt("Download {name}", { name: attachment.name })}
             accessibilityState={{ disabled, busy: opening }}
             disabled={disabled}
-            className="mr-1 min-h-11 w-11 items-center justify-center rounded-lg active:bg-subtle disabled:opacity-40"
+            className="me-1 min-h-11 w-11 items-center justify-center rounded-lg active:bg-subtle disabled:opacity-40"
             onPress={() => shareFile(sourceIdentifier)}
           >
             <SymbolView name="arrow.down" size={16} tintColorClassName="accent-foreground-muted" />
@@ -1568,7 +1568,7 @@ function MarkdownDetailsFold(props: {
       >
         <ThreadDisclosureChevron
           expanded={expanded}
-          collapsedDirection="right"
+          collapsedDirection="inline-end"
           size={12}
           tintColor={iconSubtleColor}
         />
@@ -1576,7 +1576,7 @@ function MarkdownDetailsFold(props: {
           {props.summary}
         </Text>
       </Pressable>
-      {expanded ? <View className="pb-3 pl-5">{props.children}</View> : null}
+      {expanded ? <View className="pb-3 ps-5">{props.children}</View> : null}
     </View>
   );
 }
@@ -1835,7 +1835,7 @@ function ThreadAutomationMessageRow(props: {
         ) : null}
       </View>
       {props.expanded ? (
-        <View className="mt-1 flex-row items-center justify-end gap-2 pr-0.5">
+        <View className="mt-1 flex-row items-center justify-end gap-2 pe-0.5">
           {props.scheduledTaskId ? (
             <Pressable
               accessibilityRole="link"
@@ -1979,7 +1979,7 @@ function RunFoldButton({
         </Text>
         <ThreadDisclosureChevron
           expanded={entry.expanded}
-          collapsedDirection="right"
+          collapsedDirection="inline-end"
           size={15}
           tintColor={iconColor}
         />
@@ -2440,7 +2440,7 @@ function renderFeedEntry(
           {...(enterAnimated ? { entering: FadeInDown.duration(220) } : {})}
         >
           {presentation.attribution === "t3code" ? (
-            <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
+            <Text className="mb-1 pe-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
               {m(msg("Sent by T3 Code"))}
             </Text>
           ) : null}
@@ -2627,7 +2627,7 @@ function renderFeedEntry(
             </View>
           ) : null}
           {bubbleBodyVisible ? (
-            <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
+            <View className="mt-1 flex-row items-center justify-end gap-1 pe-0.5">
               {foldRowId !== null && senderRef ? (
                 <OpenSenderThreadButton
                   environmentId={senderRef.environmentId}

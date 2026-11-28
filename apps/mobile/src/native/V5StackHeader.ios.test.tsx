@@ -4,9 +4,22 @@ import { createRoot } from "react-dom/client";
 import type { StackHeaderConfigProps } from "react-native-screens";
 import { expect, it, vi } from "vite-plus/test";
 
-const bridge = vi.hoisted(() => ({ ios: undefined as StackHeaderConfigProps["ios"] }));
+const bridge = vi.hoisted(() => ({
+  ios: undefined as StackHeaderConfigProps["ios"],
+  rightToLeft: undefined as boolean | undefined,
+}));
 
-vi.mock("react-native", () => ({ StyleSheet: { flatten: (style: unknown) => style } }));
+vi.mock("expo", () => ({
+  requireNativeView:
+    () =>
+    ({ rightToLeft }: { rightToLeft: boolean }) => {
+      bridge.rightToLeft = rightToLeft;
+      return null;
+    },
+}));
+vi.mock("react-native", () => ({
+  StyleSheet: { create: (styles: unknown) => styles, flatten: (style: unknown) => style },
+}));
 vi.mock("react-native-keyboard-controller", () => ({
   KeyboardController: { dismiss: vi.fn() },
   useKeyboardState: () => false,
@@ -27,7 +40,36 @@ vi.mock("react-native-screens", () => ({
   },
 }));
 
+import { InterfaceDirectionContext } from "../i18n/direction";
 import { V5StackHeader } from "./V5StackHeader.ios";
+
+it("updates native header direction and keeps the back button chevron-only when switching language", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const root = createRoot(document.createElement("div"));
+  const render = (direction: "ltr" | "rtl") =>
+    act(() =>
+      root.render(
+        <InterfaceDirectionContext value={direction}>
+          <V5StackHeader
+            canGoBack
+            options={{ headerBackTitle: "", headerBackButtonDisplayMode: "minimal" }}
+          />
+        </InterfaceDirectionContext>,
+      ),
+    );
+  try {
+    render("rtl");
+    expect(bridge.rightToLeft).toBe(true);
+    expect(bridge.ios).toMatchObject({ backButtonTitle: "", backButtonDisplayMode: "minimal" });
+
+    render("ltr");
+    expect(bridge.rightToLeft).toBe(false);
+    expect(bridge.ios).toMatchObject({ backButtonTitle: "", backButtonDisplayMode: "minimal" });
+  } finally {
+    act(() => root.unmount());
+    vi.unstubAllGlobals();
+  }
+});
 
 it.each(["leadingItems", "trailingItems", "toolbarItems"] as const)(
   "updates native enabled state after permissions change in %s",

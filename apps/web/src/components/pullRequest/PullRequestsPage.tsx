@@ -1244,7 +1244,7 @@ export function PullRequestsPage() {
   const openPanelControls = (
     <div
       className={cn(
-        "absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+        "absolute top-[var(--workspace-controls-top)] end-[var(--workspace-controls-right)] rtl:end-[var(--workspace-controls-left)] z-50 me-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
         mobileSidebarSheetMounted && "hidden",
       )}
       data-workspace-titlebar-controls
@@ -1458,7 +1458,7 @@ export function PullRequestsPage() {
         aria-hidden
         className={cn(
           "shrink-0",
-          rightPanelState.isOpen ? "-ml-3 w-0" : "w-7 sm:w-5",
+          rightPanelState.isOpen ? "-ms-3 w-0" : "w-7 sm:w-5",
           panelAnimationsActive && "transition-[width,margin] ease-out",
         )}
         style={
@@ -1476,7 +1476,7 @@ export function PullRequestsPage() {
         rightPanelPresent ? (
           <span
             aria-hidden
-            className="pointer-events-none absolute inset-y-0 left-full w-7 [-webkit-app-region:no-drag]"
+            className="pointer-events-none absolute inset-y-0 start-full w-7 [-webkit-app-region:no-drag]"
           />
         ) : (
           openPanelControls

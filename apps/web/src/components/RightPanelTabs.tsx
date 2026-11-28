@@ -1,3 +1,4 @@
+import { useDirection } from "@base-ui/react/direction-provider";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { contextMenuSourceOf } from "../contextMenuSource";
 import { m, type MessageResolver } from "../i18n/messages";
@@ -540,7 +541,7 @@ function RightPanelEmptyState(props: {
                   type="button"
                   onClick={action.onClick}
                   className={cn(
-                    "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm transition-colors group-hover:bg-accent/60",
+                    "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-2.5 text-start text-sm transition-colors group-hover:bg-accent/60",
                     isHighlighted(action) && "bg-accent/60",
                   )}
                 >
@@ -548,7 +549,7 @@ function RightPanelEmptyState(props: {
                   <span
                     className={cn(
                       "min-w-0 flex-1 truncate",
-                      action.label === "Browser" && props.browserProfiles.length > 1 && "pr-7",
+                      action.label === "Browser" && props.browserProfiles.length > 1 && "pe-7",
                     )}
                   >
                     {messages(action.label)}
@@ -561,7 +562,7 @@ function RightPanelEmptyState(props: {
                       render={
                         <Button
                           aria-label={gt("Open browser in a profile")}
-                          className="absolute top-1/2 right-8 -translate-y-1/2"
+                          className="absolute top-1/2 end-8 -translate-y-1/2"
                           size="icon-xs"
                           variant="ghost-muted"
                         />
@@ -590,7 +591,7 @@ function RightPanelEmptyState(props: {
                   <div
                     tabIndex={0}
                     aria-disabled="true"
-                    className="flex h-8 w-full cursor-default items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm opacity-50"
+                    className="flex h-8 w-full cursor-default items-center gap-2.5 rounded-(--control-radius) px-2.5 text-start text-sm opacity-50"
                   >
                     {actionIcon(action, "size-4")}
                     <span className="min-w-0 flex-1 truncate">{messages(action.label)}</span>
@@ -942,11 +943,13 @@ function SortableTabList(props: {
   onMove: RightPanelTabsProps["onMoveSurfaces"];
   children: ReactNode;
 }) {
+  const direction = useDirection();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const surfaceIds = props.surfaces.map((surface) => surface.id);
+  const sortableIds = direction === "rtl" ? surfaceIds.toReversed() : surfaceIds;
   const { onMove, selectedIds } = props;
   const strategy = tabSortingStrategy(
-    surfaceIds.findIndex((id) => id === selectedIds[0]),
+    sortableIds.findIndex((id) => selectedIds.includes(id)),
     selectedIds.length,
   );
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
@@ -966,7 +969,7 @@ function SortableTabList(props: {
       }}
       onDragEnd={handleDragEnd}
     >
-      <SortableContext items={surfaceIds} strategy={strategy}>
+      <SortableContext items={sortableIds} strategy={strategy}>
         {props.children}
       </SortableContext>
     </DndContext>
@@ -1140,7 +1143,9 @@ function RightPanelTab(
               }
               onClick={(event) => onActivate(surface, event.shiftKey)}
             >
-              <span className="truncate">{title}</span>
+              <span dir={surface.kind === "file" ? "ltr" : undefined} className="truncate">
+                {title}
+              </span>
             </button>
           }
           label={
@@ -1173,7 +1178,7 @@ function RightPanelTab(
       ref={setNodeRef}
       style={{ transform: translation, transition }}
       className={cn(
-        "cursor-pointer group/tab flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
+        "cursor-pointer group/tab flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-md ps-1.5 pe-2 text-xs",
         props.ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
         props.active
           ? "bg-accent text-foreground"
@@ -1240,11 +1245,12 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
   }));
 
   const updateTabScrollState = (viewport: HTMLDivElement) => {
-    const hasOverflow = viewport.scrollWidth - viewport.clientWidth > TAB_SCROLL_EDGE_TOLERANCE;
-    const canScrollLeft = hasOverflow && viewport.scrollLeft > TAB_SCROLL_EDGE_TOLERANCE;
-    const canScrollRight =
-      hasOverflow &&
-      viewport.scrollLeft + viewport.clientWidth < viewport.scrollWidth - TAB_SCROLL_EDGE_TOLERANCE;
+    const maxScroll = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+    const hasOverflow = maxScroll > TAB_SCROLL_EDGE_TOLERANCE;
+    const isRtl = viewport.matches(":dir(rtl)");
+    const distanceFromLeft = isRtl ? maxScroll + viewport.scrollLeft : viewport.scrollLeft;
+    const canScrollLeft = hasOverflow && distanceFromLeft > TAB_SCROLL_EDGE_TOLERANCE;
+    const canScrollRight = hasOverflow && distanceFromLeft < maxScroll - TAB_SCROLL_EDGE_TOLERANCE;
     setTabScrollState((current) => {
       if (
         current.hasOverflow === hasOverflow &&
@@ -1551,8 +1557,9 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
       if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
       if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= viewport.clientWidth;
 
+      const isRtl = viewport.matches(":dir(rtl)");
       const previousScrollLeft = viewport.scrollLeft;
-      viewport.scrollLeft += delta;
+      viewport.scrollLeft += isRtl ? -delta : delta;
       if (viewport.scrollLeft === previousScrollLeft) return;
       event.preventDefault();
       update();
@@ -1604,10 +1611,14 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
     >
       <div
         className={cn(
-          "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pl-2",
-          props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
+          "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 ps-2",
+          props.mode === "inline"
+            ? props.layoutControls
+              ? "pe-3 rtl:pe-(--workspace-controls-left)"
+              : "pe-28 rtl:pe-(--workspace-panel-controls-end)"
+            : "pe-3 rtl:pe-(--workspace-controls-left) rtl:wco:pe-3",
           ownsDesktopTitleBar && "drag-region",
-          ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
+          ownsDesktopTitleBar && "ltr:wco:pr-(--workspace-native-controls-inset)",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
         data-right-panel-tabbar
@@ -1760,6 +1771,7 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
         </ScrollArea>
         {tabScrollState.hasOverflow ? (
           <div
+            dir="ltr"
             className="flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"
             role="group"
             aria-label={gt("Scroll panel tabs")}
@@ -1808,12 +1820,12 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
         ) : null}
         {props.layoutControls}
         {ownsDesktopTitleBar && !props.layoutControls ? (
-          <span aria-hidden className="hidden w-24 shrink-0 wco:block" />
+          <span aria-hidden className="hidden w-24 shrink-0 ltr:wco:block" />
         ) : null}
         {ownsDesktopTitleBar ? (
           <span
             aria-hidden
-            className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
+            className="pointer-events-none fixed top-[var(--workspace-controls-top)] end-[var(--workspace-controls-right)] rtl:end-[var(--workspace-controls-left)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
           />
         ) : null}
       </div>

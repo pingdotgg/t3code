@@ -49,6 +49,7 @@ import {
   useAppearancePreferences,
 } from "./features/settings/appearance/AppearancePreferencesProvider";
 import { RootStack, rootPathnameFromState, workspaceLocationFromState } from "./Stack";
+import { useInterfaceDirection } from "./i18n/direction";
 import { I18nProvider } from "./i18n/I18nProvider";
 import { DEFAULT_LOCALE } from "./i18n/locales";
 import { appAtomRegistry } from "./state/atom-registry";
@@ -287,6 +288,7 @@ export default function App() {
 }
 
 function AppContent() {
+  const direction = useInterfaceDirection();
   const { themeAppearance } = useAppearancePreferences();
   const navigationTheme = useMobileNavigationTheme();
 
@@ -317,6 +319,7 @@ function AppContent() {
             <GlobalVoiceInputControl>
               <NativeLayoutMetricsProvider>
                 <Navigation
+                  direction={direction}
                   ref={attachRootNavigation}
                   linking={appLinking}
                   onReady={handleNavigationReady}

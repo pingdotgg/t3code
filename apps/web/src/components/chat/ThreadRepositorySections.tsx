@@ -111,7 +111,10 @@ const RepositorySection = memo(function RepositorySection(props: {
         aria-controls={props.expanded ? bodyId : undefined}
         onClick={() => props.onToggle(props.sectionKey)}
       >
-        <Chevron className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} aria-hidden />
+        <Chevron
+          className={cn(THREAD_DETAILS_PANEL_CHEVRON_CLASS, !props.expanded && "rtl:rotate-180")}
+          aria-hidden
+        />
         <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
           <span className="max-w-2/3 shrink-0 truncate">{props.name}</span>
           <span className="min-w-0 truncate font-normal text-muted-foreground">
@@ -122,21 +125,21 @@ const RepositorySection = memo(function RepositorySection(props: {
                 : (summary.branch ?? gt("Detached HEAD"))}
           </span>
           {summary?.isRepository ? (
-            <span className="ml-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
+            <span className="ms-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
               {summary.pullRequest ? (
-                <span className="font-sans font-normal text-muted-foreground">
+                <span dir="ltr" className="font-sans font-normal text-muted-foreground">
                   #{summary.pullRequest.number}
                 </span>
               ) : null}
               {summary.changedFiles > 0 ? (
-                <>
+                <span dir="ltr" className="inline-flex items-baseline gap-2">
                   <span className="text-diff-addition-foreground">
                     +{formatDiffCount(summary.insertions)}
                   </span>
                   <span className="text-diff-deletion-foreground">
                     -{formatDiffCount(summary.deletions)}
                   </span>
-                </>
+                </span>
               ) : null}
             </span>
           ) : null}

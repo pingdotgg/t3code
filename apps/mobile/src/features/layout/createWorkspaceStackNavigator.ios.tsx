@@ -1,4 +1,5 @@
 import { useGT } from "gt-react-native";
+import { useInterfaceDirection } from "../../i18n/direction";
 import {
   createNavigatorFactory,
   NavigationContext,
@@ -330,6 +331,7 @@ function WorkspaceColumns(
     }
   };
 
+  const direction = useInterfaceDirection();
   const primary = props.descriptors[props.primary.key];
   if (!primary) return null;
   const primaryColumnWidth = nativeSidebarColumnWidth(layout);
@@ -460,13 +462,14 @@ function WorkspaceColumns(
               <SafeAreaView style={{ flex: 1 }} edges={["left", "right"]} pointerEvents="box-none">
                 <View className="flex-1" pointerEvents="box-none">
                   <View
-                    className="absolute inset-y-0 left-0 w-[22px] flex-row"
+                    className="absolute inset-y-0 w-[22px] flex-row"
+                    style={{ start: 0 }}
                     pointerEvents="box-none"
                   >
                     <WorkspacePaneDivider
                       accessibilityLabel={gt("Resize inspector")}
                       currentWidth={inspectorWidth}
-                      resizeDirection={-1}
+                      resizeDirection={direction === "rtl" ? 1 : -1}
                       onResizeStart={() => {
                         resizeStartWidth.current = inspectorWidth;
                       }}

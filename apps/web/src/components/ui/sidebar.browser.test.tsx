@@ -15,10 +15,14 @@ function CollapseFromInside() {
   );
 }
 
-function Harness(props: { readonly onResize?: (width: number) => void }) {
+function Harness(props: {
+  readonly onResize?: (width: number) => void;
+  readonly side?: "left" | "right";
+}) {
   return (
     <SidebarProvider defaultOpen>
       <Sidebar
+        {...(props.side ? { side: props.side } : {})}
         collapsible="offcanvas"
         resizable={{
           collapseOnResize: true,
@@ -320,4 +324,41 @@ it("opens the mobile sheet without a transition while panel animations are off",
   const popup = document.querySelector<HTMLElement>('[data-mobile="true"][data-sidebar="sidebar"]');
   expect(popup).not.toBeNull();
   expect(getComputedStyle(popup!).transitionDuration).toBe("0s");
+});
+
+it("supports drag-to-collapse and drag-to-restore when docked on the right side", async () => {
+  await page.viewport(1280, 800);
+  const onResize = vi.fn();
+  await using screen = await render(<Harness onResize={onResize} side="right" />, {
+    router: false /* no routes involved */,
+  });
+  const sidebar = screen.container.querySelector<HTMLElement>('[data-slot="sidebar"]')!;
+  const rail = sidebar.querySelector<HTMLElement>('[data-sidebar="rail"]')!;
+  const pointer = {
+    bubbles: true,
+    cancelable: true,
+    pointerId: 1,
+    button: 0,
+    pointerType: "mouse",
+  };
+  const dispatch = (target: HTMLElement, type: string, clientX: number) =>
+    target.dispatchEvent(new PointerEvent(type, { ...pointer, clientX }));
+  const { left } = rail.getBoundingClientRect();
+
+  // Dragging past the collapse threshold toward the right edge collapses the right-side sidebar.
+  dispatch(rail, "pointerdown", left);
+  dispatch(rail, "pointermove", 1270);
+  dispatch(rail, "pointerup", 1270);
+  await vi.waitFor(() => expect(sidebar.dataset.state).toBe("collapsed"));
+
+  const restoreHandle = screen.container.querySelector<HTMLElement>(
+    '[data-slot="sidebar-restore-handle"]',
+  );
+  expect(restoreHandle).not.toBeNull();
+
+  // Dragging inward from the right edge restores the sidebar.
+  dispatch(restoreHandle!, "pointerdown", 1272);
+  dispatch(restoreHandle!, "pointermove", 1000);
+  dispatch(restoreHandle!, "pointerup", 1000);
+  await vi.waitFor(() => expect(sidebar.dataset.state).toBe("expanded"));
 });

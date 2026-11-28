@@ -1,4 +1,5 @@
 import { SheetHeader } from "../../components/ui/SheetHeader";
+import { useInterfaceDirection } from "../../i18n/direction";
 import {
   DatePicker,
   Host,
@@ -84,8 +85,11 @@ export function CustomSnoozeSheet(props: {
     props.onClose();
   };
 
+  const direction = useInterfaceDirection();
+  const layoutDirection = direction === "rtl" ? "rightToLeft" : "leftToRight";
   return (
     <Host
+      layoutDirection={layoutDirection}
       style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
       colorScheme={themeAppearance}
       seedColor={colors["--color-primary"]}
@@ -109,6 +113,7 @@ export function CustomSnoozeSheet(props: {
             onSubmit={submit}
           >
             <Host
+              layoutDirection={layoutDirection}
               matchContents={{ vertical: true }}
               colorScheme={themeAppearance}
               style={{ width: popoverWidth }}

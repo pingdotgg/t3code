@@ -659,7 +659,7 @@ function MiniPlayerShell({
                   </>
                 }
               >
-                <PanelRightIcon />
+                <PanelRightIcon className="rtl:rotate-180" />
               </SharedTooltipTrigger>
               {pillActions}
               <SharedTooltipTrigger

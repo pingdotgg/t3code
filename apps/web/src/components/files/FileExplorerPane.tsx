@@ -39,7 +39,7 @@ export function FileExplorerPane({
     defaultWidth: responsiveDefaultWidth,
     minWidth,
     maxWidth,
-    edge: "left",
+    edge: "inline-start",
   });
 
   return (
@@ -66,7 +66,7 @@ export function FileExplorerPane({
       aria-label={gt("File explorer")}
       className={cn(
         "relative flex min-h-0 min-w-0 shrink-0 bg-background",
-        resizable ? "border-l border-border/60" : "flex-1",
+        resizable ? "border-s border-border/60" : "flex-1",
       )}
       style={
         resizable
@@ -90,10 +90,10 @@ export function FileExplorerPane({
             let nextWidth: number;
             switch (event.key) {
               case "ArrowLeft":
-                nextWidth = width + 16;
+                nextWidth = width + (event.currentTarget.matches(":dir(rtl)") ? -16 : 16);
                 break;
               case "ArrowRight":
-                nextWidth = width - 16;
+                nextWidth = width + (event.currentTarget.matches(":dir(rtl)") ? 16 : -16);
                 break;
               case "Home":
                 nextWidth = minWidth;

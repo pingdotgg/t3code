@@ -44,8 +44,8 @@ function SheetViewport({
         "fixed inset-0 z-(--z-sheet) grid [-webkit-app-region:no-drag]",
         side === "bottom" && "grid grid-rows-[1fr_auto] pt-12",
         side === "top" && "grid grid-rows-[auto_1fr] pb-12",
-        side === "left" && "flex justify-start",
-        side === "right" && "flex justify-end",
+        side === "left" && "flex justify-start rtl:justify-end",
+        side === "right" && "flex justify-end rtl:justify-start",
         variant === "inset" && "sm:p-4",
         className,
       )}
@@ -98,9 +98,9 @@ function SheetPopup({
             side === "top" &&
               "data-ending-style:-translate-y-8 data-starting-style:-translate-y-8 border-b",
             side === "left" &&
-              "data-ending-style:-translate-x-8 data-starting-style:-translate-x-8 w-[calc(100%-(--spacing(12)))] max-w-md border-e",
+              "data-ending-style:-translate-x-8 data-starting-style:-translate-x-8 w-[calc(100%-(--spacing(12)))] max-w-md border-r",
             side === "right" &&
-              "col-start-2 w-[calc(100%-(--spacing(12)))] max-w-md border-s data-ending-style:translate-x-8 data-starting-style:translate-x-8",
+              "col-start-2 w-[calc(100%-(--spacing(12)))] max-w-md border-l data-ending-style:translate-x-8 data-starting-style:translate-x-8",
             variant === "inset" &&
               "before:hidden sm:rounded-2xl sm:border sm:before:rounded-[calc(var(--radius-2xl)-1px)] sm:**:data-[slot=sheet-footer]:rounded-b-[calc(var(--radius-2xl)-1px)]",
             instant &&

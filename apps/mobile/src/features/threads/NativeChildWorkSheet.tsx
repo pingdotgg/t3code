@@ -95,7 +95,7 @@ function NativeChild(props: { readonly child: OrchestrationV2NativeChildWork }) 
           <T>No transcript yet.</T>
         </Text>
       ) : (
-        <View className="gap-2 border-l border-border ps-3">
+        <View className="gap-2 border-s border-border ps-3">
           {child.steps.map((step) => (
             <View key={step.index} className="gap-1">
               <Text className="font-t3-bold text-xs text-foreground-secondary">

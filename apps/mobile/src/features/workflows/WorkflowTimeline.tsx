@@ -20,6 +20,7 @@ import Svg, { Circle, Path } from "react-native-svg";
 import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { useInterfaceDirection } from "../../i18n/direction";
 import { cn } from "../../lib/cn";
 
 type StepTone = "working" | "input" | "quiet" | "done" | "failed" | "ended";
@@ -223,7 +224,7 @@ function Rail(props: { readonly first: boolean; readonly last: boolean }) {
       pointerEvents="none"
       className="absolute w-0.5 bg-border"
       style={{
-        left: 9,
+        start: 9,
         top: props.first ? ROW / 2 : 0,
         ...(props.last ? { height: props.first ? 0 : ROW / 2 } : { bottom: 0 }),
       }}
@@ -231,15 +232,21 @@ function Rail(props: { readonly first: boolean; readonly last: boolean }) {
   );
 }
 
+// The branch curves are drawn left to right, so RTL flips them onto the mirrored rail.
+function useBranchMirror() {
+  return useInterfaceDirection() === "rtl" ? { transform: [{ scaleX: -1 }] } : null;
+}
+
 /** Where a fork leaves the rail under its mark, and where it rejoins below its last step. */
 function BranchOut(props: { readonly palette: Palette }) {
+  const mirror = useBranchMirror();
   return (
     <Svg
       pointerEvents="none"
       width={32}
       height={24}
       viewBox="0 0 32 24"
-      style={[styles.absolute, { left: 9, top: ROW / 2 + 10 }]}
+      style={[styles.absolute, { start: 9, top: ROW / 2 + 10 }, mirror]}
     >
       <Path
         d="M1 0V3Q1 10 8 10H23Q30 10 30 17V24"
@@ -252,6 +259,7 @@ function BranchOut(props: { readonly palette: Palette }) {
 }
 
 function BranchBack(props: { readonly palette: Palette }) {
+  const mirror = useBranchMirror();
   return (
     <>
       <Svg
@@ -259,7 +267,7 @@ function BranchBack(props: { readonly palette: Palette }) {
         width={32}
         height={16}
         viewBox="0 0 32 16"
-        style={[styles.absolute, { left: 9, top: SUB_ROW / 2 }]}
+        style={[styles.absolute, { start: 9, top: SUB_ROW / 2 }, mirror]}
       >
         <Path
           d="M30 0Q30 8 23 8H8Q1 8 1 15V16"
@@ -271,7 +279,7 @@ function BranchBack(props: { readonly palette: Palette }) {
       <View
         pointerEvents="none"
         className="absolute w-0.5 bg-border"
-        style={{ left: 9, top: SUB_ROW, bottom: 0 }}
+        style={{ start: 9, top: SUB_ROW, bottom: 0 }}
       />
     </>
   );
@@ -280,7 +288,7 @@ function BranchBack(props: { readonly palette: Palette }) {
 const styles = StyleSheet.create({
   absolute: { position: "absolute" },
   // The dot's slot puts its centre on the branch, 39pt in.
-  dotSlot: { width: 20, marginLeft: 29, alignItems: "center", justifyContent: "center" },
+  dotSlot: { width: 20, marginStart: 29, alignItems: "center", justifyContent: "center" },
 });
 
 /**
@@ -500,7 +508,7 @@ export function WorkflowTimeline(props: {
                         pointerEvents="none"
                         className="absolute w-0.5 bg-border"
                         style={{
-                          left: 38,
+                          start: 38,
                           top: first ? SUB_ROW / 2 : 0,
                           ...(last ? { height: SUB_ROW / 2 } : { bottom: 0 }),
                         }}
@@ -607,8 +615,8 @@ export function WorkflowTimeline(props: {
       {ended ? null : (
         <View
           pointerEvents="none"
-          className="h-5 w-0 border-l-2 border-dashed border-border"
-          style={{ marginLeft: 9 }}
+          className="h-5 w-0 border-s-2 border-dashed border-border"
+          style={{ marginStart: 9 }}
         />
       )}
     </View>

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { I18nManager, Platform, Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import Animated, {
   useAnimatedStyle,
   useDerivedValue,
@@ -8,6 +8,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { segmentedControlColors } from "./segmentedControlColors";
+import { useInterfaceDirection } from "../../i18n/direction";
 import { AppText } from "./AppText";
 import { useControlTheme } from "./useControlTheme";
 import type { SegmentedControlProps } from "./SegmentedControl.types";
@@ -23,7 +24,7 @@ export function SegmentedControl<Value extends string | number>(
   const reduceMotion = useReducedMotion();
   const selectedIndex = props.options.findIndex((option) => option.value === props.selected);
   const segmentWidth = props.options.length ? Math.max(0, width - 6) / props.options.length : 0;
-  const direction = I18nManager.isRTL ? -1 : 1;
+  const direction = useInterfaceDirection() === "rtl" ? -1 : 1;
   // The index animates, not the offset, so a resize moves the selection without sliding it.
   const selectedPosition = useDerivedValue(() =>
     withTiming(selectedIndex, { duration: reduceMotion ? 0 : 160 }),

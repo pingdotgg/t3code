@@ -35,27 +35,31 @@ export function MiddleTruncate({
         "inline-flex min-w-0 max-w-full overflow-hidden whitespace-nowrap",
         variant === "cap-aligned" &&
           // Padding keeps descenders inside the box, so the cut does not clip them.
-          "overflow-x-clip overflow-y-visible [&>span]:[text-box:trim-both_cap_alphabetic] [&>span]:-mb-1 [&>span]:pb-1 [&>span]:overflow-x-clip [&>span]:overflow-y-visible",
+          "overflow-x-clip overflow-y-visible [&>span>span]:[text-box:trim-both_cap_alphabetic] [&>span>span]:-mb-1 [&>span>span]:pb-1 [&>span>span]:overflow-x-clip [&>span>span]:overflow-y-visible",
         className,
       )}
       {...props}
     >
-      {split ? (
-        <>
-          {/* The tail carries the ellipsis so it sits flush; a CSS ellipsis leaves a ragged gap. */}
-          <span ref={headRef} className="peer min-w-0 overflow-hidden whitespace-pre">
-            {split.head}
+      {/* The value sets its own order, so a branch keeps head before tail in an RTL row,
+          while the outer box still aligns to the row's start. */}
+      <span dir="auto" className="inline-flex min-w-0 max-w-full">
+        {split ? (
+          <>
+            {/* The tail carries the ellipsis so it sits flush; a CSS ellipsis leaves a ragged gap. */}
+            <span ref={headRef} className="peer min-w-0 overflow-hidden whitespace-pre">
+              {split.head}
+            </span>
+            <span className="shrink-0 whitespace-pre peer-data-overflow:before:content-['…']">
+              {split.tail}
+            </span>
+          </>
+        ) : (
+          // Keyed so React does not reuse the head node and its imperative clip.
+          <span key="whole" className="min-w-0 truncate">
+            {value}
           </span>
-          <span className="shrink-0 whitespace-pre peer-data-overflow:before:content-['…']">
-            {split.tail}
-          </span>
-        </>
-      ) : (
-        // Keyed so React does not reuse the head node and its imperative clip.
-        <span key="whole" className="min-w-0 truncate">
-          {value}
-        </span>
-      )}
+        )}
+      </span>
     </span>
   );
 }
@@ -71,8 +75,8 @@ function scheduleFit(head: HTMLElement) {
 }
 
 // An overflowing head is cut after its last whole character: clip the partial glyph
-// and slide the tail left over the slack. Neither changes layout, so the observed
-// size stays the true available width.
+// and slide the tail toward the head over the slack. Neither changes layout, so the
+// observed size stays the true available width.
 function fitPendingHeads() {
   const heads = [...pendingFits].filter((head) => head.isConnected);
   pendingFits.clear();
@@ -80,24 +84,32 @@ function fitPendingHeads() {
     (head) => head.scrollWidth > head.clientWidth && head.firstChild instanceof Text,
   );
   heads.forEach((head, index) => head.toggleAttribute("data-overflow", overflowing[index]));
-  const slacks = heads.map((head, index) => (overflowing[index] ? measureSlack(head) : 0));
+  const rtl = heads.map((head) => getComputedStyle(head).direction === "rtl");
+  const slacks = heads.map((head, index) =>
+    overflowing[index] ? measureSlack(head, rtl[index]!) : 0,
+  );
   heads.forEach((head, index) => {
     const slack = slacks[index]!;
-    head.style.clipPath = slack > 0 ? `inset(-0.25em ${slack}px -0.25em 0)` : "";
+    const isRtl = rtl[index]!;
+    head.style.clipPath =
+      slack > 0 ? `inset(-0.25em ${isRtl ? 0 : slack}px -0.25em ${isRtl ? slack : 0}px)` : "";
     const tail = head.nextElementSibling;
-    if (tail instanceof HTMLElement) tail.style.translate = slack > 0 ? `-${slack}px 0` : "";
+    if (tail instanceof HTMLElement) {
+      tail.style.translate = slack > 0 ? `${isRtl ? slack : -slack}px 0` : "";
+    }
   });
 }
 
-function measureSlack(head: HTMLElement) {
+function measureSlack(head: HTMLElement, isRtl: boolean) {
   const text = head.firstChild as Text;
   const range = document.createRange();
-  const left = head.getBoundingClientRect().left;
+  const box = head.getBoundingClientRect();
   const width = head.clientWidth;
   const widthTo = (end: number) => {
     range.setStart(text, 0);
     range.setEnd(text, end);
-    return range.getBoundingClientRect().right - left;
+    const rect = range.getBoundingClientRect();
+    return isRtl ? box.right - rect.left : rect.right - box.left;
   };
   let fits = 0;
   let over = text.length;

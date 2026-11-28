@@ -58,13 +58,14 @@ function BreadcrumbLabel(props: {
     <SharedTooltipTrigger
       render={
         <span
+          dir="ltr"
           className={cn(
             "block max-w-40 truncate rounded-sm px-0.5",
             props.current ? "font-medium text-foreground" : "text-muted-foreground",
           )}
         />
       }
-      label={props.pathLabel}
+      label={<bdi dir="ltr">{props.pathLabel}</bdi>}
     >
       {props.label}
     </SharedTooltipTrigger>
@@ -110,7 +111,9 @@ function BreadcrumbMenuContent(props: {
       align="start"
       side="bottom"
       onKeyDown={(event) => {
-        if (event.key !== "ArrowLeft" || !canGoBack || parentPath === null) return;
+        const backKey =
+          getComputedStyle(event.currentTarget).direction === "rtl" ? "ArrowRight" : "ArrowLeft";
+        if (event.key !== backKey || !canGoBack || parentPath === null) return;
         event.preventDefault();
         event.stopPropagation();
         props.onDirectoryChange(parentPath);
@@ -119,7 +122,7 @@ function BreadcrumbMenuContent(props: {
       {canGoBack && parentPath !== null ? (
         <>
           <MenuItem closeOnClick={false} onClick={() => props.onDirectoryChange(parentPath)}>
-            <ArrowLeftIcon />
+            <ArrowLeftIcon className="rtl:rotate-180" />
             <span className="truncate">
               <T>
                 Back to <Var>{pathLabel(parentPath, props.projectName)}</Var>
@@ -168,14 +171,15 @@ function BreadcrumbMenuContent(props: {
                   <SharedTooltipTrigger
                     render={
                       <span
+                        dir="ltr"
                         className={cn(
                           "min-w-0 flex-1 truncate",
                           entry.ignored && "text-muted-foreground",
                         )}
                       />
                     }
-                    label={entry.path}
-                    side="right"
+                    label={<bdi dir="ltr">{entry.path}</bdi>}
+                    side="inline-end"
                   >
                     {entry.label}
                   </SharedTooltipTrigger>
@@ -188,7 +192,7 @@ function BreadcrumbMenuContent(props: {
                   onClick={() => props.onDirectoryChange(entry.path)}
                 >
                   {row}
-                  <ChevronRightIcon />
+                  <ChevronRightIcon className="rtl:rotate-180" />
                 </MenuItem>
               ) : (
                 <MenuRadioItem
@@ -255,7 +259,7 @@ function FolderContentsMenu(props: FileBreadcrumbsProps & { readonly crumb: File
           />
         }
       >
-        <ChevronRightIcon className="size-3.5" />
+        <ChevronRightIcon className="size-3.5 rtl:rotate-180" />
       </MenuTrigger>
       {open ? (
         <BreadcrumbMenuContent
@@ -289,14 +293,16 @@ function FolderBreadcrumb(props: {
           type="button"
           onClick={() => props.onNavigate(props.crumb.path)}
           className={cn(
-            "relative block max-w-40 cursor-pointer rounded-sm px-0.5 text-left outline-none pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-3 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+            "relative block max-w-40 cursor-pointer rounded-sm px-0.5 text-start outline-none pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-3 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
             props.descendant ? "text-muted-foreground/70" : "text-muted-foreground",
           )}
         />
       }
-      label={props.crumb.path || props.projectName}
+      label={<bdi dir="ltr">{props.crumb.path || props.projectName}</bdi>}
     >
-      <span className="block truncate">{props.crumb.label}</span>
+      <span dir="ltr" className="block truncate">
+        {props.crumb.label}
+      </span>
     </SharedTooltipTrigger>
   );
 }
@@ -342,7 +348,7 @@ export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
               {index === breadcrumbs.length - 1 ? null : hostPath ? (
                 <ChevronRightIcon
                   aria-hidden
-                  className="mx-1 size-3.5 shrink-0 text-muted-foreground/60"
+                  className="mx-1 size-3.5 shrink-0 text-muted-foreground/60 rtl:rotate-180"
                 />
               ) : (
                 <FolderContentsMenu {...props} crumb={crumb} />

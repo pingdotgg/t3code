@@ -9,6 +9,7 @@ import { filePreviewKey } from "../../lib/filePreviewGallery";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { ForwardChevron } from "../../components/ui/ForwardChevron";
 import { useFullscreenVideoOpen, useMediaAudioSessionHold } from "../../lib/videoAudioSession";
 import { useRefreshAssetUrl } from "../../state/assets";
 import { ThreadMediaRetainContext, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
@@ -53,7 +54,7 @@ function FileCardHeader(props: PreviewProps) {
             : gt("Audio")}
         </Text>
       </View>
-      <SymbolView name="chevron.right" size={12} tintColorClassName="accent-foreground-muted" />
+      <ForwardChevron size={12} tintColorClassName="accent-foreground-muted" />
     </Pressable>
   );
 }

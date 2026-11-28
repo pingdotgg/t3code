@@ -346,6 +346,7 @@
   "cbba2216dafdd91d": "{count, plural, other {已发送附件 {count} 次}}",
   "f6589d3539e5e4b0": "{count, plural, other {尝试发送附件 {count} 次}}",
   "bba19d414974a12c": "已关联 PR",
+  "4eb908d895a28c5f": "已关联 PR",
   "3ab4b1ee5133f899": "尝试关联 PR",
   "72d699ac25327b32": "{count, plural, other {已关联 {count} 个 pull request }}",
   "c4c26dc511a3e964": "{count, plural, other {尝试关联 {count} 个 PR}}",

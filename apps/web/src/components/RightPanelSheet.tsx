@@ -1,6 +1,8 @@
+import { useDirection } from "@base-ui/react/direction-provider";
 import { T } from "gt-react";
 import { type ReactNode } from "react";
 
+import { useWindowControlsInsetStyle } from "../windowControlsInset";
 import { Sheet, SheetHeader, SheetPopup, SheetTitle } from "./ui/sheet";
 
 export function RightPanelSheet(props: {
@@ -9,6 +11,8 @@ export function RightPanelSheet(props: {
   open: boolean;
   onClose: () => void;
 }) {
+  const direction = useDirection();
+  const windowControlsInsetStyle = useWindowControlsInsetStyle();
   return (
     <Sheet
       open={props.open}
@@ -23,8 +27,9 @@ export function RightPanelSheet(props: {
     >
       <SheetPopup
         transitionDurationMs={props.animationDurationMs}
-        side="right"
+        side={direction === "rtl" ? "left" : "right"}
         showCloseButton={false}
+        style={windowControlsInsetStyle}
         keepMounted
         className="w-[min(42vw,28rem)] min-w-80 max-w-[28rem] max-[760px]:w-[min(88vw,24rem)] max-[760px]:min-w-0 wco:mt-(--workspace-topbar-height) wco:h-[calc(100%-var(--workspace-topbar-height))] wco:max-h-[calc(100%-var(--workspace-topbar-height))]"
       >

@@ -38,27 +38,27 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
   let onCompose = EventDispatcher()
   private let tabBar = WorkspaceTabBar()
   private let composeButton = UIButton(type: .system)
-  private lazy var tabBarTrailing = tabBar.trailingAnchor.constraint(equalTo: trailingAnchor)
+  private lazy var tabBarLeft = tabBar.leftAnchor.constraint(equalTo: leftAnchor)
+  private lazy var tabBarRight = tabBar.rightAnchor.constraint(equalTo: rightAnchor)
   private var itemsByTab: [String: UITabBarItem] = [:]
   var tabs = ["threads", "pullRequests", "issues", "usage", "settings"] {
     didSet { if tabs != oldValue { updateItems() } }
   }
   var selectedTab = "threads" { didSet { updateSelection() } }
   var selectedColor: UIColor = .systemBlue { didSet { tabBar.tintColor = selectedColor } }
+  var rightToLeft = false {
+    didSet { if rightToLeft != oldValue { updateLayoutDirection() } }
+  }
   var compact = false {
-    didSet {
-      tabBarTrailing.constant = showsCompose ? (compact ? -64 : -76) : 0
-      tabBar.setNeedsLayout()
-    }
+    didSet { updateTabBarLayout() }
   }
   var showsCompose = false {
     didSet {
       composeButton.isHidden = !showsCompose
-      tabBarTrailing.constant = showsCompose ? (compact ? -64 : -76) : 0
       setNeedsLayout()
       // JS moves this view's edge by the same amount, so the bar keeps its frame and won't lay
       // itself out; compose is placed only from that layout.
-      tabBar.setNeedsLayout()
+      updateTabBarLayout()
     }
   }
   var appearance = "light" {
@@ -77,8 +77,8 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
     tabBar.translatesAutoresizingMaskIntoConstraints = false
     addSubview(tabBar)
     NSLayoutConstraint.activate([
-      tabBar.leadingAnchor.constraint(equalTo: leadingAnchor),
-      tabBarTrailing,
+      tabBarLeft,
+      tabBarRight,
       tabBar.bottomAnchor.constraint(equalTo: bottomAnchor),
     ])
     // UIKit's floating row changes with window geometry. Follow its laid-out items
@@ -88,6 +88,7 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
     composeButton.addAction(UIAction { [weak self] _ in self?.onCompose() }, for: .touchUpInside)
     composeButton.isHidden = true
     addSubview(composeButton)
+    updateLayoutDirection()
     configureCompose()
     prepareItems()
     updateItems()
@@ -137,11 +138,31 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
     updateSelection()
   }
 
+  private func updateLayoutDirection() {
+    let direction: UISemanticContentAttribute = rightToLeft ? .forceRightToLeft : .forceLeftToRight
+    let layout: UITraitEnvironmentLayoutDirection = rightToLeft ? .rightToLeft : .leftToRight
+    semanticContentAttribute = direction
+    tabBar.semanticContentAttribute = direction
+    if #available(iOS 17.0, *), tabBar.traitCollection.layoutDirection != layout {
+      tabBar.traitOverrides.layoutDirection = layout
+    }
+    setNeedsLayout()
+    updateTabBarLayout()
+  }
+
+  private func updateTabBarLayout() {
+    let composeSpace: CGFloat = showsCompose ? (compact ? 64 : 76) : 0
+    tabBarLeft.constant = rightToLeft ? composeSpace : 0
+    tabBarRight.constant = rightToLeft ? 0 : -composeSpace
+    tabBar.setNeedsLayout()
+  }
+
   private func layoutCompose(alongside frame: CGRect) {
     guard showsCompose, frame.height > 0 else { return }
     let row = convert(frame, from: tabBar)
     let size = row.height + 8
-    composeButton.frame = CGRect(x: row.maxX + 16, y: row.midY - size / 2, width: size, height: size)
+    let x = rightToLeft ? row.minX - 16 - size : row.maxX + 16
+    composeButton.frame = CGRect(x: x, y: row.midY - size / 2, width: size, height: size)
   }
 
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {

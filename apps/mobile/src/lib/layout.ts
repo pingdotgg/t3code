@@ -172,20 +172,23 @@ export interface VerticalHinge {
 
 /**
  * Moves the list/detail split onto a book-posture hinge so neither pane straddles the crease.
- * `leadingWidth` is chrome left of the list pane, such as the Android navigation rail.
+ * `leadingWidth` is chrome before the list pane, such as the Android navigation rail.
  */
 export function alignListPaneToHinge(input: {
   readonly layout: Layout;
   readonly hinge: VerticalHinge | null;
   readonly viewportWidth: number;
   readonly leadingWidth: number;
+  readonly isRTL: boolean;
 }): Layout {
   const { layout, hinge } = input;
   if (!hinge || !layout.usesSplitView) return layout;
-  const listPaneWidth = hinge.x - input.leadingWidth;
+  // The hinge is measured from the left edge, but an RTL row starts at the right.
+  const hingeStart = input.isRTL ? input.viewportWidth - hinge.x - hinge.width : hinge.x;
+  const listPaneWidth = hingeStart - input.leadingWidth;
   if (
     listPaneWidth < SPLIT_SIDEBAR_MIN_WIDTH ||
-    input.viewportWidth - hinge.x - hinge.width < 320
+    input.viewportWidth - hingeStart - hinge.width < 320
   ) {
     return layout;
   }

@@ -143,7 +143,6 @@ const THREAD_FOLDER = "__thread_folder__";
 const NO_GIT_REPOSITORIES: ReturnType<typeof threadChangedRepositories> = Object.freeze([]);
 const NO_TURN_DIFF_SECTIONS: ReadonlyArray<TurnDiffSection> = [];
 const DIFF_FILE_TREE_STORAGE_KEY = "t3code.diffFileTreeOpen";
-
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
 
 function DiffFileCollapseToggle({
@@ -1121,7 +1120,7 @@ export default function DiffPanel({
                               Turn <Var>{turnCount}</Var>
                             </T>
                           </span>
-                          <span className="ml-auto text-xs tabular-nums text-muted-foreground">
+                          <span className="ms-auto text-xs tabular-nums text-muted-foreground">
                             {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
                           </span>
                         </span>
@@ -1166,12 +1165,14 @@ export default function DiffPanel({
                                 closeOnClick
                               />
                             }
-                            label={commit.subject}
-                            side="right"
+                            label={<span dir="auto">{commit.subject}</span>}
+                            side="inline-end"
                             className="max-w-80"
                           >
                             <span className="flex items-center gap-3">
-                              <span className="min-w-0 flex-1 truncate">{commit.subject}</span>
+                              <span dir="auto" className="min-w-0 flex-1 truncate text-start">
+                                {commit.subject}
+                              </span>
                               <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                                 {formatRelativeTimeLabel(commit.committedAt, undefined, messages)}
                               </span>
@@ -1296,7 +1297,7 @@ export default function DiffPanel({
                     <span className="flex min-w-0 items-center gap-3">
                       <span className="min-w-0 truncate">{section.name}</span>
                       {section.relativePath !== "" && section.relativePath !== section.name ? (
-                        <span className="ml-auto min-w-0 truncate text-xs text-muted-foreground">
+                        <span className="ms-auto min-w-0 truncate text-xs text-muted-foreground">
                           {section.relativePath}
                         </span>
                       ) : null}
@@ -1324,7 +1325,7 @@ export default function DiffPanel({
                 }
               >
                 <span className="min-w-0 max-w-48 truncate">{comparisonHeadRef}</span>
-                <ArrowRightIcon className="size-3.5 shrink-0 opacity-70" />
+                <ArrowRightIcon className="size-3.5 shrink-0 opacity-70 rtl:rotate-180" />
               </TooltipTrigger>
               <TooltipPopup side="top">
                 {`${comparisonHeadRef} → ${comparisonBaseRef}`}
@@ -1373,7 +1374,7 @@ export default function DiffPanel({
                     <span>
                       <T context="git branch">Branch</T>
                     </span>
-                    <span className="text-right">
+                    <span className="text-end">
                       <T context="git remote">Remote</T>
                     </span>
                   </div>
@@ -1461,7 +1462,7 @@ export default function DiffPanel({
             <DiffStatLabel
               additions={diffLineStat.additions}
               deletions={diffLineStat.deletions}
-              className="mr-1 text-2xs"
+              className="me-1 text-2xs"
               layout="inline"
             />
           </span>
