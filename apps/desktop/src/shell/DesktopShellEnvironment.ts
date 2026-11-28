@@ -123,13 +123,23 @@ const LOGIN_SHELL_ENV_NAMES = [
   "SSL_CERT_DIR",
   "NODE_EXTRA_CA_CERTS",
   "T3CODE_TELEMETRY_ENABLED",
+  "DO_NOT_TRACK",
   "T3CODE_FEATURE_FLAGS",
   "T3CODE_RELEASE_BASE_URL",
   "__MISE_DIFF",
   "JAVA_HOME",
   "PNPM_HOME",
+  "AZURE_CONFIG_DIR",
+  "GH_CONFIG_DIR",
+  "GLAB_CONFIG_DIR",
 ] as const;
-const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
+const WINDOWS_PROFILE_ENV_NAMES = [
+  "PATH",
+  "FNM_DIR",
+  "FNM_MULTISHELL_PATH",
+  "T3CODE_TELEMETRY_ENABLED",
+  "DO_NOT_TRACK",
+] as const;
 const LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
 const ANDROID_SDK_ENV_NAMES = ["ANDROID_HOME", "ANDROID_SDK_ROOT"] as const;
 const FALLBACK_LC_CTYPE = "en_US.UTF-8";
@@ -454,6 +464,11 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
     if (!config.env.FNM_MULTISHELL_PATH && profile.FNM_MULTISHELL_PATH) {
       config.env.FNM_MULTISHELL_PATH = profile.FNM_MULTISHELL_PATH;
     }
+    for (const name of ["T3CODE_TELEMETRY_ENABLED", "DO_NOT_TRACK"] as const) {
+      if (!config.env[name] && profile[name]) {
+        config.env[name] = profile[name];
+      }
+    }
     return Boolean(noProfile.PATH && profile.PATH);
   },
 );
@@ -553,7 +568,12 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       "NODE_EXTRA_CA_CERTS",
       "JAVA_HOME",
       "PNPM_HOME",
+      // Source-control CLIs read their login and defaults from these.
+      "AZURE_CONFIG_DIR",
+      "GH_CONFIG_DIR",
+      "GLAB_CONFIG_DIR",
       "T3CODE_TELEMETRY_ENABLED",
+      "DO_NOT_TRACK",
       "T3CODE_FEATURE_FLAGS",
       "T3CODE_RELEASE_BASE_URL",
     ] as const) {
@@ -661,6 +681,7 @@ const CACHED_ENV_NAMES = [
   "SSL_CERT_DIR",
   "NODE_EXTRA_CA_CERTS",
   "T3CODE_TELEMETRY_ENABLED",
+  "DO_NOT_TRACK",
   // The server reads its flags once at start, before discovery can finish.
   "T3CODE_FEATURE_FLAGS",
 ] as const;

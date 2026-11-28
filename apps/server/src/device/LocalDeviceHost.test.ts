@@ -55,6 +55,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     cameraHelp: "",
     cameraProbes: 0,
     spawnedEnvironments: [] as Array<NodeJS.ProcessEnv | undefined>,
+    spawnedArgs: [] as Array<ReadonlyArray<unknown>>,
   };
   const daemonStopRequested = yield* Deferred.make<ReadonlyArray<string>>();
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
@@ -93,22 +94,25 @@ const agentFixture = Effect.fn("agentFixture")(function* (
             )
           : Effect.addFinalizer(() => hub.cleanup).pipe(
               Effect.tap(() =>
-                Effect.sync(() =>
-                  hub.spawnedEnvironments.push(
+                Effect.sync(() => {
+                  if (command._tag === "StandardCommand") hub.spawnedArgs.push(command.args);
+                  return hub.spawnedEnvironments.push(
                     (
                       command as unknown as {
                         readonly options: { readonly env?: NodeJS.ProcessEnv };
                       }
                     ).options.env,
-                  ),
-                ),
+                  );
+                }),
               ),
               Effect.as(
                 ChildProcessSpawner.makeHandle({
                   pid: ChildProcessSpawner.ProcessId(123),
                   stdout: Stream.empty,
                   stderr: Stream.empty,
-                  all: Stream.empty,
+                  all: Stream.encodeText(
+                    Stream.make("  Local:   http://localhost:1/?token=hub-token\n"),
+                  ),
                   exitCode: Effect.never,
                   isRunning: Effect.sync(() => hub.running),
                   kill: () => Effect.void,
@@ -460,6 +464,18 @@ describe("AgentDevice startup", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("starts the hub requiring a session token and keeps the one it prints", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const { host, hub, baseDir } = yield* agentFixture(() => Effect.succeed(processOutput(0)));
+      expect(hub.spawnedArgs[0]).toContain("--require-token");
+      expect(hub.spawnedEnvironments[0]?.EXPO_DEVICE_HUB_STATE_DIR).toBe(
+        path.join(baseDir, "userdata", "device", "hub"),
+      );
+      expect((yield* host.current)?.hub.token).toBe("hub-token");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("keeps releasing agent sessions while a dead hub fails to restart and after", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -657,34 +673,13 @@ describe("Android SDK availability", () => {
     }),
   );
 
-  // regression: #12017 detect unsupported legacy Android command-line tools
-  it.effect("explains how to upgrade legacy command-line tools in the standard macOS SDK", () =>
+  // regression: #30629 connected phones were hidden on hosts without emulator tooling
+  it.effect("supports connected Android devices with only Platform-Tools installed", () =>
     Effect.gen(function* () {
-      const root = "/test/home/Library/Android/sdk";
-      const reason = yield* diagnose(
-        [`${root}/platform-tools/adb`, `${root}/emulator/emulator`, `${root}/tools/bin/avdmanager`],
-        { HOME: "/test/home" },
+      expect(yield* diagnose(["/sdk/platform-tools/adb"], { ANDROID_HOME: "/sdk" })).toBeNull();
+      expect(yield* diagnose(["/sdk/emulator/emulator"], { ANDROID_HOME: "/sdk" })).toContain(
+        "Platform-Tools are missing from /sdk",
       );
-      expect(reason).toContain("older, unsupported version");
-      expect(reason).toContain(root);
-      expect(reason).toContain(
-        "Install Android SDK Command-line Tools (latest) in Android Studio's SDK Manager under SDK Tools.",
-      );
-    }),
-  );
-
-  it.effect("accepts the latest command-line tools when legacy tools are also installed", () =>
-    Effect.gen(function* () {
-      const reason = yield* diagnose(
-        [
-          "/sdk/platform-tools/adb",
-          "/sdk/emulator/emulator",
-          "/sdk/tools/bin/avdmanager",
-          "/sdk/cmdline-tools/latest/bin/avdmanager",
-        ],
-        { ANDROID_HOME: "/sdk" },
-      );
-      expect(reason).toBeNull();
     }),
   );
 

@@ -21,6 +21,8 @@ import {
   parseSessionUpdateEvent,
 } from "@t3tools/provider-acp/server/runtimeModel";
 import { acpToolCallDiffPatch } from "@t3tools/provider-acp/server/adapter";
+import { acpChangedPathsOfToolCall } from "@t3tools/provider-acp/server/clientPolicy";
+import { MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH, toolOutputImages } from "@t3tools/shared/toolOutput";
 
 const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
 
@@ -73,6 +75,68 @@ describe("native Antigravity subagent tools", () => {
     expect(
       antigravitySubagentOutput({ toolCallId: "trajectory:4", data: { rawOutput: {} } }),
     ).toBeUndefined();
+  });
+
+  it("classifies swarm worker launches and formats legacy swarm board tools cleanly", () => {
+    const addCall = normalizeAntigravityToolCall({
+      toolCallId: "swarm-add-1",
+      title: "Run swarm",
+      kind: "other",
+      status: "completed",
+      data: {
+        rawInput: { action: "add", name: "parser", brief: "Audit parser module" },
+        rawOutput: { status: "added", name: "parser", conversation_id: "child-1" },
+      },
+    });
+    expect(addCall.title).toBe("Add swarm worker @parser");
+    expect(classifyAntigravitySubagentToolCall(addCall, {})).toBe("subagent");
+    expect(
+      classifyAntigravitySubagentToolCall(
+        {
+          toolCallId: "swarm-mcp",
+          title: "Run swarm",
+          kind: "other",
+          data: { rawInput: { action: "add", name: "parser" } },
+        },
+        { update: { _meta: { is_mcp_tool_call: true } } },
+      ),
+    ).toBe("mcp");
+
+    const killCall = normalizeAntigravityToolCall({
+      toolCallId: "swarm-kill-1",
+      title: "Run swarm",
+      kind: "other",
+      data: { rawInput: { action: "kill", name: "parser" } },
+    });
+    expect(killCall.title).toBe("Stop swarm worker @parser");
+    expect(classifyAntigravitySubagentToolCall(killCall, {})).toBeUndefined();
+
+    const postCall = normalizeAntigravityToolCall({
+      toolCallId: "swarm-post-1",
+      title: "Run post_message",
+      kind: "other",
+      data: { rawInput: { channel: "backend", text: "@coordinator done" } },
+    });
+    expect(postCall.title).toBe("Post to #backend");
+    expect(classifyAntigravitySubagentToolCall(postCall, {})).toBeUndefined();
+
+    const readCall = normalizeAntigravityToolCall({
+      toolCallId: "swarm-read-1",
+      title: "Run read_board",
+      kind: "other",
+      data: { rawInput: { since: 1 } },
+    });
+    expect(readCall.title).toBe("Read swarm board");
+    expect(readCall.kind).toBe("other");
+
+    const waitCall = normalizeAntigravityToolCall({
+      toolCallId: "swarm-wait-1",
+      title: "Run swarm_wait",
+      kind: "other",
+      data: { rawInput: { since: 2, wake_on: "mentions" } },
+    });
+    expect(waitCall.title).toBe("Wait for swarm board");
+    expect(waitCall.kind).toBe("think");
   });
 });
 
@@ -612,6 +676,103 @@ describe("Antigravity tool results", () => {
     );
   });
 
+  it("keeps bounded screenshot bytes from T3 MCP tool results", () => {
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
+    const tooLarge = "A".repeat(MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH + 4);
+    const notification = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "shot-1",
+        status: "completed",
+        rawOutput: {
+          content: [
+            { type: "image", mimeType: "image/png", data: png },
+            { type: "image", mimeType: "image/png", data: tooLarge },
+            { type: "text", text: JSON.stringify({ url: "https://example.test/" }) },
+          ],
+        },
+        content: [
+          { type: "content", content: { type: "image", mimeType: "image/png", data: png } },
+        ],
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+    const normalized = normalizeAntigravitySessionUpdate(notification);
+    expect(isSessionNotification(normalized)).toBe(true);
+    const update = parseToolUpdate(normalized).toolCall.data;
+    expect(toolOutputImages(update.rawOutput)).toEqual([
+      { mimeType: "image/png", data: png },
+      { mimeType: "image/png" },
+    ]);
+    expect(normalized.update).toMatchObject({
+      content: [{ type: "content", content: { type: "image", mimeType: "image/png", data: png } }],
+    });
+  });
+
+  const changesBeyondSizeLimits: ReadonlyArray<{
+    readonly part: string;
+    readonly update: Pick<EffectAcpSchema.ToolCallUpdate, "content" | "rawInput">;
+  }> = [
+    {
+      part: "a diff after others whose text uses up the size limit",
+      update: {
+        content: [
+          ...Array.from({ length: 5 }, (_, index) => ({
+            type: "diff" as const,
+            path: `/workspace/a${index}.ts`,
+            newText: "a".repeat(9_000),
+          })),
+          { type: "diff", path: "/elsewhere/b.ts", newText: "b" },
+        ],
+      },
+    },
+    {
+      part: "a diff whose path is longer than the size limit",
+      update: {
+        content: [{ type: "diff", path: `/elsewhere/${"d".repeat(9_000)}/b.ts`, newText: "b" }],
+      },
+    },
+    {
+      part: "a raw input path after text that uses up the size limit",
+      update: {
+        rawInput: {
+          first: "a".repeat(8_000),
+          parts: Array.from({ length: 8 }, () => "a".repeat(8_000)),
+          file_path: "/elsewhere/b.ts",
+        },
+      },
+    },
+    {
+      part: "a raw input path longer than the size limit",
+      update: { rawInput: { path: `/elsewhere/${"d".repeat(9_000)}/b.ts` } },
+    },
+  ];
+  it.each(changesBeyondSizeLimits)(
+    "keeps every path a file change names, or none: $part",
+    ({ update }) => {
+      const notification: EffectAcpSchema.SessionNotification = {
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "edit-1",
+          title: "Edit files",
+          kind: "edit",
+          status: "pending",
+          ...update,
+        },
+      };
+      const sent = acpChangedPathsOfToolCall(update);
+      const normalized = normalizeAntigravitySessionUpdate(notification).update;
+      if (normalized.sessionUpdate !== "tool_call_update") {
+        return expect.unreachable("a tool call update stays one");
+      }
+      const kept = acpChangedPathsOfToolCall(normalized);
+      expect(sent).not.toBe("unknown");
+      if (kept !== "unknown") expect(kept).toEqual(sent);
+    },
+  );
+
   it.each([
     ["/workspace/result.png", "/workspace/result.png"],
     ["C:\\work\\result.png", "C:\\work\\result.png"],
@@ -750,6 +911,62 @@ describe("Antigravity served reads", () => {
       ).toolCall,
     );
     expect(t3Call.data.rawInput).toEqual({ message: "Hello" });
+
+    const proxiedT3Call = normalizeAntigravityToolCall(
+      parseToolUpdate(
+        normalizeAntigravitySessionUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "call_t3_proxy_send",
+            title: "Run mcp_t3-code_tool_call",
+            kind: "other",
+            status: "in_progress",
+            rawInput: {
+              name: "send_to_user",
+              arguments: { message: "Hello", toolSummary: "Nested summary" },
+              toolSummary: "Outer summary",
+            },
+          },
+        }),
+      ).toolCall,
+    );
+    expect(proxiedT3Call.data.rawInput).toEqual({
+      name: "send_to_user",
+      arguments: { message: "Hello" },
+    });
+
+    const callMcpProxiedT3Call = normalizeAntigravityToolCall(
+      parseToolUpdate(
+        normalizeAntigravitySessionUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "call_t3_call_mcp_proxy_send",
+            title: "MCP Tool tool_call",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: {
+              ServerName: "t3-code",
+              ToolName: "tool_call",
+              Arguments: {
+                name: "send_to_user",
+                arguments: { message: "Hello", toolSummary: "Nested summary" },
+                toolSummary: "Outer summary",
+              },
+            },
+          },
+        }),
+      ).toolCall,
+    );
+    expect(callMcpProxiedT3Call.data.rawInput).toEqual({
+      ServerName: "t3-code",
+      ToolName: "tool_call",
+      Arguments: {
+        name: "send_to_user",
+        arguments: { message: "Hello" },
+      },
+    });
 
     const foreignCall = normalizeAntigravityToolCall(
       parseToolUpdate({

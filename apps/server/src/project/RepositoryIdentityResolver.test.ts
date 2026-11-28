@@ -234,6 +234,35 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
+  it.effect("keeps a login embedded in a remote URL out of the identity", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-credentials-test-",
+      });
+
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, [
+        "remote",
+        "add",
+        "origin",
+        "https://me:origin-secret@github.com/me/t3code.git",
+      ]);
+      yield* git(cwd, [
+        "remote",
+        "add",
+        "upstream",
+        "https://x-access-token:upstream-secret@github.com/T3Tools/t3code.git?token=query-secret",
+      ]);
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const identity = yield* resolver.resolve(cwd);
+      expect(identity?.locator.remoteUrl).toBe("https://github.com/T3Tools/t3code.git");
+      expect(identity?.origin?.remoteUrl).toBe("https://github.com/me/t3code.git");
+      expect(JSON.stringify(identity)).not.toContain("secret");
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
   it.effect.each(["repo", "repo ", ...lineBreakSuffixes.map((suffix) => `repo${suffix}`)])(
     "returns the git top-level root path when resolving from a nested workspace in %j",
     (rootName) =>

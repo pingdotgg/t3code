@@ -117,8 +117,11 @@ export const MilestoneEvent = Schema.Union([
     ...WorkflowRunFields,
     type: Schema.Literal("workflow.input_resolved"),
     step: TrimmedNonEmptyString,
-    /** `cancelled` when the run ended with the question still open. */
-    resolution: Schema.Literals(["answered", "expired", "cancelled"]),
+    /**
+     * `cancelled` when the run ended with the question still open; `withdrawn` when it was ended
+     * unanswered from outside while the run went on.
+     */
+    resolution: Schema.Literals(["answered", "expired", "withdrawn", "cancelled"]),
   }),
   Schema.Struct({
     ...MilestoneEnvelope.fields,

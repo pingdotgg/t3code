@@ -14,6 +14,7 @@ import {
   pendingDraftBranchNeedsRefs,
   resolvePendingDraftBranch,
 } from "./pending-new-tasks-model";
+import type { DraftComposerFileAttachment } from "../lib/composerImages";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 import type { ComposerDraft, ComposerDraftWorkspaceSelection } from "./use-composer-drafts";
 
@@ -140,6 +141,45 @@ describe("buildPendingNewTasks", () => {
     expect(tasks).toHaveLength(5);
     expect(new Set(tasks.map((task) => task.environmentId))).toEqual(
       new Set(["syncing", "read-only", "retrying", "offline", "sending"]),
+    );
+  });
+
+  it("titles an offline attachment-only creation by its attachment count", () => {
+    const file = (id: string): DraftComposerFileAttachment => ({
+      id,
+      type: "file",
+      name: `${id}.txt`,
+      mimeType: "text/plain",
+      sizeBytes: 1,
+      fileUri: `file:///${id}.txt`,
+    });
+    const offline = (id: string, text: string, attachments: DraftComposerFileAttachment[]) => ({
+      ...queuedCreation("offline"),
+      messageId: MessageId.make(id),
+      text,
+      attachments,
+    });
+    const tasks = buildPendingNewTasks({
+      queuedMessages: [
+        offline("one", "", [file("a")]),
+        offline("two", "", [file("a"), file("b")]),
+        offline("text", "Fix the build", [file("a"), file("b")]),
+      ],
+      drafts: {},
+      sendGate: {
+        connectedEnvironmentIds: new Set(),
+        operableEnvironmentIds: new Set(),
+        shellStatuses: new Map(),
+        retryingMessageIds: {},
+      },
+    });
+
+    expect(new Map(tasks.map((task) => [task.key, task.title]))).toEqual(
+      new Map([
+        ["pending-task:one", "1 attachment"],
+        ["pending-task:two", "2 attachments"],
+        ["pending-task:text", "Fix the build"],
+      ]),
     );
   });
 });

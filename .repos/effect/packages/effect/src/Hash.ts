@@ -11,8 +11,8 @@
  * @since 2.0.0
  */
 import { dual } from "./Function.ts"
-import { bufferBytes, byReferenceInstances, getAllObjectKeys, isArrayBufferLike, viewBytes } from "./internal/equal.ts"
-import { addBackEdge, backEdges } from "./internal/hash.ts"
+import { byReferenceInstances, getAllObjectKeys, objectKind, toBytes } from "./internal/equal.ts"
+import { addBackEdge, backEdges, hashCache } from "./internal/hash.ts"
 import { hasProperty } from "./Predicate.ts"
 
 /**
@@ -117,13 +117,15 @@ export const hash: <A>(self: A) => number = <A>(self: A) => {
     case "object": {
       if (self === null) {
         break
-      } else if (self instanceof Date) {
-        if (Number.isNaN(self.getTime())) {
+      }
+      const kind = objectKind(self)
+      if (kind === 1) {
+        if (Number.isNaN((self as any as Date).getTime())) {
           return string("Invalid Date")
         }
-        return string(self.toISOString())
-      } else if (self instanceof RegExp) {
-        return string(self.toString())
+        return string((self as any as Date).toISOString())
+      } else if (kind === 2) {
+        return string((self as any as RegExp).toString())
       } else {
         if (byReferenceInstances.has(self)) {
           return random(self)
@@ -144,17 +146,15 @@ export const hash: <A>(self: A) => number = <A>(self: A) => {
             h = (self as Hash)[symbol]()
           } else if (typeof self === "function") {
             h = random(self)
-          } else if (isArrayBufferLike(self)) {
-            const bytes = bufferBytes(self)
-            h = bytes === undefined ? random(self) : array(bytes)
-          } else if (self instanceof DataView) {
-            h = array(viewBytes(self))
-          } else if (Array.isArray(self) || ArrayBuffer.isView(self)) {
-            h = array(self as any)
-          } else if (self instanceof Map) {
-            h = hashMap(self)
-          } else if (self instanceof Set) {
-            h = hashSet(self)
+          } else if (kind >= 7) {
+            const bytes = toBytes(self as any, kind)
+            h = bytes === undefined ? random(self) : hashIndexed(bytes)
+          } else if (kind >= 5) {
+            h = hashIndexed(self as any)
+          } else if (kind === 3) {
+            h = hashMap(self as any)
+          } else if (kind === 4) {
+            h = hashSet(self as any)
           } else {
             h = structure(self)
           }
@@ -203,10 +203,11 @@ export const hash: <A>(self: A) => number = <A>(self: A) => {
  * @since 2.0.0
  */
 export const random: <A extends object>(self: A) => number = (self) => {
-  if (!randomHashCache.has(self)) {
-    randomHashCache.set(self, optimize((Math.random() * 0x100000000) | 0))
+  let h = randomHashCache.get(self)
+  if (h === undefined) {
+    randomHashCache.set(self, h = optimize((Math.random() * 0x100000000) | 0))
   }
-  return randomHashCache.get(self)!
+  return h
 }
 
 // 32-bit MurmurHash3 finalizer.
@@ -518,6 +519,14 @@ export const array = <A>(arr: Iterable<A>): number => {
   return optimize(h)
 }
 
+const hashIndexed = (arr: ArrayLike<unknown>): number => {
+  let h = 6151
+  for (let i = 0; i < arr.length; i++) {
+    h = combine(h, hash(arr[i]))
+  }
+  return optimize(h)
+}
+
 const hashMap: <K, V>(map: Iterable<readonly [K, V]>) => number = unordered(
   string("Map"),
   ([k, v]) => combine(hash(k), hash(v))
@@ -526,5 +535,4 @@ const setSeed = string("Set")
 const hashSet: <A>(set: Iterable<A>) => number = unordered(setSeed, (element) => combine(setSeed, hash(element)))
 
 const randomHashCache = new WeakMap<any, number>()
-const hashCache = new WeakMap<object, number>()
 const visitedObjects = new WeakSet<object>()

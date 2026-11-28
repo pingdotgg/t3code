@@ -19,6 +19,23 @@ describe("browser target resolver", () => {
     ).toBe("http://localhost:5173");
   });
 
+  it("refuses a system-browser localhost URL the client has no route to", async () => {
+    const { resolveReachableExternalServerUrl } = await import("./browserTargetResolver");
+    const environmentId = EnvironmentId.make("environment-1");
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://relay.example.com" });
+    expect(() =>
+      resolveReachableExternalServerUrl(environmentId, "http://localhost:3000/docs"),
+    ).toThrow();
+    readPreparedConnection.mockReturnValue(undefined);
+    expect(() =>
+      resolveReachableExternalServerUrl(environmentId, "http://localhost:3000/docs"),
+    ).toThrow();
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://192.168.1.25:3773" });
+    expect(
+      resolveReachableExternalServerUrl(environmentId, "http://localhost:3000/docs?x=1#top"),
+    ).toBe("http://192.168.1.25:3000/docs?x=1#top");
+  });
+
   it("normalizes schemeless localhost server-picker values", async () => {
     readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://localhost:3773" });
     const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");

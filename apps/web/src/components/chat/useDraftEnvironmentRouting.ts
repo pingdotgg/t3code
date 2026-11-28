@@ -10,6 +10,7 @@ import {
   type ProviderDriverKind,
   ProviderInstanceId,
   resolveProjectProviderInstanceEnabled,
+  type ScopedProjectRef,
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 import {
@@ -24,6 +25,7 @@ import {
 import { isTriagePrompt, replaceTriagePlaybookLink } from "@t3tools/shared/triagePrompt";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { shallow } from "zustand/shallow";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -32,12 +34,16 @@ import {
 import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { type EnvironmentPresentation, useEnvironmentProviders } from "../../state/environments";
 import { currentClientMetadata } from "../../connection/platform";
-import { useProjects } from "../../state/entities";
+import { readProject, readProjects, subscribeProjects, useProjects } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { DraftSessionState } from "../../composerDraftStore";
 import { loadBalancingSendWarning } from "./composerSend.logic";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { retargetDraftWorkspace } from "../../lib/retargetDraftWorkspace";
+import { trackPendingWorkspaceDefault } from "../../lib/draftWorkspaceDefaults";
+import { vcsEnvironment } from "../../state/vcs";
+import { resolveDefaultWorktreeBaseBranch } from "../BranchToolbar.logic";
 import { seedDraftModelSelection } from "../../lib/seedDraftModelSelection";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
 
@@ -76,6 +82,17 @@ function carryFanoutSelections(
   );
 }
 
+// A send waits on this; a read stuck on a reconnecting machine falls back to no project file.
+function readDestinationWorkspace(draft: DraftSessionState, projectRef: ScopedProjectRef) {
+  return retargetDraftWorkspace(draft, projectRef, AbortSignal.timeout(5_000));
+}
+
+function changesProject(draft: DraftSessionState, projectRef: ScopedProjectRef) {
+  return (
+    draft.environmentId !== projectRef.environmentId || draft.projectId !== projectRef.projectId
+  );
+}
+
 /**
  * Which machine an unsent draft runs on: automatic load balancing across the
  * project's machines, or a manual switch, which may first open a scratch
@@ -111,6 +128,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     (store) => store.setLogicalProjectDraftThreadId,
   );
   const allProjects = useProjects();
+  const readRefs = useAtomCommand(vcsEnvironment.readRefs, { reportFailure: false });
   const { openScratchProject } = useScratchProject();
   const needsLoadBalancing = automaticEnvironment && !draftThread?.loadBalancedEnvironmentId;
   const loadBalancingCandidates = automaticEnvironment
@@ -150,7 +168,38 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     needsLoadBalancing ? loadBalancingCandidates : [],
     loadBalancingSettings.loadBalancingWeights,
   );
+  const mountedRoutingScope = useRef<object | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates send preparation when the draft or project scope closes
+  useLayoutEffect(() => {
+    mountedRoutingScope.current = { draftId, activeProjectKey };
+    return () => {
+      mountedRoutingScope.current = null;
+    };
+  }, [draftId, activeProjectKey]);
   const readRouting = useStableCallback(() => ({ input, loadBalancingCandidates }));
+  const readWorktreeBase = async (projectRef: ScopedProjectRef, branch: string | null) => {
+    const cwd = readProject(projectRef)?.workspaceRoot;
+    if (!cwd) return null;
+    const { environmentId } = projectRef;
+    const call = { signal: AbortSignal.timeout(5_000) };
+    if (branch) {
+      let cursor: number | undefined;
+      do {
+        const matching = await readRefs(
+          {
+            environmentId,
+            input: { cwd, query: branch.slice(0, 256), cursor, includeMatchingRemoteRefs: true },
+          },
+          call,
+        );
+        if (matching._tag !== "Success") break;
+        if (matching.value.refs.some((ref) => ref.name === branch)) return branch;
+        cursor = matching.value.nextCursor ?? undefined;
+      } while (cursor !== undefined && !call.signal.aborted);
+    }
+    const result = await readRefs({ environmentId, input: { cwd, limit: 2 } }, call);
+    return result._tag === "Success" ? resolveDefaultWorktreeBaseBranch(result.value.refs) : null;
+  };
   const refreshBeforeSend = () => {
     if (
       !automaticEnvironment ||
@@ -161,23 +210,42 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     )
       return null;
     const originalDraft = getDraftSession(draftId);
+    const scope = mountedRoutingScope.current;
+    if (!originalDraft || !scope) return null;
     const composerDraft = useComposerDraftStore.getState().getComposerDraft(draftId);
-    return loadBalancing.refreshSelection(loadBalancingCandidates).then((environmentId) => {
+    const readCurrentRouting = () => {
       const current = readRouting();
-      if (
-        current.input.draftId !== draftId ||
-        !current.input.automaticEnvironment ||
-        current.input.composerHasAttachments ||
-        current.input.activeProjectKey !== activeProjectKey ||
-        current.input.selectedProvider !== selectedProvider ||
-        current.input.activeProviderInstanceId !== activeProviderInstanceId ||
-        current.input.loadBalancingSettings.loadBalancingWeights !==
-          loadBalancingSettings.loadBalancingWeights ||
-        current.loadBalancingCandidates.join("\n") !== loadBalancingCandidates.join("\n") ||
-        getDraftSession(draftId) !== originalDraft ||
-        useComposerDraftStore.getState().getComposerDraft(draftId) !== composerDraft
-      )
-        return false;
+      const latestDraft = getDraftSession(draftId);
+      const draftMatches =
+        latestDraft === originalDraft ||
+        // The picker may fill an empty base while any of the routing reads are pending.
+        // Its automatic write keeps the routing mode; a manual pick switches it to manual.
+        (originalDraft.envMode === "worktree" &&
+          originalDraft.branch === null &&
+          latestDraft?.branch != null &&
+          shallow(latestDraft, {
+            ...originalDraft,
+            branch: latestDraft.branch,
+            environmentSelection: originalDraft.environmentSelection ?? "auto",
+          }));
+      return mountedRoutingScope.current === scope &&
+        current.input.draftId === draftId &&
+        current.input.automaticEnvironment &&
+        !current.input.composerHasAttachments &&
+        current.input.activeProjectKey === activeProjectKey &&
+        current.input.selectedProvider === selectedProvider &&
+        current.input.activeProviderInstanceId === activeProviderInstanceId &&
+        current.input.loadBalancingSettings.loadBalancingWeights ===
+          loadBalancingSettings.loadBalancingWeights &&
+        current.loadBalancingCandidates.join("\n") === loadBalancingCandidates.join("\n") &&
+        draftMatches &&
+        useComposerDraftStore.getState().getComposerDraft(draftId) === composerDraft
+        ? current
+        : null;
+    };
+    return loadBalancing.refreshSelection(loadBalancingCandidates).then(async (environmentId) => {
+      const current = readCurrentRouting();
+      if (!current) return false;
       const target = current.input.logicalProjectEnvironments.find(
         (candidate) => candidate.environmentId === environmentId,
       );
@@ -193,43 +261,118 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         return false;
       }
       const projectRef = scopeProjectRef(target.environmentId, target.projectId);
-      if (originalDraft) carryFanoutSelections(originalDraft, target.environmentId);
+      const moved = changesProject(originalDraft, projectRef);
+      const workspace = moved ? await readDestinationWorkspace(originalDraft, projectRef) : {};
+      const isWorktree = (workspace.envMode ?? originalDraft.envMode) === "worktree";
+      const branch =
+        isWorktree && (moved || originalDraft.branch === null)
+          ? await readWorktreeBase(projectRef, originalDraft.branch)
+          : moved
+            ? null
+            : originalDraft.branch;
+      if (
+        !readCurrentRouting()?.input.logicalProjectEnvironments.some(
+          (candidate) =>
+            candidate.environmentId === environmentId && candidate.projectId === target.projectId,
+        )
+      )
+        return false;
+
+      carryFanoutSelections(originalDraft, target.environmentId);
       // The send must read the target project's composer and provider context after retargeting.
       flushSync(() =>
         setDraftThreadContext(draftId, {
           projectRef,
           environmentSelection: "auto",
           loadBalancedEnvironmentId: target.environmentId,
-          branch: originalDraft?.branch ?? null,
+          ...workspace,
+          branch,
         }),
       );
       return true;
     });
   };
+  const environmentChangeScope = `${draftId ?? ""}:${activeProjectKey ?? ""}`;
+  // The busy state belongs to the request that set it, so an older request settling late
+  // (abandoned, or superseded by a newer switch) can never clear a newer one's.
+  const [busyEnvironmentChange, setBusyEnvironmentChange] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly scope: string;
+  } | null>(null);
+  const isEnvironmentChanging = busyEnvironmentChange?.scope === environmentChangeScope;
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the resolved load-balanced environment into the draft store once the async pick settles
   useEffect(() => {
-    if (!needsLoadBalancing || loadBalancing.pending || !draftId || sendInFlightRef.current) return;
+    if (
+      !needsLoadBalancing ||
+      loadBalancing.pending ||
+      !draftId ||
+      isEnvironmentChanging ||
+      sendInFlightRef.current
+    )
+      return;
     const target = logicalProjectEnvironments.find(
       (environment) => environment.environmentId === loadBalancing.environmentId,
     );
     if (!target?.projectId) return;
     const draft = getDraftSession(draftId);
-    if (draft) carryFanoutSelections(draft, target.environmentId);
+    if (!draft) return;
+    const projectRef = scopeProjectRef(target.environmentId, target.projectId);
+    carryFanoutSelections(draft, target.environmentId);
     setDraftThreadContext(draftId, {
-      projectRef: scopeProjectRef(target.environmentId, target.projectId),
+      projectRef,
       environmentSelection: "auto",
       loadBalancedEnvironmentId: target.environmentId,
     });
+    if (changesProject(draft, projectRef)) {
+      const current = { envMode: draft.envMode, startFromOrigin: draft.startFromOrigin };
+      trackPendingWorkspaceDefault(
+        draftId,
+        projectRef,
+        current,
+        readDestinationWorkspace(draft, projectRef).then((workspace) => ({
+          ...current,
+          ...workspace,
+        })),
+      );
+    }
   }, [
     needsLoadBalancing,
     loadBalancing.pending,
     loadBalancing.environmentId,
+    isEnvironmentChanging,
     draftId,
     logicalProjectEnvironments,
     sendInFlightRef,
     getDraftSession,
     setDraftThreadContext,
   ]);
+  // A change in flight belongs to the draft and project it started on.
+  const environmentChangeRef = useRef<{
+    readonly controller: AbortController;
+    readonly environmentId: EnvironmentId;
+    readonly scope: string;
+  } | null>(null);
+  const environmentChangeScopeRef = useRef("");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the current change scope into a ref that async environment switches compare against
+  useLayoutEffect(() => {
+    environmentChangeScopeRef.current = environmentChangeScope;
+  });
+  // Leaving the scope, or unmounting, abandons a change still in flight.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons an in-flight environment change when the draft or project scope changes or unmounts
+  useLayoutEffect(
+    () => () => {
+      if (environmentChangeRef.current?.scope === environmentChangeScope) {
+        environmentChangeRef.current.controller.abort();
+        environmentChangeRef.current = null;
+      }
+    },
+    [environmentChangeScope],
+  );
+  const readPendingEnvironmentChange = () => {
+    const pending = environmentChangeRef.current;
+    return pending !== null && pending.scope === environmentChangeScopeRef.current ? pending : null;
+  };
   const onAutoEnvironment = () => {
     if (envLocked || !draftId || sendInFlightRef.current) return;
     if (composerHasAttachments) {
@@ -245,6 +388,9 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       });
       return;
     }
+    environmentChangeRef.current?.controller.abort();
+    environmentChangeRef.current = null;
+    setBusyEnvironmentChange(null);
     loadBalancing.refresh(
       logicalProjectEnvironments.map((environment) => environment.environmentId),
     );
@@ -266,39 +412,6 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
           : gt("Auto balance")
     : undefined;
 
-  // A change in flight belongs to the draft and project it started on.
-  const environmentChangeScope = `${draftId ?? ""}:${activeProjectKey ?? ""}`;
-  const environmentChangeRef = useRef<{
-    readonly environmentId: EnvironmentId;
-    readonly scope: string;
-  } | null>(null);
-  const environmentChangeScopeRef = useRef("");
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the current change scope into a ref that async environment switches compare against
-  useLayoutEffect(() => {
-    environmentChangeScopeRef.current = environmentChangeScope;
-  });
-  // Leaving the scope, or unmounting, abandons a change still in flight.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons an in-flight environment change when the draft or project scope changes or unmounts
-  useLayoutEffect(
-    () => () => {
-      if (environmentChangeRef.current?.scope === environmentChangeScope) {
-        environmentChangeRef.current = null;
-      }
-    },
-    [environmentChangeScope],
-  );
-  const readPendingEnvironmentChange = () => {
-    const pending = environmentChangeRef.current;
-    return pending !== null && pending.scope === environmentChangeScopeRef.current ? pending : null;
-  };
-  // The busy state belongs to the request that set it, so an older request settling late
-  // (abandoned, or superseded by a newer switch) can never clear a newer one's.
-  const [busyEnvironmentChange, setBusyEnvironmentChange] = useState<{
-    readonly environmentId: EnvironmentId;
-    readonly scope: string;
-  } | null>(null);
-  const isEnvironmentChanging = busyEnvironmentChange?.scope === environmentChangeScope;
-
   const onEnvironmentChange = (nextEnvironmentId: EnvironmentId) => {
     if (envLocked || !draftId || sendInFlightRef.current) return;
     const originalDraft = getDraftSession(draftId);
@@ -307,11 +420,15 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       (env) => env.environmentId === nextEnvironmentId,
     );
     if (!target) return;
-    const request = { environmentId: target.environmentId, scope: environmentChangeScope };
+    environmentChangeRef.current?.controller.abort();
+    const request = {
+      controller: new AbortController(),
+      environmentId: target.environmentId,
+      scope: environmentChangeScope,
+    };
     environmentChangeRef.current = request;
     setBusyEnvironmentChange(null);
-    // `triagePrompt` is the prompt the target machine prepared for a triage draft.
-    const retarget = (project: (typeof allProjects)[number], triagePrompt?: string) => {
+    const readSwitchingDraft = () => {
       const currentDraft = getDraftSession(draftId);
       if (
         environmentChangeRef.current !== request ||
@@ -322,30 +439,82 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         currentDraft.environmentId !== originalDraft.environmentId ||
         currentDraft.projectId !== originalDraft.projectId
       )
+        return null;
+      return currentDraft;
+    };
+    // `triagePrompt` is the prompt the target machine prepared for a triage draft.
+    const retarget = async (
+      project: (typeof allProjects)[number],
+      triagePrompt?: string,
+    ): Promise<void> => {
+      const draft = readSwitchingDraft();
+      if (!draft) return;
+      const projectRef = scopeProjectRef(target.environmentId, project.id);
+      // Use the catalog-backed list: an unpaired machine can still have a cached project snapshot.
+      const findDestination = (projects: typeof allProjects) =>
+        projects.find(
+          (candidate) =>
+            candidate.environmentId === projectRef.environmentId &&
+            candidate.id === projectRef.projectId,
+        );
+      const workspaceRoot = findDestination(readProjects())?.workspaceRoot;
+      const controller = new AbortController();
+      const unsubscribe = subscribeProjects((projects) => {
+        if (findDestination(projects)?.workspaceRoot !== workspaceRoot) controller.abort();
+      });
+      const workspaceRead =
+        workspaceRoot === undefined
+          ? Promise.resolve({})
+          : retargetDraftWorkspace(
+              draft,
+              projectRef,
+              AbortSignal.any([request.controller.signal, controller.signal]),
+            );
+      const defaultWorkspace = await workspaceRead.finally(unsubscribe);
+      const currentDraft = readSwitchingDraft();
+      if (!currentDraft) return;
+      const destination = findDestination(readProjects());
+      if (!destination) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: m(msg("Could not switch machine")),
+            description: m(msg("This project is no longer available.")),
+          }),
+        );
         return;
+      }
+      if (controller.signal.aborted || destination.workspaceRoot !== workspaceRoot) {
+        return retarget(destination, triagePrompt);
+      }
+      const workspace =
+        currentDraft.workspaceExplicit || currentDraft.worktreePath !== null
+          ? {}
+          : defaultWorkspace;
       if (triagePrompt !== undefined) {
         // Read now, so text typed while the machine prepared the session is kept.
         const prompt = getComposerDraft(draftId)?.prompt ?? "";
         const nextPrompt = replaceTriagePlaybookLink(prompt, triagePrompt);
         if (nextPrompt !== prompt) setPrompt(draftId, nextPrompt);
       }
+      const moved = changesProject(currentDraft, projectRef);
       carryFanoutSelections(currentDraft, target.environmentId);
-      const projectRef = scopeProjectRef(target.environmentId, project.id);
       if (activeProjectIsScratch) {
         setLogicalProjectDraftThreadId(
-          deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
+          deriveLogicalProjectKeyFromSettings(destination, projectGroupingSettings),
           projectRef,
           draftId,
-          { environmentSelection: "manual", loadBalancedEnvironmentId: null },
+          { environmentSelection: "manual", loadBalancedEnvironmentId: null, ...workspace },
         );
       } else {
         setDraftThreadContext(draftId, {
           projectRef,
           environmentSelection: "manual",
           loadBalancedEnvironmentId: null,
+          ...workspace,
         });
       }
-      seedDraftModelSelection(draftId, projectRef);
+      if (moved) seedDraftModelSelection(draftId, projectRef);
     };
     const finish = () => {
       if (environmentChangeRef.current === request) environmentChangeRef.current = null;
@@ -357,8 +526,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     );
     // The playbook and context files exist only on the machine that prepared them.
     const followsTriage = isTriagePrompt(getComposerDraft(draftId)?.prompt ?? "");
-    if (target.projectId !== null && !(knownProject && followsTriage)) {
-      if (knownProject) retarget(knownProject);
+    if (target.projectId !== null && !knownProject) {
       finish();
       return;
     }
@@ -386,7 +554,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       const project =
         knownProject ??
         (await openScratchProject(target.environmentId, m(msg("Could not switch machine"))));
-      if (project) retarget(project, triagePrompt);
+      if (project) await retarget(project, triagePrompt);
     };
     setBusyEnvironmentChange(request);
     void switchMachine().finally(finish);

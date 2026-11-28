@@ -44,9 +44,19 @@ async function readFont(src: string, signal: AbortSignal) {
   });
 }
 
+const fontColors = (style = getComputedStyle(document.documentElement)) =>
+  [style.getPropertyValue("--background"), style.getPropertyValue("--foreground")] as const;
+
 export default function FontViewer(props: { readonly src: string; readonly name: string }) {
   const gt = useGT();
-  const { resolvedTheme } = useTheme();
+  const { theme, resolvedTheme, themeHalves } = useTheme();
+  const [[background, foreground], setColors] = useState(fontColors);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read the host DOM's applied theme tokens so the sandboxed font preview receives the current palette.
+  useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- Read tokens after useTheme applies the selected palette.
+    setColors(fontColors());
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Theme values invalidate the palette read from the host DOM.
+  }, [theme, resolvedTheme, themeHalves]);
   const [data, setData] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load the font from its URL and abort the request and timeout when the source changes or unmounts.
@@ -85,9 +95,6 @@ export default function FontViewer(props: { readonly src: string; readonly name:
       </div>
     );
   if (!data) return <FileSurfaceLoading />;
-  const tokens = getComputedStyle(document.documentElement);
-  const background = tokens.getPropertyValue("--background");
-  const foreground = tokens.getPropertyValue("--foreground");
   const escapeHtml = (text: string) =>
     text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
   const heading = escapeHtml(gt("Font preview"));

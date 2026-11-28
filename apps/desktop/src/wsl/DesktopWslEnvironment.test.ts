@@ -557,6 +557,7 @@ describe("parseResolvedPath", () => {
 const WSL_EXE = "/windows/System32/wsl.exe";
 const STORE_SERVICE = "HKLM\\SYSTEM\\CurrentControlSet\\Services\\WSLService";
 const INBOX_SERVICE = "HKLM\\SYSTEM\\CurrentControlSet\\Services\\LxssManager";
+const SERVICES_ROOT = "HKLM\\SYSTEM\\CurrentControlSet\\Services";
 
 const registrySpawner = (keys: ReadonlyArray<string>) =>
   ChildProcessSpawner.make((command) =>
@@ -570,7 +571,7 @@ const registrySpawner = (keys: ReadonlyArray<string>) =>
           ChildProcessSpawner.ExitCode(
             command._tag === "StandardCommand" &&
               command.command === "reg.exe" &&
-              keys.some((key) => command.args.includes(key))
+              [SERVICES_ROOT, ...keys].some((key) => command.args.includes(key))
               ? 0
               : 1,
           ),
@@ -605,6 +606,42 @@ describe("makeIsAvailable", () => {
     Effect.gen(function* () {
       assert.isFalse(yield* isAvailable(undefined, []));
       assert.isTrue(yield* isAvailable(undefined, [INBOX_SERVICE]));
+    }),
+  );
+
+  it.effect("keeps WSL when registry tools are disabled by policy and reg.exe cannot answer", () =>
+    Effect.gen(function* () {
+      const denied = new TextEncoder().encode(
+        "ERROR: Registry editing has been disabled by your administrator.\r\n",
+      );
+      const blockedRegistry = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            stdout: Stream.empty,
+            stderr: Stream.make(denied),
+            all: Stream.make(denied),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            stdin: Sink.drain,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+            unref: Effect.succeed(Effect.void),
+          }),
+        ),
+      );
+      const available = yield* makeIsAvailable("win32", "/windows").pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            FileSystem.layerNoop({ exists: (path) => Effect.succeed(path === WSL_EXE) }),
+            Path.layer,
+            DesktopManagedPolicy.layerTest(undefined),
+          ),
+        ),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, blockedRegistry),
+      );
+      assert.isTrue(available);
     }),
   );
 

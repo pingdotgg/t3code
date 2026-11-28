@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // Windows cleanup must outlive this executable to delete its directory; scoped ChildProcess kills children on exit.
 import * as NodeChildProcess from "node:child_process";
+import * as NodePath from "node:path";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
@@ -23,6 +24,7 @@ import {
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as CliService from "./service.ts";
 import { awaitDetachedSpawn } from "../process/windowsVerbatimSpawn.ts";
+import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 import { findWindowsShim } from "./update.ts";
 
 export class CliUninstallError extends Schema.TaggedError<CliUninstallError>()(
@@ -125,19 +127,22 @@ export const findRecordedLaunchers = Effect.fn("cli.uninstall.find_recorded_laun
   return owned;
 });
 
-// cmd.exe needs verbatim quoting and a literal path, with delayed expansion disabled.
-export function spawnWindowsRemoval(comspec: string, dir: string) {
+// cmd.exe needs verbatim quoting and literal paths, with delayed expansion disabled. The shell
+// starts in System32 and runs ping from there, whatever directory `t3 uninstall` was run in.
+export function spawnWindowsRemoval(environment: NodeJS.ProcessEnv, dir: string) {
+  const ping = windowsSystem32Path(environment, "ping.exe");
   return NodeChildProcess.spawn(
-    comspec,
+    environment["ComSpec"] ?? environment["COMSPEC"] ?? windowsSystem32Path(environment, "cmd.exe"),
     [
       "/d",
       "/v:off",
       "/s",
       "/c",
-      '"ping -n 3 127.0.0.1 >nul & rmdir /s /q "%T3_UNINSTALL_RUNTIME%""',
+      '""%T3_UNINSTALL_PING%" -n 3 127.0.0.1 >nul & rmdir /s /q "%T3_UNINSTALL_RUNTIME%""',
     ],
     {
-      env: { ...process.env, T3_UNINSTALL_RUNTIME: dir },
+      cwd: NodePath.win32.dirname(ping),
+      env: { ...process.env, T3_UNINSTALL_PING: ping, T3_UNINSTALL_RUNTIME: dir },
       windowsVerbatimArguments: true,
       detached: true,
       stdio: "ignore",
@@ -281,12 +286,11 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
     // Windows refuses to unlink this running executable; a detached shell removes it after exit.
     if (platform === "win32") {
       const runtimeDir = plan.runtimeDir;
-      const comspec = environment["ComSpec"] ?? environment["COMSPEC"] ?? "cmd.exe";
       const notScheduled = () =>
         new CliUninstallError({
           reason: `Could not schedule removal of ${runtimeDir}. Delete it yourself once this window is closed.`,
         });
-      yield* awaitDetachedSpawn(() => spawnWindowsRemoval(comspec, runtimeDir)).pipe(
+      yield* awaitDetachedSpawn(() => spawnWindowsRemoval(environment, runtimeDir)).pipe(
         Effect.mapError(notScheduled),
       );
       yield* Console.log(`${runtimeDir} will be removed once t3 exits.`);

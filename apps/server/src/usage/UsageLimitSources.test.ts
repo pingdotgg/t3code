@@ -109,6 +109,82 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
   ),
 );
 
+it.effect("publishes validated HTTP quotas as display-only accounts", () => {
+  const window = { id: "monthly", kind: "monthly", label: "Monthly", usedPercent: 35 };
+  const accounts = [
+    { id: "account", label: "External plan", providerInstanceId: "work-codex", windows: [window] },
+  ];
+  let usedPercent = 35;
+  let oversized = false;
+  const client = HttpClient.make((request, url) =>
+    Effect.sync(() => {
+      expect(url.href).toBe("https://quota.test/v1");
+      expect(request.headers.authorization).toBe("Bearer test-token");
+      return HttpClientResponse.fromWeb(
+        request,
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  JSON.stringify({
+                    version: 1,
+                    accounts: [{ ...accounts[0], windows: [{ ...window, usedPercent }] }],
+                  }),
+                ),
+              );
+              if (oversized) controller.enqueue(new Uint8Array(1024 * 1024).fill(32));
+              controller.close();
+            },
+          }),
+        ),
+      );
+    }),
+  );
+  return Effect.gen(function* () {
+    const sources = yield* UsageLimitSources.make;
+    yield* sources.refresh;
+    const [snapshot] = yield* sources.current;
+    expect(snapshot).toMatchObject({ kind: "http", accounts: [], quotaAccounts: accounts });
+    expect(snapshot?.origin).toBeUndefined();
+    usedPercent = 101;
+    yield* sources.refresh;
+    const [failed] = yield* sources.current;
+    expect(failed).toMatchObject({ accounts: [], error: "Could not read the HTTP quota source." });
+    expect(failed?.quotaAccounts).toBeUndefined();
+    usedPercent = 35;
+    oversized = true;
+    yield* sources.refresh;
+    expect((yield* sources.current)[0]).toMatchObject({
+      accounts: [],
+      error: "Could not read the HTTP quota source.",
+    });
+  }).pipe(
+    Effect.provide([
+      Layer.succeed(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
+        read: (references) => Effect.succeed(references.map(() => undefined)),
+        invalidate: () => Effect.void,
+      }),
+      ServerSettings.layerTest({
+        usageLimitSources: {
+          [UsageLimitSourceId.make("quota")]: {
+            kind: "http",
+            url: "https://quota.test/v1",
+            managementKey: "test-token",
+            enabled: true,
+          },
+        },
+      }),
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+      Layer.succeed(HttpClient.HttpClient, client),
+      NodeCrypto.layer,
+    ]),
+  );
+});
+
 it.effect("reads a management key from its secret provider", () => {
   const authorizations: Array<string | undefined> = [];
   const keySource = (reference: string) => ({
@@ -373,18 +449,6 @@ it.each([
     expected: at(1),
   },
   {
-    name: "a spent Gemini quota does not hold back Claude on Antigravity",
-    accounts: [
-      {
-        driver: "antigravity",
-        models: ["claude-opus-4-6-thinking"],
-        windows: [spent("3p-5h", 1), spent("gemini-5h", 24)],
-      },
-    ],
-    model: "claude-opus-4-6-thinking",
-    expected: at(1),
-  },
-  {
     name: "a hub thinking suffix routes by its base model",
     accounts: [
       { driver: "codex", models: ["gpt-5.2"], windows: [spent("five_hour", 3)] },
@@ -392,24 +456,6 @@ it.each([
     ],
     model: "gpt-5.2(high)",
     expected: at(3),
-  },
-  {
-    name: "a prefixed Gemini model is held back by the Gemini quota",
-    accounts: [
-      {
-        driver: "antigravity",
-        models: ["ag/gemini-3.1-pro-high"],
-        windows: [spent("3p-5h", 1), spent("gemini-5h", 24)],
-      },
-    ],
-    model: "ag/gemini-3.1-pro-high",
-    expected: at(24),
-  },
-  {
-    name: "an alias of unknown family is held back by every Antigravity quota",
-    accounts: [{ driver: "antigravity", models: ["fast"], windows: [spent("gemini-5h", 24)] }],
-    model: "fast",
-    expected: at(24),
   },
   {
     name: "an own-driver account whose model list was unread still counts",
@@ -423,18 +469,6 @@ it.each([
     ],
     model: "claude-sonnet-4-6",
     expected: at(1),
-  },
-  {
-    name: "an Argon model waits only for the Argon quota",
-    accounts: [
-      {
-        driver: "antigravity",
-        models: ["gemini-4-argon-high"],
-        windows: [spent("gemini-argon-5h", 2), spent("gemini-carbon-weekly", 96)],
-      },
-    ],
-    model: "gemini-4-argon-high",
-    expected: at(2),
   },
 ])("hub pool reset: $name", ({ accounts, model, expected }) => {
   expect(

@@ -100,7 +100,8 @@ export function DeviceStreamView(props: {
   const model = deviceModel(props.platform, props.deviceName ?? "");
   const isDuo = model?.id === "iphone-duo";
   const gt = useGT();
-  const [presentation, setPresentation] = useState<"phone" | "flat">("phone");
+  // The Duo's fold and stand controls exist only in 3D view, so it still opens there.
+  const [presentation, setPresentation] = useState<"phone" | "flat">(isDuo ? "phone" : "flat");
   const [keyboardAttached, setKeyboardAttached] = useState(false);
   const cancelPhoneInputRef = useRef<(() => void) | null>(null);
   const cancelPhoneInput = () => cancelPhoneInputRef.current?.();
@@ -151,6 +152,8 @@ export function DeviceStreamView(props: {
 
   const retainingFrame =
     status === "connecting" && hasFrame && inputState.connected && screen !== null;
+  // MJPEG draws into an <img> that goes blank while it reconnects, so only a canvas is kept.
+  const retainingCanvasFrame = retainingFrame && !mjpegUrl;
   const showPhone =
     props.allowPhoneView &&
     (status === "streaming" || retainingFrame) &&
@@ -471,7 +474,7 @@ export function DeviceStreamView(props: {
             </span>
           </div>
         ) : null}
-        {retainingFrame && showPhone ? (
+        {retainingCanvasFrame ? (
           // Shown only once the device has been silent for two seconds.
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2 transition-opacity delay-2000 duration-0 starting:opacity-0">
             <span className="rounded-md bg-background/85 px-2 py-1 text-xs text-muted-foreground">
@@ -479,7 +482,7 @@ export function DeviceStreamView(props: {
             </span>
           </div>
         ) : null}
-        {status !== "streaming" && !(retainingFrame && showPhone) ? (
+        {status !== "streaming" && !retainingCanvasFrame ? (
           <div className="absolute inset-0">
             <DeviceLoadingView
               name={props.deviceName ?? gt("Device")}

@@ -1,4 +1,5 @@
 import * as NetService from "@t3tools/shared/Net";
+import { isWildcardHost, normalizeHostname } from "@t3tools/shared/hostClassification";
 import {
   OtlpHeadersFromString,
   OtlpProtocol,
@@ -262,6 +263,16 @@ const loadPersistedObservabilitySettings = Effect.fn(function* (settingsPath: st
   return parsePersistedServerObservabilitySettings(raw);
 });
 
+export const normalizeServerCwdArgument = Effect.fn("config.normalizeServerCwdArgument")(function* (
+  argument: string,
+) {
+  const cwd = argument.trimEnd();
+  const trimmed = cwd.trimStart();
+  if (cwd === trimmed || trimmed === "." || trimmed === "..") return trimmed;
+  const path = yield* Path.Path;
+  return path.parse(yield* expandHomePath(trimmed)).root === "" ? cwd : trimmed;
+});
+
 export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(function* (
   flags: CliServerFlags,
   cliLogLevel: Option.Option<LogLevel.LogLevel>,
@@ -269,8 +280,10 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     readonly startupPresentation?: ServerConfig.StartupPresentation;
     readonly forceAutoBootstrapProjectFromCwd?: boolean;
     readonly rejectRunningServer?: boolean;
+    readonly prepareDirectories?: boolean;
     readonly selectAutomaticPort?: (
       preferred: number,
+      host: string | undefined,
     ) => Effect.Effect<number, NetService.NetError | CliError.UserError>;
   },
 ) {
@@ -310,22 +323,6 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     () => "web",
   );
 
-  const port = yield* Option.match(
-    resolveOptionPrecedence(
-      normalizedFlags.port,
-      Option.fromUndefinedOr(env.port),
-      Option.fromUndefinedOr(bootstrap?.port),
-    ),
-    {
-      onSome: (value) => Effect.succeed(value),
-      onNone: () => {
-        if (mode === "desktop") {
-          return Effect.succeed(ServerConfig.DEFAULT_PORT);
-        }
-        return selectAutomaticPort(ServerConfig.DEFAULT_PORT);
-      },
-    },
-  );
   const devUrl = Option.getOrElse(
     resolveOptionPrecedence(normalizedFlags.devUrl, Option.fromUndefinedOr(env.devUrl)),
     () => undefined,
@@ -341,8 +338,10 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
       resolveOptionPrecedence(explicitBaseDir, Option.fromUndefinedOr(bootstrap?.t3Home)),
     ),
   );
-  const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
-  const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
+  const rawCwd = Option.isSome(normalizedFlags.cwd)
+    ? yield* normalizeServerCwdArgument(normalizedFlags.cwd.value)
+    : process.cwd().trim();
+  const cwd = path.resolve(yield* expandHomePath(rawCwd));
   const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
     baseDirIsExplicit: Option.isSome(explicitBaseDir),
   });
@@ -370,13 +369,15 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
       });
     }
   }
-  yield* fs.makeDirectory(cwd, { recursive: true });
-  yield* ServerConfig.ensureServerDirectories(derivedPaths);
+  const serverTracePath = env.traceFile ?? derivedPaths.serverTracePath;
+  if (options?.prepareDirectories !== false) {
+    yield* fs.makeDirectory(cwd, { recursive: true });
+    yield* ServerConfig.ensureServerDirectories(derivedPaths);
+    yield* fs.makeDirectory(path.dirname(serverTracePath), { recursive: true });
+  }
   const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
     derivedPaths.settingsPath,
   );
-  const serverTracePath = env.traceFile ?? derivedPaths.serverTracePath;
-  yield* fs.makeDirectory(path.dirname(serverTracePath), { recursive: true });
   const startupPresentation = options?.startupPresentation ?? "browser";
   const isHeadlessStartup = startupPresentation === "headless";
   const noBrowser = Option.getOrElse(
@@ -390,6 +391,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   );
   const desktopBootstrapToken = bootstrap?.desktopBootstrapToken;
   const desktopBootstrapSecret = bootstrap?.desktopBootstrapSecret;
+  const desktopReadinessSecret = bootstrap?.desktopReadinessSecret;
   const shellEnvironmentPrepared = bootstrap?.shellEnvironmentPrepared;
   const desktopTelemetryFd = bootstrap?.desktopTelemetryFd;
   const desktopTelemetryControlFd = bootstrap?.desktopTelemetryControlFd;
@@ -434,7 +436,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     normalizedFlags.host,
     Option.fromUndefinedOr(env.host),
     Option.fromUndefinedOr(bootstrap?.host),
-  );
+  ).pipe(Option.map((host) => (isWildcardHost(host) ? normalizeHostname(host) : host)));
   // Private networks only, so clients learn a LAN address and prefer it over
   // T3 Connect. `t3 service install` writes T3CODE_LAN=false for a new
   // service; one installed before T3CODE_LAN existed keeps listening.
@@ -450,6 +452,22 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
         ));
   const host = Option.getOrElse(explicitHost, () =>
     privateNetworkOnly ? "0.0.0.0" : mode === "desktop" ? "127.0.0.1" : undefined,
+  );
+  const port = yield* Option.match(
+    resolveOptionPrecedence(
+      normalizedFlags.port,
+      Option.fromUndefinedOr(env.port),
+      Option.fromUndefinedOr(bootstrap?.port),
+    ),
+    {
+      onSome: (value) => Effect.succeed(value),
+      onNone: () => {
+        if (mode === "desktop") {
+          return Effect.succeed(ServerConfig.DEFAULT_PORT);
+        }
+        return selectAutomaticPort(ServerConfig.DEFAULT_PORT, host);
+      },
+    },
   );
   const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
 
@@ -524,6 +542,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     startupPresentation,
     desktopBootstrapToken,
     ...(desktopBootstrapSecret === undefined ? {} : { desktopBootstrapSecret }),
+    ...(desktopReadinessSecret === undefined ? {} : { desktopReadinessSecret }),
     ...(shellEnvironmentPrepared === undefined ? {} : { shellEnvironmentPrepared }),
     desktopTelemetryFd,
     desktopTelemetryControlFd,
@@ -543,7 +562,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
 export const resolveCliAuthConfig = (
   flags: CliAuthLocationFlags,
   cliLogLevel: Option.Option<LogLevel.LogLevel>,
-  options?: { readonly quietLogs?: boolean },
+  options?: { readonly quietLogs?: boolean; readonly prepareDirectories?: boolean },
 ) => {
   const resolved = resolveServerConfig(
     {
@@ -562,6 +581,7 @@ export const resolveCliAuthConfig = (
       lan: Option.none(),
     },
     cliLogLevel,
+    options,
   );
   // Logs go to stdout, where --json and --token-only print, and resolving can
   // log, for example when it sweeps abandoned attachment uploads.

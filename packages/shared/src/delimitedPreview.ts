@@ -13,21 +13,27 @@ export function filePreviewDelimiter(file: { name: string; mimeType?: string }):
 export function parseDelimitedPreview(
   text: string,
   delimiter: "," | ";" | "\t",
-  limits: { maxRows: number; maxColumns: number; maxCellLength: number; detectCsv?: boolean } = {
+  limits: {
+    maxRows: number;
+    maxColumns: number;
+    maxCellLength: number;
+    detectCsv?: boolean;
+    stripBom?: boolean;
+  } = {
     maxRows: 100,
     maxColumns: 30,
     maxCellLength: 2000,
   },
 ) {
   if (delimiter === "," && limits.detectCsv !== false) {
-    delimiter = csvPreviewDelimiter(text);
+    delimiter = csvPreviewDelimiter(text, limits.stripBom !== false);
   }
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = "";
   let quoted = false;
   let truncated = false;
-  let rowStart = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+  let rowStart = limits.stripBom !== false && text.charCodeAt(0) === 0xfeff ? 1 : 0;
   const endCell = () => {
     if (cell.length > limits.maxCellLength) {
       let end = limits.maxCellLength;
@@ -75,7 +81,7 @@ export function parseDelimitedPreview(
   return { rows, truncated: truncated || quoted };
 }
 
-export function csvPreviewDelimiter(text: string) {
+export function csvPreviewDelimiter(text: string, stripBom = true) {
   // Semicolons win only when they are consistent across the first two records and commas are not.
   const commas = [0, 0];
   const semicolons = [0, 0];
@@ -83,7 +89,8 @@ export function csvPreviewDelimiter(text: string) {
   let second = false;
   let quoted = false;
   let fieldStart = true;
-  for (let index = text.charCodeAt(0) === 0xfeff ? 1 : 0; index < text.length; index++) {
+  const start = stripBom && text.charCodeAt(0) === 0xfeff ? 1 : 0;
+  for (let index = start; index < text.length; index++) {
     const char = text[index];
     if (quoted) {
       if (char !== '"') continue;
@@ -101,8 +108,8 @@ export function csvPreviewDelimiter(text: string) {
     second ||= record === 1;
     fieldStart = char === "," || char === ";";
   }
-  if (semicolons[0]! <= commas[0]!) return ",";
-  if (!second) return ";";
+  if (!second) return semicolons[0]! > commas[0]! ? ";" : ",";
+  if (semicolons[0] === 0) return ",";
   const consistentCommas = commas[0]! > 0 && commas[1] === commas[0];
   return semicolons[1] === semicolons[0] && !consistentCommas ? ";" : ",";
 }

@@ -1,6 +1,7 @@
 import type * as Tracer from "../../Tracer.ts"
 import * as Headers from "../Headers.ts"
 import * as UrlParams from "../UrlParams.ts"
+import { type ClientPath, redactClientPath } from "./clientPath.ts"
 
 const defaultPorts: Record<string, number> = {
   "http:": 80,
@@ -17,11 +18,13 @@ const defaultPorts: Record<string, number> = {
 export const addUrlAttributes = (
   span: Tracer.Span,
   url: URL,
-  redactedNames: ReadonlyArray<string | RegExp>
+  redactedNames: ReadonlyArray<string | RegExp>,
+  path?: ClientPath | undefined
 ): void => {
+  const redactPath = (url: string) => path === undefined ? url : redactClientPath(url, path)
   const query = UrlParams.redactUrl(url.search, redactedNames).slice(1)
-  span.attribute("url.full", UrlParams.redactUrl(url.href, redactedNames))
-  span.attribute("url.path", url.pathname)
+  span.attribute("url.full", redactPath(UrlParams.redactUrl(url.href, redactedNames)))
+  span.attribute("url.path", redactPath(url.pathname))
   if (query !== "") {
     span.attribute("url.query", query)
   }

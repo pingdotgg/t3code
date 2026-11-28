@@ -59,6 +59,42 @@ const input = {
 const run = (status: string) => ({ recentRuns: [{ runId: "turn-1", status }], items: [] });
 const waited = { threadId: "thread-1", runId: "turn-1", status: "idle" };
 
+const assistant = (position: number, runId: string, text: string) => ({
+  type: "assistant_message",
+  itemId: `item-${position}`,
+  position,
+  runId,
+  text,
+  textTruncated: false,
+});
+const page = (
+  items: ReadonlyArray<ReturnType<typeof assistant>>,
+  earlierPosition?: number | null,
+  hasMore = false,
+) => ({
+  recentRuns: [],
+  items,
+  earlierPosition,
+  hasMore,
+  nextPosition: items.at(-1)?.position ?? null,
+});
+const readReply = (...pages: ReadonlyArray<unknown>) => {
+  const there = peer({
+    t3_thread_wait: [{ ...waited, timedOut: false }],
+    t3_thread_read: [run("completed"), ...pages],
+  });
+  return Effect.gen(function* () {
+    const result = yield* Effect.provide(
+      Effect.flatMap(WorkflowAgentLinks.make, (links) =>
+        links.result({ threadId: "thread-1", turnId: "turn-1" }, "env-b"),
+      ),
+      there.layer,
+    );
+    return { result, reads: there.calls.slice(2).map((call) => call.arguments) };
+  });
+};
+const messageRead = { threadId: "thread-1", view: "messages", limit: 100 };
+
 it.effect("starts a thread there by the project's folder, with the step's key as the request", () =>
   Effect.gen(function* () {
     const there = peer({
@@ -222,6 +258,79 @@ it.effect("waits in pieces, rides out a dropped route, and returns the output an
     });
     assert.equal(there.calls.filter((call) => call.tool === "t3_thread_wait").length, 3);
   }),
+);
+
+it.effect("returns the whole last reply from an older page of a linked thread", () =>
+  Effect.gen(function* () {
+    const later = {
+      ...assistant(4, "turn-1", "Latest "),
+      textTruncated: true,
+      nextTextOffset: 7,
+    };
+    const { result, reads } = yield* readReply(
+      page([assistant(9, "turn-3", "newest turn")], 9),
+      page([assistant(6, "turn-2", "another turn")], 6, true),
+      page([assistant(3, "turn-1", "earlier draft"), later], 3, true),
+      page([{ ...later, text: "complete reply", textTruncated: false }]),
+    );
+    assert.deepStrictEqual(result, {
+      ending: "completed",
+      detail: "",
+      reply: "Latest complete reply",
+    });
+    assert.deepStrictEqual(reads, [
+      messageRead,
+      { ...messageRead, beforePosition: 9 },
+      { ...messageRead, beforePosition: 6 },
+      { threadId: "thread-1", itemId: "item-4", textOffset: 7, maxCharsPerItem: 50_000 },
+    ]);
+  }),
+);
+
+it.effect("keeps the latest matching reply when paging a legacy peer forward", () =>
+  Effect.gen(function* () {
+    for (const earlierPosition of [undefined, null]) {
+      const { result, reads } = yield* readReply(
+        page([assistant(2, "turn-1", "draft")], earlierPosition, true),
+        page([assistant(4, "turn-1", "final")], earlierPosition, true),
+        page([assistant(6, "turn-2", "other turn")], earlierPosition),
+      );
+      assert.strictEqual(result.reply, "final");
+      assert.deepStrictEqual(reads, [
+        messageRead,
+        { ...messageRead, afterPosition: 2 },
+        { ...messageRead, afterPosition: 4 },
+      ]);
+    }
+  }),
+);
+
+it.effect("keeps the reply when a legacy peer's forward cursor stops advancing", () =>
+  Effect.gen(function* () {
+    for (const position of [2, 1]) {
+      const { result, reads } = yield* readReply(
+        page([assistant(2, "turn-1", "Done.")], undefined, true),
+        page([assistant(position, "turn-2", "other turn")], undefined, true),
+      );
+      assert.strictEqual(result.reply, "Done.");
+      assert.deepStrictEqual(reads, [messageRead, { ...messageRead, afterPosition: 2 }]);
+    }
+  }),
+);
+
+it.effect(
+  "returns an empty reply when older pages are exhausted or their cursor stops advancing",
+  () =>
+    Effect.gen(function* () {
+      for (const earlierPosition of [null, 3, 4]) {
+        const { result, reads } = yield* readReply(
+          page([assistant(3, "turn-2", "other turn")], 3),
+          page([assistant(1, "turn-0", "another turn")], earlierPosition, true),
+        );
+        assert.deepStrictEqual(result, { ending: "completed", detail: "", reply: "" });
+        assert.deepStrictEqual(reads, [messageRead, { ...messageRead, beforePosition: 3 }]);
+      }
+    }),
 );
 
 it.effect("a turn someone stopped there is stopped, and a refused link fails at once", () =>

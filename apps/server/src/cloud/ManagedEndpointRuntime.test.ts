@@ -509,6 +509,55 @@ describe("CloudManagedEndpointRuntime", () => {
     }),
   );
 
+  it.effect("restarts a relay client that ignores SIGTERM within a bounded time", () => {
+    // cloudflared on a half-open HTTP/2 socket keeps running after SIGTERM; only SIGKILL stops it.
+    const exits: Array<Deferred.Deferred<ChildProcessSpawner.ExitCode>> = [];
+    return Effect.gen(function* () {
+      const started = yield* Queue.unbounded<number>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const pid = 900 + exits.length;
+          const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+          exits.push(exit);
+          const handle = ChildProcessSpawner.makeHandle({
+            ...makeHandle({ pid, exitCode: Deferred.await(exit), onKill: () => {} }),
+            kill: (options) =>
+              options?.forceKillAfter === undefined
+                ? Deferred.await(exit).pipe(Effect.asVoid)
+                : Effect.sleep(options.forceKillAfter).pipe(
+                    Effect.andThen(Deferred.succeed(exit, ChildProcessSpawner.ExitCode(137))),
+                    Effect.asVoid,
+                  ),
+          });
+          yield* Queue.offer(started, pid);
+          return handle;
+        }),
+      );
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      yield* runtime.applyConfig(tunnelConfig);
+      expect(yield* Queue.take(started)).toBe(900);
+
+      const restart = yield* runtime
+        .restartConnector(900, Effect.succeed(true))
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust(Duration.minutes(1));
+
+      expect(restart.pollUnsafe()).toEqual(Exit.succeed(true));
+    }).pipe(
+      Effect.ensuring(
+        Effect.suspend(() =>
+          Effect.forEach(
+            exits,
+            (exit) => Deferred.succeed(exit, ChildProcessSpawner.ExitCode(143)),
+            {
+              discard: true,
+            },
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect("still owns a relay client when activation is interrupted while recording it", () =>
     Effect.gen(function* () {
       const fixture = yield* makeTransportSpawner();

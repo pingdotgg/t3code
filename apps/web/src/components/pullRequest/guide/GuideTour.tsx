@@ -4,6 +4,7 @@ import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "rea
 
 import { createPullRequestDiffFileContentsLoader } from "~/lib/diffFileContents";
 import { isEditableFocused } from "~/lib/editableFocus";
+import { isInSideChatPane } from "~/lib/sideChatPane";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -86,11 +87,19 @@ export function GuideTour({
   const step = (delta: 1 | -1) => goTo(stepTourPosition(position, delta, stopCount));
 
   const stepFromKey = useEffectEvent((event: KeyboardEvent) => {
-    if (event.defaultPrevented || event.isComposing || isCommandPaletteOpen()) return;
+    if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+    if (isCommandPaletteOpen()) return;
     if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
     const key = event.key.toLowerCase();
     if (key !== "j" && key !== "k") return;
-    if (isEditableFocused(event.target)) return;
+    if (isEditableFocused(event.target) || isInSideChatPane(event.target)) return;
+    const floatingLayer =
+      event.target instanceof Element
+        ? event.target.closest(
+            '[role="dialog"], [role="alertdialog"], [aria-modal="true"], [role="menu"], [role="combobox"], [data-slot$="popup"]',
+          )
+        : null;
+    if (floatingLayer !== null && !floatingLayer.contains(scrollRef.current)) return;
     event.preventDefault();
     step(key === "j" ? 1 : -1);
   });

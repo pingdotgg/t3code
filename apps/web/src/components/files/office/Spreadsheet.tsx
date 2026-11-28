@@ -513,7 +513,7 @@ function SpreadsheetGrid(props: {
       root.setPointerCapture(event.pointerId);
       drag = true;
       header = found.x < 0 ? (found.y < 0 ? "all" : "row") : found.y < 0 ? "column" : undefined;
-      pressed = header ? undefined : found.cell;
+      pressed = header || event.shiftKey ? undefined : found.cell;
       if (found.x < 0 && found.y < 0)
         select({ anchor: { row: lastCell.row, col: lastCell.col }, focus: { row: 0, col: 0 } });
       else if (found.x < 0)
@@ -641,8 +641,11 @@ function SpreadsheetGrid(props: {
         });
     };
     const key = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && resizing) {
+      if (event.key === "Escape" && (resizing || event.repeat)) {
         event.preventDefault();
+        event.stopPropagation();
+        if (!resizing) return;
+        root.releasePointerCapture(resizing.pointerId);
         resizing = undefined;
         root.style.cursor = "";
         schedule();

@@ -469,6 +469,12 @@ export function showContextMenuFallback<T extends string>(
             spacer.setAttribute("aria-hidden", "true");
             button.appendChild(spacer);
           }
+        } else if (typeof item.iconImage === "string") {
+          const image = document.createElement("img");
+          image.src = item.iconImage;
+          image.alt = "";
+          image.className = "size-4.5 shrink-0 sm:size-4";
+          button.appendChild(image);
         } else if (typeof item.icon === "string") {
           const icon = createIconElement(item.icon, isLeafDestructive ? "destructive" : "neutral");
           if (icon) {

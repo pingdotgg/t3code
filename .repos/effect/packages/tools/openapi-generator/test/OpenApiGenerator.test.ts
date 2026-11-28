@@ -322,6 +322,14 @@ const generateHttpApi = Effect.fnUntraced(function*(spec: OpenAPISpec) {
   return { source, warnings }
 }, Effect.provide(OpenApiGenerator.layerTransformerSchema))
 
+const withReexportedHttpApi = (source: string, check: (spec: OpenAPISpec) => void) =>
+  Effect.promise(() =>
+    withGeneratedModule<{ TestClient: HttpApi.HttpApi<string, never> }>(
+      source,
+      ({ TestClient }) => check(OpenApi.fromApi(TestClient))
+    )
+  )
+
 const findEndpoint = (source: string, method: string, path: string): string => {
   const line = source.split("\n").find((line) =>
     line.includes(`HttpApiEndpoint.${method}(`) && line.includes(`", ${JSON.stringify(path)}`)
@@ -1684,6 +1692,61 @@ export const TestClientError = <Tag extends string, E>(
 
   describe("httpapi", () => {
     const Bytes = Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array())
+
+    it.effect("uses group-local endpoint names, qualified OpenAPI ids, and grouped parameter schemas", () =>
+      Effect.gen(function*() {
+        const spec = OpenApi.fromApi(
+          HttpApi.make("Api").add(
+            HttpApiGroup.make("balance").add(
+              HttpApiEndpoint.get("read", "/balance/:accountId", {
+                params: { accountId: Schema.String },
+                query: { currency: Schema.String },
+                headers: { "x-trace-id": Schema.String }
+              })
+            ),
+            HttpApiGroup.make("orders").add(HttpApiEndpoint.get("read", "/orders"))
+          )
+        )
+        const { source } = yield* generateHttpApi(spec)
+        assert.notInclude(source, "BalanceReadParams")
+
+        yield* Effect.promise(() =>
+          withGeneratedModule<{
+            TestClient: HttpApi.HttpApi<string, never> & {
+              readonly groups: Record<string, { readonly endpoints: Record<string, unknown> }>
+            }
+          }>(source, ({ TestClient }) => {
+            assert.deepStrictEqual(Object.keys(TestClient.groups.balance.endpoints), ["read"])
+            assert.deepStrictEqual(Object.keys(TestClient.groups.orders.endpoints), ["read"])
+            const reexported = OpenApi.fromApi(TestClient)
+            assert.strictEqual(reexported.paths["/balance/{accountId}"].get?.operationId, "balance.read")
+            assert.strictEqual(reexported.paths["/orders"].get?.operationId, "orders.read")
+            assert.deepStrictEqual(
+              reexported.paths["/balance/{accountId}"].get?.parameters,
+              spec.paths["/balance/{accountId}"].get?.parameters
+            )
+          })
+        )
+      }))
+
+    it.effect("rejects duplicate local endpoint names in the same group", () =>
+      Effect.gen(function*() {
+        const spec = OpenApi.fromApi(
+          HttpApi.make("Api").add(
+            HttpApiGroup.make("balance").add(
+              HttpApiEndpoint.get("read", "/balance/latest"),
+              HttpApiEndpoint.get("history", "/balance/history").annotate(OpenApi.Identifier, "read")
+            )
+          )
+        )
+        const result = yield* Effect.result(generateHttpApi(spec))
+        if (result._tag === "Success") {
+          assert.fail("Expected duplicate local endpoint names in the same group to fail")
+        }
+        assert.include(result.failure.message, "GET /balance/latest")
+        assert.include(result.failure.message, "GET /balance/history")
+        assert.include(result.failure.message, "read")
+      }))
     const event = (name: string) =>
       Schema.Struct({ ...Sse.EventEncoded.fields, event: Schema.Literal(name) }).annotate({ identifier: name })
 
@@ -1794,6 +1857,111 @@ const unrelated: Events200Sse = { event: "unrelated", data: "payload" }
         assertIncludes(openApi30SseSpec, ["\"event\": string"], ["\"event\": \"first\"", "\"event\": \"second\""]))
     }
 
+    it.effect("round-trips descriptions of responses without a body", () =>
+      Effect.gen(function*() {
+        const spec = OpenApi.fromApi(
+          HttpApi.make("Orders").add(
+            HttpApiGroup.make("orders").add(
+              HttpApiEndpoint.delete("deleteOrder", "/order", {
+                success: HttpApiSchema.Empty(204).annotate({ description: "" }),
+                error: HttpApiSchema.Empty(404).annotate({ description: "Order not found\n" })
+              })
+            )
+          )
+        )
+        const { source } = yield* generateHttpApi(spec)
+        yield* withReexportedHttpApi(source, (generated) =>
+          assert.deepStrictEqual(generated.paths["/order"].delete?.responses, spec.paths["/order"].delete!.responses))
+      }))
+
+    it.effect("keeps the explicit response when default would map to the same status", () =>
+      Effect.gen(function*() {
+        const explicit = { 200: { description: "OK" }, 500: { description: "Server error" } }
+        const responses = { ...explicit, default: { description: "Other statuses" } }
+        const { source, warnings } = yield* generateHttpApi({
+          openapi: "3.1.0",
+          info: { title: "Orders", version: "1" },
+          paths: {
+            "/order": {
+              get: {
+                operationId: "getOrder",
+                parameters: [],
+                tags: ["orders"],
+                security: [],
+                responses
+              }
+            }
+          },
+          components: { schemas: {}, securitySchemes: {} },
+          security: [],
+          tags: []
+        })
+        yield* withReexportedHttpApi(source, (generated) =>
+          assert.deepStrictEqual(generated.paths["/order"].get?.responses, explicit))
+        assert.deepStrictEqual(warnings, [{
+          code: "default-response-remapped",
+          message: "Default response was skipped because its remapped status 500 is explicitly defined.",
+          path: "/order",
+          method: "get",
+          operationId: "getOrder"
+        }])
+      }))
+
+    it.effect.each([
+      { version: "3.1.0", local: "Order not found", empty: "", inherited: "Shared order error" },
+      { version: "3.0.3", local: "Missing resource", empty: "Missing resource", inherited: "Missing resource" }
+    ])(
+      "resolves response reference descriptions for OpenAPI $version",
+      ({ version, local, empty, inherited }) =>
+        Effect.gen(function*() {
+          const shared = { $ref: "#/components/responses/Missing" }
+          const order = { $ref: "#/components/responses/OrderError" }
+          const { source } = yield* generateHttpApi({
+            openapi: version,
+            info: { title: "Orders", version: "1" },
+            paths: {
+              "/order": {
+                get: {
+                  operationId: "getOrder",
+                  parameters: [],
+                  tags: ["orders"],
+                  security: [],
+                  description: "Look up an order",
+                  responses: {
+                    204: { description: "OK" },
+                    400: order,
+                    403: { ...order, description: "" },
+                    404: { ...order, description: "Order not found" },
+                    410: shared
+                  }
+                }
+              }
+            },
+            components: {
+              schemas: {},
+              securitySchemes: {},
+              responses: {
+                Missing: { description: "Missing resource" },
+                OrderError: { ...shared, description: "Shared order error" }
+              }
+            },
+            security: [],
+            tags: []
+          } as unknown as OpenAPISpec)
+          yield* withReexportedHttpApi(source, (generated) => {
+            const operation = generated.paths["/order"].get!
+            assert.strictEqual(operation.description, "Look up an order")
+            assert.deepStrictEqual(operation.responses, {
+              204: { description: "OK" },
+              400: { description: inherited },
+              403: { description: empty },
+              404: { description: local },
+              410: { description: "Missing resource" }
+            })
+          })
+        })
+    )
+
     it.effect("generates tagged groups with endpoint annotations and representable parameters", () =>
       assertHttpApiIncludes(
         {
@@ -1881,7 +2049,7 @@ const unrelated: Events200Sse = { event: "unrelated", data: "payload" }
           `class UsersGroup extends HttpApiGroup.make("Users")`,
           `.annotate(OpenApi.Description, "User operations")`,
           `.annotate(OpenApi.ExternalDocs, {"url":"https://example.com/users"})`,
-          `HttpApiEndpoint.get("getUser", "/users/:id", { params: GetUserPathParams, query: GetUserQuery, headers: GetUserHeaders, success: GetUser200, error: HttpApiSchema.Empty(404) })`,
+          `HttpApiEndpoint.get("getUser", "/users/:id", { params: GetUserPathParams, query: GetUserQuery, headers: GetUserHeaders, success: GetUser200, error: HttpApiSchema.Empty(404).annotate({ description: "Not found" }) })`,
           `.annotate(OpenApi.Identifier, "getUser")`,
           `.annotate(OpenApi.Summary, "Get user")`,
           `.annotate(OpenApi.Description, "Read a user")`,
@@ -1940,7 +2108,7 @@ const unrelated: Events200Sse = { event: "unrelated", data: "payload" }
         [
           `export type GetApplicationPathParams = { readonly "application_id": string }`,
           `export const GetApplicationPathParams = Schema.Struct({ "application_id": Schema.String })`,
-          `HttpApiEndpoint.get("getApplication", "/applications/:application_id", { params: GetApplicationPathParams, success: HttpApiSchema.Empty(200) })`
+          `HttpApiEndpoint.get("getApplication", "/applications/:application_id", { params: GetApplicationPathParams, success: HttpApiSchema.Empty(200).annotate({ description: "Application" }) })`
         ],
         [
           `export class GetApplicationPathParams extends Schema.Class<GetApplicationPathParams>("GetApplicationPathParams")({ "application_id": Schema.String }) {}`
@@ -1979,7 +2147,7 @@ const unrelated: Events200Sse = { event: "unrelated", data: "payload" }
         },
         [
           `class DefaultGroup extends HttpApiGroup.make("default", { topLevel: true })`,
-          `HttpApiEndpoint.get("getHealth", "/health", { success: HttpApiSchema.Empty(204) })`,
+          `HttpApiEndpoint.get("getHealth", "/health", { success: HttpApiSchema.Empty(204).annotate({ description: "No content" }) })`,
           `.add(DefaultGroup)`
         ]
       ))
@@ -2029,8 +2197,8 @@ const unrelated: Events200Sse = { event: "unrelated", data: "payload" }
         },
         [
           `class DefaultGroup extends HttpApiGroup.make("default", { topLevel: true })`,
-          `HttpApiEndpoint.get("getTagged", "/tagged", { success: HttpApiSchema.Empty(200) })`,
-          `HttpApiEndpoint.get("getUntagged", "/untagged", { success: HttpApiSchema.Empty(204) })`,
+          `HttpApiEndpoint.get("getTagged", "/tagged", { success: HttpApiSchema.Empty(200).annotate({ description: "Tagged" }) })`,
+          `HttpApiEndpoint.get("getUntagged", "/untagged", { success: HttpApiSchema.Empty(204).annotate({ description: "Untagged" }) })`,
           `.add(DefaultGroup)`
         ]
       ))
@@ -2156,7 +2324,7 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
 
 export const CreatePayloadRequestText = Schema.String`,
           `payload: [HttpApiSchema.NoContent, CreatePayloadRequestJson, CreatePayloadRequestFormData.pipe(HttpApiSchema.asMultipart()), CreatePayloadRequestFormUrlEncoded.pipe(HttpApiSchema.asFormUrlEncoded()), CreatePayloadRequestText.pipe(HttpApiSchema.asText()), CreatePayloadRequestBinary.pipe(HttpApiSchema.asUint8Array())]`,
-          `success: [CreatePayload200, CreatePayload200Text.pipe(HttpApiSchema.asText()), CreatePayload200Binary.pipe(HttpApiSchema.asUint8Array()), HttpApiSchema.Empty(201)]`
+          `success: [CreatePayload200, CreatePayload200Text.pipe(HttpApiSchema.asText()), CreatePayload200Binary.pipe(HttpApiSchema.asUint8Array()), HttpApiSchema.Empty(201).annotate({ description: "Created" })]`
         ],
         [
           "Schema.Opaque",
@@ -2730,7 +2898,7 @@ export const __HttpApiMultipartSingleFile = Multipart.SingleFileSchema`,
 export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
           `export type UploadRequestFormData = { readonly "file": __HttpApiMultipartSingleFile, readonly "files": __HttpApiMultipartFiles }`,
           `export const UploadRequestFormData = Schema.Struct({ "file": __HttpApiMultipartSingleFile, "files": __HttpApiMultipartFiles })`,
-          `HttpApiEndpoint.post("upload", "/upload", { payload: UploadRequestFormData.pipe(HttpApiSchema.asMultipart()), success: HttpApiSchema.Empty(200) })`
+          `HttpApiEndpoint.post("upload", "/upload", { payload: UploadRequestFormData.pipe(HttpApiSchema.asMultipart()), success: HttpApiSchema.Empty(200).annotate({ description: "Uploaded" }) })`
         ],
         [
           `Schema.String.annotate({ "format": "binary" })`,
@@ -2933,7 +3101,7 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
           `import { Multipart } from "effect/http"`,
           `export type UploadWithContentEncodingRequestFormData = { readonly "file": __HttpApiMultipartSingleFile, readonly "files": __HttpApiMultipartFiles }`,
           `export const UploadWithContentEncodingRequestFormData = Schema.Struct({ "file": __HttpApiMultipartSingleFile, "files": __HttpApiMultipartFiles })`,
-          `HttpApiEndpoint.post("uploadWithContentEncoding", "/upload-content-encoding", { payload: UploadWithContentEncodingRequestFormData.pipe(HttpApiSchema.asMultipart()), success: HttpApiSchema.Empty(200) })`
+          `HttpApiEndpoint.post("uploadWithContentEncoding", "/upload-content-encoding", { payload: UploadWithContentEncodingRequestFormData.pipe(HttpApiSchema.asMultipart()), success: HttpApiSchema.Empty(200).annotate({ description: "Uploaded" }) })`
         ],
         [
           `contentEncoding`,
@@ -3174,11 +3342,11 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
             `const BasicAuthSecurity = HttpApiSecurity.basic`,
             `class ApiKeyAuthOrBearerAuthSecurityMiddleware extends HttpApiMiddleware.Service<ApiKeyAuthOrBearerAuthSecurityMiddleware>()("apiKeyAuth | bearerAuth security", { security: { "apiKeyAuth": ApiKeyAuthSecurity, "bearerAuth": BearerAuthSecurity } }) {}`,
             `class ApiKeyAuthAndBasicAuthSecurityMiddleware extends HttpApiMiddleware.Service<ApiKeyAuthAndBasicAuthSecurityMiddleware>()("apiKeyAuth & basicAuth security") {}`,
-            `HttpApiEndpoint.get("getSecure", "/secure", { success: HttpApiSchema.Empty(200) })\n      .middleware(ApiKeyAuthOrBearerAuthSecurityMiddleware)\n      .middleware(ApiKeyAuthAndBasicAuthSecurityMiddleware)`,
-            `HttpApiEndpoint.get("getPublic", "/public", { success: HttpApiSchema.Empty(200) })`
+            `HttpApiEndpoint.get("getSecure", "/secure", { success: HttpApiSchema.Empty(200).annotate({ description: "Secure" }) })\n      .middleware(ApiKeyAuthOrBearerAuthSecurityMiddleware)\n      .middleware(ApiKeyAuthAndBasicAuthSecurityMiddleware)`,
+            `HttpApiEndpoint.get("getPublic", "/public", { success: HttpApiSchema.Empty(200).annotate({ description: "Public" }) })`
           ],
           excludes: [
-            `HttpApiEndpoint.get("getPublic", "/public", { success: HttpApiSchema.Empty(200) })\n      .middleware(`
+            `HttpApiEndpoint.get("getPublic", "/public", { success: HttpApiSchema.Empty(200).annotate({ description: "Public" }) })\n      .middleware(`
           ],
           warnings: [
             {
@@ -3331,15 +3499,15 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
           includes: [
             `class ApiKeyAuthSecurityMiddleware extends HttpApiMiddleware.Service<ApiKeyAuthSecurityMiddleware>()("apiKeyAuth security", { security: { "apiKeyAuth": ApiKeyAuthSecurity } }) {}`,
             `class BearerAuthSecurityMiddleware extends HttpApiMiddleware.Service<BearerAuthSecurityMiddleware>()("bearerAuth security", { security: { "bearerAuth": BearerAuthSecurity } }) {}`,
-            `HttpApiEndpoint.get("getInherited", "/inherited", { success: HttpApiSchema.Empty(200) })\n      .middleware(ApiKeyAuthSecurityMiddleware)`,
-            `HttpApiEndpoint.get("getInheritedTwo", "/inherited-two", { success: HttpApiSchema.Empty(200) })\n      .middleware(ApiKeyAuthSecurityMiddleware)`,
-            `HttpApiEndpoint.get("getCleared", "/cleared", { success: HttpApiSchema.Empty(200) })`,
-            `HttpApiEndpoint.get("getAnonymous", "/anonymous", { success: HttpApiSchema.Empty(200) })`,
-            `HttpApiEndpoint.get("getOverride", "/override", { success: HttpApiSchema.Empty(200) })\n      .middleware(BearerAuthSecurityMiddleware)`
+            `HttpApiEndpoint.get("getInherited", "/inherited", { success: HttpApiSchema.Empty(200).annotate({ description: "Inherited" }) })\n      .middleware(ApiKeyAuthSecurityMiddleware)`,
+            `HttpApiEndpoint.get("getInheritedTwo", "/inherited-two", { success: HttpApiSchema.Empty(200).annotate({ description: "Inherited two" }) })\n      .middleware(ApiKeyAuthSecurityMiddleware)`,
+            `HttpApiEndpoint.get("getCleared", "/cleared", { success: HttpApiSchema.Empty(200).annotate({ description: "Cleared" }) })`,
+            `HttpApiEndpoint.get("getAnonymous", "/anonymous", { success: HttpApiSchema.Empty(200).annotate({ description: "Anonymous" }) })`,
+            `HttpApiEndpoint.get("getOverride", "/override", { success: HttpApiSchema.Empty(200).annotate({ description: "Override" }) })\n      .middleware(BearerAuthSecurityMiddleware)`
           ],
           excludes: [
-            `HttpApiEndpoint.get("getCleared", "/cleared", { success: HttpApiSchema.Empty(200) })\n      .middleware(`,
-            `HttpApiEndpoint.get("getAnonymous", "/anonymous", { success: HttpApiSchema.Empty(200) })\n      .middleware(`
+            `HttpApiEndpoint.get("getCleared", "/cleared", { success: HttpApiSchema.Empty(200).annotate({ description: "Cleared" }) })\n      .middleware(`,
+            `HttpApiEndpoint.get("getAnonymous", "/anonymous", { success: HttpApiSchema.Empty(200).annotate({ description: "Anonymous" }) })\n      .middleware(`
           ],
           occurrences: [
             {
@@ -3501,10 +3669,10 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
         },
         {
           includes: [
-            `HttpApiEndpoint.get("getCookie", "/cookies", { success: HttpApiSchema.Empty(200) })`,
-            `HttpApiEndpoint.get("getHeaders", "/headers", { success: HttpApiSchema.Empty(200) })`,
-            `HttpApiEndpoint.get("getDefaultSuccess", "/default-success", { success: HttpApiSchema.Empty(200), error: HttpApiSchema.Empty(500) })`,
-            `HttpApiEndpoint.get("getDefaultOnly", "/default-only", { success: HttpApiSchema.Empty(200) })`
+            `HttpApiEndpoint.get("getCookie", "/cookies", { success: HttpApiSchema.Empty(200).annotate({ description: "Cookie" }) })`,
+            `HttpApiEndpoint.get("getHeaders", "/headers", { success: HttpApiSchema.Empty(200).annotate({ description: "Headers" }) })`,
+            `HttpApiEndpoint.get("getDefaultSuccess", "/default-success", { success: HttpApiSchema.Empty(200).annotate({ description: "OK" }), error: HttpApiSchema.Empty(500).annotate({ description: "Fallback" }) })`,
+            `HttpApiEndpoint.get("getDefaultOnly", "/default-only", { success: HttpApiSchema.Empty(200).annotate({ description: "Fallback" }) })`
           ],
           excludes: [
             `HttpApiEndpoint.get("streamEvents", "/sse"`,
@@ -3644,7 +3812,7 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
         assertHttpApiIncludes(spec, [
           `HttpApiEndpoint.get("list", "/search"`,
           `export const SearchRequestJson = Schema.Struct({ "query": Schema.String })`,
-          `HttpApiEndpoint.query("search", "/search", { payload: SearchRequestJson, success: HttpApiSchema.Empty(204) })`
+          `HttpApiEndpoint.query("search", "/search", { payload: SearchRequestJson, success: HttpApiSchema.Empty(204).annotate({ description: "No content" }) })`
         ], ["legacySearch", "LegacySearch"])
       ]))
   })
@@ -3665,6 +3833,22 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
         }
       }
     } satisfies OpenAPISpec
+
+    it.effect.each([
+      {
+        summary: "List pets",
+        description: "Returns pets available for adoption.",
+        text: "List pets\n* \n* Returns pets available for adoption."
+      },
+      { summary: "List pets", description: " List pets ", text: "List pets" },
+      { summary: "List pets", text: "List pets" },
+      { description: "Returns available pets.", text: "Returns available pets." }
+    ])("documents client methods with summary '$summary' and description '$description'", ({ text, ...metadata }) => {
+      const get = { ...petsSpec.paths["/pets"].get, ...metadata }
+      const spec = { ...petsSpec, paths: { "/pets": { get } } }
+      const expected = [`/**\n* ${text}\n*/\nreadonly "listPets"`]
+      return Effect.all([assertRuntimeIncludes(spec, expected), assertTypeOnlyIncludes(spec, expected)])
+    })
 
     for (const format of ["httpclient", "httpclient-type-only", "httpapi"] as const) {
       const layer = format === "httpclient-type-only"
@@ -4369,6 +4553,42 @@ export const withoutLocale = client.getGreeting({ params: {} })
 export const withBlob: UploadRequestFormData = { file: new Blob([]) }
 // @ts-expect-error Binary multipart fields do not accept strings.
 export const withString: UploadRequestFormData = { file: "upload.txt" }
+`
+      }
+    )
+
+    const openMultipartSpec = multipartSpec({
+      type: "object",
+      properties: { file: { type: "string", format: "binary" }, caption: { type: "string" } },
+      required: ["file"]
+    })
+
+    itGeneratedClientsCompile("accepts files in open multipart objects for generated clients", openMultipartSpec, {
+      usage: `export const withFile: UploadRequestFormData = { file: new File([], "upload.txt"), caption: "hi" }
+export const withBlob: UploadRequestFormData = { file: new Blob([]), undeclared: "kept" }
+`
+    })
+
+    it.effect("accepts files in open multipart objects (httpapi)", () =>
+      assertHttpApiIncludes(openMultipartSpec, [
+        `[Schema.Record(Schema.String, Schema.Union([Schema.Json.annotate({ "expected": "JSON value" }), __HttpApiMultipartSingleFile]))]`
+      ]))
+
+    itGeneratedClientsCompile(
+      "accepts referenced file unions in open multipart objects without widening shared JSON components",
+      sharedMultipartSpec({ $ref: "#/components/schemas/Upload" }, {
+        MaybeFile: { anyOf: [{ type: "string", format: "binary" }, { type: "null" }] },
+        Upload: {
+          type: "object",
+          properties: { file: { $ref: "#/components/schemas/MaybeFile" } },
+          required: ["file"]
+        }
+      }),
+      {
+        usage: `export const multipartBlob: UploadMultipart = { file: new Blob([]), undeclared: "kept" }
+export const jsonString: Upload = { file: "text", undeclared: "kept" }
+// @ts-expect-error Shared JSON component must still reject files.
+export const jsonBlob: Upload = { file: new Blob([]) }
 `
       }
     )

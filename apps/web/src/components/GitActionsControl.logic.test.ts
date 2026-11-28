@@ -128,6 +128,22 @@ describe("when: on default ref without open PR", () => {
     });
   });
 
+  it("resolveQuickAction pushes without committing when the tree is clean and ahead", () => {
+    const withUpstream = resolveQuickAction(
+      status({ refName: "main", aheadCount: 1 }),
+      false,
+      true,
+    );
+    assert.deepInclude(withUpstream, { kind: "run_action", action: "push", label: "Push" });
+
+    const withoutUpstream = resolveQuickAction(
+      status({ refName: "main", aheadCount: 1, hasUpstream: false }),
+      false,
+      true,
+    );
+    assert.deepInclude(withoutUpstream, { kind: "run_action", action: "push", label: "Push" });
+  });
+
   it("offers a feature branch only to actions that commit the changes", () => {
     const reason = (action: DefaultBranchConfirmableAction, hasWorkingTreeChanges: boolean) =>
       resolveFeatureBranchUnavailableReason({ action, branchName: "main", hasWorkingTreeChanges });

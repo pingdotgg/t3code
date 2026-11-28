@@ -46,4 +46,14 @@ describe("nativePullRequestMarkdown", () => {
     const marker = native.markdown.lastIndexOf("[ ]");
     expect(native.sourceOffset(marker)).toBe(text.lastIndexOf("[ ]"));
   });
+
+  it("keeps rewrites and task offsets aligned after a leading BOM", () => {
+    const text = "\uFEFF[:+1: see](https://x.test) Fixes #12 :tada:\n- [ ] next";
+    const native = nativePullRequestMarkdown(text, github, true);
+    expect(native.markdown).toBe(
+      "\uFEFF[👍 see](https://x.test) Fixes [#12](https://github.com/team/repo/issues/12) 🎉\n- [ ] next",
+    );
+    const marker = native.markdown.lastIndexOf("[ ]");
+    expect(native.sourceOffset(marker)).toBe(text.lastIndexOf("[ ]"));
+  });
 });
