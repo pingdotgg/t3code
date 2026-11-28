@@ -14,6 +14,7 @@ import { createCanvas, readImageColorSpace } from "../../lib/imageCanvas";
 import { encodeCanvas } from "../../lib/imageCompression";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { Button } from "../ui/button";
+import { FloatingToolbar } from "../ui/floating-toolbar";
 import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
 import { ZoomableImageNaturalSize } from "./ZoomableImage";
 
@@ -305,7 +306,7 @@ export function ImageAnnotationOverlay({
         aria-label={gt("Draw on {name}", { name: target.name })}
         role="img"
         className={cn(
-          "absolute inset-0 size-full touch-none rounded-lg",
+          "absolute inset-0 size-full touch-none rounded-card",
           tool === "draw" ? "cursor-crosshair" : "cursor-pointer",
         )}
         onPointerDown={onPointerDown}
@@ -319,7 +320,10 @@ export function ImageAnnotationOverlay({
         <g ref={liveLayerRef} />
       </svg>
       {/* Floats above the image and takes no layout space, so entering edit mode moves nothing. */}
-      <div className="absolute bottom-full left-1/2 z-10 mb-2 flex w-max max-w-[calc(100vw-7rem)] -translate-x-1/2 flex-col items-center gap-1 rounded-lg border border-border bg-popover/95 p-1 text-popover-foreground shadow-lg backdrop-blur-xl">
+      <FloatingToolbar
+        orientation="vertical"
+        className="absolute bottom-full left-1/2 z-10 mb-2 w-max max-w-[calc(100vw-7rem)] -translate-x-1/2"
+      >
         <div className="flex flex-wrap items-center justify-center gap-1">
           <ToggleGroup
             variant="default"
@@ -386,7 +390,7 @@ export function ImageAnnotationOverlay({
             {gt("The drawing could not be saved. Try again or cancel.")}
           </p>
         ) : null}
-      </div>
+      </FloatingToolbar>
     </>
   );
 }

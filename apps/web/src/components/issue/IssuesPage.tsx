@@ -81,7 +81,7 @@ import { isElectron } from "~/env";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { PREVIEW_PANEL_SPLIT_MIN_ROW_WIDTH } from "~/hooks/usePreviewPanelInlineSize";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { resolveShortcutCommand } from "~/keybindings";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "~/keybindings";
 import { useLayoutPane, useLayoutPaneFocusedRef } from "~/layout/layoutPaneContext";
 import { useLayoutPageLocation } from "~/layout/pageNavigation";
 import { isModalDialogOpen } from "~/lib/modalDialog";
@@ -495,7 +495,14 @@ export function IssuesPage() {
   const rightPanelMaximized = rightPanelState.isOpen && (maximized || tooNarrowToSplit);
   if (!rightPanelState.isOpen && maximized) setMaximized(false);
   const toggleRightPanelMaximized = () => {
-    if (rightPanelState.isOpen) setMaximized((value) => !value);
+    if (rightPanelState.isOpen) {
+      setMaximized((value) => !value);
+      return;
+    }
+    // A closed panel opens straight into maximized.
+    if (rightPanelRef === null || panelSurface === null) return;
+    toggleRightPanel();
+    setMaximized(true);
   };
 
   const closeSurfaces = (surfaces: readonly RightPanelSurface[]) => {
@@ -536,7 +543,7 @@ export function IssuesPage() {
     if (!event.repeat) toggleRightPanel();
   });
   const toggleRightPanelMaximizedFromShortcut = useEffectEvent((event: KeyboardEvent) => {
-    if (!rightPanelState.isOpen) return;
+    if (!rightPanelState.isOpen && (rightPanelRef === null || panelSurface === null)) return;
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) toggleRightPanelMaximized();
@@ -816,6 +823,7 @@ export function IssuesPage() {
         <RightPanelMaximizeControl
           maximized={rightPanelMaximized}
           onToggle={toggleRightPanelMaximized}
+          shortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggleMaximized")}
         />
       </div>
     ) : null;

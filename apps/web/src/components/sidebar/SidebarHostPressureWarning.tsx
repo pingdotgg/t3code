@@ -167,7 +167,7 @@ function MachinesDetails(props: { readonly strained: ReadonlyArray<Strained> }) 
     <>
       <KindExplanations kinds={kinds} pressure={null} machineName={null} />
       {props.strained.map((entry) => (
-        <section key={entry.environmentId} className="mt-3 border-t border-border/60 pt-2">
+        <section key={entry.environmentId} className="mt-3 border-t border-divider pt-2">
           <p className="truncate text-caption">{entry.label}</p>
           {kinds.length > 1 ? (
             <ul className="mt-0.5 text-caption text-muted-foreground">

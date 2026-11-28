@@ -102,7 +102,7 @@ import { RightPanelTabs, type RightPanelTabsHandle } from "../RightPanelTabs";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { isModalDialogOpen } from "~/lib/modalDialog";
 import { isElectron } from "~/env";
-import { resolveShortcutCommand } from "~/keybindings";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "~/keybindings";
 import { registerCommands } from "~/shortcuts/dispatcher";
 import { isTerminalFocused } from "~/lib/terminalFocus";
 import { RightPanelMaximizeControl } from "../chat/PanelLayoutControls";
