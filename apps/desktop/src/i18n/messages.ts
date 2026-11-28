@@ -20,6 +20,7 @@ const CATALOGS: Readonly<Record<string, () => Promise<{ readonly default: Catalo
   "pt-BR": () => import("./translations/pt-BR.json", { with: { type: "json" } }),
   ru: () => import("./translations/ru.json", { with: { type: "json" } }),
   sv: () => import("./translations/sv.json", { with: { type: "json" } }),
+  vi: () => import("./translations/vi.json", { with: { type: "json" } }),
   zh: () => import("./translations/zh.json", { with: { type: "json" } }),
 };
 const SUPPORTED_LOCALES = [DEFAULT_LOCALE, ...Object.keys(CATALOGS)];

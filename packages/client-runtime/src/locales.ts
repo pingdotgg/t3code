@@ -12,6 +12,7 @@ const NATIVE_LANGUAGE_NAMES: Readonly<Record<string, string>> = {
   "pt-BR": "Português (Brasil)",
   ru: "Русский",
   sv: "Svenska",
+  vi: "Tiếng Việt",
   zh: "中文（简体）",
 };
 

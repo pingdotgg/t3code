@@ -29,6 +29,7 @@ const CATALOGS: Readonly<Record<string, () => unknown>> = {
   pl: () => require("./translations/pl.json"),
   ru: () => require("./translations/ru.json"),
   sv: () => require("./translations/sv.json"),
+  vi: () => require("./translations/vi.json"),
 };
 
 initializeGT({
