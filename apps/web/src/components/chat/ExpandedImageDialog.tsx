@@ -8,6 +8,7 @@ import {
   ExternalLinkIcon,
   ImageIcon,
   MinusIcon,
+  PencilIcon,
   PlusIcon,
   VideoIcon,
   Image as ImageGlyphIcon,
@@ -33,6 +34,11 @@ import {
 } from "./SnapShotAttachmentDetails";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ZoomableImage, type ZoomableImageHandle, type ZoomableImageView } from "./ZoomableImage";
+import {
+  type EditedImage,
+  ImageAnnotationOverlay,
+  type ImageAnnotationStatus,
+} from "./ImageAnnotationOverlay";
 import { readLocalApi } from "../../localApi";
 import { toastManager } from "../ui/toast";
 import { composerFloatingLayerProps } from "./composerEventScope";
@@ -175,6 +181,15 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   } | null>(null);
   const [view, setView] = useState<ZoomableImageView | null>(null);
   const zoomableImageRef = useRef<ZoomableImageHandle>(null);
+  // Drawing happens in place over the current image, so the preview around it never moves.
+  const [editing, setEditing] = useState(false);
+  const [editStatus, setEditStatus] = useState<ImageAnnotationStatus>({
+    dirty: false,
+    saving: false,
+  });
+  // A saved edit replaces the draft's bytes; show them here without reopening the preview.
+  const [editedImages, setEditedImages] = useState<Readonly<Record<number, EditedImage>>>({});
+  const editButtonRef = useRef<HTMLButtonElement>(null);
   const [returnFocus] = useState(() => {
     const target = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     return { target, focusVisible: target?.matches(":focus-visible") ?? false };
@@ -191,7 +206,16 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   const imageCount = preview.images.length;
   const index =
     imageCount > 0 ? (((preview.index + imageOffset) % imageCount) + imageCount) % imageCount : 0;
-  const item = preview.images[index];
+  const previewItem = preview.images[index];
+  const editedImage = editedImages[index];
+  const item =
+    previewItem && editedImage
+      ? {
+          ...previewItem,
+          src: editedImage.src,
+          ...(previewItem.edit ? { edit: { ...previewItem.edit, file: editedImage.file } } : {}),
+        }
+      : previewItem;
   const source: MediaActionSource = item?.actionsSource ?? {
     kind: item?.type === "video" ? "video" : "image",
     name: item?.name ?? gt("Media"),
@@ -209,17 +233,34 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     : source;
   const runByteAction = useMediaByteAction(actionsSource);
 
+  const exitEdit = () => {
+    setEditing(false);
+    setEditStatus({ dirty: false, saving: false });
+    editButtonRef.current?.focus({ preventScroll: true });
+  };
+  const cancelEdit = () => {
+    if (!editStatus.saving) exitEdit();
+  };
+
   const navigateImage = (direction: -1 | 1) => {
+    if (editing) {
+      if (editStatus.dirty) return;
+      exitEdit();
+    }
     setImageOffset((current) => current + direction);
   };
   const selectImage = (target: number) => {
+    if (editing) {
+      if (editStatus.dirty) return;
+      exitEdit();
+    }
     setImageOffset(target - preview.index);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || isContextMenuOpen() || event.target instanceof HTMLVideoElement)
       return;
-    if (zoomableImageRef.current?.pan(event.key)) {
+    if (!editing && zoomableImageRef.current?.pan(event.key)) {
       event.preventDefault();
       event.stopPropagation();
       return;
@@ -239,6 +280,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
 
   if (!item) return null;
   const isVideo = item.type === "video";
+  const editTarget = editing && !isVideo ? item.edit : undefined;
   const openOriginalLink =
     item.originalUrl && resolveExternalWebLinkHost(item.originalUrl) !== null ? (
       <OpenMediaLink originalUrl={item.originalUrl} />
@@ -299,6 +341,12 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           eventDetails.cancel();
           return;
         }
+        // While drawing, Escape cancels the drawing and nothing else closes the preview.
+        if (editing) {
+          eventDetails.cancel();
+          if (eventDetails.reason === "escape-key") cancelEdit();
+          return;
+        }
         close();
       }}
     >
@@ -320,13 +368,15 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             return;
           event.preventDefault();
           event.stopPropagation();
-          close();
+          // While drawing, Escape cancels the drawing and nothing else closes the preview.
+          if (editing) cancelEdit();
+          else close();
         }}
         onKeyDown={onKeyDown}
         initialFocus={closeButtonRef}
         finalFocus={() => returnFocus.target}
         onClick={(event) => {
-          if (event.target === event.currentTarget) close();
+          if (event.target === event.currentTarget && !editing) close();
         }}
       >
         <DialogTitle className="sr-only">
@@ -346,8 +396,14 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                   ref={closeButtonRef}
                   size="icon-sm"
                   variant="secondary"
-                  onClick={close}
-                  aria-label={isVideo ? gt("Close video preview") : gt("Close image preview")}
+                  onClick={editing ? cancelEdit : close}
+                  aria-label={
+                    editing
+                      ? gt("Cancel drawing")
+                      : isVideo
+                        ? gt("Close video preview")
+                        : gt("Close image preview")
+                  }
                 />
               }
               label={gt("Back")}
@@ -398,6 +454,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                     variant={showingAccessibilityDetails ? "secondary" : "ghost"}
                     aria-label={contentsLabel}
                     aria-pressed={showingAccessibilityDetails}
+                    disabled={editing}
                     onClick={() =>
                       setAccessibilityDetailsSrc(showingAccessibilityDetails ? null : item.src)
                     }
@@ -414,6 +471,26 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
               </SharedTooltipTrigger>
             ) : item.source ? (
               <SnapShotContentsButton source={item.source} side="bottom" />
+            ) : null}
+            {item.edit && !isVideo ? (
+              <SharedTooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    ref={editButtonRef}
+                    size="icon-sm"
+                    variant={editing ? "secondary" : "ghost"}
+                    aria-label={gt("Draw on image")}
+                    aria-pressed={editing}
+                    disabled={showingAccessibilityDetails || editStatus.saving}
+                    onClick={() => (editing ? cancelEdit() : setEditing(true))}
+                  />
+                }
+                label={gt("Draw on image")}
+                side="bottom"
+              >
+                <PencilIcon aria-hidden="true" />
+              </SharedTooltipTrigger>
             ) : null}
             {item.onCopySnapshot ? (
               <SnapShotCopyButton onCopy={item.onCopySnapshot} side="bottom" />
@@ -507,6 +584,19 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                     if (item.src !== null) setNaturalSize({ src: item.src, ...size });
                   }}
                   onViewChange={setView}
+                  overlay={
+                    editTarget ? (
+                      <ImageAnnotationOverlay
+                        target={editTarget}
+                        onStatusChange={setEditStatus}
+                        onSaved={(edited) => {
+                          setEditedImages((current) => ({ ...current, [index]: edited }));
+                          exitEdit();
+                        }}
+                        onExit={exitEdit}
+                      />
+                    ) : undefined
+                  }
                 />
               )}
             </div>

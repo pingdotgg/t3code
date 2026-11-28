@@ -66,6 +66,8 @@ import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { PROVIDER_PRESENTATION } from "../usage/usageProviders";
+import { UsageAccessReads } from "../usage/UsageAccessReads";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
@@ -78,6 +80,7 @@ import {
 } from "./customModelSaves.logic";
 import { getProviderRestartNotice } from "../ProviderUpdateLaunchNotification.logic";
 import {
+  getProviderReinstallCommand,
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
   getProviderStatusKey,
@@ -227,13 +230,14 @@ type ProviderVersionAdvisory = NonNullable<
 // label, busy state and progress line live in one place.
 function ProviderVersionUpdateAction(props: {
   readonly advisory: ProviderVersionAdvisory;
+  readonly isReinstall: boolean;
   readonly isUpdating: boolean;
   readonly progress: string | null;
   readonly problem: string | null;
   readonly stretch: boolean;
   readonly onRun: () => void;
 }) {
-  const { advisory, isUpdating, progress, problem, stretch, onRun } = props;
+  const { advisory, isReinstall, isUpdating, progress, problem, stretch, onRun } = props;
   const gt = useGT();
   return (
     <>
@@ -252,7 +256,9 @@ function ProviderVersionUpdateAction(props: {
             ? gt("Install {version}", {
                 version: getProviderVersionLabel(advisory.targetVersion),
               })
-            : gt("Update now")}
+            : isReinstall
+              ? gt("Reinstall")
+              : gt("Update now")}
       </Button>
       {progress || problem ? (
         <p
@@ -866,12 +872,28 @@ export function ProviderInstanceCard({
       ? (providerAuthLabel(liveProvider.auth, m) ?? null)
       : null;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
-  const versionAdvisory = getProviderVersionAdvisoryPresentation(
+  const updateAdvisory = getProviderVersionAdvisoryPresentation(
     liveProvider?.versionAdvisory,
     liveProvider?.compatibilityAdvisory,
     enabled,
     m,
   );
+  const reinstallCommand =
+    enabled && !updateAdvisory ? getProviderReinstallCommand(liveProvider) : null;
+  const isReinstall = reinstallCommand !== null;
+  const versionAdvisory =
+    updateAdvisory ??
+    (isReinstall
+      ? {
+          title: gt("Reinstall needed"),
+          detail: gt(
+            "This installation is missing files it needs to start. Reinstall it to fix it.",
+          ),
+          updateCommand: reinstallCommand,
+          emphasis: "strong" as const,
+          targetVersion: null,
+        }
+      : null);
   const updateCommand = versionAdvisory?.updateCommand ?? null;
   const updateState = liveProvider?.updateState;
   const updateProgress = isUpdating
@@ -889,7 +911,8 @@ export function ProviderInstanceCard({
     compatibility !== undefined &&
     compatibility.status !== "supported" &&
     compatibility.status !== "unknown";
-  const VersionAdvisoryIcon = hasCompatibilityWarning ? AlertTriangleIcon : ArrowUpCircleIcon;
+  const VersionAdvisoryIcon =
+    hasCompatibilityWarning || isReinstall ? AlertTriangleIcon : ArrowUpCircleIcon;
   const onRunVersionAction = readOnly
     ? undefined
     : versionAdvisory?.targetVersion
@@ -968,6 +991,12 @@ export function ProviderInstanceCard({
     }
     onUpdate({ ...instance, enabled: value });
   };
+
+  const readsUsage = Object.values(PROVIDER_PRESENTATION).some(
+    (presentation) => presentation.driverKind === instance.driver,
+  );
+  const updateUsageAccess = (allowed: boolean) =>
+    onUpdate({ ...instance, usageAccess: allowed ? "allowed" : "denied" });
 
   const updateAccentColor = (value: string) => {
     const normalized = normalizeProviderAccentColor(value);
@@ -1125,7 +1154,7 @@ export function ProviderInstanceCard({
                   <VersionAdvisoryIcon
                     className={cn(
                       mode === "list" && "size-3.5",
-                      hasCompatibilityWarning && "text-warning-foreground",
+                      (hasCompatibilityWarning || isReinstall) && "text-warning-foreground",
                     )}
                   />
                 )}
@@ -1155,6 +1184,7 @@ export function ProviderInstanceCard({
           {onRunVersionAction ? (
             <ProviderVersionUpdateAction
               advisory={versionAdvisory}
+              isReinstall={isReinstall}
               isUpdating={isUpdating}
               progress={updateProgress}
               problem={updateProblem}
@@ -1342,6 +1372,7 @@ export function ProviderInstanceCard({
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <ProviderVersionUpdateAction
             advisory={versionAdvisory}
+            isReinstall={isReinstall}
             isUpdating={isUpdating}
             progress={updateProgress}
             problem={updateProblem}
@@ -1436,6 +1467,20 @@ export function ProviderInstanceCard({
             </div>
           }
         />
+        {readsUsage ? (
+          <SettingsRow
+            title={gt("Usage access")}
+            description={<UsageAccessReads driver={instance.driver} />}
+            control={
+              <Switch
+                checked={instance.usageAccess === "allowed"}
+                disabled={readOnly}
+                onCheckedChange={(checked) => updateUsageAccess(Boolean(checked))}
+                aria-label={gt("Usage access for {provider}", { provider: displayName })}
+              />
+            }
+          />
+        ) : null}
       </SettingsSection>
 
       {setup || environmentFields.length > 0 ? (

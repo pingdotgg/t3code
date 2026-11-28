@@ -3,7 +3,7 @@ import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, useGT, useMessages } from "gt-react";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { ComposerTaskStatus } from "./chat/ComposerTaskStatus";
-import { workspaceAreaProps } from "../lib/workspaceFocus";
+import { requestWorkspaceFocus, workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
@@ -1237,11 +1237,6 @@ export default function ChatView(props: ChatViewProps) {
   // An embedded side chat has no panel; a stale maximized flag would hide its own column.
   const rightPanelMaximized =
     !embedded && canMaximizeRightPanel && rightPanelState.maximized === true;
-  const toggleRightPanelMaximizedStable = useStableCallback(() => {
-    if (canMaximizeRightPanel && activeThreadRef) {
-      useRightPanelStore.getState().setMaximized(activeThreadRef, !rightPanelMaximized);
-    }
-  });
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const [threadPanelPopoverHandle] = useState(PopoverCreateHandle);
   const [chatCanvasStore] = useState(createChatCanvasStore);
@@ -2613,6 +2608,19 @@ export default function ChatView(props: ChatViewProps) {
     activeProjectCwd,
     onDiffPanelOpen,
   });
+  const toggleRightPanelMaximizedStable = useStableCallback(() => {
+    if (!activeThreadRef) return;
+    if (!rightPanelOpen) {
+      // A closed panel opens straight into maximized.
+      requestWorkspaceFocus({ area: "panel" });
+      useRightPanelStore.getState().requestMaximize(activeThreadRef);
+      toggleRightPanelStable();
+      return;
+    }
+    if (!canMaximizeRightPanel) return;
+    if (!rightPanelMaximized) requestWorkspaceFocus({ area: "panel" });
+    useRightPanelStore.getState().setMaximized(activeThreadRef, !rightPanelMaximized);
+  });
   const pullRequestSurfaceAvailable = supportsPullRequests && pullRequestPanelTarget !== null;
   const {
     acknowledgeActiveThreadWoke,
@@ -3096,6 +3104,9 @@ export default function ChatView(props: ChatViewProps) {
       ...terminalShortcuts,
       ...rightPanelShortcuts,
       ...threadLifecycleShortcuts,
+      "rightPanel.toggleMaximized": ({ event }) => {
+        if (!event.repeat) toggleRightPanelMaximizedStable();
+      },
       "rightPanel.close": ({ event }) => {
         if (!activeRightPanelSurface) return false;
         if (!event.repeat) closeActiveRightPanelSurfaceStable();
@@ -3146,9 +3157,16 @@ export default function ChatView(props: ChatViewProps) {
     if (embedded || backgroundThread) return;
     return window.desktopBridge?.onMenuAction((action) => {
       if (action === "rightPanel.toggle") toggleRightPanelStable();
+      else if (action === "rightPanel.toggleMaximized") toggleRightPanelMaximizedStable();
       else if (action === "rightPanel.close") closeActiveRightPanelSurfaceStable();
     });
-  }, [embedded, backgroundThread, toggleRightPanelStable, closeActiveRightPanelSurfaceStable]);
+  }, [
+    embedded,
+    backgroundThread,
+    toggleRightPanelStable,
+    toggleRightPanelMaximizedStable,
+    closeActiveRightPanelSurfaceStable,
+  ]);
 
   usePasteToFocusComposer(embedded ? null : activeThreadId, composerRef);
   // A delegated task is a remote thread's subagent.
@@ -3698,6 +3716,10 @@ export default function ChatView(props: ChatViewProps) {
     onToggleThreadPanel: toggleThreadPanelStable,
     onToggleRightPanel: toggleRightPanelStable,
   } satisfies PanelLayoutControlsProps;
+  const rightPanelMaximizeShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "rightPanel.toggleMaximized",
+  );
   const panelToggleControls = (
     <PanelLayoutControls
       {...panelToggleControlProps}
@@ -4425,6 +4447,7 @@ export default function ChatView(props: ChatViewProps) {
                 <RightPanelMaximizeControl
                   maximized={rightPanelMaximized}
                   onToggle={toggleRightPanelMaximizedStable}
+                  shortcutLabel={rightPanelMaximizeShortcutLabel}
                 />
                 {panelToggleControls}
               </div>

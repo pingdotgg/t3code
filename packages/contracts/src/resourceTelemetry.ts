@@ -1,10 +1,80 @@
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { HostPowerSnapshot } from "./background.ts";
 import { DesktopUpdateChannelSchema, DesktopUpdateStateSchema } from "./ipc.ts";
 
 export const RESOURCE_MONITOR_PROTOCOL_VERSION = 3 as const;
+
+export const HostPressureLevel = Schema.Literals(["none", "elevated", "severe"]);
+export type HostPressureLevel = typeof HostPressureLevel.Type;
+
+export const HostPressureAgent = Schema.Struct({
+  /** Null for a process several threads share, such as a Codex app-server. */
+  threadId: Schema.NullOr(ThreadId),
+  /** What launched it, such as `claude` or `codex`. */
+  agent: TrimmedNonEmptyString,
+  memoryBytes: NonNegativeInt,
+  /** CPU cores in use, coarsely rounded; null until two samples exist. */
+  cpuCores: Schema.NullOr(Schema.Number),
+});
+export type HostPressureAgent = typeof HostPressureAgent.Type;
+
+/** Whether work on the machine is stalling, by cause. Busy is not stalling. */
+export const HostPressure = Schema.Struct({
+  memory: HostPressureLevel,
+  /** Runnable work waiting for a CPU. */
+  cpu: HostPressureLevel,
+  /** Work waiting on storage reads and writes. */
+  io: HostPressureLevel,
+  /** Free space where T3 keeps its data and worktrees. */
+  disk: HostPressureLevel,
+  /** Free bytes on the fullest of those volumes, coarsely rounded; null when unreadable. */
+  diskFreeBytes: Schema.NullOr(NonNegativeInt),
+  /** The largest agents by the resource under pressure; empty while memory and CPU are calm. */
+  heaviestAgents: Schema.Array(HostPressureAgent),
+});
+export type HostPressure = typeof HostPressure.Type;
+
+export const CALM_HOST_PRESSURE: HostPressure = {
+  memory: "none",
+  cpu: "none",
+  io: "none",
+  disk: "none",
+  diskFreeBytes: null,
+  heaviestAgents: [],
+};
+
+const HOST_PRESSURE_RANK = { none: 0, elevated: 1, severe: 2 } as const;
+
+export function worstHostPressureLevel(pressure: HostPressure): HostPressureLevel {
+  return [pressure.memory, pressure.cpu, pressure.io, pressure.disk].reduce((worst, level) =>
+    HOST_PRESSURE_RANK[level] > HOST_PRESSURE_RANK[worst] ? level : worst,
+  );
+}
+
+export type HostPressureKind = "memory" | "disk" | "cpu" | "io";
+
+/** Most actionable first: memory and disk failures end turns, overload only slows them. */
+export function severeHostPressureKinds(pressure: HostPressure): ReadonlyArray<HostPressureKind> {
+  return (["memory", "disk", "cpu", "io"] as const).filter((kind) => pressure[kind] === "severe");
+}
+
+/** What `heaviestAgents` is ranked by: the more pressured of memory and CPU, memory on a tie. */
+export function hostPressureRanking(pressure: HostPressure): "memory" | "cpu" {
+  return HOST_PRESSURE_RANK[pressure.cpu] > HOST_PRESSURE_RANK[pressure.memory] ? "cpu" : "memory";
+}
+
+/** The thread's agent when it is among the heaviest while memory or CPU is severe. */
+export function hostPressureCulprit(
+  pressure: HostPressure | undefined,
+  threadId: ThreadId,
+): HostPressureAgent | null {
+  if (pressure === undefined || (pressure.memory !== "severe" && pressure.cpu !== "severe")) {
+    return null;
+  }
+  return pressure.heaviestAgents.find((agent) => agent.threadId === threadId) ?? null;
+}
 
 export const HostResourcesSnapshot = Schema.Struct({
   sampledAt: NonNegativeInt,
@@ -12,6 +82,9 @@ export const HostResourcesSnapshot = Schema.Struct({
   cpuCount: NonNegativeInt,
   availableMemoryBytes: NonNegativeInt,
   totalMemoryBytes: NonNegativeInt,
+  /** Absent from older servers. */
+  diskFreeBytes: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
+  diskTotalBytes: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
 });
 export type HostResourcesSnapshot = typeof HostResourcesSnapshot.Type;
 
@@ -143,6 +216,13 @@ export const ResourceMonitorReadHistoryCommand = Schema.Struct({
 });
 export type ResourceMonitorReadHistoryCommand = typeof ResourceMonitorReadHistoryCommand.Type;
 
+export const ResourceMonitorMemoryPressureCommand = Schema.Struct({
+  version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
+  type: Schema.Literal("memoryPressure"),
+  requestId: TrimmedNonEmptyString,
+});
+export type ResourceMonitorMemoryPressureCommand = typeof ResourceMonitorMemoryPressureCommand.Type;
+
 export const ResourceMonitorShutdownCommand = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("shutdown"),
@@ -157,6 +237,7 @@ export const ResourceMonitorCommand = Schema.Union([
   ResourceMonitorSampleNowCommand,
   ResourceMonitorProcessTableCommand,
   ResourceMonitorReadHistoryCommand,
+  ResourceMonitorMemoryPressureCommand,
   ResourceMonitorShutdownCommand,
 ]);
 export type ResourceMonitorCommand = typeof ResourceMonitorCommand.Type;
@@ -213,6 +294,15 @@ export const ResourceMonitorHistoryChunkEvent = Schema.Struct({
 });
 export type ResourceMonitorHistoryChunkEvent = typeof ResourceMonitorHistoryChunkEvent.Type;
 
+export const ResourceMonitorMemoryPressureEvent = Schema.Struct({
+  version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
+  type: Schema.Literal("memoryPressure"),
+  requestId: TrimmedNonEmptyString,
+  /** macOS `kern.memorystatus_vm_pressure_level`: 1 normal, 2 warning, 4 critical. */
+  level: Schema.NullOr(PositiveInt),
+});
+export type ResourceMonitorMemoryPressureEvent = typeof ResourceMonitorMemoryPressureEvent.Type;
+
 export const ResourceMonitorErrorEvent = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("error"),
@@ -227,6 +317,7 @@ export const ResourceMonitorEvent = Schema.Union([
   ResourceMonitorSnapshotEvent,
   ResourceMonitorProcessTableEvent,
   ResourceMonitorHistoryChunkEvent,
+  ResourceMonitorMemoryPressureEvent,
   ResourceMonitorErrorEvent,
 ]);
 export type ResourceMonitorEvent = typeof ResourceMonitorEvent.Type;

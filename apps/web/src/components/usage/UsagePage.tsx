@@ -88,6 +88,7 @@ import {
   WorkspaceBreadcrumbText,
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
+import { UsageAccessQuestion, type UsageAccessPrompt } from "./UsageAccessDialog";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
@@ -242,6 +243,15 @@ export function UsagePage() {
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
+
+  const accessPrompts: UsageAccessPrompt[] = selectedEnvironments.flatMap((environment) =>
+    environment.accessRequests.map((request) => ({
+      environmentId: environment.environmentId,
+      environmentLabel: environment.label,
+      instanceId: request.instanceId,
+      driver: request.driver,
+    })),
+  );
 
   const canReadDiagnostics = selectedEnvironments.some(
     (environment) => environment.canReadDiagnostics,
@@ -542,7 +552,9 @@ export function UsagePage() {
             width="wide"
             className="@container/usage-page max-w-[1040px] gap-5 pt-5.5"
           >
-            {selectedEnvironments.length === 0 ? (
+            {accessPrompts.length > 0 ? (
+              <UsageAccessQuestion prompts={accessPrompts} />
+            ) : selectedEnvironments.length === 0 ? (
               <UsageNotice
                 icon={ServerIcon}
                 title={

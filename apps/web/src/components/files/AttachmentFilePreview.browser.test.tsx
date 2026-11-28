@@ -1515,6 +1515,12 @@ describe("document output sanitization", () => {
     expect(doc.querySelector("script,style,iframe,a,[onerror]")).toBeNull();
     expect(html).not.toContain("https://");
   });
+
+  it("keeps ruby readings above their base text", () => {
+    expect(
+      sanitizeDocumentHtml("<p><ruby>漢字<rp>(</rp><rt>かんじ</rt><rp>)</rp></ruby></p>"),
+    ).toBe("<p><ruby>漢字<rp>(</rp><rt>かんじ</rt><rp>)</rp></ruby></p>");
+  });
 });
 it("keeps an attachment URL when the parent passes a fresh asset object for the same attachment", async () => {
   const url = URL.createObjectURL(new Blob(["%PDF-1.4"], { type: "application/pdf" }));

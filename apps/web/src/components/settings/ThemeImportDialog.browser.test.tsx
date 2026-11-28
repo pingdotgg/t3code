@@ -16,10 +16,15 @@ import {
   THEME_FILE_VERSION,
 } from "../../themePalette";
 import { importOpenVsxThemeExtension, type OpenVsxThemeExtension } from "../../openVsxThemes";
+import { AppRouteModal } from "../AppRouteModal";
+import { SharedTooltipProvider } from "../ui/shared-tooltip";
 import { ThemeImportDialog } from "./ThemeImportDialog";
+import { ThemeLibrary } from "./ThemeSettings";
 
 const searchOpenVsxThemes = vi.hoisted(() => vi.fn());
 
+vi.mock("../chat/GlobalVoiceInputIndicator", () => ({ GlobalVoiceInputIndicator: () => null }));
+vi.mock("../../hooks/useEnvironmentTheme", () => ({ useEnvironmentThemeDefinitions: () => [] }));
 vi.mock("../../openVsxThemes", () => ({
   searchOpenVsxThemes,
   importOpenVsxThemeExtension: vi.fn(),
@@ -491,4 +496,77 @@ it("does not install a pending community theme after leaving Appearance", async 
     getCustomThemes(),
     "expect leaving Appearance to cancel its pending theme installation",
   ).toEqual([]);
+});
+
+it("closes an open theme variant radial picker on Escape before closing Settings", async () => {
+  const collection = { id: "acme.cat", label: "Catppuccin" };
+  const customThemes = [
+    {
+      ...parseThemeFile({
+        version: THEME_FILE_VERSION,
+        name: "Catppuccin Latte",
+        appearance: "light",
+        colors: { accent: "#3b82f6" },
+      }),
+      collection,
+    },
+    { ...parseThemeFile(theme("Catppuccin Mocha")), collection },
+    { ...parseThemeFile(theme("Catppuccin Frappe", "#f97316")), collection },
+  ];
+  const renderSettings = (key: string) => (
+    <SharedTooltipProvider>
+      <AppRouteModal key={key} label="Settings">
+        <ThemeLibrary
+          appearanceMode="dark"
+          customThemes={customThemes}
+          initialAppearance="dark"
+          isImportOpen={false}
+          onImportOpenChange={() => {}}
+          refreshTheme={() => {}}
+          appearanceChoice="dark"
+          setAppearanceChoice={() => true}
+          setTheme={() => true}
+          setThemeHalf={() => true}
+          theme="dark"
+          themeHalves={null}
+        />
+      </AppRouteModal>
+    </SharedTooltipProvider>
+  );
+
+  await using screen = await render(renderSettings("multi"), { router: "/settings/appearance" });
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await expect.element(settings).toHaveFocus();
+
+  const darkPicker = page.getByRole("button", {
+    name: "Choose dark variant, 2 options, currently Mocha",
+  });
+  const mochaOption = page.getByRole("button", { name: "Use Mocha for dark mode" });
+  (darkPicker.element() as HTMLElement).focus();
+  await expect.element(mochaOption).toHaveStyle({ opacity: "1", pointerEvents: "auto" });
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(mochaOption).toHaveStyle({ opacity: "0", pointerEvents: "none" });
+  await expect.element(darkPicker).toHaveFocus();
+  await expect.element(settings).toHaveAttribute("data-open");
+
+  await userEvent.tab();
+  await expect.element(mochaOption).toHaveFocus();
+  await expect.element(mochaOption).toHaveStyle({ opacity: "1", pointerEvents: "auto" });
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(mochaOption).toHaveStyle({ opacity: "0", pointerEvents: "none" });
+  await expect.element(darkPicker).toHaveFocus();
+  await expect.element(settings).toHaveAttribute("data-open");
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(settings).not.toBeInTheDocument();
+
+  await screen.rerender(renderSettings("single"));
+  await expect.element(settings).toHaveFocus();
+
+  const lightVariant = page.getByRole("button", { name: "Use light variant, currently Latte" });
+  (lightVariant.element() as HTMLElement).focus();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(settings).not.toBeInTheDocument();
 });

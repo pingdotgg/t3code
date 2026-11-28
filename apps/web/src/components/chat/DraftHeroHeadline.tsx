@@ -22,7 +22,10 @@ import { moveDraftToProject } from "~/lib/moveDraftToProject";
 import { useProjectPin } from "~/hooks/useProjectGroupUpdate";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { isTriagePrompt } from "@t3tools/shared/triagePrompt";
-import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  groupIconFallbacks,
+  pickableProjectGroups,
+} from "@t3tools/client-runtime/state/project-grouping";
 import {
   buildSidebarProjectPickerEntries,
   projectGroupsSpanEnvironments,
@@ -176,7 +179,13 @@ export function DraftHeroHeadline({
       <DraftProjectRow
         key={group.projectKey}
         selected={!isScratchDraft && group.projectKey === activeProjectKey}
-        icon={<ProjectFavicon project={targetProject} className="size-4 shrink-0" />}
+        icon={
+          <ProjectFavicon
+            project={targetProject}
+            fallbackProjects={groupIconFallbacks(group.memberProjects, targetProject)}
+            className="size-4 shrink-0"
+          />
+        }
         label={targetProject.title}
         badge={
           showProjectEnvironments ? (

@@ -299,6 +299,11 @@ describe("searchSettings", () => {
       ["CODEX_HOME path", "providers"],
       ["Shadow home path", "providers"],
       ["ChatGPT account", "providers"],
+      ["Live Processes", "diagnostics"],
+      ["Most Common Failures", "diagnostics"],
+      ["Top Span Names", "diagnostics"],
+      ["Slowest Spans", "diagnostics"],
+      ["Third-party notices", "open-source-licenses"],
       ["Your dictionary", "speech-dictionary"],
     ] as const) {
       expect(searchSettings(title)[0]?.id, title).toBe(id);
@@ -342,7 +347,7 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(fallback.scope, "environment")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "all")).toBe(true);
     expect(isSettingsSearchScopeAvailable(fallback.scope, "project")).toBe(false);
-    for (const id of ["response-streaming", "speech-project-dictionary"]) {
+    for (const id of ["response-streaming", "speech-project-dictionary", "project-actions"]) {
       expect(getSettingsSearchTargetScope(id)?.scope).toBe("project-defaults");
     }
     for (const scope of ["all", "environment", "project"] as const) {
