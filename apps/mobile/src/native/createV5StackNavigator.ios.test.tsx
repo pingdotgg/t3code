@@ -47,190 +47,94 @@ function fire(
   act(() => handler());
 }
 
+function renderThreadStack(tabActive?: boolean) {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  screens.clear();
+  const state: StackNavigationState<ParamListBase> = {
+    key: "stack",
+    type: "stack",
+    stale: false,
+    index: 1,
+    routeNames: ["Home", "Thread"],
+    routes: [home, thread],
+    preloadedRoutes: [],
+  };
+  const navigation = { getState: () => state, emit: vi.fn(), dispatch: vi.fn() };
+  const descriptor = (route: typeof home) => ({
+    route,
+    navigation,
+    options: {},
+    render: () => null,
+  });
+  const onRootVisibilityChange = vi.fn();
+  const onNativePopChange = vi.fn();
+  const stack = (
+    <V5CardStackView
+      {...({
+        state,
+        navigation,
+        descriptors: { home: descriptor(home), thread: descriptor(thread) },
+        describe: () => descriptor(home),
+      } as unknown as V5StackViewProps)}
+      onRootVisibilityChange={onRootVisibilityChange}
+      onNativePopChange={onNativePopChange}
+    />
+  );
+  const root = createRoot(document.createElement("div"));
+  act(() =>
+    root.render(
+      tabActive === undefined ? (
+        stack
+      ) : (
+        <NativeWorkspaceTabActivityContext value={{ active: tabActive, isActive: () => tabActive }}>
+          {stack}
+        </NativeWorkspaceTabActivityContext>
+      ),
+    ),
+  );
+  return {
+    onRootVisibilityChange,
+    onNativePopChange,
+    [Symbol.dispose]() {
+      act(() => root.unmount());
+      vi.unstubAllGlobals();
+    },
+  };
+}
+
 it("forgets native Back when a full-screen presentation covers the top card", () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  const state: StackNavigationState<ParamListBase> = {
-    key: "stack",
-    type: "stack",
-    stale: false,
-    index: 1,
-    routeNames: ["Home", "Thread"],
-    routes: [home, thread],
-    preloadedRoutes: [],
-  };
-  const navigation = { getState: () => state, emit: vi.fn(), dispatch: vi.fn() };
-  const descriptor = (route: typeof home) => ({
-    route,
-    navigation,
-    options: {},
-    render: () => null,
-  });
-  const onNativePopChange = vi.fn();
-  const root = createRoot(document.createElement("div"));
-  try {
-    act(() =>
-      root.render(
-        <V5CardStackView
-          {...({
-            state,
-            navigation,
-            descriptors: { home: descriptor(home), thread: descriptor(thread) },
-            describe: () => descriptor(home),
-          } as unknown as V5StackViewProps)}
-          onNativePopChange={onNativePopChange}
-        />,
-      ),
-    );
+  using stack = renderThreadStack();
 
-    // A presentation covers the thread: nothing in the stack appears beneath it.
-    fire("thread", "onWillDisappear");
-    fire("thread", "onDidDisappear");
-    expect(onNativePopChange).toHaveBeenLastCalledWith(null);
+  // A presentation covers the thread: nothing in the stack appears beneath it.
+  fire("thread", "onWillDisappear");
+  fire("thread", "onDidDisappear");
+  expect(stack.onNativePopChange).toHaveBeenLastCalledWith(null);
 
-    // Native Back reveals Home, so the thread stays the card being popped.
-    fire("thread", "onWillDisappear");
-    fire("home", "onWillAppear");
-    fire("thread", "onDidDisappear");
-    expect(onNativePopChange).toHaveBeenLastCalledWith("thread");
-  } finally {
-    act(() => root.unmount());
-    vi.unstubAllGlobals();
-  }
+  // Native Back reveals Home, so the thread stays the card being popped.
+  fire("thread", "onWillDisappear");
+  fire("home", "onWillAppear");
+  fire("thread", "onDidDisappear");
+  expect(stack.onNativePopChange).toHaveBeenLastCalledWith("thread");
 });
 
-it("ignores root visibility and native pop events from inactive or prewarmed tab slots", () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  screens.clear();
-  const state: StackNavigationState<ParamListBase> = {
-    key: "stack",
-    type: "stack",
-    stale: false,
-    index: 1,
-    routeNames: ["Home", "Thread"],
-    routes: [home, thread],
-    preloadedRoutes: [],
-  };
-  const navigation = { getState: () => state, emit: vi.fn(), dispatch: vi.fn() };
-  const descriptor = (route: typeof home) => ({
-    route,
-    navigation,
-    options: {},
-    render: () => null,
-  });
-  const onRootVisibilityChange = vi.fn();
-  const onNativePopChange = vi.fn();
-  const root = createRoot(document.createElement("div"));
-  try {
-    // Prewarmed slot only mounts Home (index 0) behind the active tab's Thread.
-    act(() =>
-      root.render(
-        <NativeWorkspaceTabActivityContext
-          value={{ active: false, isActive: () => false, headerOnly: true }}
-        >
-          <V5CardStackView
-            {...({
-              state: { ...state, index: 0, routes: [home] },
-              navigation,
-              descriptors: { home: descriptor(home) },
-              describe: () => descriptor(home),
-            } as unknown as V5StackViewProps)}
-            onRootVisibilityChange={onRootVisibilityChange}
-            onNativePopChange={onNativePopChange}
-          />
-        </NativeWorkspaceTabActivityContext>,
-      ),
-    );
+it("hides the root when a detail card appears, including after a cancelled back swipe", () => {
+  using stack = renderThreadStack(true);
 
-    fire("home", "onWillAppear");
-    fire("home", "onWillDisappear");
-    expect(onRootVisibilityChange).not.toHaveBeenCalled();
-    expect(onNativePopChange).not.toHaveBeenCalled();
+  // Cold-start deep link: Home's initial willAppear arrives before the thread's.
+  fire("home", "onWillAppear");
+  fire("thread", "onWillAppear");
+  expect(stack.onRootVisibilityChange).toHaveBeenLastCalledWith(false);
 
-    // Retained inactive tab slot (headerOnly: false) must also stay silent.
-    screens.clear();
-    act(() =>
-      root.render(
-        <NativeWorkspaceTabActivityContext
-          value={{ active: false, isActive: () => false, headerOnly: false }}
-        >
-          <V5CardStackView
-            {...({
-              state,
-              navigation,
-              descriptors: { home: descriptor(home), thread: descriptor(thread) },
-              describe: () => descriptor(home),
-            } as unknown as V5StackViewProps)}
-            onRootVisibilityChange={onRootVisibilityChange}
-            onNativePopChange={onNativePopChange}
-          />
-        </NativeWorkspaceTabActivityContext>,
-      ),
-    );
-
-    fire("home", "onWillAppear");
-    fire("thread", "onWillDisappear");
-    expect(onRootVisibilityChange).not.toHaveBeenCalled();
-    expect(onNativePopChange).not.toHaveBeenCalled();
-  } finally {
-    act(() => root.unmount());
-    vi.unstubAllGlobals();
-  }
+  fire("home", "onWillAppear");
+  fire("thread", "onDidAppear");
+  expect(stack.onRootVisibilityChange).toHaveBeenLastCalledWith(false);
 });
 
-it("clears root visibility when a detail card appears on the active tab slot", () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  screens.clear();
-  const state: StackNavigationState<ParamListBase> = {
-    key: "stack",
-    type: "stack",
-    stale: false,
-    index: 1,
-    routeNames: ["Home", "Thread"],
-    routes: [home, thread],
-    preloadedRoutes: [],
-  };
-  const navigation = { getState: () => state, emit: vi.fn(), dispatch: vi.fn() };
-  const descriptor = (route: typeof home) => ({
-    route,
-    navigation,
-    options: {},
-    render: () => null,
-  });
-  const onRootVisibilityChange = vi.fn();
-  const root = createRoot(document.createElement("div"));
-  try {
-    act(() =>
-      root.render(
-        <NativeWorkspaceTabActivityContext
-          value={{ active: true, isActive: () => true, headerOnly: false }}
-        >
-          <V5CardStackView
-            {...({
-              state,
-              navigation,
-              descriptors: { home: descriptor(home), thread: descriptor(thread) },
-              describe: () => descriptor(home),
-            } as unknown as V5StackViewProps)}
-            onRootVisibilityChange={onRootVisibilityChange}
-          />
-        </NativeWorkspaceTabActivityContext>,
-      ),
-    );
+it("ignores card events from an inactive workspace tab", () => {
+  using stack = renderThreadStack(false);
 
-    // Cold-start notification deep link: Home's initial willAppear arrives before Thread appears.
-    fire("home", "onWillAppear");
-    expect(onRootVisibilityChange).toHaveBeenLastCalledWith(true);
-
-    fire("thread", "onWillAppear");
-    expect(onRootVisibilityChange).toHaveBeenLastCalledWith(false);
-
-    // Interactive back-swipe reveals Home, then cancelling returns to Thread.
-    fire("home", "onWillAppear");
-    expect(onRootVisibilityChange).toHaveBeenLastCalledWith(true);
-    fire("thread", "onDidAppear");
-    expect(onRootVisibilityChange).toHaveBeenLastCalledWith(false);
-  } finally {
-    act(() => root.unmount());
-    vi.unstubAllGlobals();
-  }
+  fire("home", "onWillAppear");
+  fire("thread", "onWillDisappear");
+  expect(stack.onRootVisibilityChange).not.toHaveBeenCalled();
+  expect(stack.onNativePopChange).not.toHaveBeenCalled();
 });

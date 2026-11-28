@@ -556,8 +556,8 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
           ) : (
             <V5CardStackView
               {...props}
-              onRootVisibilityChange={headerOnly ? undefined : setPrimaryVisible}
-              onNativePopChange={headerOnly ? undefined : setNativelyPoppingWorkspaceRoute}
+              onRootVisibilityChange={setPrimaryVisible}
+              onNativePopChange={setNativelyPoppingWorkspaceRoute}
               descriptors={slotDescriptors}
               state={{
                 ...props.state,
