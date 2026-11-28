@@ -234,7 +234,8 @@ export const SCENARIOS = {
     const scrolledToEnd = (yield* ctx.device.state).feed?.atEnd === true;
     // Nothing may touch the screen between these taps. The bug lost the first touch after the arrow.
     yield* ctx.device.press('label="Send"');
-    yield* Effect.sleep("4 seconds");
+    if (!(yield* ctx.env.delivered(ctx.fixtures.longThread, text)))
+      return { scrolledToEnd, serverMessages: 0 } satisfies Metrics;
     const projection = yield* ctx.env.settled(ctx.fixtures.longThread);
     return { scrolledToEnd, serverMessages: countUserText(projection, text) } satisfies Metrics;
   }, failure),
