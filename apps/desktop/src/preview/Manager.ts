@@ -84,6 +84,7 @@ import {
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
   PAGE_UNHANDLED_SHORTCUT_CHANNEL,
+  PAGE_ZOOM_CHANNEL,
   RECORDING_CURSOR_CHANNEL,
   RECORDING_INPUT_CHANNEL,
   RECORDING_CONTROLLER_CHANNEL,
@@ -284,6 +285,17 @@ const normalizeCaptureRect = (value: unknown): PreviewAnnotationRect | null => {
 
 // capturePage returns a 1x NativeImage containing device pixels, so crop() uses
 // CSS coordinates scaled by the guest's devicePixelRatio (including page zoom).
+// A pinch-zoomed page captures its visual viewport, but annotation rects are layout viewport px.
+const toVisualViewportRect = (
+  rect: PreviewAnnotationRect,
+  viewport: { readonly scale: number; readonly x: number; readonly y: number },
+): PreviewAnnotationRect => ({
+  x: (rect.x - viewport.x) * viewport.scale,
+  y: (rect.y - viewport.y) * viewport.scale,
+  width: rect.width * viewport.scale,
+  height: rect.height * viewport.scale,
+});
+
 const cropAnnotationScreenshot = (
   image: Electron.NativeImage,
   cropRect: PreviewAnnotationRect | null,
@@ -452,6 +464,31 @@ const PAGE_FIRST_FORWARDED_COMMANDS: ReadonlySet<PreviewForwardedShortcut["comma
   "preview.zoomOut",
   "preview.resetZoom",
 ]);
+
+const decodePageZoom = Schema.decodeUnknownOption(
+  Schema.Struct({ scale: Schema.Finite, x: Schema.Finite, y: Schema.Finite }),
+);
+const UNZOOMED_VIEWPORT = { scale: 1, x: 0, y: 0 };
+
+// No CDP command sets the visual viewport's offset, but scrolling an element into view moves it
+// before the layout viewport, so a probe at the target corner places it exactly. The probe is
+// measured (a positioned root moves its containing block), LTR (so "start" is its left edge),
+// and root scroll padding is lifted for the call.
+const scrollVisualViewportExpression = (x: number, y: number) => `(() => {
+  const root = document.documentElement;
+  const style = root.getAttribute("style");
+  root.style.setProperty("scroll-padding", "0px", "important");
+  const probe = document.createElement("div");
+  probe.style.cssText = "transition:none !important;position:absolute;left:0;top:0;width:1px;height:1px;margin:0;scroll-margin:0;direction:ltr;writing-mode:horizontal-tb;visibility:hidden;pointer-events:none";
+  root.append(probe);
+  const origin = probe.getBoundingClientRect();
+  probe.style.left = ${x} - origin.left + "px";
+  probe.style.top = ${y} - origin.top + "px";
+  probe.scrollIntoView({ block: "start", inline: "start", behavior: "instant" });
+  probe.remove();
+  if (style === null) root.removeAttribute("style");
+  else root.setAttribute("style", style);
+})()`;
 
 const decodePageShortcutKeys = Schema.decodeUnknownOption(
   Schema.Struct({
@@ -2093,12 +2130,37 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     },
   );
 
+  // Scale and position go out together so no frame shows one without the other.
+  const applyPageZoom = Effect.fn("PreviewManager.applyPageZoom")(function* (
+    wc: Electron.WebContents,
+    zoom: { readonly scale: number; readonly x: number; readonly y: number },
+  ) {
+    const control = yield* ensureControlSession(wc);
+    yield* attemptPromise({ operation: "applyPageZoom", webContentsId: wc.id }, () => {
+      const scaled = control.debugger.sendCommand("Emulation.setPageScaleFactor", {
+        pageScaleFactor: zoom.scale,
+      });
+      if (zoom.scale <= 1) return scaled;
+      return Promise.all([
+        scaled,
+        control.debugger.sendCommand("Runtime.evaluate", {
+          expression: scrollVisualViewportExpression(zoom.x, zoom.y),
+          silent: true,
+        }),
+      ]);
+    }).pipe(Effect.ignore);
+  });
+
   // URL tabs can paint before registerWebview; set the background at attach time.
   const prepareWebview = Effect.fn("PreviewManager.prepareWebview")(function* (
     wc: Electron.WebContents,
   ) {
     yield* rendererHistory.register(wc, { surface: "preview" });
     const webContentsId = wc.id;
+    wc.ipc.on(PAGE_ZOOM_CHANNEL, (_event, rawZoom: unknown) => {
+      const zoom = decodePageZoom(rawZoom);
+      if (Option.isSome(zoom)) runFork(applyPageZoom(wc, zoom.value));
+    });
     wc.on("did-start-navigation", (event) => {
       if (event.isMainFrame && !event.isSameDocument) guestLoadFailures.delete(webContentsId);
     });
@@ -2418,11 +2480,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           const submission =
             args[2] === "send" && annotationSendEnabled.get(tabId) === true ? "send" : "attach";
           const devicePixelRatio = typeof args[3] === "number" ? args[3] : 1;
+          const viewport = Option.getOrElse(decodePageZoom(args[4]), () => UNZOOMED_VIEWPORT);
           const targetRects = [
             ...payload.elements.map((target) => target.rect),
             ...payload.regions.map((target) => target.rect),
             ...payload.strokes.map((target) => target.bounds),
-          ];
+          ].map((rect) => toVisualViewportRect(rect, viewport));
+          const visualCropRect = cropRect && toVisualViewportRect(cropRect, viewport);
           runFork(
             capturePageWithRetry(
               { operation: "captureAnnotationScreenshot", tabId, webContentsId: wc.id },
@@ -2430,7 +2494,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               wc,
             ).pipe(
               Effect.map((image) =>
-                cropAnnotationScreenshot(image, cropRect, devicePixelRatio, targetRects),
+                cropAnnotationScreenshot(image, visualCropRect, devicePixelRatio, targetRects),
               ),
               Effect.tapError((error) =>
                 Effect.logWarning("preview annotation screenshot failed").pipe(

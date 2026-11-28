@@ -7,6 +7,7 @@ T3 Code includes a built-in preview browser beside your conversation so you and 
 - Open the right panel in a thread and choose **Browser** (or click a running dev server in the thread's **Servers** list).
 - **Local vs. remote**: On the desktop app, tabs for your local environment run natively. On web, mobile, or remote environments, tabs stream from the host's headless Chromium (~120 MB one-time download; see [Browser host setup](./remote-access.md#browser-host-setup)). On desktop, tabs you open for a remote environment can also load locally over the [preview tunnel](./remote-access.md#browser-on-a-remote-environment).
 - **Find on page**: Press `mod+f` inside a desktop browser tab (or use its **⋮** menu if the page intercepts `mod+f`).
+- **Pinch to zoom**: In a tab that runs natively in the desktop app (not one streamed from a host), pinch on a trackpad to magnify the page without changing its layout, then scroll to look around. Press `mod+0` (or **Reset zoom** in the **⋮** menu) to return to 100%.
 - **Default browser (macOS)**: You can set the desktop app as your [default web browser](./default-browser.md).
 
 ## Profiles, viewports, and settings

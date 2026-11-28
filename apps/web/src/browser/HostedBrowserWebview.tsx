@@ -16,6 +16,7 @@ import { useClientSettingsHydrated } from "~/hooks/useSettings";
 import { useViewportSize } from "~/hooks/useViewportSize";
 import { cn, isMacPlatform } from "~/lib/utils";
 
+import { registerBrowserPageZoomReset } from "./browserPageZoom";
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { useActiveBrowserRecordingTabIds } from "./browserRecording";
 import {
@@ -45,6 +46,7 @@ interface ElectronWebview extends HTMLElement {
   preload?: string;
   webpreferences?: string;
   getWebContentsId: () => number;
+  send: (channel: string, ...args: unknown[]) => Promise<void>;
   executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>;
 }
 
@@ -203,6 +205,13 @@ export function HostedBrowserWebview(props: {
         dismissHostPopups();
       }
     };
+    // Mirrors PAGE_ZOOM_RESET_CHANNEL; the guest preload owns the pinch zoom.
+    const unregisterPageZoomReset = registerBrowserPageZoomReset(runtimeTabId, () => {
+      // An attaching guest can make send() throw before it returns a promise.
+      try {
+        void webview.send("preview:page-zoom-reset").catch(() => {});
+      } catch {}
+    });
     // The desktop clears a destroyed guest's id; nothing reattaches this element, so remount it.
     const unsubscribeState = bridge.onStateChange((changedTabId, state) => {
       if (changedTabId !== runtimeTabId || registeredWebContentsId === null) return;
@@ -220,6 +229,7 @@ export function HostedBrowserWebview(props: {
       disposed = true;
       if (recoveryTimeout !== null) clearTimeout(recoveryTimeout);
       unsubscribeState();
+      unregisterPageZoomReset();
       webview.removeEventListener("did-attach", register);
       webview.removeEventListener("dom-ready", register);
       webview.removeEventListener("render-process-gone", recoverGuest);
