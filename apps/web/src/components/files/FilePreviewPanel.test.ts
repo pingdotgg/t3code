@@ -662,6 +662,42 @@ Third}`;
     ).toThrow(expect.objectContaining({ code: "notebook-unsupported" }));
   });
 
+  it("removes saved terminal cursor and erase sequences from notebook output", () => {
+    const result = openNotebook(
+      bytes(
+        JSON.stringify({
+          nbformat: 4,
+          cells: [
+            {
+              cell_type: "code",
+              source: "train()",
+              outputs: [
+                {
+                  output_type: "stream",
+                  name: "stderr",
+                  text: [
+                    "\u001b[?25lepoch 1\u001b[K\n",
+                    "\u001b[Aepoch 2\u001b[",
+                    "2K\u001b[?25h\n",
+                  ],
+                },
+                {
+                  output_type: "execute_result",
+                  data: { "text/plain": "\u001b[1Gready\u001b[0K" },
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    if (result.type !== "notebook") throw new Error("Expected notebook");
+    expect(result.cells[0]!.outputs).toEqual([
+      { kind: "text", text: "epoch 1\nepoch 2\n" },
+      { kind: "text", text: "ready" },
+    ]);
+  });
+
   it("bounds repeated OpenDocument spreadsheet cells and keeps sheet names and values", async () => {
     const archive = new JSZip().file(
       "content.xml",
