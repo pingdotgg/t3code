@@ -115,6 +115,7 @@ import {
   isLayoutTabSelected,
   isTabToggleModifier,
   readSelectedLayoutTabIds,
+  subscribePaneTabSelection,
   useIsLayoutTabSelected,
 } from "./paneTabSelection";
 import { followLayoutCompanions } from "./openRules";
@@ -599,6 +600,16 @@ function markPaneJoinedAtStart(pane: HTMLElement | null): void {
 
 /** What a strip's hovered tab last marked. The strip moves between its pane's headers. */
 const hoverStartMarks = new WeakMap<HTMLElement, readonly [name: string, element: HTMLElement][]>();
+const hoveredStrips = new Set<PaneStrip>();
+
+subscribePaneTabSelection(() => {
+  if (hoveredStrips.size === 0 || typeof requestAnimationFrame !== "function") return;
+  requestAnimationFrame(() => {
+    for (const entry of hoveredStrips) {
+      if (entry.hoveredTab) markHoverAtStart(entry, entry.hoveredTab, true);
+    }
+  });
+});
 
 function hoveredOutlineTab(strip: HTMLElement, target: EventTarget | null): HTMLElement | null {
   if (!(target instanceof Element)) return null;
@@ -618,10 +629,18 @@ function hoveredOutlineTab(strip: HTMLElement, target: EventTarget | null): HTML
 function markHoverAtStart(entry: PaneStrip, tab: HTMLElement | null, force = false): void {
   if (!force && tab === entry.hoveredTab) return;
   entry.hoveredTab = tab;
+  if (tab) hoveredStrips.add(entry);
+  else hoveredStrips.delete(entry);
   const { strip } = entry;
   const next: [name: string, element: HTMLElement][] = [];
   // A scrolled strip fades its start, and the outline with it.
-  if (tab && !tab.hasAttribute("data-joined") && !entry.canStart && entry.atPaneEdge) {
+  if (
+    tab &&
+    !tab.hasAttribute("data-joined") &&
+    !tab.hasAttribute("data-selected-tab") &&
+    !entry.canStart &&
+    entry.atPaneEdge
+  ) {
     const row = strip.closest<HTMLElement>("[data-pane-header]");
     if (
       row &&

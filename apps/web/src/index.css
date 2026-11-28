@@ -7214,12 +7214,39 @@ body {
   display: none;
 }
 
-/* Multi-selected inactive tabs reuse the strip's surface-selected tokens across
-   every Appearance style, dark and light, black chrome, and mobile. */
+/* Multi-selected tabs reuse the strip's existing tokens across every Appearance
+   style, dark and light, black chrome, and mobile. Leave box-shadow unset on
+   :focus-visible so keyboard focus keeps its inset ring utility. */
 [data-layout-tab-strip] [data-layout-pane-tab][data-selected-tab]:not([data-joined]) {
   background: var(--selected-fill);
-  box-shadow: var(--selected-shadow, none);
   color: var(--pane-bar-fg, var(--foreground));
+}
+[data-layout-tab-strip]
+  [data-layout-pane-tab][data-selected-tab]:not([data-joined], :focus-visible) {
+  box-shadow:
+    inset 0 0 0 1px var(--input),
+    var(--selected-shadow, 0 0 #0000);
+
+  @variant dark {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--foreground) 26%, transparent),
+      var(--selected-shadow, 0 0 #0000);
+  }
+}
+:root.black-chrome
+  [data-layout-tab-strip]
+  [data-layout-pane-tab][data-selected-tab]:is(.surface-pane-tab, [data-active-tab="true"]) {
+  background: var(--raised-fill);
+  color: var(--strong-foreground);
+}
+:root.black-chrome
+  [data-layout-tab-strip]
+  [data-layout-pane-tab][data-selected-tab]:is(.surface-pane-tab, [data-active-tab="true"]):not(
+    :focus-visible
+  ) {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--strong-foreground) 40%, transparent),
+    var(--selected-shadow, 0 0 #0000);
 }
 
 @media (width >= 48rem) {

@@ -26,6 +26,10 @@ const EMPTY_SELECTION: PaneTabSelectionState = {
 
 const usePaneTabSelectionStore = create<PaneTabSelectionState>()(() => EMPTY_SELECTION);
 
+export function subscribePaneTabSelection(listener: () => void): () => void {
+  return usePaneTabSelectionStore.subscribe(listener);
+}
+
 /** O(1) no-op when nothing is selected, keeping plain tab clicks allocation-free. */
 export function clearPaneTabSelection(): void {
   if (usePaneTabSelectionStore.getState().paneId === null) return;

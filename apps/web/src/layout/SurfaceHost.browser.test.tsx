@@ -1861,3 +1861,67 @@ it("multi-selecting in an unfocused pane focuses it so Cmd+W closes that pane's 
     expect(columns[0]!.panes[0]!.tabs.map((tab) => tab.id)).toEqual([p1t0!.id, p1t1!.id]);
   });
 });
+
+it("keeps keyboard focus ring on selected tabs and skips start-edge hover corner on selected first tab", async () => {
+  const settings = getClientSettings();
+  __setClientSettingsForTests({ ...settings, scrollingWorkspacesEnabled: true });
+  const original = useLayoutStore.getState().layout;
+  const tour = localStorage.getItem(TOUR_KEY);
+  localStorage.setItem(TOUR_KEY, "true");
+  useLayoutStore.setState({ layout: createLayoutState() });
+  const store = useLayoutStore.getState();
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  store.openTab(createLayoutLauncherContent(null), { placement: "active-pane", position: "end" });
+  const [t0, t1, t2] = useLayoutStore.getState().layout.workspaces[0]!.columns[0]!.panes[0]!.tabs;
+  // Make t2 active so t0 (first tab) and t1 are inactive.
+  store.focusTab(t2!.id);
+  using _cleanup = {
+    [Symbol.dispose]: () => {
+      clearPaneTabSelection();
+      __setClientSettingsForTests(settings);
+      useLayoutStore.setState({ layout: original });
+      if (tour === null) localStorage.removeItem(TOUR_KEY);
+      else localStorage.setItem(TOUR_KEY, tour);
+    },
+  };
+
+  await using _screen = await renderHost({ insetSidebar: true, viewport: 1200 });
+  const t0El = document.querySelector<HTMLElement>(`[data-layout-pane-tab="${t0!.id}"]`)!;
+  const t1El = document.querySelector<HTMLElement>(`[data-layout-pane-tab="${t1!.id}"]`)!;
+  const t2El = document.querySelector<HTMLElement>(`[data-layout-pane-tab="${t2!.id}"]`)!;
+  const header = t0El.closest<HTMLElement>("[data-pane-header]")!;
+  await vi.waitFor(() => expect(t2El.hasAttribute("data-joined")).toBe(true));
+
+  // Baseline: hovering unselected first tab sets data-pane-hover-start; keyboard focus shows inset ring.
+  t0El.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+  expect(header.hasAttribute("data-pane-hover-start")).toBe(true);
+  t0El.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
+
+  // Tab from t0 onto unselected t1 to measure its keyboard focus-visible boxShadow.
+  t0El.focus();
+  for (let step = 0; step < 4 && document.activeElement !== t1El; step += 1) {
+    await userEvent.keyboard("{Tab}");
+  }
+  expect(document.activeElement).toBe(t1El);
+  expect(t1El.matches(":focus-visible")).toBe(true);
+  const unselectedFocusShadow = getComputedStyle(t1El).boxShadow;
+  expect(unselectedFocusShadow).not.toBe("none");
+
+  // Select [t0, t1, t2] via Shift-click on t0 (t2 is active), then move keyboard focus onto selected t1.
+  await userEvent.click(page.elementLocator(t0El), { modifiers: ["Shift"] });
+  await expect.element(page.elementLocator(t0El)).toHaveAttribute("data-selected-tab", "");
+  await expect.element(page.elementLocator(t1El)).toHaveAttribute("data-selected-tab", "");
+
+  // Hovering a selected first tab must not light the start-edge corner patch.
+  t0El.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+  expect(header.hasAttribute("data-pane-hover-start")).toBe(false);
+
+  // Keyboard focus on a selected tab keeps the focus-visible inset ring.
+  t0El.focus();
+  for (let step = 0; step < 4 && document.activeElement !== t1El; step += 1) {
+    await userEvent.keyboard("{Tab}");
+  }
+  expect(document.activeElement).toBe(t1El);
+  expect(t1El.matches(":focus-visible")).toBe(true);
+  expect(getComputedStyle(t1El).boxShadow).toBe(unselectedFocusShadow);
+});
