@@ -13106,5 +13106,7 @@
   "7753abe343657f04": "Archive Bot",
   "499f37587cce8356": "Change avatar",
   "f11d8c9f4a9ee220": "Avatar",
-  "ff3d52dea796d4f3": "Open {bot}"
+  "ff3d52dea796d4f3": "Open {bot}",
+  "879a5a7e21deea74": "Start a Bot from \"{title}\"?",
+  "9be132dca65a40fd": "The thread becomes the new Bot's first worker. It keeps its work and moves from your thread list into the Bot."
 }

@@ -25,10 +25,20 @@ export interface BotGreeting {
   readonly createdAt: string;
 }
 
+/**
+ * A Bot opens either with its greeting or with the server's setup prompt as its first message;
+ * the prompt is written for the Bot, so the user never sees it.
+ */
 export function deriveBotTimelineRows(
   input: BotTimelineRowsInput,
   greeting: BotGreeting | null = null,
 ): MessagesTimelineRow[] {
+  const setupPromptId =
+    greeting === null
+      ? input.timelineEntries.find(
+          (entry) => entry.kind === "message" && entry.message.role === "user",
+        )?.id
+      : undefined;
   const running = input.isWorking && input.latestRun?.turnEnded !== true;
   const activeRunId = running
     ? deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null)
@@ -36,6 +46,7 @@ export function deriveBotTimelineRows(
   const finalReplyIds = deriveTerminalAssistantMessageIds(input.timelineEntries);
   const rows: MessagesTimelineRow[] = greeting === null ? [] : [greetingRow(greeting)];
   for (const entry of input.timelineEntries) {
+    if (entry.id === setupPromptId) continue;
     const row = botRow(entry, finalReplyIds, activeRunId, input.pendingApprovalRequestIds);
     if (row !== null) rows.push(row);
   }

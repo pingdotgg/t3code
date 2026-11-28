@@ -16,6 +16,7 @@ import type {
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { m } from "../i18n/messages";
 import { botFilesEnvironment } from "../state/botFiles";
+import { readLocalApi } from "../localApi";
 import { readThreadShells } from "../state/entities";
 import { useAtomCommand } from "../state/use-atom-command";
 import { buildThreadRouteParams } from "../threadRoutes";
@@ -129,6 +130,25 @@ export function useThreadGroupingActions() {
 
   /** A new Bot that takes this thread as its first worker; opens the Bot. */
   const startBot = async (threadRef: ScopedThreadRef) => {
+    const title =
+      readThreadShells().find(
+        (thread) =>
+          thread.environmentId === threadRef.environmentId && thread.id === threadRef.threadId,
+      )?.title ?? "";
+    // The thread leaves the thread list for the new Bot, so the user agrees to that first.
+    const confirmed = await readLocalApi()
+      ?.dialogs.confirm(
+        [
+          m(msg('Start a Bot from "{title}"?', { title })),
+          m(
+            msg(
+              "The thread becomes the new Bot's first worker. It keeps its work and moves from your thread list into the Bot.",
+            ),
+          ),
+        ].join("\n"),
+      )
+      .catch(() => false);
+    if (!confirmed) return;
     const result = await startBotCommand({
       environmentId: threadRef.environmentId,
       input: { threadId: threadRef.threadId },

@@ -13097,5 +13097,7 @@
   "7753abe343657f04": "Arquivar Bot",
   "499f37587cce8356": "Alterar avatar",
   "f11d8c9f4a9ee220": "Avatar",
-  "ff3d52dea796d4f3": "Abrir {bot}"
+  "ff3d52dea796d4f3": "Abrir {bot}",
+  "879a5a7e21deea74": "Iniciar um Bot a partir de \"{title}\"?",
+  "9be132dca65a40fd": "A thread vira o primeiro trabalhador do novo Bot. Ela mantém o trabalho e sai da sua lista de threads para dentro do Bot."
 }

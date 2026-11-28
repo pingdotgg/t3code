@@ -13092,5 +13092,7 @@
   "7753abe343657f04": "Archivar Bot",
   "499f37587cce8356": "Cambiar avatar",
   "f11d8c9f4a9ee220": "Avatar",
-  "ff3d52dea796d4f3": "Abrir {bot}"
+  "ff3d52dea796d4f3": "Abrir {bot}",
+  "879a5a7e21deea74": "¿Iniciar un Bot a partir de «{title}»?",
+  "9be132dca65a40fd": "El hilo pasa a ser el primer trabajador del nuevo Bot. Conserva su trabajo y sale de tu lista de hilos para quedar dentro del Bot."
 }

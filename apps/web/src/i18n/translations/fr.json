@@ -13097,5 +13097,7 @@
   "7753abe343657f04": "Archiver le Bot",
   "499f37587cce8356": "Changer d’avatar",
   "f11d8c9f4a9ee220": "Avatar",
-  "ff3d52dea796d4f3": "Ouvrir {bot}"
+  "ff3d52dea796d4f3": "Ouvrir {bot}",
+  "879a5a7e21deea74": "Lancer un Bot à partir de « {title} » ?",
+  "9be132dca65a40fd": "Le fil devient le premier exécutant du nouveau Bot. Il garde son travail et quitte ta liste de fils pour rejoindre le Bot."
 }

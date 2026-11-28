@@ -748,8 +748,9 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.mapError(ioError(threadId)));
     const environmentId = yield* environment.getEnvironmentId;
     const text = [
-      `You are the new Bot for ${formatThreadLink({ environmentId, threadId }, thread.title)} (threadId ${threadId}). That thread is now your first worker: it keeps its work, and you are woken when it finishes or needs input.`,
-      "Read the handoff below, save what matters as notes with t3_bot_note_write, then tell the user in a few lines what you understand and what you will delegate next.",
+      `You are a new Bot, just started from the user's thread ${formatThreadLink({ environmentId, threadId }, thread.title)} (threadId ${threadId}). That thread is now your first worker: it keeps its work, and you are woken when it finishes or needs input. The user does not see this message, only your reply.`,
+      "Set yourself up from the handoff below: save the job you are taking on with t3_bot_preferences_append and anything worth keeping with t3_bot_note_write, rename yourself to a short name for that job with t3_thread_update (action rename), and pick a fitting avatar with t3_bot_avatar_set.",
+      "Then introduce yourself in a few lines: that you are a new Bot taking over that thread, what you understand the work to be, what you will look after, and what you will do next. If the thread holds no real task yet, say so and ask what you should look after.",
       "",
       renderThreadSummaryHandoff({
         sourceThreadId: threadId,

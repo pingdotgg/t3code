@@ -45,9 +45,10 @@ const running = {
 };
 
 describe("deriveBotTimelineRows", () => {
-  it("shows a settled turn as your message and the Bot's final reply", () => {
+  it("shows a settled turn as your message and the Bot's final reply, never its setup prompt", () => {
     const rows = deriveBotTimelineRows({
       timelineEntries: [
+        message("setup", "user", 0),
         message("ask", "user", 0),
         work("wake", 1, { itemType: "notification", tone: "info" }),
         work("thought", 2, { itemType: "reasoning", tone: "thinking" }),
@@ -77,7 +78,11 @@ describe("deriveBotTimelineRows", () => {
 
   it("keeps a running turn's progress on the typing row, never in the chat", () => {
     const toolsOnly = deriveBotTimelineRows({
-      timelineEntries: [message("ask", "user", 0), work("read-thread", 1, {})],
+      timelineEntries: [
+        message("setup", "user", 0),
+        message("ask", "user", 0),
+        work("read-thread", 1, {}),
+      ],
       ...running,
     });
     expect(toolsOnly.map((row) => row.kind)).toEqual(["message", "bot-typing"]);
@@ -85,6 +90,7 @@ describe("deriveBotTimelineRows", () => {
 
     const progress = deriveBotTimelineRows({
       timelineEntries: [
+        message("setup", "user", 0),
         message("ask", "user", 0),
         message(
           "progress",
@@ -104,6 +110,7 @@ describe("deriveBotTimelineRows", () => {
     // The Bot's own pending approval stands in for the typing row.
     const approval = deriveBotTimelineRows({
       timelineEntries: [
+        message("setup", "user", 0),
         message("ask", "user", 0),
         work("approve", 1, {
           projectedItem: { item: { type: "approval_request", requestId: "req-1" } } as never,
