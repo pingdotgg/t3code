@@ -103,7 +103,7 @@ import {
 import type { LegendListRef } from "@legendapp/list/react";
 import { useAtomValue } from "@effect/atom-react";
 
-import { useComposerDraftStore } from "../composerDraftStore";
+import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -305,6 +305,7 @@ import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const ADD_PROJECT_ENTRY_GROUP = "add-project";
 const NEW_THREAD_IN_GROUP = "projects";
+const latestDraftProjectOpen = new Map<DraftId, symbol>();
 
 /** The submenu an open intent starts in; its groups resolve while rendering. */
 function openIntentView(
@@ -597,6 +598,8 @@ function OpenCommandPaletteDialog(props: {
   );
   const captureProjectOpen = () => {
     const draftId = addProjectDraftId;
+    const request = Symbol();
+    if (draftId !== null) latestDraftProjectOpen.set(draftId, request);
     let draftProjectChanged = false;
     const assignment =
       draftId === null ? null : useComposerDraftStore.getState().getDraftSession(draftId);
@@ -612,8 +615,15 @@ function OpenCommandPaletteDialog(props: {
           });
     return {
       pathname: router.latestLocation.pathname,
-      draftProjectChanged: () => draftProjectChanged,
-      [Symbol.dispose]: () => unsubscribe?.(),
+      isCurrent: () =>
+        !draftProjectChanged &&
+        (draftId === null || latestDraftProjectOpen.get(draftId) === request),
+      [Symbol.dispose]: () => {
+        unsubscribe?.();
+        if (draftId !== null && latestDraftProjectOpen.get(draftId) === request) {
+          latestDraftProjectOpen.delete(draftId);
+        }
+      },
     };
   };
   const moveDraftToAddedProject = async (
@@ -633,7 +643,7 @@ function OpenCommandPaletteDialog(props: {
     project: EnvironmentProject | null,
     projectOpen: ReturnType<typeof captureProjectOpen>,
   ): Promise<void> => {
-    if (projectOpen.draftProjectChanged()) return;
+    if (!projectOpen.isCurrent()) return;
     if (project !== null && (await moveDraftToAddedProject(project, projectOpen.pathname))) return;
     if (router.latestLocation.pathname === projectOpen.pathname) {
       await handleNewThread(projectRef);
