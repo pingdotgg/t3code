@@ -103,9 +103,9 @@ import {
 import type { LegendListRef } from "@legendapp/list/react";
 import { useAtomValue } from "@effect/atom-react";
 
+import { useComposerDraftStore } from "../composerDraftStore";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
-import { useComposerDraftStore } from "../composerDraftStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { copyThreadReference } from "../lib/copyThreadReference";
@@ -601,6 +601,7 @@ function OpenCommandPaletteDialog(props: {
     let draftProjectChanged = false;
     const assignment =
       draftId === null ? null : useComposerDraftStore.getState().getDraftSession(draftId);
+    // A draft can move away and back before this project is ready.
     const unsubscribe =
       draftId === null
         ? undefined
@@ -611,6 +612,7 @@ function OpenCommandPaletteDialog(props: {
               draft?.projectId !== assignment?.projectId
             ) {
               draftProjectChanged = true;
+              unsubscribe?.();
             }
           });
     return {
