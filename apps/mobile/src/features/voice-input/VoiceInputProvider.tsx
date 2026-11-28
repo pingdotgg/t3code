@@ -15,7 +15,10 @@ import {
   preferredMicrophoneInput,
   rememberMicrophones,
 } from "../../lib/microphonePriority";
-import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
+import {
+  getLocalVoiceTranscriber,
+  getVoiceTranscriberForLocale,
+} from "../../native/voiceTranscription";
 import { createVoiceRecorder } from "../../native/voiceRecorder";
 import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
@@ -118,27 +121,38 @@ export const voiceInputAtom = Atom.make((get) => {
       return preferredMicrophoneInput(inputs, order);
     },
   });
+  const loadPreferences = async () => {
+    const current = registry.get(mobilePreferencesAtom);
+    return AsyncResult.isSuccess(current)
+      ? current.value
+      : Effect.runPromise(
+          AtomRegistry.getResult(registry, mobilePreferencesAtom).pipe(
+            Effect.orElseSucceed(() => null),
+          ),
+        );
+  };
   const session: VoiceInputSession = new VoiceInputSession({
     recorder,
     getTranscriber: () => {
       const route = registry.get(voiceRouteAtom);
       if (route) return route.transcriber;
       const transcriber = registry.get(localVoiceTranscriberAtom);
-      return transcriber === "checking" ? null : transcriber;
+      if (transcriber === "checking" || transcriber === null) return null;
+      return {
+        prepare: async (options) => {
+          const locale = (await loadPreferences())?.dictationLocale;
+          return ((locale ? getVoiceTranscriberForLocale(locale) : null) ?? transcriber).prepare(
+            options,
+          );
+        },
+      };
     },
     requestPermission: permission.requestPermission,
     configureRecording: async () => {
       const token = acquireAudioSession("recording");
       audioToken = token;
       try {
-        const current = registry.get(mobilePreferencesAtom);
-        const preferences = AsyncResult.isSuccess(current)
-          ? current.value
-          : await Effect.runPromise(
-              AtomRegistry.getResult(registry, mobilePreferencesAtom).pipe(
-                Effect.orElseSucceed(() => null),
-              ),
-            );
+        const preferences = await loadPreferences();
         recordingMicrophoneOrder = preferences
           ? deviceMicrophoneOrder(preferences.microphones)
           : null;

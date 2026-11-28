@@ -11,6 +11,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
+import { DICTATION_LANGUAGES } from "../../lib/dictationLanguage";
 import { m } from "../../i18n/messages";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
 import {
@@ -38,6 +39,7 @@ import type { VoiceGrant } from "../voice-input/voiceGrantStorage";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
+import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
@@ -246,6 +248,9 @@ export function SettingsVoiceRouteScreen() {
   const entries = deviceMicrophoneOrder(
     AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value.microphones : undefined,
   );
+  const dictationLocale = AsyncResult.isSuccess(preferencesResult)
+    ? (preferencesResult.value.dictationLocale ?? null)
+    : null;
   const { permission, request: requestPermission } = useMicrophonePermission();
   const [drag, setDrag] = useState<{ readonly key: string; readonly translation: number } | null>(
     null,
@@ -406,6 +411,34 @@ export function SettingsVoiceRouteScreen() {
                 "Voice input uses the first connected microphone in this list. A wired or Bluetooth microphone is added by name the first time you dictate with it connected; until then it falls under Other. Swipe left on a named microphone to forget it.",
               )}
         </Text>
+        {/* Google's on-device recognizer on Android always uses the device language. */}
+        {Platform.OS === "ios" && !grant && !sheetEnvironment ? (
+          <>
+            <SettingsSection title={gt("Dictation language")}>
+              <SettingsChoiceRow
+                label={gt("Device language")}
+                selected={ready && dictationLocale === null}
+                disabled={!ready}
+                onPress={() => savePreferences({ dictationLocale: null })}
+              />
+              {DICTATION_LANGUAGES.map((language) => (
+                <SettingsChoiceRow
+                  key={language.locale}
+                  label={language.label}
+                  selected={dictationLocale === language.locale}
+                  separated
+                  disabled={!ready}
+                  onPress={() => savePreferences({ dictationLocale: language.locale })}
+                />
+              ))}
+            </SettingsSection>
+            <Text className="px-2 text-sm text-foreground-muted">
+              {gt(
+                "Voice input transcribes on this device. The first use of a language downloads it.",
+              )}
+            </Text>
+          </>
+        ) : null}
       </ScrollView>
     </SettingsScreen>
   );
