@@ -207,11 +207,15 @@ export interface ProviderBatchedChangeRequestPage {
   readonly unresolved?: ReadonlyArray<string>;
 }
 
-/** A check as the change request's checks name it; the host finds its log or run from the URL. */
+/** A check as the change request's checks name it, with its host-specific identity when available. */
 export interface ProviderCheckReference {
   readonly name: string;
   readonly url: string | null;
+  /** Opaque provider identity obtained from the host, not from the caller or the display URL. */
+  readonly nativeId?: string;
 }
+
+export type ProviderCheck = PullRequestCheck & ProviderCheckReference;
 
 export interface ProviderCheckLog {
   readonly name: string;
@@ -270,7 +274,7 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly mergedBy?: PullRequestActor | null;
   readonly closedAt: string | null;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
-  readonly checks: ReadonlyArray<PullRequestCheck>;
+  readonly checks: ReadonlyArray<ProviderCheck>;
   readonly mergeCapabilities: PullRequestMergeCapabilities;
   readonly viewerPermissions: PullRequestViewerPermissions;
   readonly baseComparison?: PullRequestBaseComparison;
@@ -438,7 +442,12 @@ export interface PullRequestProviderApi {
 
   readonly getChangeRequestChecks?: (
     input: ProviderRepositoryRef & { readonly number: number },
-  ) => Effect.Effect<Omit<PullRequestChecks, "observedAt">, PullRequestProviderError>;
+  ) => Effect.Effect<
+    Omit<PullRequestChecks, "observedAt" | "checks"> & {
+      readonly checks: ReadonlyArray<ProviderCheck>;
+    },
+    PullRequestProviderError
+  >;
 
   readonly getChangeRequest: (
     input: ProviderRepositoryRef & { readonly number: number },

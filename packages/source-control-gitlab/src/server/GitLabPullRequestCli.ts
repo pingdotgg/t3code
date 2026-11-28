@@ -95,6 +95,7 @@ import {
   type GitLabProjectUsers,
 } from "./gitLabMergeRequestJson.ts";
 import {
+  type ProviderCheck,
   type ProviderCheckLog,
   type ProviderCheckReference,
   type ProviderCheckRerun,
@@ -362,7 +363,7 @@ const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 // REST list rows carry full descriptions, so a page can pass the 1 MB default output cap.
 const MERGE_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const CHECK_LOG_MAX_BYTES = 16 * 1024 * 1024;
-const CHECK_IS_NOT_A_JOB = "This check does not identify a GitLab job.";
+const CHECK_IS_NOT_A_JOB = "This check does not identify a native GitLab job.";
 
 export interface GitLabDiscussionThreads {
   readonly threads: ReadonlyArray<PullRequestConversationThread>;
@@ -716,30 +717,11 @@ function projectPath(repository: string): string {
   return encodeURIComponent(repository.trim());
 }
 
-function checkJobPath(check: ProviderCheckReference, host: string): string | null {
-  const url = check.url === null ? null : URL.parse(check.url);
-  if (
-    url === null ||
-    (url.protocol !== "http:" && url.protocol !== "https:") ||
-    url.username !== "" ||
-    url.password !== "" ||
-    url.host !== URL.parse(`${url.protocol}//${host}`)?.host
-  ) {
-    return null;
-  }
-  const [, project, job] =
-    /^\/((?:[^/]+\/)+[^/]+)\/-\/jobs\/([1-9]\d*)\/?$/.exec(url.pathname) ?? [];
-  if (project === undefined || job === undefined) return null;
-  try {
-    const parts = project.split("/").map(decodeURIComponent);
-    if (parts.some((part) => !/^[\w.-]+$/.test(part) || part === "." || part === "..")) {
-      return null;
-    }
-    // The job may belong to a fork, not the merge request's target project.
-    return `projects/${projectPath(parts.join("/"))}/jobs/${job}`;
-  } catch {
-    return null;
-  }
+function checkJobPath(check: ProviderCheckReference): string | null {
+  const [, projectId, jobId] = /^([1-9]\d*)\/([1-9]\d*)$/.exec(check.nativeId ?? "") ?? [];
+  return projectId === undefined || jobId === undefined
+    ? null
+    : `projects/${projectId}/jobs/${jobId}`;
 }
 
 function gitLabReviewPositionLines(
@@ -1696,7 +1678,7 @@ export const make = Effect.gen(function* () {
     readonly repository: string;
     readonly number: number;
     readonly url: string;
-  }): Effect.Effect<ReadonlyArray<PullRequestCheck> | null> =>
+  }): Effect.Effect<ReadonlyArray<ProviderCheck> | null> =>
     URL.canParse(input.url)
       ? graphqlRead({
           cwd: input.cwd,
@@ -2343,10 +2325,12 @@ export const make = Effect.gen(function* () {
       return yield* Effect.forEach(
         input.checks,
         (check): Effect.Effect<ProviderCheckLog, GitLabPullRequestCliError> => {
-          const path = checkJobPath(check, input.host);
+          const { name, url } = check;
+          const path = checkJobPath(check);
           if (path === null) {
             return Effect.succeed({
-              ...check,
+              name,
+              url,
               log: null,
               truncated: false,
               detail: CHECK_IS_NOT_A_JOB,
@@ -2362,7 +2346,8 @@ export const make = Effect.gen(function* () {
             Effect.map((response) => {
               const tail = tailLogLines(response.stdout, input.tailLines);
               return {
-                ...check,
+                name,
+                url,
                 log: tail.log,
                 truncated: tail.truncated || response.stdoutTruncated,
                 detail: response.stdoutTruncated
@@ -2372,7 +2357,7 @@ export const make = Effect.gen(function* () {
             }),
             Effect.catchTags({
               GitLabCliCommandError: (error) =>
-                Effect.succeed({ ...check, log: null, truncated: false, detail: error.detail }),
+                Effect.succeed({ name, url, log: null, truncated: false, detail: error.detail }),
             }),
           );
         },
@@ -2383,7 +2368,7 @@ export const make = Effect.gen(function* () {
     rerunChecks: Effect.fn("GitLabPullRequestCli.rerunChecks")(function* (input) {
       const located = input.checks.map((check) => ({
         check,
-        path: checkJobPath(check, input.host),
+        path: checkJobPath(check),
       }));
       const paths = new Set(located.flatMap(({ path }) => (path === null ? [] : [path])));
       const outcomes = new Map<string, string | null>();

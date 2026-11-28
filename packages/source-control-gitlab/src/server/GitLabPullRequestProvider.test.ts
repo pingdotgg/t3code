@@ -132,16 +132,18 @@ it.effect(
         host: "gitlab.example.test:8443",
         number: 7,
       };
-      const root = `https://${reference.host}`;
+      const root = `https://${reference.host}/gitlab`;
       const job = { name: "test / unit", url: `${root}/fork/team/web/-/jobs/11` };
-      const long = { name: "large log", url: `${root}/target/web/-/jobs/12` };
-      const rejected = { name: "denied", url: `${root}/target/web/-/jobs/13` };
-      const limited = { name: "limited", url: `${root}/target/web/-/jobs/14` };
+      const external = { name: "test / external", url: `${root}/fork/team/web/-/jobs/15` };
+      const long = { name: "large log", url: `${root}/target/web/-/jobs/12`, nativeId: "42/12" };
+      const rejected = { name: "denied", url: `${root}/target/web/-/jobs/13`, nativeId: "42/13" };
+      const limited = { name: "limited", url: `${root}/target/web/-/jobs/14`, nativeId: "42/14" };
       const unsupported = [
         { name: "stage", url: `${root}/target/web/-/pipelines/9` },
         { name: "external", url: "https://other.example.test/target/web/-/jobs/11" },
         { name: "other port", url: "https://gitlab.example.test/target/web/-/jobs/11" },
         { name: "malformed", url: `${root}/target/%zz/-/jobs/15` },
+        { name: "invalid identity", url: job.url, nativeId: "42/11/retry" },
         { name: "no URL", url: null },
       ];
       const commands: Array<{
@@ -149,6 +151,7 @@ it.effect(
         readonly args: ReadonlyArray<string>;
       }> = [];
       let status = "FAILED";
+      let jobId = 11;
       const cli = yield* GitLabPullRequestCli.make.pipe(
         Effect.provide(
           Layer.mock(GitLabCli.GitLabCli)({
@@ -170,6 +173,7 @@ it.effect(
                 }
                 if (path.endsWith("/retry")) {
                   status = "PENDING";
+                  jobId = 21;
                   return Effect.succeed(
                     TestSourceControlHost.processOutput('{"id":21,"status":"pending"}'),
                   );
@@ -188,7 +192,8 @@ it.effect(
                           mergeRequest: input.stdin?.includes("stages(first")
                             ? {
                                 headPipeline: {
-                                  path: "/target/web/-/pipelines/9",
+                                  path: "/gitlab/fork/team/web/-/pipelines/9",
+                                  project: { id: "gid://gitlab/Project/42" },
                                   stages: {
                                     nodes: [
                                       {
@@ -197,9 +202,16 @@ it.effect(
                                         jobs: {
                                           nodes: [
                                             {
+                                              id: `gid://gitlab/Ci::Build/${jobId}`,
                                               name: "unit",
                                               status,
-                                              webPath: "/fork/team/web/-/jobs/11",
+                                              webPath: `/gitlab/fork/team/web/-/jobs/${jobId}`,
+                                            },
+                                            {
+                                              id: "gid://gitlab/GenericCommitStatus/15",
+                                              name: "external",
+                                              status: "FAILED",
+                                              webPath: "/gitlab/fork/team/web/-/jobs/15",
                                             },
                                           ],
                                         },
@@ -228,9 +240,9 @@ it.effect(
                     updated_at: "2026-07-02T00:00:00Z",
                     head_pipeline: {
                       id: 9,
-                      project_id: 10,
+                      project_id: 42,
                       status: status.toLowerCase(),
-                      web_url: `${root}/target/web/-/pipelines/9`,
+                      web_url: `${root}/fork/team/web/-/pipelines/9`,
                     },
                   }),
                 ),
@@ -245,28 +257,44 @@ it.effect(
       assert.isDefined(provider.getCheckLogs);
       assert.isDefined(provider.rerunChecks);
       assert.isDefined(provider.getChangeRequestChecks);
-      expect((yield* provider.getChangeRequestChecks(reference)).checks).toMatchObject([
-        { ...job, status: "failure" },
+      const { checks } = yield* provider.getChangeRequestChecks(reference);
+      expect(checks).toMatchObject([
+        { ...job, status: "failure", nativeId: "42/11" },
+        { ...external, status: "failure" },
       ]);
+      const [nativeJob, externalStatus] = checks;
+      assert.isDefined(nativeJob);
+      assert.isDefined(externalStatus);
+      expect(externalStatus).not.toHaveProperty("nativeId");
+      const unavailable = [externalStatus, ...unsupported];
 
       const logs = yield* provider.getCheckLogs({
         ...reference,
-        checks: [job, long, rejected, ...unsupported],
+        checks: [nativeJob, long, rejected, ...unavailable],
         tailLines: 2,
       });
       expect(logs.slice(0, 3)).toMatchObject([
         { ...job, log: "second\nthird", truncated: true, detail: null },
         {
-          ...long,
+          name: long.name,
+          url: long.url,
           log: "second\nthird",
           truncated: true,
           detail: expect.stringContaining("too large"),
         },
-        { ...rejected, log: null, truncated: false, detail: expect.stringContaining("failed") },
+        {
+          name: rejected.name,
+          url: rejected.url,
+          log: null,
+          truncated: false,
+          detail: expect.stringContaining("failed"),
+        },
       ]);
+      expect(logs.every((log) => !("nativeId" in log))).toBe(true);
       expect(logs.slice(3)).toEqual(
-        unsupported.map((check) => ({
-          ...check,
+        unavailable.map(({ name, url }) => ({
+          name,
+          url,
           log: null,
           truncated: false,
           detail: expect.any(String),
@@ -275,17 +303,17 @@ it.effect(
 
       const reruns = yield* provider.rerunChecks({
         ...reference,
-        checks: [job, { ...job, url: `${job.url}#trace` }, rejected, ...unsupported],
+        checks: [nativeJob, { ...nativeJob, url: `${job.url}#trace` }, rejected, ...unavailable],
       });
       expect(reruns.map((item) => item.rerun)).toEqual([
         true,
         true,
         false,
-        ...unsupported.map(() => false),
+        ...unavailable.map(() => false),
       ]);
       expect(commands.filter(({ args }) => args.includes("POST")).map(({ args }) => args)).toEqual([
-        ["api", "projects/fork%2Fteam%2Fweb/jobs/11/retry", "--method", "POST"],
-        ["api", "projects/target%2Fweb/jobs/13/retry", "--method", "POST"],
+        ["api", "projects/42/jobs/11/retry", "--method", "POST"],
+        ["api", "projects/42/jobs/13/retry", "--method", "POST"],
       ]);
       expect(
         commands
@@ -293,13 +321,14 @@ it.effect(
           .map(({ args }) => args[1])
           .sort(),
       ).toEqual([
-        "projects/fork%2Fteam%2Fweb/jobs/11/trace",
-        "projects/target%2Fweb/jobs/12/trace",
-        "projects/target%2Fweb/jobs/13/trace",
+        "projects/42/jobs/11/trace",
+        "projects/42/jobs/12/trace",
+        "projects/42/jobs/13/trace",
       ]);
       expect(commands.every((command) => command.host === reference.host)).toBe(true);
       expect((yield* provider.getChangeRequestChecks(reference)).checks).toMatchObject([
-        { ...job, status: "pending" },
+        { ...job, url: `${root}/fork/team/web/-/jobs/21`, status: "pending", nativeId: "42/21" },
+        { ...external, status: "failure" },
       ]);
 
       expect(

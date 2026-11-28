@@ -25,7 +25,10 @@ import type {
 import { TrimmedNonEmptyString } from "@t3tools/contracts";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
-import type { ProviderChangeRequestWatchFingerprint } from "@t3tools/source-control-core/server/PullRequestProvider";
+import type {
+  ProviderCheck,
+  ProviderChangeRequestWatchFingerprint,
+} from "@t3tools/source-control-core/server/PullRequestProvider";
 
 /** Unknown pipeline or merge status values must not fail the whole payload. */
 const RawUserSchema = Schema.Struct({
@@ -234,7 +237,7 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
   readonly mergedAt: string | null;
   readonly closedAt: string | null;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
-  readonly checks: ReadonlyArray<PullRequestCheck>;
+  readonly checks: ReadonlyArray<ProviderCheck>;
   readonly viewerCanMerge: boolean;
   /** Read only for a closed or merged merge request; absent on an open one. */
   readonly viewerCanDeleteBranch?: boolean;
@@ -350,6 +353,7 @@ export const PIPELINE_STAGES_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String
     mergeRequest(iid: $iid) {
       headPipeline {
         path
+        project { id }
         stages(first: 100) {
           nodes {
             name
@@ -357,7 +361,7 @@ export const PIPELINE_STAGES_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String
             detailedStatus { label detailsPath }
             jobs(first: 100) {
               nodes {
-                name status allowFailure retried webPath detailedStatus { label }
+                id name status allowFailure retried webPath detailedStatus { label }
                 downstreamPipeline { status path }
               }
               pageInfo { hasNextPage }
@@ -373,6 +377,7 @@ export const PIPELINE_STAGES_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String
 const OptionalString = Schema.optional(Schema.NullOr(Schema.String));
 
 const RawStageJobSchema = Schema.Struct({
+  id: OptionalString,
   name: OptionalString,
   status: OptionalString,
   allowFailure: Schema.optional(Schema.NullOr(Schema.Boolean)),
@@ -416,6 +421,7 @@ const RawPipelineStagesSchema = Schema.Struct({
                 headPipeline: Schema.NullOr(
                   Schema.Struct({
                     path: OptionalString,
+                    project: Schema.optional(Schema.NullOr(Schema.Struct({ id: OptionalString }))),
                     stages: Schema.optional(
                       Schema.NullOr(
                         Schema.Struct({
@@ -451,7 +457,7 @@ const decodePipelineStages = decodeJsonResult(RawPipelineStagesSchema);
 export function decodePipelineStageChecksJson(
   raw: string,
   origin: string,
-): Result.Result<ReadonlyArray<PullRequestCheck> | null, DecodeFailure> {
+): Result.Result<ReadonlyArray<ProviderCheck> | null, DecodeFailure> {
   const decoded = decodePipelineStages(raw);
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
@@ -466,7 +472,8 @@ export function decodePipelineStageChecksJson(
     return Result.succeed(null);
   }
   const link = (path: string | null) => (path?.startsWith("/") ? `${origin}${path}` : null);
-  const checks: Array<PullRequestCheck> = [];
+  const projectId = /^gid:\/\/gitlab\/Project\/([1-9]\d*)$/.exec(pipeline?.project?.id ?? "")?.[1];
+  const checks: Array<ProviderCheck> = [];
   for (const stage of pipeline?.stages?.nodes ?? []) {
     const name = trimmed(stage?.name);
     if (stage === null || name === null) continue;
@@ -489,12 +496,18 @@ export function decodePipelineStageChecksJson(
       // A trigger job reads as its downstream pipeline, as `decodeTriggerJobChecksJson` explains.
       const downstream = job.downstreamPipeline;
       const status = toPipelineStatus(downstream ? downstream.status : job.status);
+      // Stage jobs also include external commit statuses and bridges with job-shaped URLs.
+      // Only a native build has a trace and retry endpoint on the pipeline's project (possibly a fork).
+      const jobId = /^gid:\/\/gitlab\/Ci::Build\/([1-9]\d*)$/.exec(job.id ?? "")?.[1];
       checks.push({
         name: `${name} / ${trimmed(job.name)}`,
         // The same reading as `manual`: GitLab was told this failure does not fail the pipeline.
         status: status === "failure" && job.allowFailure === true ? "neutral" : status,
         description: downstream ? "Downstream pipeline" : trimmed(job.detailedStatus?.label),
         url: link(trimmed(downstream ? downstream.path : job.webPath)),
+        ...(downstream || projectId === undefined || jobId === undefined
+          ? {}
+          : { nativeId: `${projectId}/${jobId}` }),
       });
     }
   }

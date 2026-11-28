@@ -303,6 +303,7 @@ describe("decodePipelineStageChecksJson", () => {
   function stagesJson(
     stages: ReadonlyArray<Record<string, unknown> | null> | null,
     hasNextPage = false,
+    projectId?: string,
   ): string {
     return JSON.stringify({
       data: {
@@ -313,6 +314,7 @@ describe("decodePipelineStageChecksJson", () => {
                 ? null
                 : {
                     path: "/fork/web/-/pipelines/9",
+                    ...(projectId === undefined ? {} : { project: { id: projectId } }),
                     stages: { nodes: stages, pageInfo: { hasNextPage } },
                   },
           },
@@ -381,6 +383,42 @@ describe("decodePipelineStageChecksJson", () => {
       ["deploy / release", "neutral", "https://gitlab.example.com/acme/web/-/jobs/7"],
     ]);
     expect(checks?.[0]?.description).toBe("passed");
+  });
+
+  it("only identifies native builds with a known pipeline project", () => {
+    const stages = [
+      {
+        name: "test",
+        status: "failed",
+        jobs: {
+          nodes: [
+            { id: "gid://gitlab/Ci::Build/1", name: "unit", status: "FAILED", retried: true },
+            { id: "gid://gitlab/Ci::Build/2", name: "unit", status: "FAILED" },
+            { id: "gid://gitlab/Ci::Bridge/3", name: "trigger", status: "FAILED" },
+            { id: "gid://gitlab/GenericCommitStatus/4", name: "external", status: "FAILED" },
+            { name: "unknown", status: "FAILED", webPath: "/fork/web/-/jobs/5" },
+          ],
+        },
+      },
+    ];
+    const decode = (projectId?: string) =>
+      expectSuccess(
+        decodePipelineStageChecksJson(stagesJson(stages, false, projectId), "https://gitlab.com"),
+      );
+
+    expect(
+      decode("gid://gitlab/Project/42")?.map(({ name, nativeId }) => [name, nativeId]),
+    ).toEqual([
+      ["test / unit", "42/2"],
+      ["test / trigger", undefined],
+      ["test / external", undefined],
+      ["test / unknown", undefined],
+    ]);
+    for (const projectId of [undefined, "gid://gitlab/Project/invalid"]) {
+      const checks = decode(projectId);
+      expect(checks).toHaveLength(4);
+      expect(checks?.every((check) => !("nativeId" in check))).toBe(true);
+    }
   });
 
   it.each([

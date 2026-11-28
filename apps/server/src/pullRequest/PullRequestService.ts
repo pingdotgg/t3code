@@ -2020,7 +2020,7 @@ export const make = Effect.gen(function* () {
             closedAt: changeRequest.closedAt,
             reviewers: changeRequest.reviewers,
             labels: changeRequest.labels,
-            checks: changeRequest.checks,
+            checks: changeRequest.checks.map(({ nativeId: _, ...check }) => check),
             mergeCapabilities: changeRequest.mergeCapabilities,
             viewerPermissions: changeRequest.viewerPermissions,
             ...(viewer === null || viewer.trim().length === 0 ? {} : { viewer }),
@@ -3413,7 +3413,16 @@ export const make = Effect.gen(function* () {
                 .pipe(
                   Effect.mapError(toPullRequestError("checks")),
                   observeRead,
-                  Effect.map(({ value, observedAt }) => ({ ...value, observedAt })),
+                  Effect.map(
+                    ({
+                      value,
+                      observedAt,
+                    }): PullRequestChecks & { readonly observedAt: number } => ({
+                      ...value,
+                      checks: value.checks.map(({ nativeId: _, ...check }) => check),
+                      observedAt,
+                    }),
+                  ),
                 ),
         ),
       );
@@ -4012,19 +4021,21 @@ export const make = Effect.gen(function* () {
         : project.api.getChangeRequestChecks(ref)
     ).pipe(Effect.mapError(toPullRequestError(operation)));
     const named = input.check?.trim().toLowerCase();
-    if (named === undefined) {
-      return checks
-        .filter((check) => check.status === "failure" || check.status === "cancelled")
-        .map(({ name, url }) => ({ name, url }));
-    }
-    const matches = checks.filter((check) => check.name.toLowerCase() === named);
-    if (matches.length === 0) {
+    const matches =
+      named === undefined
+        ? checks.filter((check) => check.status === "failure" || check.status === "cancelled")
+        : checks.filter((check) => check.name.toLowerCase() === named);
+    if (named !== undefined && matches.length === 0) {
       return yield* new PullRequestOperationError({
         operation,
         detail: `No check is named ${input.check}. Checks: ${checks.map((check) => check.name).join(", ") || "none"}.`,
       });
     }
-    return matches.map(({ name, url }) => ({ name, url }));
+    return matches.map(({ name, url, nativeId }) => ({
+      name,
+      url,
+      ...(nativeId === undefined ? {} : { nativeId }),
+    }));
   });
 
   const DEFAULT_CHECK_LOGS = 5;
@@ -4055,8 +4066,9 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.mapError(toPullRequestError("checkLogs")));
     return [
       ...logs,
-      ...rest.map((check) => ({
-        ...check,
+      ...rest.map(({ name, url }) => ({
+        name,
+        url,
         log: null,
         truncated: false,
         detail: "Not read, to keep the reply short. Ask for this check by name.",
@@ -4075,6 +4087,13 @@ export const make = Effect.gen(function* () {
         detail: "This host cannot re-run checks.",
       });
     }
+    // A cached failed job may have been retried or superseded since it was displayed.
+    yield* (
+      project.api.forgetChangeRequestReads?.({
+        repository: project.repository,
+        number: input.number,
+      }) ?? Effect.void
+    );
     const checks = yield* selectChecks(project, input, "rerunChecks");
     if (checks.length === 0) return [];
     const ref = yield* canonicalRef(input);

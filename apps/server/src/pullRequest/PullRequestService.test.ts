@@ -35,6 +35,7 @@ import { fakePullRequestProvider } from "@t3tools/source-control-testing/fakeSou
 import {
   PullRequestProviderError,
   type ProviderChangeRequest,
+  type ProviderCheckReference,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
@@ -1692,6 +1693,80 @@ it.effect.each([false, true])(
       assert.equal((yield* service.checks(reference))?.checks[0]?.status, "failure");
       yield* service.rerunChecks(reference).pipe(Effect.ignore);
       assert.equal((yield* service.checks(reference))?.checks[0]?.status, "pending");
+    }),
+);
+
+it.effect(
+  "refreshes provider-cached checks before retrying and forwards their native identity",
+  () =>
+    Effect.gen(function* () {
+      let currentId = 11;
+      let cachedId: number | undefined;
+      const forgotten: Array<
+        { readonly repository: string; readonly number?: number } | undefined
+      > = [];
+      const retried: Array<ProviderCheckReference> = [];
+      const read: Array<ProviderCheckReference> = [];
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const check = (id: number) => ({
+        name: "Test",
+        url: `https://github.com/acme/web/jobs/${id}`,
+        nativeId: `42/${id}`,
+      });
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequestChecks: () =>
+              Effect.sync(() => ({
+                state: "open" as const,
+                checks: [
+                  {
+                    ...check((cachedId ??= currentId)),
+                    status: "failure" as const,
+                    description: null,
+                  },
+                ],
+              })),
+            forgetChangeRequestReads: (scope) =>
+              Effect.sync(() => {
+                forgotten.push(scope);
+                cachedId = undefined;
+              }),
+            getCheckLogs: ({ checks }) =>
+              Effect.sync(() => {
+                read.push(...checks);
+                return checks.map(({ name, url }) => ({
+                  name,
+                  url,
+                  log: "boom",
+                  truncated: false,
+                  detail: null,
+                }));
+              }),
+            rerunChecks: ({ checks }) =>
+              Effect.sync(() => {
+                retried.push(...checks);
+                return checks.map(({ name }) => ({ name, rerun: true, detail: null }));
+              }),
+          }),
+        ],
+      });
+      const displayed = yield* service.checks(reference);
+      assert.deepStrictEqual(displayed?.checks, [
+        { name: "Test", url: check(11).url, status: "failure", description: null },
+      ]);
+      yield* service.checkLogs({ ...reference, tailLines: 50 });
+      currentId = 12;
+      yield* service.rerunChecks(reference);
+      assert.deepStrictEqual(retried, [check(12)]);
+      assert.deepStrictEqual(read, [check(11)]);
+      assert.deepStrictEqual(forgotten[0], {
+        repository: reference.repository,
+        number: reference.number,
+      });
     }),
 );
 
