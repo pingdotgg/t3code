@@ -2841,11 +2841,7 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
       options: [
         { decision: "decline", label: "Deny" },
         { decision: "accept", label: "Allow once" },
-        {
-          decision: "acceptAlways",
-          label: "Always allow Safari",
-          warning: "Applies to future requests",
-        },
+        { decision: "cancel", label: "Cancel" },
       ],
       responseCapability: "live",
     },
@@ -2905,10 +2901,10 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   await click(screen.button("Why am I being asked this?"));
   await expect.element(page.getByText(/an ask rule in the agent's own settings/)).toBeVisible();
   await click(screen.button("Why am I being asked this?"));
-  await click(screen.buttons("More approval options")[1]!);
-  await expect.element(page.getByRole("menuitem", { name: "Always allow Safari" })).toBeVisible();
-  await page.getByRole("menuitem", { name: "Always allow Safari" }).click();
-  expect(onRespondToApproval).toHaveBeenLastCalledWith(appRequest, "acceptAlways");
+  await expect.element(screen.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
+  expect(screen.buttons("More approval options")).toHaveLength(1);
+  await click(screen.button("Cancel"));
+  expect(onRespondToApproval).toHaveBeenLastCalledWith(appRequest, "cancel");
   await click(screen.buttons("More approval options")[0]!);
   await expect.element(page.getByRole("menuitem", { name: "Cancel", exact: true })).toBeVisible();
   await page.getByRole("menuitem", { name: "Always allow this session" }).click();
