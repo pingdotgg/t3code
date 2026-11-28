@@ -104,7 +104,7 @@ export class HtmlRenderViewportHeightError extends Schema.TaggedError<HtmlRender
 // Check stylesheets, style attributes, and scripts (which may write either); skip comments whole.
 // Consume unclosed comments, tags, or quotes through EOF to keep every pattern linear.
 const HTML_CSS_SOURCE =
-  /<!--[\s\S]*?(?:-->|$)|<script(?=[\s/>])[^>]*(?:>|$)([\s\S]*?)(?:<\/script\s*>|$)|<style(?=[\s/>])[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|<[a-z]((?:[^>"']|"[^"]*(?:"|$)|'[^']*(?:'|$))*)/gi;
+  /<!--[\s\S]*?(?:-->|$)|<script(?=[\s/>])((?:[^>"']|"[^"]*(?:"|$)|'[^']*(?:'|$))*)(?:>|$)([\s\S]*?)(?:<\/script\s*>|$)|<style(?=[\s/>])[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|<[a-z]((?:[^>"']|"[^"]*(?:"|$)|'[^']*(?:'|$))*)/gi;
 // Inside a tag, skip other attributes' quoted values, such as a title that mentions style=.
 const TAG_STYLE =
   /"[^"]*(?:"|$)|'[^']*(?:'|$)|\sstyle\s*=\s*(?:"([^"]*)(?:"|$)|'([^']*)(?:'|$)|([^\s>]+))/gi;
@@ -128,10 +128,11 @@ const findViewportHeight = (source: string, pattern: RegExp) => {
 };
 
 const rejectViewportHeight = (html: string) => {
-  for (const [, script, sheet, tag] of html.matchAll(HTML_CSS_SOURCE)) {
+  for (const [, scriptTag, script, sheet, tag] of html.matchAll(HTML_CSS_SOURCE)) {
     const found =
       script !== undefined
-        ? findViewportHeight(script, SCRIPT_STYLE)
+        ? (findViewportHeight(scriptTag ?? "", TAG_STYLE) ??
+          findViewportHeight(script, SCRIPT_STYLE))
         : tag !== undefined
           ? findViewportHeight(tag, TAG_STYLE)
           : VIEWPORT_HEIGHT_UNIT.exec(sheet ?? "")?.[0];
