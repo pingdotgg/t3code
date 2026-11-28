@@ -460,6 +460,7 @@ describe("GitCafePullRequestProvider", () => {
         ...target,
         host: "staging.git.cafe",
       };
+      assert.isTrue(provider.readsPublicHostWithoutCheckout);
       const preview = yield* provider.getChangeRequestPreview!(input);
       assert.deepInclude(preview, {
         number: 7,
@@ -495,6 +496,56 @@ describe("GitCafePullRequestProvider", () => {
       assert.deepStrictEqual(server.sent, []);
     }).pipe(Effect.provide(server.layer));
   });
+
+  it.effect("reads public PRs without credentials while keeping writes authenticated", () =>
+    Effect.gen(function* () {
+      for (const missing of [
+        new GitCafeCredentials.GitCafeCliMissingError({ host: "git.cafe" }),
+        new GitCafeCredentials.GitCafeNotSignedInError({ host: "git.cafe" }),
+      ]) {
+        let requests = 0;
+        const client = HttpClient.make((request) => {
+          requests += 1;
+          assert.isUndefined(request.headers.authorization);
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response("public PR", { status: request.url.endsWith("/private") ? 401 : 200 }),
+            ),
+          );
+        });
+        const api = yield* GitCafeApi.make.pipe(
+          Effect.provideService(HttpClient.HttpClient, client),
+          Effect.provide(
+            Layer.mock(GitCafeCredentials.GitCafeCredentials)({
+              get: () => Effect.fail(missing),
+            }),
+          ),
+        );
+        const input = {
+          host: "git.cafe",
+          operation: "getChangeRequest",
+          path: "/repos/owner/repo/pulls/7",
+        };
+        assert.strictEqual(yield* api.request(input), "public PR");
+        assert.strictEqual(
+          yield* api.request({ ...input, method: "POST", path: `${input.path}/diff-files` }),
+          "public PR",
+        );
+        for (const method of ["POST", "PUT", "PATCH", "DELETE"] as const) {
+          const error = yield* api.request({ ...input, method }).pipe(Effect.flip);
+          assert.strictEqual(
+            error.reason,
+            missing._tag === "GitCafeCliMissingError" ? "missing-tool" : "unauthenticated",
+          );
+        }
+        assert.strictEqual(requests, 2);
+        const privateRead = yield* api.request({ ...input, path: "/private" }).pipe(Effect.flip);
+        assert.strictEqual(privateRead.reason, "unauthenticated");
+        assert.strictEqual(requests, 3);
+      }
+    }),
+  );
 
   it.effect("reports a refused token as unauthenticated and a limit as rate-limited", () =>
     Effect.gen(function* () {

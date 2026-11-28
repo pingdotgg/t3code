@@ -804,6 +804,7 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("gitcafe"),
     capabilities: CAPABILITIES,
+    readsPublicHostWithoutCheckout: true,
     getViewer: (input) =>
       read(
         "getViewer",

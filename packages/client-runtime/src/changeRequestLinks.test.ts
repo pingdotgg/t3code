@@ -115,20 +115,35 @@ describe("resolveChangeRequestLinkTarget", () => {
   const loaded = () => true;
   const url = "https://github.com/acme/app/pull/7";
 
-  it("opens a mirror's link in its own environment under a project on the link's host", () => {
+  it.each([
+    ["https://github.com/acme/app/pull/7", "github.com"],
+    ["https://git.cafe/acme/app/pull/7", "git.cafe"],
+    ["https://git.cafe/acme/app/pulls/7", "git.cafe"],
+  ])("opens %s in its own environment under a host-capable project", (url, host) => {
     expect(
       resolveChangeRequestLinkTarget({
         url,
-        projects,
+        projects: host === "git.cafe" ? [sibling, elsewhere] : projects,
         configLoaded: loaded,
         environmentId: local,
         projectId: mirrored.id,
         lendHostProject: true,
       }),
-    ).toEqual({ project: sibling, host: "github.com", repository: "acme/app", number: 7 });
+    ).toEqual({ project: sibling, host, repository: "acme/app", number: 7 });
   });
 
   it("only borrows a host project for views that can show any repository on the host", () => {
+    for (const host of ["staging.git.cafe", "git.cafe.evil.test"]) {
+      expect(
+        resolveChangeRequestLinkTarget({
+          url: `https://${host}/acme/app/pull/7`,
+          projects: [sibling],
+          configLoaded: loaded,
+          environmentId: local,
+          lendHostProject: true,
+        }),
+      ).toBeNull();
+    }
     expect(
       resolveChangeRequestLinkTarget({
         url,
