@@ -83,7 +83,7 @@ The last matching rule in `keybindings.json` wins, even across different command
 - `thread.stop`: Interrupts the running turn (unbound by default).
 - `thread.regenerateTitle`: Regenerates the focused thread's title (unbound by default).
 - `thread.undo` (`mod+z`): Undoes recent sidebar actions (unpin, settle, snooze, archive, discard draft) within 5 seconds, including consecutive actions of the same kind.
-- `navigation.back` (`mod+[`) / `navigation.forward` (`mod+]`): Moves through visited pages.
+- `navigation.back` (`mod+[`) / `navigation.forward` (`mod+]`): Moves through visited pages. In the macOS desktop app, a two-finger trackpad swipe does the same; turn it off in **Settings → General → Navigation → Swipe to navigate**.
 - `chat.new` / `chat.newLocal` / `chat.newWithoutProject` (`mod+alt+n`): Start new threads using your [new-thread defaults](./thread-sidebar.md#start-a-thread) or [without a project](./thread-sidebar.md#start-without-a-project).
 
 ## Reserved and platform shortcuts
