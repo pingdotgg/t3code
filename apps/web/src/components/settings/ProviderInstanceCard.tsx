@@ -1043,6 +1043,30 @@ export function ProviderInstanceCard({
         ) : null}
       </>
     );
+  const versionActionContent = (
+    <>
+      {isUpdating ? <Spinner /> : <DownloadIcon />}
+      {isUpdating
+        ? gt("Updating")
+        : versionAdvisory?.targetVersion
+          ? gt("Install {version}", {
+              version: getProviderVersionLabel(versionAdvisory.targetVersion),
+            })
+          : gt("Update now")}
+    </>
+  );
+  const updateFeedbackNode =
+    updateProgress || updateProblem ? (
+      <p
+        aria-live="polite"
+        className={cn(
+          "text-xs leading-snug [overflow-wrap:anywhere]",
+          updateProblem ? "text-warning" : "text-muted-foreground",
+        )}
+      >
+        {updateProgress ?? updateProblem}
+      </p>
+    ) : null;
   const versionAdvisoryNode = versionAdvisory ? (
     <Popover>
       <SharedTooltipTrigger
@@ -1098,27 +1122,10 @@ export function ProviderInstanceCard({
               disabled={isUpdating}
               onClick={onRunVersionAction}
             >
-              {isUpdating ? <Spinner /> : <DownloadIcon />}
-              {isUpdating
-                ? gt("Updating")
-                : versionAdvisory.targetVersion
-                  ? gt("Install {version}", {
-                      version: getProviderVersionLabel(versionAdvisory.targetVersion),
-                    })
-                  : gt("Update now")}
+              {versionActionContent}
             </Button>
           ) : null}
-          {updateProgress || updateProblem ? (
-            <p
-              aria-live="polite"
-              className={cn(
-                "text-xs leading-snug [overflow-wrap:anywhere]",
-                updateProblem ? "text-warning" : "text-muted-foreground",
-              )}
-            >
-              {updateProgress ?? updateProblem}
-            </p>
-          ) : null}
+          {updateFeedbackNode}
           {onRunVersionAction && updateCommand ? (
             <div className="flex items-center gap-2 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
               <span aria-hidden className="h-px flex-1 bg-border" />
@@ -1290,7 +1297,7 @@ export function ProviderInstanceCard({
           {restartNotice}
         </p>
       ) : null}
-      {versionAdvisory && onRunVersionAction ? (
+      {onRunVersionAction && versionAdvisory ? (
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <Button
             type="button"
@@ -1300,26 +1307,9 @@ export function ProviderInstanceCard({
             disabled={isUpdating}
             onClick={onRunVersionAction}
           >
-            {isUpdating ? <Spinner /> : <DownloadIcon />}
-            {isUpdating
-              ? gt("Updating")
-              : versionAdvisory.targetVersion
-                ? gt("Install {version}", {
-                    version: getProviderVersionLabel(versionAdvisory.targetVersion),
-                  })
-                : gt("Update now")}
+            {versionActionContent}
           </Button>
-          {updateProgress || updateProblem ? (
-            <p
-              aria-live="polite"
-              className={cn(
-                "text-xs leading-snug [overflow-wrap:anywhere]",
-                updateProblem ? "text-warning" : "text-muted-foreground",
-              )}
-            >
-              {updateProgress ?? updateProblem}
-            </p>
-          ) : null}
+          {updateFeedbackNode}
         </div>
       ) : null}
       {urlAuthAction && onAcceptUrlAuth ? (
