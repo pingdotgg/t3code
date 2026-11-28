@@ -1,6 +1,14 @@
-import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  type ModelSelection,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { resolveNewThreadModelSelectionOverride } from "./chatThreadActions";
+import {
+  resolveNewThreadModelSelectionOverride,
+  startNewThreadFromContext,
+} from "./chatThreadActions";
 
 const PROJECT_DEFAULT_SELECTION: ModelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -33,4 +41,21 @@ describe("chatThreadActions", () => {
       }),
     ).toEqual(PROJECT_DEFAULT_SELECTION);
   });
+});
+
+it("lets the caller open the project picker when draft creation declines the target", async () => {
+  const context = {
+    activeThread: undefined,
+    activeDraftThread: null,
+    defaultProjectRef: {
+      environmentId: EnvironmentId.make("hub"),
+      projectId: ProjectId.make("hub-project"),
+    },
+  };
+  expect(await startNewThreadFromContext({ ...context, handleNewThread: async () => null })).toBe(
+    false,
+  );
+  expect(await startNewThreadFromContext({ ...context, handleNewThread: async () => ({}) })).toBe(
+    true,
+  );
 });

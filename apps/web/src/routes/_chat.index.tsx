@@ -1,5 +1,6 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { isTeamHubOnlyServerConfig } from "@t3tools/client-runtime/team";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { T, useGT } from "gt-react";
@@ -36,6 +37,7 @@ function ChatIndexRouteView() {
 
 function IndexDraftLanding() {
   const projects = useProjects();
+  const { environments } = useEnvironments();
   const threads = useVisibleThreadShells();
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const handleNewThread = useNewThreadHandler();
@@ -45,9 +47,16 @@ function IndexDraftLanding() {
   const startedAttemptRef = useRef<number | null>(null);
   const [startState, setStartState] = useState({ failed: false, retryRequest: 0 });
 
+  const hubOnlyIds = new Set(
+    environments
+      .filter((environment) => isTeamHubOnlyServerConfig(environment.serverConfig))
+      .map((environment) => environment.environmentId),
+  );
   const mostRecentProject =
     sortScopedProjectsForSidebar(
-      projects.filter((project) => project.archivedAt == null),
+      projects.filter(
+        (project) => project.archivedAt == null && !hubOnlyIds.has(project.environmentId),
+      ),
       threads,
       "updated_at",
     )[0] ?? null;
@@ -67,7 +76,7 @@ function IndexDraftLanding() {
     void handleNewThread(projectRef, { replace: true })
       .then((opened) => {
         if (opened === null) {
-          setStartState((state) => ({ ...state, retryRequest: state.retryRequest + 1 }));
+          setStartState((state) => ({ ...state, failed: true }));
         }
       })
       .catch(() => {

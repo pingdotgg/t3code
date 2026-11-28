@@ -109,6 +109,5 @@ export async function startNewThreadFromContext(
     return false;
   }
 
-  await context.handleNewThread(projectRef);
-  return true;
+  return (await context.handleNewThread(projectRef)) !== null;
 }
