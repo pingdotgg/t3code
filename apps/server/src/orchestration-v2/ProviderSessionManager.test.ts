@@ -5913,8 +5913,8 @@ it.effect(
 
 it.effect.each([
   { open: "closed", viewed: false, unloaded: ["native-round-1", "native-round-2"] },
-  // An open thread keeps only the native thread its next send uses.
-  { open: "open", viewed: true, unloaded: ["native-round-1"] },
+  // An open thread keeps every native thread: its next message may continue the older one.
+  { open: "open", viewed: true, unloaded: [] },
 ])(
   "ProviderSessionManagerV2 unloads each idle native thread a fresh session replaced in the same $open app thread",
   ({ viewed, unloaded }) =>

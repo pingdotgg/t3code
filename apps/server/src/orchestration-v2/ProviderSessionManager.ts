@@ -1707,16 +1707,6 @@ export const layerWithOptions = (
           ) {
             return;
           }
-          const viewedRetryMs = yield* viewedRecheckMs(
-            entry.runtime,
-            entry.attachedThreadIds,
-            input.idleSinceMs,
-          );
-          if (viewedRetryMs !== null) {
-            // Recheck on this fiber; scheduleIdleReleaseInternal would interrupt it and self-deadlock.
-            yield* Effect.sleep(Duration.millis(viewedRetryMs));
-            return yield* releaseIfStillIdle(input);
-          }
           // Capture runtime identity before yielding; replacements can reuse the session id.
           const probedRuntime = entry.runtime;
           const hasPendingWork =
@@ -1766,6 +1756,17 @@ export const layerWithOptions = (
               providerSessionId: input.providerSessionId,
               pinnedForMs: now - pinnedSinceMs,
             });
+          }
+          // Checked after the probes so a client that opens the thread meanwhile still keeps it.
+          const viewedRetryMs = yield* viewedRecheckMs(
+            entry.runtime,
+            entry.attachedThreadIds,
+            input.idleSinceMs,
+          );
+          if (viewedRetryMs !== null) {
+            // Recheck on this fiber; scheduleIdleReleaseInternal would interrupt it and self-deadlock.
+            yield* Effect.sleep(Duration.millis(viewedRetryMs));
+            return yield* releaseIfStillIdle(input);
           }
           // Closing skips the threads' own idle unloads, so archive delivered children first.
           yield* Effect.forEach(
@@ -2286,14 +2287,8 @@ export const layerWithOptions = (
               ) {
                 return "skipped" as const;
               }
-              // A native thread a fresh session replaced gets no further sends, so viewing cannot keep it.
-              if (
-                input.idleSinceMs !== undefined &&
-                isLoadKeyFor(
-                  entry.loadedProviderThreadKeyByThread.get(input.threadId),
-                  pending.providerThread,
-                )
-              ) {
+              // Every native thread counts: a message after a scheduled fresh round continues the older one.
+              if (input.idleSinceMs !== undefined) {
                 const viewedRetryMs = yield* viewedRecheckMs(
                   entry.runtime,
                   [input.threadId],
