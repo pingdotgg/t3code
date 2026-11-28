@@ -1,4 +1,6 @@
-import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
+import { EnvironmentId, type ProjectEntry, type ProjectStatFileResult } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import { Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { commands, page, userEvent } from "vite-plus/test/browser";
 
@@ -10,6 +12,7 @@ import { act, render } from "../../../test/render";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { dispatchPreviewAction } from "../preview/previewActionBus";
 import { writeExpandedDirectories } from "./fileTreeExpansion";
+import { FULL_TEXT_MAX_BYTES } from "./largeTextProtocol";
 
 const entries: readonly ProjectEntry[] = [
   { path: "src", kind: "directory" },
@@ -51,6 +54,34 @@ vi.mock("~/fileContextMenu", () => ({
 const downloadFile = vi.fn();
 vi.mock("./useFileDownload", () => ({ useFileDownload: () => downloadFile }));
 vi.mock("~/hooks/useWorkspaceMutationRefresh", () => ({ useWorkspaceMutationRefresh: () => {} }));
+vi.mock(import("~/state/session"), async (original) => ({
+  ...(await original()),
+  readEnvironmentScope: () => true,
+}));
+vi.mock(import("~/state/projects"), async (original) => {
+  const module = await original();
+  return {
+    ...module,
+    projectEnvironment: {
+      ...module.projectEnvironment,
+      statFile: ({ input }) => metadataForPath(input.relativePath),
+    },
+  };
+});
+
+const previewSizes = new Map([
+  ["README.md", FULL_TEXT_MAX_BYTES],
+  ["oversized.md", FULL_TEXT_MAX_BYTES + 1],
+]);
+const metadataForPath = Atom.family((path: string) =>
+  Atom.make(
+    Effect.gen(function* (): Effect.fn.Return<ProjectStatFileResult> {
+      const byteLength = previewSizes.get(path);
+      if (byteLength === undefined) return yield* Effect.die("File size unavailable");
+      return { byteLength };
+    }),
+  ).pipe(Atom.setIdleTTL(60_000)),
+);
 
 function findTreeRow(path: string): HTMLElement | null {
   for (const host of document.querySelectorAll("*")) {
@@ -154,7 +185,14 @@ describe("FileBrowserPanel", () => {
     await vi.waitFor(() => expect((row.getRootNode() as ShadowRoot).activeElement).toBe(row));
   });
 
-  it("offers Open preview for markdown files and opens them rendered", async () => {
+  it("offers Open preview only for Markdown files confirmed within the render limit", async () => {
+    using _listing = withDirectoryListing([
+      ...entries,
+      ...["unknown.md", "oversized.md"].map((path): ProjectEntry => ({
+        path,
+        kind: "file",
+      })),
+    ]);
     const onOpenFilePreview = vi.fn();
     await using _screen = await render(
       <FileBrowserPanel
@@ -169,23 +207,33 @@ describe("FileBrowserPanel", () => {
       />,
     );
     using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
-    await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
     const action = page.getByRole("menuitem", { name: "Open preview", exact: true });
-
-    findTreeRow("src/")!.dispatchEvent(
-      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, composed: true, button: 2 }),
-    );
-    await expect
-      .element(page.getByRole("menuitem", { name: "Copy mention", exact: true }))
-      .toBeVisible();
-    await expect.element(action).not.toBeInTheDocument();
-    await userEvent.keyboard("{Escape}");
-
-    findTreeRow("README.md")!.dispatchEvent(
-      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, composed: true, button: 2 }),
-    );
-    await userEvent.click(action);
-    expect(onOpenFilePreview).toHaveBeenCalledWith("README.md");
+    for (const [path, offersPreview] of [
+      ["README.md", true],
+      ["oversized.md", false],
+      ["unknown.md", false],
+      ["src/", false],
+    ] as const) {
+      await vi.waitFor(() => expect(findTreeRow(path)).not.toBeNull());
+      findTreeRow(path)!.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          button: 2,
+        }),
+      );
+      await expect
+        .element(page.getByRole("menuitem", { name: "Copy mention", exact: true }))
+        .toBeVisible();
+      if (offersPreview) {
+        await userEvent.click(action);
+        expect(onOpenFilePreview).toHaveBeenLastCalledWith(path);
+      } else {
+        await expect.element(action).not.toBeInTheDocument();
+        await userEvent.keyboard("{Escape}");
+      }
+    }
   });
 
   it("dragging a file row carries a composer mention without opening it, and dragend releases it", async () => {

@@ -171,6 +171,11 @@ export function createProjectEnvironmentAtoms<R, E>(
       staleTimeMs: 15_000,
     }),
     readFile,
+    statFile: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:stat-file",
+      tag: WS_METHODS.projectsStatFile,
+      staleTimeMs: 0,
+    }),
     optimisticFile: (target: OptimisticProjectFileTarget) =>
       optimisticFileFamily(optimisticProjectFileKey(target)),
     create: createEnvironmentCommand(runtime, {

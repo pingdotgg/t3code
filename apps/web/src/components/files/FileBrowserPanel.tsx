@@ -6,9 +6,14 @@ import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
-import type { ContextMenuSource, EnvironmentId, ProjectEntry } from "@t3tools/contracts";
+import {
+  AuthFilesystemReadScope,
+  type ContextMenuSource,
+  type EnvironmentId,
+  type ProjectEntry,
+} from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
-import { settlePromise } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery, settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
@@ -27,6 +32,9 @@ import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh
 import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { projectEnvironment } from "~/state/projects";
+import { readEnvironmentScope } from "~/state/session";
 import {
   PIERRE_TREE_UNSAFE_CSS,
   pierreTreeStyle,
@@ -35,6 +43,7 @@ import {
 
 import { joinHostPath } from "./filePath";
 import { isMarkdownPreviewFile } from "./filePreviewMode";
+import { FULL_TEXT_MAX_BYTES } from "./largeTextProtocol";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import {
   areAllDirectoriesExpanded,
@@ -60,6 +69,7 @@ interface FileBrowserPanelProps {
   selectedPath: string | null;
   selectedPathRevealId: number;
   onOpenFile: (relativePath: string) => void;
+  previewWorkspaceRoot?: string;
   onOpenFilePreview?: (relativePath: string) => void;
   /** Host-folder entries use absolute paths. Avoid full traversal: disable expand-all and search only
    * loaded folders. */
@@ -178,6 +188,7 @@ export default function FileBrowserPanel({
   selectedPathRevealId,
   onOpenFile,
   onOpenFilePreview,
+  previewWorkspaceRoot = cwd,
   onRefreshSelectedFile,
   workspaceMutationId,
   hostFolder = false,
@@ -219,6 +230,8 @@ export default function FileBrowserPanel({
   // Tree path of the revealed row. Folders restored or loaded later insert rows above it, so each
   // path update scrolls to it again until the user takes over the scroll position.
   const followedRevealRef = useRef<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const pendingMenuRef = useRef<AbortController | null>(null);
 
   // Shadow-DOM row rects are unreliable; capture the composed contextmenu event's viewport position.
   const contextMenuPointerRef = useRef<{
@@ -230,6 +243,7 @@ export default function FileBrowserPanel({
 
   const showEntryContextMenu = useStableCallback(
     (item: TreeContextMenuItem, context: TreeContextMenuOpenContext) => {
+      pendingMenuRef.current?.abort();
       const api = readLocalApi();
       if (!api) {
         context.close();
@@ -250,13 +264,47 @@ export default function FileBrowserPanel({
         isDirectory: item.kind === "directory",
       };
       const fileMenuItems = fileContextMenu.buildItems(fileTarget);
-      const canOpenPreview =
+      const isPreviewCandidate =
         onOpenFilePreview !== undefined &&
         entryKindsRef.current.get(relativePath) === "file" &&
         isMarkdownPreviewFile(relativePath);
       // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
       context.close({ restoreFocus: !pointerIsFresh });
       void settlePromise(async () => {
+        let canOpenPreview = false;
+        if (isPreviewCandidate && readEnvironmentScope(environmentId, AuthFilesystemReadScope)) {
+          const pending = new AbortController();
+          pendingMenuRef.current = pending;
+          const options = { capture: true, signal: pending.signal };
+          document.addEventListener("pointerdown", () => pending.abort(), options);
+          document.addEventListener(
+            "keydown",
+            (event) => {
+              if (event.key === "Escape") pending.abort();
+            },
+            options,
+          );
+          const metadata = await executeAtomQuery(
+            appAtomRegistry,
+            projectEnvironment.statFile({
+              environmentId,
+              input: { cwd: previewWorkspaceRoot, relativePath: panelPath(relativePath) },
+            }),
+            {
+              refresh: true,
+              reportFailure: false,
+              signal: AbortSignal.any([pending.signal, AbortSignal.timeout(400)]),
+            },
+          );
+          const panel = panelRef.current;
+          const dismissed =
+            pending.signal.aborted || !panel?.getClientRects().length || panel.closest("[inert]");
+          pending.abort();
+          if (pendingMenuRef.current === pending) pendingMenuRef.current = null;
+          if (dismissed) return;
+          canOpenPreview =
+            metadata._tag === "Success" && metadata.value.byteLength <= FULL_TEXT_MAX_BYTES;
+        }
         const clicked = await api.contextMenu.show(
           [
             ...(canOpenPreview ? [{ id: "open-preview", label: gt("Open preview") }] : []),
@@ -638,6 +686,7 @@ export default function FileBrowserPanel({
   return (
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
+      ref={panelRef}
       data-file-browser-panel={`${environmentId}:${cwd}`}
       // Capture runs before the tree's shadow-internal row handler opens the menu.
       onContextMenuCapture={(event) => {

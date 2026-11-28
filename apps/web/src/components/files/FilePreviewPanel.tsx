@@ -1985,6 +1985,7 @@ function FilePreviewPanelContent({
                 }
                 selectedPathRevealId={revealRequestId}
                 onOpenFile={onOpenFile}
+                previewWorkspaceRoot={cwd}
                 onOpenFilePreview={(path) => {
                   setRenderMarkdownPreferred(true);
                   onOpenFile(path);

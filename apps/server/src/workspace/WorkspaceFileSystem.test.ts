@@ -222,6 +222,20 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     );
   });
 
+  describe("statFile", () => {
+    it.effect("reports the byte length of a workspace file", () =>
+      Effect.gen(function* () {
+        const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "docs/notes.md", "héllo");
+
+        expect(yield* service.statFile({ cwd, relativePath: "docs/notes.md" })).toEqual({
+          byteLength: 6,
+        });
+      }),
+    );
+  });
+
   describe("readFile", () => {
     it.effect("reads UTF-8 files relative to the workspace root", () =>
       Effect.gen(function* () {
@@ -389,6 +403,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         ]) {
           const error = yield* workspaceFileSystem.readFile(input).pipe(Effect.flip);
           expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+          const statError = yield* workspaceFileSystem.statFile(input).pipe(Effect.flip);
+          expect(statError).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
         }
         const metadata = yield* workspaceFileSystem.getMetadata({
           paths: [
