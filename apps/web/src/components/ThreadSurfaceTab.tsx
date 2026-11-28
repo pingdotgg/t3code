@@ -1237,7 +1237,7 @@ export function agentControlledBrowserCloseConfirmationForThreads(
 export async function closeThreadSurfaces(
   threadRef: ScopedThreadRef,
   surfaceIds: readonly string[],
-  options: { bulk?: boolean; skipConfirm?: boolean } = {},
+  options: { bulk?: boolean; skipConfirm?: boolean; activeSurfaceId?: string | null } = {},
 ): Promise<void> {
   if (surfaceIds.length === 0) return;
   if (surfaceIds.length === 1) {
@@ -1246,10 +1246,12 @@ export async function closeThreadSurfaces(
   }
   const hasThreadTerminal = surfaceIds.includes(THREAD_TERMINAL_SURFACE_ID);
   const panelIds = new Set(surfaceIds.filter((id) => id !== THREAD_TERMINAL_SURFACE_ID));
-  const surfaces = selectThreadRightPanelState(
+  const panelState = selectThreadRightPanelState(
     useRightPanelStore.getState().byThreadKey,
     threadRef,
-  ).surfaces.filter((candidate) => panelIds.has(candidate.id));
+  );
+  const activeSurfaceId = options.activeSurfaceId ?? panelState.activeSurfaceId;
+  const surfaces = panelState.surfaces.filter((candidate) => panelIds.has(candidate.id));
   if (surfaces.length > 0 && !options.skipConfirm) {
     const message = agentControlledBrowserCloseConfirmation(
       surfaces,
@@ -1267,11 +1269,16 @@ export async function closeThreadSurfaces(
     if (first !== undefined && !(await confirmTerminalClose([first, ...rest]))) return;
   }
   if (surfaces.length > 0) {
-    surfaceServices?.cleanup(threadRef, surfaces);
+    // Close the tabs before releasing sessions, which can prune the tabs during reconciliation.
     useRightPanelStore.getState().closeSurfaces(
       threadRef,
       surfaces.map((surface) => surface.id),
     );
+    // The active tab's session closes last so reopening restores it first.
+    const releaseOrder = surfaces.toSorted(
+      (left, right) => Number(left.id === activeSurfaceId) - Number(right.id === activeSurfaceId),
+    );
+    surfaceServices?.cleanup(threadRef, releaseOrder);
   }
   if (hasThreadTerminal) {
     await closeThreadSurface(threadRef, THREAD_TERMINAL_SURFACE_ID, {
@@ -1315,8 +1322,8 @@ export async function closeThreadSurface(
   ).surfaces.find((candidate) => candidate.id === surfaceId);
   if (!surface) return;
   const finish = () => {
-    surfaceServices?.cleanup(threadRef, [surface]);
     useRightPanelStore.getState().closeSurface(threadRef, surface.id);
+    surfaceServices?.cleanup(threadRef, [surface]);
   };
   if (surface.kind === "preview" && !options.skipConfirm) {
     const message = agentControlledBrowserCloseConfirmation(

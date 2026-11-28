@@ -280,30 +280,30 @@ export function closeLayoutTabsByUser(tabIds: readonly string[]): void {
     if (locations.length === 0) return;
     const surfacesByThread = new Map<
       string,
-      { threadRef: ScopedThreadRef; surfaceIds: string[] }
+      { threadRef: ScopedThreadRef; surfaceIds: string[]; activeSurfaceId: string | null }
     >();
-    const nonSurfaceLocations: typeof locations = [];
+    const inactiveNonSurfaces: typeof locations = [];
+    const activeNonSurfaces: typeof locations = [];
     for (const location of locations) {
       const { tab } = location;
+      const isActive = location.pane.activeTabId === tab.id;
       if (tab.content.kind === "surface") {
         const key = scopedThreadKey(tab.content.threadRef);
         const entry = surfacesByThread.get(key) ?? {
           threadRef: tab.content.threadRef,
           surfaceIds: [],
+          activeSurfaceId: null,
         };
         entry.surfaceIds.push(tab.content.surfaceId);
+        if (isActive) entry.activeSurfaceId = tab.content.surfaceId;
         surfacesByThread.set(key, entry);
+      } else if (isActive) {
+        activeNonSurfaces.push(location);
       } else {
-        nonSurfaceLocations.push(location);
+        inactiveNonSurfaces.push(location);
       }
     }
-    // Remember non-surface tabs with the active tab last so Cmd+Shift+T reopens it first.
-    const orderedNonSurfaces = nonSurfaceLocations.toSorted(
-      (left, right) =>
-        Number(left.pane.activeTabId === left.tab.id) -
-        Number(right.pane.activeTabId === right.tab.id),
-    );
-    for (const location of orderedNonSurfaces) {
+    const rememberNonSurface = (location: (typeof locations)[number]) => {
       const { tab } = location;
       if (tab.content.kind === "chat") {
         const target = tab.content.target;
@@ -345,12 +345,27 @@ export function closeLayoutTabsByUser(tabIds: readonly string[]): void {
           index: location.tabIndex,
         });
       }
+    };
+    // Remember inactive non-surfaces first, then close surfaces (active surface's thread last),
+    // then remember any active non-surface last so Cmd+Shift+T restores the active tab first.
+    for (const location of inactiveNonSurfaces) rememberNonSurface(location);
+    const orderedThreadSurfaces = [...surfacesByThread.values()].toSorted(
+      (left, right) =>
+        Number(left.activeSurfaceId !== null) - Number(right.activeSurfaceId !== null),
+    );
+    for (const { threadRef, surfaceIds, activeSurfaceId } of orderedThreadSurfaces) {
+      void closeThreadSurfaces(threadRef, surfaceIds, {
+        bulk: true,
+        skipConfirm: true,
+        activeSurfaceId,
+      });
     }
-    for (const { threadRef, surfaceIds } of surfacesByThread.values()) {
-      void closeThreadSurfaces(threadRef, surfaceIds, { bulk: true, skipConfirm: true });
-    }
-    if (nonSurfaceLocations.length > 0) {
-      store.closeTabsByUser(nonSurfaceLocations.map((location) => location.tab.id));
+    for (const location of activeNonSurfaces) rememberNonSurface(location);
+    const nonSurfaceIds = [...inactiveNonSurfaces, ...activeNonSurfaces].map(
+      (location) => location.tab.id,
+    );
+    if (nonSurfaceIds.length > 0) {
+      store.closeTabsByUser(nonSurfaceIds);
     }
   };
 

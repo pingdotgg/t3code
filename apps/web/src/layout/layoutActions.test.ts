@@ -416,6 +416,45 @@ describe("closeLayoutTabByUser", () => {
       useRightPanelStore.setState({ byThreadKey: previousPanels });
     }
   });
+
+  it("remembers the active non-surface tab last so Cmd+Shift+T restores it first on mixed selections", () => {
+    const previousPanels = useRightPanelStore.getState().byThreadKey;
+    useClosedViewStore.setState({ entries: [] });
+    useRightPanelStore.getState().open(parentRef, "diff");
+    useRightPanelStore.getState().openFile(parentRef, "package.json");
+    const fileSurfaceId = useRightPanelStore
+      .getState()
+      .byThreadKey[scopedThreadKey(parentRef)]!.surfaces.find(
+        (surface) => surface.kind === "file",
+      )!.id;
+
+    const diffContent: LayoutTabContent = {
+      kind: "surface",
+      threadRef: parentRef,
+      surfaceId: "diff",
+    };
+    const fileContent: LayoutTabContent = {
+      kind: "surface",
+      threadRef: parentRef,
+      surfaceId: fileSurfaceId,
+    };
+
+    try {
+      using layout = setup([parent, diffContent, fileContent, other]);
+      const parentTab = layout.tabOf(parent)!;
+      const diffTab = layout.tabOf(diffContent)!;
+      const fileTab = layout.tabOf(fileContent)!;
+      useLayoutStore.getState().focusTab(parentTab.id);
+
+      closeLayoutTabsByUser([parentTab.id, diffTab.id, fileTab.id]);
+      expect(useClosedViewStore.getState().entries[0]).toMatchObject({
+        kind: "chat",
+        threadRef: parentRef,
+      });
+    } finally {
+      useRightPanelStore.setState({ byThreadKey: previousPanels });
+    }
+  });
 });
 
 describe("reopening a closed list page", () => {
