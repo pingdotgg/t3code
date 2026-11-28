@@ -349,7 +349,7 @@ export interface ChatComposerHandle {
   ) => boolean;
   citeAssistantText: (
     citation: AssistantCitation,
-    sourceAnchor: AssistantCitationSourceAnchor,
+    sourceAnchor: AssistantCitationSourceAnchor | undefined,
   ) => boolean;
   replyToResponse: (response: ResponseContextRecord) => boolean;
   openModelPicker: () => void;
@@ -1919,7 +1919,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       focusEditorAfterReplace?: boolean;
       citationComment?: {
         start: number;
-        sourceAnchor: AssistantCitationSourceAnchor;
+        sourceAnchor: AssistantCitationSourceAnchor | undefined;
         insertedSpaces: ComposerCitationCommentRequest["insertedSpaces"];
       };
     },
@@ -2896,14 +2896,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     position: "cursor" | "end",
     options?: {
       ensureLeadingBoundary?: boolean;
-      citationCommentAnchor?: AssistantCitationSourceAnchor;
+      citationCommentAnchor?: AssistantCitationSourceAnchor | undefined;
       clipboardPaste?: PastedComposerClipboard;
     },
   ): boolean => {
     if (
       text.length === 0 ||
       !canInsertComposerText ||
-      (options?.citationCommentAnchor && !composerEditorRef.current)
+      (options !== undefined && "citationCommentAnchor" in options && !composerEditorRef.current)
     ) {
       return false;
     }
@@ -2921,7 +2921,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       cursor,
       rangeEnd,
       needsLeadingSpace ? ` ${text}` : text,
-      options?.citationCommentAnchor
+      options !== undefined && "citationCommentAnchor" in options
         ? {
             citationComment: {
               start: cursor + (needsLeadingSpace ? 1 : 0),

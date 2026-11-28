@@ -129,6 +129,30 @@ describe("citedThreadSnapshot", () => {
       title: "Could not load the cited response",
     });
   });
+
+  it("finds a cited HTML render by its item id, but no other tool", () => {
+    const tool = (toolName: string) =>
+      citedThreadSnapshot({
+        ...unloaded,
+        thread: {
+          projection: {
+            visibleTurnItems: [
+              {
+                item: {
+                  type: "dynamic_tool",
+                  id: "cited",
+                  status: "completed",
+                  toolName,
+                  output: { htmlRender: { attachmentId: "page.html", title: "Page", height: 200 } },
+                },
+              },
+            ],
+          },
+        } as never,
+      });
+    expect(tool("html_render")).toEqual({ message: "assistant", hasMoreHistory: false });
+    expect(tool("shell")).toEqual({ message: "other", hasMoreHistory: false });
+  });
 });
 
 describe("resolveCitationPhase", () => {
@@ -196,6 +220,27 @@ describe("resolveCitationPhase", () => {
         rows: [{ kind: "sent-message", id: messageId, createdAt: at, text: "Draft" }],
       }),
     ).toEqual({ _tag: "ready", rowId: messageId });
+  });
+
+  it("is ready once a cited HTML render has a row", () => {
+    const htmlRender = { attachmentId: "page.html", title: "Page", height: 200 };
+    const renderEntry: TimelineEntry = {
+      kind: "html-render",
+      id: messageId,
+      createdAt: at,
+      runId,
+      htmlRender,
+    };
+    const renderRow = {
+      kind: "html-render",
+      id: messageId,
+      createdAt: at,
+      htmlRender,
+    } as MessagesTimelineRow;
+    expect(phase({ entries: [renderEntry], rows: [renderRow] })).toEqual({
+      _tag: "ready",
+      rowId: messageId,
+    });
   });
 
   it("fails for a citation that names a user message", () => {

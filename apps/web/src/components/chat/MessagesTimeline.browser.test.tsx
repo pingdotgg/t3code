@@ -1,6 +1,7 @@
 import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { AudioPreview } from "../files/AudioPreview";
+import { HTML_RENDER_SELECTION_EVENT } from "../files/BrowserDocumentFrame";
 import { cdp, page, userEvent } from "vite-plus/test/browser";
 import {
   ComposerContextId,
@@ -101,6 +102,14 @@ vi.mock(import("~/assets/assetUrls"), async (original) => {
         : actual.useAssetUrls(...args)) as typeof actual.useAssetUrls,
   };
 });
+
+vi.mock(import("~/assets/longLivedAssetUrls"), () => ({
+  useLongLivedAssetUrl: () => ({
+    _tag: "Success",
+    url: "about:blank",
+    expiresAt: Date.now() + 60 * 60_000,
+  }),
+}));
 
 const previewAccess = vi.hoisted(() => ({ granted: false }));
 vi.mock(import("~/browser/previewRuntime"), async (original) => {
@@ -1650,6 +1659,57 @@ describe("MessagesTimeline citations", () => {
     );
     await expect.element(screen.getByText("the cited answer")).toBeVisible();
     expect(toast).not.toHaveBeenCalled();
+  });
+
+  it("cites the selection an HTML render reports from its frame", async () => {
+    const onCiteAssistantText = vi.fn(() => true);
+    const listRef = createRef<LegendListRef | null>();
+    const htmlRender: Entry = {
+      id: "render",
+      kind: "html-render",
+      createdAt: CREATED_AT,
+      runId: null,
+      htmlRender: { attachmentId: "page.html", title: "Report", height: 2000 },
+    };
+    await using screen = await renderTimeline(
+      [message("Show a report", {}, "question"), htmlRender],
+      { onCiteAssistantText, listRef, liveFollowEnabled: false },
+    );
+    const frame = (await screen.getByTitle("Report").findElement()) as HTMLIFrameElement;
+    const viewport = frame.closest<HTMLElement>("[data-assistant-citation-viewport]")!;
+    await listRef.current?.scrollToOffset({ offset: 0, animated: false });
+    await vi.waitFor(() =>
+      expect(frame.getBoundingClientRect().top).toBeGreaterThan(
+        viewport.getBoundingClientRect().top,
+      ),
+    );
+    // The selection starts in view, but its last line sits below the chat viewport.
+    const below = viewport.getBoundingClientRect().bottom - frame.getBoundingClientRect().top + 100;
+
+    frame.focus();
+    frame.dispatchEvent(
+      new CustomEvent(HTML_RENDER_SELECTION_EVENT, {
+        bubbles: true,
+        detail: {
+          text: "Quoted words",
+          rect: { left: 8, top: below, right: 120, bottom: below + 20 },
+          bounds: { left: 8, top: 8, right: 300, bottom: below + 20 },
+        },
+      }),
+    );
+    await userEvent.click(page.getByRole("button", { name: "Cite selection in composer" }));
+
+    expect(onCiteAssistantText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: "render",
+        text: "Quoted words",
+        start: 0,
+        end: "Quoted words".length,
+        prefix: "",
+        suffix: "",
+      }),
+      undefined,
+    );
   });
 });
 
