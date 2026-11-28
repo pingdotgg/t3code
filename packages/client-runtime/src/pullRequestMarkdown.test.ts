@@ -106,6 +106,31 @@ describe("pull request body segmentation", () => {
         media: "video",
       },
     ]);
+    for (const body of [
+      '<video src="https://example.org/right.mp4" data-src="https://example.org/wrong.mp4"></video>',
+      '<video data-src="https://example.org/wrong.mp4" src="https://example.org/right.mp4"></video>',
+    ]) {
+      expect(split(body)).toEqual([
+        {
+          id: "attachment:0",
+          kind: "attachment",
+          url: "https://example.org/right.mp4",
+          media: "video",
+        },
+      ]);
+    }
+    expect(split("<video src=https://example.org/demo.mp4?token=abc></video>")).toEqual([
+      {
+        id: "attachment:0",
+        kind: "attachment",
+        url: "https://example.org/demo.mp4?token=abc",
+        media: "video",
+      },
+    ]);
+    const dataSrcOnly = '<video data-src="https://example.org/wrong.mp4"></video>';
+    expect(split(dataSrcOnly)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: dataSrcOnly, sourceOffset: 0 },
+    ]);
   });
 
   it("leaves the img tag GitHub writes for a dropped image as markdown", () => {
