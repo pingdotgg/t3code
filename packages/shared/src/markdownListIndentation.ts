@@ -15,7 +15,7 @@ interface MarkdownAstNode {
   readonly type: string;
   readonly identifier?: unknown;
   readonly value?: unknown;
-  readonly position?: MarkdownPosition;
+  readonly position?: MarkdownPosition | undefined;
   children?: MarkdownAstNode[];
 }
 
