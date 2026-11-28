@@ -107,8 +107,16 @@ function tableSeparatorFor(headerCells: Element[]): string {
   return `| ${markers.join(" | ")} |`;
 }
 
+// Footers render after the body even when the source puts them first.
+function tableRows(table: Element): Element[] {
+  return [
+    ...table.querySelectorAll(":scope > thead > tr, :scope > tbody > tr, :scope > tr"),
+    ...table.querySelectorAll(":scope > tfoot > tr"),
+  ];
+}
+
 function serializeTable(table: Element): string {
-  const rows = [...table.querySelectorAll(":scope > thead > tr, :scope > tbody > tr, :scope > tr")];
+  const rows = tableRows(table);
   if (rows.length === 0) return "";
   const lines: string[] = [];
   let emittedSeparator = false;
@@ -538,7 +546,7 @@ function csvCell(value: string): string {
 }
 
 export function serializeTableElementToCsv(table: Element): string {
-  const rows = [...table.querySelectorAll(":scope > thead > tr, :scope > tbody > tr, :scope > tr")];
+  const rows = tableRows(table);
   const lines: string[] = [];
   for (const row of rows) {
     const cells = [...row.children].filter(
