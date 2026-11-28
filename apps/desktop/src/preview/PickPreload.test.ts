@@ -116,7 +116,7 @@ it("erases a drawn stroke only when the pointer hits it", () => {
   expect(attach.disabled).toBe(false);
 
   // jsdom has no layout or hit testing. Dispatch at the target the browser would hit.
-  const hit = shadowRoot.querySelector('path[pointer-events="stroke"]')!;
+  const hit = shadowRoot.querySelector('[pointer-events="stroke"] > path')!;
   Object.defineProperty(shadowRoot, "elementFromPoint", { value: () => hit });
   pointer(hit, "pointerdown", 150, 155);
   expect(attach.disabled).toBe(true);
