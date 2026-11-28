@@ -4386,7 +4386,6 @@
   "96fc2108d6a798dc": "Abrir o agente principal em {label}",
   "bc5f7c6821578b8f": "Agentes anteriores",
   "8bcded34eb7e7f09": "Não foi possível mesclar de volta",
-  "ed2fc31d28c441da": "Não foi possível desconectar a sessão do agente",
   "ba2cf3dd6de0d1a6": "Não foi possível parar o subagente",
   "1c4391ec5c411ba7": "Não foi possível parar o workflow",
   "7af596fd1e3ac2a2": "Mesclar de volta em {parentTitle}",
@@ -4397,7 +4396,6 @@
   "de93e39b51ae5ebf": "Parar o subagente {threadTitle}",
   "e7b97dccb035f744": "Linhagem · {runningCount} em execução",
   "3f5e86e6d076a97b": "Linhagem",
-  "d52abd756b3da5ee": "Mais ações da thread",
   "a65861ad58565591": "Chats paralelos · {runningSideChats} em execução",
   "dc28386e0a961d4d": "Chats paralelos",
   "05c120510a9b85d8": [
@@ -4417,7 +4415,6 @@
     }
   ],
   "3237699bd13dd4bb": "Parar subagente",
-  "075398ac562d74b0": "Desconectar a sessão do agente",
   "f169e59fe234e9f1": "Não foi possível adicionar {name}",
   "1de933b25248e5aa": "Repositório {name}",
   "94662355bd93e456": "Não é um repositório Git",

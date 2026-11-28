@@ -4387,7 +4387,6 @@
   "96fc2108d6a798dc": "Ouvrir l’agent parent sur {label}",
   "bc5f7c6821578b8f": "Agents précédents",
   "8bcded34eb7e7f09": "Impossible de fusionner en retour",
-  "ed2fc31d28c441da": "Impossible de déconnecter la session de l’agent",
   "ba2cf3dd6de0d1a6": "Impossible d’arrêter le sous-agent",
   "1c4391ec5c411ba7": "Impossible d’arrêter le workflow",
   "7af596fd1e3ac2a2": "Fusionner dans {parentTitle}",
@@ -4398,7 +4397,6 @@
   "de93e39b51ae5ebf": "Arrêter le sous-agent {threadTitle}",
   "e7b97dccb035f744": "Lignée · {runningCount} en cours",
   "3f5e86e6d076a97b": "Lignée",
-  "d52abd756b3da5ee": "Plus d’actions sur le fil",
   "a65861ad58565591": "Discussions annexes · {runningSideChats} en cours",
   "dc28386e0a961d4d": "Discussions annexes",
   "05c120510a9b85d8": [
@@ -4418,7 +4416,6 @@
     }
   ],
   "3237699bd13dd4bb": "Arrêter le sous-agent",
-  "075398ac562d74b0": "Déconnecter la session de l’agent",
   "f169e59fe234e9f1": "Impossible d’ajouter {name}",
   "1de933b25248e5aa": "Dépôt {name}",
   "94662355bd93e456": "Pas un dépôt Git",

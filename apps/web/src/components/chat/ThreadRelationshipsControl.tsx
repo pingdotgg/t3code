@@ -24,10 +24,7 @@ import {
   type ThreadRelationshipEdge,
   type ThreadRelationshipWalkRow,
 } from "@t3tools/client-runtime/state/thread-relationships";
-import {
-  canDetachThreadProviderSession,
-  resolveLatestMergeBackRun,
-} from "@t3tools/client-runtime/state/thread-workflows";
+import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
 import {
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
@@ -52,10 +49,8 @@ import {
   CornerLeftUpIcon,
   GitForkIcon,
   MessagesSquareIcon,
-  MoreHorizontalIcon,
   PlusIcon,
   SquareIcon,
-  UnplugIcon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useRef, useState, type ReactNode } from "react";
@@ -90,7 +85,6 @@ import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
 import { useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
 import { openSideThread, resolveThreadOpenRoute } from "../../lib/sideChatPane";
 
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { toastManager } from "../ui/toast";
@@ -525,15 +519,13 @@ export function ThreadRelationshipsPanel(props: {
   const navigate = useNavigate();
   const trigger = useSideThreadTrigger();
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
-  const stopSession = useAtomCommand(threadEnvironment.stopSession);
   const interruptTurn = useAtomCommand(threadEnvironment.interruptTurn);
   const stopWorkflowCommand = useAtomCommand(orchestrationEnvironment.stopWorkflow);
   const canOperateWorkflow = useAtomValue(
     orchestrationEnvironment.stopWorkflow.permissionAtom(props.environmentId),
   );
-  const [busyAction, setBusyAction] = useState<"merge" | "detach" | null>(null);
+  const [busyAction, setBusyAction] = useState<"merge" | null>(null);
   const mergeErrorToastId = useRef<string | null>(null);
-  const detachErrorToastId = useRef<string | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
   // Derive graphs after hooks to preserve their compiler cache.
   const providers = providersByEnvironment.get(props.environmentId);
@@ -634,7 +626,6 @@ export function ThreadRelationshipsPanel(props: {
       threadTitles.isPending ||
       Object.hasOwn(resolvedThreadTitles, threadId),
   );
-  const canDetach = projection ? canDetachThreadProviderSession(projection) : false;
 
   const {
     related = [],
@@ -685,9 +676,7 @@ export function ThreadRelationshipsPanel(props: {
       runningCount > 0 ||
       remoteActive.length > 0 ||
       remotePrevious.length > 0 ||
-      delegatedFrom !== undefined ||
-      // Disconnect lives in this heading, so a thread with only side chats still shows it.
-      (canDetach && sideChats.length > 0));
+      delegatedFrom !== undefined);
   const sideChatsVisible = props.showSideChats && sideChats.length > 0;
   const runningSideChats = sideChats.filter(({ edge }) => edge.status === "running").length;
 
@@ -746,26 +735,6 @@ export function ThreadRelationshipsPanel(props: {
       return;
     }
     openThread(mergeTargetThreadId);
-  };
-
-  const detach = async () => {
-    if (!canDetach || busyAction !== null) return;
-    if (detachErrorToastId.current !== null) {
-      toastManager.close(detachErrorToastId.current);
-      detachErrorToastId.current = null;
-    }
-    setBusyAction("detach");
-    const result = await stopSession({
-      environmentId: props.environmentId,
-      input: { threadId: props.threadId },
-    });
-    setBusyAction(null);
-    if (result._tag === "Failure") {
-      detachErrorToastId.current = toastManager.add({
-        type: "error",
-        title: gt("Could not disconnect agent session"),
-      });
-    }
   };
 
   const stopSubagent = async (
@@ -1068,41 +1037,15 @@ export function ThreadRelationshipsPanel(props: {
               ? gt("Lineage · {runningCount} running", { runningCount })
               : gt("Lineage", { $context: "thread details section: parent and child agents" })
           }
-          // A lone "Previous agents" row names itself; the heading returns for status or actions.
+          // A lone "Previous agents" row names itself; the heading returns for status.
           showHeading={
             runningCount > 0 ||
-            canDetach ||
             related.length > 0 ||
             active.length > 0 ||
             remoteActive.length > 0 ||
             delegatedFrom !== undefined
           }
           data-thread-relationships-panel
-          actions={
-            canDetach ? (
-              <Menu>
-                <MenuTrigger
-                  render={
-                    <ThreadDetailsControl
-                      size="icon-xs"
-                      variant="ghost"
-                      part="icon"
-                      aria-label={gt("More thread actions")}
-                      disabled={busyAction !== null}
-                    />
-                  }
-                >
-                  <MoreHorizontalIcon className="size-3.5" />
-                </MenuTrigger>
-                <MenuPopup align="end" className="min-w-60 max-w-(--available-width)">
-                  <MenuItem onClick={() => void detach()}>
-                    <UnplugIcon className="size-3.5" />
-                    <T>Disconnect agent session</T>
-                  </MenuItem>
-                </MenuPopup>
-              </Menu>
-            ) : null
-          }
         >
           {delegatedFrom === undefined ? null : (
             <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>

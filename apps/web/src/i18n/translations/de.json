@@ -4389,7 +4389,6 @@
   "96fc2108d6a798dc": "Übergeordneten Agenten auf {label} öffnen",
   "bc5f7c6821578b8f": "Frühere Agenten",
   "8bcded34eb7e7f09": "Zurückführen fehlgeschlagen",
-  "ed2fc31d28c441da": "Agentensitzung konnte nicht getrennt werden",
   "ba2cf3dd6de0d1a6": "Subagent konnte nicht gestoppt werden",
   "1c4391ec5c411ba7": "Workflow konnte nicht gestoppt werden",
   "7af596fd1e3ac2a2": "In {parentTitle} zurückführen",
@@ -4400,7 +4399,6 @@
   "de93e39b51ae5ebf": "Subagent {threadTitle} stoppen",
   "e7b97dccb035f744": "Abstammung · {runningCount} laufen",
   "3f5e86e6d076a97b": "Abstammung",
-  "d52abd756b3da5ee": "Weitere Thread-Aktionen",
   "a65861ad58565591": "Nebenchats · {runningSideChats} laufen",
   "dc28386e0a961d4d": "Nebenchats",
   "05c120510a9b85d8": [
@@ -4420,7 +4418,6 @@
     }
   ],
   "3237699bd13dd4bb": "Subagent stoppen",
-  "075398ac562d74b0": "Agentensitzung trennen",
   "f169e59fe234e9f1": "{name} konnte nicht hinzugefügt werden",
   "1de933b25248e5aa": "Repository {name}",
   "94662355bd93e456": "Kein Git-Repository",

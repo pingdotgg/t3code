@@ -4388,7 +4388,6 @@
   "96fc2108d6a798dc": "Open parent agent on {label}",
   "bc5f7c6821578b8f": "Previous agents",
   "8bcded34eb7e7f09": "Could not merge back",
-  "ed2fc31d28c441da": "Could not disconnect agent session",
   "ba2cf3dd6de0d1a6": "Could not stop subagent",
   "1c4391ec5c411ba7": "Could not stop workflow",
   "7af596fd1e3ac2a2": "Merge back to {parentTitle}",
@@ -4399,7 +4398,6 @@
   "de93e39b51ae5ebf": "Stop subagent {threadTitle}",
   "e7b97dccb035f744": "Lineage · {runningCount} running",
   "3f5e86e6d076a97b": "Lineage",
-  "d52abd756b3da5ee": "More thread actions",
   "a65861ad58565591": "Side chats · {runningSideChats} running",
   "dc28386e0a961d4d": "Side chats",
   "05c120510a9b85d8": [
@@ -4419,7 +4417,6 @@
     }
   ],
   "3237699bd13dd4bb": "Stop subagent",
-  "075398ac562d74b0": "Disconnect agent session",
   "f169e59fe234e9f1": "Could not add {name}",
   "1de933b25248e5aa": "Repository {name}",
   "94662355bd93e456": "Not a Git repository",

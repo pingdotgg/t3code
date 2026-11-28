@@ -4387,7 +4387,6 @@
   "96fc2108d6a798dc": "Öppna den överordnade agenten på {label}",
   "bc5f7c6821578b8f": "Tidigare agenter",
   "8bcded34eb7e7f09": "Kunde inte merga tillbaka",
-  "ed2fc31d28c441da": "Kunde inte koppla från agentsessionen",
   "ba2cf3dd6de0d1a6": "Kunde inte stoppa subagenten",
   "1c4391ec5c411ba7": "Kunde inte stoppa arbetsflödet",
   "7af596fd1e3ac2a2": "Merga tillbaka till {parentTitle}",
@@ -4398,7 +4397,6 @@
   "de93e39b51ae5ebf": "Stoppa subagenten {threadTitle}",
   "e7b97dccb035f744": "Härkomst · {runningCount} körs",
   "3f5e86e6d076a97b": "Härkomst",
-  "d52abd756b3da5ee": "Fler trådåtgärder",
   "a65861ad58565591": "Sidochattar · {runningSideChats} körs",
   "dc28386e0a961d4d": "Sidochattar",
   "05c120510a9b85d8": [
@@ -4418,7 +4416,6 @@
     }
   ],
   "3237699bd13dd4bb": "Stoppa subagent",
-  "075398ac562d74b0": "Koppla från agentsession",
   "f169e59fe234e9f1": "Det gick inte att lägga till {name}",
   "1de933b25248e5aa": "Repo {name}",
   "94662355bd93e456": "Inte ett Git-repo",

@@ -99,10 +99,7 @@ function setup() {
   };
 }
 
-it.each([
-  ["merge", "Could not merge back"],
-  ["disconnect", "Could not disconnect agent session"],
-])("reports a rejected %s command and clears the busy state", async (action, title) => {
+it("reports a rejected merge command and clears the busy state", async () => {
   setup();
   await using screen = await render(
     <ToastProvider timeout={0}>
@@ -115,27 +112,15 @@ it.each([
     </ToastProvider>,
   );
 
-  if (action === "merge") {
-    await screen.getByRole("button", { name: "Merge back to source conversation" }).click();
-  } else {
-    await screen.getByRole("button", { name: "More thread actions" }).click();
-    await page.getByRole("menuitem", { name: "Disconnect agent session" }).click();
-  }
+  await screen.getByRole("button", { name: "Merge back to source conversation" }).click();
 
-  await expect.element(page.getByText(title, { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Could not merge back", { exact: true })).toBeVisible();
   await expect
-    .element(
-      screen.getByRole("button", {
-        name: action === "merge" ? "Merge back to source conversation" : "More thread actions",
-      }),
-    )
+    .element(screen.getByRole("button", { name: "Merge back to source conversation" }))
     .toBeEnabled();
 });
 
-it.each([
-  ["merge", "Could not merge back"],
-  ["disconnect", "Could not disconnect agent session"],
-])("clears the previous %s error after a successful retry", async (action, title) => {
+it("clears the previous merge error after a successful retry", async () => {
   setup();
   await using screen = await render(
     <ToastProvider timeout={0}>
@@ -148,32 +133,21 @@ it.each([
     </ToastProvider>,
     { router: "/environment/fork" },
   );
+  const merge = screen.getByRole("button", { name: "Merge back to source conversation" });
 
-  const runAction = async () => {
-    if (action === "merge") {
-      await screen.getByRole("button", { name: "Merge back to source conversation" }).click();
-    } else {
-      await screen.getByRole("button", { name: "More thread actions" }).click();
-      await page.getByRole("menuitem", { name: "Disconnect agent session" }).click();
-    }
-  };
-
-  await runAction();
-  await expect.element(page.getByText(title, { exact: true })).toBeVisible();
+  await merge.click();
+  await expect.element(page.getByText("Could not merge back", { exact: true })).toBeVisible();
   expect(screen.router?.state.location.pathname).toBe("/environment/fork");
 
   state.commandSucceeds = true;
-  await runAction();
+  await merge.click();
 
-  await expect.element(page.getByText(title, { exact: true })).not.toBeInTheDocument();
+  await expect
+    .element(page.getByText("Could not merge back", { exact: true }))
+    .not.toBeInTheDocument();
   await vi.waitFor(() => {
-    expect(screen.router?.state.location.pathname).toBe(
-      action === "merge" ? "/environment/source" : "/environment/fork",
-    );
+    expect(screen.router?.state.location.pathname).toBe("/environment/source");
   });
-  if (action === "disconnect") {
-    await expect.element(screen.getByRole("button", { name: "More thread actions" })).toBeEnabled();
-  }
 });
 
 it("opens an idle child beside the thread, and in its place with the modifier", async () => {

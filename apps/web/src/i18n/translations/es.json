@@ -4386,7 +4386,6 @@
   "96fc2108d6a798dc": "Abrir el agente principal en {label}",
   "bc5f7c6821578b8f": "Agentes anteriores",
   "8bcded34eb7e7f09": "No se pudo fusionar de vuelta",
-  "ed2fc31d28c441da": "No se pudo desconectar la sesión del agente",
   "ba2cf3dd6de0d1a6": "No se pudo detener el subagente",
   "1c4391ec5c411ba7": "No se pudo detener el flujo de trabajo",
   "7af596fd1e3ac2a2": "Fusionar de vuelta en {parentTitle}",
@@ -4397,7 +4396,6 @@
   "de93e39b51ae5ebf": "Detener el subagente {threadTitle}",
   "e7b97dccb035f744": "Linaje · {runningCount} en ejecución",
   "3f5e86e6d076a97b": "Linaje",
-  "d52abd756b3da5ee": "Más acciones del hilo",
   "a65861ad58565591": "Chats laterales · {runningSideChats} en curso",
   "dc28386e0a961d4d": "Chats laterales",
   "05c120510a9b85d8": [
@@ -4417,7 +4415,6 @@
     }
   ],
   "3237699bd13dd4bb": "Detener subagente",
-  "075398ac562d74b0": "Desconectar la sesión del agente",
   "f169e59fe234e9f1": "No se pudo añadir {name}",
   "1de933b25248e5aa": "Repositorio {name}",
   "94662355bd93e456": "No es un repositorio Git",
