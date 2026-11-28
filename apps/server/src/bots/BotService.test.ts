@@ -259,5 +259,10 @@ it.effect("creates a Bot outside any project, from instructions or with a greeti
     });
     assert.isUndefined(orchestration.launched[1]?.text);
     assert.strictEqual(orchestration.threads.get(greeter.threadId)?.botConfig?.greets, true);
+
+    // Each Bot sees the user's other Bots, never itself.
+    assert.deepStrictEqual(yield* bots.otherBots(threadId), [
+      { threadId: greeter.threadId, name: "New Bot" },
+    ]);
   }).pipe(provideBots(orchestration));
 });

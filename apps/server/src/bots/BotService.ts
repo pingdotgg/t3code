@@ -100,6 +100,10 @@ export class BotService extends Context.Service<
       readonly avatar: BotAvatarChoice;
     }) => Effect.Effect<void, BotError>;
     readonly watches: (botThreadId: ThreadId) => Effect.Effect<ReadonlyArray<BotWatch>>;
+    /** The user's other live Bots on this server. */
+    readonly otherBots: (
+      botThreadId: ThreadId,
+    ) => Effect.Effect<ReadonlyArray<{ readonly threadId: ThreadId; readonly name: string }>>;
     readonly addWatch: (
       botThreadId: ThreadId,
       watch: BotWatchTarget & { readonly reason: BotWatchReason },
@@ -624,6 +628,15 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const otherBots: BotService["Service"]["otherBots"] = Effect.fn("BotService.otherBots")(
+    function* (botThreadId) {
+      const all = yield* projectionStore.listBots().pipe(Effect.orElseSucceed(() => []));
+      return all
+        .filter((bot) => bot.threadId !== botThreadId)
+        .map((bot) => ({ threadId: bot.threadId, name: bot.title }));
+    },
+  );
+
   /** An archived Bot has let its workers go, so it is not woken. */
   const wakeable = Effect.fn("BotService.wakeable")(function* (threadId: ThreadId) {
     if (!(yield* isBot(threadId))) return false;
@@ -823,6 +836,7 @@ const make = Effect.gen(function* () {
     writePreferences,
     appendPreference,
     setAvatar,
+    otherBots,
     readNote,
     writeNote,
     deleteNote,

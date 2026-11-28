@@ -95,6 +95,7 @@ import {
   userMessageFileLabel,
 } from "./TimelineUserMessageRow.logic";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
+import { BotAvatar } from "../bot/BotAvatar";
 
 // Drawn inside the media so dark screenshots keep an edge on the dark background.
 const MEDIA_EDGE_CLASS_NAME =
@@ -494,11 +495,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
   const userMessage = resolveUserMessagePresentation(row.message);
+  const fromAgent = userMessage.attribution === "agent";
+  const senderShell = useQuietThreadShell(fromAgent ? senderRef : null);
+  // Another Bot talks like a person: its message shows in full under its name and avatar.
+  const senderBot = fromAgent && senderShell?.botConfig != null ? senderShell : null;
   // Messages from other agents fold to one line so the user's own messages stay easy to find.
-  const folded = userMessage.attribution === "agent";
+  const folded = fromAgent && senderBot === null;
   const [expanded, setExpanded] = useState(false);
   const revealFoldRef = findRevealRef(() => setExpanded(true));
-  const senderShell = useQuietThreadShell(folded ? senderRef : null);
   const senderTitle = senderShell?.title.trim() || row.message.linkedSender?.title.trim();
   const senderLabel =
     senderTitle || gt("Agent", { $context: "sender of a message from another agent" });
@@ -850,7 +854,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         floatActions ? "flex-wrap" : "shrink-0",
       )}
     >
-      {folded && senderRef && canOpenSender ? (
+      {fromAgent && senderRef && canOpenSender ? (
         <InlineButton
           onClick={() => ctx.onOpenThread(senderRef.threadId, senderRef.environmentId)}
           tone="muted"
@@ -903,6 +907,20 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       className="group @container flex flex-col items-end gap-1"
       data-user-message-attribution={folded ? "agent" : undefined}
     >
+      {senderBot !== null ? (
+        <div
+          aria-hidden
+          className="me-1 flex items-center gap-1.5 text-xs font-medium text-foreground/80"
+        >
+          <BotAvatar
+            threadId={senderBot.id}
+            choice={senderBot.botConfig?.avatar}
+            state="idle"
+            size={18}
+          />
+          <span className="min-w-0 truncate">{senderBot.title}</span>
+        </div>
+      ) : null}
       {userMessage.attribution === "t3code" ? (
         <p
           className="me-1 text-2xs text-muted-foreground/70"
@@ -953,9 +971,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           <MessageAuthorHeading>
             {folded
               ? senderLabel
-              : userMessage.guestName === undefined
-                ? gt("You", { $context: "author of the user's own message" })
-                : gt("{name} (guest)", { name: userMessage.guestName })}
+              : senderBot !== null
+                ? senderBot.title
+                : userMessage.guestName === undefined
+                  ? gt("You", { $context: "author of the user's own message" })
+                  : gt("{name} (guest)", { name: userMessage.guestName })}
           </MessageAuthorHeading>
         )}
         {folded ? (

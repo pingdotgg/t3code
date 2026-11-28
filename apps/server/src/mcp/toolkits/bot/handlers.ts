@@ -59,6 +59,7 @@ export const layer = McpToolAccess.toLayer(BotToolkit, {
         instructions: files.preferences,
         notes: files.notes,
         watches: yield* bots.watches(threadId),
+        bots: yield* bots.otherBots(threadId),
       };
     }),
   ),

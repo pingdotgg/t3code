@@ -41,13 +41,15 @@ const WatchTargetInput = Schema.Struct({
 const MemoryRead = Tool.make("t3_bot_memory_read", {
   ...shared,
   description:
-    "Read your memory: the user's instructions (preferences.md), the index of your notes (slug, title, one-line summary), and the threads and workflow runs you watch beyond your workers. Read a note with t3_bot_note_read when its summary says you need it.",
+    "Read your memory: the user's instructions (preferences.md), the index of your notes (slug, title, one-line summary), the threads and workflow runs you watch beyond your workers, and the user's other Bots here. Read a note with t3_bot_note_read when its summary says you need it.",
   // No `parameters`: an explicit Schema.Struct({}) advertises `anyOf: [object, array]`,
   // which MCP clients reject. The default EmptyParams advertises `type: "object"`.
   success: Schema.Struct({
     instructions: Schema.String,
     notes: Schema.Array(BotNoteSummary),
     watches: Schema.Array(BotWatch),
+    /** The user's other Bots on this machine, to ask or hand work to with t3_thread_send. */
+    bots: Schema.Array(Schema.Struct({ threadId: ThreadId, name: Schema.String })),
   }),
 })
   .annotate(Tool.Title, "Read Bot memory")

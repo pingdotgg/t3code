@@ -129,6 +129,12 @@ export const makeOrchestration = () => {
             .map((thread) => thread.id),
         ),
       getThreadRecords: () => Effect.succeed({ turnItems: [] } as never),
+      listBots: () =>
+        Effect.succeed(
+          [...threads.values()]
+            .filter((thread) => thread.botConfig != null && thread.archivedAt === null)
+            .map((thread) => ({ threadId: thread.id, title: thread.title })),
+        ),
     }),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
       namedProjectsRoot: "/unused",

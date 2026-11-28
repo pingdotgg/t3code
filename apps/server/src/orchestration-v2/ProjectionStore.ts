@@ -584,6 +584,11 @@ export interface ProjectionStoreV2Shape {
   readonly listGroupedWorkerIds: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
+  /** Live, unarchived Bots: threads with a Bot config. Scans thread rows; only Bots use it. */
+  readonly listBots: () => Effect.Effect<
+    ReadonlyArray<{ readonly threadId: ThreadId; readonly title: string }>,
+    ProjectionStoreV2Error
+  >;
   readonly getRunCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
   /** Child threads of the thread's app-owned tasks, in task order, without decoding the tasks. */
   readonly listAppOwnedChildThreadIds: (
@@ -6845,6 +6850,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       ),
     );
+    const listBots: ProjectionStoreV2Shape["listBots"] = Effect.fn("ProjectionStore.listBots")(() =>
+      sql<{ readonly threadId: string; readonly title: string | null }>`SELECT
+          thread_id AS "threadId",
+          title
+        FROM orchestration_v2_projection_threads
+        WHERE deleted_at IS NULL
+          AND archived_at IS NULL
+          AND json_extract(payload_json, '$.botConfig') IS NOT NULL
+        ORDER BY created_at ASC`.pipe(
+        Effect.map((rows) =>
+          rows.map((row) => ({ threadId: ThreadId.make(row.threadId), title: row.title ?? "" })),
+        ),
+        Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+      ),
+    );
     const listAppOwnedChildThreadIds: ProjectionStoreV2Shape["listAppOwnedChildThreadIds"] = (
       threadId,
     ) =>
@@ -10030,6 +10050,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getTranscriptByteFloor: readOnReader(getTranscriptByteFloor),
       getSubagentCount: readOnReader(getSubagentCount),
       listGroupedWorkerIds: readOnReader(listGroupedWorkerIds),
+      listBots: readOnReader(listBots),
       getRunCount: readOnReader(getRunCount),
       listAppOwnedChildThreadIds: readOnReader(listAppOwnedChildThreadIds),
       hasPendingDelegatedCompletion: readOnReader(hasPendingDelegatedCompletion),

@@ -173,6 +173,7 @@ function layerProjectionStore(
       hasPendingDelegatedCompletion: () => Effect.die("unused hasPendingDelegatedCompletion"),
       getSubagentCount: () => Effect.die("unused subagent count"),
       listGroupedWorkerIds: () => Effect.die("unused grouped workers"),
+      listBots: () => Effect.die("unused listBots"),
       getRunCount: () => Effect.die("unused run count"),
       listAppOwnedChildThreadIds: () => Effect.die("unused listAppOwnedChildThreadIds"),
       getNextTurnItemOrdinal: () => Effect.die("unused ordinal read"),

@@ -2418,6 +2418,10 @@ it.effect("lists and runs Bot tools only for a Bot thread, deferred or not", () 
                 ],
               }),
             watches: () => Effect.succeed([]),
+            otherBots: () =>
+              Effect.succeed([
+                { threadId: ThreadId.make("thread-bot-2"), name: "Release captain" },
+              ]),
           }),
         ),
         Layer.provide(ServerSettings.layerTest()),
@@ -2522,6 +2526,7 @@ it.effect("lists and runs Bot tools only for a Bot thread, deferred or not", () 
           },
         ],
         watches: [],
+        bots: [{ threadId: "thread-bot-2", name: "Release captain" }],
       });
       const refused = yield* plain.call("t3_bot_memory_read", {});
       expect(refused.result?.structuredContent).toBeUndefined();
