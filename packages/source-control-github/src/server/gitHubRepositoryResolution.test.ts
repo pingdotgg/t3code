@@ -4,6 +4,7 @@ import {
   gitHubApiHostForRemote,
   resolveGitHubRepository,
   parseGitHubRepositorySelector,
+  parsePullRequestReference,
   selectGitHubBaseRepository,
 } from "./gitHubRepositoryResolution.ts";
 
@@ -340,5 +341,18 @@ describe("parseGitHubRepositorySelector", () => {
     ]) {
       assert.strictEqual(parseGitHubRepositorySelector(selector, "github.com"), null, selector);
     }
+  });
+});
+
+describe("parsePullRequestReference", () => {
+  it("keeps Unicode whitespace that Git allows at the edges of a branch name", () => {
+    assert.deepStrictEqual(parsePullRequestReference(" feature\u3000"), {
+      kind: "branch",
+      headSelector: "feature\u3000",
+    });
+    assert.deepStrictEqual(parsePullRequestReference("\u00a0release"), {
+      kind: "branch",
+      headSelector: "\u00a0release",
+    });
   });
 });

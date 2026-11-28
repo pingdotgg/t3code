@@ -668,7 +668,7 @@ export const make = Effect.gen(function* () {
     if (locator === null) return yield* failure(`${input.repository} is not a GitHub repository.`);
     const limit = Math.min(Math.max(Math.trunc(input.limit), 1), 100);
     const headSelector = trimAsciiWhitespace(input.headSelector);
-    const ownerMatch = /^([^:/\s]+):(.+)$/u.exec(headSelector);
+    const ownerMatch = /^([^:/\s]+):(.+)$/su.exec(headSelector);
     const headRefName = ownerMatch?.[2] ?? headSelector;
     if (ownerMatch) {
       // GraphQL cannot filter heads by owner, and names like a fork's `main` match thousands.

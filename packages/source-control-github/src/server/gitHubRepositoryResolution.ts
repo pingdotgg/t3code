@@ -1,3 +1,4 @@
+import { trimAsciiWhitespace } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
@@ -151,7 +152,7 @@ export function parsePullRequestReference(
       }
     } catch {}
   }
-  return { kind: "branch", headSelector: trimmed };
+  return { kind: "branch", headSelector: trimAsciiWhitespace(reference) };
 }
 
 // An additional dot is a real DNS host, never a github.com SSH alias.
