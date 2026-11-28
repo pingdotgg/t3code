@@ -38,6 +38,20 @@ Add a second Claude instance in **Settings → Providers** (or **Add Claude acco
 - **Skills**: Loaded from `<CLAUDE_CONFIG_DIR>/skills`, the project's `.claude/skills` (config dir wins on name collisions), and enabled Claude plugins (e.g. `plugin:review`). Invoke via `$`. Send `disable-model-invocation` skills one per message.
 - **MCP OAuth**: When a Claude MCP server needs sign-in, click **Sign in** on the thread notice, approve in your browser, and paste the final redirect URL into T3 Code (**Finish sign-in**). Connectors added on `claude.ai` authenticate there instead.
 
+## Artifacts
+
+Claude can publish pages to claude.ai with Claude Code's Artifact tool. To
+choose whether Claude threads get it, add `CLAUDE_CODE_ARTIFACT=1` (on) or
+`CLAUDE_CODE_ARTIFACT=0` (off) under **Variables** in the Claude instance's
+**Environment** section in **Settings > Providers**, then start a new thread.
+
+Your account and organization must also qualify. If Claude says it can't
+publish, check Claude Code's
+[artifact requirements](https://code.claude.com/docs/en/artifacts#availability).
+
+Claude Code opens each new artifact in a browser on the machine running the
+session. On a remote environment, also add `CLAUDE_CODE_ARTIFACT_AUTO_OPEN=0`.
+
 ## Claude in Chrome
 
 To use the [Claude in Chrome extension](https://code.claude.com/docs/en/chrome) in T3 Code threads, add `--chrome` to **Launch arguments** in the Claude instance settings (applies to new sessions). Requires a direct Anthropic `/login` plan—not supported with API keys, `setup-token`, Bedrock/Vertex, or WSL.
