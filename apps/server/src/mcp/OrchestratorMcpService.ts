@@ -291,6 +291,14 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const SCHEDULED_TASK_WORKSPACE = {
+  root: "checkout",
+  worktree: "worktree",
+  existing_worktree: "existing_worktree",
+} as const;
+const WORKSPACE_NEEDS_UNBOUND =
+  "workspace applies only to tasks that start a new thread. Pass bindToCurrentThread: false, or leave workspace out.";
+
 function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): OrchestratorMcpScheduledTask {
   return {
     scheduledTaskId: task.id,
@@ -303,6 +311,9 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
+    ...(task.threadId === null
+      ? { workspace: SCHEDULED_TASK_WORKSPACE[task.workspaceStrategy.type] }
+      : {}),
     ...(task.webhook?.url == null || !mayRun || task.blockedByPolicy !== undefined
       ? {}
       : { webhookUrl: task.webhook.url }),
@@ -2382,8 +2393,8 @@ const make = Effect.gen(function* () {
 
   const scheduledTaskWorkspaceStrategy = Effect.fn(
     "OrchestratorMcpService.scheduledTaskWorkspaceStrategy",
-  )(function* (boundToThread: boolean, projectId: ProjectId) {
-    if (boundToThread) return { type: "root" as const };
+  )(function* (workspace: "checkout" | "worktree", projectId: ProjectId) {
+    if (workspace === "checkout") return { type: "root" as const };
     const { workspaceRoot } = yield* requireProject(projectId);
     return {
       type: "worktree" as const,
@@ -2502,6 +2513,9 @@ const make = Effect.gen(function* () {
             : "bindToCurrentThread binds to this thread, which belongs to a different project.",
         );
       }
+      if (bindToCurrentThread && input.workspace !== undefined) {
+        return yield* failure("invalid_request", WORKSPACE_NEEDS_UNBOUND);
+      }
       const modelSelection =
         parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
       // Never end on a lone high surrogate, which renders as a broken character.
@@ -2532,7 +2546,10 @@ const make = Effect.gen(function* () {
           : bindToCurrentThread
             ? "continue"
             : "new_thread",
-        workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(bindToCurrentThread, projectId),
+        workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(
+          bindToCurrentThread ? "checkout" : (input.workspace ?? "worktree"),
+          projectId,
+        ),
         modelSelection,
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
@@ -2619,11 +2636,23 @@ const make = Effect.gen(function* () {
             : input.bindToCurrentThread && parent !== undefined
               ? parent.thread.id
               : null;
-        // Reset the workspace only when the binding flips, so unbinding cannot leave runs in the shared checkout.
+        if (threadId !== null && input.workspace !== undefined) {
+          return yield* failure("invalid_request", WORKSPACE_NEEDS_UNBOUND);
+        }
+        // Without an explicit workspace, unbinding defaults to a worktree so runs do not silently share the checkout.
+        const workspace =
+          input.workspace ??
+          ((threadId === null) === (existing.threadId === null)
+            ? undefined
+            : threadId === null
+              ? "worktree"
+              : "checkout");
         const workspaceStrategy =
-          (threadId === null) === (existing.threadId === null)
+          workspace === undefined ||
+          (existing.threadId === null &&
+            SCHEDULED_TASK_WORKSPACE[existing.workspaceStrategy.type] === workspace)
             ? existing.workspaceStrategy
-            : yield* scheduledTaskWorkspaceStrategy(threadId !== null, existing.projectId);
+            : yield* scheduledTaskWorkspaceStrategy(workspace, existing.projectId);
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           requireExisting: true,
