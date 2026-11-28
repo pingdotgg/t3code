@@ -23,7 +23,9 @@ import {
   threadWokeAt,
   isThreadWokeUnseen,
   snoozeWakeLabel,
+  canSnooze,
 } from "@t3tools/client-runtime/state/thread-settled";
+import { THREAD_PULL_DEFAULT_ACTION, useThreadPullActions } from "./useThreadPullActions";
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
@@ -665,6 +667,14 @@ function ThreadDetailBody(
       snoozedUntil,
     });
   const settled = configLoaded && props.selectedThread.settledOverride === "settled";
+  const pullActions = useThreadPullActions({
+    environmentId: props.environmentId,
+    threadId: props.selectedThread.id,
+    canSettle: configLoaded && !settled,
+    canSnooze: configLoaded && !snoozed && canSnooze(props.selectedThread, { now: lifecycleNow }),
+    now: lifecycleNow,
+    snoozePresets: props.serverConfig?.settings.snoozePresets,
+  });
   const wokeAt = configLoaded ? threadWokeAt(props.selectedThread, { now: lifecycleNow }) : null;
   const woke = isThreadWokeUnseen({
     wokeAt,
@@ -1604,6 +1614,8 @@ function ThreadDetailBody(
                   skills={selectedProviderSkills}
                   onCiteAssistantText={canCiteAssistantText ? handleCiteAssistantText : undefined}
                   onUseArtifactTemplate={handleUseArtifactTemplate}
+                  pullActions={props.canOperateThread ? pullActions : undefined}
+                  pullDefaultAction={THREAD_PULL_DEFAULT_ACTION}
                 />
               </ColumnWidth>
             </WorkspaceMutationIdProvider>

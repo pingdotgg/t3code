@@ -221,6 +221,7 @@ function useStableActions(actions: Required<AdaptiveWorkspaceActions>): Adaptive
   });
   const [stable] = useState((): AdaptiveWorkspaceActions => ({
     startNewTask: () => latest.current.startNewTask(),
+    startNewTaskInThreadProject: (thread) => latest.current.startNewTaskInThreadProject(thread),
     selectDetail: (detail, sheet) => latest.current.selectDetail(detail, sheet),
     registerWorkspaceInspector: (content, routeKey, revealKey) =>
       latest.current.registerWorkspaceInspector(content, routeKey, revealKey),
@@ -599,7 +600,8 @@ function AdaptiveWorkspaceLayoutContent(
   const compactAndroidSettings =
     Platform.OS === "android" && androidSettingsOpen && !layout.usesSplitView;
   // Reads the open page when pressed, so the layout context doesn't change on every navigation.
-  const handleStartNewTask = () => {
+  // A thread passed in (a pulled feed, which may be in the inspector) fixes the project to its own.
+  const startNewTask = (thread?: { readonly environmentId: string; readonly threadId: string }) => {
     const state = rootStackState(navigation);
     const currentRoute = workspaceRoutesOf(
       state?.routes.slice(0, state.index + 1) ?? [],
@@ -610,8 +612,8 @@ function AdaptiveWorkspaceLayoutContent(
         : undefined;
     const first = (value: string | string[] | undefined) =>
       Array.isArray(value) ? value[0] : value;
-    const environmentId = first(params?.environmentId);
-    const threadId = first(params?.threadId);
+    const environmentId = thread?.environmentId ?? first(params?.environmentId);
+    const threadId = thread?.threadId ?? first(params?.threadId);
     // The full index, not the sidebar list: subagent and archived threads are current threads too.
     const projectId =
       environmentId && threadId
@@ -655,6 +657,7 @@ function AdaptiveWorkspaceLayoutContent(
           )
         : undefined,
       lastProject: saved?.lastThreadProject,
+      currentProjectOnly: thread !== undefined,
     });
     // Without a project the draft would only push the picker over itself a frame later; open it directly.
     if (destination.draft.projectId === undefined) {
@@ -663,6 +666,7 @@ function AdaptiveWorkspaceLayoutContent(
     }
     handleSelectThreadRoute(destination);
   };
+  const handleStartNewTask = () => startNewTask();
 
   useHardwareKeyboardCommand("newTask", () => {
     handleStartNewTask();
@@ -954,6 +958,7 @@ function AdaptiveWorkspaceLayoutContent(
 
   const actions = useStableActions({
     startNewTask: handleStartNewTask,
+    startNewTaskInThreadProject: (thread) => startNewTask(thread),
     selectDetail: handleSelectDetail,
     registerWorkspaceInspector,
     setPrimarySidebarSearchQuery,

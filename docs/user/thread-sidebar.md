@@ -6,6 +6,7 @@ Use a separate thread for each task. Choose **New worktree** when a task needs i
 
 - **Web and desktop**: **New thread** opens the project picker when you have multiple open projects (unless the sidebar is filtered to one project). `Shift`-click to start in the current project. To reuse an existing worktree, choose **New thread in this worktree** from the branch toolbar.
 - **Mobile**: **New thread** uses the current, filtered, or last-opened project. Disable **Settings → General → Use last project** to pick every time.
+  In a thread, keep pulling up past the end and let go to start a new thread in that thread's project. Drag left while pulling to settle the thread instead, or right to snooze it with your first snooze preset; drag back down to cancel.
 - **Defaults**: New threads inherit your last model and mode unless the project sets its own model default.
 
 ### Start without a project

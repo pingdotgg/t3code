@@ -14,6 +14,10 @@ import {
 /** The workspace's actions; their identities never change. */
 export interface AdaptiveWorkspaceActions {
   readonly startNewTask: () => void;
+  readonly startNewTaskInThreadProject: (thread: {
+    readonly environmentId: string;
+    readonly threadId: string;
+  }) => void;
   /** Use `useSelectWorkspaceDetail`, which also works outside the layout. */
   readonly selectDetail?: (detail: WorkspaceDetail, sheet?: WorkspaceDetailSheet) => void;
   readonly registerWorkspaceInspector: (
@@ -77,6 +81,7 @@ const compactFileInspector = deriveFileInspectorPaneLayout({
 export const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceLayoutValue>({
   layout: compactLayout,
   startNewTask: () => undefined,
+  startNewTaskInThreadProject: () => undefined,
   registerWorkspaceInspector: () => () => undefined,
   setPrimarySidebarSearchQuery: () => undefined,
   showInspector: () => undefined,
