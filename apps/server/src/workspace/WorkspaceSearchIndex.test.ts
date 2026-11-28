@@ -302,8 +302,24 @@ it.live("answers content searches with git grep while a slow content index build
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const vcsProcess = yield* VcsProcess.VcsProcess;
-    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-content-warmup-" });
-    yield* vcsProcess.run({ operation: "test.gitInit", command: "git", args: ["init"], cwd });
+    const repoRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-content-warmup-" });
+    yield* vcsProcess.run({
+      operation: "test.gitInit",
+      command: "git",
+      args: ["init"],
+      cwd: repoRoot,
+    });
+    // User git config must not change git grep's records or make it refuse --untracked.
+    for (const setting of ["grep.column", "grep.fullName", "submodule.recurse"]) {
+      yield* vcsProcess.run({
+        operation: "test.gitConfig",
+        command: "git",
+        args: ["config", setting, "true"],
+        cwd: repoRoot,
+      });
+    }
+    const cwd = path.join(repoRoot, "project");
+    yield* fileSystem.makeDirectory(cwd);
     yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), "ignored.txt\n");
     yield* fileSystem.makeDirectory(path.join(cwd, "src"));
     yield* fileSystem.writeFileString(
@@ -346,6 +362,7 @@ it.live("answers content searches with git grep while a slow content index build
       .mockReturnValueOnce({ ok: true, value: finder })
       .mockReturnValueOnce({ ok: true, value: noPcreFinder })
       .mockReturnValueOnce({ ok: true, value: noPcreFinder })
+      .mockReturnValueOnce({ ok: true, value: noPcreFinder })
       .mockReturnValueOnce({ ok: true, value: noPcreFinder });
 
     const searchIndex = yield* WorkspaceSearchIndex.make(cwd, "content");
@@ -385,6 +402,21 @@ it.live("answers content searches with git grep while a slow content index build
         (match) => match.matchRanges,
       ),
     ).toEqual([[{ start: 6, end: 12 }], [{ start: 0, end: 7 }]]);
+    // Git's match text can end on the `\r` of a CRLF line.
+    expect(
+      (yield* search({ query: "needle|1;.*", useRegex: true })).matches.map(
+        (match) => match.matchRanges,
+      ),
+    ).toEqual([
+      [
+        { start: 6, end: 12 },
+        { start: 15, end: 17 },
+      ],
+      [{ start: 0, end: 6 }],
+    ]);
+    expect(
+      (yield* search({ query: "\\r", useRegex: true })).matches.map((match) => match.matchRanges),
+    ).toEqual([[]]);
     expect(
       (yield* search({ query: "[a-z]e", useRegex: true })).matches.map(
         (match) => match.matchRanges,
@@ -465,6 +497,107 @@ it.live("answers content searches with git grep while a slow content index build
       ],
       truncated: true,
     });
+    // A column that does not point at its text (a file edited between the two runs, or invalid
+    // UTF-8 before the match) still lands on that text, never on other text.
+    const staleRangesIndex = yield* failingGitIndex("-o", "", {
+      exitCode: 0,
+      stdout: "src/a.ts\u00001\u00001\u0000Needle\n",
+    });
+    expect(
+      (yield* staleRangesIndex.searchContents(regexInput)).matches.map(
+        (match) => match.matchRanges,
+      ),
+    ).toEqual([[{ start: 6, end: 12 }]]);
+    yield* fileSystem.writeFile(
+      path.join(cwd, "src/latin1.ts"),
+      new Uint8Array([...Buffer.from("caf"), 0xe9, ...Buffer.from(" needle needle\n")]),
+    );
+    expect(
+      (yield* search({ query: "needle", wholeWord: true, useRegex: true })).matches.map((match) => [
+        match.path,
+        match.matchRanges,
+      ]),
+    ).toEqual([
+      ["src/a.ts", [{ start: 6, end: 12 }]],
+      [
+        "src/latin1.ts",
+        [
+          { start: 5, end: 11 },
+          { start: 12, end: 18 },
+        ],
+      ],
+    ]);
+    yield* fileSystem.remove(path.join(cwd, "src/latin1.ts"));
+    // Outside a UTF-8 locale, git's `.` matches one byte of `中`.
+    yield* fileSystem.writeFileString(path.join(cwd, "src/cjk.ts"), "x中 y\n");
+    vi.stubEnv("LC_ALL", "C");
+    const partialCharacter = yield* search({ query: "x.", wholeWord: true, useRegex: true }).pipe(
+      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+    );
+    expect(partialCharacter.matches.map((match) => [match.path, match.matchRanges])).toEqual([
+      ["src/cjk.ts", [{ start: 0, end: 2 }]],
+    ]);
+    yield* fileSystem.remove(path.join(cwd, "src/cjk.ts"));
+
+    // Lines longer than the 512-character cap are matched whole, then show only ranges that fit.
+    yield* fileSystem.writeFileString(
+      path.join(cwd, "src/long.ts"),
+      [
+        `${" ".repeat(600)}token`,
+        `${" ".repeat(507)}tokenized`,
+        `é token ${"d".repeat(600)} token`,
+        `é tokenized${" ".repeat(600)}token`,
+        // The cap falls inside the emoji, so the shown line drops it whole.
+        `token ${"a".repeat(505)}😀`,
+      ].join("\n"),
+    );
+    const longLines = (input: Partial<Parameters<typeof searchIndex.searchContents>[0]>) =>
+      search({ query: "token", ...input }).pipe(
+        Effect.map((result) =>
+          result.matches.map((match) => [
+            match.lineNumber,
+            match.lineContent.length,
+            match.matchRanges,
+          ]),
+        ),
+      );
+    const wholeWordLines = [
+      [1, 512, []],
+      [3, 512, [{ start: 2, end: 7 }]],
+      [4, 512, []],
+      [5, 511, [{ start: 0, end: 5 }]],
+    ];
+    expect(yield* longLines({ wholeWord: true })).toEqual(wholeWordLines);
+    expect(yield* longLines({ query: "tok+en", wholeWord: true, useRegex: true })).toEqual(
+      wholeWordLines,
+    );
+    expect(yield* longLines({ query: "tok+en\\w*", useRegex: true })).toEqual([
+      [1, 512, []],
+      [2, 512, []],
+      [3, 512, [{ start: 2, end: 7 }]],
+      [4, 512, [{ start: 2, end: 11 }]],
+      [5, 511, [{ start: 0, end: 5 }]],
+    ]);
+
+    // Windows cannot name a file with a newline.
+    if (HostProcess.Platform.defaultValue() !== "win32") {
+      const newlinePath = "src/one\ntwo.txt";
+      yield* fileSystem.writeFileString(path.join(cwd, newlinePath), "unique_lf_needle\n");
+      for (const input of [
+        { query: "unique_lf_needle" },
+        { query: "unique_lf_n.+", useRegex: true },
+      ]) {
+        expect((yield* search({ ...input, caseSensitive: true })).matches).toEqual([
+          {
+            path: newlinePath,
+            lineNumber: 1,
+            lineContent: "unique_lf_needle",
+            matchRanges: [{ start: 0, end: 16 }],
+          },
+        ]);
+      }
+      yield* fileSystem.remove(path.join(cwd, newlinePath));
+    }
 
     isWarmupComplete = true;
     yield* search({});
@@ -716,6 +849,36 @@ it.effect("finds symlinks in folders past the first page of the index", () =>
       expect(directorySearch.mock.calls.map(([, options]) => options?.pageIndex)).toEqual([
         0, 1_000,
       ]);
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("keeps symlinks Git does not ignore when a link's name looks like a git pathspec", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) === "win32") return;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const vcsProcess = yield* VcsProcess.VcsProcess;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-symlink-pathspec-" });
+      yield* vcsProcess.run({ operation: "test.gitInit", command: "git", args: ["init"], cwd });
+      yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), "ignored-link\n");
+      yield* fileSystem.writeFileString(path.join(cwd, "a.ts"), "");
+      yield* fileSystem.symlink("a.ts", path.join(cwd, "docs-link"));
+      yield* fileSystem.symlink("a.ts", path.join(cwd, ":(link)"));
+      yield* fileSystem.symlink("a.ts", path.join(cwd, "ignored-link"));
+      // Stage so `ls-files --others` skips it and `listGitIgnored` must hide it.
+      yield* vcsProcess.run({
+        operation: "test.gitAdd",
+        command: "git",
+        args: ["add", "-f", "ignored-link"],
+        cwd,
+      });
+      fakeSymlinkFinder([]);
+
+      const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
+
+      expect(yield* listedPaths(searchIndex)).toEqual([":(link)", "docs-link"]);
     }),
   ).pipe(Effect.provide(testLayer)),
 );

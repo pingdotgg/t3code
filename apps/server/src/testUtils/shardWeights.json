@@ -170,7 +170,6 @@
   "src/provider/ProviderRegistry.test.ts": 0.7,
   "src/provider/acp/AcpJsonRpcConnection.test.ts": 6.1,
   "src/provider/acp/AcpSessionRuntime.processTree.test.ts": 1,
-  "src/provider/antigravityUsageLimits.test.ts": 0.6,
   "src/provider/providerCompatibility.test.ts": 1.6,
   "src/provider/providerInstallation.test.ts": 1.1,
   "src/provider/providerMaintenanceRunner.test.ts": 0.5,

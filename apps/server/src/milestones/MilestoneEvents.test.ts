@@ -128,7 +128,7 @@ type JsonRpcResponse = {
   readonly error?: { readonly code: number; readonly data?: unknown };
 };
 
-const serve = Effect.gen(function* () {
+const serveWith = Effect.fnUntraced(function* (settings: { readonly workflowsEnabled: boolean }) {
   const revoked = yield* Deferred.make<void>();
   const deliveries = yield* Queue.unbounded<Delivery>();
   const replies = new Set<Delivery["reply"]>();
@@ -164,7 +164,7 @@ const serve = Effect.gen(function* () {
           }),
         ),
       ),
-      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(ServerSettings.layerTest(settings)),
       Layer.provide(
         Layer.mock(SessionStore.SessionStore)({
           cookieName: "t3-session",
@@ -285,6 +285,7 @@ const serve = Effect.gen(function* () {
     subscribe,
   };
 });
+const serve = serveWith({ workflowsEnabled: true });
 
 const layerTest = Layer.mergeAll(
   MilestoneHub.layer,
@@ -327,6 +328,18 @@ it.effect("advertises the extension and lists each milestone type to outside cli
       "includeSubagentChildren",
     ]);
     expect((yield* call("events/list", {}, { token: threadToken })).result!.events).toEqual([]);
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
+it.effect("lists workflow event types only while Labs → Workflows is on", () =>
+  Effect.gen(function* () {
+    const { call } = yield* serveWith({ workflowsEnabled: false });
+    const { events } = (yield* call("events/list")).result!;
+    const names = (events as ReadonlyArray<{ name: string }>).map((event) => event.name);
+    expect(names).toHaveLength(6);
+    expect(names.some((name) => name.startsWith("workflow."))).toBe(false);
+    const poll = yield* call("events/poll", { name: "workflow.run_ended", cursor: null });
+    expect(poll.error).toBeDefined();
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 

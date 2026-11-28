@@ -182,6 +182,14 @@ export class ParentSpan extends Context.Service<ParentSpan, AnySpan>()(ParentSpa
  * identifiers, sampling state, and annotations so it can be used as a parent or
  * link in Effect tracing.
  *
+ * **Details**
+ *
+ * An external span identifies a parent or link only. Effect never records on
+ * it: it has no attributes, events, or end. While the nearest parent span is
+ * external, `Effect.currentSpan` fails, `Effect.annotateCurrentSpan` does
+ * nothing, and `Logger.tracerLogger` records nothing. Open a span with
+ * `Effect.withSpan` to get one that records.
+ *
  * **Example** (Creating an external span value)
  *
  * ```ts import.meta.vitest
@@ -513,6 +521,8 @@ export const make = (options: Tracer): Tracer => options
  * value // => "Hello"
  * spans.map((span) => Option.getOrUndefined(span.parent)?.spanId) // => ["span-abc-123"]
  * ```
+ *
+ * @see {@link ExternalSpan}
  *
  * @stability stable
  * @category constructors

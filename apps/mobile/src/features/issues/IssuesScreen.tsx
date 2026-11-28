@@ -50,7 +50,7 @@ import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { issueParamsKey } from "./issueParams";
 import { IssueListRow } from "./IssueListRow";
 import type { PullRequestFilterMenu } from "../pull-requests/PullRequestListFilters";
-import { issueListFiltersAtom } from "./issueListFilters";
+import { issueListFiltersAtom, issueSearchQuery } from "./issueListFilters";
 import { issueViewMatches } from "./issueSavedViews";
 import { SavedViewsMenu } from "../layout/workspace/SavedViewsMenu";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -130,7 +130,7 @@ export function IssuesScreen(
       animated: false,
     });
   });
-  const debouncedQuery = useDebouncedValue(tab.query.trim(), 300);
+  const debouncedQuery = useDebouncedValue(issueSearchQuery(tab.query), 300);
   const query = tab.searchMode === "resting" ? "" : debouncedQuery;
   const [state, setState] = useState<IssueListState>("open");
   const [involvement, setInvolvement] = useState<IssueInvolvement>("all");
@@ -165,7 +165,8 @@ export function IssuesScreen(
   const continuable = [...held].filter(([, page]) => Object.keys(page.nextCursors).length > 0);
   const moreFailure = [...held.values()].find((page) => page.moreFailure)?.moreFailure ?? null;
   const loadMore = async (retry = false) => {
-    if (loading.current || (moreFailure !== null && !retry)) return;
+    // With nothing to continue, the spinner and new pages would only re-fire onEndReached forever.
+    if (loading.current || continuable.length === 0 || (moreFailure !== null && !retry)) return;
     loading.current = true;
     setLoadingMore(true);
     const loaded = await Promise.all(

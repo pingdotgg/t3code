@@ -126,10 +126,8 @@ const layerWakeups = Wakeups.layer({
                 return;
               }
               if (state === "active") {
-                Queue.offerUnsafe(
-                  queue,
-                  mobileApplicationActiveWakeup(backgroundedAtMs, Date.now()),
-                );
+                const wakeup = mobileApplicationActiveWakeup(backgroundedAtMs, Date.now());
+                if (wakeup !== null) Queue.offerUnsafe(queue, wakeup);
                 backgroundedAtMs = null;
               }
             });
@@ -190,9 +188,8 @@ const layerCapabilities = Layer.effectContext(
           bearerToken: Effect.succeedNone,
         }),
       ),
-      // The relay device id already persists in secure storage; analytics only sends its hash.
       Context.add(ClientCapabilities.AnalyticsDevice, {
-        id: storage.loadOrCreateAgentAwarenessDeviceId.pipe(Effect.option),
+        id: storage.loadOrCreateAnalyticsDeviceId.pipe(Effect.option),
       }),
       Context.add(
         ClientCapabilities.RelayDeviceIdentity,

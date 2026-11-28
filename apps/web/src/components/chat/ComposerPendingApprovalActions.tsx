@@ -8,8 +8,8 @@ import { memo } from "react";
 import { EllipsisIcon, TriangleAlertIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 interface ComposerPendingApprovalActionsProps {
   presentation?: "composer" | "inline";
@@ -100,10 +100,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
             </Button>
           );
         return option.warning ? (
-          <Tooltip key={option.decision}>
-            <TooltipTrigger render={button} />
-            <TooltipPopup side="top">{option.warning}</TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger key={option.decision} render={button} label={option.warning} />
         ) : (
           button
         );
@@ -145,10 +142,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
                 </MenuItem>
               );
               return option.warning ? (
-                <Tooltip key={option.decision}>
-                  <TooltipTrigger render={item} />
-                  <TooltipPopup side="top">{option.warning}</TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger key={option.decision} render={item} label={option.warning} />
               ) : (
                 item
               );
