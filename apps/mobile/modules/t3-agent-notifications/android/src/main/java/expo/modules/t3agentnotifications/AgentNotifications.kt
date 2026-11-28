@@ -48,6 +48,8 @@ object AgentNotifications {
   private const val ALERT_CHANNEL = "agent-alerts"
   private const val ACTIVITY_TAG = "t3-agent-activity"
   private const val ALERT_TAG = "t3-agent-alert"
+  private const val ALERT_SUMMARY_TAG = "$ALERT_TAG-summary:$ALERT_TAG"
+  private const val ALERT_SUMMARY_ID = 0
   private const val ACTIVITY_ID = 73001
   private const val MAX_MESSAGE_AGE_MS = 10 * 60 * 1000L
   private const val RUNNING_LIFETIME_MS = 2 * 60 * 60 * 1000L
@@ -85,6 +87,7 @@ object AgentNotifications {
     cancelActivity(context)
     context.getSharedPreferences(STORE, Context.MODE_PRIVATE).edit().clear().apply()
     val manager = manager(context)
+    manager.cancel(ALERT_SUMMARY_TAG, ALERT_SUMMARY_ID)
     manager.activeNotifications.filter {
       it.tag == ACTIVITY_TAG || it.tag == ALERT_TAG ||
         it.tag?.startsWith("$ALERT_TAG-summary:") == true
@@ -186,35 +189,33 @@ object AgentNotifications {
     // Grouped alerts list up to five 120-character thread titles.
     val body = data["alert_body"].orEmpty().take(608)
     val id = alertId.hashCode()
-    val group = data["alert_group"]?.takeIf { it.isNotBlank() } ?: ALERT_TAG
     val notification = base(context, ALERT_CHANNEL)
       .setContentTitle(title).setContentText(body)
       .setStyle(NotificationCompat.BigTextStyle().bigText(body))
       .setAutoCancel(true)
-      .setGroup(group)
+      .setGroup(ALERT_TAG)
+      .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
       .setContentIntent(contentIntent(context, scheme, data["alert_path"], id))
       .build()
     manager(context).notify(ALERT_TAG, id, notification)
-    val children = manager(context).activeNotifications.filter {
-      it.tag == ALERT_TAG && it.notification.group == group
-    }
-    if (children.size > 1) {
-      val style = NotificationCompat.InboxStyle()
-      children.forEach {
-        style.addLine(it.notification.extras.getCharSequence(android.app.Notification.EXTRA_TEXT))
-      }
-      val summary = base(context, ALERT_CHANNEL)
-        .setContentTitle(title)
-        .setContentText(body)
-        .setStyle(style)
-        .setGroup(group)
-        .setGroupSummary(true)
-        .setSilent(true)
-        .setAutoCancel(true)
-        .setContentIntent(contentIntent(context, scheme, data["alert_path"], 0))
-        .build()
-      manager(context).notify("$ALERT_TAG-summary:$group", 0, summary)
-    }
+    postAlertSummary(context)
+  }
+
+  private fun postAlertSummary(context: Context) {
+    // Keep auto-cancel enabled without a contentIntent so Android 7-11 clears
+    // the summary when the last child is tapped without letting a summary tap
+    // cascade-cancel unread children.
+    val summary = base(context, ALERT_CHANNEL)
+      .setContentTitle("Agent alerts")
+      .setContentText("Agent updates")
+      .setGroup(ALERT_TAG)
+      .setGroupSummary(true)
+      .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
+      .setDefaults(0)
+      .setSilent(true)
+      .setAutoCancel(true)
+      .build()
+    manager(context).notify(ALERT_SUMMARY_TAG, ALERT_SUMMARY_ID, summary)
   }
 
   /**

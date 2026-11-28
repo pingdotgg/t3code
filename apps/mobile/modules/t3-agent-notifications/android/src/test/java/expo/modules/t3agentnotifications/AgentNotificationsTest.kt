@@ -65,6 +65,14 @@ abstract class AgentNotificationsFixture {
     "alert_body" to "Done: Test project",
     "alert_path" to "/threads/environment/thread",
   )
+
+  protected fun alertChildren() = manager.activeNotifications.filter {
+    it.tag == "t3-agent-alert" && it.notification.flags and Notification.FLAG_GROUP_SUMMARY == 0
+  }
+
+  protected fun alertSummaries() = manager.activeNotifications.filter {
+    it.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0
+  }
 }
 
 @RunWith(RobolectricTestRunner::class)
@@ -78,13 +86,14 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     for (id in 1..64) AgentNotifications.receive(context, update("alert-$id", false))
     assertTrue(manager.activeNotifications.isEmpty())
     AgentNotifications.receive(context, update("alert-0", false))
-    assertEquals("alert-0".hashCode(), manager.activeNotifications.single().id)
+    assertEquals("alert-0".hashCode(), alertChildren().single().id)
   }
 
   @Test
-  fun alertsStackByThreadGroup() {
+  fun alertsShareOneAppWideGroup() {
     AgentNotifications.receive(context, update("grouped", false))
-    assertEquals("environment/thread", manager.activeNotifications.single().notification.group)
+    assertEquals("t3-agent-alert", alertChildren().single().notification.group)
+    assertEquals("t3-agent-alert", alertSummaries().single().notification.group)
   }
 
   @Test
@@ -93,7 +102,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     AgentNotifications.receive(context, update("no-launcher", false))
     assertEquals(
       "Test thread",
-      manager.activeNotifications.single().notification.extras.getString(Notification.EXTRA_TITLE)
+      alertChildren().single().notification.extras.getString(Notification.EXTRA_TITLE)
     )
   }
 
@@ -102,7 +111,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     lifecycle.currentState = Lifecycle.State.RESUMED
     AgentNotifications.setThreadOnScreen("/threads/environment/other")
     AgentNotifications.receive(context, update("elsewhere", false))
-    assertEquals("t3-agent-alert", manager.activeNotifications.single().tag)
+    assertEquals("t3-agent-alert", alertChildren().single().tag)
   }
 
   @Test
@@ -134,7 +143,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
 
     AgentNotifications.receive(context, update("later-background-completion", false))
 
-    assertEquals("later-background-completion".hashCode(), manager.activeNotifications.single().id)
+    assertEquals("later-background-completion".hashCode(), alertChildren().single().id)
   }
 
   @Test
@@ -144,7 +153,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
 
     AgentNotifications.receive(context, update("foreground-completion", false))
 
-    assertEquals("background-completion".hashCode(), manager.activeNotifications.single().id)
+    assertEquals("background-completion".hashCode(), alertChildren().single().id)
   }
 
   @Test
@@ -152,10 +161,8 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     AgentNotifications.receive(context, update("first", false) + ("alert_group" to "thread-group"))
     AgentNotifications.receive(context, update("second", false) + ("alert_group" to "thread-group"))
 
-    val summary = manager.activeNotifications.single {
-      it.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0
-    }
-    assertEquals("thread-group", summary.notification.group)
+    val summary = alertSummaries().single()
+    assertEquals("t3-agent-alert", summary.notification.group)
     assertEquals(3, manager.activeNotifications.size)
     assertEquals(null, summary.notification.sound)
 
@@ -178,7 +185,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
       grouped + ("alert_body" to "A retry must not replace this alert")
     )
 
-    val alert = manager.activeNotifications.single()
+    val alert = alertChildren().single()
     assertEquals("5 agents finished", alert.notification.extras.getString(Notification.EXTRA_TITLE))
     assertEquals(titles, alert.notification.extras.getString(Notification.EXTRA_BIG_TEXT))
     assertEquals("t3code-dev://", shadowOf(alert.notification.contentIntent).savedIntent.dataString)
@@ -193,13 +200,14 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     )
     lifecycle.currentState = Lifecycle.State.RESUMED
     AgentNotifications.receive(context, grouped)
-    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-alert" })
+    assertEquals(1, alertChildren().size)
     lifecycle.currentState = Lifecycle.State.CREATED
     AgentNotifications.receive(context, grouped)
 
-    assertEquals(2, manager.activeNotifications.size)
+    assertEquals(3, manager.activeNotifications.size)
     assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
-    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-alert" })
+    assertEquals(1, alertChildren().size)
+    assertEquals(1, alertSummaries().size)
   }
 
   @Test
@@ -207,11 +215,13 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     val message = update("attention", true)
     AgentNotifications.receive(context, message)
     AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
-    assertEquals(2, manager.activeNotifications.size)
+    assertEquals(3, manager.activeNotifications.size)
     AgentNotifications.dismiss(context)
     AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
     AgentNotifications.receive(context, message)
-    assertEquals("t3-agent-alert", manager.activeNotifications.single().tag)
+    assertEquals(1, alertChildren().size)
+    assertEquals(1, alertSummaries().size)
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
   }
 
   @Test
@@ -637,7 +647,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     )
     assertTrue(manager.activeNotifications.isEmpty())
     AgentNotifications.receive(context, update("valid", true))
-    assertEquals(2, manager.activeNotifications.size)
+    assertEquals(3, manager.activeNotifications.size)
   }
 
   @Test
@@ -648,7 +658,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     assertTrue(manager.activeNotifications.isEmpty())
     shadowOf(manager).setNotificationsEnabled(true)
     AgentNotifications.receive(context, message)
-    assertEquals(2, manager.activeNotifications.size)
+    assertEquals(3, manager.activeNotifications.size)
   }
 }
 
@@ -759,10 +769,11 @@ class AgentNotificationsCompletionTest : AgentNotificationsFixture() {
     AgentNotifications.receive(context, completion)
     AgentNotifications.receive(context, completion.filterKeys { !it.startsWith("alert_") })
 
-    val alert = manager.activeNotifications.single()
+    val alert = alertChildren().single()
     assertEquals("t3-agent-alert", alert.tag)
     assertEquals("Test thread", alert.notification.extras.getString(Notification.EXTRA_TITLE))
     assertFalse(alert.notification.flags and Notification.FLAG_ONGOING_EVENT != 0)
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
     AgentNotifications.receive(context, update("next-run", true))
     assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
 
