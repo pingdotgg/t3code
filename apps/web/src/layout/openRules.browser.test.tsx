@@ -1,20 +1,22 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../test/render";
-import { useRightPanelStore } from "../rightPanelStore";
+import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { registerLayoutOpenBesideAction, toggleFocusedSidePaneFill } from "./layoutActions";
 import { useLayoutBehaviorStore } from "./layoutBehavior";
 import {
   createLayoutState,
   findLayoutTabByContent,
   isLayoutGhostTab,
+  selectFocusedTab,
   showLayoutContent,
   type LayoutTabContent,
 } from "./layoutModel";
 import { setLayoutStripViewportWidth, useLayoutStore } from "./layoutStore";
-import { followLayoutCompanions } from "./openRules";
+import { followLayoutCompanions, toggleThreadSidePaneFill } from "./openRules";
 import { requestLayoutSurfacePlacement, useLayoutSurfaceSync } from "./surfaceSync";
 
 function SurfaceSync() {
@@ -135,3 +137,56 @@ it("restores both resized columns when a sidebar open replaced the thread's ghos
   showFromSidebar(chat);
   expect(widths()).toEqual(expanded);
 });
+
+it.each(["closed, pressed from the chat", "open, pressed from the side pane"] as const)(
+  "mod+alt+E fills the side pane and a second press from the filled pane restores the layout (pane %s)",
+  async (start) => {
+    using _state = setup();
+    const threadRef = scopeThreadRef(EnvironmentId.make("local"), ThreadId.make("fill-toggle"));
+    const chat = { kind: "chat", target: { kind: "server", threadRef } } as const;
+    const store = useLayoutStore.getState();
+    store.openTab(chat);
+    const chatTab = findLayoutTabByContent(useLayoutStore.getState().layout, chat)!;
+    store.focusTab(chatTab.tab.id);
+    await using _screen = await render(<SurfaceSync />);
+    using _chat = {
+      [Symbol.dispose]: registerLayoutOpenBesideAction({
+        available: new Set(),
+        open: () => {},
+        fillSidePane: () =>
+          toggleThreadSidePaneFill(threadRef, () => {
+            useRightPanelStore.getState().open(threadRef, "files");
+            return true;
+          }),
+      }),
+    };
+    const files = () =>
+      findLayoutTabByContent(useLayoutStore.getState().layout, {
+        kind: "surface",
+        threadRef,
+        surfaceId: "files",
+      });
+    const widths = () =>
+      useLayoutStore.getState().layout.workspaces[0]!.columns.map((c) => c.width);
+    const paneWasOpen = start === "open, pressed from the side pane";
+    if (paneWasOpen) {
+      useRightPanelStore.getState().open(threadRef, "files");
+      await vi.waitFor(() => expect(files()).toBeDefined());
+      store.focusTab(files()!.tab.id);
+    }
+    const before = widths();
+    const focusedBefore = selectFocusedTab(useLayoutStore.getState().layout)?.id;
+
+    expect(toggleFocusedSidePaneFill()).toBe(true);
+    await vi.waitFor(() => expect(useLayoutStore.getState().maximizedTabId).toBe(files()?.tab.id));
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(files()!.tab.id);
+
+    expect(toggleFocusedSidePaneFill()).toBe(true);
+    expect(useLayoutStore.getState().maximizedTabId).toBeNull();
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(focusedBefore);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).isOpen,
+    ).toBe(paneWasOpen);
+    await vi.waitFor(() => expect(widths()).toEqual(before));
+  },
+);

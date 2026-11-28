@@ -40,6 +40,7 @@ import {
   focusAdjacentLayoutTab,
   openLayoutNewTab,
   toggleFocusedLayoutFill,
+  toggleFocusedSidePaneFill,
 } from "../layout/layoutActions";
 import { readSelectedLayoutTabIds } from "../layout/paneTabSelection";
 import { useLayoutStore } from "../layout/layoutStore";
@@ -182,6 +183,10 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       "layout.splitRight": layoutCommand(() => openLayoutNewTab("new-column")),
       "layout.splitDown": layoutCommand(() => openLayoutNewTab("split-down")),
       "layout.fill": layoutCommand(toggleFocusedLayoutFill),
+      "rightPanel.toggleMaximized": (event) => {
+        if (!layoutShowing() || (!event.repeat && !toggleFocusedSidePaneFill())) return false;
+        claim(event);
+      },
       "tab.close": (event) => {
         if (router.state.location.search.pane !== 1 || event.repeat) return false;
         const layout = useLayoutStore.getState().layout;

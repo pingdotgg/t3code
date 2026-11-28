@@ -32,7 +32,6 @@ export type ChatShortcutCommands = Partial<Record<KeybindingCommand, ChatShortcu
 const SIDE_CHAT_PANE_COMMANDS: ReadonlySet<KeybindingCommand> = new Set([
   "rightPanel.toggle",
   "rightPanel.close",
-  "rightPanel.toggleMaximized",
 ]);
 
 const PANEL_TOGGLE_COMMANDS: ReadonlySet<KeybindingCommand> = new Set([

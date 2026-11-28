@@ -1153,9 +1153,15 @@ function TerminalSessionViewport({
         ) {
           return false;
         }
-        // Tab switching belongs to the layout, so it bubbles to the app's handler.
+        // Tab switching and the side pane fill belong to the layout, so they bubble to the app.
         const command = resolveShortcutCommand(event, currentKeybindings, options);
-        if (command === "tab.next" || command === "tab.previous") return false;
+        if (
+          command === "tab.next" ||
+          command === "tab.previous" ||
+          command === "rightPanel.toggleMaximized"
+        ) {
+          return false;
+        }
 
         const activeTerminal = terminalRef.current;
         const navigationData = activeTerminal

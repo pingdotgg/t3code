@@ -298,11 +298,20 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       );
   };
   const openBesideStable = useStableCallback(openBeside);
+  const fillSidePaneStable = useStableCallback(() => {
+    if (activeThreadRef !== null) {
+      toggleThreadSidePaneFill(activeThreadRef, openSidePaneDefaultStable);
+    }
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Expose only the focused pane actions to the imperative layout launcher and palette.
   useEffect(() => {
     if (!ownsThread) return;
-    return registerLayoutOpenBesideAction({ available: besideAvailable, open: openBesideStable });
-  }, [besideAvailable, ownsThread, openBesideStable]);
+    return registerLayoutOpenBesideAction({
+      available: besideAvailable,
+      open: openBesideStable,
+      fillSidePane: fillSidePaneStable,
+    });
+  }, [besideAvailable, ownsThread, openBesideStable, fillSidePaneStable]);
 
   const onOpenToolDiffStable = useStableCallback((target: ToolCallDiffTarget) => {
     if (!isServerThread || !activeThreadRef) return;
@@ -325,11 +334,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   };
   const shortcuts = {
     "rightPanel.toggle": () => toggleSidePane(),
-    "rightPanel.toggleMaximized": ({ event }) => {
-      if (!event.repeat && activeThreadRef !== null) {
-        toggleThreadSidePaneFill(activeThreadRef, openSidePaneDefaultStable);
-      }
-    },
     "threadPanel.toggle": () => toggleThreadPanel(),
     "diff.toggle": () => onToggleDiff(),
     "pullRequests.toggle": () => onTogglePullRequests(),

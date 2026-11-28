@@ -8,11 +8,17 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell } from "../state/entities";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import {
+  readWorkspaceFocusTarget,
+  requestWorkspaceFocus,
+  type WorkspaceFocusTarget,
+} from "../lib/workspaceFocus";
 import { isThreadlessSurfacesRef } from "../threadlessSurfaces";
 import type { ThreadRouteTarget } from "../threadRoutes";
 import {
   createLayoutLauncherContent,
   findLayoutLauncherFor,
+  findLayoutTab,
   findLayoutTabByContent,
   findLayoutPane,
   findLayoutSurfaceTabs,
@@ -146,14 +152,47 @@ export function toggleThreadSidePane(threadRef: ScopedThreadRef, openDefault: ()
   );
 }
 
+/** What the last mod+alt+E fill changed, so the next press puts it back. */
+let sidePaneFill: {
+  readonly tabId: string;
+  readonly threadRef: ScopedThreadRef;
+  readonly opened: boolean;
+  readonly returnTabId: string | null;
+  readonly focus: WorkspaceFocusTarget | null;
+} | null = null;
+
+/**
+ * mod+alt+E with a pane filling the window: every pane comes back, as "Show every pane" does.
+ * After a mod+alt+E fill, a side pane it opened hides again and focus returns where it was.
+ */
+export function restoreThreadSidePaneFill(): boolean {
+  const store = useLayoutStore.getState();
+  const filled = store.maximizedTabId;
+  const fill = sidePaneFill;
+  sidePaneFill = null;
+  if (filled === null) return false;
+  store.toggleMaximizedTab(filled);
+  if (fill?.tabId !== filled) return true;
+  if (fill.opened) hideThreadSurfaces(fill.threadRef);
+  const layout = useLayoutStore.getState().layout;
+  if (fill.returnTabId !== null && findLayoutTab(layout, (tab) => tab.id === fill.returnTabId)) {
+    store.focusTab(fill.returnTabId);
+  }
+  if (fill.focus && fill.focus.tab !== filled) requestWorkspaceFocus(fill.focus);
+  return true;
+}
+
 /**
  * mod+alt+E for a thread: its side pane fills the window, opening first when it is hidden.
- * Pressed on the filled side pane, the other panes come back.
+ * Pressed again, `restoreThreadSidePaneFill` brings the layout back.
  */
 export function toggleThreadSidePaneFill(
   threadRef: ScopedThreadRef,
   openDefault: () => boolean,
 ): void {
+  if (restoreThreadSidePaneFill()) return;
+  const returnTabId = selectFocusedTab(useLayoutStore.getState().layout)?.id ?? null;
+  const focus = readWorkspaceFocusTarget();
   const besideTab = () => {
     const layout = useLayoutStore.getState().layout;
     const chat = findThreadChat(layout, threadRef);
@@ -168,13 +207,15 @@ export function toggleThreadSidePaneFill(
       ) ?? null
     );
   };
-  const fill = (tabId: string) => {
+  const fill = (tabId: string, openedByPress = true) => {
     const store = useLayoutStore.getState();
+    sidePaneFill = { tabId, threadRef, opened: openedByPress, returnTabId, focus };
     store.focusTab(tabId);
     store.toggleMaximizedTab(tabId);
+    if (focus?.tab !== tabId) requestWorkspaceFocus({ area: "panel", tab: tabId });
   };
   const shown = besideTab();
-  if (shown) return fill(shown.tab.id);
+  if (shown) return fill(shown.tab.id, false);
   toggleThreadSidePane(threadRef, openDefault);
   const opened = besideTab();
   if (opened) return fill(opened.tab.id);

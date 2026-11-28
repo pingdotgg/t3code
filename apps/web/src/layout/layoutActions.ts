@@ -34,7 +34,7 @@ import { readThreadLineage } from "../state/entities";
 import { ISSUES_PANEL_REF, PULL_REQUESTS_PANEL_REF } from "../rightPanelStore";
 import type { ThreadRouteTarget } from "../threadRoutes";
 import { useLayoutStore } from "./layoutStore";
-import { followLayoutCompanions } from "./openRules";
+import { followLayoutCompanions, restoreThreadSidePaneFill } from "./openRules";
 import type { LauncherSurfaceKind } from "../components/SurfaceLauncher";
 import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
 import { threadlessSurfacesRef } from "../threadlessSurfaces";
@@ -462,6 +462,8 @@ interface OpenBesideAction {
     paneId?: string | null,
     browserProfileId?: string,
   ) => void;
+  /** mod+alt+E: the thread's side pane fills the window. */
+  readonly fillSidePane: () => void;
 }
 let openBesideAction: OpenBesideAction | null = null;
 
@@ -479,6 +481,17 @@ export function registerLayoutOpenBesideAction(action: OpenBesideAction): () => 
 
 export function readLayoutOpenBesideKinds(): ReadonlySet<LayoutBesideKind> {
   return openBesideAction?.available ?? new Set();
+}
+
+/**
+ * mod+alt+E wherever focus is: a filled pane gives the window back, otherwise the focused
+ * thread's side pane fills it. False when there is no thread to fill for.
+ */
+export function toggleFocusedSidePaneFill(): boolean {
+  if (restoreThreadSidePaneFill()) return true;
+  if (!openBesideAction) return false;
+  openBesideAction.fillSidePane();
+  return true;
 }
 
 /** Open a surface tab in the palette's originating pane, including companion panes. */

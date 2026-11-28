@@ -28,6 +28,8 @@ export interface WorkspaceFocusTarget {
   selector?: string;
   restore?: boolean;
   surface?: { threadKey: string; surfaceId: string };
+  /** The layout tab whose area takes focus, instead of the one holding focus now. */
+  tab?: string;
 }
 
 function workspaceArea(element: Element): HTMLElement | null {
@@ -551,6 +553,7 @@ export function createWorkspaceFocusController(doc: Document) {
     cancelRequest();
     pending = target;
     pendingPane =
+      target.tab ??
       paneId(doc.activeElement) ??
       doc.querySelector<HTMLElement>('[data-layout-pane-focused="true"]')?.dataset.layoutTabId;
     // The key or click that made the request may still be propagating.
@@ -657,6 +660,15 @@ export function requestSideChatComposerFocus(threadRef: ScopedThreadRef, surface
     surface: { threadKey: scopedThreadKey(threadRef), surfaceId },
     selector: `[data-side-chat-pane="${CSS.escape(threadId)}"] [data-workspace-area="composer"] [contenteditable="true"]`,
   });
+}
+
+/** Where the keyboard is now, as a request that puts it back there later. */
+export function readWorkspaceFocusTarget(): WorkspaceFocusTarget | null {
+  const area = document.activeElement ? workspaceArea(document.activeElement) : null;
+  const name = area?.dataset.workspaceArea;
+  if (!area || !name) return null;
+  const tab = paneId(area);
+  return tab === undefined ? { area: name } : { area: name, tab };
 }
 
 export function requestWorkspaceContentFocus() {
