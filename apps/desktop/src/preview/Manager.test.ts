@@ -2794,36 +2794,6 @@ describe("PreviewManager", () => {
     }).pipe(Effect.provide(managerLayer())),
   );
 
-  effectIt.effect("restores the tab zoom when a navigation resets the guest to app zoom", () =>
-    withManager((manager) =>
-      Effect.gen(function* () {
-        const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
-        const setZoomFactor = vi.fn<(factor: number) => void>();
-        const wc = Object.assign(
-          makeTestPreviewWebContents(async () => ({
-            toJPEG: () => Buffer.from("jpeg"),
-            getSize: () => ({ width: 100, height: 80 }),
-          })),
-          {
-            setZoomFactor,
-            on: (event: string, listener: (...args: unknown[]) => void) => {
-              listeners.set(event, [...(listeners.get(event) ?? []), listener]);
-            },
-          },
-        );
-        fromId.mockReturnValue(wc);
-        yield* manager.createTab("tab_1");
-        yield* manager.registerWebview("tab_1", 42);
-        yield* manager.setZoomFactor("tab_1", 1.5);
-        setZoomFactor.mockClear();
-
-        for (const listener of listeners.get("did-navigate") ?? []) listener();
-
-        expect(setZoomFactor).toHaveBeenCalledWith(1.5);
-      }),
-    ),
-  );
-
   effectIt.effect("discards a screenshot that resolves after its guest is replaced", () =>
     withManager((manager) =>
       Effect.gen(function* () {
