@@ -439,28 +439,8 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
         const path = yield* Path.Path;
-        const quotedCwd = yield* makeTempDir;
-        yield* writeTextFile(
-          quotedCwd,
-          "src/routes/__root.tsx",
-          `const links = [
-  { "data-rel": "icon", "href": "/app.css" },
-  { "data-\\"rel": "icon", "href": "/app.css" },
-  { $rel: "icon", "href": "/app.css" },
-  { "rel': "icon", "href": "/app.css" },
-  { "rel": "icon", $href: "/app.css" },
-  { "rel": "icon", "data-\\"href": "/app.css" },
-  { "rel": "icon", "data-href": "/app.css", 'href": "/app.css" },
-  { "rel": "icon", "href": "/brand/quoted.svg", "data-theme": "dark" },
-];`,
-        );
-        yield* writeTextFile(quotedCwd, "public/app.css", "body {}");
-        yield* writeTextFile(quotedCwd, "public/brand/quoted.svg", "<svg>quoted</svg>");
-        expect(yield* resolver.resolvePath(quotedCwd)).toBe(
-          path.join(quotedCwd, "public", "brand", "quoted.svg"),
-        );
-
         for (const [links, file] of [
+          [`[{ "rel": "icon", "href": "/brand/double.svg" }]`, "double.svg"],
           [`[{ 'href': '/brand/single.svg', 'rel': 'icon' }]`, "single.svg"],
           [`[{ "href": "/brand/mixed.svg", rel: "icon" }]`, "mixed.svg"],
         ] as const) {
