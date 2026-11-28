@@ -2090,8 +2090,10 @@ describe("PullRequestSyncReactor", () => {
           commandRan(agent, "cd app && git -C . push --force-with-lease", undefined, "push"),
           commandRan(agent, '/bin/zsh -lc "gh stack submit --auto"', undefined, "stack"),
           commandRan(agent, "for ((i=0;i<1;i++)) do git push; done", undefined, "loop"),
+          commandRan(agent, "while [[ 1 ]] do git push; break; done", undefined, "while"),
+          commandRan(agent, "if { true; } then git push; fi", undefined, "brace"),
         ]);
-        for (const item of ["push", "stack", "loop"]) {
+        for (const item of ["push", "stack", "loop", "while", "brace"]) {
           const command = yield* Queue.take(fixture.reopenCommands);
           assert.deepStrictEqual(
             [command.threadId, command.commandId],
@@ -2391,6 +2393,18 @@ describe("PullRequestSyncReactor", () => {
       input: "for ((i=0;i<1;i++)) do gh pr create --fill; done",
       output: "https://github.com/owner/repository/pull/31",
       linked: [31],
+    },
+    {
+      name: "a create after a compact test",
+      input: 'if [[ -z "$PR" ]] then gh pr create --fill; fi',
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [31],
+    },
+    {
+      name: "a create command after then following an expansion",
+      input: "echo ${X} then gh pr create $(date) then gh pr create; printf '%s\\n' \"$PR\"",
+      output: "https://github.com/owner/repository/pull/31",
+      linked: [],
     },
     {
       name: "a create command after then used as an ordinary argument",
