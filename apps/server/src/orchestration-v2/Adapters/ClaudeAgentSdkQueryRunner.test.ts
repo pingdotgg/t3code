@@ -631,7 +631,7 @@ function fakeClaudeCli(script: string): string {
   return cli;
 }
 
-const openFakeCli = (cli: string) =>
+const openFakeCli = (cli: string, permissionMode: ClaudeSdk.PermissionMode = "default") =>
   Effect.gen(function* () {
     const runner = yield* ClaudeAgentSdkQueryRunner;
     return yield* runner.open({
@@ -641,7 +641,10 @@ const openFakeCli = (cli: string) =>
         sessionId: "native-session-fake-cli",
         model: "claude-sonnet-4-6",
         tools: [],
-        permissionMode: "default",
+        permissionMode,
+        ...(permissionMode === "bypassPermissions"
+          ? { allowDangerouslySkipPermissions: true }
+          : {}),
         pathToClaudeCodeExecutable: cli,
       },
     });
@@ -1217,6 +1220,42 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       assert.equal(seen, `${registered} ${registered}`);
       yield* Deferred.await(forgotten);
     }),
+  );
+
+  it.effect.each([
+    "default",
+    "acceptEdits",
+    "auto",
+    "plan",
+    "dontAsk",
+    "bypassPermissions",
+  ] as const)(
+    "starts the CLI in %s with the folder trusted only at Full access",
+    (permissionMode) =>
+      Effect.gen(function* () {
+        const cli = fakeClaudeCli(
+          [
+            'dir=$(dirname "$0")',
+            'printf "%s" "${CLAUDE_CODE_IGNORE_PERSISTED_TRUST-unset}" > "$dir/trust"',
+            "cat > /dev/null",
+          ].join("\n"),
+        );
+        const dir = NodePath.dirname(cli);
+        NodeChildProcess.execFileSync("mkfifo", [NodePath.join(dir, "trust")]);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
+        );
+        const trustRead = NodeFS.promises.readFile(NodePath.join(dir, "trust"), "utf8");
+
+        const session = yield* openFakeCli(cli, permissionMode);
+        assert.equal(
+          yield* Effect.promise(() => trustRead),
+          permissionMode === "bypassPermissions"
+            ? ((yield* HostProcess.Environment).CLAUDE_CODE_IGNORE_PERSISTED_TRUST ?? "unset")
+            : "1",
+        );
+        yield* session.close;
+      }).pipe(Effect.provide(realQueryRunner)),
   );
 
   it.effect("marks the CLI's jobs with its thread and counts it as an agent until it exits", () => {

@@ -299,6 +299,8 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
       FORCE_CODE_TERMINAL: undefined,
       CLAUDE_CODE_AUTO_CONNECT_IDE: "0",
       CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: "1",
+      // The probe runs in project folders; a trusted folder's helper commands would run unasked.
+      CLAUDE_CODE_IGNORE_PERSISTED_TRUST: "1",
     },
     ...(input.cwd ? { cwd: input.cwd } : {}),
     stderr: () => {},

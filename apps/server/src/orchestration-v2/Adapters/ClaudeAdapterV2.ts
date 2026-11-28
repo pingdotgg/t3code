@@ -1793,6 +1793,11 @@ export const layerQueryRunner: Layer.Layer<
                 CLAUDE_CODE_RESUME_REASON: "user_resume",
               }
             : {}),
+          // Headless Claude treats every folder as trusted and runs its hooks, MCP servers and
+          // helpers unasked. Below Full access the folder stays untrusted, as for an IDE host.
+          ...(sdkOptions.permissionMode === "bypassPermissions"
+            ? {}
+            : { CLAUDE_CODE_IGNORE_PERSISTED_TRUST: "1" }),
           [PortScanner.AGENT_THREAD_ENV]: input.threadId,
         },
       };

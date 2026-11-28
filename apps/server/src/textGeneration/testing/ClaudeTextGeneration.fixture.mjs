@@ -93,6 +93,10 @@ if (imageRejection && stdinContent.includes('"type":"image"')) {
   process.exit(1);
 }
 
+if (process.env.CLAUDE_CODE_IGNORE_PERSISTED_TRUST !== "1") {
+  fail("text generation trusted the project folder", 13);
+}
+
 const configDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
 if (configDirMustBe && process.env.CLAUDE_CONFIG_DIR !== configDirMustBe) {
   fail("CLAUDE_CONFIG_DIR was " + (process.env.CLAUDE_CONFIG_DIR ?? ""), 5);

@@ -39,6 +39,19 @@ it("drops strict MCP mode, and only that, next to an administrator's managed-mcp
   assert.equal(options.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
 });
 
+it("leaves the probe's workspace untrusted so its settings cannot run helper commands", () => {
+  const options = buildClaudeCapabilitiesProbeQueryOptions({
+    executablePath: "/usr/bin/claude",
+    abortController: new AbortController(),
+    environment: { HOME: "/home/user", CLAUDE_CODE_IGNORE_PERSISTED_TRUST: "0" },
+    cwd: "/workspace",
+    managedMcpConfig: false,
+    spawnVia: undefined,
+  });
+
+  assert.equal(options.env?.CLAUDE_CODE_IGNORE_PERSISTED_TRUST, "1");
+});
+
 // A shell trampoline would not do: dash drops the exported function, and the launcher exits 127.
 it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
   "starts a Bash launcher that calls an exported function in the probe's workspace",

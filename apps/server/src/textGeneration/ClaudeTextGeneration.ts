@@ -138,7 +138,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
-  const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+  const claudeEnvironment = {
+    ...(yield* makeClaudeEnvironment(claudeSettings, environment)),
+    // Headless Claude would trust the project and run its settings' helper commands unasked.
+    CLAUDE_CODE_IGNORE_PERSISTED_TRUST: "1",
+  };
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
   );
