@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
+import { readAndroidDisplayViewport, readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
 import type { DeviceHostReady } from "./DeviceHost.ts";
 
 type Call = { command: string; args: ReadonlyArray<string>; stdin?: string };
@@ -230,6 +230,96 @@ describe("readDeviceDetail", () => {
         networkEnabled: true,
       });
       expect(detail.foregroundApp).toEqual({ id: "com.example.app" });
+    }),
+  );
+});
+
+describe("readAndroidDisplayViewport", () => {
+  // `dumpsys display` from an API 34 Pixel 7 emulator after `wm size 904x2316`.
+  const viewport = (frame: string, extra = "", logical = "0, 0 - 904, 2316") =>
+    `  mViewports=[DisplayViewport{type=INTERNAL, valid=true, isActive=true, displayId=0, uniqueId='local:4619827259835644672', physicalPort=0, orientation=0, logicalFrame=Rect(${logical}), physicalFrame=Rect(${frame}), deviceWidth=1080, deviceHeight=2400}${extra}]\n`;
+  const letterboxed = {
+    width: 1080,
+    height: 2400,
+    content: { x: 72, y: 0, width: 936, height: 2400 },
+  };
+  const onPanel = { x: 72 / 1080, y: 0, width: 936 / 1080, height: 1 };
+
+  it.effect.each([
+    [
+      "a letterboxed override",
+      viewport("72, 0 - 1008, 2400"),
+      "framebuffer",
+      { ...letterboxed, touch: onPanel },
+    ],
+    [
+      "a letterboxed override whose hub touches in display pixels",
+      viewport("72, 0 - 1008, 2400"),
+      "display",
+      { ...letterboxed, touch: { x: 0, y: 0, width: 904 / 1080, height: 2316 / 2400 } },
+    ],
+    [
+      "a same-shape override whose hub touches in display pixels",
+      viewport("0, 0 - 1080, 2400", "", "0, 0 - 540, 1200"),
+      "display",
+      {
+        width: 1080,
+        height: 2400,
+        content: { x: 0, y: 0, width: 1080, height: 2400 },
+        touch: { x: 0, y: 0, width: 0.5, height: 0.5 },
+      },
+    ],
+    [
+      "a same-shape override on the panel",
+      viewport("0, 0 - 1080, 2400", "", "0, 0 - 540, 1200"),
+      "framebuffer",
+      null,
+    ],
+    [
+      "the display filling the panel",
+      viewport("0, 0 - 1080, 2400", "", "0, 0 - 1080, 2400"),
+      "display",
+      null,
+    ],
+    ["a frame outside the panel", viewport("72, 0 - 1200, 2400"), "framebuffer", null],
+    [
+      "a valid viewport after an invalid one",
+      viewport(
+        "72, 0 - 1200, 2400",
+        ", " +
+          viewport("72, 0 - 1008, 2400")
+            .trim()
+            .replace(/^mViewports=\[/, "")
+            .replace(/\]$/, ""),
+      ),
+      "framebuffer",
+      { ...letterboxed, touch: onPanel },
+    ],
+    [
+      "an internal display that is not active",
+      viewport("72, 0 - 1008, 2400").replace("isActive=true", "isActive=false"),
+      "framebuffer",
+      null,
+    ],
+    [
+      "the internal display beside a virtual one",
+      viewport(
+        "72, 0 - 1008, 2400",
+        ", DisplayViewport{type=VIRTUAL, valid=true, isActive=true, displayId=2, uniqueId='virtual:1', physicalPort=null, orientation=0, logicalFrame=Rect(0, 0 - 10, 10), physicalFrame=Rect(0, 0 - 10, 10), deviceWidth=10, deviceHeight=10}",
+      ),
+      "framebuffer",
+      { ...letterboxed, touch: onPanel },
+    ],
+    ["output without viewports", "Display Power Controller:\n", "framebuffer", null],
+  ] as const)("reads %s", ([_name, stdout, touchSpace, expected]) =>
+    Effect.gen(function* () {
+      const { ready, calls } = makeReady(() => ({ stdout }));
+      expect(yield* readAndroidDisplayViewport(ready.run, "emulator-5554", touchSpace)).toEqual(
+        expected,
+      );
+      expect(calls.map((call) => call.args)).toEqual([
+        ["-s", "emulator-5554", "shell", "dumpsys display 2>/dev/null | grep -m1 mViewports="],
+      ]);
     }),
   );
 });

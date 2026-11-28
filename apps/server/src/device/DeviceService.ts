@@ -4,6 +4,7 @@ import {
   type DeviceConfigureInput,
   type DeviceDetail,
   type DeviceDetailInput,
+  type DeviceDisplayViewport,
   type DeviceError,
   DeviceHostId,
   DeviceId,
@@ -71,7 +72,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as ServerSettings from "../serverSettings.ts";
 import { isLocalSshDeviceHost, remoteSshDeviceHosts } from "./localSshDeviceHost.ts";
 
-import { readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
+import { readAndroidDisplayViewport, readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
@@ -220,6 +221,11 @@ export class DeviceService extends Context.Service<
       readonly hostId?: DeviceHostId | undefined;
       readonly deviceId: DeviceId;
     }) => Effect.Effect<DeviceScreenshot, DeviceError>;
+    /** Null when the device streams its display edge to edge, or no ADB can read it. */
+    readonly displayViewport: (input: {
+      readonly hostId?: DeviceHostId | undefined;
+      readonly deviceId: DeviceId;
+    }) => Effect.Effect<DeviceDisplayViewport | null, DeviceError>;
     /**
      * The device an id names in the last listing. Ids are unique per host, not across hosts (an
      * Android AVD name can exist on two), so a hostId decides, and without one the id has to be
@@ -1008,6 +1014,33 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     },
   );
 
+  const FRAMEBUFFER_STREAM = { framebuffer: true, touchSpace: "framebuffer" } as const;
+
+  const displayViewport: DeviceService["Service"]["displayViewport"] = Effect.fn(
+    "DeviceService.displayViewport",
+  )(function* (input) {
+    // Read on a schedule, so a device missing from the listing fails instead of relisting.
+    const host = yield* resolveHost(input.hostId);
+    const { state } = yield* SynchronizedRef.get(stateRef);
+    // A refresh can miss a running emulator while its session, and its stream, stay open.
+    const session = state.sessions.find(
+      (entry) => entry.hostId === host.id && entry.deviceId === input.deviceId,
+    );
+    const device =
+      findDevice(state, host.id, input.deviceId) ??
+      (session ? { id: session.deviceId, platform: session.platform, physical: false } : undefined);
+    if (!device)
+      return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
+    const ready = yield* readiness(host.id);
+    // Physical devices and cloud hosts stream their display as it is, or have no ADB here.
+    if (device.platform !== "android" || device.physical || ready.upstream) return null;
+    const stream = ready.devices.androidStream
+      ? yield* ready.devices.androidStream(device.id)
+      : FRAMEBUFFER_STREAM;
+    if (!stream.framebuffer) return null;
+    return yield* readAndroidDisplayViewport(ready.run, device.id, stream.touchSpace);
+  });
+
   const resolveDevice = Effect.fn("DeviceService.resolveDevice")(function* (
     hostId: DeviceHostId | undefined,
     deviceId: DeviceId,
@@ -1237,6 +1270,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       detail,
       action,
       screenshot,
+      displayViewport,
       locateDevice,
       locateSession,
       readiness,

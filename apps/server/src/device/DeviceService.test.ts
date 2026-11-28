@@ -44,7 +44,7 @@ import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 import * as DeviceService from "./DeviceService.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
 import { agentDeviceSession, releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
-import { ensureDeviceHub } from "./DeviceToolchain.ts";
+import { DEVICE_HUB_VERSION, ensureDeviceHub } from "./DeviceToolchain.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
@@ -101,6 +101,34 @@ it.effect.each([400, 500])(
       expect(yield* screenshot("iOS 26.3")).toMatchObject({
         success: new Uint8Array([137, 80, 78, 71]),
       });
+    }),
+);
+
+it.effect.each([
+  ["grpc-screenshot", "scrcpy", { framebuffer: true, touchSpace: "display" }],
+  ["grpc-screenshot", "grpc", { framebuffer: true, touchSpace: "framebuffer" }],
+  ["scrcpy", "scrcpy", { framebuffer: false, touchSpace: "framebuffer" }],
+] as const)(
+  "reads what a %s stream with %s input shows and where it puts touches",
+  ([streamMode, inputSource, expected]) =>
+    Effect.gen(function* () {
+      const requests: string[] = [];
+      const operations = makeDeviceHubOperations({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        origin: "http://device.test",
+        http: HttpClient.make((request) =>
+          Effect.sync(() => {
+            requests.push(request.url);
+            return HttpClientResponse.fromWeb(request, Response.json({ streamMode, inputSource }));
+          }),
+        ),
+        run: () => Effect.die("unexpected command"),
+        platformAvailable: () => Effect.succeed(true),
+      });
+      // Pinned to the hub whose scrcpy scaling this compensates; recheck it when the hub changes.
+      expect(DEVICE_HUB_VERSION).toBe("0.26.1");
+      expect(yield* operations.androidStream!("emulator-5554")).toEqual(expected);
+      expect(requests).toEqual(["http://device.test/vendor/serve-emu/api?device=emulator-5554"]);
     }),
 );
 
@@ -640,6 +668,34 @@ describe("device setup consent", () => {
       expect(state.devices.map((device) => device.id)).toEqual(["emulator-5554"]);
       expect(state.bootingDevices).toEqual([]);
     }),
+  );
+
+  it.effect(
+    "reads the viewport of an open emulator that a refresh missed, not of unknown ones",
+    () =>
+      Effect.gen(function* () {
+        const { service, endDevice } = yield* fixture();
+        yield* service.configure({ enabled: true });
+        const session = yield* service.open({
+          threadId: ThreadId.make("thread-1"),
+          deviceId: "Pixel_API_35",
+          platform: "android",
+        });
+        endDevice();
+        const listed = yield* service.list;
+        expect(listed.sessions.map((entry) => entry.deviceId)).toContain(session.deviceId);
+        expect(listed.devices.map((device) => device.id)).not.toContain(session.deviceId);
+        const open = yield* service
+          .displayViewport({ deviceId: DeviceId.make(session.deviceId) })
+          .pipe(Effect.result);
+        expect(open._tag === "Failure" ? open.failure._tag : "Success").not.toBe(
+          "DeviceNotFoundError",
+        );
+        const unknown = yield* service
+          .displayViewport({ deviceId: DeviceId.make("emulator-5560") })
+          .pipe(Effect.result);
+        expect(unknown._tag === "Failure" && unknown.failure._tag).toBe("DeviceNotFoundError");
+      }),
   );
 
   it.effect("blocks only emulator video until ffmpeg is usable, then allows retry", () =>

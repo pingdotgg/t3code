@@ -1,11 +1,17 @@
 import { requestUrl } from "../requestUrl.ts";
 // Loopback-only hubs expose shell execution or unauthenticated actions.
 // Proxy with environment read scope for streams and operate scope for input and tuning.
-import { AuthOrchestrationReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  DeviceDisplayViewport,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as Duration from "effect/Duration";
+import * as Schema from "effect/Schema";
 import {
   HttpClient,
   HttpClientRequest,
@@ -19,9 +25,36 @@ import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequ
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
 import { authenticateMediaRequest, failEnvironmentInternal } from "../auth/http.ts";
+import { eventStreamResponse } from "../eventStreamResponse.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as DeviceService from "./DeviceService.ts";
 import { repeatStillFrame } from "./mjpegStillFrame.ts";
+
+const VIEWPORT_READ_INTERVAL = Duration.seconds(5);
+const encodeViewportEvent = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Struct({ viewport: Schema.NullOr(DeviceDisplayViewport) })),
+);
+
+/**
+ * A `wm size` change leaves the stream's size alone, so the viewport is read on a schedule. A
+ * failed read is skipped: it says nothing about the display, and null would drop a valid crop.
+ */
+export const displayViewportUpdates = <E, R>(
+  read: Effect.Effect<DeviceDisplayViewport | null, E, R>,
+  first: ReadonlyArray<DeviceDisplayViewport | null>,
+) =>
+  Stream.fromIterable(first).pipe(
+    Stream.concat(
+      Stream.fromEffectRepeat(
+        read.pipe(
+          Effect.map((viewport) => [viewport]),
+          Effect.orElseSucceed(() => []),
+          Effect.delay(VIEWPORT_READ_INTERVAL),
+        ),
+      ).pipe(Stream.flattenIterable),
+    ),
+    Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
+  );
 
 const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   /^\/api\/devices$/,
@@ -35,6 +68,8 @@ const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   /^\/vendor\/serve-emu\/api$/,
   /^\/vendor\/serve-emu\/api\/(devices|screenshot|stream-mode|stream-settings|accessibility|fold)$/,
   /^\/vendor\/serve-emu\/health$/,
+  // Answered by T3: serve-emu streams the framebuffer but does not report where the display sits.
+  /^\/t3\/display-viewport$/,
 ];
 
 // Paths that take methods besides GET; one missing from ALLOWED_PATHS takes no GET.
@@ -233,16 +268,30 @@ const handler = Effect.gen(function* () {
   upstreamSearch.delete("wsTicket");
   upstreamSearch.delete("hostId");
   const search = upstreamSearch.size > 0 ? `?${upstreamSearch.toString()}` : "";
-  const screenshotDevice = upstreamSearch.get("device");
+  const requestedDevice = upstreamSearch.get("device");
   if (
-    screenshotDevice &&
+    requestedDevice &&
     ["/vendor/serve-sim/api/screenshot", "/vendor/serve-emu/api/screenshot"].includes(hubPath)
   ) {
-    const { png } = yield* devices.screenshot({ hostId: ready.hostId, deviceId: screenshotDevice });
+    const { png } = yield* devices.screenshot({ hostId: ready.hostId, deviceId: requestedDevice });
     return HttpServerResponse.uint8Array(png, {
       contentType: "image/png",
       headers: { "cache-control": "no-store, no-transform" },
     });
+  }
+  if (hubPath === "/t3/display-viewport") {
+    if (!requestedDevice) return HttpServerResponse.text("Bad Request", { status: 400 });
+    const read = devices.displayViewport({ hostId: ready.hostId, deviceId: requestedDevice });
+    // Once the stream starts, an unknown device could only fail every read unseen.
+    const first = yield* read.pipe(
+      Effect.map((viewport) => [viewport]),
+      Effect.catchTags({ DeviceNotFoundError: () => Effect.succeed(null) }),
+      Effect.orElseSucceed(() => []),
+    );
+    if (first === null) return HttpServerResponse.text("Not Found", { status: 404 });
+    // Pushing the viewport keeps working after the media ticket expires, like the video socket.
+    const viewports = displayViewportUpdates(read, first).pipe(Stream.interruptWhen(invalidated));
+    return eventStreamResponse(viewports, (viewport) => encodeViewportEvent({ viewport }));
   }
   // Hosts with several upstreams (one per cloud session) route and authenticate requests themselves.
   const routed = ready.upstream ? yield* ready.upstream(hubPath, upstreamSearch) : undefined;

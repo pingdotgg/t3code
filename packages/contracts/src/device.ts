@@ -2,7 +2,13 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
-import { ThreadId, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import {
+  NonNegativeInt,
+  PositiveInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+  TrimmedString,
+} from "./baseSchemas.ts";
 import { SettingsSecretValue } from "./settingsSecretValue.ts";
 
 export const DevicePlatform = Schema.Literals(["ios", "android"]);
@@ -414,6 +420,31 @@ export const DeviceForegroundApp = Schema.Struct({
   version: Schema.optional(Schema.String),
 });
 export type DeviceForegroundApp = typeof DeviceForegroundApp.Type;
+
+const UnitInterval = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
+
+/**
+ * Where Android draws its display inside the framebuffer an emulator streams. A `wm size`
+ * override with another aspect is scaled to fit and centred, leaving black bars around `content`.
+ * `touch` is where the display's 0..1 coordinates go in the hub's 0..1 touch coordinates.
+ */
+export const DeviceDisplayViewport = Schema.Struct({
+  width: PositiveInt,
+  height: PositiveInt,
+  content: Schema.Struct({
+    x: NonNegativeInt,
+    y: NonNegativeInt,
+    width: PositiveInt,
+    height: PositiveInt,
+  }),
+  touch: Schema.Struct({
+    x: UnitInterval,
+    y: UnitInterval,
+    width: UnitInterval,
+    height: UnitInterval,
+  }),
+});
+export type DeviceDisplayViewport = typeof DeviceDisplayViewport.Type;
 
 export const DeviceDetail = Schema.Struct({
   hostId: DeviceHostId,

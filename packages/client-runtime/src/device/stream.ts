@@ -9,8 +9,15 @@ import {
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { createCanvasFrameSink, type DeviceFrameSink } from "./frame.ts";
+import {
+  displayRegion,
+  type FrameRegion,
+  touchArea,
+  touchPoint,
+  watchDisplayViewport,
+} from "./displayViewport.ts";
 import { type DeviceHubAccess, withDeviceHubQuery } from "./hubAccess.ts";
-import type { DevicePlatform } from "@t3tools/contracts";
+import type { DeviceDisplayViewport, DevicePlatform } from "@t3tools/contracts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
@@ -444,6 +451,12 @@ export function createDeviceStreamClient(
   let timestamp = 0;
   let awaitingKeyframe = true;
   let screen: DeviceScreenSize | null = null;
+  let displayViewport: DeviceDisplayViewport | null = null;
+  let viewportWatch: ReturnType<typeof watchDisplayViewport> | null = null;
+  let region: FrameRegion | null = null;
+  let touchRegion: FrameRegion | null = null;
+  // A gesture keeps the mapping it started with, so a viewport change cannot move it mid-drag.
+  let gestureTouch: { area: FrameRegion | null } | null = null;
   let firstFrame = false;
   let configuring = false;
   let mjpeg = false;
@@ -594,11 +607,22 @@ export function createDeviceStreamClient(
 
   const paint = (source: CanvasImageSource, width: number, height: number) => {
     if (stopped) return;
-    if (!avcc && (screen?.width !== width || screen.height !== height)) {
-      screen = { width, height, orientation: width > height ? "landscape_left" : "portrait" };
+    region = displayRegion(displayViewport, width, height);
+    touchRegion = touchArea(displayViewport, width, height);
+    const shownWidth = region?.width ?? width;
+    const shownHeight = region?.height ?? height;
+    if (!avcc && (screen?.width !== shownWidth || screen.height !== shownHeight)) {
+      screen = {
+        width: shownWidth,
+        height: shownHeight,
+        orientation: width > height ? "landscape_left" : "portrait",
+      };
       events.onScreen(screen);
     }
-    if (!sink.present(source, width, height)) {
+    const presented = region
+      ? sink.present(source, shownWidth, shownHeight, region)
+      : sink.present(source, width, height);
+    if (!presented) {
       fail(resolve(msg("Could not display the device stream. Reconnect to try again.")));
       return;
     }
@@ -1161,14 +1185,14 @@ export function createDeviceStreamClient(
       return createDeviceStreamClient(
         { ...target, ...(id === null ? {} : { panelId: id }), videoOnly: true },
         {
-          present(source, width, height) {
+          present(...frame) {
             if (id === null) {
-              return sink.present(source, width, height);
+              return sink.present(...frame);
             }
             // An inactive native LCD can emit its shutdown black frame. Retain its last useful image.
             if (screen?.screenId !== id) return true;
-            const retained = output.present(source, width, height);
-            const primary = sink.present(source, width, height);
+            const retained = output.present(...frame);
+            const primary = sink.present(...frame);
             return retained && primary;
           },
         },
@@ -1389,7 +1413,23 @@ export function createDeviceStreamClient(
       if (!target.videoOnly) void connectIosInput();
       if (useWebCodecs) void readIosVideo();
       else void startIosWithoutWebCodecs();
-    } else void startAndroid();
+    } else {
+      viewportWatch =
+        typeof EventSource === "undefined"
+          ? null
+          : watchDisplayViewport({
+              url: withDeviceHubQuery(
+                `${access.httpBase}/t3/display-viewport?device=${device}`,
+                access,
+              ),
+              credentials: access.credentials,
+              onChange: (next) => {
+                displayViewport = next;
+              },
+              onRefused: handleUnauthorized,
+            });
+      void startAndroid();
+    }
   };
 
   const stop = () => {
@@ -1399,6 +1439,9 @@ export function createDeviceStreamClient(
     videoGeneration++;
     duoControl.clear();
     rotationCursor = null;
+    viewportWatch?.stop();
+    viewportWatch = null;
+    gestureTouch = null;
     for (const panel of panelClients) panel.stop();
     panelClients = [];
     panelSinks = null;
@@ -1487,7 +1530,10 @@ export function createDeviceStreamClient(
         return;
       }
       const action = phase === "begin" ? "down" : phase === "move" ? "move" : "up";
-      send(JSON.stringify({ type: "touch", action, x, y }));
+      if (phase === "begin" || !gestureTouch) gestureTouch = { area: touchRegion };
+      const point = gestureTouch.area ? touchPoint(gestureTouch.area, x, y) : { x, y };
+      if (phase === "end") gestureTouch = null;
+      send(JSON.stringify({ type: "touch", action, ...point }));
     },
     sendKey: (event, phase) => {
       if (avcc) {

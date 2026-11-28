@@ -5,6 +5,7 @@ import {
   type DeviceForegroundApp,
   DeviceOperationError,
   DeviceActionUnavailableError,
+  type DeviceDisplayViewport,
   type DeviceOrientation,
   type DevicePlatform,
   type DeviceSettings,
@@ -14,7 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import type { DeviceHostReady } from "./DeviceHost.ts";
+import type { AndroidTouchSpace, DeviceHostReady } from "./DeviceHost.ts";
 
 type Runner = DeviceHostReady["run"];
 
@@ -529,6 +530,77 @@ const readIos = Effect.fn("DeviceActions.readIos")(function* (
   };
   return { settings, foregroundApp: null };
 });
+
+const VIEWPORT_PATTERN =
+  /DisplayViewport\{type=INTERNAL, valid=true,(?: isActive=(\w+),)? displayId=0,[^}]*?logicalFrame=Rect\((\d+), (\d+) - (\d+), (\d+)\), physicalFrame=Rect\((\d+), (\d+) - (\d+), (\d+)\), deviceWidth=(\d+), deviceHeight=(\d+)\}/g;
+
+/** Reads the internal display's viewport from `dumpsys display`; null when it fills the panel. */
+const parseAndroidDisplayViewport = (
+  dump: string,
+  touchSpace: AndroidTouchSpace,
+): DeviceDisplayViewport | null => {
+  for (const match of dump.matchAll(VIEWPORT_PATTERN)) {
+    if (match[1] === "false") continue;
+    const [logicalLeft, logicalTop, logicalRight, logicalBottom, left, top, right, bottom] = match
+      .slice(2, 10)
+      .map(Number) as [number, number, number, number, number, number, number, number];
+    const width = Number(match[10]);
+    const height = Number(match[11]);
+    const logicalWidth = logicalRight - logicalLeft;
+    const logicalHeight = logicalBottom - logicalTop;
+    if (
+      width <= 0 ||
+      height <= 0 ||
+      logicalWidth <= 0 ||
+      logicalHeight <= 0 ||
+      left < 0 ||
+      top < 0 ||
+      right <= left ||
+      bottom <= top ||
+      right > width ||
+      bottom > height
+    )
+      continue;
+    const content = { x: left, y: top, width: right - left, height: bottom - top };
+    // A touch the hub scales by the framebuffer size lands in display pixels, so it must be
+    // scaled down to reach the display's far edge; one larger than the panel cannot be reached.
+    const touch =
+      touchSpace === "display"
+        ? {
+            x: 0,
+            y: 0,
+            width: Math.min(1, logicalWidth / width),
+            height: Math.min(1, logicalHeight / height),
+          }
+        : {
+            x: left / width,
+            y: top / height,
+            width: content.width / width,
+            height: content.height / height,
+          };
+    const fills =
+      content.width === width &&
+      content.height === height &&
+      touch.x === 0 &&
+      touch.y === 0 &&
+      touch.width === 1 &&
+      touch.height === 1;
+    return fills ? null : { width, height, content, touch };
+  }
+  return null;
+};
+
+export const readAndroidDisplayViewport = (
+  run: Runner,
+  serial: string,
+  touchSpace: AndroidTouchSpace,
+) =>
+  adb(
+    run,
+    serial,
+    ["shell", "dumpsys display 2>/dev/null | grep -m1 mViewports="],
+    "display viewport",
+  ).pipe(Effect.map((dump) => parseAndroidDisplayViewport(dump, touchSpace)));
 
 const isColorFilter = (value: unknown): value is DeviceSettings["colorFilter"] & string =>
   value === "none" ||

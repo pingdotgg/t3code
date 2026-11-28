@@ -706,6 +706,23 @@ describe("WebRTC device streams", () => {
     vi.stubGlobal("RTCPeerConnection", Peer);
     vi.stubGlobal("RTCRtpReceiver", { getCapabilities: () => ({ codecs: [] }) });
     vi.stubGlobal("document", { createElement: () => new Video(), body: { append: vi.fn() } });
+    const viewportSources: ViewportSource[] = [];
+    class ViewportSource {
+      static CLOSED = 2;
+      readyState = 1;
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onmessage: ((event: { data: string }) => void) | null = null;
+      close = vi.fn();
+      readonly url: string;
+      constructor(url: string) {
+        this.url = url;
+        viewportSources.push(this);
+      }
+    }
+    vi.stubGlobal("EventSource", ViewportSource);
+    const pushViewport = (viewport: unknown) =>
+      viewportSources.at(-1)!.onmessage?.({ data: JSON.stringify({ viewport }) });
     const fetch = vi.fn((url: string, _init?: RequestInit) =>
       Promise.resolve(
         url.includes("/api?")
@@ -739,7 +756,18 @@ describe("WebRTC device streams", () => {
     );
     const image = new MjpegImage();
     client.setMjpegImage(image as unknown as HTMLImageElement);
-    return { client, events, fetch, peers, videos, sockets, present, image };
+    return {
+      client,
+      events,
+      fetch,
+      peers,
+      videos,
+      sockets,
+      present,
+      image,
+      viewportSources,
+      pushViewport,
+    };
   }
 
   const serveSim = "https://test/api/device-hub/vendor/serve-sim";
@@ -775,6 +803,150 @@ describe("WebRTC device streams", () => {
     expect(peers).toHaveLength(1);
     expect(peers[0]?.close).not.toHaveBeenCalled();
     expect(events.onStatus).not.toHaveBeenCalled();
+    client.stop();
+  });
+
+  const letterboxed = {
+    width: 1080,
+    height: 2400,
+    content: { x: 72, y: 0, width: 936, height: 2400 },
+    touch: { x: 72 / 1080, y: 0, width: 936 / 1080, height: 1 },
+  };
+
+  async function streamFrame(fixture: ReturnType<typeof setup>, width: number, height: number) {
+    fixture.client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    fixture.peers.at(-1)?.ontrack?.({ streams: [{}], track: {} });
+    const video = fixture.videos.at(-1)!;
+    video.videoWidth = width;
+    video.videoHeight = height;
+    return video;
+  }
+
+  it("crops a wm size letterbox and touches where the server says the display is", async () => {
+    const fixture = setup();
+    const { client, events, sockets, present, viewportSources, pushViewport } = fixture;
+    const video = await streamFrame(fixture, 540, 1200);
+    expect(viewportSources.map((source) => source.url)).toEqual([
+      "https://test/api/device-hub/t3/display-viewport?device=session-1&hostId=eas",
+    ]);
+    pushViewport(letterboxed);
+    video.callback?.();
+    expect(present).toHaveBeenLastCalledWith(video, 468, 1200, {
+      x: 36,
+      y: 0,
+      width: 468,
+      height: 1200,
+    });
+    expect(events.onScreen).toHaveBeenLastCalledWith({
+      width: 468,
+      height: 1200,
+      orientation: "portrait",
+    });
+
+    sockets[0]!.onopen?.();
+    client.sendTouch("begin", 0, 0.5);
+    client.sendTouch("end", 1, 0.5);
+    expect(sockets[0]!.send.mock.calls.map(([payload]) => JSON.parse(payload))).toEqual([
+      { type: "touch", action: "down", x: 72 / 1080, y: 0.5 },
+      { type: "touch", action: "up", x: 1008 / 1080, y: 0.5 },
+    ]);
+
+    // `wm size reset` keeps the stream's size; the server pushes the change.
+    pushViewport(null);
+    video.callback?.();
+    expect(present).toHaveBeenLastCalledWith(video, 540, 1200);
+    client.stop();
+    expect(viewportSources[0]!.close).toHaveBeenCalled();
+  });
+
+  it("drops a viewport from before a reconnect when the display now fills the panel", async () => {
+    const fixture = setup();
+    const { client, present, pushViewport } = fixture;
+    let video = await streamFrame(fixture, 540, 1200);
+    pushViewport(letterboxed);
+    video.callback?.();
+    client.stop();
+    video = await streamFrame(fixture, 540, 1200);
+    pushViewport(null);
+    video.callback?.();
+    expect(present).toHaveBeenLastCalledWith(video, 540, 1200);
+    client.stop();
+  });
+
+  it("retries a refused first viewport connection a few times, then shows the frame whole", async () => {
+    const fixture = setup();
+    const { events, viewportSources } = fixture;
+    await streamFrame(fixture, 540, 1200);
+    const refuse = (source: (typeof viewportSources)[number]) => {
+      source.readyState = 2;
+      source.onerror?.();
+    };
+    for (const delay of [1_000, 2_000, 4_000]) {
+      refuse(viewportSources.at(-1)!);
+      await vi.advanceTimersByTimeAsync(delay);
+    }
+    refuse(viewportSources.at(-1)!);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(viewportSources).toHaveLength(4);
+    expect(events.onUnauthorized).not.toHaveBeenCalled();
+    fixture.client.stop();
+  });
+
+  it("drops a crop from before a restart when the viewport stream never connects", async () => {
+    const fixture = setup();
+    const { present, pushViewport, viewportSources } = fixture;
+    let video = await streamFrame(fixture, 540, 1200);
+    pushViewport(letterboxed);
+    video.callback?.();
+    fixture.client.stop();
+    video = await streamFrame(fixture, 540, 1200);
+    for (const delay of [1_000, 2_000, 4_000, 0]) {
+      const source = viewportSources.at(-1)!;
+      source.readyState = 2;
+      source.onerror?.();
+      await vi.advanceTimersByTimeAsync(delay);
+    }
+    video.callback?.();
+    expect(present).toHaveBeenLastCalledWith(video, 540, 1200);
+    fixture.client.stop();
+  });
+
+  it("renews access only when the viewport stream is refused with 401 or 403", async () => {
+    const fixture = setup();
+    const { client, events, fetch, sockets, viewportSources } = fixture;
+    let viewportStatus = 503;
+    const answer = fetch.getMockImplementation()!;
+    fetch.mockImplementation((url, init) =>
+      url.includes("/t3/display-viewport")
+        ? Promise.resolve(new Response(null, { status: viewportStatus }))
+        : answer(url, init),
+    );
+    await streamFrame(fixture, 540, 1200);
+    sockets[0]!.onopen?.();
+    const refuse = (source: (typeof viewportSources)[number]) => {
+      source.readyState = 2;
+      source.onerror?.();
+    };
+    viewportSources[0]!.onopen?.();
+    // A one-off drop after the stream worked reconnects the viewport alone.
+    refuse(viewportSources[0]!);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(viewportSources).toHaveLength(2);
+
+    // A replacement the proxy cannot serve for now keeps video and input up.
+    refuse(viewportSources[1]!);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(events.onUnauthorized).not.toHaveBeenCalled();
+    expect(sockets[0]!.close).not.toHaveBeenCalled();
+    expect(fixture.peers.at(-1)!.close).not.toHaveBeenCalled();
+    expect(viewportSources).toHaveLength(3);
+
+    // Refused for access: the media ticket has expired.
+    viewportStatus = 401;
+    refuse(viewportSources[2]!);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(events.onUnauthorized).toHaveBeenCalledOnce();
     client.stop();
   });
 
