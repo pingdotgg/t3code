@@ -484,13 +484,40 @@ describe("reference links around lifted media", () => {
 
 describe("media on custom hosts", () => {
   it.each([
-    ["https://drop.example.com/capture.PNG?token=abc#preview", "image", undefined],
-    ["[Recording](https://drop.example.com/recording.mov)", "video", "Recording"],
-    ["[Screenshot](https://drop.example.com/shot.webp)", "image", "Screenshot"],
-    ["<https://drop.example.com/shot.webp>", "image", undefined],
-  ])("recognizes %s without a request and preserves its label", (body, media, label) => {
+    [
+      "https://drop.example.com/capture.PNG?token=abc#preview",
+      "https://drop.example.com/capture.PNG?token=abc#preview",
+      "image",
+      undefined,
+    ],
+    [
+      "[Recording](https://drop.example.com/recording.mov)",
+      "https://drop.example.com/recording.mov",
+      "video",
+      "Recording",
+    ],
+    ["[Demo](https://example.com/demo(1).mp4)", "https://example.com/demo(1).mp4", "video", "Demo"],
+    [
+      "[Demo](https://example.com/demo%281%29.mp4)",
+      "https://example.com/demo%281%29.mp4",
+      "video",
+      "Demo",
+    ],
+    [
+      "[Screenshot](https://drop.example.com/shot.webp)",
+      "https://drop.example.com/shot.webp",
+      "image",
+      "Screenshot",
+    ],
+    [
+      "<https://drop.example.com/shot.webp>",
+      "https://drop.example.com/shot.webp",
+      "image",
+      undefined,
+    ],
+  ])("recognizes %s without a request and preserves its label", (body, url, media, label) => {
     const segments = split(body);
-    expect(segments).toEqual([expect.objectContaining({ kind: "attachment", media })]);
+    expect(segments).toEqual([expect.objectContaining({ kind: "attachment", url, media })]);
     const [segment] = segments;
     expect(segment?.kind === "attachment" ? segment.label : null).toBe(label);
   });
@@ -498,7 +525,9 @@ describe("media on custom hosts", () => {
   it.each([
     "[Open report](https://example.com/report?file=demo.mp4)",
     "https://example.com/report#demo.png",
-  ])("keeps %s a link when only its query or fragment names media", (body) => {
+    "[Demo](https://example.com/demo(1).mp4) trailing",
+    "[Demo](https://example.com/demo(1.mp4)",
+  ])("keeps %s a link when not a standalone media link", (body) => {
     expect(split(body)).toEqual([
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
