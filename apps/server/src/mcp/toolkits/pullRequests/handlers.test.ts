@@ -1032,36 +1032,6 @@ describe("source control tools", () => {
     }),
   );
 
-  it.effect("lists a named repository's PRs for an outside MCP client", () =>
-    Effect.gen(function* () {
-      const listed: Array<ProjectId | undefined> = [];
-      const harness = yield* makeHarness({
-        external: true,
-        thread: null,
-        pullRequests: {
-          list: (input) =>
-            Effect.sync(() => listed.push(input.projectId)).pipe(
-              Effect.as({
-                viewers: {},
-                providers: [],
-                entries: [],
-                errors: [],
-                truncated: false,
-                nextCursors: {},
-              }),
-            ),
-        },
-      });
-      const unnamed = yield* harness.call("pull_request_list", {}).pipe(
-        Effect.flip,
-        Effect.map((error) => error.message),
-      );
-      expect(unnamed).toBe("Pass repository: this MCP client is not running inside a T3 thread.");
-      yield* harness.call("pull_request_list", { repository: "t3tools/t3code" });
-      expect(listed).toEqual([PROJECT_ID]);
-    }),
-  );
-
   it.effect("pages a long conversation and the PR list through the cursors they return", () =>
     Effect.gen(function* () {
       const comment = (body: string) =>
