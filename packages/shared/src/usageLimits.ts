@@ -513,6 +513,8 @@ export interface LimitPoolWindow {
     readonly member: LimitPoolMember;
     readonly at: number;
     readonly restoresPercent: number;
+    /** Unrounded share used when combining simultaneous refills. */
+    readonly poolSharePercent: number;
   }>;
 }
 
@@ -570,21 +572,9 @@ export function collectLimitPools(
     else byDriver.set(account.driver, [account]);
   }
   return [...byDriver].map(([driver, members]) => {
-    const orderWindow = members
-      .flatMap((account) => account.limits.windows)
-      .sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind])[0];
-    const orderReset = (account: LimitAccount) => {
-      const window = account.limits.windows.find(
-        (window) => orderWindow && poolKey(driver, window) === poolKey(driver, orderWindow),
-      );
-      return (
-        (window ? resetMillis(poolMember(account, window, now).window) : null) ??
-        Number.POSITIVE_INFINITY
-      );
-    };
+    // Account columns must not jump when refreshes change their reset timestamps.
     const sorted = [...members].sort(
       (left, right) =>
-        orderReset(left) - orderReset(right) ||
         accountSortName(left).localeCompare(accountSortName(right)) ||
         left.key.localeCompare(right.key),
     );
@@ -723,17 +713,16 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     const resets = members
       .flatMap((member) => {
         const at = resetMillis(member.window);
-        return at === null
-          ? []
-          : [
-              {
-                member,
-                at,
-                restoresPercent: Math.round(
-                  (member.refillPercent * weightOf.get(member)!) / totalWeight,
-                ),
-              },
-            ];
+        if (at === null) return [];
+        const poolSharePercent = (member.refillPercent * weightOf.get(member)!) / totalWeight;
+        return [
+          {
+            member,
+            at,
+            restoresPercent: Math.round(poolSharePercent),
+            poolSharePercent,
+          },
+        ];
       })
       .sort((left, right) => left.at - right.at);
     return {
@@ -752,6 +741,35 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     };
   });
   return pools.sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind]);
+}
+
+export function nextPoolRefill(
+  pool: LimitPoolWindow,
+  now: number,
+): { readonly member: LimitPoolMember; readonly at: number; readonly restoresPercent: number } | null {
+  // Ignore stale snapshots whose reset has already passed.
+  for (let index = 0; index < pool.resets.length; index++) {
+    const first = pool.resets[index]!;
+    if (first.at <= now) continue;
+    const oneMinuteLater = first.at + 60_000;
+    let refill = 0;
+    for (
+      let next = index;
+      next < pool.resets.length && pool.resets[next]!.at < oneMinuteLater;
+      next++
+    ) {
+      refill += pool.resets[next]!.poolSharePercent;
+    }
+    const restoresPercent = Math.round(refill);
+    if (restoresPercent > 0) {
+      return { member: first.member, at: first.at, restoresPercent };
+    }
+  }
+  return null;
+}
+
+export function nextPoolRefillPercent(pool: LimitPoolWindow, now: number): number | null {
+  return nextPoolRefill(pool, now)?.restoresPercent ?? null;
 }
 
 function limitsNotice(limits: ServerProviderUsageLimits): string | null {

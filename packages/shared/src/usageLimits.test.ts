@@ -20,6 +20,8 @@ import {
   collectLimitAccounts,
   collectExternalUsageLinks,
   collectLimitPools,
+  nextPoolRefill,
+  nextPoolRefillPercent,
   elapsedShare,
   exhaustedUsageWindow,
   paceOf,
@@ -1313,10 +1315,10 @@ describe("pooled account columns", () => {
       ]),
     ];
     const [pool] = collectLimitPools(accounts, now);
-    expect(pool!.accounts.map((account) => account.key)).toEqual(["b", "a"]);
+    expect(pool!.accounts.map((account) => account.key)).toEqual(["a", "b"]);
     expect(keys(pool!)).toEqual([
-      ["b", "a"],
-      ["b", "a"],
+      ["a", "b"],
+      ["a", "b"],
     ]);
     expect(pool!.windows[1]!.resets.map((reset) => reset.member.account.key)).toEqual(["a", "b"]);
     expect(pool!.windows[1]!.remainingPercent).toBe(50);
@@ -1344,7 +1346,7 @@ describe("pooled account columns", () => {
     },
   );
 
-  it("orders by usable session refill and clears suppression after a fresh weekly reading", () => {
+  it("preserves account order while clearing weekly suppression after a fresh reading", () => {
     const blocked = account("blocked", [
       { ...window, resetsAt: "2026-09-03T13:00:00.000Z" },
       { ...weekly, usedPercent: 100, resetsAt: "2026-09-03T15:00:00.000Z" },
@@ -1361,7 +1363,7 @@ describe("pooled account columns", () => {
       },
     };
     const [after] = collectLimitPools([refreshed, available], now);
-    expect(after!.accounts.map((account) => account.key)).toEqual(["blocked", "available"]);
+    expect(after!.accounts.map((account) => account.key)).toEqual(["available", "blocked"]);
     expect(after!.windows[0]!.remainingPercent).toBe(60);
     expect(after!.windows[0]!.resets[0]).toMatchObject({
       at: Date.parse("2026-09-03T13:00:00.000Z"),
@@ -1390,7 +1392,121 @@ describe("pooled account columns", () => {
     expect(pool!.windows[1]!.resets.map((reset) => reset.restoresPercent)).toEqual([40, 20]);
   });
 
-  it("falls back to weekly resets when no account reports a session", () => {
+  it("rounds simultaneous pooled refills after combining fractional shares", () => {
+    const exhausted = collectLimitPools(
+      Array.from({ length: 6 }, (_, index) =>
+        account(`account-${index}`, [
+          { ...window, usedPercent: 100, resetsAt: "2026-09-03T13:00:00.000Z" },
+        ]),
+      ),
+      now,
+    )[0]!.windows[0]!;
+    expect(exhausted.resets.map(({ restoresPercent }) => restoresPercent)).toEqual(
+      Array(6).fill(17),
+    );
+    expect(nextPoolRefillPercent(exhausted, now)).toBe(100);
+
+    const fractional = collectLimitPools(
+      [
+        account("a", [{ ...window, usedPercent: 13 }]),
+        account("b", [{ ...window, usedPercent: 13 }]),
+      ],
+      now,
+    )[0]!.windows[0]!;
+    expect(fractional.resets.map(({ restoresPercent }) => restoresPercent)).toEqual([7, 7]);
+    expect(nextPoolRefillPercent(fractional, now)).toBe(13);
+
+    // Individually both accounts round to zero, but their combined 0.8% rounds to 1%.
+    const combinedFractional = collectLimitPools(
+      [
+        account("a", [{ ...window, usedPercent: 0.8, resetsAt: "2026-09-03T13:00:00.000Z" }]),
+        account("b", [{ ...window, usedPercent: 0.8, resetsAt: "2026-09-03T13:00:00.000Z" }]),
+      ],
+      now,
+    )[0]!.windows[0]!;
+    expect(combinedFractional.resets.map(({ restoresPercent }) => restoresPercent)).toEqual([0, 0]);
+    expect(nextPoolRefillPercent(combinedFractional, now)).toBe(1);
+    expect(nextPoolRefill(combinedFractional, now)).toMatchObject({
+      restoresPercent: 1,
+      member: { account: { key: "a" } },
+    });
+  });
+
+  it("counts all accounts refilling within the next minute, not just the first", () => {
+    const [pool] = collectLimitPools(
+      [
+        account("alpha", [{ ...window, usedPercent: 20, resetsAt: "2026-09-03T13:00:00.000Z" }]),
+        account("beta", [{ ...window, usedPercent: 100, resetsAt: "2026-09-03T13:00:03.000Z" }]),
+        account("gamma", [{ ...window, usedPercent: 10, resetsAt: "2026-09-03T15:00:00.000Z" }]),
+      ],
+      now,
+    );
+    const session = pool!.windows[0]!;
+    expect(session.resets.map(({ restoresPercent }) => restoresPercent)).toEqual([7, 33, 3]);
+    expect(nextPoolRefillPercent(session, now)).toBe(40);
+    expect(
+      nextPoolRefillPercent({
+        ...session,
+        resets: [session.resets[0]!, { ...session.resets[1]!, at: session.resets[0]!.at + 60_000 }],
+      }, now),
+    ).toBe(7);
+
+    const noRefill = collectLimitPools([account("idle", [{ ...window, usedPercent: 0 }])], now)[0]!
+      .windows[0]!;
+    expect(nextPoolRefillPercent(noRefill, now)).toBeNull();
+
+    const negligibleFirst = collectLimitPools(
+      [
+        account("tiny", [{ ...window, usedPercent: 0.8, resetsAt: "2026-09-03T13:00:00.000Z" }]),
+        account("spent", [{ ...window, usedPercent: 80.4, resetsAt: "2026-09-03T14:00:00.000Z" }]),
+      ],
+      now,
+    )[0]!.windows[0]!;
+    expect(nextPoolRefillPercent(negligibleFirst, now)).toBe(40);
+    expect(nextPoolRefill(negligibleFirst, now)).toMatchObject({
+      restoresPercent: 40,
+      member: { account: { key: "spent" } },
+    });
+  });
+
+  it("keeps the same account columns when their reset times change", () => {
+    const alpha = account("alpha", [
+      { ...window, usedPercent: 20, resetsAt: "2026-09-03T15:00:00.000Z" },
+    ]);
+    const zeta = account("zeta", [
+      { ...window, usedPercent: 80, resetsAt: "2026-09-03T13:00:00.000Z" },
+    ]);
+    const before = collectLimitPools([zeta, alpha], now)[0]!;
+    const refreshedZeta = account("zeta", [
+      { ...window, usedPercent: 30, resetsAt: "2026-09-03T16:00:00.000Z" },
+    ]);
+    const after = collectLimitPools([alpha, refreshedZeta], now)[0]!;
+    expect(before.accounts.map(({ key }) => key)).toEqual(["alpha", "zeta"]);
+    expect(after.accounts.map(({ key }) => key)).toEqual(["alpha", "zeta"]);
+    expect(keys(before)).toEqual([["alpha", "zeta"]]);
+    expect(keys(after)).toEqual([["alpha", "zeta"]]);
+  });
+
+  it("skips expired resets when selecting the next pooled refill", () => {
+    const [pool] = collectLimitPools(
+      [
+        account("past", [
+          { ...window, usedPercent: 10, resetsAt: "2026-09-03T11:59:00.000Z" },
+        ]),
+        account("future", [
+          { ...window, usedPercent: 80, resetsAt: "2026-09-03T13:00:00.000Z" },
+        ]),
+      ],
+      now,
+    );
+    expect(nextPoolRefill(pool!.windows[0]!, now)).toMatchObject({
+      at: Date.parse("2026-09-03T13:00:00.000Z"),
+      restoresPercent: 40,
+      member: { account: { key: "future" } },
+    });
+  });
+
+  it("keeps named account order when only weekly windows are available", () => {
     const [pool] = collectLimitPools(
       [
         account("a", [{ ...weekly, resetsAt: "2026-09-06T12:00:00.000Z" }]),
@@ -1398,7 +1514,7 @@ describe("pooled account columns", () => {
       ],
       now,
     );
-    expect(keys(pool!)).toEqual([["b", "a"]]);
+    expect(keys(pool!)).toEqual([["a", "b"]]);
   });
 });
 
