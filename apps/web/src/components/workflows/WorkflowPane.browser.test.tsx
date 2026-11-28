@@ -90,6 +90,13 @@ describe("WorkflowPane", () => {
       expect(header).not.toBeNull();
       expect(header!.classList.contains("drag-region")).toBe(true);
       expect(getComputedStyle(header!).paddingRight).toBe("140px");
+      expect(tablist.classList.contains("[-webkit-app-region:no-drag]")).toBe(true);
+      expect(tablist.getBoundingClientRect().right).toBeLessThan(
+        screen
+          .getByRole("button", { name: "Open as a full thread" })
+          .element()
+          .getBoundingClientRect().left,
+      );
     } finally {
       document.documentElement.classList.remove("wco");
       document.documentElement.style.removeProperty("--workspace-native-controls-inset");
@@ -108,6 +115,7 @@ describe("WorkflowPane", () => {
       expect(header).not.toBeNull();
       expect(header!.classList.contains("drag-region")).toBe(false);
       expect(getComputedStyle(header!).paddingRight).toBe("8px");
+      expect(tablist.classList.contains("[-webkit-app-region:no-drag]")).toBe(false);
     } finally {
       document.documentElement.classList.remove("wco");
       document.documentElement.style.removeProperty("--workspace-native-controls-inset");

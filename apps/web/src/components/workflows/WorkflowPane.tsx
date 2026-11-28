@@ -95,7 +95,10 @@ export default function WorkflowPane({
         <div
           role="tablist"
           aria-label={gt("Open beside the run")}
-          className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto"
+          className={cn(
+            "me-auto flex min-w-0 gap-0.5 overflow-x-auto",
+            electron && "[-webkit-app-region:no-drag]",
+          )}
         >
           {tabs.map((tab, index) => (
             <div
