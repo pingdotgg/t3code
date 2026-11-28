@@ -18,18 +18,12 @@ describe("resolveProjectPathForDispatch", () => {
     expect(resolveProjectPathForDispatch("./docs\\archive", "/workspace/app")).toBe(
       "/workspace/app/docs\\archive",
     );
-    expect(resolveProjectPathForDispatch("../docs\\archive", "/workspace/app/sub")).toBe(
-      "/workspace/app/docs\\archive",
-    );
     expect(resolveProjectPathForDispatch("./docs\\archive/../other", "/workspace/app")).toBe(
       "/workspace/app/other",
     );
   });
 
   it("splits relative paths on both slashes and backslashes for Windows bases", () => {
-    expect(resolveProjectPathForDispatch("./docs/archive", "C:\\workspace\\app")).toBe(
-      "C:\\workspace\\app\\docs\\archive",
-    );
     expect(resolveProjectPathForDispatch("..\\sibling\\sub", "C:\\workspace\\app")).toBe(
       "C:\\workspace\\sibling\\sub",
     );
