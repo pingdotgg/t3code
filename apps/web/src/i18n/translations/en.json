@@ -10901,6 +10901,7 @@
   "d6845667c3278af2": "Not authenticated",
   "7813f10f3f534004": "Status unknown",
   "4f3c3b40b25cac07": "Toggle source control account visibility",
+  "fc3bfdc366686e4b": "Toggle source control account visibility: {account}",
   "16ffdd2f02752973": "Toggle {label} details",
   "b98fef2c26258e7b": "Offer {label} when adding or publishing a project",
   "516da46e1bc929e2": "Server environment",

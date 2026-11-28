@@ -10892,6 +10892,7 @@
   "d6845667c3278af2": "Não autenticado",
   "7813f10f3f534004": "Status desconhecido",
   "4f3c3b40b25cac07": "Alternar visibilidade da conta de controle de versão",
+  "fc3bfdc366686e4b": "Alternar visibilidade da conta de controle de versão: {account}",
   "16ffdd2f02752973": "Alternar detalhes de {label}",
   "b98fef2c26258e7b": "Oferecer {label} ao adicionar ou publicar um projeto",
   "516da46e1bc929e2": "Ambiente do servidor",
