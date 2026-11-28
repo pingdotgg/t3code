@@ -350,6 +350,17 @@ describe("learned routes", () => {
       `learned:${ENVIRONMENT_ID}:http://10.0.0.42:3773@lan`,
       "relay",
     ]);
+
+    // A 100.64.0.0/10 address not confirmed as Tailscale is plain HTTP too.
+    const vpn = direct("vpn", "http://100.101.102.103:3773/");
+    const overVpn = mergeLearnedRoutes({
+      entry: entryWithRoutes(relayOnly, [vpn]),
+      activeRoute: vpn,
+      reported: [{ kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" }],
+      allowInsecure: true,
+    });
+    expect(ids(overVpn)).toEqual([`learned:${ENVIRONMENT_ID}:http://192.168.1.10:3773@vpn`, "vpn"]);
+    expect(sendsTokenInClear(overVpn!, overVpn![0]!)).toBe(false);
   });
 
   it("skips plain HTTP from an HTTPS page and never learns loopback", () => {
