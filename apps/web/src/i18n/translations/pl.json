@@ -758,9 +758,11 @@
   "8360d689ebc7f829": "Push i utworzenie {shortLabel} z domyślnej gałęzi?",
   "daa408bb99d21d18": "{kind, select, pr {Ta akcja wypchnie lokalne commity i utworzy PR na \"{branch}\". Możesz kontynuować na tej gałęzi albo utworzyć gałąź funkcjonalności i wykonać tę samą akcję tam.} mr {Ta akcja wypchnie lokalne commity i utworzy MR na \"{branch}\". Możesz kontynuować na tej gałęzi albo utworzyć gałąź funkcjonalności i wykonać tę samą akcję tam.} generic {Ta akcja wypchnie lokalne commity i utworzy zgłoszenie zmian na \"{branch}\". Możesz kontynuować na tej gałęzi albo utworzyć gałąź funkcjonalności i wykonać tę samą akcję tam.} other {Ta akcja wypchnie lokalne commity i utworzy {changeRequest} na \"{branch}\". Możesz kontynuować na tej gałęzi albo utworzyć gałąź funkcjonalności i wykonać tę samą akcję tam.}}",
   "8471c4c5a50ffde3": "Zgłoszeń tego hosta nie można jeszcze przeglądać.",
-  "2f4a47129f89fe22": "Brak połączenia. Dodaj osobisty klucz API, aby wyświetlić listę jego zgłoszeń.",
+  "4a727b074bbbc5b2": "Nie połączono. Dodaj swój osobisty klucz API, aby wyświetlić jego zgłoszenia.",
+  "b40c70c4488dcebe": "Nie połączono. Dodaj swój token API, aby wyświetlić jego zgłoszenia.",
   "024baab60525a419": "Zapisane poświadczenie zostało odrzucone.",
-  "2613c232516f3c72": "Połączono jako {account} · brak powiązanych projektów. Wybierz zespół dla projektu, aby wyświetlić listę jego zgłoszeń.",
+  "1e89798e3a9050c6": "Połączono jako {account} · brak powiązanych projektów. Powiąż jeden z zespołem Linear, aby wyświetlić jego zgłoszenia.",
+  "c3ab6f9e8b29fbf1": "Połączono jako {account} · brak powiązanych projektów. Powiąż jeden z projektem Jira, aby wyświetlić jego zgłoszenia.",
   "77d07bfe2f8ee19d": "{count, plural, one {Połączono jako {account} · {count} powiązany projekt} few {Połączono jako {account} · {count} powiązane projekty} many {Połączono jako {account} · {count} powiązanych projektów} other {Połączono jako {account} · {count} powiązanych projektów}}",
   "3eb9a01099aaf799": "{count}s",
   "3618302947c280f0": "{count}m",
@@ -1576,6 +1578,8 @@
   "737d3c6bec93f9e6": "Wybierz pliki dla strony",
   "e6a3fa7cfc14f86a": "Okno dialogowe przeglądarki",
   "61a552a67e9e3eac": "Odpowiedź okna dialogowego",
+  "cb5c27218e96e407": "Nazwa użytkownika",
+  "182a659d70f8ea72": "Hasło",
   "3d000b56e95f3150": "Zwolnij kontrolę",
   "0633c3bcdcb95b2f": "Przejmij kontrolę",
   "b8ba763621bcdd70": "Przeglądarka serwera wczytała tę stronę, ale jej nie rysuje. Spróbuj odświeżyć albo otwórz stronę w przeglądarce na tym komputerze.",
@@ -3126,7 +3130,7 @@
   "c646366e142ba05f": "Stan WSL desktopa jest niedostępny.",
   "228dcd284ea651b3": "Nie udało się wczytać stanu WSL.",
   "b08d105dd2553f8d": "Projekt nie pojawił się w aplikacji desktopowej.",
-  "7a4b3f3b83e121d7": "{organization} wyłączyło anonimowe dane o użyciu.",
+  "bf45d68027d21097": "Organizacja {organization} wyłączyła zbieranie danych o użytkowaniu produktu.",
   "d85822b18e9475df": "Zarządzane przez {organization}.",
   "a6dd531d58080010": "Połącz się z tym serwerem, aby sprawdzić wydania.",
   "314cdccee9c14774": "Ten serwer nie obsługuje sprawdzania rejestru. Zaktualizuj go przed przełączeniem torów.",
@@ -3233,10 +3237,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "na komputerze, który otworzył tę stronę"
-      ]
+      "c": [" ", "na komputerze, który otworzył tę stronę"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3248,10 +3249,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· dostęp otrzymuje każdy, kto go uruchamia"
-      ]
+      "c": [" ", "· dostęp otrzymuje każdy, kto go uruchamia"]
     }
   ],
   "c54cc9c75db9dc58": "Zatwierdzaj tylko logowanie, które właśnie rozpocząłeś.",
@@ -4239,6 +4237,7 @@
   "ac242b57dbfa5259": "Zarządzaj zaplanowanymi zadaniami",
   "d93c0db04f4c8e46": "Edytuj automatyzację",
   "3fe420ed9b5bdb75": "Uruchom teraz",
+  "fdf273ca647a967f": "Usuń",
   "0c433351a8606e50": [
     "Nie udało się wczytać automatyzacji: ",
     {
@@ -5372,7 +5371,9 @@
   "4cb21672153c1f18": "W tym środowisku nie znaleziono symulatorów ani emulatorów.",
   "c82410197256eb53": "Symulatory iOS",
   "31a71fec6b5f2bf3": "Urządzenia Android",
+  "1bd21d5284dc2d8e": "Urządzenia iOS",
   "ac18a5e35195a258": "Emulatory Android",
+  "f28d1d2b5f30a8cd": "Fizyczne",
   "94215375ea2558b8": "Uruchomione",
   "f8a65d4d662389b0": "Zatrzymane",
   "b1687c7b2b91e569": "Otwórz {name}",
@@ -6275,13 +6276,13 @@
   ],
   "216ab7514aea1d61": "Rozpocznij bez agenta",
   "501ce2d99da8bfd1": "Aby rozpocząć, skonfiguruj jednego agenta.",
-  "71f3822326109c8e": [
-    "T3 Code zbiera anonimowe dane o użyciu, aby ulepszać aplikację. Aby zrezygnować, zobacz",
+  "b089e0792d542bed": [
+    "T3 Code zbiera pseudonimowe dane o użytkowaniu produktu, aby ulepszać aplikację. Jak z tego zrezygnować, opisuje",
     " ",
     {
       "t": "a",
       "i": 1,
-      "c": "politykę prywatności"
+      "c": "polityka prywatności"
     },
     "."
   ],
@@ -8733,7 +8734,7 @@
   "a6a6dc235b108747": "Pozwól agentom korzystać z udostępnionej przeglądarki. Projekty mogą to nadpisać.",
   "ea5fed973bfc1aca": "Resetuj dostęp domyślnej przeglądarki do wartości domyślnej",
   "19e1f74805f4a1fb": "Dostęp agentów do przeglądarki",
-  "b395b88284e3bca2": "Pokazuj pływający podgląd, gdy agent otworzy przeglądarkę lub urządzenie, chyba że agent zarządzi inaczej.",
+  "d6ccca83a1676fcb": "Pokazuj pływający podgląd, gdy agent otwiera przeglądarkę lub urządzenie, chyba że agent wskaże inaczej, oraz gdy zamykasz prawy panel.",
   "6aadfd59cf60b4b5": "Resetuj automatyczne pokazywanie pływającego podglądu do wartości domyślnej",
   "e4a7ec61190bc1f9": "Automatyczne pokazywanie pływającego podglądu",
   "3705c53cb3e76a28": "Nie udało się wyczyścić danych {name}''s",
@@ -10298,7 +10299,7 @@
   "c424bee294b9f778": "To środowisko jest zarządzane przez {organization}. Niektóre ustawienia i funkcje podlegają jej zasadom.",
   "82d9538af590f58c": "Zobacz swoje agenty, zaimportuj projekty i skonfiguruj telefon.",
   "6a48fd0a37e725a1": "Informacje prawne",
-  "d6d3ea46ac979e1c": "Jak przetwarzamy Twoje dane, w tym anonimowe dane użycia zbierane przez T3 Code.",
+  "bcbd81fcef7fff67": "Jak postępujemy z Twoimi danymi, w tym z pseudonimowymi danymi o użytkowaniu produktu, które zbiera T3 Code.",
   "e741b1ab9396053a": "Jak przetwarzamy Twoje dane. {telemetryOff}",
   "0bffbbf4d7f780c0": "Uwagi o zależnościach, zasobach i opcjonalnych narzędziach używanych przez T3 Code.",
   "e39a57514be028e9": "Przegląd",
@@ -10900,6 +10901,7 @@
   "d6845667c3278af2": "Brak uwierzytelnienia",
   "7813f10f3f534004": "Status nieznany",
   "4f3c3b40b25cac07": "Przełącz widoczność konta kontroli wersji",
+  "fc3bfdc366686e4b": "Przełącz widoczność konta kontroli wersji: {account}",
   "16ffdd2f02752973": "Przełącz szczegóły {label}",
   "b98fef2c26258e7b": "Proponuj {label} przy dodawaniu lub publikowaniu projektu",
   "516da46e1bc929e2": "Środowisko serwera",
@@ -13050,5 +13052,10 @@
   "717c1c47a852a1a5": "Wstrzymaj narrację",
   "0eceb5780908eb6c": "Czytaj na głos",
   "3ee98da81538c6de": "Nie udało się odtworzyć narracji.",
-  "95435f0b59cb2193": "Podgląd audio"
+  "95435f0b59cb2193": "Podgląd audio",
+  "4a12506938295127": "Najpierw wpisz {field}.",
+  "5807c08e225c6b3d": "Pobierz",
+  "0d50b5bfe7151ece": "Nie udało się pobrać pliku",
+  "eb1fd384ad5919dd": "Notatka wewnętrzna",
+  "b45f0b467e9406d0": "Odpowiedz klientowi"
 }
