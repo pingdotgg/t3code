@@ -1798,6 +1798,154 @@ function selectAutoApprovedPermissionOption(
   );
 }
 
+const ACP_FENCE_OPEN_RE = /^[ ]{0,3}(`{3,}|~{3,})(.*)$/;
+const ACP_FENCE_CLOSE_RE = /^[ ]{0,3}(`{3,}|~{3,})[ \t]*$/;
+const ACP_TABLE_ROW_RE = /^[ \t]*\|.*\|[ \t]*$/;
+const ACP_HORIZONTAL_RULE_RE = /^[ \t]*(?:[*_-][ \t]*){3,}$/;
+const ACP_LIST_MARKER_RE = /^[ \t]*(?:[*+-]|\d+[.)])[ \t]+/;
+const ACP_SENTENCE_END_RE = /[.!?…:。！？：]$/;
+const ACP_TRAILING_WRAPPERS_RE = /["'”’)\]}>*_~]+$/;
+const ACP_MID_PHRASE_END_RE = /[,;+&|/=—–-]$/;
+const ACP_CONTINUATION_START_RE = /^(?:[ \t]|[\p{Ll}0-9]|[,.;:!?…)\]}>—–+&|/=]|-(?![ \t-]))/u;
+
+function acpLastNonEmptyLine(text: string): string {
+  const lines = text.split(/\r?\n/);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]!;
+    if (line.trim().length > 0) return line;
+  }
+  return "";
+}
+
+/**
+ * Classifies whether an unnamed streaming ACP text segment is safe to split before a new root
+ * tool call, must stay open because it is mid-token or mid-Markdown construct, or should defer
+ * the split until the next chunk reveals whether it continues the same sentence.
+ */
+export function acpClassifyUnnamedTextBoundaryForTool(text: string): "open" | "defer" | "close" {
+  if (text.trim().length === 0) return "open";
+
+  let fenceChar: "`" | "~" | null = null;
+  let fenceLength = 0;
+  let inlineCodeTicks = 0;
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let boldOpen = false;
+
+  const resetParagraphInlineState = () => {
+    inlineCodeTicks = 0;
+    parenDepth = 0;
+    bracketDepth = 0;
+    boldOpen = false;
+  };
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    if (fenceChar !== null) {
+      const closeMatch = ACP_FENCE_CLOSE_RE.exec(rawLine);
+      if (
+        closeMatch !== null &&
+        closeMatch[1]![0] === fenceChar &&
+        closeMatch[1]!.length >= fenceLength
+      ) {
+        fenceChar = null;
+        fenceLength = 0;
+        resetParagraphInlineState();
+      }
+      continue;
+    }
+
+    const openMatch = ACP_FENCE_OPEN_RE.exec(rawLine);
+    if (openMatch !== null) {
+      const marker = openMatch[1]!;
+      const info = openMatch[2] ?? "";
+      if (marker[0] === "~" || !info.includes("`")) {
+        fenceChar = marker[0] as "`" | "~";
+        fenceLength = marker.length;
+        resetParagraphInlineState();
+        continue;
+      }
+    }
+
+    if (rawLine.trim().length === 0) {
+      resetParagraphInlineState();
+      continue;
+    }
+
+    const isHorizontalRule = inlineCodeTicks === 0 && ACP_HORIZONTAL_RULE_RE.test(rawLine);
+    const line =
+      inlineCodeTicks === 0 && !isHorizontalRule
+        ? rawLine.replace(ACP_LIST_MARKER_RE, "")
+        : rawLine;
+
+    for (let index = 0; index < line.length;) {
+      const ch = line[index]!;
+      if (inlineCodeTicks === 0 && ch === "\\") {
+        index += index + 1 < line.length ? 2 : 1;
+        continue;
+      }
+      if (ch === "`") {
+        let end = index + 1;
+        while (end < line.length && line[end] === "`") end += 1;
+        const runLength = end - index;
+        if (inlineCodeTicks === 0) {
+          inlineCodeTicks = runLength;
+        } else if (runLength === inlineCodeTicks) {
+          inlineCodeTicks = 0;
+        }
+        index = end;
+        continue;
+      }
+      if (inlineCodeTicks > 0) {
+        index += 1;
+        continue;
+      }
+      if (!isHorizontalRule && ch === "*") {
+        let end = index + 1;
+        while (end < line.length && line[end] === "*") end += 1;
+        if (end - index >= 2) boldOpen = !boldOpen;
+        index = end;
+        continue;
+      }
+      if (ch === "(") parenDepth += 1;
+      else if (ch === ")") parenDepth = Math.max(0, parenDepth - 1);
+      else if (ch === "[") bracketDepth += 1;
+      else if (ch === "]") bracketDepth = Math.max(0, bracketDepth - 1);
+      index += 1;
+    }
+  }
+
+  if (fenceChar !== null || inlineCodeTicks > 0 || parenDepth > 0 || bracketDepth > 0 || boldOpen) {
+    return "open";
+  }
+  if (/[ \t]$/.test(text)) return "open";
+  if (/\r?\n$/.test(text)) {
+    if (!/\r?\n[ \t]*\r?\n$/.test(text) && ACP_TABLE_ROW_RE.test(acpLastNonEmptyLine(text))) {
+      return "defer";
+    }
+    return "close";
+  }
+  const withoutTrailingWrappers = text.replace(ACP_TRAILING_WRAPPERS_RE, "");
+  if (ACP_SENTENCE_END_RE.test(withoutTrailingWrappers)) return "close";
+  if (ACP_MID_PHRASE_END_RE.test(text)) return "open";
+  return "defer";
+}
+
+/**
+ * Returns true when `nextText` continues an unnamed segment whose split before a new tool call
+ * was deferred (mid-word, mid-sentence, or continuing a Markdown table).
+ */
+export function acpChunkContinuesUnnamedText(segmentText: string, nextText: string): boolean {
+  if (nextText.length === 0) return true;
+  if (ACP_CONTINUATION_START_RE.test(nextText)) return true;
+  if (
+    ACP_TABLE_ROW_RE.test(acpLastNonEmptyLine(segmentText)) &&
+    nextText.trimStart().startsWith("|")
+  ) {
+    return true;
+  }
+  return false;
+}
+
 interface ActiveTextSegment {
   readonly nativeItemId: string;
   readonly startedAt: DateTime.Utc;
@@ -1807,6 +1955,8 @@ interface ActiveTextSegment {
   emitted: boolean;
   // Text changed since the last emission; a delayed flush is scheduled.
   dirty: boolean;
+  // A new root tool arrived at an ambiguous boundary; decide on the next unnamed chunk.
+  pendingToolSplit: boolean;
 }
 
 interface ActiveTextStream {
@@ -3912,6 +4062,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* closeTextStream(context, "assistant");
         });
 
+        const closeUnnamedTextStreamForNewTool = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          kind: "assistant" | "reasoning",
+        ) {
+          const segment = textStreamFor(context, kind).current;
+          if (segment === null || segment.sourceMessageId !== null) return;
+          const boundary = acpClassifyUnnamedTextBoundaryForTool(segment.text);
+          if (boundary === "close") {
+            yield* closeTextStream(context, kind);
+          } else if (boundary === "defer") {
+            segment.pendingToolSplit = true;
+          }
+        });
+
+        const closeTextStreamsForNewTool = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
+          yield* closeUnnamedTextStreamForNewTool(context, "assistant");
+          yield* closeUnnamedTextStreamForNewTool(context, "reasoning");
+          yield* closeTextStream(context, "user");
+        });
+
         const openTextSegment = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           kind: "user" | "assistant" | "reasoning",
@@ -3933,8 +4103,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   text: "",
                   emitted: false,
                   dirty: false,
+                  pendingToolSplit: false,
                 }
-              : { ...closed, emitted: false, dirty: false };
+              : { ...closed, emitted: false, dirty: false, pendingToolSplit: false };
           if (closed === undefined) stream.nextSegment += 1;
           stream.current = segment;
           return segment;
@@ -3959,6 +4130,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             stream.current.sourceMessageId !== sourceMessageId
           ) {
             yield* closeTextStream(context, kind);
+          } else if (
+            stream.current !== null &&
+            sourceMessageId === null &&
+            stream.current.sourceMessageId === null &&
+            stream.current.pendingToolSplit
+          ) {
+            if (acpChunkContinuesUnnamedText(stream.current.text, text)) {
+              stream.current.pendingToolSplit = false;
+            } else {
+              yield* closeTextStream(context, kind);
+            }
           }
           let segment = stream.current;
           if (segment === null) {
@@ -3966,6 +4148,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           } else if (segment.sourceMessageId === null && sourceMessageId !== null) {
             // Agents may omit the first messageId; retain projected identity until the first later id.
             segment.sourceMessageId = sourceMessageId;
+            segment.pendingToolSplit = false;
           }
           segment.text += text;
           yield* publishTextSegment(context, kind);
@@ -5437,11 +5620,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           projectedStatus?: ProjectedToolStatus,
           rawPayload?: unknown,
         ) {
-          if (context.assistant.current?.sourceMessageId == null)
-            yield* closeTextStream(context, "assistant");
-          if (context.reasoning.current?.sourceMessageId == null)
-            yield* closeTextStream(context, "reasoning");
-          yield* closeTextStream(context, "user");
           const previous = context.tools.get(incoming.toolCallId);
           const merged = mergeToolCallState(previous, incoming);
           const normalized = flavor.normalizeToolCall?.(merged) ?? merged;
@@ -5601,6 +5779,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ? undefined
             : extractSubagentUpdate(toolCall);
           if (subagentUpdate !== undefined) {
+            const existingSubagent =
+              context.subagents.get(subagentUpdate.nativeTaskId) ??
+              (subagentUpdate.childSessionId !== null
+                ? context.subagentsBySessionId.get(subagentUpdate.childSessionId)
+                : undefined);
+            if (
+              existingSubagent === undefined &&
+              !(subagentUpdate.prompt === "" && subagentUpdate.title === null) &&
+              subagentUpdate.suppressNormalTool !== false
+            ) {
+              yield* closeTextStreamsForNewTool(context);
+            }
             yield* emitSubagent(
               context,
               stoppedStatus === "interrupted" && subagentUpdate.status === "failed"
@@ -5634,6 +5824,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             toolStatus(toolCall.status);
           const now = yield* DateTime.now;
           const nativeItemId = `${context.nativeThreadId}:tool:${toolCall.toolCallId}`;
+          if (!context.itemOrdinals.has(nativeItemId)) {
+            yield* closeTextStreamsForNewTool(context);
+          }
           const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
           const nodeId = providerNodeId(nativeItemId);
           const turnItemId = providerTurnItemId(nativeItemId);
@@ -6754,6 +6947,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             } else if (context.nativeThreadId === notification.sessionId) {
               if (update.sessionUpdate === "usage_update") {
                 context.replyOpen = false;
+                if (context.assistant.current?.pendingToolSplit) {
+                  yield* closeTextStream(context, "assistant");
+                }
+                if (context.reasoning.current?.pendingToolSplit) {
+                  yield* closeTextStream(context, "reasoning");
+                }
                 yield* idleReportedSubagents(context);
                 yield* rearmDeferredFinalize(context);
               } else if (acpRootSessionUpdateIngestsOutput(notification)) {

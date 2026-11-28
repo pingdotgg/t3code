@@ -3899,6 +3899,166 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.each([
+    {
+      label: "a brand-new interleaved tool call arrives mid-inline-code token",
+      steps: [
+        answer(undefined, "Check permissions (bootstrap `umask 027` app `0750` & keyring `0"),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "interleaved-cmd-1",
+          title: "ls -la ./config",
+          kind: "execute",
+          status: "in_progress",
+          rawInput: { command: "ls -la ./config" },
+        },
+        answer(undefined, "640`, OpenSSH `01-` ordering + `sshd -T`)."),
+      ],
+      expectedAssistants: [
+        "Check permissions (bootstrap `umask 027` app `0750` & keyring `0640`, OpenSSH `01-` ordering + `sshd -T`).",
+      ],
+    },
+    {
+      label: "a brand-new interleaved tool call arrives inside an unclosed fenced code block",
+      steps: [
+        answer(undefined, "Config:\n```bash\numask 027\n"),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "interleaved-fence-1",
+          title: "pwd",
+          kind: "execute",
+          status: "in_progress",
+          rawInput: { command: "pwd" },
+        },
+        answer(undefined, "chmod 0640 keyring.gpg\n```"),
+      ],
+      expectedAssistants: ["Config:\n```bash\numask 027\nchmod 0640 keyring.gpg\n```"],
+    },
+    {
+      label: "a brand-new interleaved tool call arrives mid-word",
+      steps: [
+        answer(undefined, "Inspecting the conf"),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "interleaved-word-1",
+          title: "pwd",
+          kind: "execute",
+          status: "in_progress",
+          rawInput: { command: "pwd" },
+        },
+        answer(undefined, "ig file now."),
+      ],
+      expectedAssistants: ["Inspecting the config file now."],
+    },
+    {
+      label: "an already-tracked background tool reports progress and completion mid-answer",
+      steps: [
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "bg-1",
+          title: "sleep 3 && echo done",
+          kind: "execute",
+          status: "in_progress",
+          rawInput: { command: "sleep 3 && echo done" },
+        },
+        answer(undefined, "First sentence done."),
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "bg-1",
+          status: "in_progress",
+          rawOutput: { stdout: "." },
+        },
+        answer(undefined, " Second sentence "),
+        {
+          sessionUpdate: "tool_call_content_chunk",
+          toolCallId: "bg-1",
+          content: { type: "content", content: { type: "text", text: "more" } },
+        },
+        answer(undefined, "continues cleanly."),
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "bg-1",
+          status: "completed",
+          rawOutput: { stdout: "done" },
+        },
+        answer(undefined, " Final tail."),
+      ],
+      expectedAssistants: ["First sentence done. Second sentence continues cleanly. Final tail."],
+    },
+    {
+      label: "a clean preamble precedes a sequential tool call and follow-up reply",
+      steps: [
+        answer(undefined, "Let me check the config file."),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "seq-1",
+          title: "Read config.json",
+          kind: "read",
+          status: "in_progress",
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "seq-1",
+          status: "completed",
+        },
+        answer(undefined, "The config looks good."),
+      ],
+      expectedAssistants: ["Let me check the config file.", "The config looks good."],
+    },
+    {
+      label: "a terse preamble without punctuation precedes a tool call and fresh reply",
+      steps: [
+        answer(undefined, "Checking"),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "seq-2",
+          title: "Read config.json",
+          kind: "read",
+          status: "in_progress",
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "seq-2",
+          status: "completed",
+        },
+        answer(undefined, "Found the issue."),
+      ],
+      expectedAssistants: ["Checking", "Found the issue."],
+    },
+  ] satisfies ReadonlyArray<{
+    readonly label: string;
+    readonly steps: ReadonlyArray<ScriptedTextStep>;
+    readonly expectedAssistants: ReadonlyArray<string>;
+  }>)("preserves unnamed ACP assistant streams when $label", ({ steps, expectedAssistants }) =>
+    Effect.gen(function* () {
+      const events = yield* runScriptedTextTurn(steps);
+      const latestById = new Map<string, OrchestrationV2TurnItem>();
+      for (const event of events) {
+        if (event.type !== "turn_item.updated") continue;
+        latestById.set(String(event.turnItem.id), event.turnItem);
+      }
+      const ordered = [...latestById.values()].toSorted((a, b) => a.ordinal - b.ordinal);
+      const assistants = ordered.flatMap((item) =>
+        item.type === "assistant_message" ? [item] : [],
+      );
+      assert.deepEqual(
+        assistants.map((item) => item.text),
+        expectedAssistants,
+      );
+      for (const item of assistants) {
+        assert.equal(item.status, "completed");
+      }
+      if (expectedAssistants.length === 2) {
+        const tool = ordered.find(
+          (item) => item.type === "dynamic_tool" || item.type === "command_execution",
+        );
+        assert.isDefined(tool);
+        assert.isBelow(assistants[0]!.ordinal, tool!.ordinal);
+        assert.isBelow(tool!.ordinal, assistants[1]!.ordinal);
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live("replaces and removes identified ACP plans across turns", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("acp-cross-turn-plans");
