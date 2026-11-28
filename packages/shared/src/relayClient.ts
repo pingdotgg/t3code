@@ -287,6 +287,8 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   const installSemaphore = yield* Semaphore.make(1);
   const platform = yield* HostProcess.Platform;
   const arch = yield* HostProcess.Architecture;
+  const versionProbeTimeout =
+    platform === "win32" ? INSTALL_VALIDATION_TIMEOUT : VERSION_PROBE_TIMEOUT;
   const releaseAsset = options.releaseAsset ?? resolveReleaseAsset(platform, arch);
   const loadCloudflaredConfig = Effect.suspend(() => CloudflaredConfig).pipe(Effect.orDie);
   const managedRoot = path.join(options.baseDir, "tools", "cloudflared");
@@ -318,7 +320,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
 
   // Cache successful version probes per file revision; do not let transient failures hide valid binaries.
   const versionCache = yield* Cache.makeWith(
-    (key: VersionProbeKey) => runVersionProbe(key.executablePath, VERSION_PROBE_TIMEOUT),
+    (key: VersionProbeKey) => runVersionProbe(key.executablePath, versionProbeTimeout),
     {
       capacity: 16,
       timeToLive: (exit) =>
