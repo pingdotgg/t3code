@@ -32,6 +32,7 @@ import {
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { formatThreadLink, hostedThreadLink } from "@t3tools/shared/threadLinks";
+import { derive } from "@t3tools/provider-core/server/IdAllocator";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -2543,6 +2544,191 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
   });
+
+  it.effect.each([
+    { scenario: "usable fallback", active: true, usesFallback: true, refreshes: false },
+    { scenario: "child still preparing", active: true, usesFallback: true, refreshes: false },
+    { scenario: "explicit target", active: true, usesFallback: false, refreshes: false },
+    { scenario: "invalid requested options", active: true, usesFallback: false, refreshes: false },
+    { scenario: "healthy inherited model", active: false, usesFallback: false, refreshes: false },
+    { scenario: "project-disabled fallback", active: false, usesFallback: false, refreshes: false },
+    { scenario: "invalid model", active: false, usesFallback: false, refreshes: true },
+    { scenario: "stale model list", active: false, usesFallback: true, refreshes: true },
+  ])("resolves configured delegation fallback for $scenario", (testCase) =>
+    Effect.gen(function* () {
+      const { scenario, active, usesFallback, refreshes } = testCase;
+      const fallbackId = ProviderInstanceId.make("claudeAgent");
+      const fallbackModel = "claude-sonnet-4-6";
+      const inherited = providerSnapshot({
+        instanceId: codexInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+        model: "gpt-5.4",
+      });
+      const fallbackProvider = providerSnapshot({
+        instanceId: fallbackId,
+        driver: ProviderDriverKind.make("claudeAgent"),
+        model: fallbackModel,
+      });
+      const exhausted = {
+        ...inherited,
+        usageLimits: {
+          checkedAt: "2026-09-13T00:00:00.000Z",
+          windows: [{ id: "primary", kind: "session" as const, label: "5h", usedPercent: 100 }],
+        },
+      };
+      const fallback = { instanceId: fallbackId, model: fallbackModel };
+      const snapshots = [
+        scenario === "healthy inherited model" ? inherited : exhausted,
+        scenario === "invalid model" || scenario === "stale model list"
+          ? {
+              ...fallbackProvider,
+              models: [{ ...fallbackProvider.models[0]!, slug: "other-model" }],
+            }
+          : fallbackProvider,
+      ];
+      const selection = usesFallback
+        ? { instanceId: fallbackId, model: fallbackModel }
+        : { instanceId: codexInstanceId, model: "gpt-5.4" };
+      const refreshed: Array<ProviderInstanceId> = [];
+      const commands: Array<unknown> = [];
+      const childRunId = derive.run({ threadId: childThreadId, ordinal: 1 });
+      const preparations: Array<ThreadLaunchService.ThreadLaunchPreparationInput> = [];
+      const tasks: Array<ReturnType<typeof taskFor>> = [];
+      function taskFor(commandId: CommandId) {
+        return {
+          id: derive.delegatedTaskNode({ commandId }),
+          threadId: parentThreadId,
+          origin: "app_owned",
+          childThreadId,
+          providerInstanceId: selection.instanceId,
+          model: selection.model,
+          status: "running",
+          result: null,
+        };
+      }
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(tasks.length > 0),
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection(tasks)
+                : scenario === "child still preparing"
+                  ? {
+                      ...childProjection,
+                      runs: [
+                        {
+                          id: childRunId,
+                          status: preparations.length === 0 ? "preparing" : "starting",
+                          workspacePreparation: { type: "worktree", baseRef: "HEAD" },
+                        },
+                      ] as unknown as typeof childProjection.runs,
+                    }
+                  : childProjection,
+            ),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              commands.push(command);
+              const task = taskFor(command.commandId);
+              tasks.push(task);
+              return {
+                sequence: 1,
+                storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+              } as never;
+            }),
+        }),
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+          prepareRun: (input) =>
+            Effect.sync(() => {
+              preparations.push(input);
+            }),
+        }),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        ServerSettings.layerTest({
+          fallbackModelSelection: fallback,
+          ...(scenario === "project-disabled fallback"
+            ? {
+                providerInstances: {
+                  [fallbackId]: { driver: ProviderDriverKind.make("claudeAgent"), enabled: true },
+                },
+                projectSettingsOverrides: {
+                  [projectId]: { providerInstances: { [fallbackId]: { enabled: false } } },
+                },
+              }
+            : {}),
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.sync(() =>
+            tasks.length === 0 ? snapshots : [{ ...inherited, status: "error" }],
+          ),
+          refreshInstance: (instanceId) =>
+            Effect.sync(() => {
+              refreshed.push(instanceId);
+              return scenario === "stale model list" ? [exhausted, fallbackProvider] : snapshots;
+            }),
+        }),
+        adapterRegistryLayer([codexInstanceId, fallbackId]),
+        Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        assert.deepEqual((yield* service.capabilities(scope)).fallback, {
+          providerInstanceId: fallbackId,
+          model: fallbackModel,
+          active,
+        });
+        const request = {
+          task: "Review the change.",
+          mode: "async" as const,
+          clientRequestId: scenario,
+          ...(scenario === "explicit target"
+            ? { target: { providerInstanceId: codexInstanceId, model: "gpt-5.4" } }
+            : scenario === "invalid requested options"
+              ? {
+                  target: {
+                    options: [
+                      { id: "effort", value: "low" },
+                      { id: "effort", value: "high" },
+                    ],
+                  },
+                }
+              : {}),
+        };
+        if (scenario === "invalid requested options") {
+          const error = yield* service.delegateTask(scope, request).pipe(Effect.flip);
+          assert.equal(error.code, "invalid_request");
+          assert.include(error.message, fallbackId);
+          assert.deepEqual(commands, []);
+          return;
+        }
+        const first = yield* service.delegateTask(scope, request);
+        assert.deepEqual((commands[0] as { modelSelection: unknown }).modelSelection, selection);
+        assert.deepEqual(refreshed, refreshes ? [fallbackId] : []);
+        const retry = yield* service.delegateTask(scope, request);
+        assert.equal(retry.taskId, first.taskId);
+        assert.lengthOf(commands, 1);
+        if (scenario === "child still preparing") {
+          assert.deepEqual(preparations, [
+            {
+              commandId: (commands[0] as { commandId: CommandId }).commandId,
+              threadId: childThreadId,
+              runId: childRunId,
+            },
+          ]);
+          yield* service.delegateTask(scope, request);
+          assert.lengthOf(preparations, 1);
+          assert.lengthOf(commands, 1);
+        } else {
+          assert.deepEqual(preparations, []);
+        }
+      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+    }),
+  );
 
   it.effect.each(["already advertised", "newly advertised", "still unavailable"] as const)(
     "rechecks a delegated model that is %s",
