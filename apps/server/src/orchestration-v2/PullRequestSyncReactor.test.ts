@@ -2284,6 +2284,19 @@ describe("PullRequestSyncReactor", () => {
       linked: [42],
     },
     {
+      name: "a create whose quoted body substitution starts its heredoc on a later line",
+      input:
+        'gh pr create --title "x" --body "$(\ncat <<\'EOF\'\nA 5" margin; see gh pr status\nuses gh api\nEOF\n)"',
+      output: "https://github.com/owner/repository/pull/42",
+      linked: [42],
+    },
+    {
+      name: "a create whose body quote never closes around repeated heredoc substitutions",
+      input: `gh pr create --body "${"$(<<A\nA\n".repeat(200)}`,
+      output: "https://github.com/owner/repository/pull/42",
+      linked: [42],
+    },
+    {
       name: "a read with no create",
       input: "gh pr view 124 --json url --jq .url",
       output: "https://github.com/owner/repository/pull/124",
