@@ -235,6 +235,15 @@ describe("parseOriginUrlFromGitConfig", () => {
     },
   );
 
+  // A quadratic trim blocks for tens of seconds here, well past the test timeout.
+  it("trims long whitespace runs in linear time", () => {
+    const url = "ssh://git@forge.example/org/repo.git";
+    const padding = " ".repeat(200_000);
+    expect(
+      parseOriginUrlFromGitConfig(`[remote "origin"]\nurl = ${padding}${url}${padding}\n`),
+    ).toBe(url);
+  });
+
   it("reads settings on the remote header line", () => {
     const upstream = '\n[remote "upstream"]\n\turl = https://github.com/other/source.git\n';
     expect(

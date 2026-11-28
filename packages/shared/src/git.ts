@@ -260,8 +260,14 @@ function parseGitConfigValue(raw: string): string {
 
 // Git trims only ASCII whitespace; String#trim would also drop U+2028/U+2029 from a value.
 function trimGitWhitespace(value: string): string {
-  return value.replace(/^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g, "");
+  let start = 0;
+  let end = value.length;
+  while (start < end && GIT_WHITESPACE.has(value[start]!)) start += 1;
+  while (end > start && GIT_WHITESPACE.has(value[end - 1]!)) end -= 1;
+  return value.slice(start, end);
 }
+
+const GIT_WHITESPACE = new Set([" ", "\t", "\n", "\r", "\f", "\v"]);
 
 function isTrueGitConfigValue(value: string): boolean {
   if (value === "true" || value === "yes" || value === "on") return true;
