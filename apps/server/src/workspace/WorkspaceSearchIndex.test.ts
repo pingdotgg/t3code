@@ -579,6 +579,26 @@ it.live("answers content searches with git grep while a slow content index build
       [5, 511, [{ start: 0, end: 5 }]],
     ]);
 
+    // Windows cannot name a file with a newline.
+    if (HostProcess.Platform.defaultValue() !== "win32") {
+      const newlinePath = "src/one\ntwo.txt";
+      yield* fileSystem.writeFileString(path.join(cwd, newlinePath), "unique_lf_needle\n");
+      for (const input of [
+        { query: "unique_lf_needle" },
+        { query: "unique_lf_n.+", useRegex: true },
+      ]) {
+        expect((yield* search({ ...input, caseSensitive: true })).matches).toEqual([
+          {
+            path: newlinePath,
+            lineNumber: 1,
+            lineContent: "unique_lf_needle",
+            matchRanges: [{ start: 0, end: 16 }],
+          },
+        ]);
+      }
+      yield* fileSystem.remove(path.join(cwd, newlinePath));
+    }
+
     isWarmupComplete = true;
     yield* search({});
     expect(grep).toHaveBeenCalledTimes(3);
