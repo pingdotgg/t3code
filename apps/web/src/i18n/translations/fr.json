@@ -5226,6 +5226,7 @@
   "ce6b7e994161e68f": "Ajouter une route",
   "d3ef4f9486e31279": "Ajouter",
   "c246e33dafd359cc": "Ajouter",
+  "d24cc1734912f197": "Gérer dans T3 Connect…",
   "b0c1beb79a87d97b": "Demande d’autorisation",
   "0311d7ed2b7eb2f6": "Ce lien de connexion est incomplet",
   "09e69d04f7e588eb": "Il manque la demande d’autorisation dans le lien. Relancez `t3 connect` dans votre terminal et ouvrez l’URL qui vient d’être affichée.",

@@ -5227,6 +5227,7 @@
   "ce6b7e994161e68f": "Add route",
   "d3ef4f9486e31279": "Add",
   "c246e33dafd359cc": "Add",
+  "d24cc1734912f197": "Manage in T3 Connect…",
   "b0c1beb79a87d97b": "Authorization request",
   "0311d7ed2b7eb2f6": "This connect link is incomplete",
   "09e69d04f7e588eb": "The link is missing its authorization request. Re-run `t3 connect` in your terminal and open the freshly printed URL.",

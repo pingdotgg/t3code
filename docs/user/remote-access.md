@@ -89,7 +89,7 @@ Open a delegated task or thread link on a linked machine to follow it live (read
 Manage pairing links and active client sessions in **Settings → Sharing & access** or via `t3 auth --help`.
 
 - **Scoped tokens**: Pass `--scope <scope>` (repeatable) to `t3 pair`, `t3 auth pairing create`, or `t3 auth session issue` to restrict permissions (e.g. `orchestration:read`, `source-control:write`, `filesystem:read`, `filesystem:write`, `terminal:operate`, `relay:configure`). Re-pair with a fresh link to change an existing client's scopes.
-- **Deregister from T3 Connect**: Open your account menu → **T3 Connect → Deregister** (or `t3 connect unlink` / `t3 connect logout` on CLI hosts). Idle tunnels are automatically cleaned up after 5–10 minutes offline and recreated on reconnect (hosts on older versions offline for 7+ days need an update first).
+- **Deregister from T3 Connect**: Choose **T3 Connect → Deregister** in your account menu, which opens from the avatar at the bottom of the Settings sidebar or from **Manage in T3 Connect…** in the menu of an environment you haven't added on this device (or `t3 connect unlink` / `t3 connect logout` on CLI hosts). Idle tunnels are automatically cleaned up after 5–10 minutes offline and recreated on reconnect (hosts on older versions offline for 7+ days need an update first).
 - Treat pairing URLs and codes as passwords—never paste them into logs or screenshots.
 
 ## Desktop app as a remote only

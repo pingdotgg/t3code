@@ -28,6 +28,9 @@ vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => () => Promise.resolve({ _tag: "Success" })) as never,
 }));
+vi.mock(import("../clerk/T3ConnectAccountPages"), () => ({
+  useT3ConnectAccountPage: () => ({ open: null, portals: null }),
+}));
 
 import { CloudEnvironmentConnectRows } from "./CloudEnvironmentConnectList";
 

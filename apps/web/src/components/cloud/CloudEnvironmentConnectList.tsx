@@ -27,6 +27,7 @@ import type {
   RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
 import * as Option from "effect/Option";
+import { EllipsisIcon } from "lucide-react";
 import { T, useGT, useMessages } from "gt-react";
 import { type ReactNode, useEffect, useEffectEvent, useState } from "react";
 
@@ -36,11 +37,13 @@ import { cn } from "~/lib/utils";
 import { relayEnvironmentDiscovery } from "~/state/relay";
 import { useRelayEnvironmentDiscovery, useRetainedRelayEnvironments } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "../settings/itemRows";
 import { Checkbox } from "../ui/checkbox";
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Skeleton } from "../ui/skeleton";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
@@ -105,6 +108,14 @@ export function CloudEnvironmentConnectRows({
   const gt = useGT();
   const m = useMessages();
   const environmentsState = useRelayEnvironmentDiscovery();
+  const accountPage = useT3ConnectAccountPage();
+  const openAccountPage = accountPage.open;
+  const withPortals = (node: ReactNode) => (
+    <>
+      {node}
+      {accountPage.portals}
+    </>
+  );
   const retainedEnvironments = useRetainedRelayEnvironments();
   // A single row is a machine the user picked: it stays through a refresh, as it does on the map.
   const discovered = only === undefined ? environmentsState.environments : retainedEnvironments;
@@ -309,7 +320,7 @@ export function CloudEnvironmentConnectRows({
     environmentsState.refreshing &&
     environmentsState.environments.size === 0
   ) {
-    return <RemoteEnvironmentRowsSkeleton />;
+    return withPortals(<RemoteEnvironmentRowsSkeleton />);
   }
 
   if (standalone && visibleEnvironments.length === 0) {
@@ -317,7 +328,7 @@ export function CloudEnvironmentConnectRows({
       ? gt("You appear to be offline.")
       : thrownErrorMessage(Option.getOrNull(environmentsState.error), m);
     if (discoveryProblem !== null && !environmentsState.refreshing) {
-      return (
+      return withPortals(
         <div className={ITEM_ROW_CLASSNAME}>
           <p className="text-sm font-medium text-destructive">
             <T>Could not load T3 Connect environments</T>
@@ -331,13 +342,13 @@ export function CloudEnvironmentConnectRows({
           >
             <T>Try again</T>
           </Button>
-        </div>
+        </div>,
       );
     }
-    return empty;
+    return withPortals(empty);
   }
 
-  return visibleEnvironments.map(({ environment, availability, error, status }) => {
+  const rows = visibleEnvironments.map(({ environment, availability, error, status }) => {
     const savedEnvironment = savedById.get(environment.environmentId);
     const compatibilityError = discoveredCompatibilityError(status);
     const unsupported =
@@ -507,34 +518,58 @@ export function CloudEnvironmentConnectRows({
               {statusText}
             </p>
           </div>
-          {unsupported && !savedEnvironment ? (
-            <SharedTooltipTrigger
-              render={<span className="inline-flex" tabIndex={0} />}
-              label={unsupportedDetail ?? gt("Client not supported")}
-            >
-              <Button size="sm" disabled>
-                <T context="verb, adds an environment">Add</T>
+          <div className="flex shrink-0 items-center gap-1">
+            {unsupported && !savedEnvironment ? (
+              <SharedTooltipTrigger
+                render={<span className="inline-flex" tabIndex={0} />}
+                label={unsupportedDetail ?? gt("Client not supported")}
+              >
+                <Button size="sm" disabled>
+                  <T context="verb, adds an environment">Add</T>
+                </Button>
+              </SharedTooltipTrigger>
+            ) : savedConnection ? (
+              <Button size="sm" variant="outline" disabled>
+                {savedConnection.buttonLabel}
               </Button>
-            </SharedTooltipTrigger>
-          ) : savedConnection ? (
-            <Button size="sm" variant="outline" disabled>
-              {savedConnection.buttonLabel}
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              disabled={connectingEnvironmentIds.size > 0}
-              onClick={() => void connectEnvironment(environment)}
-            >
-              {connectingEnvironmentIds.has(environment.environmentId)
-                ? gt("Adding…")
-                : savedWithoutRelay.has(environment.environmentId)
-                  ? gt("Add route")
-                  : gt("Add", { $context: "verb, adds an environment" })}
-            </Button>
-          )}
+            ) : (
+              <Button
+                size="sm"
+                disabled={connectingEnvironmentIds.size > 0}
+                onClick={() => void connectEnvironment(environment)}
+              >
+                {connectingEnvironmentIds.has(environment.environmentId)
+                  ? gt("Adding…")
+                  : savedWithoutRelay.has(environment.environmentId)
+                    ? gt("Add route")
+                    : gt("Add", { $context: "verb, adds an environment" })}
+              </Button>
+            )}
+            {openAccountPage && !savedEnvironment ? (
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost-muted"
+                      size="icon-xs"
+                      aria-label={gt("More actions for {label}", { label: environment.label })}
+                    />
+                  }
+                >
+                  <EllipsisIcon className="size-3.5" />
+                </MenuTrigger>
+                <MenuPopup align="end">
+                  <MenuItem onClick={() => openAccountPage("t3-connect")}>
+                    <T>Manage in T3 Connect…</T>
+                  </MenuItem>
+                </MenuPopup>
+              </Menu>
+            ) : null}
+          </div>
         </div>
       </div>
     );
   });
+  return withPortals(rows);
 }
