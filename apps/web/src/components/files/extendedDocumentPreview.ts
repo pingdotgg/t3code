@@ -59,6 +59,7 @@ async function imageData(archive: JSZip, path: string | null): Promise<string> {
   return `data:image/${mime};base64,${await entry.async("base64")}`;
 }
 let markupBytes = 0;
+const odfNotes: string[] = [];
 function reserveMarkup(size: number) {
   markupBytes += size;
   if (markupBytes > 16 * 1024 * 1024) throw new PreviewError({ code: "rendered-too-large" });
@@ -89,6 +90,17 @@ async function odfHtml(
       `<span data-odf-whitespace>${node.name === "text:tab" ? "&#9;" : " ".repeat(repeat(node.attrs["text:c"], 100))}</span>`,
     );
   if (node.name === "text:line-break") return boundedMarkup("<br>");
+  if (node.name === "text:note") {
+    const mark = `<sup>${escape(find(node, "text:note-citation", "text:note-body").map(text).join(""))}</sup>`;
+    const [body] = find(node, "text:note-body");
+    const html = body ? (await odfHtml(body, archive, listStyles)).trimStart() : "";
+    odfNotes.push(
+      html.startsWith("<p>")
+        ? `<p>${boundedMarkup(mark)}${html.slice(3)}`
+        : `${boundedMarkup(`<p>${mark}</p>`)}${html}`,
+    );
+    return boundedMarkup(mark);
+  }
   if (node.name === "draw:image") {
     const src = await imageData(
       archive,
@@ -219,6 +231,7 @@ export async function openDocument(
   kind: "odt" | "ods" | "odp",
 ): Promise<OfficeWorkerResult> {
   markupBytes = 0;
+  odfNotes.length = 0;
   const content = await archive.file("content.xml")?.async("uint8array");
   if (!content?.length) throw new PreviewError({ code: "odf-no-content" });
   const root = parseXml(officeXmlDecoder(content).decode(content));
@@ -306,9 +319,12 @@ export async function openDocument(
   }
   const rendered = [];
   for (const page of pages) {
+    const html = await odfHtml(page, archive, listStyles);
     rendered.push({
       title: page.attrs["draw:name"] || undefined,
-      html: await odfHtml(page, archive, listStyles),
+      html: odfNotes.length
+        ? `${html}${boundedMarkup("<hr>")}${odfNotes.splice(0).join("")}`
+        : html,
     });
   }
   return { type: "document", navigation: kind === "odp" ? "slide" : "page", pages: rendered };
@@ -543,7 +559,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         continue;
       }
       if (next === "*") {
-        state.skip = true;
+        // Shape instructions are an optional destination, but a text box keeps its text there.
+        if (!/^\*[\r\n]*\\shpinst(?![a-z])/i.test(source.slice(i, i + 16))) state.skip = true;
         i++;
         continue;
       }
@@ -614,6 +631,9 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
           "pict",
           "object",
           "fldinst",
+          // Shape properties, and the drawing that repeats a shape for older readers.
+          "sp",
+          "shprslt",
           "header",
           "headerl",
           "headerr",

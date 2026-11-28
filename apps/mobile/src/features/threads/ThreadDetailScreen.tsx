@@ -21,6 +21,7 @@ import { useAppActive } from "../../lib/appState";
 import {
   effectiveSnoozed,
   threadWokeAt,
+  isIndefiniteSnooze,
   isThreadWokeUnseen,
   snoozeWakeLabel,
 } from "@t3tools/client-runtime/state/thread-settled";
@@ -798,6 +799,7 @@ function ThreadDetailBody(
     const wake =
       lifecycleSnoozed &&
       snoozedUntil !== null &&
+      !isIndefiniteSnooze(snoozedUntil) &&
       Date.parse(snoozedUntil) > Date.parse(lifecycleNow)
         ? snoozeWakeLabel(snoozedUntil, { now: lifecycleNow }, messages)
         : null;

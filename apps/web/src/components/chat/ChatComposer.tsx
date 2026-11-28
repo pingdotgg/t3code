@@ -53,6 +53,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
@@ -145,7 +146,9 @@ import {
   clipboardHtmlImageContent,
   imagesToAttachBesidePastedText,
   shouldHandleComposerAttachmentPaste,
+  readComposerImageBytes,
 } from "./composerAttachmentFiles";
+import { prepareImageForAttachment } from "../../lib/imageCompression";
 import {
   releaseAttachmentUpload,
   releaseDraftAttachment,
@@ -792,7 +795,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectId: activeProjectId ?? undefined,
     expandImage: (imageId: string) => {
       const preview =
-        buildExpandedImagePreview(composerImages, imageId, copyComposerSnapshotStable) ??
+        buildExpandedImagePreview(
+          composerImages,
+          imageId,
+          copyComposerSnapshotStable,
+          saveComposerImageEditStable,
+        ) ??
         buildExpandedImagePreview(
           (activeEditingQueuedAttachments ?? []).flatMap(({ attachment, url }) =>
             isQueuedImageAttachment(attachment) && url ? [{ ...attachment, previewUrl: url }] : [],
@@ -901,6 +909,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const removeComposerDraftImage = useComposerDraftStore((store) => store.removeImage);
+  const replaceComposerDraftImageFile = useComposerDraftStore((store) => store.replaceImageFile);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
   const removeComposerDraftFile = useComposerDraftStore((store) => store.removeFile);
   const insertComposerDraftTerminalContext = useComposerDraftStore(
@@ -1501,6 +1510,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
   };
   const copyComposerSnapshotStable = useStableCallback(copyComposerSnapshot);
+  const saveComposerImageEdit = async (imageId: string, file: File) => {
+    if (questionAttachmentTarget && activePendingIsResponding) return null;
+    const prepared = await prepareImageForAttachment(
+      file,
+      PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+    ).catch(() => null);
+    if (!prepared?.ok) return null;
+    await readComposerImageBytes(prepared.file);
+    // The edited bytes replace the old ones under the same id, so its finished upload is stale.
+    releaseAttachmentUpload(imageId);
+    if (!replaceComposerDraftImageFile(attachmentDraftTarget, imageId, prepared.file)) return null;
+    const stored = getComposerDraft(attachmentDraftTarget)?.images.find(
+      (image) => image.id === imageId,
+    );
+    return stored ? { src: stored.previewUrl, file: stored.file } : null;
+  };
+  const saveComposerImageEditStable = useStableCallback(saveComposerImageEdit);
   const buildContextClipboardFragmentStable = useStableCallback(buildContextClipboardFragment);
   const {
     loadThreadTranscript,
@@ -2688,6 +2714,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         resolvedTheme={resolvedTheme}
         onExpandImage={onExpandImage}
         onCopySnapshot={copyComposerSnapshotStable}
+        onSaveImageEdit={saveComposerImageEditStable}
         onShowMore={expandMobileComposer}
       />
     ) : null;
@@ -3646,6 +3673,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         attachmentDraftTarget={attachmentDraftTarget}
         canOperateThread={canOperateThread}
         onCopySnapshot={copyComposerSnapshotStable}
+        onSaveImageEdit={saveComposerImageEditStable}
         onExpandImage={onExpandImage}
         onFileOpen={onFileOpen}
         onRemoveImage={removeComposerImage}

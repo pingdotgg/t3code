@@ -46,6 +46,7 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { piHome, resolvePiSessionsDir } from "@t3tools/provider-pi/server/usage";
 import * as ServerSettings from "../serverSettings.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import { parseGitfileTarget } from "./worktreeContainer.ts";
 import {
   createTranscriptJsonReader,
   createTranscriptJsonSelector,
@@ -1152,8 +1153,8 @@ export const make = Effect.gen(function* () {
     const pointerTexts = yield* readGitFiles(pointers.map(({ gitPath }) => gitPath));
     const linkedWorktrees: Array<{ directory: string; gitDir: string }> = [];
     for (const { directory, gitPath } of pointers) {
-      const target = /^gitdir:\s*(.+)$/m.exec(pointerTexts.get(gitPath) ?? "")?.[1]?.trim();
-      if (target === undefined || target.length === 0) {
+      const target = parseGitfileTarget(pointerTexts.get(gitPath) ?? "");
+      if (target === undefined) {
         identities.set(directory, { _tag: "NotGit" });
         continue;
       }

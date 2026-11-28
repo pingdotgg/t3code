@@ -95,13 +95,14 @@ function importedPaths(
     while (match !== null) {
       // Bundler queries such as `?worker` or `?url` name the same file.
       const specifier = (match[1] ?? "").replace(/\?.*$/, "");
-      const resolvedPath = specifier.startsWith(".") ? resolveRelative(path, specifier) : specifier;
+      const isRelative = specifier.startsWith(".");
+      const resolvedPath = isRelative ? resolveRelative(path, specifier) : specifier;
       const resolved = stripModuleExtension(resolvedPath);
       const target =
         (exactPaths.has(resolvedPath) ? resolvedPath : undefined) ??
         byModulePath.get(resolved) ??
         byModulePath.get(`${resolved}/index`) ??
-        byModuleName.get(moduleName(resolved));
+        (isRelative ? undefined : byModuleName.get(moduleName(resolved)));
       if (target !== undefined && target !== path) imported.add(target);
       match = IMPORT_SPECIFIER.exec(line);
     }
