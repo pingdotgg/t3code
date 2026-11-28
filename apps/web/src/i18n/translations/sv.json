@@ -10900,6 +10900,7 @@
   "d6845667c3278af2": "Inte autentiserad",
   "7813f10f3f534004": "Status okänd",
   "4f3c3b40b25cac07": "Växla synlighet för versionshanteringskonton",
+  "fc3bfdc366686e4b": "Växla synlighet för versionshanteringskonton: {account}",
   "16ffdd2f02752973": "Växla detaljer för {label}",
   "b98fef2c26258e7b": "Erbjud {label} när ett projekt läggs till eller publiceras",
   "516da46e1bc929e2": "Servermiljö",

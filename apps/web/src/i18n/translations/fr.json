@@ -10892,6 +10892,7 @@
   "d6845667c3278af2": "Non authentifié",
   "7813f10f3f534004": "Statut inconnu",
   "4f3c3b40b25cac07": "Afficher ou masquer le compte de gestion de versions",
+  "fc3bfdc366686e4b": "Afficher ou masquer le compte de gestion de versions: {account}",
   "16ffdd2f02752973": "Afficher ou masquer les détails de {label}",
   "b98fef2c26258e7b": "Proposer {label} lors de l’ajout ou de la publication d’un projet",
   "516da46e1bc929e2": "Environnement serveur",
