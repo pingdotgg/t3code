@@ -3,6 +3,7 @@ import {
   ServerSettings,
   type ServerConfig,
   type ServerConfigStreamEvent,
+  CALM_HOST_PRESSURE,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -77,5 +78,95 @@ describe("applyServerConfigProjection settingsUpdated", () => {
       payload: { settings: decode() },
     } as ServerConfigStreamEvent);
     expect(Option.getOrThrow(next).config).toBe(Option.getOrThrow(current).config);
+  });
+});
+
+describe("applyServerConfigProjection provider catalogs", () => {
+  const provider = (fields: Record<string, unknown>) =>
+    ({
+      instanceId: "claude",
+      checkedAt: "a",
+      models: [],
+      ...fields,
+    }) as unknown as ServerConfig["providers"][number];
+  const projection = (providers: ServerConfig["providers"]) =>
+    Option.some({
+      config: { providers } as unknown as ServerConfig,
+      latestEvent: {} as ServerConfigStreamEvent,
+      source: "cache" as const,
+    });
+  const apply = (current: ReturnType<typeof projection>, event: unknown) =>
+    Option.getOrThrow(applyServerConfigProjection(current, event as ServerConfigStreamEvent)).config
+      .providers[0]!;
+
+  it("keeps held slash commands and skills when the server sends a digest in their place", () => {
+    const slashCommands = [{ name: "compact" }];
+    const skills = [{ name: "review", path: "/skills/review", enabled: true }];
+    const held = provider({
+      slashCommands,
+      skills,
+      catalogDigest: "d1",
+      loadedCatalogDigest: "d1",
+    });
+    const sent = (fields: Record<string, unknown>) =>
+      provider({ slashCommands: [], skills: [], catalogDigest: "d1", ...fields });
+
+    const reconnected = apply(projection([held]), {
+      type: "snapshot",
+      config: { providers: [sent({ checkedAt: "b" })] },
+    });
+    expect(reconnected).toMatchObject({ checkedAt: "b", loadedCatalogDigest: "d1" });
+    expect(reconnected.slashCommands).toBe(slashCommands);
+    expect(reconnected.skills).toBe(skills);
+
+    // A changed catalog keeps the stale lists; the old marker says they need a reload.
+    const { slashCommands: _c, skills: _s, ...delta } = sent({ catalogDigest: "d2" });
+    const changed = apply(projection([held]), {
+      type: "providerStatusDeltas",
+      payload: { providers: [delta] },
+    });
+    expect(changed).toMatchObject({ catalogDigest: "d2", loadedCatalogDigest: "d1" });
+    expect(changed.skills).toBe(skills);
+
+    // Lists cached before digests existed carry over without a marker.
+    const legacy = apply(projection([provider({ slashCommands, skills })]), {
+      type: "providerStatuses",
+      payload: { providers: [sent({})] },
+    });
+    expect(legacy.slashCommands).toBe(slashCommands);
+    expect(legacy.loadedCatalogDigest).toBeUndefined();
+  });
+});
+
+describe("applyServerConfigProjection hostPressureUpdated", () => {
+  it("keeps pressure across a reconnect snapshot from a server that sends it, and drops it once pressure ends", () => {
+    const pressure = (level: "none" | "severe") =>
+      ({
+        type: "hostPressureUpdated",
+        version: 1,
+        payload: { ...CALM_HOST_PRESSURE, memory: level },
+      }) as ServerConfigStreamEvent;
+    const snapshotFrom = (hostPressure: boolean) =>
+      ({
+        type: "snapshot",
+        version: 1,
+        config: { environment: { capabilities: { hostPressure } } },
+      }) as ServerConfigStreamEvent;
+    const snapshot = snapshotFrom(true);
+    // Kept, not dropped: a session that drops it cannot replay the calm to a client still holding severe.
+    const fresh = applyServerConfigProjection(Option.none(), snapshot);
+    expect(Option.getOrThrow(applyServerConfigProjection(fresh, pressure("none")))).toBe(
+      Option.getOrThrow(fresh),
+    );
+    const severe = applyServerConfigProjection(
+      applyServerConfigProjection(Option.none(), snapshot),
+      pressure("severe"),
+    );
+    const reconnected = applyServerConfigProjection(severe, snapshot);
+    expect(Option.getOrThrow(reconnected).config.hostPressure?.memory).toBe("severe");
+    const olderServer = applyServerConfigProjection(severe, snapshotFrom(false));
+    expect(Option.getOrThrow(olderServer).config.hostPressure).toBeUndefined();
+    const ended = applyServerConfigProjection(reconnected, pressure("none"));
+    expect(Option.getOrThrow(ended).config.hostPressure).toBeUndefined();
   });
 });

@@ -42,11 +42,12 @@ vi.mock("@effect/atom-react", () => ({
 }));
 vi.mock("../../state/preferences", () => ({
   mobilePreferencesAtom: {},
-  updateMobilePreferencesAtom: {},
+  saveMobilePreferences: {},
 }));
 vi.mock("./components/AutoSettleDaysField", () => ({ AutoSettleDaysField: () => null }));
-vi.mock("./components/SourceControlSignInSection", () => ({
-  SourceControlSignInSection: () => null,
+vi.mock("./components/IssueTrackerSection", () => ({ IssueTrackerSection: () => null }));
+vi.mock("./components/SourceControlProvidersSection", () => ({
+  SourceControlProvidersSection: () => null,
 }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({}) }));

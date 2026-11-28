@@ -2,13 +2,16 @@ import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { HomeProjectScope } from "../home/homeThreadList";
+import { buildHomeProjectScopes, type HomeProjectScope } from "../home/homeThreadList";
 import {
   getProjectScopeSelectionTarget,
+  isSameRepository,
   newTaskDestination,
+  newTaskFilteredProject,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
   resolveNewTaskScratchOption,
+  workspaceFolderName,
 } from "./new-task-project-selection";
 
 function makeProject(
@@ -58,6 +61,29 @@ function makeScope(projects: ReadonlyArray<EnvironmentProject>): HomeProjectScop
 }
 
 describe("getProjectScopeSelectionTarget", () => {
+  it("chooses an open copy of a repository over an archived copy on the preferred machine", () => {
+    const repo = { repositoryKey: "github.com/t3tools/t3code" };
+    const archived = {
+      ...makeProject("archived-copy", "mac", repo),
+      archivedAt: "2026-07-02T00:00:00.000Z",
+    };
+    const open = makeProject("open-copy", "server", repo);
+    const [scope] = buildHomeProjectScopes({
+      projects: [archived, open],
+      environmentId: null,
+      projectGroupingMode: "repository",
+    });
+    if (!scope || scope.archived) throw new Error("Expected a pickable repository group");
+
+    expect(
+      getProjectScopeSelectionTarget(
+        scope,
+        archived.environmentId,
+        new Set([archived.environmentId, open.environmentId]),
+      ).id,
+    ).toBe(open.id);
+  });
+
   it("prefers a connected copy of a project that spans environments", () => {
     const mac = makeProject("t3code", "mac");
     const server = makeProject("t3code", "server");
@@ -75,6 +101,60 @@ describe("getProjectScopeSelectionTarget", () => {
     expect(target([], "server")).toBe(server);
     expect(target([])).toBe(mac);
   });
+
+  it("starts in the repository root over an earlier sub-folder in the same environment", () => {
+    const identity = (project: EnvironmentProject) => ({
+      ...project.repositoryIdentity!,
+      rootPath: "/work/workspace",
+    });
+    const base = makeProject("old-tool", "mac", {
+      workspaceRoot: "/work/workspace/_archive/old-tool",
+      repositoryKey: "github.com/owner/workspace",
+    });
+    const subfolder = { ...base, repositoryIdentity: identity(base) };
+    const root = {
+      ...makeProject("workspace", "mac", { workspaceRoot: "/work/workspace" }),
+      repositoryIdentity: identity(base),
+    };
+    expect(
+      getProjectScopeSelectionTarget(
+        { ...makeScope([subfolder, root]), representative: root },
+        EnvironmentId.make("mac"),
+        new Set([EnvironmentId.make("mac")]),
+      ),
+    ).toBe(root);
+  });
+});
+
+describe("newTaskFilteredProject", () => {
+  it("never starts in an archived copy of the filtered project", () => {
+    const mac = { ...makeProject("t3code", "mac"), archivedAt: "2026-01-01T00:00:00.000Z" };
+    const server = makeProject("t3code", "server");
+    expect(
+      newTaskFilteredProject(
+        makeScope([mac, server]),
+        null,
+        new Set([mac.environmentId, server.environmentId]),
+        { environmentId: "mac", projectId: "t3code" },
+      ),
+    ).toEqual({ environmentId: "server", projectId: "t3code" });
+  });
+
+  it("prefers the remembered copy of the filtered project", () => {
+    const mac = makeProject("t3code", "mac");
+    const server = makeProject("t3code", "server");
+    const connected = new Set([mac.environmentId, server.environmentId]);
+    const filtered = (last?: { readonly environmentId: string; readonly projectId: string }) =>
+      newTaskFilteredProject(makeScope([mac, server]), null, connected, last);
+    expect(filtered({ environmentId: "server", projectId: "t3code" })).toEqual({
+      environmentId: "server",
+      projectId: "t3code",
+    });
+    expect(filtered({ environmentId: "server", projectId: "other" })).toEqual({
+      environmentId: "mac",
+      projectId: "t3code",
+    });
+  });
 });
 
 describe("resolveEnvironmentProjectMatch", () => {
@@ -85,6 +165,7 @@ describe("resolveEnvironmentProjectMatch", () => {
       makeProject("t3code-clone", "server", { repositoryKey: "github.com/t3tools/t3code" }),
     ];
     expect(resolveEnvironmentProjectMatch(target, selected)).toBe(target[1]);
+    expect(isSameRepository(target[1]!, selected)).toBe(true);
   });
 
   it("falls back to workspace basename, then title, for unindexed projects", () => {
@@ -94,12 +175,30 @@ describe("resolveEnvironmentProjectMatch", () => {
       makeProject("srv", "server", { workspaceRoot: "/home/me/t3code" }),
     ];
     expect(resolveEnvironmentProjectMatch(byBasename, selected)).toBe(byBasename[1]);
+    expect(isSameRepository(byBasename[1]!, selected)).toBe(false);
 
     const byTitle = [
       makeProject("other", "server"),
       makeProject("srv", "server", { title: "t3code" }),
     ];
     expect(resolveEnvironmentProjectMatch(byTitle, selected)).toBe(byTitle[1]);
+  });
+
+  it("matches workspace folder names across Windows and POSIX hosts", () => {
+    const windows = makeProject("win", "windows", {
+      title: "T3 Code",
+      workspaceRoot: "C:\\Users\\me\\t3code",
+    });
+    const mac = makeProject("mac", "mac", {
+      title: "t3 (mac)",
+      workspaceRoot: "/Users/me/t3code/",
+    });
+    const other = makeProject("other", "server");
+
+    expect(resolveEnvironmentProjectMatch([other, mac], windows)).toBe(mac);
+    expect(resolveEnvironmentProjectMatch([other, windows], mac)).toBe(windows);
+    const otherDrive = makeProject("d", "windows-2", { workspaceRoot: "D:/src/t3code" });
+    expect(resolveEnvironmentProjectMatch([other, otherDrive], windows)).toBe(otherDrive);
   });
 
   it("does not treat a known different repository as a basename or title match", () => {
@@ -115,6 +214,18 @@ describe("resolveEnvironmentProjectMatch", () => {
     const unindexed = makeProject("unindexed", "server", { workspaceRoot: "/srv/t3code" });
     expect(resolveEnvironmentProjectMatch([fork, unindexed], selected)).toBe(unindexed);
     expect(resolveEnvironmentProjectMatch([fork], selected)).toBe(fork);
+    expect(isSameRepository(fork, selected)).toBe(false);
+  });
+});
+
+describe("workspaceFolderName", () => {
+  it("gives volume roots and empty placeholders no folder name", () => {
+    for (const root of ["", "/", "\\", "C:", "C:\\", "c:/"]) {
+      expect(workspaceFolderName(root)).toBeNull();
+    }
+    expect(workspaceFolderName("C:\\Users\\me\\t3code\\")).toBe("t3code");
+    expect(workspaceFolderName("\\\\server\\share")).toBe("share");
+    expect(workspaceFolderName("/home/me/t3code//")).toBe("t3code");
   });
 });
 
@@ -164,6 +275,30 @@ describe("resolveDraftProjectSelection", () => {
       }),
     ).toEqual({ kind: "pick" });
   });
+
+  it("starts a share draft in the last project when Use last project is on", () => {
+    const scopes = [makeScope([projects[0]!]), makeScope([projects[1]!])];
+    const shareDraft = {
+      incomingShareId: "share",
+      pickerClosed: false,
+      useLastProject: undefined,
+      lastProject: { environmentId: "environment", projectId: "t3code-2" },
+    };
+    expect(resolveDraftProjectSelection(null, projects, scopes, shareDraft)).toEqual({
+      kind: "select",
+      project: projects[1],
+    });
+    expect(
+      resolveDraftProjectSelection(null, projects, scopes, {
+        ...shareDraft,
+        useLastProject: false,
+      }),
+    ).toEqual({ kind: "pick" });
+    const archived = [projects[0]!, { ...projects[1]!, archivedAt: "2026-07-02T00:00:00.000Z" }];
+    expect(resolveDraftProjectSelection(null, archived, scopes, shareDraft)).toEqual({
+      kind: "pick",
+    });
+  });
 });
 
 describe("newTaskDestination", () => {
@@ -173,6 +308,7 @@ describe("newTaskDestination", () => {
     readonly useLastProject: boolean | undefined;
     readonly projects: ReadonlyArray<EnvironmentProject>;
     readonly current?: EnvironmentProject;
+    readonly filtered?: EnvironmentProject;
     readonly last?: { readonly environmentId: string; readonly projectId: string };
   }) {
     return newTaskDestination({
@@ -183,21 +319,40 @@ describe("newTaskDestination", () => {
         environmentId: options.current.environmentId,
         projectId: options.current.id,
       },
+      filteredProject: options.filtered && {
+        environmentId: options.filtered.environmentId,
+        projectId: options.filtered.id,
+      },
       lastProject: options.last,
     });
   }
 
-  it("starts in the current thread's project ahead of the remembered one", () => {
+  it("starts in the current thread's project ahead of the filtered and remembered ones", () => {
     const projects = [makeProject("remembered"), makeProject("current", "other-environment")];
     expect(
       destination({
         useLastProject: true,
         projects,
         current: projects[1],
+        filtered: projects[0],
         last: { environmentId: "environment", projectId: "remembered" },
       }),
     ).toEqual({
       draft: { requestId: "request", environmentId: "other-environment", projectId: "current" },
+    });
+  });
+
+  it("starts in the thread list's filtered project ahead of the remembered one", () => {
+    const projects = [makeProject("bravo"), makeProject("alpha")];
+    expect(
+      destination({
+        useLastProject: true,
+        projects,
+        filtered: projects[1],
+        last: { environmentId: "environment", projectId: "bravo" },
+      }),
+    ).toEqual({
+      draft: { requestId: "request", environmentId: "environment", projectId: "alpha" },
     });
   });
 
@@ -262,6 +417,7 @@ describe("newTaskDestination", () => {
         useLastProject: false,
         projects: [only],
         current: only,
+        filtered: only,
         last: { environmentId: "environment", projectId: "only" },
       }),
     ).toEqual(picker);

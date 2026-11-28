@@ -1,0 +1,15 @@
+{
+  "defaultLocale": "en",
+  "locales": ["es", "zh", "pt-BR", "fr", "de", "ja", "ko", "pl", "ru", "sv"],
+  "src": [
+    "src/**/*.{ts,tsx}",
+    "../../packages/client-runtime/src/**/*.{ts,tsx}",
+    "../../packages/shared/src/**/*.{ts,tsx}",
+    "!**/*.test.{ts,tsx}"
+  ],
+  "files": {
+    "gt": {
+      "output": "src/i18n/translations/[locale].json"
+    }
+  }
+}

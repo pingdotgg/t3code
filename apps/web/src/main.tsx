@@ -4,25 +4,20 @@ import ReactDOM from "react-dom/client";
 import "@fontsource-variable/inter";
 import "./index.css";
 
+import { trackKeyboardLayout } from "./keyboardLayout";
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { isElectron } from "./env";
 import { startAppServices } from "./appInit";
 import { AppRoot } from "./AppRoot";
-import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
+import { whenLocaleReady } from "./i18n/runtime";
+import { chunkLoadState } from "./lib/chunkReloadGuard";
+
+const stopTrackingKeyboardLayout = trackKeyboardLayout();
+import.meta.hot?.dispose(stopTrackingKeyboardLayout);
 
 const router = startAppServices();
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
-
-let chunkLoadFailed = false;
-let reloadScheduled = false;
-window.addEventListener("vite:preloadError", (event) => {
-  chunkLoadFailed = true;
-  if (reloadOnceForChunkLoadError()) {
-    reloadScheduled = true;
-    event.preventDefault();
-  }
-});
 
 const app = <AppRoot router={router} />;
 
@@ -36,12 +31,12 @@ const managedAuthShellModule =
 
 export const startup = Promise.all([
   managedAuthShellModule?.then((module) => module.default) ?? null,
-  router.load(),
+  // Chained so settings have usually hydrated; English resolves without a chunk load.
+  router.load().then(whenLocaleReady),
 ])
   .then(([ManagedAuthShell]) => {
     // Route chunk failures resolve router.load() and surface later through the error boundary.
-    if (reloadScheduled) return;
-    if (!chunkLoadFailed) clearChunkReloadGuard();
+    if (chunkLoadState.reloadScheduled) return;
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
         {ManagedAuthShell && clerkPublishableKey ? (
@@ -53,6 +48,6 @@ export const startup = Promise.all([
     );
   })
   .catch((error: unknown) => {
-    if (reloadScheduled) return;
+    if (chunkLoadState.reloadScheduled) return;
     throw error;
   });

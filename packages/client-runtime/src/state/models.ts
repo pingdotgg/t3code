@@ -12,13 +12,17 @@ import type {
   OrchestrationV2ThreadShell,
   PlanId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
+import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 
 export interface EnvironmentProject extends OrchestrationProjectShell {
   readonly environmentId: EnvironmentId;
@@ -89,6 +93,19 @@ export interface ThreadRunSummary {
    * generating while the server settles it.
    */
   readonly turnEnded?: boolean;
+  /**
+   * Set while the run is open but its provider has not started a turn, so the
+   * provider is still launching and nothing is generating. Clients show it
+   * instead of "Thinking".
+   */
+  readonly providerStartingLabel?: string;
+  /** `providerStartingLabel` as a `msg()` string; display sites resolve this one. */
+  readonly providerStartingLabelMsg?: string;
+  /** The starting provider, so clients can show its logo beside the label. */
+  readonly providerStarting?: {
+    readonly instanceId: ProviderInstanceId;
+    readonly driver: ProviderDriverKind;
+  };
   readonly sourcePlanRef?: {
     readonly threadId: ThreadId;
     readonly planId: PlanId;
@@ -104,6 +121,8 @@ export interface ThreadRuntimeSummary {
   readonly lastError: string | null;
   readonly lastErrorClass?: OrchestrationV2ProviderFailureClass | null;
   readonly lastErrorCode?: string | null;
+  /** The record `lastError` came from, with its change time so a repeated failure differs. */
+  readonly lastErrorSource?: string | null;
   readonly usageLimitResetAt?: string | null;
   readonly updatedAt: string;
 }
@@ -113,6 +132,34 @@ export type ThreadStructureRuntime = Omit<ThreadRuntimeSummary, "updatedAt">;
 
 export function threadRuntimeIsActive(runtime: ThreadStructureRuntime | null | undefined): boolean {
   return runtime !== null && runtime !== undefined && threadRunStatusIsActive(runtime.status);
+}
+
+export function resolveThreadConnectionStatus(
+  thread: Pick<EnvironmentThreadShell, "connectionPhase" | "runtime"> & {
+    readonly pendingBackgroundTasks?: EnvironmentThreadShell["pendingBackgroundTasks"] | undefined;
+  },
+): "connecting" | "reconnecting" | "offline" | null {
+  if (
+    !threadRuntimeIsActive(thread.runtime) &&
+    !(
+      thread.runtime?.status === "idle" &&
+      backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+    )
+  )
+    return null;
+  switch (thread.connectionPhase) {
+    case "connecting":
+      return "connecting";
+    case "reconnecting":
+      return "reconnecting";
+    case "available":
+    case "offline":
+    case "error":
+    case "unsupported":
+      return "offline";
+    default:
+      return null;
+  }
 }
 
 export function threadRuntimeCanArchive(runtime: ThreadRuntimeSummary | null | undefined): boolean {
@@ -136,6 +183,7 @@ function threadRunStatusIsActive(status: ThreadRuntimeSummary["status"]): boolea
 
 export interface EnvironmentThreadShell {
   readonly environmentId: EnvironmentId;
+  readonly connectionPhase?: EnvironmentConnectionPhase | undefined;
   readonly id: ThreadId;
   readonly projectId: ProjectId;
   readonly title: string;
@@ -150,6 +198,8 @@ export interface EnvironmentThreadShell {
   readonly linkOrigin: OrchestrationV2ThreadShell["linkOrigin"] | null;
   /** The thread in a linked environment that delegated this one, if one did. */
   readonly delegatedFrom: OrchestrationV2ThreadShell["delegatedFrom"] | null;
+  /** The workflow run this thread is an agent step of, if it is one. */
+  readonly workflowRun: OrchestrationV2ThreadShell["workflowRun"] | null;
   readonly activeProviderThreadId: OrchestrationV2ThreadShell["activeProviderThreadId"];
   readonly latestRun: ThreadRunSummary | null;
   readonly runtime: ThreadRuntimeSummary | null;
@@ -186,6 +236,8 @@ export interface EnvironmentThreadShell {
   readonly pullRequests: ReadonlyArray<import("@t3tools/contracts").ThreadPullRequestLink>;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   readonly branchPullRequest?: ThreadLinkedPullRequest | null;
+  /** Absent from rows built before issue linking; the server sends an empty list. */
+  readonly issues?: ReadonlyArray<import("@t3tools/contracts").ThreadIssueLink>;
   /**
    * Server-tracked visited watermark. `undefined` means the environment's
    * server predates visited tracking and clients should fall back to any
@@ -225,7 +277,7 @@ function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary 
   const parkAtIdle =
     backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
     thread.status !== "failed";
-  if (thread.latestRunId === null && thread.activeProviderThreadId === null && !parkAtIdle) {
+  if (thread.latestRunId === null && !parkAtIdle) {
     return null;
   }
   const status = parkAtIdle ? "idle" : (thread.activityRunStatus ?? thread.status);
@@ -295,10 +347,12 @@ export function presentThreadShell(
     pullRequests: threadPullRequestsOf(thread),
     linkedPullRequest: thread.linkedPullRequest ?? null,
     branchPullRequest: thread.branchPullRequest ?? null,
+    issues: thread.issues ?? [],
     lineage: thread.lineage,
     forkedFrom: thread.forkedFrom,
     linkOrigin: thread.linkOrigin ?? null,
     delegatedFrom: thread.delegatedFrom ?? null,
+    workflowRun: thread.workflowRun ?? null,
     activeProviderThreadId: thread.activeProviderThreadId,
     latestRun,
     runtime,
@@ -361,16 +415,6 @@ export function scopeThreadShell(
   return presentThreadShell(environmentId, thread);
 }
 
-const THREAD_PROVIDER_STACK_LIMIT = 3;
-
-export function resolveThreadProviderStack(
-  thread: Pick<EnvironmentThreadShell, "providerInstanceHistory" | "modelSelection" | "runtime">,
-): ReadonlyArray<ProviderInstanceId> {
-  const current = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
-  const previous = thread.providerInstanceHistory.filter((instanceId) => instanceId !== current);
-  return [...previous.slice(-(THREAD_PROVIDER_STACK_LIMIT - 1)), current];
-}
-
 /**
  * Both shell and detail timers count from the activity-owning run's work
  * start, never last activity. A wake keeps the start of the work it continues.
@@ -392,10 +436,15 @@ export function resolveThreadWorkingStartedAt(input: {
   return null;
 }
 
-export function formatWorkingDurationLabel(elapsedMs: number): string {
+export function formatWorkingDurationLabel(
+  elapsedMs: number,
+  resolve: MFunctionType = mFallback,
+): string {
   const seconds = Number.isFinite(elapsedMs) ? Math.max(0, Math.floor(elapsedMs / 1000)) : 0;
-  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 60) return resolve(msg("{count}s", { count: seconds }));
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  if (minutes < 60) return resolve(msg("{count}m", { count: minutes }));
+  return resolve(
+    msg("{hours}h {minutes}m", { hours: Math.floor(minutes / 60), minutes: minutes % 60 }),
+  );
 }

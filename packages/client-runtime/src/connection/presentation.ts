@@ -1,6 +1,10 @@
 import type { ServerConfig } from "@t3tools/contracts";
+import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import * as Option from "effect/Option";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
+import { type MarkedText, resolveMarkedText } from "../errors/translatable.ts";
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import type { ConnectionTarget, SupervisorConnectionState } from "./model.ts";
 import { connectionRouteId, connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
@@ -17,7 +21,14 @@ export type EnvironmentConnectionPhase =
 export interface EnvironmentConnectionPresentation {
   readonly phase: EnvironmentConnectionPhase;
   readonly error: string | null;
+  /** `error` as marked text, when the failure carries it. Read both through `connectionErrorText`. */
+  readonly i18nError?: MarkedText;
   readonly traceId: string | null;
+  /**
+   * Set while reconnecting because the host has not approved this device yet. `error` then
+   * says where to approve it and shows the code, and is not a failure.
+   */
+  readonly awaitingApproval?: true;
 }
 
 /**
@@ -31,11 +42,33 @@ export interface EnvironmentPresentation {
   readonly entry: ConnectionCatalogEntry;
   readonly connection: EnvironmentConnectionPresentation;
   readonly serverConfig: EnvironmentServerConfig | null;
+  /** See `SupervisorConnectionState.refusedRouteIds`. */
+  readonly refusedRouteIds: ReadonlyArray<string>;
+}
+
+function failureError(
+  failure: SupervisorConnectionState["lastFailure"],
+): Pick<EnvironmentConnectionPresentation, "error" | "i18nError" | "traceId"> {
+  return {
+    error: failure?.message ?? null,
+    ...(failure?.i18nMessage !== undefined ? { i18nError: failure.i18nMessage } : {}),
+    traceId: failure?.traceId ?? null,
+  };
 }
 
 export function presentConnectionState(
   state: SupervisorConnectionState,
 ): EnvironmentConnectionPresentation {
+  if (
+    (state.phase === "connecting" || state.phase === "backoff") &&
+    state.lastFailure?.reason === "approval-pending"
+  ) {
+    return {
+      phase: "reconnecting",
+      ...failureError(state.lastFailure),
+      awaitingApproval: true,
+    };
+  }
   switch (state.phase) {
     case "available":
       return { phase: "available", error: null, traceId: null };
@@ -44,54 +77,75 @@ export function presentConnectionState(
     case "connecting":
       return {
         phase: state.attempt <= 1 && state.lastFailure === null ? "connecting" : "reconnecting",
-        error: state.lastFailure?.message ?? null,
-        traceId: state.lastFailure?.traceId ?? null,
+        ...failureError(state.lastFailure),
       };
     case "connected":
       return { phase: "connected", error: null, traceId: null };
     case "backoff":
       return {
         phase: "reconnecting",
-        error: state.lastFailure?.message ?? null,
-        traceId: state.lastFailure?.traceId ?? null,
+        ...failureError(state.lastFailure),
       };
     case "blocked":
       return {
         phase: state.lastFailure?.reason === "unsupported" ? "unsupported" : "error",
-        error: state.lastFailure?.message ?? null,
-        traceId: state.lastFailure?.traceId ?? null,
+        ...failureError(state.lastFailure),
       };
   }
 }
 
-export function connectionStatusText(connection: EnvironmentConnectionPresentation): string {
+/** The connection's error in the active language, or null when it has none. */
+export function connectionErrorText(
+  connection: Pick<EnvironmentConnectionPresentation, "error" | "i18nError">,
+  resolve: MFunctionType = mFallback,
+): string | null {
+  if (connection.error === null) return null;
+  return connection.i18nError !== undefined
+    ? resolveMarkedText(connection.i18nError, resolve)
+    : connection.error;
+}
+
+export function connectionStatusText(
+  connection: EnvironmentConnectionPresentation,
+  resolve: MFunctionType = mFallback,
+): string {
+  const error = connectionErrorText(connection, resolve);
   switch (connection.phase) {
     case "available":
-      return "Available";
+      return resolve(msg("Available", { $context: "connection status" }));
     case "offline":
-      return "Offline";
+      return resolve(msg("Offline", { $context: "connection status" }));
     case "connecting":
-      return "Connecting...";
+      return resolve(msg("Connecting..."));
     case "reconnecting":
-      return connection.error
-        ? `Failed to connect. Reconnecting... Reason: ${connection.error}`
-        : "Reconnecting...";
+      if (connection.awaitingApproval) {
+        return error ?? resolve(msg("Waiting for approval on the host"));
+      }
+      return error
+        ? resolve(msg("Failed to connect. Reconnecting... Reason: {error}", { error }))
+        : resolve(msg("Reconnecting..."));
     case "connected":
-      return "Connected";
+      return resolve(msg("Connected", { $context: "connection status" }));
     case "unsupported":
-      return "Client not supported";
+      return resolve(msg("Client not supported"));
     case "error":
-      return connection.error
-        ? `Connection failed. Reason: ${connection.error}`
-        : "Connection failed";
+      return error
+        ? resolve(msg("Connection failed. Reason: {error}", { error }))
+        : resolve(msg("Connection failed"));
   }
 }
 
-export function connectionStatusTitle(connection: EnvironmentConnectionPresentation): string {
-  if (connection.phase === "reconnecting" && connection.error) {
-    return "Failed to connect. Reconnecting...";
+export function connectionStatusTitle(
+  connection: EnvironmentConnectionPresentation,
+  resolve: MFunctionType = mFallback,
+): string {
+  if (connection.awaitingApproval) {
+    return resolve(msg("Waiting for approval"));
   }
-  return connectionStatusText({ ...connection, error: null });
+  if (connection.phase === "reconnecting" && connection.error) {
+    return resolve(msg("Failed to connect. Reconnecting..."));
+  }
+  return connectionStatusText({ ...connection, error: null }, resolve);
 }
 
 /**
@@ -117,6 +171,22 @@ export function environmentMcpUrl(input: {
     if (mcpUrl !== null) return mcpUrl;
   }
   return null;
+}
+
+/**
+ * The MCP address for the environment this app runs. Agents only sign in over https or
+ * loopback, so a plain-http LAN address is not offered.
+ */
+export function localEnvironmentMcpUrl(input: {
+  readonly entry: ConnectionCatalogEntry;
+}): string | null {
+  const mcpUrl = environmentMcpUrl({ entry: input.entry });
+  return mcpUrl !== null && isAgentSignInMcpUrl(mcpUrl) ? mcpUrl : null;
+}
+
+function isAgentSignInMcpUrl(mcpUrl: string): boolean {
+  const url = new URL(mcpUrl);
+  return url.protocol === "https:" || isLocalLoopbackHost(url.hostname);
 }
 
 function mcpUrlFromBase(httpBaseUrl: string): string | null {

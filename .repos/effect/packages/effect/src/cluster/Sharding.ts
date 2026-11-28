@@ -288,6 +288,12 @@ const make = Effect.gen(function*() {
   const selfShards = MutableHashSet.empty<ShardId>()
   // open while shard lock storage is healthy
   const shardLocksHealthyLatch = Latch.makeUnsafe(true)
+  // Empty liveness probes do not prove that the lock connection has recovered.
+  let shardLocksFailingSince: number | undefined
+  const shardLockExpirationMillis = Duration.toMillis(config.shardLockExpiration)
+  const shardLocksExpired = () =>
+    shardLocksFailingSince !== undefined &&
+    clock.currentTimeMillisUnsafe() - shardLocksFailingSince >= shardLockExpirationMillis
 
   // the active shards are the ones that we have acquired the lock for
   const acquiredShards = MutableHashSet.empty<ShardId>()
@@ -699,6 +705,7 @@ const make = Effect.gen(function*() {
 
     const markShardLocksUnhealthy = (cause: Cause.Cause<unknown>) =>
       Effect.suspend(() => {
+        shardLocksFailingSince ??= clock.currentTimeMillisUnsafe()
         if (!shardLocksHealthyLatch.closeUnsafe()) return Effect.void
 
         const affectedShards = MutableHashSet.fromIterable([...acquiredShards, ...releasingShards])
@@ -738,7 +745,10 @@ const make = Effect.gen(function*() {
       const refreshed = [...acquiredShards, ...releasingShards]
       return Effect.map(
         runnerStorage.refresh(selfAddress, refreshed),
-        (acquired) => releaseLostShards(refreshed, acquired)
+        (acquired) => {
+          shardLocksFailingSince = undefined
+          return releaseLostShards(refreshed, acquired)
+        }
       )
     }).pipe(
       Effect.retry({
@@ -1472,7 +1482,11 @@ const make = Effect.gen(function*() {
 
     while (true) {
       // Ensure the current runner is registered
-      if (selfRunner && !isShutdown.current && !MutableHashMap.has(allRunners, selfRunner)) {
+      if (selfRunner && shardLocksExpired()) {
+        if (MutableHashMap.has(allRunners, selfRunner)) {
+          yield* withRegistrationLock(withTimeout(runnerStorage.unregister(selfRunner.address)))
+        }
+      } else if (selfRunner && !isShutdown.current && !MutableHashMap.has(allRunners, selfRunner)) {
         yield* withRegistrationLock(Effect.gen(function*() {
           if (isShutdown.current) return
           yield* Effect.logDebug("Registering runner", selfRunner)
@@ -1550,7 +1564,7 @@ const make = Effect.gen(function*() {
       healthyRunnerCount = MutableHashSet.size(healthyRunners)
 
       // Ensure the current runner is registered
-      if (selfRunner && !isShutdown.current && !MutableHashMap.has(allRunners, selfRunner)) {
+      if (selfRunner && !isShutdown.current && !shardLocksExpired() && !MutableHashMap.has(allRunners, selfRunner)) {
         continue
       }
 

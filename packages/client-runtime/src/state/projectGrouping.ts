@@ -9,7 +9,9 @@ import {
 import type { ClientSettings } from "@t3tools/contracts/settings";
 
 import type { EnvironmentProject } from "./models.ts";
-import { normalizeProjectPathForComparison } from "./projects.ts";
+import { normalizeProjectPathForComparison, preferredPathSeparator } from "./projects.ts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 const SCRATCH_PROJECT_SCOPE_KEY = "\0no-project";
 
@@ -59,13 +61,44 @@ function deriveRepositoryRelativeProjectPath(
     return "";
   }
 
-  const separator = normalizedRootPath.includes("\\") ? "\\" : "/";
-  const rootPrefix = `${normalizedRootPath}${separator}`;
+  const separator = preferredPathSeparator(normalizedRootPath);
+  // A volume root such as `/` or `d:\` already ends with its separator.
+  const rootPrefix = normalizedRootPath.endsWith(separator)
+    ? normalizedRootPath
+    : `${normalizedRootPath}${separator}`;
   if (!normalizedProjectPath.startsWith(rootPrefix)) {
     return null;
   }
 
-  return normalizedProjectPath.slice(rootPrefix.length).replaceAll("\\", "/");
+  const relativePath = normalizedProjectPath.slice(rootPrefix.length);
+  return separator === "\\" ? relativePath.replaceAll("\\", "/") : relativePath;
+}
+
+/** The project's workspace root is its repository's git top-level, not a sub-folder. */
+export function isRepositoryRootProject(
+  project: Pick<EnvironmentProject, "workspaceRoot" | "repositoryIdentity">,
+): boolean {
+  return deriveRepositoryRelativeProjectPath(project) === "";
+}
+
+/** A group's default checkout for new threads: its repository root, else its first member. */
+export function selectGroupDefaultProject<
+  TProject extends Pick<EnvironmentProject, "workspaceRoot" | "repositoryIdentity">,
+>(projects: ReadonlyArray<TProject>): TProject | undefined {
+  return projects.find(isRepositoryRootProject) ?? projects[0];
+}
+
+/**
+ * The members a group's icon falls back to, in order, when its representative has no icon.
+ * A repository root often has none while a project nested in it does.
+ */
+export function groupIconFallbacks<
+  TProject extends Pick<EnvironmentProject, "environmentId" | "id">,
+>(members: ReadonlyArray<TProject>, representative: Pick<TProject, "environmentId" | "id">) {
+  return members.filter(
+    (member) =>
+      member.environmentId !== representative.environmentId || member.id !== representative.id,
+  );
 }
 
 export function derivePhysicalProjectKeyFromPath(environmentId: string, cwd: string): string {
@@ -163,6 +196,23 @@ export function deriveLogicalProjectKeyFromSettings(
   });
 }
 
+/** The checkout a new thread in `project`'s group starts in on its environment: the group's root. */
+export function resolveGroupDefaultProject<TProject extends EnvironmentProject>(
+  project: TProject,
+  projects: ReadonlyArray<TProject>,
+  settings: ProjectGroupingSettings,
+): TProject {
+  const groupKey = deriveLogicalProjectKeyFromSettings(project, settings);
+  return (
+    projects.find(
+      (candidate) =>
+        candidate.environmentId === project.environmentId &&
+        isRepositoryRootProject(candidate) &&
+        deriveLogicalProjectKeyFromSettings(candidate, settings) === groupKey,
+    ) ?? project
+  );
+}
+
 export function resolveScratchProjectScopeKey(
   key: string | null,
   projects: ReadonlyArray<
@@ -199,9 +249,26 @@ export function resolveScratchProjectScopeKey(
 }
 
 export function deriveProjectGroupLabel(input: {
+  readonly groupKey: string;
   readonly representative: Pick<EnvironmentProject, "title" | "repositoryIdentity">;
-  readonly members: ReadonlyArray<Pick<EnvironmentProject, "title" | "repositoryIdentity">>;
+  readonly members: ReadonlyArray<
+    Pick<EnvironmentProject, "title" | "hasCustomTitle" | "repositoryIdentity" | "workspaceRoot">
+  >;
 }): string {
+  // A rename reaches only the checkouts that exist at that moment; one added later, on any
+  // environment, still has its folder title. A renamed subfolder doesn't name the repository.
+  const isSubfolderOfRepositoryGroup = (member: (typeof input.members)[number]) =>
+    member.repositoryIdentity != null &&
+    input.groupKey === repositoryGroupingKeyOf(member.repositoryIdentity) &&
+    Boolean(deriveRepositoryRelativeProjectPath(member));
+  const renamedTitles = uniqueNonEmptyValues(
+    input.members
+      .filter((member) => member.hasCustomTitle === true && !isSubfolderOfRepositoryGroup(member))
+      .map((member) => member.title),
+  );
+  if (renamedTitles.length === 1) {
+    return renamedTitles[0]!;
+  }
   const sharedTitles = uniqueNonEmptyValues(input.members.map((member) => member.title));
   const sharedDisplayNames = uniqueNonEmptyValues(
     input.members.map((member) =>
@@ -215,8 +282,8 @@ export function deriveProjectGroupLabel(input: {
   if (
     sharedTitles.length === 1 &&
     sharedTitle !== undefined &&
-    !sharedDisplayNames.includes(sharedTitle) &&
-    !sharedRepositoryNames.includes(sharedTitle)
+    (input.members.some((member) => member.hasCustomTitle === true) ||
+      (!sharedDisplayNames.includes(sharedTitle) && !sharedRepositoryNames.includes(sharedTitle)))
   ) {
     return sharedTitle;
   }
@@ -228,6 +295,19 @@ export function deriveProjectGroupLabel(input: {
     return sharedRepositoryNames[0]!;
   }
 
+  // A whole-repository group is named for the repository, not one member's folder:
+  // clones can disagree on its casing. A subfolder group keeps its own title.
+  const representativeIdentity = input.representative.repositoryIdentity;
+  if (
+    representativeIdentity &&
+    input.groupKey === repositoryGroupingKeyOf(representativeIdentity)
+  ) {
+    return (
+      repositoryGroupingDisplayNameOf(representativeIdentity) ??
+      representativeIdentity.name ??
+      input.representative.title
+    );
+  }
   return input.representative.title;
 }
 
@@ -253,6 +333,10 @@ export function pickableProjectGroups<
 >(groups: ReadonlyArray<TGroup>): TGroup[] {
   const open = groups.filter((group) => !group.archived);
   return [...open.filter((group) => group.pinned), ...open.filter((group) => !group.pinned)];
+}
+
+export function isPickableProjectMember(member: Pick<EnvironmentProject, "archivedAt">): boolean {
+  return member.archivedAt == null;
 }
 
 function projectFreshnessTime(project: EnvironmentProject): number {
@@ -295,12 +379,15 @@ function selectProjectIdentitySource<TProject extends EnvironmentProject>(
   return freshestIdentifiedProject ?? winner;
 }
 
-export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
-  readonly projects: ReadonlyArray<TProject>;
-  readonly settings: ProjectGroupingSettings;
-  readonly preferredEnvironmentId?: EnvironmentId | null;
-  readonly groupScratchProjects?: boolean;
-}): ReadonlyArray<ProjectGroup<TProject>> {
+export function buildProjectGroups<TProject extends EnvironmentProject>(
+  input: {
+    readonly projects: ReadonlyArray<TProject>;
+    readonly settings: ProjectGroupingSettings;
+    readonly preferredEnvironmentId?: EnvironmentId | null;
+    readonly groupScratchProjects?: boolean;
+  },
+  resolve: MFunctionType = mFallback,
+): ReadonlyArray<ProjectGroup<TProject>> {
   const projectsByPhysicalKey = new Map<string, TProject[]>();
   for (const project of input.projects) {
     const physicalProjectKey = derivePhysicalProjectKey(project);
@@ -356,17 +443,21 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
 
   const preferredEnvironmentId = input.preferredEnvironmentId ?? null;
   return Array.from(groupedMembers, ([key, members]) => {
+    const projects = members.map((member) => member.project);
     const representative =
       (preferredEnvironmentId
-        ? members.find((member) => member.project.environmentId === preferredEnvironmentId)?.project
-        : null) ?? members[0]!.project;
+        ? selectGroupDefaultProject(
+            projects.filter((project) => project.environmentId === preferredEnvironmentId),
+          )
+        : undefined) ?? selectGroupDefaultProject(projects)!;
     return {
       key,
       label:
         input.groupScratchProjects && representative.isScratch
-          ? "No project"
+          ? resolve(msg("No project"))
           : members.length > 1
             ? deriveProjectGroupLabel({
+                groupKey: key,
                 representative,
                 members: members.map((member) => member.project),
               })
@@ -375,7 +466,7 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
       members,
       memberProjectRefs: projectRefsByLogicalKey.get(key) ?? [],
       pinned: members.some((member) => member.project.pinnedAt != null),
-      archived: members.every((member) => member.project.archivedAt != null),
+      archived: !members.some(({ project }) => isPickableProjectMember(project)),
     };
   });
 }
@@ -384,10 +475,14 @@ export function sortProjectsByGroupOrder<
   TProject extends { readonly id: string; readonly environmentId: string },
 >(
   projects: ReadonlyArray<TProject>,
-  groups: ReadonlyArray<{ readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef> }>,
+  groups: ReadonlyArray<{
+    readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
+    readonly pinned: boolean;
+    readonly archived: boolean;
+  }>,
 ): TProject[] {
   const rankByProject = new Map<string, number>();
-  groups.forEach((group, rank) => {
+  pickableProjectGroups(groups).forEach((group, rank) => {
     for (const ref of group.memberProjectRefs) {
       const key = `${ref.environmentId}\0${ref.projectId}`;
       if (!rankByProject.has(key)) rankByProject.set(key, rank);

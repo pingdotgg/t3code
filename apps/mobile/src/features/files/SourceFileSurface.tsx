@@ -1,18 +1,20 @@
+import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
+import { T, useGT } from "gt-react-native";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import type { ComponentType } from "react";
 import { useLayoutEffect, useRef, useState } from "react";
 import {
-  FlatList,
   Platform,
   Pressable,
-  RefreshControl,
   ScrollView,
   Text as NativeText,
   useWindowDimensions,
   View,
 } from "react-native";
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { RefreshControl } from "../../components/ui/RefreshControl";
 import { WebView } from "react-native-webview";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -23,7 +25,7 @@ import {
   resolveNativeReviewDiffView,
 } from "../diffs/nativeReviewDiffSurface";
 import { createNativeReviewDiffTheme } from "../review/nativeReviewDiffAdapter";
-import { REVIEW_MONO_FONT_FAMILY, renderVisibleWhitespace } from "../review/reviewDiffRendering";
+import { renderVisibleWhitespace } from "../review/reviewDiffRendering";
 import type { HighlightedToken } from "../../lib/highlights";
 import { cn } from "../../lib/cn";
 import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
@@ -43,7 +45,6 @@ import {
   selectableSourceHtml,
 } from "./source-file-document";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
-import { createSourceLineScroll } from "./source-file-scroll";
 
 interface SourceFileSurfaceProps {
   readonly contents: string;
@@ -67,6 +68,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
   readonly wordBreak: boolean;
   readonly onLongPress?: () => void;
 }) {
+  const gt = useGT();
   const selectable = props.onLongPress === undefined;
   const row = (
     <View
@@ -74,10 +76,9 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
       style={{ minHeight: props.codeSurface.rowHeight }}
     >
       <NativeText
-        className="select-none pr-3 text-right text-foreground-tertiary"
+        className="select-none pr-3 text-right font-mono text-foreground-tertiary"
         style={{
           width: props.codeSurface.gutterWidth,
-          fontFamily: REVIEW_MONO_FONT_FAMILY,
           fontSize: props.codeSurface.lineNumberFontSize,
           lineHeight: props.codeSurface.rowHeight,
         }}
@@ -88,9 +89,8 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
         selectable={selectable}
         selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
         numberOfLines={props.wordBreak ? undefined : 1}
-        className="flex-1 font-normal text-foreground"
+        className="flex-1 font-mono font-normal text-foreground"
         style={{
-          fontFamily: REVIEW_MONO_FONT_FAMILY,
           fontSize: props.codeSurface.fontSize,
           lineHeight: props.codeSurface.rowHeight,
           minWidth: props.wordBreak ? undefined : 320,
@@ -121,7 +121,6 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
                     }
                     style={{
                       color: token.color ?? undefined,
-                      fontFamily: REVIEW_MONO_FONT_FAMILY,
                       fontWeight,
                       fontStyle,
                     }}
@@ -139,7 +138,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
   return onLongPress ? (
     <Pressable
       onLongPress={onLongPress}
-      accessibilityActions={[{ name: "longpress", label: "Select text" }]}
+      accessibilityActions={[{ name: "longpress", label: gt("Select text") }]}
       onAccessibilityAction={(event) => {
         if (event.nativeEvent.actionName === "longpress") onLongPress();
       }}
@@ -182,7 +181,9 @@ function SourceHighlightStatusView(props: { readonly status: SourceHighlightStat
   if (props.status === "error") {
     return (
       <View className="border-b border-border bg-card px-4 py-2">
-        <Text className="text-2xs font-t3-medium uppercase text-foreground-muted">Plain text</Text>
+        <Text className="text-2xs font-t3-medium uppercase text-foreground-muted">
+          <T>Plain text</T>
+        </Text>
       </View>
     );
   }
@@ -267,11 +268,10 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const usesAutomaticInsets = Platform.OS === "ios" && !props.embedded;
   const appTheme = useUniwindTheme();
   const foreground = appTheme["--color-foreground"];
-  const { codeSurface, codeWordBreak } = useAppearanceCodeSurface();
+  const { codeSurface, codeWordBreak, monoFontFamily } = useAppearanceCodeSurface();
   const { normalizedContents, lines, status, targetIndex, tokens } = useSourceFileModel(props);
   const selectableTokens = props.selectable ? boundedSelectableSourceTokens(tokens) : null;
-  const listRef = useRef<FlatList<string>>(null);
-  const [lineScroll] = useState(createSourceLineScroll);
+  const listRef = useRef<LegendListRef>(null);
   const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(props.onRefresh);
   const refreshControl = props.onRefresh ? (
     <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullToRefresh()} />
@@ -283,15 +283,21 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const usesTextSelection = props.selectable === true && !usesWebSelection;
 
   // Layout effect so a pending jump is cancelled in the commit that swaps the file.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the FlatList to the target line and cancels a pending jump when the file changes
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the list to the target line and cancels a pending jump when the file changes
   useLayoutEffect(() => {
     if (targetIndex === null || !usesLineList) {
       return;
     }
-    lineScroll.scrollToLine(listRef.current, targetIndex);
-    return lineScroll.cancel;
+    const frame = requestAnimationFrame(() => {
+      void listRef.current?.scrollToIndex({
+        index: targetIndex,
+        animated: false,
+        viewPosition: 0.3,
+      });
+    });
+    return () => cancelAnimationFrame(frame);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening another file at the same line index, or leaving selection mode, scrolls the remounted list to it.
-  }, [lineScroll, props.path, targetIndex, usesLineList]);
+  }, [props.path, targetIndex, usesLineList]);
 
   const { onLongPressLine } = props;
   const renderLine = ({ item, index }: { item: string; index: number }) => (
@@ -312,7 +318,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
       selectable
       style={{
         color: foreground,
-        fontFamily: REVIEW_MONO_FONT_FAMILY,
+        fontFamily: monoFontFamily,
         fontSize: codeSurface.fontSize,
         lineHeight: codeSurface.rowHeight,
       }}
@@ -385,33 +391,26 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   ) : null;
 
   const list = (
-    <FlatList
+    <LegendList
       ref={listRef}
+      // An embedded viewer sits inside another screen's scroll surface.
+      renderScrollComponent={props.embedded ? undefined : NativeScrollView}
       contentInsetAdjustmentBehavior={usesAutomaticInsets ? "automatic" : "never"}
       automaticallyAdjustsScrollIndicatorInsets={usesAutomaticInsets}
       refreshControl={refreshControl}
       data={lines}
       keyExtractor={(_line, index) => String(index)}
-      initialNumToRender={80}
-      maxToRenderPerBatch={80}
-      windowSize={12}
-      {...(codeWordBreak
-        ? {}
-        : {
-            getItemLayout: (_data, index) => ({
-              length: codeSurface.rowHeight,
-              offset: codeSurface.rowHeight * index,
-              index,
-            }),
-          })}
+      extraData={{ tokens, targetIndex, codeSurface, codeWordBreak, onLongPressLine }}
+      estimatedItemSize={codeSurface.rowHeight}
+      getFixedItemSize={codeWordBreak ? undefined : () => codeSurface.rowHeight}
+      drawDistance={codeSurface.rowHeight * 40}
+      recycleItems
       contentContainerStyle={{
         minWidth: codeWordBreak ? undefined : "100%",
         paddingBottom: codeSurface.rowHeight,
         paddingTop: 8,
       }}
       renderItem={renderLine}
-      onScrollToIndexFailed={lineScroll.onScrollToIndexFailed}
-      onScrollBeginDrag={lineScroll.cancel}
     />
   );
 

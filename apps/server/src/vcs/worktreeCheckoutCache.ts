@@ -492,14 +492,17 @@ export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")
   );
 
   const gitDirOf = Effect.fn("WorktreeCheckoutCache.gitDirOf")(function* (worktreePath: string) {
-    const contents = yield* fileSystem.readFileString(path.join(worktreePath, ".git"));
-    const gitDir = contents.match(/^gitdir: (.+)$/m)?.[1];
-    if (gitDir === undefined) {
+    const contents = (yield* fileSystem.readFileString(path.join(worktreePath, ".git"))).replace(
+      /[\r\n]+$/u,
+      "",
+    );
+    const prefix = "gitdir: ";
+    if (!contents.startsWith(prefix) || contents.length === prefix.length) {
       return yield* new WorktreeCheckoutCacheError({
         detail: `${worktreePath} is not a linked worktree`,
       });
     }
-    return path.resolve(worktreePath, gitDir.trim());
+    return path.resolve(worktreePath, contents.slice(prefix.length));
   });
 
   /**
@@ -511,6 +514,7 @@ export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")
     readonly worktreePath: string;
     readonly refName: string;
     readonly checkoutWorkers: string;
+    readonly lockReason?: string | undefined;
   }) {
     if (!(yield* gitSupported)) return false;
     const worktreePath = path.resolve(input.cwd, input.worktreePath);
@@ -613,13 +617,14 @@ export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")
       if (moved === null || (yield* fileSystem.exists(target.indexHook))) return null;
       return target;
     });
-    const rollback = git("rollback", input.cwd, [
-      "worktree",
-      "remove",
-      "--force",
-      "--",
-      worktreePath,
-    ]).pipe(
+    const rollback = (
+      input.lockReason
+        ? git("unlockRollback", input.cwd, ["worktree", "unlock", "--", worktreePath])
+        : Effect.void
+    ).pipe(
+      Effect.andThen(
+        git("rollback", input.cwd, ["worktree", "remove", "--force", "--", worktreePath]),
+      ),
       Effect.flatMap((removed) =>
         removed === null
           ? Effect.logWarning("could not remove a partially created worktree", { worktreePath })
@@ -633,6 +638,7 @@ export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")
           "worktree",
           "add",
           "--no-checkout",
+          ...(input.lockReason ? ["--lock", "--reason", input.lockReason] : []),
           "--",
           worktreePath,
           input.refName,

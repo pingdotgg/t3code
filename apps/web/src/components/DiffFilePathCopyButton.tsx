@@ -1,45 +1,46 @@
-import { Check, Copy } from "lucide";
+import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
+import { useGT } from "gt-react";
+import { CheckIcon, CopyIcon } from "lucide-react";
 import { useRef } from "react";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
-import { cn } from "../lib/utils";
-import {
-  ANCHORED_COPY_TOAST_TIMEOUT_MS,
-  showAnchoredCopyErrorToast,
-  showAnchoredCopySuccessToast,
-} from "./ui/anchoredCopyToast";
+import { ANCHORED_COPY_TOAST_TIMEOUT_MS, showAnchoredCopyErrorToast } from "./ui/anchoredCopyToast";
 import { Button } from "./ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
-export function DiffFilePathCopyButton({ filePath }: { filePath: string }) {
+export function DiffFilePathCopyButton({
+  filePath,
+  workspaceRoot,
+}: {
+  filePath: string;
+  workspaceRoot: string | undefined;
+}) {
+  const gt = useGT();
   const ref = useRef<HTMLButtonElement>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({
-    onCopy: () => showAnchoredCopySuccessToast(ref),
     onError: (error) => showAnchoredCopyErrorToast(ref, error),
     timeout: ANCHORED_COPY_TOAST_TIMEOUT_MS,
   });
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            ref={ref}
-            size="icon-micro"
-            variant="ghost-muted"
-            aria-label="Copy file path"
-            onClick={() => copyToClipboard(filePath, undefined)}
-          />
-        }
-      >
-        <MorphIcon
-          className={cn("size-3", isCopied && "text-success")}
-          icon={isCopied ? Check : Copy}
+    <SharedTooltipTrigger
+      render={
+        <Button
+          ref={ref}
+          size="icon-micro"
+          variant="ghost-muted"
+          aria-label={gt("Copy file path")}
+          onClick={() =>
+            copyToClipboard(formatFilePathForClipboard(filePath, workspaceRoot), undefined)
+          }
         />
-      </TooltipTrigger>
-      <TooltipPopup>
-        <p>{isCopied ? "Copied" : "Copy path"}</p>
-      </TooltipPopup>
-    </Tooltip>
+      }
+      label={
+        <>
+          <p>{isCopied ? gt("Copied") : gt("Copy path")}</p>
+        </>
+      }
+    >
+      {isCopied ? <CheckIcon className="size-3 text-success" /> : <CopyIcon className="size-3" />}
+    </SharedTooltipTrigger>
   );
 }

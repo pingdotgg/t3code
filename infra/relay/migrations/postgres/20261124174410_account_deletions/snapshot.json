@@ -1,0 +1,92 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "0538d0fe-4847-4c62-85fb-420aa62709b3",
+  "prevIds": ["4a3b409a-6315-41e4-bd97-a2659709bf35"],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": ["table", "public", "relay_account_deletions"],
+      "writes": [
+        "s|tbl|public.relay_account_deletions",
+        "n|tbl|public.relay_account_deletions",
+        "e|tbl|public.relay_account_deletions",
+        "n|rel|public.relay_account_deletions",
+        "n|type|public.relay_account_deletions",
+        "n|rel|public.relay_account_deletions_pkey"
+      ],
+      "reads": ["n|sch|public"]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "relay_account_deletions",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_account_deletions",
+        "name": "user_id",
+        "type": "varchar(255)",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_account_deletions",
+        "name": "requested_at",
+        "type": "varchar(64)",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_account_deletions",
+        "name": "attempts",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "0",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_account_deletions",
+        "name": "relay_account_deletions_pkey",
+        "columns": ["user_id"],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    }
+  ]
+}

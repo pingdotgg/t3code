@@ -85,7 +85,16 @@ export const make = Effect.gen(function* () {
     driver: VcsDriver.VcsDriver["Service"],
     cwd: string,
   ) {
-    const repository = yield* driver.detectRepository(cwd);
+    // Status, review and source control show a repository Git cannot read as none at all.
+    // Checkpoints need the failure, so CheckpointStore asks the driver directly.
+    const repository = yield* driver.detectRepository(cwd).pipe(
+      Effect.catchTags({
+        VcsProcessExitError: (error) =>
+          error.operation === GitVcsDriver.WORK_TREE_PROBE_OPERATION
+            ? Effect.succeed(null)
+            : Effect.fail(error),
+      }),
+    );
     if (!repository) {
       return null;
     }
@@ -113,7 +122,9 @@ export const make = Effect.gen(function* () {
   // Symlinks can put cwd outside root; then inspect cwd alone.
   const foldersBelowRoot = (cwd: string, rootPath: string) => {
     const relative = path.relative(path.resolve(rootPath), path.resolve(cwd));
-    if (relative.startsWith("..") || path.isAbsolute(relative)) return [cwd];
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      return [cwd];
+    }
     return Array.from({ length: relative.split(path.sep).length }, (_, levelsUp) =>
       path.resolve(cwd, ...Array<string>(levelsUp).fill("..")),
     );

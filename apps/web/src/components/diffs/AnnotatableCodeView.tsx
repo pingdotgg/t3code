@@ -6,7 +6,7 @@ import type {
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
-import type { CodeViewHandle } from "@pierre/diffs/react";
+import type { CodeViewHandle, CodeViewProps } from "@pierre/diffs/react";
 import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import { useState, type ReactNode, type Ref } from "react";
 
@@ -32,6 +32,7 @@ interface DiffCommentAnnotationEntry {
 
 interface DiffCommentAnnotationGroup {
   entries: DiffCommentAnnotationEntry[];
+  imagePath?: string;
 }
 
 type DiffCommentLineAnnotation = DiffLineAnnotation<DiffCommentAnnotationGroup>;
@@ -88,6 +89,7 @@ interface AnnotatableCodeViewProps {
   composerDraftTarget: ScopedThreadRef | DraftId;
   options: StyledDiffCodeViewOptions<DiffCommentAnnotationGroup>;
   viewerRef?: Ref<AnnotatableCodeViewHandle>;
+  onScroll?: CodeViewProps<DiffCommentAnnotationGroup, undefined>["onScroll"];
   className?: string;
   renderCodeViewFooter?: () => ReactNode;
   unsafeCSSExtra?: string;
@@ -98,7 +100,10 @@ interface AnnotatableCodeViewProps {
     fileKey: string,
     collapsed: boolean,
   ) => ReactNode;
-  onRevealSearchMatch: (fileKey: string) => void;
+  onFileCollapsedChange: (fileKey: string, collapsed: boolean) => void;
+  /** Git sends no patch for an image, so its row can show the file at this path instead. */
+  imagePreviewPath?: (fileDiff: FileDiffMetadata) => string | null;
+  renderImagePreview?: (path: string) => ReactNode;
 }
 
 interface DiffSelectionContext {
@@ -116,13 +121,16 @@ export function AnnotatableCodeView({
   composerDraftTarget,
   options,
   viewerRef,
+  onScroll,
   className,
   renderCodeViewFooter,
   unsafeCSSExtra,
   renderHeaderMetadata,
   renderHeaderFilenameSuffix,
   renderHeaderPrefix,
-  onRevealSearchMatch,
+  onFileCollapsedChange,
+  imagePreviewPath,
+  renderImagePreview,
 }: AnnotatableCodeViewProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
@@ -176,7 +184,14 @@ export function AnnotatableCodeView({
             text: comment.text,
           });
         }, []);
-      const annotations = draft?.fileKey === fileKey ? [...persisted, draft.annotation] : persisted;
+      const imagePath = imagePreviewPath?.(fileDiff) ?? null;
+      const annotations = [
+        ...persisted,
+        ...(draft?.fileKey === fileKey ? [draft.annotation] : []),
+        ...(imagePath === null
+          ? []
+          : [{ side: "additions" as const, lineNumber: 0, metadata: { entries: [], imagePath } }]),
+      ];
       return {
         id: fileKey,
         type: "diff",
@@ -184,7 +199,7 @@ export function AnnotatableCodeView({
         annotations,
         collapsed,
         version: fnv1a32(
-          `${fileVersion}:${collapsed ? "1" : "0"}:${annotations
+          `${fileVersion}:${collapsed ? "1" : "0"}:${imagePath ?? ""}:${annotations
             .flatMap((annotation) =>
               annotation.metadata.entries.map(
                 (entry) => `${entry.id}:${entry.rangeLabel}:${entry.text}`,
@@ -260,6 +275,7 @@ export function AnnotatableCodeView({
     <StyledDiffCodeView<DiffCommentAnnotationGroup>
       key={codeViewKey}
       {...(viewerRef ? { viewerRef } : {})}
+      {...(onScroll ? { onScroll } : {})}
       {...(className ? { className } : {})}
       {...(unsafeCSSExtra ? { unsafeCSSExtra } : {})}
       {...(renderHeaderMetadata
@@ -277,7 +293,8 @@ export function AnnotatableCodeView({
         enableGutterUtility: draft === null,
         enableLineSelection: draft === null,
         onGutterUtilityClick: beginComment,
-        onRevealSearchMatch: (item) => onRevealSearchMatch(item.id),
+        onItemCollapsedChange: (_item, nextItem) =>
+          onFileCollapsedChange(nextItem.id, nextItem.collapsed === true),
       }}
       renderHeaderFilenameSuffix={(item) =>
         item.type === "diff" ? renderHeaderFilenameSuffix(item.fileDiff) : null
@@ -288,6 +305,9 @@ export function AnnotatableCodeView({
           : null
       }
       renderAnnotation={(...[annotation]) => {
+        if (annotation.metadata.imagePath !== undefined) {
+          return renderImagePreview?.(annotation.metadata.imagePath) ?? null;
+        }
         const hasDraft = annotation.metadata.entries.some((entry) => entry.kind === "draft");
         return (
           <div

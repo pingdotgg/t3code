@@ -121,3 +121,207 @@ it.effect("filters listed pull requests by the requested state", () =>
     assert.deepStrictEqual(yield* numbers("open"), []);
   }),
 );
+
+const fastForwardOnly = {
+  cwd: "/forgejo",
+  repository: "maria/project",
+  host: "forge.example:3000",
+  number: 3,
+};
+const fastForwardOnlySettings = {
+  allow_merge_commits: false,
+  allow_squash_merge: false,
+  allow_rebase: false,
+  allow_rebase_explicit: false,
+  allow_fast_forward_only_merge: true,
+  default_merge_style: "fast-forward-only",
+};
+const fastForwardOnlyProvider = (
+  writes: Array<{ path: string; body: unknown }>,
+  mergeSettings: object = fastForwardOnlySettings,
+) =>
+  ForgejoPullRequestProvider.make.pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          const [path] = input.path.split("?");
+          const reply = (value: unknown) =>
+            Effect.succeed(TestSourceControlHost.processOutput(JSON.stringify(value)));
+          if (input.method === "POST") {
+            writes.push({ path: input.path, body: input.body });
+            return reply("");
+          }
+          switch (path) {
+            case "user":
+              return reply({ login: "maria" });
+            case "repos/maria/project":
+              return reply({
+                full_name: "maria/project",
+                permissions: { push: true, admin: true },
+                ...mergeSettings,
+              });
+            case "repos/maria/project/pulls/3":
+              return reply({
+                number: 3,
+                title: "Fast-forward me",
+                body: "",
+                html_url: "https://forge.example:3000/maria/project/pulls/3",
+                user: { login: "maria" },
+                state: "open",
+                merged: false,
+                mergeable: true,
+                head: { ref: "feature", sha: "head-sha", repo: null },
+                base: { ref: "main", sha: "base-sha", repo: null },
+                merge_base: "base-sha",
+                created_at: "2026-10-12T00:00:00Z",
+                updated_at: "2026-10-12T00:00:00Z",
+                closed_at: null,
+                merged_at: null,
+                labels: [],
+              });
+            case "repos/maria/project/branches/main":
+              return reply({});
+            default:
+              return reply([]);
+          }
+        },
+      }),
+    ),
+  );
+
+it.effect("offers a fast-forward merge on a repository that only allows fast-forward", () =>
+  Effect.gen(function* () {
+    const provider = yield* fastForwardOnlyProvider([]);
+    const detail = yield* provider.getChangeRequest(fastForwardOnly);
+    const allowed = provider.capabilities.mergeMethods.filter(
+      (method) => detail.mergeCapabilities[method],
+    );
+    assert.deepStrictEqual(allowed, ["fast-forward"]);
+  }),
+);
+
+it.effect("does not offer fast-forward when Forgejo omits the setting", () =>
+  Effect.gen(function* () {
+    const provider = yield* fastForwardOnlyProvider([], {});
+    const detail = yield* provider.getChangeRequest(fastForwardOnly);
+    const allowed = provider.capabilities.mergeMethods.filter(
+      (method) => detail.mergeCapabilities[method],
+    );
+    assert.deepStrictEqual(allowed, ["merge", "squash", "rebase"]);
+  }),
+);
+
+it.effect("merges with Forgejo's fast-forward-only style", () =>
+  Effect.gen(function* () {
+    const writes: Array<{ path: string; body: unknown }> = [];
+    const provider = yield* fastForwardOnlyProvider(writes);
+    yield* provider.runAction({ ...fastForwardOnly, action: "merge", mergeMethod: "fast-forward" });
+    assert.deepStrictEqual(writes, [
+      {
+        path: "repos/maria/project/pulls/3/merge",
+        body: { Do: "fast-forward-only", delete_branch_after_merge: false },
+      },
+    ]);
+  }),
+);
+
+// An empty `link` header marks the last page.
+const labelPage = (value: unknown) =>
+  Effect.succeed({
+    ...TestSourceControlHost.processOutput(JSON.stringify(value)),
+    stderr: "link: \n",
+  });
+
+it.effect("lists organization labels after repository labels, tolerating a personal owner", () =>
+  Effect.gen(function* () {
+    const make = (
+      orgLabels: ReturnType<typeof labelPage> | Effect.Effect<never, ForgejoCli.ForgejoCliError>,
+    ) =>
+      ForgejoPullRequestProvider.make.pipe(
+        Effect.provide(
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            api: (input) => {
+              const [route] = input.path.split("?");
+              if (route === "repos/forgejo/acme/web/labels") {
+                return labelPage([{ id: 3, name: "bug", color: "d73a4a" }]);
+              }
+              if (route === "orgs/acme/labels") return orgLabels;
+              return Effect.die(`unexpected route ${route}`);
+            },
+          }),
+        ),
+      );
+    const input = { cwd: "/forgejo", repository: "forgejo/acme/web", host: "forge.example:3000" };
+
+    const org = yield* make(
+      labelPage([
+        { id: 99, name: "bug", color: "000000" },
+        { id: 101, name: "security", color: "ff0000" },
+      ]),
+    );
+    assert.deepStrictEqual(yield* org.listRepositoryLabels!(input), {
+      items: [
+        { name: "bug", color: "d73a4a" },
+        { name: "security", color: "ff0000" },
+      ],
+      truncated: false,
+    });
+
+    const personal = yield* make(
+      Effect.fail(
+        new ForgejoCli.ForgejoCliError({
+          command: "fj",
+          cwd: "/forgejo",
+          detail: "404",
+          reason: "not-found",
+          httpStatus: 404,
+        }),
+      ),
+    );
+    assert.deepStrictEqual(yield* personal.listRepositoryLabels!(input), {
+      items: [{ name: "bug", color: "d73a4a" }],
+      truncated: false,
+    });
+  }),
+);
+
+it.effect("filters by a unique organization label id and skips an ambiguous name", () =>
+  Effect.gen(function* () {
+    const pullLabelParams: Array<string | null> = [];
+    const provider = yield* ForgejoPullRequestProvider.make.pipe(
+      Effect.provide(
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          api: (input) => {
+            const [route, query] = input.path.split("?");
+            if (route === "repos/acme/web/labels") {
+              return labelPage([{ id: 2, name: "shared", color: "0000ff" }]);
+            }
+            if (route === "orgs/acme/labels") {
+              return labelPage([
+                { id: 5, name: "shared", color: "00ff00" },
+                { id: 101, name: "Needs-Review", color: "ff0000" },
+              ]);
+            }
+            if (route === "repos/acme/web/pulls") {
+              pullLabelParams.push(new URLSearchParams(query).get("labels"));
+            }
+            return labelPage([]);
+          },
+        }),
+      ),
+    );
+
+    const base = {
+      cwd: "/forgejo",
+      repository: "acme/web",
+      host: "forge.example:3000",
+      state: "open" as const,
+      involvement: "all" as const,
+      viewer: "maria",
+      limit: 10,
+    };
+    yield* provider.listChangeRequests({ ...base, filters: { labels: [["needs-review"]] } });
+    yield* provider.listChangeRequests({ ...base, filters: { labels: [["shared"]] } });
+    assert.deepStrictEqual(pullLabelParams, ["101", null]);
+  }),
+);

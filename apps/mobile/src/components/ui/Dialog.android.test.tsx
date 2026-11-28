@@ -90,6 +90,62 @@ it("keeps a dialog raised while the activity is replaced", () => {
   expect(current.container.textContent).toContain("Shared content imported");
 });
 
+it.each([
+  {
+    kind: "alert",
+    present: (onClose: () => void) =>
+      Dialog.alert("Older", undefined, [{ text: "OK" }], { onDismiss: onClose }),
+  },
+  {
+    kind: "confirm",
+    present: (onClose: () => void) =>
+      Dialog.confirm({
+        title: "Remove project",
+        confirmText: "Remove",
+        onConfirm: () => {},
+        onCancel: onClose,
+      }),
+  },
+  {
+    kind: "text-input",
+    present: (onClose: () => void) =>
+      Dialog.prompt({
+        title: "Rename",
+        initialValue: "",
+        confirmText: "Save",
+        onConfirm: () => {},
+        onCancel: onClose,
+      }),
+  },
+])("tells a replaced $kind it was closed without an answer", ({ present }) => {
+  mountHost();
+  const onClose = vi.fn();
+  act(() => present(onClose));
+  act(() => Dialog.alert("Newer", undefined, [{ text: "OK" }]));
+
+  expect(onClose).toHaveBeenCalledOnce();
+});
+
+it.each([
+  { action: "confirm", clickIndex: -1 },
+  { action: "cancel", clickIndex: -2 },
+])("ignores a late $action click from a replaced confirmation", ({ clickIndex }) => {
+  const { container } = mountHost();
+  const onConfirm = vi.fn();
+  const onCancel = vi.fn();
+  act(() =>
+    Dialog.confirm({ title: "Remove project", confirmText: "Remove", onConfirm, onCancel }),
+  );
+  const lateClick = renderedClicks.at(clickIndex)!;
+  act(() => Dialog.alert("Newer", undefined, [{ text: "OK" }]));
+
+  act(() => lateClick());
+
+  expect(onConfirm).not.toHaveBeenCalled();
+  expect(onCancel).toHaveBeenCalledOnce();
+  expect(container.textContent).toContain("Newer");
+});
+
 it("ignores a late action from a dialog that a newer one replaced", () => {
   const { container } = mountHost();
   const olderAction = vi.fn();

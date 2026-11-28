@@ -45,20 +45,21 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
           WHERE project_id = ${projectId}
         `;
         assert.strictEqual(rows[0]?.defaultModelSelection, JSON.stringify(modelSelection));
-        assert.deepStrictEqual(
-          Option.getOrNull(yield* projects.get(projectId))?.defaultModelSelection,
-          modelSelection,
-        );
+        const project = Option.getOrNull(yield* projects.get(projectId));
+        assert.deepStrictEqual(project?.defaultModelSelection, modelSelection);
+        // Events from before tracked folders have no list.
+        assert.deepStrictEqual(project?.trackedFolders, []);
       }),
     );
 
-    it.effect("keeps pin and archive times across later updates", () =>
+    it.effect("keeps pin and archive times and tracked folders across later updates", () =>
       Effect.gen(function* () {
         const projects = yield* ProjectStore.ProjectStoreV2;
         const projectId = ProjectId.make("project-organized");
         const at = "2026-03-24T00:00:00.000Z";
         const event = { aggregateKind: "project", aggregateId: projectId, occurredAt: at } as const;
         const meta = { commandId: null, causationEventId: null, correlationId: null, metadata: {} };
+        const trackedFolders = [{ path: "/tmp/project-shared", name: "Shared" }];
         yield* projects.apply({
           ...event,
           ...meta,
@@ -81,7 +82,7 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
           sequence: 2,
           eventId: EventId.make("event-organized-pinned"),
           type: "project.meta-updated",
-          payload: { projectId, pinnedAt: at, archivedAt: at, updatedAt: at },
+          payload: { projectId, pinnedAt: at, archivedAt: at, trackedFolders, updatedAt: at },
         });
         yield* projects.apply({
           ...event,
@@ -94,6 +95,71 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
         const project = Option.getOrNull(yield* projects.get(projectId));
         assert.strictEqual(project?.pinnedAt, at);
         assert.strictEqual(project?.archivedAt, at);
+        assert.deepStrictEqual(project?.trackedFolders, trackedFolders);
+      }),
+    );
+
+    it.effect("marks a project's title as custom only once it is renamed", () =>
+      Effect.gen(function* () {
+        const projects = yield* ProjectStore.ProjectStoreV2;
+        const projectId = ProjectId.make("project-renamed");
+        const event = {
+          aggregateKind: "project",
+          aggregateId: projectId,
+          occurredAt: "2026-03-24T00:00:00.000Z",
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+        } as const;
+        const hasCustomTitle = () =>
+          projects
+            .getShell(projectId)
+            .pipe(Effect.map((shell) => Option.getOrNull(shell)?.hasCustomTitle));
+        yield* projects.apply({
+          ...event,
+          sequence: 1,
+          eventId: EventId.make("event-renamed-created"),
+          type: "project.created",
+          payload: {
+            projectId,
+            title: "repo",
+            workspaceRoot: "/tmp/repo",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-03-24T00:00:00.000Z",
+            updatedAt: "2026-03-24T00:00:00.000Z",
+          },
+        });
+        assert.strictEqual(yield* hasCustomTitle(), false);
+        yield* projects.apply({
+          ...event,
+          sequence: 2,
+          eventId: EventId.make("event-renamed-title"),
+          type: "project.meta-updated",
+          payload: { projectId, title: "custom repo", updatedAt: "2026-03-24T00:00:02.000Z" },
+        });
+        assert.strictEqual(yield* hasCustomTitle(), true);
+        yield* projects.apply({
+          ...event,
+          sequence: 3,
+          eventId: EventId.make("migration:39:project:project-renamed:baseline"),
+          type: "project.created",
+          payload: {
+            projectId,
+            title: "repo",
+            workspaceRoot: "/tmp/repo",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-03-24T00:00:00.000Z",
+            updatedAt: "2026-03-24T00:00:03.000Z",
+          },
+        });
+        assert.strictEqual(yield* hasCustomTitle(), true);
+        assert.strictEqual(
+          Option.getOrNull(yield* projects.getShell(projectId))?.title,
+          "custom repo",
+        );
       }),
     );
   },

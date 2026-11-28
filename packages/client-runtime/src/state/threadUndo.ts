@@ -36,9 +36,10 @@ export function invalidate(kind: string, threadKey: string) {
 }
 
 export type ThreadUndoStep =
-  | { readonly action: "unsettle" }
+  | { readonly action: "unsettle"; readonly restoreUnsettledAt?: string | null }
   | { readonly action: "unsnooze" }
   | { readonly action: "pin"; readonly orderKey?: string }
+  | { readonly action: "reorderActive"; readonly orderKey: string }
   | { readonly action: "snooze"; readonly snoozedUntil: string };
 
 export type ThreadUndoPlan = readonly [ThreadUndoStep, ...ThreadUndoStep[]];
@@ -48,6 +49,8 @@ export function planThreadUndo(
   thread?: {
     readonly pinnedAt?: string | null;
     readonly pinOrderKey?: string | null;
+    readonly activeOrderKey?: string | null;
+    readonly unsettledAt?: string | null;
     readonly snoozedUntil?: string | null;
   } | null,
 ): ThreadUndoPlan {
@@ -62,7 +65,38 @@ export function planThreadUndo(
       ? [{ action: "snooze" as const, snoozedUntil: thread.snoozedUntil }]
       : [];
   if (action === "unpin") return [pin, ...snooze];
-  return [{ action: "unsettle" }, ...(thread?.pinnedAt != null ? [pin] : []), ...snooze];
+  // Settling clears a manual active position; pinned threads are placed by their pin instead.
+  const placement: ThreadUndoStep[] =
+    thread?.pinnedAt != null
+      ? [pin]
+      : thread?.activeOrderKey != null
+        ? [{ action: "reorderActive", orderKey: thread.activeOrderKey }]
+        : [];
+  const unsettle: ThreadUndoStep =
+    thread == null
+      ? { action: "unsettle" }
+      : { action: "unsettle", restoreUnsettledAt: thread.unsettledAt ?? null };
+  return [unsettle, ...placement, ...snooze];
+}
+
+/**
+ * True when a step cancelled a change that was still waiting to sync. The server never applied
+ * it, so the rest of the plan has nothing to restore; see `restoresAfterDeviceCancel`.
+ */
+export function cancelledOnDevice(value: unknown): boolean {
+  return typeof value === "object" && value !== null && "cancelledOnDevice" in value;
+}
+
+/**
+ * Whether a step still runs after the change it undoes was cancelled on the device. Only a
+ * snooze can: the cancelled settle replaced a snooze queued on the device, which went with it.
+ * `current` is the thread as shown now; a snooze it still holds needs nothing.
+ */
+export function restoresAfterDeviceCancel(
+  step: ThreadUndoStep,
+  current: { readonly snoozedUntil?: string | null } | null | undefined,
+): boolean {
+  return step.action === "snooze" && current?.snoozedUntil !== step.snoozedUntil;
 }
 
 export async function executeThreadUndo<Result>(

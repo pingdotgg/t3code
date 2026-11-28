@@ -16,7 +16,8 @@ const ModelSelectionSource = Schema.Struct({
   provider: Schema.optional(Schema.Unknown),
   instanceId: Schema.optional(Schema.Unknown),
   model: Schema.Unknown,
-  options: Schema.optional(Schema.Unknown),
+  // Keep decoding array or object forms; advertised MCP JSON Schema uses the object map.
+  options: Schema.optional(Schema.NullOr(ProviderOptionSelections)),
 });
 
 export const ModelSelection = ModelSelectionSource.pipe(
@@ -34,7 +35,7 @@ export const ModelSelection = ModelSelectionSource.pipe(
           instanceId: instanceIdSource,
           model: raw.model,
         };
-        if (raw.options !== undefined) base.options = raw.options;
+        if (raw.options !== undefined && raw.options !== null) base.options = raw.options;
         return Effect.succeed(base as typeof ModelSelectionWire.Encoded);
       },
       encode: (value) => {
@@ -43,7 +44,7 @@ export const ModelSelection = ModelSelectionSource.pipe(
           model: value.model,
         };
         if (value.options !== undefined) base.options = value.options;
-        return Effect.succeed(base as typeof ModelSelectionSource.Encoded);
+        return Effect.succeed(base as typeof ModelSelectionSource.Type);
       },
     }),
   ),

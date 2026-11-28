@@ -10,12 +10,17 @@ describe("isJsonToolText", () => {
     ['[{"threadId":"thread-1"}]', true],
     ['{\n\n  "status": "completed"\n}', true],
     ['{\n  "count": 1\n}\n\n{\n  "count": 2\n}', true],
+    ['{"id":1}\n{"id":2}', true],
+    ['{"id":1}\n{"id":-9007199254740993}', true],
     ["false", true],
     ["null", true],
     ["42", true],
     ['"completed"', true],
     ['{"partial":', false],
     ['{"count":1}\n\nFinished.', false],
+    ['{"count":1}\nFinished.', false],
+    ['{"id":1}\n{"id":', false],
+    ["1\n2\n3", false],
     ["No output.", false],
     ["", false],
   ] as const)("classifies %j as JSON: %s", (text, expected) => {
@@ -112,4 +117,107 @@ describe("tool image output parsing", () => {
       );
     },
   );
+});
+
+describe("tool text output formatting", () => {
+  it.each([
+    '{"id":1234567890123456789,"name":"x"}',
+    '{"id":1}\n{"id":-9007199254740993}',
+    '{"id":9.007199254740993e15}',
+    '{"id":1e309}',
+    '{"ratio":1e-400}',
+  ])("keeps %j as returned when parsing would change a number", (text) => {
+    expect(turnItemOutputText(toolItem({ content: [{ type: "text", text }] }))).toBe(text);
+  });
+
+  it.each([
+    '{"id":42,"note":"12345678901234567890"}',
+    '{"ratio":0.1234567890123456789}',
+    '{"ratio":0.00e-400}',
+  ])("still pretty-prints %j", (text) => {
+    expect(turnItemOutputText(toolItem({ content: [{ type: "text", text }] }))).toBe(
+      JSON.stringify(JSON.parse(text), null, 2),
+    );
+  });
+});
+
+describe("MCP app tool output", () => {
+  it("shows the tool result, not the app wrapper", () => {
+    const text = "Notice\nview\tcount\n/home\t42";
+    const item = toolItem({
+      t3McpApp: {
+        attachmentId: "app-html",
+        server: "repro",
+        tool: "aggregate_rum_events",
+        resourceUri: "ui://repro/dataviz",
+      },
+      result: { content: [{ type: "text", text }] },
+    });
+    expect(turnItemOutputText(item)).toBe(text);
+  });
+
+  it("reads a result with metadata and marks images it cannot preview", () => {
+    const item = toolItem({
+      t3McpApp: {
+        attachmentId: "app-html",
+        server: "repro",
+        tool: "chart",
+        resourceUri: "ui://repro/chart",
+      },
+      result: {
+        content: [
+          { type: "text", text: "chart" },
+          { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
+        ],
+        _meta: { "ui/resourceUri": "ui://repro/chart" },
+      },
+    });
+    expect(turnItemOutputText(item)).toBe("chart\n[image]");
+
+    const bounded = toolItem({
+      t3McpApp: {
+        attachmentId: "app-html",
+        server: "repro",
+        tool: "chart",
+        resourceUri: "ui://repro/chart",
+      },
+      result: [
+        { type: "text", text: "chart" },
+        { type: "image", mimeType: "image/png" },
+      ],
+    });
+    expect(turnItemOutputText(bounded)).toBe("chart\n[image]");
+  });
+});
+
+describe("file search output text", () => {
+  function searchItem(
+    results: Extract<OrchestrationV2TurnItem, { type: "file_search" }>["results"],
+  ): OrchestrationV2TurnItem {
+    const {
+      toolName: _toolName,
+      input: _input,
+      output: _output,
+      ...base
+    } = toolItem(null) as Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>;
+    return { ...base, type: "file_search", pattern: "needle", results };
+  }
+
+  it("prints matches under one heading per file", () => {
+    expect(
+      turnItemOutputText(
+        searchItem([
+          { fileName: "src/one.ts", line: 2, preview: "  const needle = 1;" },
+          { fileName: "src/two.ts", line: 7, column: 3, preview: "needle()" },
+          { fileName: "src/one.ts", line: 9, preview: "return needle;" },
+        ]),
+      ),
+    ).toBe("src/one.ts\n2:   const needle = 1;\n9: return needle;\n\nsrc/two.ts\n7:3: needle()");
+  });
+
+  it("keeps a plain file list one path per line", () => {
+    expect(turnItemOutputText(searchItem([{ fileName: "a.ts" }, { fileName: "b.ts" }]))).toBe(
+      "a.ts\nb.ts",
+    );
+  });
 });

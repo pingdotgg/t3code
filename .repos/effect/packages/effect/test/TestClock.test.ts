@@ -5,6 +5,7 @@ import * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as Fiber from "effect/Fiber"
+import * as Layer from "effect/Layer"
 import * as Scheduler from "effect/Scheduler"
 import * as TestClock from "effect/testing/TestClock"
 import * as TestConsole from "effect/testing/TestConsole"
@@ -13,7 +14,7 @@ import { vi } from "vitest"
 describe("TestClock", () => {
   describe("warnings", { concurrent: false }, () => {
     for (const warning of ["not advancing the test clock", "still running without suspending"] as const) {
-      it.effect(`warnings bypass TestConsole - ${warning}`, () =>
+      it.live(`warnings bypass TestConsole - ${warning}`, () =>
         Effect.gen(function*() {
           const output: Array<unknown> = []
           yield* Effect.acquireRelease(
@@ -48,7 +49,11 @@ describe("TestClock", () => {
           }).pipe(Effect.timeout("3 seconds"), TestClock.withLive)
           assert.deepStrictEqual(captured, ["ordinary output"])
           assert.isTrue(containsWarning(output))
-        }))
+        }).pipe(
+          // The environment `it.effect` provides, with a shorter warning delay. `it.live`
+          // starts without TestConsole, so the clock captures the real console.
+          Effect.provide(Layer.mergeAll(TestConsole.layer, TestClock.layer({ warningDelay: "10 millis" })))
+        ))
     }
   })
 
@@ -103,6 +108,28 @@ describe("TestClock", () => {
       assert.isTrue(elapsed)
     }))
 
+  it.effect("sleep - preserves interruption masking in a finalizer on first use", () =>
+    Effect.gen(function*() {
+      const clock = yield* TestClock.make()
+      const events: Array<string> = []
+      const fiber = yield* Effect.never.pipe(
+        Effect.ensuring(Effect.gen(function*() {
+          events.push("cleanup started")
+          yield* Effect.sleep("1 second")
+          events.push("cleanup finished")
+        })),
+        Effect.provideService(Clock.Clock, clock),
+        Effect.forkChild({ startImmediately: true })
+      )
+      fiber.interruptUnsafe()
+      yield* Effect.yieldNow
+      assert.deepStrictEqual(events, ["cleanup started"])
+      assert.isUndefined(fiber.pollUnsafe())
+      yield* clock.adjust("1 second")
+      yield* Fiber.await(fiber)
+      assert.deepStrictEqual(events, ["cleanup started", "cleanup finished"])
+    }))
+
   it.effect("sleep - handles multiple sleeps", () =>
     Effect.gen(function*() {
       let message = ""
@@ -116,6 +143,20 @@ describe("TestClock", () => {
       assert.strictEqual(message, "Hello, ")
       yield* TestClock.adjust("4 hours")
       assert.strictEqual(message, "Hello, World!")
+    }))
+
+  it.effect("sleep - waits the full duration each time a sleep effect runs", () =>
+    Effect.gen(function*() {
+      const clock = yield* TestClock.testClockWith(Effect.succeed)
+      const sleep = clock.sleep(Duration.seconds(1))
+      yield* TestClock.adjust("5 seconds")
+      for (let i = 0; i < 2; i++) {
+        const fiber = yield* Effect.forkChild(sleep)
+        yield* TestClock.adjust("999 millis")
+        assert.isUndefined(fiber.pollUnsafe())
+        yield* TestClock.adjust("1 millis")
+        assert.deepStrictEqual(fiber.pollUnsafe(), Exit.void)
+      }
     }))
 
   it.effect("setTime - sleep correctly handles new set time", () =>
@@ -142,6 +183,17 @@ describe("TestClock", () => {
       const timestamp = 1_000_000_000_001
       yield* testClock.setTime(timestamp)
       assert.strictEqual(testClock.currentTimeNanosUnsafe(), BigInt(timestamp) * 1_000_000n)
+    }))
+
+  it.effect("adjust - advances the clock when detached, copied or inherited", () =>
+    Effect.gen(function*() {
+      const clock = yield* TestClock.testClockWith(Effect.succeed)
+      const { adjust } = clock
+      const inherited: TestClock.TestClock = Object.create(clock)
+      yield* adjust("1 second")
+      yield* { ...clock }.adjust("1 second")
+      yield* inherited.adjust("1 second")
+      assert.strictEqual(clock.currentTimeMillisUnsafe(), 3000)
     }))
 
   it.effect("adjust - advances wall and monotonic time", () =>
@@ -254,6 +306,18 @@ describe("TestClock", () => {
       yield* TestClock.adjust("5 seconds")
       assert.isTrue(later)
     }).pipe(Effect.provide(TestClock.layer({ warningDelay: "10 millis" }))))
+
+  it.effect("serializes a context containing a TestClock", () =>
+    Effect.gen(function*() {
+      const context = yield* Effect.context<never>()
+      assert.doesNotThrow(() => JSON.stringify(context))
+      const clock = yield* TestClock.testClockWith(Effect.succeed)
+      const copy = { ...clock }
+      const copied = yield* Effect.context<never>().pipe(Effect.provideService(Clock.Clock, copy))
+      assert.doesNotThrow(() => JSON.stringify(copied))
+      yield* copy.adjust("1 second")
+      assert.strictEqual(JSON.parse(JSON.stringify(copy)).currentTimeMillis, 1000)
+    }))
 
   it.effect("adjust - waits for woken fibers when the advancing fiber yields on its operation budget", () =>
     Effect.gen(function*() {

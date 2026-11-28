@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { Editor, Node } from "@tiptap/core";
+import { Editor, getSchema, Node } from "@tiptap/core";
 import { newlineInCode } from "@tiptap/pm/commands";
-import { TextSelection } from "@tiptap/pm/state";
+import { history, undo } from "@tiptap/pm/history";
+import { EditorState, TextSelection, type Transaction } from "@tiptap/pm/state";
+import type { EditorView } from "@tiptap/pm/view";
 
 import {
   indentCodeBlock,
@@ -17,6 +19,11 @@ import {
   ComposerListExtensions,
   serializeEditorDoc,
 } from "./composer-rich-text-doc";
+import {
+  COMPOSER_UNDO_GROUP_DELAY,
+  type ComposerChangeKind,
+  groupUndoByChangeKind,
+} from "./composer-undo-grouping";
 
 const extensions = [
   StarterKit.configure({ codeBlock: false, trailingNode: false }),
@@ -93,6 +100,38 @@ describe("exitCodeBlockOnTrailingBlankLines", () => {
     pressEnter(editor);
     expect(editor.state.doc.firstChild?.attrs.close).toBe("\n```");
   });
+
+  it.each([
+    ["a closed", "\n```"],
+    ["an open", ""],
+  ])("reverses exiting a code block with %s fence in a single undo", (_, close) => {
+    const schema = getSchema(extensions);
+    let previous: ComposerChangeKind | null = null;
+    let state = EditorState.create({
+      schema,
+      doc: schema.node("doc", null, [schema.node("codeBlock", { close }, [schema.text("a\n\n")])]),
+      plugins: [history({ newGroupDelay: COMPOSER_UNDO_GROUP_DELAY })],
+    });
+    const dispatch = (tr: Transaction) => {
+      previous = groupUndoByChangeKind(tr, previous);
+      state = state.apply(tr);
+    };
+    dispatch(state.tr.setSelection(TextSelection.atEnd(state.doc)));
+    const view = {
+      get state() {
+        return state;
+      },
+      dispatch,
+    } as EditorView;
+
+    const before = state;
+
+    expect(exitCodeBlockOnTrailingBlankLines(view)).toBe(true);
+    expect(state.doc.childCount).toBe(2);
+    undo(state, dispatch);
+    expect(state.doc.eq(before.doc)).toBe(true);
+    expect(state.selection.eq(before.selection)).toBe(true);
+  });
 });
 
 describe("exitCodeBlockOnClosingFence", () => {
@@ -144,11 +183,15 @@ describe("indentCodeBlock", () => {
     expect(textOf(editor)).toBe("one\ntwo");
   });
 
-  it("keeps the selection across the shifted lines", () => {
-    const editor = codeEditor("one\ntwo", { from: 0, to: 7 });
+  it.each([
+    ["one\ntwo", "    one\n    two", 5],
+    ["\none\ntwo", "\n    one\n    two", 1],
+  ])("keeps the selection across the shifted lines in %s", (code, expected, from) => {
+    const editor = codeEditor(code, { from: 0, to: code.length });
     indentCodeBlock(editor.state, "in", (tr) => editor.view.dispatch(tr));
     indentCodeBlock(editor.state, "in", (tr) => editor.view.dispatch(tr));
-    expect(textOf(editor)).toBe("    one\n    two");
+    expect(textOf(editor)).toBe(expected);
+    expect(editor.state.selection.from).toBe(from);
   });
 
   it("reports handled when outdenting can go no further, so Tab never escapes the editor", () => {
@@ -156,6 +199,21 @@ describe("indentCodeBlock", () => {
     expect(indentCodeBlock(editor.state, "out", (tr) => editor.view.dispatch(tr))).toBe(true);
     expect(textOf(editor)).toBe("one\ntwo");
   });
+
+  it.each([
+    ["  a\n  b", 2, 5, "out", "a\nb", 0, 2],
+    ["  a\n  b", 5, 2, "out", "a\nb", 2, 0],
+    ["one\ntwo", 7, 0, "in", "  one\n  two", 11, 2],
+  ] as const)(
+    "maps selection endpoints when shifting %j from %i to %i %s",
+    (code, anchor, head, direction, expected, nextAnchor, nextHead) => {
+      const editor = codeEditor(code, { from: anchor, to: head });
+      indentCodeBlock(editor.state, direction, (tr) => editor.view.dispatch(tr));
+      expect(textOf(editor)).toBe(expected);
+      expect(editor.state.selection.anchor - 1).toBe(nextAnchor);
+      expect(editor.state.selection.head - 1).toBe(nextHead);
+    },
+  );
 });
 
 describe("selections across two identical fences", () => {

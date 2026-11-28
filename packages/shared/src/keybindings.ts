@@ -20,6 +20,7 @@ export {
   shortcutKeyFromEvent,
   type ShortcutEventLike,
   type ShortcutModifierStateLike,
+  type ShortcutKeyboardLayoutMap,
 } from "./keybindingMatching.ts";
 
 export const US_SHIFTED_TO_UNSHIFTED_KEYS: ReadonlyMap<string, string> = new Map([
@@ -65,6 +66,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+]", command: "navigation.forward", when: "!terminalFocus" },
   { key: "mod+j", command: "terminal.toggle" },
   { key: "mod+alt+b", command: "rightPanel.toggle" },
+  { key: "mod+alt+e", command: "rightPanel.toggleMaximized" },
   { key: "mod+shift+b", command: "threadPanel.toggle", when: "!terminalFocus" },
   { key: "mod+t", command: "rightPanel.new", when: "rightPanelOpen && !terminalFocus" },
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
@@ -72,6 +74,8 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+d", command: "composer.dictation", when: "!terminalFocus" },
   { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
   { key: "mod+w", command: "terminal.close", when: "terminalFocus" },
+  { key: "ctrl+alt+[", command: "terminal.previous", when: "terminalFocus && !isMac" },
+  { key: "ctrl+alt+]", command: "terminal.next", when: "terminalFocus && !isMac" },
   { key: "mod+w", command: "rightPanel.close", when: "!terminalFocus" },
   { key: "mod+shift+t", command: "view.reopenClosed" },
   { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
@@ -82,6 +86,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod++", command: "preview.zoomIn", when: "previewFocus" },
   { key: "mod+-", command: "preview.zoomOut", when: "previewFocus" },
   { key: "mod+0", command: "preview.resetZoom", when: "previewFocus" },
+  { key: "mod+f", command: "preview.find", when: "previewFocus" },
   { key: "mod+k", command: "commandPalette.toggle", when: "!terminalFocus" },
   { key: "mod+p", command: "filePicker.toggle", when: "!terminalFocus" },
   { key: "mod+shift+f", command: "projectSearch.toggle", when: "!terminalFocus" },
@@ -126,6 +131,8 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+o", command: "editor.openFavorite" },
   { key: "mod+shift+[", command: "thread.previous" },
   { key: "mod+shift+]", command: "thread.next" },
+  { key: "cmd+shift+[", command: "terminal.previous", when: "terminalFocus && isMac" },
+  { key: "cmd+shift+]", command: "terminal.next", when: "terminalFocus && isMac" },
   { key: "mod+shift+c", command: "thread.copyReference", when: "!terminalFocus" },
   { key: "mod+shift+s", command: "thread.settle", when: "!terminalFocus" },
   { key: "mod+shift+p", command: "thread.pin", when: "!terminalFocus" },
@@ -166,8 +173,10 @@ export function parseKeybindingShortcut(value: string): KeybindingShortcut | nul
     trailingEmptyCount += 1;
     tokens.pop();
   }
-  if (trailingEmptyCount > 0) {
+  if (trailingEmptyCount === 2) {
     tokens.push("+");
+  } else if (trailingEmptyCount !== 0) {
+    return null;
   }
   if (tokens.some((token) => token.length === 0)) {
     return null;

@@ -4,6 +4,9 @@ import * as Struct from "effect/Struct";
 
 import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
+/** Ends a checkpoint diff the server cut off at its output size limit. */
+export const CHECKPOINT_DIFF_TRUNCATED_MARKER = "\n\n[truncated]";
+
 export const TurnCountRange = Schema.Struct({
   fromTurnCount: NonNegativeInt,
   toTurnCount: NonNegativeInt,
@@ -18,10 +21,25 @@ export const TurnCountRange = Schema.Struct({
   ),
 );
 
+/** One tracked repository's patch in a thread that reaches several. */
+export const ThreadTurnRepositoryDiff = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  /** The project's tracked path; matches the checkpoint scope's `repositoryPath`. */
+  repositoryPath: TrimmedNonEmptyString,
+  /** The repository folder from the thread's cwd, `/`-separated; may start with `../`. */
+  relativePath: Schema.String,
+  /** Paths are relative to the repository, as Git prints them. */
+  diff: Schema.String,
+});
+export type ThreadTurnRepositoryDiff = typeof ThreadTurnRepositoryDiff.Type;
+
 export const ThreadTurnDiff = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
+    /** The thread folder's own patch; empty when that folder is not a Git repository. */
     diff: Schema.String,
+    /** Tracked repositories that changed in the range. Absent when the thread has none. */
+    repositories: Schema.optionalKey(Schema.Array(ThreadTurnRepositoryDiff)),
   }),
   { unsafePreserveChecks: true },
 );

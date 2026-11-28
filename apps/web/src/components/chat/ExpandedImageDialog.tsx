@@ -1,9 +1,15 @@
 import { memo, useRef, useState, type ReactNode, type KeyboardEvent } from "react";
 import { flushSync } from "react-dom";
-import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
-import { Image as ImageGlyph, Text as TextGlyph } from "lucide";
+import { useGT } from "gt-react";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ImageIcon,
+  PencilIcon,
+  TextIcon,
+  XIcon,
+} from "lucide-react";
 import { Button } from "../ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import type { ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
@@ -14,11 +20,16 @@ import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { isContextMenuOpen } from "../../contextMenuFallback";
 import {
   SnapShotAccessibilityData,
+  SnapShotCopyButton,
   SnapShotContentsButton,
   snapShotAccessibilityDetails,
 } from "./SnapShotAttachmentDetails";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ZoomableImage, type ZoomableImageHandle } from "./ZoomableImage";
+import {
+  type EditedImage,
+  ImageAnnotationOverlay,
+  type ImageAnnotationStatus,
+} from "./ImageAnnotationOverlay";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
@@ -27,6 +38,7 @@ import { expandedImageKey } from "./ExpandedImagePreview";
 import { registerThreadOverlay } from "./threadOverlayRetention";
 import { mediaReferenceFileName } from "@t3tools/client-runtime/media-reference";
 import { mediaMimeType, mediaMimeTypeFromExtension } from "@t3tools/shared/mediaPreview";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 interface ExpandedImageDialogProps {
   preview: ExpandedImagePreview;
@@ -83,28 +95,62 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   preview,
   onClose,
 }: ExpandedImageDialogProps) {
+  const gt = useGT();
   const [imageOffset, setImageOffset] = useState(0);
   const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
   const [accessibilityDetailsSrc, setAccessibilityDetailsSrc] = useState<string | null>(null);
   const zoomableImageRef = useRef<ZoomableImageHandle>(null);
-  const [returnFocusTarget] = useState(() =>
-    document.activeElement instanceof HTMLElement ? document.activeElement : null,
-  );
+  // Drawing happens in place over the current image, so the preview around it never moves.
+  const [editing, setEditing] = useState(false);
+  const [editStatus, setEditStatus] = useState<ImageAnnotationStatus>({
+    dirty: false,
+    saving: false,
+  });
+  // A saved edit replaces the draft's bytes; show them here without reopening the preview.
+  const [editedImages, setEditedImages] = useState<Readonly<Record<number, EditedImage>>>({});
+  const editButtonRef = useRef<HTMLButtonElement>(null);
+  const [returnFocus] = useState(() => {
+    const target = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    return { target, focusVisible: target?.matches(":focus-visible") ?? false };
+  });
   // The host unmounts the dialog outright, so Base UI never runs finalFocus. Without
   // this, focus stays on the removed dialog, and the composer that owned the opener
-  // reads that as a blur and rests.
+  // reads that as a blur and rests. Preserve mouse focus when Escape closes it.
   const close = () => {
     flushSync(onClose);
-    if (returnFocusTarget?.isConnected) returnFocusTarget.focus({ preventScroll: true });
+    const { target, focusVisible } = returnFocus;
+    if (target?.isConnected) target.focus({ preventScroll: true, focusVisible });
   };
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  // Only a press that starts and ends on the empty area closes; a drag across it does not.
+  const emptyAreaPressRef = useRef(false);
   const imageCount = preview.images.length;
   const index =
     imageCount > 0 ? (((preview.index + imageOffset) % imageCount) + imageCount) % imageCount : 0;
-  const item = preview.images[index];
+  const previewItem = preview.images[index];
+  const editedImage = editedImages[index];
+  const item =
+    previewItem && editedImage
+      ? {
+          ...previewItem,
+          src: editedImage.src,
+          name: editedImage.file.name,
+          mimeType: editedImage.file.type,
+          ...(previewItem.edit
+            ? {
+                edit: {
+                  ...previewItem.edit,
+                  file: editedImage.file,
+                  name: editedImage.file.name,
+                  mimeType: editedImage.file.type,
+                },
+              }
+            : {}),
+        }
+      : previewItem;
   const source: MediaActionSource = item?.actionsSource ?? {
     kind: item?.type === "video" ? "video" : "image",
-    name: item?.name ?? "Media",
+    name: item?.name ?? gt("Media"),
     src: item?.src ?? null,
   };
   const openFile = source.onOpenFile;
@@ -118,14 +164,27 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
       }
     : source;
 
+  const exitEdit = () => {
+    setEditing(false);
+    setEditStatus({ dirty: false, saving: false });
+    editButtonRef.current?.focus({ preventScroll: true });
+  };
+  const cancelEdit = () => {
+    if (!editStatus.saving) exitEdit();
+  };
+
   const navigateImage = (direction: -1 | 1) => {
+    if (editing) {
+      if (editStatus.dirty) return;
+      exitEdit();
+    }
     setImageOffset((current) => current + direction);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || isContextMenuOpen() || event.target instanceof HTMLVideoElement)
       return;
-    if (zoomableImageRef.current?.pan(event.key)) {
+    if (!editing && zoomableImageRef.current?.pan(event.key)) {
       event.preventDefault();
       event.stopPropagation();
       return;
@@ -144,7 +203,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   };
 
   if (!item) return null;
-  const mediaLabel = item.type === "video" ? "video" : "image";
+  const isVideo = item.type === "video";
+  const editTarget = editing && !isVideo ? item.edit : undefined;
   const openOriginalLink =
     item.originalUrl && resolveExternalWebLinkHost(item.originalUrl) !== null ? (
       <OpenMediaLink originalUrl={item.originalUrl} />
@@ -153,10 +213,10 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   const showingAccessibilityDetails =
     Boolean(accessibilityDetails) && accessibilityDetailsSrc === item.src;
   const contentsLabel = showingAccessibilityDetails
-    ? "Show screenshot"
+    ? gt("Show screenshot")
     : accessibilityDetails?.format === "json"
-      ? "Show accessibility JSON"
-      : "Show extracted text";
+      ? gt("Show accessibility JSON")
+      : gt("Show extracted text");
 
   return (
     <Dialog
@@ -168,33 +228,57 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           eventDetails.cancel();
           return;
         }
+        // While drawing, Escape cancels the drawing and nothing else closes the preview.
+        if (editing) {
+          eventDetails.cancel();
+          if (eventDetails.reason === "escape-key") cancelEdit();
+          return;
+        }
         close();
       }}
     >
       <DialogPopup
         {...composerFloatingLayerProps}
         variant="media"
+        mediaControlsPlacement="inside"
         showCloseButton={false}
         bottomStickOnMobile={false}
         className="row-start-1 h-full max-h-[92vh] w-[92vw] max-w-[92vw] items-center justify-center overflow-visible [--media-width:92vw] [--media-height:min(calc((100vh-var(--native-titlebar-height,0px))*0.86),calc(100vh-var(--native-titlebar-height,0px)-160px))] sm:[--media-width:calc(92vw-96px)]"
         onKeyDown={onKeyDown}
         initialFocus={closeButtonRef}
-        finalFocus={() => returnFocusTarget}
+        finalFocus={() => returnFocus.target}
+        onPointerDown={(event) => {
+          emptyAreaPressRef.current = event.target === event.currentTarget;
+        }}
+        // A press released on the image still clicks the popup, their common ancestor.
+        onPointerUp={(event) => {
+          if (event.target !== event.currentTarget) emptyAreaPressRef.current = false;
+        }}
         onClick={(event) => {
-          if (event.target === event.currentTarget) close();
+          if (emptyAreaPressRef.current && event.target === event.currentTarget && !editing)
+            close();
+          emptyAreaPressRef.current = false;
         }}
       >
-        <DialogTitle className="sr-only">Expanded {mediaLabel} preview</DialogTitle>
+        <DialogTitle className="sr-only">
+          {isVideo ? gt("Expanded video preview") : gt("Expanded image preview")}
+        </DialogTitle>
         <Button
           type="button"
           ref={closeButtonRef}
-          size="icon-sm"
+          size="icon"
           variant="media-close"
-          className="absolute right-0 top-0 z-20"
-          onClick={close}
-          aria-label={`Close ${mediaLabel} preview`}
+          className="absolute end-0 top-0 z-20 max-[8rem]:end-auto max-[8rem]:left-1/2 max-[8rem]:-translate-x-1/2"
+          onClick={editing ? cancelEdit : close}
+          aria-label={
+            editing
+              ? gt("Cancel drawing")
+              : isVideo
+                ? gt("Close video preview")
+                : gt("Close image preview")
+          }
         >
-          <XIcon />
+          <XIcon aria-hidden="true" />
         </Button>
         {preview.images.length > 1 && (
           <Button
@@ -202,7 +286,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             size="icon"
             variant="media-navigation"
             className="left-0 top-auto bottom-0 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
-            aria-label="Previous media"
+            aria-label={gt("Previous media")}
+            disabled={editing && editStatus.dirty}
             onClick={() => navigateImage(-1)}
           >
             <ChevronLeftIcon className="size-5" />
@@ -223,8 +308,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
               <ExpandedMediaFailure>
                 <p>
                   {openOriginalLink
-                    ? "This image could not be loaded."
-                    : "Image unavailable. The file may have been moved or deleted."}
+                    ? gt("This image could not be loaded.")
+                    : gt("Image unavailable. The file may have been moved or deleted.")}
                 </p>
                 {openOriginalLink}
               </ExpandedMediaFailure>
@@ -236,6 +321,19 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                 name={item.name}
                 mimeType={itemMimeType(item)}
                 onError={() => setFailedImageSrc(item.src)}
+                overlay={
+                  editTarget ? (
+                    <ImageAnnotationOverlay
+                      target={editTarget}
+                      onStatusChange={setEditStatus}
+                      onSaved={(edited) => {
+                        setEditedImages((current) => ({ ...current, [index]: edited }));
+                        exitEdit();
+                      }}
+                      onExit={exitEdit}
+                    />
+                  ) : undefined
+                }
               />
             )}
             <div className="mt-2 flex max-w-[var(--media-width)] items-center justify-center gap-1.5 text-xs text-white/80 max-sm:px-10">
@@ -244,31 +342,53 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                 {preview.images.length > 1 ? ` (${index + 1}/${preview.images.length})` : ""}
               </span>
               {accessibilityDetails && item.source ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        aria-label={contentsLabel}
-                        aria-pressed={showingAccessibilityDetails}
-                        onClick={() =>
-                          setAccessibilityDetailsSrc(showingAccessibilityDetails ? null : item.src)
-                        }
-                        size="icon-micro"
-                        variant="overlay"
-                      />
-                    }
-                  >
-                    <MorphIcon
-                      className="size-3"
-                      aria-hidden="true"
-                      icon={showingAccessibilityDetails ? ImageGlyph : TextGlyph}
+                <SharedTooltipTrigger
+                  render={
+                    <Button
+                      aria-label={contentsLabel}
+                      aria-pressed={showingAccessibilityDetails}
+                      disabled={editing}
+                      onClick={() =>
+                        setAccessibilityDetailsSrc(showingAccessibilityDetails ? null : item.src)
+                      }
+                      size="icon-micro"
+                      variant="overlay"
                     />
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">{contentsLabel}</TooltipPopup>
-                </Tooltip>
+                  }
+                  label={contentsLabel}
+                >
+                  {showingAccessibilityDetails ? (
+                    <ImageIcon className="size-3" aria-hidden="true" />
+                  ) : (
+                    <TextIcon className="size-3" aria-hidden="true" />
+                  )}
+                </SharedTooltipTrigger>
               ) : item.source ? (
                 <SnapShotContentsButton source={item.source} side="top" />
               ) : null}
+              {item.edit && !isVideo ? (
+                <SharedTooltipTrigger
+                  render={
+                    <Button
+                      ref={editButtonRef}
+                      aria-label={gt("Draw on image")}
+                      aria-pressed={editing}
+                      disabled={showingAccessibilityDetails || editStatus.saving}
+                      onClick={() => (editing ? cancelEdit() : setEditing(true))}
+                      size="icon-micro"
+                      variant={editing ? "default" : "overlay"}
+                    />
+                  }
+                  label={gt("Draw on image")}
+                >
+                  <PencilIcon className="size-3" aria-hidden="true" />
+                </SharedTooltipTrigger>
+              ) : null}
+              {item.onCopySnapshot && (
+                <div className="-my-1.5">
+                  <SnapShotCopyButton onCopy={item.onCopySnapshot} />
+                </div>
+              )}
             </div>
           </div>
         </MediaActions>
@@ -278,7 +398,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             size="icon"
             variant="media-navigation"
             className="right-0 top-auto bottom-0 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
-            aria-label="Next media"
+            aria-label={gt("Next media")}
+            disabled={editing && editStatus.dirty}
             onClick={() => navigateImage(1)}
           >
             <ChevronRightIcon className="size-5" />

@@ -73,10 +73,11 @@ export type userMessage = "~effect/cli/CliError/userMessage"
  *
  * **Details**
  *
- * When a handler failure has a string `[CliError.userMessage]`, `Command.run`
- * renders it with the installed formatter, sets `Runtime.errorReported` to
- * `false`, and rethrows the original error, so its tag is preserved. The
- * global `Error` interface declares this key as an optional string.
+ * When a handler or `Command.validate` failure has a string
+ * `[CliError.userMessage]`, `Command.run` renders it with the installed
+ * formatter, sets `Runtime.errorReported` to `false`, and rethrows the
+ * original error, so its tag is preserved. The global `Error` interface
+ * declares this key as an optional string.
  *
  * **Example** (Rendering a tagged handler failure)
  *
@@ -588,6 +589,8 @@ export class UnknownSubcommand extends Schema.TaggedError<UnknownSubcommand>(
  * Fail with it from `Command.validate`, `Flag.mapEffect` or
  * `Argument.mapEffect`. The runner shows it with the command help, like any
  * other parse error. Handlers report their own failures with `UserError`.
+ * To report a `Command.validate` failure without help, fail with your own
+ * error instead.
  *
  * **Example** (Rejecting a flag combination)
  *

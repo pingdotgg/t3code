@@ -6,9 +6,11 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Base64 from "effect/encoding/Base64";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -29,6 +31,7 @@ import {
 } from "../deploymentConfig.ts";
 import * as CloudflareApiPause from "./CloudflareApiPause.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
+import * as ManagedTunnelBinding from "./ManagedTunnelBinding.ts";
 import * as ManagedTunnelLimits from "./ManagedTunnelLimits.ts";
 
 export class ManagedEndpointProvisioningNotConfigured extends Schema.TaggedError<ManagedEndpointProvisioningNotConfigured>()(
@@ -98,6 +101,7 @@ const ManagedEndpointDeprovisioningStage = Schema.Literals([
   "claim-deprovision",
   "delete-dns-record",
   "delete-tunnel",
+  "disconnect-tunnel",
   "remove-allocation",
 ]);
 
@@ -178,6 +182,8 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly userId: string;
       readonly environmentId: string;
       readonly target?: ManagedEndpointDeprovisionTarget | null;
+      /** Drop a tunnel's live connectors instead of failing; only for accounts that no longer exist. */
+      readonly forceDisconnect?: boolean;
     }) => Effect.Effect<boolean, ManagedEndpointDeprovisioningFailed>;
     /** True means the connector token is dead; false means concurrent provisioning kept its tunnel live. */
     readonly release: (input: {
@@ -219,6 +225,7 @@ const ManagedEndpointTunnelClientOperation = Schema.Literals([
   "get-configuration",
   "get-token",
   "delete",
+  "disconnect",
 ]);
 
 export class ManagedEndpointTunnelClientError extends Schema.TaggedError<ManagedEndpointTunnelClientError>()(
@@ -242,7 +249,10 @@ export class ManagedEndpointTunnelClient extends Context.Service<
     readonly get: (
       tunnelId: string,
     ) => Effect.Effect<ManagedEndpointTunnel, ManagedEndpointTunnelClientError>;
-    readonly list: (request: ManagedEndpointTunnelListRequest) => Effect.Effect<
+    readonly list: (
+      request: ManagedEndpointTunnelListRequest,
+      options?: { readonly timeout?: Duration.Input },
+    ) => Effect.Effect<
       {
         readonly result: ReadonlyArray<ManagedEndpointTunnel>;
         readonly resultInfo?: {
@@ -280,6 +290,10 @@ export class ManagedEndpointTunnelClient extends Context.Service<
       tunnelId: string,
     ) => Effect.Effect<string, ManagedEndpointTunnelClientError>;
     readonly delete: (tunnelId: string) => Effect.Effect<unknown, ManagedEndpointTunnelClientError>;
+    /** Rotates the tunnel secret and drops its connectors, so a live host no longer blocks deletion. */
+    readonly disconnect: (
+      tunnelId: string,
+    ) => Effect.Effect<void, ManagedEndpointTunnelClientError>;
   }
 >()("t3code-relay/environments/ManagedEndpointProvider/ManagedEndpointTunnelClient") {}
 
@@ -392,7 +406,12 @@ function isManagedEndpointNotFound(cause: unknown): boolean {
   if (typeof cause !== "object" || cause === null) {
     return false;
   }
-  if ("_tag" in cause && (cause._tag === "NotFound" || cause._tag === "TunnelNotFound")) {
+  if (
+    "_tag" in cause &&
+    (cause._tag === "NotFound" ||
+      cause._tag === "TunnelNotFound" ||
+      cause._tag === "RecordNotFound")
+  ) {
     return true;
   }
   if ("status" in cause && cause.status === 404) {
@@ -499,6 +518,7 @@ const makeCloudflareApiGate = (alchemyRuntimeContext: Alchemy.BaseRuntimeContext
     });
     return <A, E>(
       call: Effect.Effect<A, E, Alchemy.RuntimeContext>,
+      timeout: Duration.Input = "8 seconds",
     ): Effect.Effect<A, E | CloudflareApiPaused | Cause.TimeoutError> =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
@@ -517,7 +537,7 @@ const makeCloudflareApiGate = (alchemyRuntimeContext: Alchemy.BaseRuntimeContext
         }
         return yield* call.pipe(
           Effect.provideService(CloudflareRetry.Retry, withoutRateLimitRetries),
-          Effect.timeout("8 seconds"),
+          Effect.timeout(timeout),
           Effect.tapError((cause) =>
             isCloudflareRateLimited(cause) ? recordRateLimit(cause) : Effect.void,
           ),
@@ -928,7 +948,7 @@ const make = Effect.gen(function* () {
           );
         }
         if (tunnelId !== null) {
-          yield* ignoreNotFound(tunnels.delete(tunnelId)).pipe(
+          const deleteTunnel = Effect.suspend(() => ignoreNotFound(tunnels.delete(tunnelId))).pipe(
             Effect.mapError(
               (cause) =>
                 new ManagedEndpointDeprovisioningFailed({
@@ -938,6 +958,25 @@ const make = Effect.gen(function* () {
                   cause,
                 }),
             ),
+          );
+          yield* deleteTunnel.pipe(
+            Effect.catchTags({
+              ManagedEndpointDeprovisioningFailed: (failure) =>
+                input.forceDisconnect === true && isManagedEndpointTunnelInUse(failure.cause)
+                  ? tunnels.disconnect(tunnelId).pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new ManagedEndpointDeprovisioningFailed({
+                            ...input,
+                            stage: "disconnect-tunnel",
+                            tunnelId,
+                            cause,
+                          }),
+                      ),
+                      Effect.andThen(deleteTunnel),
+                    )
+                  : Effect.fail(failure),
+            }),
           );
           tunnelDeleted = true;
         }
@@ -1577,7 +1616,7 @@ const make = Effect.gen(function* () {
 export const layer = Layer.effect(ManagedEndpointProvider, make);
 
 export const layerCloudflareBindings = (
-  tunnelClient: Cloudflare.Tunnel.ReadWriteTunnelClient,
+  tunnelClient: ManagedTunnelBinding.ManagedTunnelClient,
   dnsClient: Cloudflare.DNS.ReadWriteDnsClient,
   alchemyRuntimeContext: Alchemy.BaseRuntimeContext,
 ) => {
@@ -1588,6 +1627,7 @@ export const layerCloudflareBindings = (
       Layer.unwrap(
         Effect.gen(function* () {
           const pause = yield* CloudflareApiPause.CloudflareApiPause;
+          const random = yield* SecureRandom.SecureRandom;
           const gate = cloudflare(pause);
           return Layer.mergeAll(
             layerTunnelClient({
@@ -1602,8 +1642,8 @@ export const layerCloudflareBindings = (
                       }),
                   ),
                 ),
-              list: (request) =>
-                gate(tunnelClient.list(request)).pipe(
+              list: (request, options) =>
+                gate(tunnelClient.list(request), options?.timeout).pipe(
                   Effect.mapError(
                     (cause) =>
                       new ManagedEndpointTunnelClientError({
@@ -1668,6 +1708,20 @@ export const layerCloudflareBindings = (
                     (cause) =>
                       new ManagedEndpointTunnelClientError({
                         operation: "delete",
+                        tunnelId,
+                        cause,
+                      }),
+                  ),
+                ),
+              disconnect: (tunnelId) =>
+                random.randomBytes(32).pipe(
+                  Effect.flatMap((secret) =>
+                    gate(tunnelClient.disconnect(tunnelId, Base64.encode(secret))),
+                  ),
+                  Effect.mapError(
+                    (cause) =>
+                      new ManagedEndpointTunnelClientError({
+                        operation: "disconnect",
                         tunnelId,
                         cause,
                       }),

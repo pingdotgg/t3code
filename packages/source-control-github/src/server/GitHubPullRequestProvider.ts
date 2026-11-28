@@ -32,6 +32,22 @@ import type {
 } from "./gitHubPullRequestJson.ts";
 import { definition } from "../shared/definition.ts";
 
+/**
+ * `review-requested:<viewer>` search rows include the viewer's team requests, which name no login,
+ * so record the viewer as requested. Search rows only: the listing fallback cannot tell whether the
+ * viewer belongs to a requested team.
+ */
+function withViewerRequested<T extends { readonly reviewRequestLogins: ReadonlyArray<string> }>(
+  item: T,
+  input: { readonly involvement: string; readonly viewer: string },
+): T {
+  const viewer = input.viewer.toLowerCase();
+  return input.involvement === "reviewing" &&
+    !item.reviewRequestLogins.some((login) => login.toLowerCase() === viewer)
+    ? { ...item, reviewRequestLogins: [...item.reviewRequestLogins, input.viewer] }
+    : item;
+}
+
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
@@ -55,17 +71,19 @@ const CAPABILITIES: PullRequestCapabilities = {
   edit: { changeRequest: true, comment: true, maintainerEdits: true },
   stacks: true,
   stackActions: true,
+  stackAutoMerge: true,
   labels: true,
   // Statuses and check runs land on the head commit itself and are read whole, so an empty list
   // after a push is CI that never started rather than a read that saw nothing.
   checksAlwaysReport: true,
+  withheldFileDiff: true,
 };
 
 const UNAVAILABLE_REQUIREMENT = {
   missing:
     "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI (https://cli.github.com/) and run `gh auth login`.",
   unauthenticated:
-    "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source Control.",
+    "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source control & issues.",
 };
 
 /**
@@ -143,9 +161,9 @@ function gitHubProviderFailure(
 
 const REPOSITORY_ACCESS_HINTS: Record<Exclude<GitHubCredentialSource, "app">, string> = {
   settings:
-    "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source Control.",
+    "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source control & issues.",
   env: "The server's environment token can't see it. Give it access, or unset it.",
-  gh: "Your gh login can't see it. Give it access, or save a token in Settings → Source Control.",
+  gh: "Your gh login can't see it. Give it access, or save a token in Settings → Source control & issues.",
 };
 
 function withAvatar(
@@ -161,6 +179,9 @@ function withAvatar(
   return avatarUrl === null ? actor : { ...actor, avatarUrl };
 }
 
+const workflowRunIdOf = (url: string | null) =>
+  url?.match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1] ?? null;
+
 function withWorkflowApprovals(
   checks: ReadonlyArray<PullRequestCheck>,
   runs: ReadonlyArray<GitHubWorkflowRunApproval>,
@@ -169,8 +190,8 @@ function withWorkflowApprovals(
   const representedRunIds = new Set<number>();
   for (const check of checks) {
     if (check.status !== "action-required" || check.url === null) continue;
-    const id = check.url.match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1];
-    if (id !== undefined) representedRunIds.add(Number(id));
+    const id = workflowRunIdOf(check.url);
+    if (id !== null) representedRunIds.add(Number(id));
   }
   const approvalChecks = runs
     .filter((run) => !representedRunIds.has(run.id))
@@ -194,6 +215,30 @@ function withWorkflowApprovals(
           },
         ]
       : []),
+  ];
+}
+
+// GitHub adds a run's check runs only as its jobs start, so a queued run can have none yet.
+function withUnfinishedWorkflowRuns(
+  checks: ReadonlyArray<PullRequestCheck>,
+  runs: ReadonlyArray<GitHubWorkflowRunApproval>,
+): ReadonlyArray<PullRequestCheck> {
+  const runningRunIds = new Set<number>();
+  for (const check of checks) {
+    if (check.status !== "pending" && check.status !== "action-required") continue;
+    const id = workflowRunIdOf(check.url);
+    if (id !== null) runningRunIds.add(Number(id));
+  }
+  return [
+    ...checks,
+    ...runs
+      .filter((run) => !runningRunIds.has(run.id))
+      .map((run): PullRequestCheck => ({
+        name: run.name,
+        status: "pending",
+        description: "This workflow run has not finished.",
+        url: run.url,
+      })),
   ];
 }
 
@@ -306,7 +351,7 @@ export const make = Effect.gen(function* () {
   const readChecks = (input: ProviderRepositoryRef & { readonly number: number }) =>
     cli.getPullRequestDetail(input).pipe(
       Effect.flatMap((pullRequest) =>
-        (pullRequest.state !== "open" || pullRequest.isCrossRepository !== true
+        (pullRequest.state !== "open"
           ? Effect.succeed({
               runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
               unavailable: false,
@@ -322,7 +367,7 @@ export const make = Effect.gen(function* () {
                   headSha: pullRequest.headSha,
                   headBranch: pullRequest.headBranch,
                   headRepositoryOwner: pullRequest.headRepositoryOwner,
-                  isCrossRepository: true,
+                  isCrossRepository: pullRequest.isCrossRepository === true,
                 })
                 .pipe(
                   Effect.matchEffect({
@@ -338,11 +383,24 @@ export const make = Effect.gen(function* () {
                   }),
                 )
         ).pipe(
-          Effect.map((workflowApprovals) => ({
+          Effect.zip(
+            pullRequest.state !== "open" || pullRequest.headSha == null
+              ? Effect.succeed([] as ReadonlyArray<GitHubWorkflowRunApproval>)
+              : cli.listUnfinishedWorkflowRuns({ ...input, headSha: pullRequest.headSha }).pipe(
+                  Effect.catchIf(
+                    (error) =>
+                      error._tag !== "GitHubApiRateLimitError" &&
+                      error._tag !== "SourceControlRateLimitPausedError",
+                    () => Effect.succeed([] as ReadonlyArray<GitHubWorkflowRunApproval>),
+                  ),
+                ),
+            { concurrent: true },
+          ),
+          Effect.map(([workflowApprovals, unfinishedRuns]) => ({
             ...pullRequest,
             author: withAvatar(pullRequest.author, new Map(), input.host),
             checks: withWorkflowApprovals(
-              pullRequest.checks,
+              withUnfinishedWorkflowRuns(pullRequest.checks, unfinishedRuns),
               workflowApprovals.runs,
               workflowApprovals.unavailable,
             ),
@@ -359,6 +417,7 @@ export const make = Effect.gen(function* () {
     capabilities: CAPABILITIES,
     unavailableRequirement: UNAVAILABLE_REQUIREMENT,
     readsPublicHostWithoutCheckout: true,
+    batchesReads: true,
     mergeMessageRewrite: removeAgentCredits,
     getRoutingIdentity: (input) =>
       cli.getRoutingIdentity(input).pipe(Effect.mapError(fail("routeIdentity"))),
@@ -391,7 +450,7 @@ export const make = Effect.gen(function* () {
           Effect.map((page) => ({
             ...page,
             items: page.items.map((item) => ({
-              ...item,
+              ...(page.continues ? withViewerRequested(item, input) : item),
               author: withAvatar(item.author, new Map<string, string>(), input.host),
             })),
           })),
@@ -417,7 +476,7 @@ export const make = Effect.gen(function* () {
             Effect.map(unresolvedBySearch(input, batch), (unresolved) => ({
               truncated: batch.truncated,
               items: batch.items.map((item) => ({
-                ...item,
+                ...withViewerRequested(item, input),
                 author: withAvatar(item.author, new Map<string, string>(), input.host),
               })),
               unresolved,
@@ -453,12 +512,18 @@ export const make = Effect.gen(function* () {
         .getPullRequestWatchFingerprint(input)
         .pipe(Effect.mapError(fail("getChangeRequestWatchFingerprint"))),
 
+    changeRequestEvents: (input) => cli.pullRequestEvents(input),
+
     getChangeRequestPreview: (input) =>
       cli.getPullRequestPreview(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
 
     getChangeRequestChecks: (input) =>
       cli.revalidateChecks(input, readChecks(input)).pipe(
-        Effect.map(({ state, checks }) => ({ state, checks })),
+        Effect.map(({ state, checks, workflowApprovalsRequired }) => ({
+          state,
+          checks,
+          ...(workflowApprovalsRequired === undefined ? {} : { workflowApprovalsRequired }),
+        })),
         Effect.mapError(fail("getChangeRequestChecks")),
       ),
 
@@ -496,12 +561,14 @@ export const make = Effect.gen(function* () {
         Effect.mapError(fail("getChangeRequest")),
       ),
 
-    getChangeRequestActivity: (input) =>
-      Effect.all(
-        [
-          cli.getPullRequestActivity(input),
-          cli.listReviewThreadComments(input).pipe(
-            Effect.orElseSucceed(() => ({
+    getChangeRequestActivity: (input) => {
+      const threadRead = cli.listReviewThreadComments(input).pipe(
+        Effect.catchIf(
+          (error) =>
+            error._tag !== "GitHubApiRateLimitError" &&
+            error._tag !== "SourceControlRateLimitPausedError",
+          () =>
+            Effect.succeed({
               comments: [],
               dismissalsByReviewId: new Map<string, string>(),
               reactions: [],
@@ -516,17 +583,21 @@ export const make = Effect.gen(function* () {
               botLogins: new Set<string>(),
               commits: [],
               viewer: { canUpdate: true, didAuthor: false },
-            })),
-          ),
-        ],
-        { concurrency: 2 },
-      ).pipe(
+            }),
+        ),
+      );
+      return Effect.all([cli.getPullRequestActivity(input), threadRead], {
+        concurrency: 2,
+      }).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
         Effect.map(([pullRequest, reviewThreads]): ProviderChangeRequestActivity => {
           const commitStats = new Map(
-            pullRequest.commits.map(({ oid, additions, deletions }) => [
+            pullRequest.commits.map(({ oid, additions, deletions, changedFiles }) => [
               oid,
-              additions === undefined ? {} : { additions, deletions },
+              {
+                ...(additions === undefined ? {} : { additions, deletions }),
+                ...(changedFiles === undefined ? {} : { changedFiles }),
+              },
             ]),
           );
           return {
@@ -575,7 +646,7 @@ export const make = Effect.gen(function* () {
               }))
               .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
             commentCount: pullRequest.comments.length + reviewThreads.commentCount,
-            commentsTruncated: reviewThreads.truncated,
+            commentsTruncated: pullRequest.truncated || reviewThreads.truncated,
             reviewThreadsTruncated: reviewThreads.reviewThreadsTruncated,
             reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
               ...thread,
@@ -591,7 +662,8 @@ export const make = Effect.gen(function* () {
             })),
           };
         }),
-      ),
+      );
+    },
 
     getReviewThreadComments: (input) =>
       cli.getReviewThreadComments(input).pipe(Effect.mapError(fail("getReviewThreadComments"))),
@@ -689,10 +761,16 @@ export const make = Effect.gen(function* () {
           ...(input.expectedStackHeads === undefined
             ? {}
             : { expectedStackHeads: input.expectedStackHeads }),
+          ...(input.expectedHeadSha === undefined
+            ? {}
+            : { expectedHeadSha: input.expectedHeadSha }),
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
           ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
         })
         .pipe(Effect.mapError(fail("runAction"))),
+
+    getCheckLogs: (input) => cli.readCheckLogs(input).pipe(Effect.mapError(fail("getCheckLogs"))),
+    rerunChecks: (input) => cli.rerunChecks(input).pipe(Effect.mapError(fail("rerunChecks"))),
 
     updateChangeRequest: (input) =>
       cli
@@ -732,6 +810,7 @@ export const make = Effect.gen(function* () {
           cwd: input.cwd,
           repository: input.repository,
           host: input.host,
+          number: input.number,
           threadId: input.threadId,
           body: input.body,
         })
@@ -756,6 +835,7 @@ export const make = Effect.gen(function* () {
           cwd: input.cwd,
           repository: input.repository,
           host: input.host,
+          number: input.number,
           threadId: input.threadId,
           resolved: input.resolved,
         })

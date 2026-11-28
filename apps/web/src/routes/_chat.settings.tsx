@@ -1,6 +1,7 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
-import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect, useLocation, useRouter } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
@@ -16,6 +17,7 @@ import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
 import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScopeSentence";
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
+import { useRenderedSettingsPathname } from "../components/settings/useRenderedSettingsPathname";
 import {
   retainSettingsScope,
   validateSettingsRouteSearch,
@@ -36,8 +38,10 @@ function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void })
       disabled={changedSettingLabels.length === 0}
       onClick={() => void restoreDefaults()}
     >
-      <RotateCcwIcon className="mx-1 size-3.5" />
-      <span className="max-sm:sr-only">Restore device defaults</span>
+      <RotateCcwIcon className="size-3.5" />
+      <span className="max-sm:sr-only">
+        <T>Restore device defaults</T>
+      </span>
     </Button>
   );
 }
@@ -45,26 +49,55 @@ function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void })
 function SettingsScopeBoundary({ pathname, children }: { pathname: string; children: ReactNode }) {
   const { scope, connectedEnvironments } = useSettingsScope();
   const { environments } = useEnvironments();
-  const hash = useLocation({ select: (location) => location.hash });
+  const gt = useGT();
+  const m = useMessages();
+  // A pending navigation's hash targets the page still loading, not the one on screen.
+  const hash = useLocation({
+    select: (location) => (location.pathname === pathname ? location.hash : ""),
+  });
   const searchTarget = getSettingsSearchTargetScope(hash);
-  const autoSettlementAvailability = searchTarget?.requiresThreadAutoSettlement
-    ? getThreadAutoSettlementSearchAvailability(environments, scope)
+  const agentFeedbackAvailability = searchTarget?.agentFeedbackOnly
+    ? {
+        eligibleEnvironmentIds: environments
+          .filter(
+            (environment) =>
+              environment.connection.phase === "connected" &&
+              environment.serverConfig?.environment.capabilities.agentFeedback === true,
+          )
+          .map((environment) => environment.environmentId),
+        isTargetAvailable:
+          connectedEnvironments.length > 0 &&
+          connectedEnvironments.every(
+            (environment) =>
+              environment.serverConfig?.environment.capabilities.agentFeedback === true,
+          ),
+      }
     : null;
+  const targetAvailability =
+    agentFeedbackAvailability ??
+    (searchTarget?.requiresThreadAutoSettlement
+      ? getThreadAutoSettlementSearchAvailability(environments, scope)
+      : null);
   if (
     scope.kind !== "unavailable" &&
     searchTarget &&
-    autoSettlementAvailability &&
-    !autoSettlementAvailability.isTargetAvailable
+    targetAvailability &&
+    !targetAvailability.isTargetAvailable
   ) {
     return (
       <SettingsScopeNotice
         target="environment"
         targetId={hash}
-        eligibleEnvironmentIds={autoSettlementAvailability.eligibleEnvironmentIds}
+        eligibleEnvironmentIds={targetAvailability.eligibleEnvironmentIds}
       >
-        {autoSettlementAvailability.eligibleEnvironmentIds.length > 0
-          ? `${searchTarget.title} requires a supporting environment. Choose one to continue.`
-          : `${searchTarget.title} requires a supporting environment. Connect or update an environment to continue.`}
+        {targetAvailability.eligibleEnvironmentIds.length > 0
+          ? gt("{title} requires a supporting environment. Choose one to continue.", {
+              title: m(searchTarget.title),
+            })
+          : gt(
+              "{title} requires a supporting environment. Connect or update an environment to continue.",
+              { title: m(searchTarget.title) },
+            )}
       </SettingsScopeNotice>
     );
   }
@@ -81,7 +114,10 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
         : "all";
     return (
       <SettingsScopeNotice target={target} targetId={hash}>
-        {`${searchTarget.title} is not available for the selected target. Choose its owning scope to continue.`}
+        {gt(
+          "{title} is not available for the selected target. Choose its owning scope to continue.",
+          { title: m(searchTarget.title) },
+        )}
       </SettingsScopeNotice>
     );
   }
@@ -98,7 +134,9 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
     return (
       <SettingsPageContainer>
         <p className="text-sm text-muted-foreground">
-          Reconnect {scope.label} to change its settings.
+          <T>
+            Reconnect <Var>{scope.label}</Var> to change its settings.
+          </T>
         </p>
       </SettingsPageContainer>
     );
@@ -107,24 +145,26 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
 }
 
 function SettingsContentLayout() {
-  const contentArea = workspaceAreaProps("settings", 1, "Settings content");
-  const location = useLocation();
+  const gt = useGT();
+  const contentArea = workspaceAreaProps("settings", 1, gt("Settings content"));
+  const navPathname = useLocation({ select: (location) => location.pathname });
+  const pathname = useRenderedSettingsPathname();
   const { search, environment } = useSettingsScope();
   const contentScopeKey =
-    location.pathname === "/settings/diagnostics" || location.pathname === "/settings/providers"
+    pathname === "/settings/diagnostics" || pathname === "/settings/providers"
       ? environment?.environmentId
       : JSON.stringify(search);
   const [restoreSignal, setRestoreSignal] = useState(0);
 
   return (
-    <AppRouteModal label="Settings">
+    <AppRouteModal label={gt("Settings")}>
       <div className="relative flex min-h-0 flex-1">
-        <SettingsSidebarNav pathname={location.pathname} />
+        <SettingsSidebarNav pathname={navPathname} />
         <div {...contentArea} className="flex min-h-0 min-w-0 flex-1 flex-col">
           <header className="flex h-12 shrink-0 items-center gap-3 border-b ps-5 pe-2">
-            <SettingsBreadcrumb pathname={location.pathname} />
+            <SettingsBreadcrumb pathname={pathname} />
             <div className="ms-auto flex shrink-0 items-center gap-1">
-              {location.pathname === "/settings/general" ? (
+              {pathname === "/settings/general" ? (
                 <RestoreDeviceDefaultsButton
                   onRestored={() => setRestoreSignal((value) => value + 1)}
                 />
@@ -133,7 +173,7 @@ function SettingsContentLayout() {
             </div>
           </header>
           <div key={`${contentScopeKey}:${restoreSignal}`} className="min-h-0 flex flex-1 flex-col">
-            <SettingsScopeBoundary pathname={location.pathname}>
+            <SettingsScopeBoundary pathname={pathname}>
               <Outlet />
             </SettingsScopeBoundary>
           </div>
@@ -146,15 +186,19 @@ function SettingsContentLayout() {
 function SettingsRouteLayout() {
   const rawSearch = Route.useSearch();
   const navigate = Route.useNavigate();
-  const pathname = useLocation({ select: (location) => location.pathname });
+  const router = useRouter();
+  const pathname = useRenderedSettingsPathname();
   return (
     <SettingsScopeProvider
       search={rawSearch}
       singleEnvironment={pathname === "/settings/providers" || pathname === "/settings/secrets"}
+      deviceOnly={SETTINGS_DEVICE_ONLY_PATHS.has(pathname)}
       onChange={(next) => {
         // Send every axis so retain middleware recognizes "all" as an explicit target.
         void navigate({
-          to: pathname,
+          // Read at call time: subscribing would hand every scope consumer a new context value on
+          // each click. A pending navigation's target wins over the page still on screen.
+          to: router.state.location.pathname,
           search: () => ({
             project: next.project,
             machine: next.machine,

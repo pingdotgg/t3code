@@ -21,15 +21,8 @@ The Android terminal renderer vendors upstream `libghostty-vt` shared libraries 
 The web terminal vendors a WebAssembly build from the same revision and uses the same C ABI.
 
 - Upstream project: https://github.com/ghostty-org/ghostty
-- Vendored revision: `9f62873bf195e4d8a762d768a1405a5f2f7b1697`
+- Vendored revision: `3ff6d08fad56f2d6b81420a27bdc56ee707b453e`
 - License: MIT
 
 Ghostty's MIT license applies to the vendored Android and web libraries. Keep this notice and both
 artifacts in sync when updating the repository-root `native/libghostty-vt`.
-
-## MesloLGS NF (Android terminal font)
-
-- Files: `android/src/main/assets/fonts/MesloLGS-NF-{Regular,Bold}.ttf`
-- Source: https://github.com/romkatv/powerlevel10k-media (Meslo LG patched with Nerd Fonts glyphs)
-- Upstream: Meslo LG by André Berg (customization of Apple's Menlo), Nerd Fonts patcher
-- License: Apache License 2.0

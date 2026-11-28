@@ -71,7 +71,9 @@ const chromiumSource = (input: {
     }
     return input.linuxSegments
       ? context.path.join(
-          input.id === "chrome" ? context.linuxChromeConfigHome : context.linuxConfigHome,
+          input.id === "chrome" || input.id === "chromium"
+            ? context.linuxChromeConfigHome
+            : context.linuxConfigHome,
           ...input.linuxSegments,
         )
       : undefined;
@@ -88,6 +90,15 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     macSegments: ["Google", "Chrome"],
     linuxSegments: ["google-chrome"],
     linuxSecretApplication: "chrome",
+  }),
+  chromiumSource({
+    id: "chromium",
+    name: "Chromium",
+    keychainService: "Chromium Safe Storage",
+    keychainAccount: "Chromium",
+    macSegments: ["Chromium"],
+    linuxSegments: ["chromium"],
+    linuxSecretApplication: "chromium",
   }),
   chromiumSource({
     id: "edge",
@@ -345,6 +356,12 @@ const countProfileCookies = Effect.fnUntraced(function* (
   if (database === undefined) return undefined;
   return yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    // readChromiumCookieDatabase imports a razed jar as empty; Firefox has no such reader guard.
+    if (definition.engine !== "firefox") {
+      const tables =
+        yield* sql`select 1 from sqlite_master where type = 'table' and name = 'cookies'`;
+      if (tables.length === 0) return 0;
+    }
     const rows =
       definition.engine === "firefox"
         ? yield* sql`select count(*) as count from moz_cookies where originAttributes = ''`

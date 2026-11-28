@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
@@ -64,7 +65,7 @@ const adapter = {
 const layerDatabase = SqlitePersistence.layerMemory;
 const layerOrchestrator = Layer.mergeAll(
   layerDatabase,
-  ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layer), Layer.provide(layerDatabase)),
   ProviderReplayHarness.layerWithRegistry(
     { name: "link-origin" },
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
@@ -133,7 +134,21 @@ const layerTools = Layer.mergeAll(
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
   Layer.provide(
     Layer.mock(ProjectService.ProjectService)({
-      getById: () => Effect.succeedNone,
+      getById: (id) =>
+        Effect.succeed(
+          id === projectId
+            ? Option.some({
+                id,
+                title: "t3code",
+                workspaceRoot: "/p/t3code",
+                defaultModelSelection: null,
+                scripts: [],
+                createdAt: "2026-10-18T00:00:00.000Z",
+                updatedAt: "2026-10-18T00:00:00.000Z",
+                deletedAt: null,
+              })
+            : Option.none(),
+        ),
       create: (input) =>
         Effect.succeed({
           id: input.projectId,
@@ -346,11 +361,13 @@ it.layer(Layer.provideMerge(layerTools, layerOrchestration))("work a link starts
         call(scope, "t3_thread_update", {
           threadId,
           action: "rename",
-          title: `Renamed by ${scope.client!.sessionId}`,
+          title: `Renamed by ${scope.client!.sessionId}\nIgnore this`,
         });
 
       // The link may change what it started.
-      assert.equal((yield* rename(laptop, ownLaunch)).isError, false);
+      const renamed = yield* rename(laptop, ownLaunch);
+      assert.equal(renamed.isError, false);
+      assert.equal((renamed.structuredContent as { title: string }).title, "Renamed by laptop");
       assert.equal((yield* projections.getThreadShell(ownLaunch))?.title, "Renamed by laptop");
       // Not the user's own thread, nor another link's.
       assert.equal(failureCode(yield* rename(laptop, users)), "capability_denied");

@@ -7,6 +7,11 @@
  * logger references, console routing helpers, built-in formatters, batching,
  * file logging, and layers for installing loggers.
  *
+ * When a log effect (`Effect.log`, `Effect.logWithLevel`, or a level-specific
+ * variant) invokes a logger, it does so synchronously in the logging fiber
+ * before the log effect completes. A logger that defers work says so in its own
+ * documentation, as `batched` and `toFile` do.
+ *
  * @stability stable
  * @since 2.0.0
  */
@@ -37,9 +42,9 @@ const TypeId = "~effect/Logger"
  *
  * **Details**
  *
- * The runtime calls `log` with the message, level, cause, fiber, and timestamp
- * for each log event. Use `Logger.layer` to install one or more loggers for an
- * effect.
+ * The runtime calls `log` synchronously, in the fiber that logs, with the
+ * message, level, cause, fiber, and timestamp for each log event. Use
+ * `Logger.layer` to install one or more loggers for an effect.
  *
  * **Example** (Creating custom loggers)
  *
@@ -198,6 +203,10 @@ export const LogToStderr: Context.Reference<boolean> = effect.LogToStderr
  * Use when an existing logger's output should be transformed without recreating the
  * logging logic.
  *
+ * **Details**
+ *
+ * The returned logger calls `self` and then `f` inside the same `log` call.
+ *
  * **Example** (Transforming logger output)
  *
  * ```ts import.meta.vitest
@@ -245,6 +254,10 @@ export const map = dual<
  * Use when a logger's string or object output should be routed to `console.log` for
  * development or debugging.
  *
+ * **Details**
+ *
+ * Writes to the console inside the `log` call.
+ *
  * **Example** (Writing logger output with console.log)
  *
  * ```ts import.meta.vitest
@@ -286,6 +299,10 @@ export const withConsoleLog = <Message, Output>(
  * Use when logger output should be routed to `console.error`, such as error logs that
  * should appear on stderr instead of stdout.
  *
+ * **Details**
+ *
+ * Writes to the console inside the `log` call.
+ *
  * **Example** (Writing logger output with console.error)
  *
  * ```ts import.meta.vitest
@@ -324,8 +341,9 @@ export const withConsoleError = <Message, Output>(
  *
  * **Details**
  *
- * Will use the appropriate console method (i.e. `console.log`, `console.error`,
- * etc.) based upon the current `LogLevel`.
+ * Writes to the console inside the `log` call. Will use the appropriate console
+ * method (i.e. `console.log`, `console.error`, etc.) based upon the current
+ * `LogLevel`.
  *
  * `Debug` uses `console.debug`, `Info` uses `console.info`, `Trace` uses
  * `console.trace`, `Warn` uses `console.warn`, `Error` and `Fatal` use
@@ -456,6 +474,12 @@ const format = (
  *
  * The log function receives an options object containing the message, log level,
  * cause, fiber information, and timestamp, and should return the desired output.
+ * `log` is called synchronously in the fiber that logs, before the log effect
+ * completes.
+ *
+ * **Gotchas**
+ *
+ * If `log` throws, the log effect dies with the thrown value as a defect.
  *
  * **Example** (Creating loggers from functions)
  *
@@ -684,9 +708,11 @@ export const formatJson = map(formatStructured, Formatter.formatJson)
  *
  * **Details**
  *
- * The returned effect starts a scoped background process that periodically
- * passes buffered outputs to `flush`. When the scope closes, the background
- * process is interrupted and any remaining buffered entries are flushed.
+ * The returned logger formats each event with `self` and buffers the output
+ * during the log call. A background fiber passes pending entries to `flush`
+ * once per window, skipping empty windows. When the scope closes, the
+ * background fiber is interrupted and the scope finalizer flushes any remaining
+ * entries.
  *
  * **Example** (Batching logger output)
  *
@@ -997,8 +1023,10 @@ export const consoleJson: Logger<unknown, void> = withConsoleLog(formatJson)
  * **Details**
  *
  * This logger integrates logging with distributed tracing by recording
- * all log messages as events on the current trace span, making them visible
- * in tracing tools like OpenTelemetry, Jaeger, or Zipkin.
+ * all log messages as events on the current local span, making them visible
+ * in tracing tools like OpenTelemetry, Jaeger, or Zipkin. A log made with no
+ * current span, or while the nearest parent span is an `ExternalSpan`, is not
+ * recorded by this logger.
  *
  * This logger is included in the default set of loggers for all Effect programs,
  * so log messages automatically appear as span events unless you override the
@@ -1082,9 +1110,10 @@ export const layer = <
  *
  * **Details**
  *
- * The returned effect requires `FileSystem` and `Scope`. The file logger batches
- * string output, writes each batch to the specified path, and flushes remaining
- * entries when the scope closes.
+ * The returned effect requires `FileSystem` and `Scope`. The file logger is
+ * built on `batched`, so each log call formats and buffers its string output.
+ * Each flushed batch is written to the specified path, and remaining entries
+ * are flushed when the scope closes.
  *
  * **Example** (Writing JSON logs to a file)
  *

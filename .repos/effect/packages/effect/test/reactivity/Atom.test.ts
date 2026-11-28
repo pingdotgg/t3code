@@ -5,6 +5,7 @@ import {
   Context,
   Deferred,
   Effect,
+  Fiber,
   Hash,
   Latch,
   Layer,
@@ -20,6 +21,7 @@ import {
 import { KeyValueStore } from "effect/persistence"
 import { AsyncResult, Atom, AtomRegistry, Hydration, Reactivity } from "effect/reactivity"
 import { TestClock } from "effect/testing"
+import { inspect } from "node:util"
 import { collectGarbage, getGc } from "../utils/gc.ts"
 
 declare const global: any
@@ -256,6 +258,38 @@ describe("Atom", { concurrent: false }, () => {
       r.set(q, "")
       await vitest.advanceTimersByTimeAsync(500)
       expect(urls).toEqual(["/path?q=2#section", "/path#section"])
+    } finally {
+      r.dispose()
+      vitest.unstubAllGlobals()
+    }
+  })
+
+  it.each([false, true])("searchParam cancels stale writes but preserves observer writes (%s)", async (normalize) => {
+    const r = AtomRegistry.make()
+    const location = new URL("http://localhost/current?q=before&page=2")
+    const events = new EventTarget()
+    const pushState = vitest.fn()
+    vitest.stubGlobal("window", {
+      location,
+      history: { pushState },
+      addEventListener: events.addEventListener.bind(events),
+      removeEventListener: events.removeEventListener.bind(events)
+    })
+    try {
+      const q = Atom.searchParam("q")
+      const page = Atom.searchParam("page", { schema: Schema.NumberFromString })
+      r.subscribe(q, (value) => {
+        if (normalize && value === "OLD") r.set(q, "old")
+      })
+      r.mount(page)
+      r.set(q, "pending")
+      r.set(page, Option.some(9))
+      location.search = "?q=OLD&page=1"
+      events.dispatchEvent(new Event("popstate"))
+      await vitest.advanceTimersByTimeAsync(500)
+      assert.deepStrictEqual(pushState.mock.calls, normalize ? [[{}, "", "/current?q=old&page=1"]] : [])
+      assert.strictEqual(r.get(q), normalize ? "old" : "OLD")
+      assert.deepStrictEqual(r.get(page), Option.some(1))
     } finally {
       r.dispose()
       vitest.unstubAllGlobals()
@@ -1388,10 +1422,10 @@ describe("Atom", { concurrent: false }, () => {
     }
   )
 
-  it("label", async () => {
-    expect(
-      Atom.make(0).pipe(Atom.withLabel("counter")).label![1]
-    ).toMatch(/Atom.test.ts:\d+:\d+/)
+  it("label", () => {
+    const makeCounter = () => Atom.make(0).pipe(Atom.withLabel("counter"))
+    const atom = makeCounter()
+    assert.match(inspect(atom), /makeCounter .*Atom\.test\.ts:\d+:\d+/)
   })
 
   it("batching", async () => {
@@ -1893,6 +1927,49 @@ describe("Atom", { concurrent: false }, () => {
     cancel()
   })
 
+  it("stream rerun without items produces NoSuchElementError", async () => {
+    const rows = Atom.make<ReadonlyArray<string>>(["Alice"])
+    const atom = Atom.make((get) => Stream.fromIterable(get(rows)))
+    const r = AtomRegistry.make()
+    const cancel = r.mount(atom)
+
+    await vitest.advanceTimersByTimeAsync(0)
+    const initial = r.get(atom)
+    assert(AsyncResult.isSuccess(initial))
+    assert.strictEqual(initial.value, "Alice")
+    assert.strictEqual(initial.waiting, false)
+
+    r.set(rows, [])
+    await vitest.advanceTimersByTimeAsync(0)
+    const result = r.get(atom)
+    assert(AsyncResult.isFailure(result))
+    assert.deepStrictEqual(
+      AsyncResult.error(result),
+      Option.some(new Cause.NoSuchElementError())
+    )
+    assert.deepStrictEqual(AsyncResult.value(result), Option.some("Alice"))
+
+    cancel()
+  })
+
+  it("stream completion keeps a value set after the last emission", async () => {
+    const atom = Atom.make((get) =>
+      Stream.fromIterable<string>(["draft"]).pipe(
+        Stream.ensuring(Effect.sync(() => get.setSelf(AsyncResult.success("saved"))))
+      )
+    )
+    const r = AtomRegistry.make()
+    const cancel = r.mount(atom)
+
+    await vitest.advanceTimersByTimeAsync(0)
+    const result = r.get(atom)
+    assert(AsyncResult.isSuccess(result))
+    assert.strictEqual(result.value, "saved")
+    assert.strictEqual(result.waiting, false)
+
+    cancel()
+  })
+
   it("Option is not an Effect", async () => {
     const atom = Atom.make(Option.none<string>())
     const r = AtomRegistry.make()
@@ -1939,13 +2016,12 @@ describe("Atom", { concurrent: false }, () => {
     unmount()
   })
 
-  it("SubscriptionRef/runtime", async () => {
+  it("SubscriptionRef/runtime", () => {
     const atom = counterRuntime.subscriptionRef(SubscriptionRef.make(0))
     const r = AtomRegistry.make()
     const unmount = r.mount(atom)
     assert.deepStrictEqual(r.get(atom), AsyncResult.success(0, { waiting: true }))
     r.set(atom, 1)
-    await new Promise((resolve) => resolve(null))
     assert.deepStrictEqual(r.get(atom), AsyncResult.success(1, { waiting: true }))
     unmount()
   })
@@ -1973,6 +2049,39 @@ describe("Atom", { concurrent: false }, () => {
     await Effect.runPromise(Effect.yieldNow)
     assert.strictEqual(finalized, true)
   })
+
+  it.effect("SubscriptionRef queues contended writes", () =>
+    Effect.gen(function*() {
+      const ref = yield* SubscriptionRef.make(0)
+      const plain = Atom.subscriptionRef(ref)
+      const runtime = counterRuntime.subscriptionRef(Effect.succeed(ref))
+      const r = AtomRegistry.make()
+      const release = yield* Latch.make()
+      try {
+        r.mount(plain)
+        r.mount(runtime)
+        const changes = yield* SubscriptionRef.changes(ref).pipe(
+          Stream.take(5),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true })
+        )
+
+        r.set(plain, 1)
+        assert.strictEqual(r.get(plain), 1)
+
+        yield* SubscriptionRef.updateEffect(ref, (value) => release.await.pipe(Effect.as(value + 10))).pipe(
+          Effect.forkChild({ startImmediately: true })
+        )
+
+        r.set(plain, 5)
+        r.set(runtime, 6)
+
+        yield* release.open
+        assert.deepStrictEqual(yield* Fiber.join(changes), [0, 1, 11, 5, 6])
+      } finally {
+        r.dispose()
+      }
+    }))
 
   it("setLazy(true)", async () => {
     const count = Atom.make(0).pipe(Atom.keepAlive)
@@ -3569,6 +3678,29 @@ describe("Atom", { concurrent: false }, () => {
       assert(AsyncResult.isSuccess(updated))
       expect(updated.value).toEqual(24)
     })
+
+    for (const mode of ["sync", "async"] as const) {
+      it(`${mode} mode retains persisted writes across refresh`, () => {
+        const atom = Atom.kvs({
+          mode,
+          runtime: Atom.runtime(KeyValueStore.layerMemory.pipe(
+            Layer.tap((services) =>
+              Context.get(services, KeyValueStore.KeyValueStore).set("theme", JSON.stringify("light"))
+            )
+          )),
+          key: "theme",
+          schema: Schema.String,
+          defaultValue: () => "light"
+        })
+        const r = AtomRegistry.make()
+        r.mount(atom)
+        r.set(atom, "dark")
+        r.refresh(atom)
+        const value = r.get(atom)
+        assert.strictEqual(AsyncResult.isAsyncResult(value) ? AsyncResult.getOrThrow(value) : value, "dark")
+        r.dispose()
+      })
+    }
   })
 })
 

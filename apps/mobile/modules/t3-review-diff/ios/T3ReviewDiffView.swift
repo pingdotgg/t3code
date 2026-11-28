@@ -19,6 +19,12 @@ private struct ReviewDiffNativeRow: Decodable, Sendable {
   let commentText: String?
   let commentRangeLabel: String?
   let commentSectionTitle: String?
+  /** A notice drawn in the warning colors. */
+  let tone: String?
+  /** A notice that reports taps through `onPressNotice`. */
+  let actionable: Bool?
+  /** Where a cut line's note starts in `content`, in UTF-16 units. */
+  let noteStart: Int?
 }
 
 private struct ReviewDiffNativeWordDiffRange: Decodable, Sendable {
@@ -52,6 +58,8 @@ private struct ReviewDiffNativeThemePayload: Decodable {
   let deleteBar: String?
   let addText: String?
   let deleteText: String?
+  let warningText: String?
+  let warningBackground: String?
 }
 
 private struct ReviewDiffNativeTheme {
@@ -68,6 +76,8 @@ private struct ReviewDiffNativeTheme {
   let deleteBar: UIColor
   let addText: UIColor
   let deleteText: UIColor
+  let warningText: UIColor
+  let warningBackground: UIColor
 
   static func resolve(_ scheme: String) -> ReviewDiffNativeTheme {
     resolve(scheme, payload: nil)
@@ -95,7 +105,10 @@ private struct ReviewDiffNativeTheme {
       addBar: UIColor(reviewDiffHex: payload.addBar) ?? fallback.addBar,
       deleteBar: UIColor(reviewDiffHex: payload.deleteBar) ?? fallback.deleteBar,
       addText: UIColor(reviewDiffHex: payload.addText) ?? fallback.addText,
-      deleteText: UIColor(reviewDiffHex: payload.deleteText) ?? fallback.deleteText
+      deleteText: UIColor(reviewDiffHex: payload.deleteText) ?? fallback.deleteText,
+      warningText: UIColor(reviewDiffHex: payload.warningText) ?? fallback.warningText,
+      warningBackground: UIColor(reviewDiffHex: payload.warningBackground)
+        ?? fallback.warningBackground
     )
   }
 
@@ -114,7 +127,9 @@ private struct ReviewDiffNativeTheme {
         addBar: UIColor(red: 0.02, green: 0.82, blue: 0.54, alpha: 1),
         deleteBar: UIColor(red: 1.00, green: 0.36, blue: 0.50, alpha: 1),
         addText: UIColor(red: 0.10, green: 0.84, blue: 0.56, alpha: 1),
-        deleteText: UIColor(red: 1.00, green: 0.38, blue: 0.52, alpha: 1)
+        deleteText: UIColor(red: 1.00, green: 0.38, blue: 0.52, alpha: 1),
+        warningText: UIColor(red: 0.98, green: 0.80, blue: 0.40, alpha: 1),
+        warningBackground: UIColor(red: 0.20, green: 0.15, blue: 0.05, alpha: 1)
       )
     }
 
@@ -131,7 +146,9 @@ private struct ReviewDiffNativeTheme {
       addBar: UIColor(red: 0.02, green: 0.80, blue: 0.52, alpha: 1),
       deleteBar: UIColor(red: 1.00, green: 0.34, blue: 0.48, alpha: 1),
       addText: UIColor(red: 0.00, green: 0.56, blue: 0.34, alpha: 1),
-      deleteText: UIColor(red: 0.90, green: 0.10, blue: 0.24, alpha: 1)
+      deleteText: UIColor(red: 0.90, green: 0.10, blue: 0.24, alpha: 1),
+      warningText: UIColor(red: 0.55, green: 0.36, blue: 0.00, alpha: 1),
+      warningBackground: UIColor(red: 1.00, green: 0.96, blue: 0.84, alpha: 1)
     )
   }
 }
@@ -168,6 +185,8 @@ private struct ReviewDiffNativeStylePayload: Decodable {
   let fileHeaderStatusFontWeight: String?
   let emptyStateFontSize: Double?
   let emptyStateFontWeight: String?
+  let codeFontFamily: String?
+  let uiFontFamily: String?
 }
 
 private struct ReviewDiffNativeStyle: Equatable {
@@ -202,6 +221,8 @@ private struct ReviewDiffNativeStyle: Equatable {
   let fileHeaderStatusFontWeight: UIFont.Weight
   let emptyStateFontSize: CGFloat
   let emptyStateFontWeight: UIFont.Weight
+  let codeFontFamily: String?
+  let uiFontFamily: String?
 
   static func resolve(_ payload: ReviewDiffNativeStylePayload?) -> ReviewDiffNativeStyle {
     ReviewDiffNativeStyle(
@@ -235,7 +256,9 @@ private struct ReviewDiffNativeStyle: Equatable {
       fileHeaderStatusFontSize: metric(payload?.fileHeaderStatusFontSize, fallback: 10),
       fileHeaderStatusFontWeight: fontWeight(payload?.fileHeaderStatusFontWeight, fallback: .semibold),
       emptyStateFontSize: metric(payload?.emptyStateFontSize, fallback: 13),
-      emptyStateFontWeight: fontWeight(payload?.emptyStateFontWeight, fallback: .semibold)
+      emptyStateFontWeight: fontWeight(payload?.emptyStateFontWeight, fallback: .semibold),
+      codeFontFamily: payload?.codeFontFamily,
+      uiFontFamily: payload?.uiFontFamily
     )
   }
 
@@ -310,7 +333,9 @@ private struct ReviewDiffNativeStyle: Equatable {
       fileHeaderStatusFontSize: fileHeaderStatusFontSize,
       fileHeaderStatusFontWeight: fileHeaderStatusFontWeight,
       emptyStateFontSize: emptyStateFontSize,
-      emptyStateFontWeight: emptyStateFontWeight
+      emptyStateFontWeight: emptyStateFontWeight,
+      codeFontFamily: codeFontFamily,
+      uiFontFamily: uiFontFamily
     )
   }
 }
@@ -350,6 +375,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
   let onToggleViewedFile = EventDispatcher()
   let onPressLine = EventDispatcher()
   let onToggleComment = EventDispatcher()
+  let onPressNotice = EventDispatcher()
   let onPullToRefresh = EventDispatcher()
 
   private let pullRefreshControl = UIRefreshControl()
@@ -382,6 +408,9 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     }
     contentView.onToggleComment = { [weak self] commentId in
       self?.onToggleComment(["commentId": commentId])
+    }
+    contentView.onPressNotice = { [weak self] payload in
+      self?.onPressNotice(payload)
     }
     contentView.onDrawMetrics = { [weak self] metrics in
       self?.emitDebug("draw-metrics", metrics)
@@ -1008,6 +1037,7 @@ private struct ReviewDiffFileHeaderInteractiveRects {
   let chevron: CGRect
   let icon: CGRect
   let checkbox: CGRect
+  let checkboxHitTarget: CGRect
 }
 
 private struct ReviewDiffStickyFileHeaderIndex {
@@ -1214,6 +1244,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   var onToggleViewedFile: ((String) -> Void)?
   var onPressLine: (([String: Any]) -> Void)?
   var onToggleComment: ((String) -> Void)?
+  var onPressNotice: (([String: Any]) -> Void)?
   var onDrawMetrics: (([String: Any]) -> Void)?
 
   private var stickyWidth: CGFloat {
@@ -1430,35 +1461,43 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
   }
 
   private var codeFont: UIFont {
-    UIFont.monospacedSystemFont(ofSize: style.codeFontSize, weight: style.codeFontWeight)
+    reviewDiffFont(
+      family: style.codeFontFamily, size: style.codeFontSize, weight: style.codeFontWeight, monospaced: true)
   }
 
   private var lineNumberFont: UIFont {
-    UIFont.monospacedSystemFont(ofSize: style.lineNumberFontSize, weight: style.lineNumberFontWeight)
+    reviewDiffFont(
+      family: style.codeFontFamily, size: style.lineNumberFontSize, weight: style.lineNumberFontWeight, monospaced: true)
   }
 
   private var hunkFont: UIFont {
-    UIFont.monospacedSystemFont(ofSize: style.hunkFontSize, weight: style.hunkFontWeight)
+    reviewDiffFont(
+      family: style.codeFontFamily, size: style.hunkFontSize, weight: style.hunkFontWeight, monospaced: true)
   }
 
   private var fileHeaderFont: UIFont {
-    UIFont.systemFont(ofSize: style.fileHeaderFontSize, weight: style.fileHeaderFontWeight)
+    reviewDiffFont(
+      family: style.uiFontFamily, size: style.fileHeaderFontSize, weight: style.fileHeaderFontWeight, monospaced: false)
   }
 
   private var fileHeaderMetaFont: UIFont {
-    UIFont.systemFont(ofSize: style.fileHeaderMetaFontSize, weight: style.fileHeaderMetaFontWeight)
+    reviewDiffFont(
+      family: style.uiFontFamily, size: style.fileHeaderMetaFontSize, weight: style.fileHeaderMetaFontWeight, monospaced: false)
   }
 
   private var fileHeaderSubtextFont: UIFont {
-    UIFont.systemFont(ofSize: style.fileHeaderSubtextFontSize, weight: style.fileHeaderSubtextFontWeight)
+    reviewDiffFont(
+      family: style.uiFontFamily, size: style.fileHeaderSubtextFontSize, weight: style.fileHeaderSubtextFontWeight, monospaced: false)
   }
 
   private var fileHeaderStatusFont: UIFont {
-    UIFont.systemFont(ofSize: style.fileHeaderStatusFontSize, weight: style.fileHeaderStatusFontWeight)
+    reviewDiffFont(
+      family: style.uiFontFamily, size: style.fileHeaderStatusFontSize, weight: style.fileHeaderStatusFontWeight, monospaced: false)
   }
 
   private var emptyStateFont: UIFont {
-    UIFont.systemFont(ofSize: style.emptyStateFontSize, weight: style.emptyStateFontWeight)
+    reviewDiffFont(
+      family: style.uiFontFamily, size: style.emptyStateFontSize, weight: style.emptyStateFontWeight, monospaced: false)
   }
 
   private lazy var horizontalPanGesture: UIPanGestureRecognizer = {
@@ -1555,6 +1594,11 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       return
     }
 
+    if row.kind == "notice", row.actionable == true {
+      onPressNotice?(["rowId": row.id, "fileId": resolvedFileId(for: row)])
+      return
+    }
+
     if row.kind == "line" {
       onPressLine?(linePressPayload(for: row, gesture: "tap"))
       return
@@ -1616,7 +1660,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     let interactiveRects = fileHeaderInteractiveRects(for: row, cardRect: rect)
     let fileId = resolvedFileId(for: row)
 
-    if interactiveRects.checkbox.contains(point) {
+    if interactiveRects.checkboxHitTarget.contains(point) {
       onToggleViewedFile?(fileId)
       return
     }
@@ -2200,7 +2244,8 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       return
     }
 
-    theme.background.setFill()
+    let warning = row.tone == "warning"
+    (warning ? theme.warningBackground : theme.background).setFill()
     context.fill(rect)
 
     let hairline = 1 / traitCollection.displayScale
@@ -2214,7 +2259,8 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       width: iconSize,
       height: iconSize
     )
-    drawNoticeIcon(rect: iconRect, color: theme.mutedText)
+    let noticeColor = warning ? theme.warningText : theme.mutedText
+    drawNoticeIcon(rect: iconRect, color: noticeColor)
 
     drawSingleLineText(
       row.text ?? "",
@@ -2224,7 +2270,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
         width: max(24, viewportWidth - iconRect.maxX - 10 - style.fileHeaderHorizontalPadding),
         height: fileHeaderSubtextFont.lineHeight
       ),
-      color: theme.mutedText,
+      color: noticeColor,
       font: fileHeaderSubtextFont
     )
   }
@@ -2320,10 +2366,17 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     let chevronRect = CGRect(x: cardRect.minX + horizontalPadding, y: centerY - 10, width: 20, height: 20)
     let iconRect = CGRect(x: chevronRect.maxX + 8, y: centerY - 10, width: 20, height: 20)
     let checkboxRect = CGRect(x: cardRect.maxX - horizontalPadding - 20, y: centerY - 10, width: 20, height: 20)
+    let checkboxHitMinX = checkboxRect.minX - 14
     return ReviewDiffFileHeaderInteractiveRects(
       chevron: chevronRect,
       icon: iconRect,
-      checkbox: checkboxRect
+      checkbox: checkboxRect,
+      checkboxHitTarget: CGRect(
+        x: checkboxHitMinX,
+        y: cardRect.minY,
+        width: cardRect.maxX - checkboxHitMinX,
+        height: cardRect.height
+      )
     )
   }
 
@@ -2554,6 +2607,13 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
           NSRange(location: $0.start, length: $0.end - $0.start)
         },
         color: (change == "add" ? theme.addBar : theme.deleteBar).withAlphaComponent(0.28),
+        note: row.noteStart.map {
+          ReviewDiffCodeNote(
+            range: NSRange(location: $0, length: max(0, text.length - $0)),
+            color: theme.warningText,
+            background: theme.warningBackground
+          )
+        },
         version: codeDecorationVersion
       )
       layout.draw(
@@ -2625,8 +2685,9 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       return
     }
 
+    // Source files hide the change bar (width 0); the selection marker still needs to show.
     theme.hunkText.withAlphaComponent(0.95).setFill()
-    context.fill(CGRect(x: 0, y: rect.minY, width: style.changeBarWidth, height: rect.height))
+    context.fill(CGRect(x: 0, y: rect.minY, width: max(style.changeBarWidth, 4), height: rect.height))
   }
 
   private func drawWordDiffRanges(
@@ -2937,4 +2998,21 @@ private extension UIColor {
 
     self.init(red: red, green: green, blue: blue, alpha: alpha)
   }
+}
+
+/// Resolves a React Native family name; system names such as `System` and `ui-monospace` have no
+/// UIFont of that name and fall through to the platform font.
+private func reviewDiffFont(
+  family: String?, size: CGFloat, weight: UIFont.Weight, monospaced: Bool
+) -> UIFont {
+  if let family, let base = UIFont(name: family, size: size) {
+    let descriptor = UIFontDescriptor(fontAttributes: [
+      .family: base.familyName,
+      .traits: [UIFontDescriptor.TraitKey.weight: weight],
+    ])
+    return UIFont(descriptor: descriptor, size: size)
+  }
+  return monospaced
+    ? .monospacedSystemFont(ofSize: size, weight: weight)
+    : .systemFont(ofSize: size, weight: weight)
 }

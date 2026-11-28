@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
@@ -8,6 +9,7 @@ import { ChildProcessSpawner } from "effect/process";
 import {
   type DevShareError,
   DevServeFailedError,
+  DevServePortTakenError,
   shareDevServer,
   unshareDevServer,
 } from "./dev-share.ts";
@@ -22,21 +24,41 @@ interface CallResult {
 
 const encode = (value: string) => Stream.make(new TextEncoder().encode(value));
 
+const serveStatusWithRoot = (webPort: number, proxy: string) =>
+  JSON.stringify({
+    Web: { [`host.example.ts.net:${String(webPort)}`]: { Handlers: { "/": { Proxy: proxy } } } },
+  });
+
 const spawnerLayer = (input: {
   readonly off?: CallResult;
   readonly serve?: CallResult;
+  readonly serveStatus?: CallResult & { readonly stdout?: string };
+  readonly liveLoopbackPorts?: ReadonlyArray<number>;
   readonly calls?: Array<ReadonlyArray<string>>;
-}) =>
-  Layer.succeed(
+}) => {
+  const live = new Set(input.liveLoopbackPorts ?? []);
+  const unused = Effect.die("unused in dev-share tests");
+  const net = Layer.succeed(NetService.NetService, {
+    hasListenerOnHost: (port: number) => Effect.succeed(live.has(port)),
+    canListenOnHost: () => unused,
+    probeListenOnHost: () => unused,
+    isPortAvailableOnLoopback: () => unused,
+    reserveLoopbackPort: () => unused,
+    findAvailablePort: () => unused,
+  });
+  const spawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
       const args = "args" in command ? (command.args as ReadonlyArray<string>) : [];
       input.calls?.push(args);
-      const result: CallResult = args.includes("status")
-        ? { exitCode: 0 }
-        : args.includes("off")
-          ? (input.off ?? { exitCode: 0 })
-          : (input.serve ?? { exitCode: 0 });
+      const isServeStatus = args[0] === "serve" && args.includes("status");
+      const result: CallResult & { readonly stdout?: string } = isServeStatus
+        ? (input.serveStatus ?? { exitCode: 0, stdout: "{}" })
+        : args.includes("status")
+          ? { exitCode: 0, stdout: TAILNET_STATUS }
+          : args.includes("off")
+            ? (input.off ?? { exitCode: 0 })
+            : (input.serve ?? { exitCode: 0 });
 
       return Effect.succeed(
         ChildProcessSpawner.makeHandle({
@@ -46,7 +68,7 @@ const spawnerLayer = (input: {
           kill: () => Effect.void,
           unref: Effect.succeed(Effect.void),
           stdin: Sink.drain,
-          stdout: args.includes("status") ? encode(TAILNET_STATUS) : Stream.empty,
+          stdout: result.stdout !== undefined ? encode(result.stdout) : Stream.empty,
           stderr: result.stderr ? encode(result.stderr) : Stream.empty,
           all: Stream.empty,
           getInputFd: () => Sink.drain,
@@ -55,6 +77,8 @@ const spawnerLayer = (input: {
       );
     }),
   );
+  return Layer.merge(spawner, net);
+};
 
 describe("unshareDevServer", () => {
   // `tailscale serve … off` exits 1 when the port had no mapping, which is the
@@ -129,6 +153,64 @@ describe("shareDevServer", () => {
       assert.equal(error.stage, "clear-existing");
       assert.include(error.message, "could not clear the existing mapping");
       assert.include(error.message, "permission denied");
+    }),
+  );
+
+  it.effect("leaves a mapping that another running server holds alone", () =>
+    Effect.gen(function* () {
+      const calls: Array<ReadonlyArray<string>> = [];
+      const error: DevShareError = yield* shareDevServer({ webPort: 5788 }).pipe(
+        Effect.provide(
+          spawnerLayer({
+            serveStatus: {
+              exitCode: 0,
+              stdout: serveStatusWithRoot(5788, "http://127.0.0.1:9555"),
+            },
+            liveLoopbackPorts: [9555],
+            calls,
+          }),
+        ),
+        Effect.flip,
+      );
+
+      assert.instanceOf(error, DevServePortTakenError);
+      assert.isUndefined(calls.find((args) => args.includes("off") || args.includes("--bg")));
+    }),
+  );
+
+  it.effect("replaces a mapping that dials a port nothing listens on", () =>
+    Effect.gen(function* () {
+      const calls: Array<ReadonlyArray<string>> = [];
+      yield* shareDevServer({ webPort: 5788 }).pipe(
+        Effect.provide(
+          spawnerLayer({
+            serveStatus: {
+              exitCode: 0,
+              stdout: serveStatusWithRoot(5788, "http://127.0.0.1:9555"),
+            },
+            calls,
+          }),
+        ),
+      );
+
+      assert.isDefined(calls.find((args) => args.includes("off")));
+      assert.isDefined(calls.find((args) => args.includes("--bg")));
+    }),
+  );
+
+  it.effect("leaves the port alone when its mapping cannot be read", () =>
+    Effect.gen(function* () {
+      const calls: Array<ReadonlyArray<string>> = [];
+      const error: DevShareError = yield* shareDevServer({ webPort: 5788 }).pipe(
+        Effect.provide(
+          spawnerLayer({ serveStatus: { exitCode: 1, stderr: "permission denied" }, calls }),
+        ),
+        Effect.flip,
+      );
+
+      assert.instanceOf(error, DevServeFailedError);
+      assert.equal(error.stage, "read-existing");
+      assert.isUndefined(calls.find((args) => args.includes("off") || args.includes("--bg")));
     }),
   );
 });

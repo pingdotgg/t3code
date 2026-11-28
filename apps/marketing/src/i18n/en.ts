@@ -27,6 +27,8 @@ export const en = {
     downloadForMac: "Download for macOS",
     downloadForWindows: "Download for Windows",
     downloadForLinux: "Download for Linux",
+    downloadForIos: "Download for iOS",
+    downloadForAndroid: "Download for Android",
     sourceLink: "Steal our code (legally)",
     alsoOnPhone: "Also on your phone:",
     screenshotAlt: "T3 Code running Claude, Codex, Muse, and Gemini subagents in one thread",

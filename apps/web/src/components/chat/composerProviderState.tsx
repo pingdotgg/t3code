@@ -12,11 +12,12 @@ import {
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
-  normalizeModelSlug,
+  resolveSelectableModel,
+  withImplicitFastModeDefault,
 } from "@t3tools/shared/model";
 
 import type { DraftId } from "../../composerDraftStore";
-import { getProviderModelCapabilities } from "../../providerModels";
+import { getProviderModelCapabilities, keepsUnavailableModelOptions } from "../../providerModels";
 import {
   getReasoningTraitStep,
   type PromptUltrathink,
@@ -62,24 +63,6 @@ export function getComposerPromptInjectionState(prompt: string): ComposerPromptI
   return isClaudeUltrathinkPrompt(prompt) ? "ultrathink" : "none";
 }
 
-/** Cursor ACP can default Fast to true; T3 requires a user selection. */
-export function withImplicitFastModeDefault(
-  caps: ModelCapabilities,
-  modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined,
-): ReadonlyArray<ProviderOptionSelection> | undefined {
-  const hasExplicitFastMode = modelOptions?.some((selection) => selection.id === "fastMode");
-  if (hasExplicitFastMode) {
-    return modelOptions ?? undefined;
-  }
-  const hasFastModeDescriptor = caps.optionDescriptors?.some(
-    (descriptor) => descriptor.type === "boolean" && descriptor.id === "fastMode",
-  );
-  if (!hasFastModeDescriptor) {
-    return modelOptions ?? undefined;
-  }
-  return [...(modelOptions ?? []), { id: "fastMode", value: false }];
-}
-
 function resolveComposerOptionSelections(
   models: ReadonlyArray<ServerProviderModel>,
   model: string,
@@ -103,10 +86,8 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     promptInjectionState = "none",
     includePlanAgent,
   } = input;
-  if (provider === "opencode") {
-    const normalizedModel = normalizeModelSlug(model, provider);
-    const modelIsInCatalog = models.some((candidate) => candidate.slug === normalizedModel);
-    if (!modelIsInCatalog) {
+  if (keepsUnavailableModelOptions(provider, model)) {
+    if (resolveSelectableModel(provider, model, models) === null) {
       const preservedOptions = modelOptions?.filter(
         (option) => includePlanAgent || option.id !== "agent" || option.value !== "plan",
       );

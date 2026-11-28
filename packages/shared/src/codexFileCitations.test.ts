@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { codexFileCitationMarkdown, resolveCodexFileCitationLink } from "./codexFileCitations.ts";
+import { sanitizeChatHast } from "./markdownHast.ts";
+import {
+  extractMarkdownLinkHrefs,
+  isMarkdownFileLinkLabel,
+  parseMarkdownFileLink,
+  resolveMarkdownFileLink,
+} from "./markdownLinks.ts";
 
 describe("resolveCodexFileCitationLink", () => {
   it("resolves the attributes emitted by Codex", () => {
@@ -32,8 +39,42 @@ describe("resolveCodexFileCitationLink", () => {
     });
   });
 
+  it("opens forward-slash UNC citations inside the current workspace", () => {
+    for (const host of ["files", "localhost"]) {
+      const cwd = String.raw`\\${host}\team\repo`;
+      const citation = resolveCodexFileCitationLink({
+        path: `//${host}/team/repo/src/app.ts`,
+        line_range_start: "7",
+      });
+      expect(citation).not.toBeNull();
+      if (!citation) return;
+      const copiedHref = extractMarkdownLinkHrefs(codexFileCitationMarkdown(citation))[0];
+      for (const href of [citation.href, copiedHref]) {
+        expect(resolveMarkdownFileLink(href, cwd)).toMatchObject({
+          targetPath: `${cwd}\\src\\app.ts:7`,
+          position: { path: `${cwd}\\src\\app.ts`, line: 7 },
+        });
+      }
+    }
+  });
+
+  it("keeps UNC citations outside the workspace from becoming file links", () => {
+    for (const path of [
+      "//other/team/repo/src/app.ts",
+      "//files/other/repo/src/app.ts",
+      "//localhost/team/repo/src/app.ts",
+    ]) {
+      const citation = resolveCodexFileCitationLink({ path, line_range_start: "7" });
+      expect(resolveMarkdownFileLink(citation?.href, "\\\\files\\team\\repo")).toBeNull();
+    }
+    expect(resolveCodexFileCitationLink({ path: "///Users/me/repo/src/app.ts" })?.href).toBe(
+      "///Users/me/repo/src/app.ts",
+    );
+  });
+
   it("rejects missing paths and invalid line numbers", () => {
     expect(resolveCodexFileCitationLink({ purpose: "output" })).toBeNull();
+    expect(resolveCodexFileCitationLink({ path: "   " })).toBeNull();
     expect(
       resolveCodexFileCitationLink({ path: "src/main.ts", line_range_start: "not-a-line" }),
     ).toEqual({
@@ -41,6 +82,25 @@ describe("resolveCodexFileCitationLink", () => {
       href: "src/main.ts",
       label: "main.ts",
     });
+  });
+
+  it.each([
+    ["/tmp/draft.md ", "/tmp/draft.md%20", undefined],
+    ["/repo/draft.md ", "/repo/draft.md%20", undefined],
+    [" draft.md  ", "./%20draft.md%20%20", undefined],
+    ["/tmp/draft%20.md  ", "/tmp/draft%2520.md%20%20#L7", "7"],
+    ["\u00a0draft.md\n", "./%C2%A0draft.md%0A", undefined],
+  ])("preserves boundary spaces in literal filenames: %s", (path, href, line) => {
+    const citation = resolveCodexFileCitationLink({ path, line_range_start: line });
+
+    expect(citation?.path).toBe(path);
+    expect(citation?.href).toBe(href);
+    expect(parseMarkdownFileLink(citation?.href ?? "")).toEqual({
+      path: /^\s/.test(path) ? `./${path}` : path,
+      ...(line === undefined ? {} : { line: Number(line) }),
+    });
+    expect(citation && codexFileCitationMarkdown(citation)).toContain(`](<${href}>)`);
+    expect(citation && isMarkdownFileLinkLabel(citation.label, citation.href)).toBe(true);
   });
 
   it("preserves URL syntax characters in file paths", () => {
@@ -51,20 +111,70 @@ describe("resolveCodexFileCitationLink", () => {
       }),
     ).toEqual({
       path: "reports/100% #1? draft.md",
-      href: "reports/100%25 %231%3F draft.md#L7",
+      href: "./reports/100%25 %231%3F draft.md#L7",
       label: "100% #1? draft.md",
       lineRangeStart: 7,
     });
+  });
+
+  it.each([
+    [
+      "notes:final.txt",
+      "7",
+      "./notes:final.txt#L7",
+      { path: "/workspace/notes:final.txt", line: 7 },
+    ],
+    ["a:b/c.txt", undefined, "./a:b/c.txt", { path: "/workspace/a:b/c.txt" }],
+    ["file:notes.txt", undefined, "./file:notes.txt", { path: "/workspace/file:notes.txt" }],
+  ])(
+    "disambiguates relative colon-bearing paths: %s (line %s)",
+    (path, lineRangeStart, expectedHref, expectedPosition) => {
+      const citation = resolveCodexFileCitationLink({
+        path,
+        ...(lineRangeStart === undefined ? {} : { line_range_start: lineRangeStart }),
+      });
+      expect(citation?.href).toBe(expectedHref);
+      const sanitized = sanitizeChatHast({
+        type: "root",
+        children: [
+          {
+            type: "element",
+            tagName: "a",
+            properties: { href: citation?.href },
+            children: [{ type: "text", value: citation?.label ?? "" }],
+          },
+        ],
+      });
+      const sanitizedHref =
+        sanitized.children[0]?.type === "element"
+          ? sanitized.children[0].properties.href
+          : undefined;
+      expect(sanitizedHref).toBe(expectedHref);
+      expect(resolveMarkdownFileLink(String(sanitizedHref), "/workspace")?.position).toEqual(
+        expectedPosition,
+      );
+    },
+  );
+
+  it.each([
+    "https://example.com/report.pdf",
+    "file:/workspace/notes.txt",
+    "sandbox:/mnt/data/report.pdf",
+    "/workspace/notes:final.txt",
+    "C:\\Users\\test\\report.md",
+    "C:/Users/test/report.md",
+  ])("preserves supported URIs, absolute paths, and Windows drive paths: %s", (path) => {
+    expect(resolveCodexFileCitationLink({ path })?.href).toBe(path);
   });
 });
 
 describe("codexFileCitationMarkdown", () => {
   it("escapes Markdown syntax in the visible filename", () => {
     const citation = resolveCodexFileCitationLink({
-      path: "reports/*draft*_[copy]`<&.txt",
+      path: "reports/*draft*_[copy]`~<&|.txt",
     });
     expect(citation && codexFileCitationMarkdown(citation)).toBe(
-      "[\\*draft\\*\\_\\[copy\\]\\`\\<\\&.txt](<reports/*draft*_[copy]`%3C&.txt>)",
+      "[\\*draft\\*\\_\\[copy\\]\\`\\~\\<\\&\\|.txt](<./reports/*draft*_[copy]`~%3C%26%7C.txt>)",
     );
   });
 });

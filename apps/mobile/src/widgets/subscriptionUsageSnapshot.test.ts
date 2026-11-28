@@ -64,6 +64,84 @@ describe("subscription widget snapshots", () => {
     expect(snapshot.url).toBe(deepLink);
     expect(JSON.stringify(snapshot)).not.toContain("private@example.com");
   });
+  it("splits a pooled window by account without exposing emails", () => {
+    const claude = (id: string, overrides: Partial<ServerProvider>) =>
+      provider({
+        instanceId: ProviderInstanceId.make(id),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        auth: { status: "authenticated", email: `${id}@example.com` },
+        ...overrides,
+      });
+    const snapshot = buildSubscriptionUsageSnapshot(
+      presentations([
+        claude("smol", {
+          displayName: "smol",
+          accentColor: "#4c6ef5",
+          usageLimits: {
+            checkedAt,
+            windows: [{ ...window, usedPercent: 29, windowDurationMins: 300 }],
+          },
+        }),
+        claude("relay", {
+          displayName: "relay@example.com",
+          usageLimits: {
+            checkedAt,
+            windows: [{ ...window, id: "seven_day", kind: "weekly", label: "Weekly" }],
+          },
+        }),
+        claude("rex", {
+          usageLimits: {
+            checkedAt,
+            windows: [{ ...window, resetsAt: "2026-09-05T11:50:00.000Z" }],
+          },
+        }),
+      ]),
+      deepLink,
+    );
+    const session = snapshot.providers[0]?.windows.find((w) => w.kind === "session");
+    expect(session?.accounts).toStrictEqual([
+      { name: "RE", remaining: 60, refill: 0 },
+      {
+        name: "smol",
+        color: "#4c6ef5",
+        remaining: 71,
+        refill: 29,
+        resetsAt: Date.parse(window.resetsAt),
+        reset: expect.any(String),
+        durationMs: 300 * 60_000,
+      },
+      { name: "RE2" },
+    ]);
+    expect(JSON.stringify(snapshot)).not.toContain("example.com");
+  });
+  it.each([
+    [
+      ["AB", "AB2", "AB"],
+      ["AB", "AB2", "AB3"],
+    ],
+    [
+      ["AB", "AB", "AB2"],
+      ["AB", "AB3", "AB2"],
+    ],
+  ])("keeps widget account names unique for %j", (names, expected) => {
+    const snapshot = buildSubscriptionUsageSnapshot(
+      presentations(
+        names.map((displayName, index) =>
+          provider({
+            instanceId: ProviderInstanceId.make(`account${index}`),
+            displayName,
+            auth: { status: "authenticated", email: `account${index}@example.com` },
+            usageLimits: {
+              checkedAt,
+              windows: [{ ...window, resetsAt: `2026-09-05T12:1${index}:00.000Z` }],
+            },
+          }),
+        ),
+      ),
+      deepLink,
+    );
+    expect(snapshot.providers[0]?.windows[0]?.accounts?.map((a) => a.name)).toStrictEqual(expected);
+  });
   it("uses upstream deduplication for a native account also present in a proxy hub", () => {
     const input = new Map([
       [
@@ -133,6 +211,65 @@ describe("subscription widget snapshots", () => {
     expect(snapshot.providers[0]?.detail).toBe("Subscription remaining");
     expect(snapshot.providers[0]?.windows[0]?.remaining).toBe(20);
   });
+});
+
+describe("subscription widget expiry", () => {
+  const maxAgeDeadline = now + 15 * 60_000;
+  function single(resetsAt: string) {
+    return buildSubscriptionUsageSnapshot(
+      presentations([provider({ usageLimits: { checkedAt, windows: [{ ...window, resetsAt }] } })]),
+      deepLink,
+    ).providers[0];
+  }
+
+  it.each(["2026-09-05T11:50:00.000Z", checkedAt])(
+    "keeps usage whose reset at %s already happened when observed",
+    (resetsAt) => {
+      expect(single(resetsAt)).toMatchObject({
+        detail: "Subscription remaining",
+        expiresAt: maxAgeDeadline,
+        windows: [{ remaining: 60, reset: expect.stringMatching(/^Reset /) }],
+      });
+    },
+  );
+
+  it.each([
+    { resetAccount: 1, expiresAt: maxAgeDeadline, label: /^Reset / },
+    { resetAccount: 0, expiresAt: now + 2 * 60_000, label: /^Next reset / },
+  ])(
+    "compares a pooled reset with its own account's observation (account $resetAccount)",
+    ({ resetAccount, expiresAt, label }) => {
+      // Account 0 was observed at 12:00, account 1 at 12:05; the pooled reset is at 12:02.
+      const snapshot = buildSubscriptionUsageSnapshot(
+        presentations(
+          [checkedAt, "2026-09-05T12:05:00.000Z"].map((accountCheckedAt, index) =>
+            provider({
+              instanceId: ProviderInstanceId.make(`codex-${index}`),
+              auth: { status: "authenticated", email: `account-${index}@example.com` },
+              usageLimits: {
+                checkedAt: accountCheckedAt,
+                windows: [
+                  {
+                    ...window,
+                    resetsAt:
+                      index === resetAccount
+                        ? "2026-09-05T12:02:00.000Z"
+                        : "2026-09-05T13:00:00.000Z",
+                  },
+                ],
+              },
+            }),
+          ),
+        ),
+        deepLink,
+      );
+      expect(snapshot.providers[0]).toMatchObject({
+        detail: "2 accounts · pooled",
+        expiresAt,
+        windows: [{ remaining: 60, reset: expect.stringMatching(label) }],
+      });
+    },
+  );
 });
 
 describe("widget refresh probes", () => {

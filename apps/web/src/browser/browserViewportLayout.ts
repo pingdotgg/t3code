@@ -71,6 +71,39 @@ export function resolveFittedBrowserViewport(
   return { _tag: "freeform", width: 1280, height: 800 };
 }
 
+export function resolveHiddenBrowserViewportSize(input: {
+  readonly setting: PreviewViewportSetting;
+  readonly zoomFactor: number;
+  readonly content: {
+    readonly width: number;
+    readonly height: number;
+    readonly scale: number;
+  } | null;
+  readonly lastRect: { readonly width: number; readonly height: number } | null;
+  readonly windowSize: { readonly width: number; readonly height: number };
+}): { readonly width: number; readonly height: number } {
+  const { content, lastRect, setting, windowSize, zoomFactor } = input;
+  if (setting._tag !== "fill") {
+    // Chromium paints a guest only near the window, so a capture of a larger one loses its far edge.
+    return {
+      width: Math.min(windowSize.width, setting.width * zoomFactor),
+      height: Math.min(windowSize.height, setting.height * zoomFactor),
+    };
+  }
+  if (content)
+    return { width: content.width / content.scale, height: content.height / content.scale };
+  return { width: lastRect?.width ?? 1280, height: lastRect?.height ?? 800 };
+}
+
+export function resolveHiddenBrowserViewportFitScale(
+  hiddenSize: { readonly width: number; readonly height: number },
+  windowSize: { readonly width: number; readonly height: number },
+): number {
+  // A minimized window can report a zero viewport; scale(0) would stop the guest compositing.
+  if (windowSize.width <= 0 || windowSize.height <= 0) return 1;
+  return Math.min(1, windowSize.width / hiddenSize.width, windowSize.height / hiddenSize.height);
+}
+
 export function resolveBrowserDeviceViewportArea(container: {
   readonly width: number;
   readonly height: number;
@@ -123,6 +156,22 @@ export function resolveBrowserViewportLayout(
     viewportScale,
     fillsPanel: false,
   };
+}
+
+/**
+ * Chromium rasters a CSS-scaled guest at its on-screen scale, so captures of it lose detail.
+ * Its raster scale also counts x/y-to-z terms, which a `preserve-3d` parent keeps and the
+ * screen drops, so `fullDetail` draws like `scale()` but keeps full-resolution frames.
+ */
+export function resolveBrowserViewportTransform(
+  scale: number,
+  fullDetail: boolean,
+): string | undefined {
+  if (scale >= 1) return undefined;
+  if (!fullDetail) return `scale(${scale})`;
+  // Positive depth keeps the guest in front of its parent for hit testing.
+  const depth = Math.sqrt(1 - scale * scale);
+  return `matrix3d(${scale}, 0, ${depth}, 0, 0, ${scale}, ${depth}, 0, 0, 0, 1, 0, 0, 0, 0, 1)`;
 }
 
 export function resolveBrowserDeviceViewportLayout(

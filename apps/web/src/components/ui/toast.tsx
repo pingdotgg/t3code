@@ -1,6 +1,7 @@
 import { Spinner } from "~/components/ui/spinner";
 
 import { Toast } from "@base-ui/react/toast";
+import { msg, useGT } from "gt-react";
 import {
   useEffect,
   useState,
@@ -10,12 +11,20 @@ import {
   type ReactNode,
 } from "react";
 import { type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
-import { CircleAlertIcon, CircleCheckIcon, InfoIcon, TriangleAlertIcon, XIcon } from "lucide-react";
-import { Check, ChevronDown, ChevronUp, Copy } from "lucide";
+import {
+  CircleAlertIcon,
+  CircleCheckIcon,
+  InfoIcon,
+  TriangleAlertIcon,
+  XIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  CopyIcon,
+} from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { Button, buttonVariants } from "~/components/ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import {
@@ -24,8 +33,8 @@ import {
   shouldHideCollapsedToastContent,
   shouldRenderThreadScopedToast,
 } from "./toast.logic";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./tooltip";
 import { useThreadRouteTarget } from "~/hooks/useThreadRouteTarget";
+import { SharedTooltipTrigger } from "./shared-tooltip";
 
 export type ThreadToastData = {
   threadRef?: ScopedThreadRef | null;
@@ -135,29 +144,31 @@ function handleToastDismissClick(
 }
 
 function CopyErrorButton({ text }: { text: string }) {
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "error-message" });
-  const label = isCopied ? "Copied error" : "Copy error";
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: {
+      target: "error-message",
+      unavailableMessage: msg("Clipboard API is unavailable while copying error-message."),
+      failureMessage: msg("Failed to copy error-message to the clipboard."),
+    },
+  });
+  const gt = useGT();
+  const label = isCopied ? gt("Copied error") : gt("Copy error");
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-micro"
-            variant="ghost-muted"
-            aria-label={label}
-            className="[--control-icon-color:currentColor] rounded-md text-muted-foreground/80 hover:bg-transparent hover:text-muted-foreground"
-            onClick={() => copyToClipboard(text)}
-          />
-        }
-      >
-        <MorphIcon
-          className={cn("size-3", isCopied && "text-success")}
-          icon={isCopied ? Check : Copy}
+    <SharedTooltipTrigger
+      render={
+        <Button
+          size="icon-micro"
+          variant="ghost-muted"
+          aria-label={label}
+          className="[--control-icon-color:currentColor] rounded-md text-muted-foreground/80 hover:bg-transparent hover:text-muted-foreground"
+          onClick={() => copyToClipboard(text)}
         />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{label}</TooltipPopup>
-    </Tooltip>
+      }
+      label={label}
+    >
+      {isCopied ? <CheckIcon className="size-3 text-success" /> : <CopyIcon className="size-3" />}
+    </SharedTooltipTrigger>
   );
 }
 
@@ -172,8 +183,9 @@ function ToastExpandableSection({
   labels: { expand?: string; collapse?: string };
 }) {
   const [open, setOpen] = useState(false);
-  const expandLabel = labels.expand ?? "Show details";
-  const collapseLabel = labels.collapse ?? "Hide details";
+  const gt = useGT();
+  const expandLabel = labels.expand ?? gt("Show details");
+  const collapseLabel = labels.collapse ?? gt("Hide details");
 
   return (
     <div className="min-w-0">
@@ -183,11 +195,11 @@ function ToastExpandableSection({
         onClick={() => setOpen((prev) => !prev)}
         type="button"
       >
-        <MorphIcon
-          className="size-3.5 shrink-0 opacity-80"
-          icon={open ? ChevronUp : ChevronDown}
-          strokeWidth={2.25}
-        />
+        {open ? (
+          <ChevronUpIcon className="size-3.5 shrink-0 opacity-80" strokeWidth={2.25} />
+        ) : (
+          <ChevronDownIcon className="size-3.5 shrink-0 opacity-80" strokeWidth={2.25} />
+        )}
         {open ? collapseLabel : expandLabel}
       </button>
       {open ? <div className={toastExpandablePanelClassName}>{children}</div> : null}
@@ -207,6 +219,7 @@ function ToastDescriptionAndExpandable({
   const expandableContent = toastData?.expandableContent;
   const labels = toastData?.expandableLabels ?? {};
   const descriptionTrigger = toastData?.expandableDescriptionTrigger ?? false;
+  const gt = useGT();
   const descriptionClassName = cn(
     "min-w-0 select-text wrap-break-word text-muted-foreground",
     errorDescriptionClampClass(toastType, toastDescription),
@@ -226,8 +239,8 @@ function ToastDescriptionAndExpandable({
     );
   }
 
-  const expandLabel = labels.expand ?? "Show details";
-  const collapseLabel = labels.collapse ?? "Hide details";
+  const expandLabel = labels.expand ?? gt("Show details");
+  const collapseLabel = labels.collapse ?? gt("Hide details");
 
   const toggle = () => setOpen((v) => !v);
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -239,43 +252,48 @@ function ToastDescriptionAndExpandable({
 
   return (
     <>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <div
-              aria-label={open ? collapseLabel : expandLabel}
-              aria-expanded={open}
-              className={cn(
-                "group flex min-w-0 w-full cursor-pointer select-none items-start gap-1.5 rounded-sm text-left outline-none ring-offset-background",
-                "transition-colors hover:bg-muted/40",
-                "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-              )}
-              onClick={toggle}
-              onKeyDown={onKeyDown}
-              role="button"
-              tabIndex={0}
-            />
-          }
-        >
-          <div className="min-w-0 flex-1">
-            <Toast.Description
-              className={cn(
-                "min-w-0 select-none wrap-break-word text-muted-foreground",
-                errorDescriptionClampClass(toastType, toastDescription),
-                "underline-offset-2 decoration-muted-foreground/60 group-hover:underline",
-              )}
-              data-slot="toast-description"
-            />
-          </div>
-          <MorphIcon
+      <SharedTooltipTrigger
+        render={
+          <div
+            aria-label={open ? collapseLabel : expandLabel}
+            aria-expanded={open}
+            className={cn(
+              "group flex min-w-0 w-full cursor-pointer select-none items-start gap-1.5 rounded-sm text-left outline-none ring-offset-background",
+              "transition-colors hover:bg-muted/40",
+              "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+            )}
+            onClick={toggle}
+            onKeyDown={onKeyDown}
+            role="button"
+            tabIndex={0}
+          />
+        }
+        label={open ? collapseLabel : expandLabel}
+      >
+        <div className="min-w-0 flex-1">
+          <Toast.Description
+            className={cn(
+              "min-w-0 select-none wrap-break-word text-muted-foreground",
+              errorDescriptionClampClass(toastType, toastDescription),
+              "underline-offset-2 decoration-muted-foreground/60 group-hover:underline",
+            )}
+            data-slot="toast-description"
+          />
+        </div>
+        {open ? (
+          <ChevronUpIcon
             aria-hidden
             className="size-3.5 h-lh shrink-0 text-muted-foreground opacity-80"
-            icon={open ? ChevronUp : ChevronDown}
             strokeWidth={2.25}
           />
-        </TooltipTrigger>
-        <TooltipPopup side="top">{open ? collapseLabel : expandLabel}</TooltipPopup>
-      </Tooltip>
+        ) : (
+          <ChevronDownIcon
+            aria-hidden
+            className="size-3.5 h-lh shrink-0 text-muted-foreground opacity-80"
+            strokeWidth={2.25}
+          />
+        )}
+      </SharedTooltipTrigger>
       {open ? <div className={toastExpandablePanelClassName}>{expandableContent}</div> : null}
     </>
   );
@@ -553,6 +571,7 @@ function ToastProvider({ children, position = "top-right", ...props }: ToastProv
 function Toasts({ position }: { position: ToastPosition }) {
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
+  const gt = useGT();
   const isTop = position.startsWith("top");
   const visibleToasts = toasts.filter((toast) =>
     shouldRenderThreadScopedToast(toast.data, activeThreadRef),
@@ -572,6 +591,7 @@ function Toasts({ position }: { position: ToastPosition }) {
   return (
     <Toast.Portal data-slot="toast-portal">
       <Toast.Viewport
+        aria-label={gt("Notifications", { $context: "screen reader name of the toast area" })}
         className={cn(
           "fixed z-100 mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-header-offset:var(--workspace-topbar-height)] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
           "data-[position*=top]:top-[calc(var(--toast-inset)+var(--toast-header-offset))]",
@@ -660,7 +680,7 @@ function Toasts({ position }: { position: ToastPosition }) {
               />
               <div className={toastCornerDismissClass}>
                 <button
-                  aria-label="Dismiss notification"
+                  aria-label={gt("Dismiss notification")}
                   className={toastCornerOrbClass}
                   data-slot="toast-close"
                   onClick={() =>
@@ -711,10 +731,16 @@ function AnchoredToastProvider({ children, ...props }: Toast.Provider.Props) {
 function AnchoredToasts() {
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
+  const gt = useGT();
 
   return (
     <Toast.Portal data-slot="toast-portal-anchored">
-      <Toast.Viewport className="outline-none" data-slot="toast-viewport-anchored">
+      <Toast.Viewport
+        aria-label={undefined}
+        className="outline-none"
+        data-slot="toast-viewport-anchored"
+        role={undefined}
+      >
         {toasts
           .filter((toast) => shouldRenderThreadScopedToast(toast.data, activeThreadRef))
           .map((toast) => {
@@ -751,7 +777,7 @@ function AnchoredToasts() {
                     <>
                       <div className={toastCornerDismissClass}>
                         <button
-                          aria-label="Dismiss notification"
+                          aria-label={gt("Dismiss notification")}
                           className={toastCornerOrbClass}
                           data-slot="toast-close"
                           onClick={() =>

@@ -42,15 +42,19 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
   readonly updatedAt: string;
 };
 
-/** Newest report by timestamp; snapshots order turns by provider thread. */
+/**
+ * Newest report by timestamp among the active provider thread's turns, since a provider switch leaves
+ * the previous provider's report behind. Without an active provider thread, every turn is a candidate.
+ */
 export function latestProviderTurnTokenUsage(
-  turns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "tokenUsage">>,
+  turns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "providerThreadId" | "tokenUsage">>,
   projection?: Pick<ThreadStructure, "thread" | "contextTransfers"> | null,
-  providerThread?: Pick<OrchestrationV2ProviderThread, "contextUsage"> | null,
+  providerThread?: Pick<OrchestrationV2ProviderThread, "id" | "contextUsage"> | null,
 ): OrchestrationV2ProviderTurnTokenUsage | null {
   let latest: OrchestrationV2ProviderTurnTokenUsage | null = null;
-  for (const { tokenUsage } of turns) {
+  for (const { providerThreadId, tokenUsage } of turns) {
     if (tokenUsage === undefined) continue;
+    if (providerThread != null && providerThreadId !== providerThread.id) continue;
     // Ties go to the later entry, since live upserts append.
     if (latest === null || Date.parse(tokenUsage.updatedAt) >= Date.parse(latest.updatedAt)) {
       latest = tokenUsage;
@@ -72,13 +76,85 @@ export function latestProviderTurnTokenUsage(
   );
 }
 
+type CompactionItem = Extract<ThreadStructureTurnItem, { readonly type: "compaction" }>;
+
+// A retired provider thread's items say nothing about the active conversation.
+function isRetiredProviderThreadItem(
+  item: CompactionItem,
+  providerThread: Pick<OrchestrationV2ProviderThread, "id"> | null | undefined,
+): boolean {
+  return (
+    providerThread != null &&
+    item.providerThreadId != null &&
+    item.providerThreadId !== providerThread.id
+  );
+}
+
+function compactionSnapshot(
+  item: CompactionItem,
+  maxTokens: number | null,
+  updatedAt: string,
+): ContextWindowSnapshot | null {
+  const usedTokens = asFiniteNumber(item.afterTokenCount);
+  if (usedTokens === null || usedTokens < 0) return null;
+  const usedPercentage =
+    maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;
+  return {
+    usedTokens,
+    totalProcessedTokens: asFiniteNumber(item.beforeTokenCount),
+    maxTokens,
+    remainingTokens: maxTokens !== null ? Math.max(0, Math.round(maxTokens - usedTokens)) : null,
+    usedPercentage,
+    remainingPercentage: usedPercentage !== null ? Math.max(0, 100 - usedPercentage) : null,
+    inputTokens: null,
+    cachedInputTokens: null,
+    outputTokens: null,
+    reasoningOutputTokens: null,
+    lastUsedTokens: null,
+    lastInputTokens: null,
+    lastCachedInputTokens: null,
+    lastOutputTokens: null,
+    lastReasoningOutputTokens: null,
+    toolUses: null,
+    durationMs: null,
+    compactsAutomatically: true,
+    autoCompactThreshold: null,
+    cost: null,
+    updatedAt,
+  };
+}
+
 export function deriveLatestContextWindowSnapshot(
   entries: ReadonlyArray<{
     readonly item: ThreadStructureTurnItem;
   }>,
   liveUsage?: OrchestrationV2ProviderTurnTokenUsage | null,
-  providerThread?: Pick<OrchestrationV2ProviderThread, "contextUsage" | "updatedAt"> | null,
+  providerThread?: Pick<OrchestrationV2ProviderThread, "id" | "contextUsage" | "updatedAt"> | null,
 ): ContextWindowSnapshot | null {
+  const latestCompletedCompaction = entries.findLast(
+    (entry): entry is { readonly item: CompactionItem } =>
+      entry.item.type === "compaction" &&
+      entry.item.status === "completed" &&
+      !isRetiredProviderThreadItem(entry.item, providerThread),
+  )?.item;
+  const usageUpdatedAt =
+    liveUsage?.updatedAt ??
+    (providerThread?.contextUsage != null ? DateTime.formatIso(providerThread.updatedAt) : null);
+  if (latestCompletedCompaction !== undefined) {
+    const compactedAt = DateTime.formatIso(
+      latestCompletedCompaction.completedAt ?? latestCompletedCompaction.updatedAt,
+    );
+    // Usage reported before the compaction describes the context it just discarded; usage at
+    // the same instant is the provider's own post-compaction report.
+    if (usageUpdatedAt === null || Date.parse(compactedAt) > Date.parse(usageUpdatedAt)) {
+      return compactionSnapshot(
+        latestCompletedCompaction,
+        liveUsage?.maxTokens ?? asFiniteNumber(providerThread?.contextUsage?.maxTokens),
+        compactedAt,
+      );
+    }
+  }
+
   if (liveUsage != null) {
     const usedTokens = Math.max(0, liveUsage.usedTokens);
     const maxTokens = liveUsage.maxTokens ?? null;
@@ -147,46 +223,16 @@ export function deriveLatestContextWindowSnapshot(
     };
   }
   for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index];
-    if (!entry || entry.item.type !== "compaction") {
+    const item = entries[index]?.item;
+    if (item?.type !== "compaction" || isRetiredProviderThreadItem(item, providerThread)) {
       continue;
     }
-    const payload = entry.item;
-    const usedTokens = asFiniteNumber(payload.afterTokenCount);
-    if (usedTokens === null || usedTokens < 0) {
-      continue;
-    }
-
-    const maxTokens = null;
-    const usedPercentage =
-      maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;
-    const remainingTokens =
-      maxTokens !== null ? Math.max(0, Math.round(maxTokens - usedTokens)) : null;
-    const remainingPercentage = usedPercentage !== null ? Math.max(0, 100 - usedPercentage) : null;
-
-    return {
-      usedTokens,
-      totalProcessedTokens: asFiniteNumber(payload.beforeTokenCount),
-      maxTokens,
-      remainingTokens,
-      usedPercentage,
-      remainingPercentage,
-      inputTokens: null,
-      cachedInputTokens: null,
-      outputTokens: null,
-      reasoningOutputTokens: null,
-      lastUsedTokens: null,
-      lastInputTokens: null,
-      lastCachedInputTokens: null,
-      lastOutputTokens: null,
-      lastReasoningOutputTokens: null,
-      toolUses: null,
-      durationMs: null,
-      compactsAutomatically: true,
-      autoCompactThreshold: null,
-      cost: null,
-      updatedAt: DateTime.formatIso(payload.startedAt ?? payload.updatedAt),
-    };
+    const snapshot = compactionSnapshot(
+      item,
+      null,
+      DateTime.formatIso(item.startedAt ?? item.updatedAt),
+    );
+    if (snapshot !== null) return snapshot;
   }
 
   return null;
@@ -234,11 +280,12 @@ export function shouldOfferResumeCompaction(input: {
 }
 
 /**
- * Whether a plain send into an idle thread compacts it first, as web's composer does under
- * "When you return". Web reads the same state for its "Compact and send" button. A send that
- * hands off to another conversation starts that one fresh, so only the resumed one counts.
+ * The tokens a plain send into an idle thread compacts first, as web's composer does under
+ * "When you return", or null when it sends as is. Web reads the same state for its "Compact and
+ * send" button. A send that hands off to another conversation starts that one fresh, so only the
+ * resumed one counts.
  */
-export function shouldCompactBeforeSend(input: {
+export function compactBeforeSendTokens(input: {
   readonly projection: Pick<
     ThreadStructure,
     | "thread"
@@ -259,7 +306,7 @@ export function shouldCompactBeforeSend(input: {
   readonly text: string;
   readonly threadIdle: boolean;
   readonly now: string;
-}): boolean {
+}): number | null {
   const { projection } = input;
   const provider = input.providers.find((entry) => entry.instanceId === input.selection.instanceId);
   if (
@@ -290,7 +337,7 @@ export function shouldCompactBeforeSend(input: {
         .map((request) => ({ kind: "user-input.resolved", payload: { answers: request.answers } })),
     )
   ) {
-    return false;
+    return null;
   }
   const activeProviderThreadId = projection.thread.activeProviderThreadId;
   const providerThread = projection.providerThreads.find(
@@ -306,8 +353,7 @@ export function shouldCompactBeforeSend(input: {
     liveUsage,
     providerThread,
   );
-  return (
-    contextWindow !== null &&
+  return contextWindow !== null &&
     shouldOfferResumeCompaction({
       provider: provider.driver,
       usedTokens: contextWindow.usedTokens,
@@ -315,5 +361,6 @@ export function shouldCompactBeforeSend(input: {
       promptCacheTtlMs: liveUsage?.promptCacheTtlMs,
       now: input.now,
     })
-  );
+    ? contextWindow.usedTokens
+    : null;
 }

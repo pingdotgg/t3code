@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -54,7 +55,7 @@ const operationOf = (
   query: Record<string, unknown>,
   body: unknown,
 ) => {
-  if (method === "GET" && path === "/api/experimental/job")
+  if (method === "GET" && path === "/api/experimental/job" && query.kind === "image")
     return { type: "imageJobs", input: query };
   if (method === "GET" && path.startsWith("/api/fs/read/"))
     return { type: "image.read", input: { path, ...query } };
@@ -64,6 +65,16 @@ const operationOf = (
       type: "rpc.call",
       input: { rpcID: rpc[1], method: rpc[2], ...query, ...(body as object) },
     };
+  if (method === "GET" && path === "/api/experimental/job")
+    return { type: "job.list", input: query };
+  const shell = /^\/api\/shell(?:\/([^/]+)(\/output)?)?$/.exec(path);
+  if (shell !== null) {
+    const input = { ...(shell[1] === undefined ? {} : { id: shell[1] }), ...query };
+    return {
+      type: `shell.${method === "DELETE" ? "remove" : shell[2] ? "output" : shell[1] ? "get" : "list"}`,
+      input,
+    };
+  }
   const session = /^\/api\/session\/([^/]+)(\/.*)?$/.exec(path);
   if (method === "GET" && path === "/api/event") return { type: "event.subscribe" };
   if (method === "GET" && path === "/api/model") return { type: "model.list", input: query };
@@ -142,6 +153,7 @@ const replayHttpClient = (
   controller: OpenCodeReplayController,
   replayGate: ProviderReplayGate | undefined,
   onPrompt: ((input: unknown) => void) | undefined,
+  beforeResponse: ((path: string) => Effect.Effect<void>) | undefined,
 ) =>
   HttpClient.make((request, url) =>
     Effect.tryPromise({
@@ -200,13 +212,18 @@ const replayHttpClient = (
         new HttpClientError.HttpClientError({
           reason: new HttpClientError.TransportError({ request, cause }),
         }),
-    }).pipe(Effect.map((response) => HttpClientResponse.fromWeb(request, response))),
+    }).pipe(
+      Effect.map((response) => HttpClientResponse.fromWeb(request, response)),
+      Effect.tap(() => beforeResponse?.(url.pathname) ?? Effect.void),
+    ),
   );
 
 export const replayServer = (
   transcript: ProviderReplayTranscript,
   options?: {
     readonly external?: boolean;
+    readonly processExit?: Effect.Effect<void>;
+    readonly beforeResponse?: (path: string) => Effect.Effect<void>;
     readonly onPrompt?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
@@ -223,7 +240,12 @@ export const replayServer = (
     const opencode = yield* OpenCode2Client.make.pipe(
       Effect.provideService(
         HttpClient.HttpClient,
-        replayHttpClient(controller, options?.replayGate, options?.onPrompt),
+        replayHttpClient(
+          controller,
+          options?.replayGate,
+          options?.onPrompt,
+          options?.beforeResponse,
+        ),
       ),
     );
     const connection = {
@@ -231,6 +253,7 @@ export const replayServer = (
       url: BASE_URL,
       version: transcript.version,
       external: options?.external ?? false,
+      ...(options?.external ? {} : { processExit: options?.processExit ?? Effect.never }),
     };
     const borrowers = options?.borrowers;
     return OpenCode2Server.OpenCode2Server.of({
@@ -247,6 +270,8 @@ export const replayServer = (
                   borrowers.current -= 1;
                 }),
             ),
+      forget: Effect.void,
+      connections: Stream.never,
     });
   });
 
@@ -254,6 +279,8 @@ const makeReplayAdapter = (
   transcript: ProviderReplayTranscript,
   options?: {
     readonly external?: boolean;
+    readonly processExit?: Effect.Effect<void>;
+    readonly beforeResponse?: (path: string) => Effect.Effect<void>;
     readonly onPrompt?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
@@ -307,6 +334,8 @@ export const openCode2ReplayRuntime = (
   entries: ReadonlyArray<ProviderReplayEntry>,
   options?: {
     readonly external?: boolean;
+    readonly processExit?: Effect.Effect<void>;
+    readonly beforeResponse?: (path: string) => Effect.Effect<void>;
     readonly version?: string;
     readonly onPrompt?: (input: unknown) => void;
     readonly borrowers?: { current: number };

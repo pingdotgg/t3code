@@ -1,14 +1,28 @@
 import { SourceControlProviderKind } from "./sourceControl.ts";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
+import * as Rpc from "effect/rpc/Rpc";
 import * as Schema from "effect/Schema";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 
 import {
-  PullRequestDetail,
+  type PullRequestDetail,
   PullRequestListResult,
+  PullRequestOperationError,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
+import { WS_METHODS, WsRpcGroup } from "./rpc.ts";
 
-const decodeDetail = Schema.decodeUnknownSync(Schema.toCodecJson(PullRequestDetail));
+// Clients decode the detail inside the RPC's Exit, as the JSON serialization does.
+const decodeDetailExit = Schema.decodeUnknownSync(
+  Schema.toCodecJson(Rpc.exitSchema(WsRpcGroup.requests.get(WS_METHODS.pullRequestsDetail)!)),
+);
+const decodeDetail = (value: unknown): PullRequestDetail => {
+  const exit = decodeDetailExit({ _tag: "Success", value });
+  if (!Exit.isSuccess(exit)) throw new Error("expected a successful exit");
+  return exit.value as PullRequestDetail;
+};
 
 const LIST_RESULT: PullRequestListResult = {
   viewers: { "github.com": "bilal", "gitlab.com": "bilal.hassan" },
@@ -104,7 +118,7 @@ describe("PullRequestCapabilities", () => {
       capabilities: {
         ...base,
         actions: options.actions,
-        mergeMethods: ["squash", "fast-forward", "merge"],
+        mergeMethods: ["squash", "semi-linear", "merge"],
         updateMethods: options.updateMethods,
         review: { ...base.review, verdicts: options.verdicts },
       },
@@ -146,4 +160,20 @@ describe("resolvePullRequestAuthorFilter", () => {
     expect(resolvePullRequestAuthorFilter(" ana ", "bilal")).toBe("ana");
     expect(resolvePullRequestAuthorFilter("meredith", "bilal")).toBe("meredith");
   });
+});
+
+describe("PullRequestOperationError", () => {
+  // Cloudflare swaps an origin 502 for its own body without CORS headers, so a
+  // client behind a T3 Connect tunnel sees a transport error instead of this error.
+  it.effect("answers with a status a Cloudflare tunnel passes through", () =>
+    Effect.gen(function* () {
+      const error = new PullRequestOperationError({
+        operation: "diff",
+        detail: "gitlab requests to gitlab.com are paused until the rate limit resets.",
+      });
+      const response = yield* error[HttpServerRespondable.symbol]();
+      expect(response.status).not.toBe(502);
+      expect(PullRequestOperationError.ast.annotations?.httpApiStatus).not.toBe(502);
+    }),
+  );
 });

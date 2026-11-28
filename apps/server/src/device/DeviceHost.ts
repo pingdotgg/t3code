@@ -67,6 +67,8 @@ export class AgentDeviceStartError extends Schema.TaggedError<AgentDeviceStartEr
 
 export interface DeviceHubEndpoint {
   readonly origin: string;
+  /** The hub's session token, which the hub requires on every request. */
+  readonly token?: string;
 }
 
 export interface AgentDeviceEndpoint {
@@ -139,7 +141,7 @@ export interface DeviceOperations {
     deviceId: string,
   ) => Effect.Effect<AgentDeviceBinding, DeviceHostUnavailableError>;
   /**
-   * Set by hosts that end devices on their own (EAS stops sessions at their
+   * Set by hosts that end devices on their own (Expo stops sessions at their
    * limits), so a session on a device the host stops listing is dropped.
    */
   readonly endsDevices?: boolean;

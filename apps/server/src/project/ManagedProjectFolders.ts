@@ -1,11 +1,13 @@
 import {
   CommandId,
+  GitCommandError,
   type GitManagerServiceError,
   ProjectId,
+  type ProjectScript,
   type ThreadId,
   VcsProcessSpawnError,
 } from "@t3tools/contracts";
-import { newProjectFolderName } from "@t3tools/shared/path";
+import { foldLatinDiacritics, newProjectFolderName } from "@t3tools/shared/path";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -65,7 +67,19 @@ export class ScratchProjectError extends Schema.TaggedError<ScratchProjectError>
   }
 }
 
+/** Where No project threads keep their folders, whether or not this T3 home allows them. */
+export const scratchFolderRoot = (baseDir: string, path: Path.Path) =>
+  path.resolve(baseDir, "scratch");
+
 export type ScratchError = ScratchUnavailableError | ScratchFolderError | ScratchProjectError;
+
+// The spawner checks cwd before spawning, so NotFound from spawn itself means a missing executable.
+const isMissingExecutable = (cause: unknown) =>
+  PlatformError.isPlatformError(cause) &&
+  cause.reason._tag === "NotFound" &&
+  cause.reason.method === "spawn";
+
+const isGitCommandError = Schema.is(GitCommandError);
 
 export class NamedProjectFolderError extends Schema.TaggedError<NamedProjectFolderError>()(
   "NamedProjectFolderError",
@@ -75,7 +89,9 @@ export class NamedProjectFolderError extends Schema.TaggedError<NamedProjectFold
   },
 ) {
   override get message(): string {
-    return "Failed to create the project folder.";
+    return isGitCommandError(this.cause) && isMissingExecutable(this.cause.cause)
+      ? "Git isn't installed on this machine. Install Git to create a project."
+      : "Failed to create the project folder.";
   }
 }
 
@@ -106,7 +122,10 @@ export class ManagedProjectFolders extends Context.Service<
     }) => Effect.Effect<Option.Option<string>, ScratchFolderError>;
     readonly namedProjectsRoot: string;
     /** Removes failed/cancelled creations' folders only while no project owns them. */
-    readonly createNamedProject: (input: { readonly name: string }) => Effect.Effect<
+    readonly createNamedProject: (input: {
+      readonly name: string;
+      readonly scripts?: readonly ProjectScript[];
+    }) => Effect.Effect<
       {
         readonly projectId: ProjectId;
         readonly workspaceRoot: string;
@@ -118,7 +137,7 @@ export class ManagedProjectFolders extends Context.Service<
 >()("t3/project/ManagedProjectFolders") {}
 
 const folderWords = (text: string) =>
-  text
+  foldLatinDiacritics(text)
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter(Boolean)
@@ -244,7 +263,7 @@ const make = Effect.gen(function* () {
       Effect.flatMap(
         (repositoryRoot): Effect.Effect<Result.Result<string, ScratchUnavailableError>> => {
           if (repositoryRoot === null) {
-            return Effect.succeed(Result.succeed(path.resolve(config.baseDir, "scratch")));
+            return Effect.succeed(Result.succeed(scratchFolderRoot(config.baseDir, path)));
           }
           const unavailable = new ScratchUnavailableError({
             baseDir: config.baseDir,
@@ -253,16 +272,37 @@ const make = Effect.gen(function* () {
           return Effect.logWarning(unavailable.message).pipe(Effect.as(Result.fail(unavailable)));
         },
       ),
-      Effect.catchCause((cause) =>
-        Cause.hasInterrupts(cause)
-          ? Effect.interrupt
-          : Effect.succeed(Result.fail(new ScratchUnavailableError({ baseDir: config.baseDir }))),
-      ),
     ),
-    Duration.infinity,
+    // A failed git check (say, a timeout on a busy machine) is not an answer; ask again next time.
+    Exit.match({ onSuccess: () => Duration.infinity, onFailure: () => Duration.zero }),
   );
-  const scratchProbe = probe.pipe(Effect.onInterrupt(() => invalidate));
-  const scratchRoot = scratchProbe.pipe(Effect.map(Result.getSuccess));
+  const scratchProbe = probe.pipe(
+    Effect.catchCause((cause) =>
+      Cause.hasInterrupts(cause)
+        ? Effect.interrupt
+        : Effect.succeed(Result.fail(new ScratchUnavailableError({ baseDir: config.baseDir }))),
+    ),
+    Effect.onInterrupt(() => invalidate),
+  );
+  // A symlinked scratch folder lets the No project live at either the link or its target.
+  const scratchProjectRoot = (root: string) =>
+    fileSystem.realPath(root).pipe(
+      Effect.flatMap((target) =>
+        target === root
+          ? Effect.succeed(root)
+          : projects
+              .getByWorkspaceRoot(target)
+              .pipe(Effect.map((project) => (Option.isSome(project) ? target : root))),
+      ),
+      Effect.orElseSucceed(() => root),
+    );
+  const scratchRoot = scratchProbe.pipe(
+    Effect.flatMap((probed) =>
+      Result.isSuccess(probed)
+        ? scratchProjectRoot(probed.success).pipe(Effect.asSome)
+        : Effect.succeedNone,
+    ),
+  );
 
   const makeScratchFolder = (folder: string) =>
     fileSystem
@@ -271,8 +311,9 @@ const make = Effect.gen(function* () {
 
   const ensureScratchProject: ManagedProjectFolders["Service"]["ensureScratchProject"] = Effect.gen(
     function* () {
-      const workspaceRoot = yield* scratchProbe.pipe(Effect.flatMap(Effect.fromResult));
-      yield* makeScratchFolder(workspaceRoot);
+      const probedRoot = yield* scratchProbe.pipe(Effect.flatMap(Effect.fromResult));
+      yield* makeScratchFolder(probedRoot);
+      const workspaceRoot = yield* scratchProjectRoot(probedRoot);
       const id = yield* random
         .uuidV4()
         .pipe(Effect.mapError((cause) => new ScratchProjectError({ workspaceRoot, cause })));
@@ -451,6 +492,7 @@ const make = Effect.gen(function* () {
         projectId: ProjectId.make(id),
         title: input.name,
         workspaceRoot,
+        ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
       })
       .pipe(
         // Re-check ownership before deleting rejected creations; interruption after commit or conflicts can leave an owner.

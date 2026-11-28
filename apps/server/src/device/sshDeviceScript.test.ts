@@ -7,9 +7,102 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
+import { DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
+
+const executable = async (file: string, body = "exit 0") => {
+  await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+  await NodeFSP.writeFile(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+};
+
+const completeSdk = async (sdk: string, adb = "echo Android Debug Bridge") => {
+  await executable(NodePath.join(sdk, "platform-tools/adb"), adb);
+  await executable(NodePath.join(sdk, "emulator/emulator"));
+  await executable(NodePath.join(sdk, "cmdline-tools/latest/bin/avdmanager"));
+};
+
+/** Runs the probe through the SSH shell setup, then `after` in that same shell. */
+const probeAndroid = (setup: (home: string) => Promise<Record<string, string>>, after = "true") =>
+  Effect.promise(async () => {
+    const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-sdk-"));
+    try {
+      const env = await setup(home);
+      await executable(NodePath.join(home, "bin/npm"), "echo 10.0.0");
+      const probe = NodePath.join(home, "probe.cjs");
+      await NodeFSP.writeFile(probe, remoteDeviceScript("fixture", "probe"));
+      const result = await exec(
+        "/bin/sh",
+        ["-c", `${remoteDeviceEnvironment}\n"$NODE" "$PROBE" && ${after}`],
+        {
+          env: {
+            HOME: home,
+            PATH: `${NodePath.join(home, "bin")}:/usr/bin:/bin`,
+            NODE: process.execPath,
+            PROBE: probe,
+            ...env,
+          },
+        },
+      );
+      const [inventory = "", ...rest] = result.stdout.trim().split("\n");
+      const android = JSON.parse(inventory).platforms.find(
+        (entry: { platform: string }) => entry.platform === "android",
+      );
+      return { android, after: rest.join("\n") };
+    } finally {
+      await NodeFSP.rm(home, { recursive: true, force: true });
+    }
+  });
+
+it.effect("does not offer Android when the SDK adb cannot run", () =>
+  Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) === "win32") return;
+    const { android } = yield* probeAndroid(async (home) => {
+      const sdk = NodePath.join(home, "sdk");
+      await completeSdk(sdk, "exit 1");
+      return { ANDROID_HOME: sdk };
+    });
+    expect(android).toEqual({ platform: "android", available: false, reason: expect.any(String) });
+  }),
+);
+
+it.effect("does not offer Android when SDK tools are directories", () =>
+  Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) === "win32") return;
+    const { android } = yield* probeAndroid(async (home) => {
+      const sdk = NodePath.join(home, "sdk");
+      await executable(NodePath.join(sdk, "platform-tools/adb"), "echo Android Debug Bridge");
+      await NodeFSP.mkdir(NodePath.join(sdk, "emulator/emulator"), { recursive: true });
+      await NodeFSP.mkdir(NodePath.join(sdk, "cmdline-tools/latest/bin/avdmanager"), {
+        recursive: true,
+      });
+      return { ANDROID_HOME: sdk };
+    });
+    expect(android).toEqual({
+      platform: "android",
+      available: false,
+      reason: expect.stringContaining("Android Emulator"),
+    });
+  }),
+);
+
+it.effect("uses the SDK the probe accepted for later SSH commands", () =>
+  Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) === "win32") return;
+    let sdk = "";
+    const result = yield* probeAndroid(async (home) => {
+      // Incomplete default locations must not shadow the configured SDK.
+      await NodeFSP.mkdir(NodePath.join(home, "Library/Android/sdk"), { recursive: true });
+      await NodeFSP.mkdir(NodePath.join(home, "Android/Sdk"), { recursive: true });
+      sdk = NodePath.join(home, "custom-sdk");
+      await completeSdk(sdk);
+      return { ANDROID_SDK_ROOT: sdk };
+    }, "command -v emulator");
+    expect(result.android).toEqual({ platform: "android", available: true });
+    expect(result.after).toBe(NodePath.join(sdk, "emulator/emulator"));
+  }),
+);
 
 it.effect("finds Android Studio Java for a non-interactive SSH session", () =>
   Effect.gen(function* () {
@@ -43,6 +136,21 @@ it.effect("preserves shell metacharacters and newlines in remote arguments", () 
       const result = await exec("sh", ["-c", `printf %s ${quoteRemoteArg(value)}`]);
       expect(result.stdout).toBe(value);
     });
+  }),
+);
+
+it.effect("rejects a Node release below the pinned agent-device engine floor", () =>
+  Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) === "win32") return;
+    const probe = NodeChildProcess.spawnSync(process.execPath, [], {
+      input:
+        `Object.defineProperty(process.versions, "node", { value: "22.11.0" });\n` +
+        remoteDeviceScript("owner", "probe"),
+      env: { HOME: NodeOS.tmpdir(), PATH: NodePath.dirname(process.execPath) },
+      encoding: "utf8",
+    });
+    expect(probe.status).not.toBe(0);
+    expect(probe.stderr).toContain("Node 22.12 or newer");
   }),
 );
 
@@ -81,7 +189,7 @@ if (fs.existsSync(${JSON.stringify(failMarker)})) process.exitCode = 1;`,
         expect(start().stderr).toContain("Could not stop the agent-device daemon");
         expect(await NodeFSP.readFile(daemonFile, "utf8")).toContain("claims");
         await NodeFSP.rm(failMarker);
-        expect(start().stderr).toContain("Android SDK missing");
+        expect(start().stderr).toContain("Android SDK was not found");
         await expect(NodeFSP.access(daemonFile)).rejects.toThrow();
         expect(await NodeFSP.readFile(calls, "utf8")).toBe(
           `daemon stop --state-dir ${state}\ndaemon stop --state-dir ${state}\n`,
@@ -124,9 +232,65 @@ it.effect("keeps a daemon record its missing agent CLI cannot stop", () =>
         );
         expect(await NodeFSP.readFile(daemonFile, "utf8")).toContain("claims");
         const exited = NodeChildProcess.spawnSync(process.execPath, ["-e", ""]).pid;
-        expect((await start(exited)).stderr).toContain("Android SDK missing");
+        expect((await start(exited)).stderr).toContain("Android SDK was not found");
         await expect(NodeFSP.access(daemonFile)).rejects.toThrow();
       } finally {
+        await NodeFSP.rm(home, { recursive: true, force: true });
+      }
+    });
+  }),
+);
+
+it.effect("starts the hub requiring a session token and reports the one it printed", () =>
+  Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) === "win32") return;
+    yield* Effect.promise(async () => {
+      const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-hub-"));
+      const run = (mode: "start" | "stop") =>
+        NodeChildProcess.spawnSync(process.execPath, [], {
+          input: remoteDeviceScript("owner", mode),
+          env: {
+            HOME: home,
+            PATH: `${NodePath.join(home, "bin")}:/usr/bin:/bin`,
+            ANDROID_HOME: NodePath.join(home, "sdk"),
+          },
+          encoding: "utf8",
+        });
+      try {
+        const state = NodePath.join(home, ".t3/device/hosts/owner");
+        const install = NodePath.join(
+          home,
+          ".t3/device/tools",
+          `expo-device-hub@${DEVICE_HUB_VERSION}`,
+        );
+        const entry = NodePath.join(install, "node_modules/expo-device-hub/dist/server/cli.mjs");
+        await completeSdk(NodePath.join(home, "sdk"));
+        await NodeFSP.mkdir(NodePath.dirname(entry), { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(install, ".install-complete"), DEVICE_HUB_VERSION);
+        // Stands in for the hub: it serves /readyz and prints its startup link.
+        await NodeFSP.writeFile(
+          entry,
+          `import * as http from "node:http";
+const args = process.argv.slice(2);
+const token = args.includes("--require-token") ? "printed-token" : undefined;
+http.createServer((_request, response) => response.end("ok")).listen(Number(args[args.indexOf("--port") + 1]), "127.0.0.1", () => {
+  console.log("  Local:   http://localhost/" + (token ? "?token=" + token : ""));
+  console.log("state-dir=" + process.env.EXPO_DEVICE_HUB_STATE_DIR);
+});`,
+        );
+
+        const started = run("start");
+        expect(started.stderr).toBe("");
+        expect(JSON.parse(started.stdout).hubToken).toBe("printed-token");
+        expect(
+          JSON.parse(await NodeFSP.readFile(NodePath.join(state, "hub.json"), "utf8")).token,
+        ).toBe("printed-token");
+        expect((await NodeFSP.stat(NodePath.join(state, "hub.log"))).mode & 0o077).toBe(0);
+        expect(await NodeFSP.readFile(NodePath.join(state, "hub.log"), "utf8")).toContain(
+          `state-dir=${state}\n`,
+        );
+      } finally {
+        run("stop");
         await NodeFSP.rm(home, { recursive: true, force: true });
       }
     });

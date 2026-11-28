@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 /** Bump for incompatible UsageSummary changes; skipped unknown array variants need no bump. */
 export const USAGE_CONTRACT_VERSION = 6 as const;
@@ -66,6 +67,8 @@ export const UsageBucket = Schema.Struct({
   costSource: UsageCostSource,
   records: NonNegativeInt,
   unpricedRecords: NonNegativeInt,
+  /** Absent from older servers; merges then estimate it from the unpriced record share. */
+  unpricedTokens: Schema.optional(NonNegativeInt),
   sessions: NonNegativeInt,
 });
 export type UsageBucket = typeof UsageBucket.Type;
@@ -76,6 +79,13 @@ export const UsageSourceFingerprint = Schema.Struct({
   resolvedHomePath: TrimmedNonEmptyString,
   /** Transcript directory device:inode distinguishes machines sharing a hostname and home path. */
   volumeId: Schema.String,
+  /**
+   * Opaque identity of a directory that the Windows server of a desktop install
+   * reads natively and its managed WSL server reads through a drvfs mount. Path
+   * and `volumeId` differ between the two sides, so clients treat sources with
+   * an equal value as one directory in addition to the fields above.
+   */
+  physicalSourceId: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type UsageSourceFingerprint = typeof UsageSourceFingerprint.Type;
 
@@ -133,9 +143,21 @@ export const UsageSummaryInput = Schema.Struct({
   sinceTime: Schema.optional(TrimmedNonEmptyString),
   untilTime: Schema.optional(TrimmedNonEmptyString),
   awaitRefresh: Schema.optional(Schema.Boolean),
+  /** Accept an immediate answer from the last scan; its sources are marked refreshing. */
+  provisional: Schema.optional(Schema.Boolean),
   modelFilter: Schema.optional(UsageModelFilter),
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
+
+/** An enabled provider whose usage files T3 has not been allowed to read yet. Nothing was read. */
+export const UsageAccessRequest = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  driver: ProviderDriverKind,
+  provider: UsageProviderKind,
+  /** Folders a grant would let T3 read; empty when finding them would itself read the provider. */
+  paths: Schema.Array(TrimmedNonEmptyString),
+});
+export type UsageAccessRequest = typeof UsageAccessRequest.Type;
 
 export const UsageSummary = Schema.Struct({
   contractVersion: Schema.Number,
@@ -149,6 +171,8 @@ export const UsageSummary = Schema.Struct({
   scanDurationMs: NonNegativeInt,
   /** The filter the server applied; absent means unfiltered, including servers that predate filters. */
   modelFilter: Schema.optional(UsageModelFilter),
+  /** Absent from servers that read every provider without asking. */
+  accessRequests: Schema.optional(ForwardCompatibleArray(UsageAccessRequest)),
 });
 export type UsageSummary = typeof UsageSummary.Type;
 

@@ -1,4 +1,8 @@
 import { type TimestampFormat } from "@t3tools/contracts/settings";
+import { msg } from "gt-react";
+
+import { DEFAULT_LOCALE } from "./i18n/locales";
+import { getActiveLocale, m, type MessageResolver } from "./i18n/messages";
 
 function getTimestampFormatOptions(
   timestampFormat: TimestampFormat,
@@ -68,25 +72,43 @@ function resolveWeekStartsOn(locale: string | undefined): WeekdayIndex | undefin
 
 export const weekStartsOn = resolveWeekStartsOn(timestampLocale);
 
+// A formatter keeps the default zone it was built in, so default-zone formatters run in UTC
+// on the wall-clock time, which Date reads from the current zone.
+function wallClockAsUtc(date: Date): Date {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+}
+
 const timestampFormatterCache = new Map<string, Intl.DateTimeFormat>();
 
 function getTimestampFormatter(
   timestampFormat: TimestampFormat,
   includeSeconds: boolean,
-  timeZone?: string,
+  timeZone = "UTC",
+  locale = timestampLocale,
 ): Intl.DateTimeFormat {
-  const cacheKey = `${timestampFormat}:${includeSeconds ? "seconds" : "minutes"}:${timeZone ?? ""}`;
+  const cacheKey = `${timestampFormat}:${includeSeconds ? "seconds" : "minutes"}:${timeZone}:${locale ?? ""}`;
   const cachedFormatter = timestampFormatterCache.get(cacheKey);
   if (cachedFormatter) {
     return cachedFormatter;
   }
 
-  const formatter = new Intl.DateTimeFormat(timestampLocale, {
+  const hourCycle =
+    timestampFormat === "locale" && locale !== timestampLocale
+      ? getTimestampFormatter(timestampFormat, includeSeconds).resolvedOptions().hourCycle
+      : undefined;
+  const formatter = new Intl.DateTimeFormat(locale, {
     ...getTimestampFormatOptions(timestampFormat, includeSeconds),
-    ...(timeZone ? { timeZone } : {}),
+    ...(hourCycle === undefined ? {} : { hourCycle }),
+    timeZone,
   });
   timestampFormatterCache.set(cacheKey, formatter);
   return formatter;
+}
+
+function formatTime(date: Date, timestampFormat: TimestampFormat, timeZone?: string): string {
+  return timeZone
+    ? getTimestampFormatter(timestampFormat, false, timeZone).format(date)
+    : getTimestampFormatter(timestampFormat, false).format(wallClockAsUtc(date));
 }
 
 export function resolveHour12(timestampFormat: TimestampFormat): boolean {
@@ -98,10 +120,23 @@ export function parseTimestampDate(isoDate: string): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-// Deliberately not the host locale: the tooltip's ordinal suffix and
-// day-before-month order below are English, so a localized month alone would
-// read "4th Juni 2026".
-const monthNameFormatter = new Intl.DateTimeFormat("en-US", { month: "long" });
+// English keeps its ordinal day-before-month form; other UI languages use their own long date.
+const monthNameFormatter = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC" });
+const longDateFormatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function getLongDateFormatter(locale: string): Intl.DateTimeFormat {
+  let formatter = longDateFormatterCache.get(locale);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+    longDateFormatterCache.set(locale, formatter);
+  }
+  return formatter;
+}
 
 function ordinalSuffix(day: number): string {
   const lastTwo = day % 100;
@@ -121,20 +156,67 @@ function ordinalSuffix(day: number): string {
 export function formatChatTimestampTooltip(
   isoDate: string,
   timestampFormat: TimestampFormat,
+  resolve: MessageResolver = m,
 ): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
-  const time = formatShortTimestamp(isoDate, timestampFormat);
+  const time = formatTime(date, timestampFormat);
+  const locale = getActiveLocale();
+  if (locale !== DEFAULT_LOCALE) {
+    const longDate = getLongDateFormatter(locale).format(wallClockAsUtc(date));
+    return resolve(
+      msg("{time}, {date}", { time, date: longDate, $context: "message time, then its date" }),
+    );
+  }
   const day = date.getDate();
-  const month = monthNameFormatter.format(date);
+  const month = monthNameFormatter.format(wallClockAsUtc(date));
   const year = date.getFullYear();
   return `${time}, ${day}${ordinalSuffix(day)} ${month} ${year}`;
 }
 
-export function formatShortTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
+export function formatFullTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
+  return new Date(isoDate).toLocaleString(
+    timestampLocale,
+    timestampFormat === "locale" ? undefined : { hour12: timestampFormat === "12-hour" },
+  );
+}
+
+export function formatShortTimestamp(
+  isoDate: string,
+  timestampFormat: TimestampFormat,
+  locale?: string,
+): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
-  return getTimestampFormatter(timestampFormat, false).format(date);
+  return getTimestampFormatter(timestampFormat, false, "UTC", locale).format(wallClockAsUtc(date));
+}
+
+const dateTimeFormatterCache = new Map<TimestampFormat, Intl.DateTimeFormat>();
+
+export function formatDateTimeTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
+  const date = parseTimestampDate(isoDate);
+  if (!date) return "";
+  let formatter = dateTimeFormatterCache.get(timestampFormat);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(timestampLocale, {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: "UTC",
+      ...(timestampFormat === "locale" ? {} : { hour12: timestampFormat === "12-hour" }),
+    });
+    dateTimeFormatterCache.set(timestampFormat, formatter);
+  }
+  return formatter.format(wallClockAsUtc(date));
+}
+
+/** A wall-clock `H:MM` or `HH:MM` that names no date or zone, such as a daily schedule's time. */
+export function formatTimeOfDay(timeOfDay: string, timestampFormat: TimestampFormat): string {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(timeOfDay);
+  if (!match) return timeOfDay;
+  // Default-zone formatters run in UTC, so the host zone cannot shift the wall time.
+  return getTimestampFormatter(timestampFormat, false).format(
+    Date.UTC(2000, 0, 1, Number(match[1]), Number(match[2])),
+  );
 }
 
 const numericDateOptions: Intl.DateTimeFormatOptions = { month: "numeric", day: "numeric" };
@@ -142,11 +224,14 @@ const numericDateWithYearOptions: Intl.DateTimeFormatOptions = {
   ...numericDateOptions,
   year: "numeric",
 };
-const numericDateFormatter = new Intl.DateTimeFormat(timestampLocale, numericDateOptions);
-const numericDateWithYearFormatter = new Intl.DateTimeFormat(
-  timestampLocale,
-  numericDateWithYearOptions,
-);
+const numericDateFormatter = new Intl.DateTimeFormat(timestampLocale, {
+  ...numericDateOptions,
+  timeZone: "UTC",
+});
+const numericDateWithYearFormatter = new Intl.DateTimeFormat(timestampLocale, {
+  ...numericDateWithYearOptions,
+  timeZone: "UTC",
+});
 
 interface CalendarDay {
   year: number;
@@ -173,7 +258,9 @@ function calendarDay(date: Date, timeZone: string | undefined): CalendarDay {
 
 function formatNumericDate(date: Date, sameYear: boolean, timeZone: string | undefined): string {
   if (!timeZone) {
-    return (sameYear ? numericDateFormatter : numericDateWithYearFormatter).format(date);
+    return (sameYear ? numericDateFormatter : numericDateWithYearFormatter).format(
+      wallClockAsUtc(date),
+    );
   }
   return new Intl.DateTimeFormat(timestampLocale, {
     ...(sameYear ? numericDateOptions : numericDateWithYearOptions),
@@ -186,46 +273,51 @@ export function formatDayAwareTimestamp(
   timestampFormat: TimestampFormat,
   nowMs: number = Date.now(),
   timeZone?: string,
+  resolve: MessageResolver = m,
 ): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
-  const time = getTimestampFormatter(timestampFormat, false, timeZone).format(date);
+  const time = formatTime(date, timestampFormat, timeZone);
 
   const today = calendarDay(new Date(nowMs), timeZone);
   const messageDay = calendarDay(date, timeZone);
   const dayDiff = today.index - messageDay.index;
 
   if (dayDiff <= 0) return time;
-  if (dayDiff === 1) return `yesterday at ${time}`;
+  if (dayDiff === 1) return resolve(msg("yesterday at {time}", { time }));
   return `${formatNumericDate(date, messageDay.year === today.year, timeZone)} ${time}`;
 }
 
-/** `timeZone` overrides the zone the formatters cached when they were built. */
+/** `timeZone` overrides the system's current zone. */
 export function formatUpcomingTimestamp(
   isoDate: string,
   timestampFormat: TimestampFormat,
   nowMs: number = Date.now(),
   timeZone?: string,
+  resolve: MessageResolver = m,
 ): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
-  const time = getTimestampFormatter(timestampFormat, false, timeZone).format(date);
+  const time = formatTime(date, timestampFormat, timeZone);
 
   const today = calendarDay(new Date(nowMs), timeZone);
   const targetDay = calendarDay(date, timeZone);
   const dayDiff = targetDay.index - today.index;
 
-  if (dayDiff < 0) return formatDayAwareTimestamp(isoDate, timestampFormat, nowMs, timeZone);
+  if (dayDiff < 0) {
+    return formatDayAwareTimestamp(isoDate, timestampFormat, nowMs, timeZone, resolve);
+  }
   if (dayDiff === 0) return time;
-  if (dayDiff === 1) return `tomorrow at ${time}`;
+  if (dayDiff === 1) return resolve(msg("tomorrow at {time}", { time }));
   return `${formatNumericDate(date, targetDay.year === today.year, timeZone)} ${time}`;
 }
 
-type RelativeTimeParts = { value: string; suffix: string | null };
+/** `label` is the whole phrase ("5m ago"); `value` and `suffix` split it for styled layouts. */
+type RelativeTimeParts = { value: string; suffix: string | null; label: string };
 export type RelativeTimeState =
   | { status: "missing" }
   | { status: "invalid" }
-  | { status: "relative"; value: string; suffix: string | null };
+  | ({ status: "relative" } & RelativeTimeParts);
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
@@ -259,66 +351,106 @@ export function msUntilRelativeTimeChange(
   return Math.min(nextChangeMs - nowMs, DAY_MS);
 }
 
-export function formatRelativeElapsed(elapsedMs: number): RelativeTimeParts {
+const secondsLabel = (count: number, resolve: MessageResolver) =>
+  resolve(msg("{count}s", { count, $context: "seconds, abbreviated" }));
+const minutesLabel = (count: number, resolve: MessageResolver) =>
+  resolve(msg("{count}m", { count, $context: "minutes, abbreviated" }));
+const hoursLabel = (count: number, resolve: MessageResolver) =>
+  resolve(msg("{count}h", { count, $context: "hours, abbreviated" }));
+const daysLabel = (count: number, resolve: MessageResolver) =>
+  resolve(msg("{count}d", { count, $context: "days, abbreviated" }));
+
+function relativeElapsedLabel(elapsedMs: number, resolve: MessageResolver): string {
   const seconds = Math.floor(elapsedMs / 1000);
-  if (seconds < 60) return { value: "just now", suffix: null };
+  if (seconds < 60) return resolve(msg("just now"));
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return { value: `${minutes}m`, suffix: "ago" };
+  if (minutes < 60) return resolve(msg("{count}m ago", { count: minutes }));
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return { value: `${hours}h`, suffix: "ago" };
+  if (hours < 24) return resolve(msg("{count}h ago", { count: hours }));
+  return resolve(msg("{count}d ago", { count: Math.floor(hours / 24) }));
+}
+
+export function formatRelativeElapsed(
+  elapsedMs: number,
+  resolve: MessageResolver = m,
+): RelativeTimeParts {
+  const label = relativeElapsedLabel(elapsedMs, resolve);
+  const seconds = Math.floor(elapsedMs / 1000);
+  if (seconds < 60) return { value: label, suffix: null, label };
+  const ago = resolve(msg("ago", { $context: "follows an elapsed time such as 5m" }));
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return { value: minutesLabel(minutes, resolve), suffix: ago, label };
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return { value: hoursLabel(hours, resolve), suffix: ago, label };
   const days = Math.floor(hours / 24);
-  return { value: `${days}d`, suffix: "ago" };
+  return { value: daysLabel(days, resolve), suffix: ago, label };
 }
 
 export function formatRelativeTime(
   isoDate: string,
   nowMs: number = Date.now(),
+  resolve: MessageResolver = m,
 ): RelativeTimeParts | null {
   const elapsedMs = relativeTimeElapsedMs(isoDate, nowMs);
-  return elapsedMs === null ? null : formatRelativeElapsed(elapsedMs);
+  return elapsedMs === null ? null : formatRelativeElapsed(elapsedMs, resolve);
 }
 
-export function formatRelativeTimeLabel(isoDate: string, nowMs: number = Date.now()) {
-  const relative = formatRelativeTime(isoDate, nowMs);
-  if (!relative) return "";
-  return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
+export function formatRelativeTimeLabel(
+  isoDate: string,
+  nowMs: number = Date.now(),
+  resolve: MessageResolver = m,
+) {
+  const elapsedMs = relativeTimeElapsedMs(isoDate, nowMs);
+  return elapsedMs === null ? "" : relativeElapsedLabel(elapsedMs, resolve);
 }
 
-export function formatElapsedDurationLabel(isoDate: string, nowMs: number = Date.now()): string {
+export function formatElapsedDurationLabel(
+  isoDate: string,
+  nowMs: number = Date.now(),
+  resolve: MessageResolver = m,
+): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
   const diffMs = nowMs - date.getTime();
-  if (diffMs <= 0) return "just now";
+  if (diffMs <= 0) return resolve(msg("just now"));
 
   const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 5) return "just now";
-  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 5) return resolve(msg("just now"));
+  if (seconds < 60) return secondsLabel(seconds, resolve);
 
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 60) return minutesLabel(minutes, resolve);
 
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
+  if (hours < 24) return hoursLabel(hours, resolve);
 
   const days = Math.floor(hours / 24);
-  return `${days}d`;
+  return daysLabel(days, resolve);
 }
 
 /** Pass nowMs to match a parent-driven render tick. */
-export function formatExpiresInLabel(isoDate: string, nowMs: number = Date.now()): string {
+export function formatExpiresInLabel(
+  isoDate: string,
+  nowMs: number = Date.now(),
+  resolve: MessageResolver = m,
+): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
   const diffMs = date.getTime() - nowMs;
-  if (diffMs <= 0) return "Expired";
+  if (diffMs <= 0) return resolve(msg("Expired"));
 
   const totalSeconds = Math.floor(diffMs / 1000);
-  if (totalSeconds < 5) return "Expires in a moment";
-  if (totalSeconds < 60) return `Expires in ${totalSeconds}s`;
+  if (totalSeconds < 5) return resolve(msg("Expires in a moment"));
+  const expiresIn = (parts: string[]) =>
+    resolve(msg("Expires in {duration}", { duration: parts.join(" ") }));
+  if (totalSeconds < 60) return expiresIn([secondsLabel(totalSeconds, resolve)]);
 
   if (totalSeconds < 3600) {
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
-    return seconds === 0 ? `Expires in ${minutes}m` : `Expires in ${minutes}m ${seconds}s`;
+    return seconds === 0
+      ? expiresIn([minutesLabel(minutes, resolve)])
+      : expiresIn([minutesLabel(minutes, resolve), secondsLabel(seconds, resolve)]);
   }
 
   if (totalSeconds < 86_400) {
@@ -326,22 +458,22 @@ export function formatExpiresInLabel(isoDate: string, nowMs: number = Date.now()
     const rem = totalSeconds % 3600;
     const minutes = Math.floor(rem / 60);
     const seconds = rem % 60;
-    const parts = [`${hours}h`];
-    if (minutes > 0) parts.push(`${minutes}m`);
-    if (seconds > 0) parts.push(`${seconds}s`);
-    return `Expires in ${parts.join(" ")}`;
+    const parts = [hoursLabel(hours, resolve)];
+    if (minutes > 0) parts.push(minutesLabel(minutes, resolve));
+    if (seconds > 0) parts.push(secondsLabel(seconds, resolve));
+    return expiresIn(parts);
   }
 
   const days = Math.floor(totalSeconds / 86_400);
   const remAfterDays = totalSeconds % 86_400;
-  if (remAfterDays === 0) return `Expires in ${days}d`;
+  if (remAfterDays === 0) return expiresIn([daysLabel(days, resolve)]);
   const hours = Math.floor(remAfterDays / 3600);
   const rem = remAfterDays % 3600;
   const minutes = Math.floor(rem / 60);
   const seconds = rem % 60;
-  const tail: string[] = [];
-  if (hours > 0) tail.push(`${hours}h`);
-  if (minutes > 0) tail.push(`${minutes}m`);
-  if (seconds > 0) tail.push(`${seconds}s`);
-  return tail.length > 0 ? `Expires in ${days}d ${tail.join(" ")}` : `Expires in ${days}d`;
+  const parts = [daysLabel(days, resolve)];
+  if (hours > 0) parts.push(hoursLabel(hours, resolve));
+  if (minutes > 0) parts.push(minutesLabel(minutes, resolve));
+  if (seconds > 0) parts.push(secondsLabel(seconds, resolve));
+  return expiresIn(parts);
 }

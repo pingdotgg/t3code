@@ -1,7 +1,7 @@
 import { MessageId, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as DateTime from "effect/DateTime";
-import { assert, describe, expect, it } from "vite-plus/test";
+import { assert, describe, expect, it, vi } from "vite-plus/test";
 import { makeAssistantStreamingFilter, splitBufferedAssistantText } from "./assistantStreaming.ts";
 
 describe("V2 assistant streaming", () => {
@@ -13,6 +13,34 @@ describe("V2 assistant streaming", () => {
     expect(splitBufferedAssistantText("```ts\nx()\n```\nrest")).toEqual({
       ready: "```ts\nx()\n```\n",
       rest: "rest",
+    });
+    expect(splitBufferedAssistantText("```a``` is inline.\n\n```\ncode\n\nmore\n")).toEqual({
+      ready: "```a``` is inline.\n\n",
+      rest: "```\ncode\n\nmore\n",
+    });
+    expect(splitBufferedAssistantText("Intro\n\n- ```ts\n  x()\n\n  y()")).toEqual({
+      ready: "Intro\n\n",
+      rest: "- ```ts\n  x()\n\n  y()",
+    });
+    expect(splitBufferedAssistantText("Intro\n\n- ```ts\n  x()\n\n  ```\nrest")).toEqual({
+      ready: "Intro\n\n- ```ts\n  x()\n\n  ```\n",
+      rest: "rest",
+    });
+    expect(splitBufferedAssistantText("Intro\n\n1. ~~~ts\n   x()\n\n   y()")).toEqual({
+      ready: "Intro\n\n",
+      rest: "1. ~~~ts\n   x()\n\n   y()",
+    });
+    expect(splitBufferedAssistantText("Intro\n\n-\t```ts\n    x()\n\n\t```\nrest")).toEqual({
+      ready: "Intro\n\n-\t```ts\n    x()\n\n\t```\n",
+      rest: "rest",
+    });
+    expect(splitBufferedAssistantText("- ```\n  x\n```\n\nbody\n```\nafter")).toEqual({
+      ready: "- ```\n  x\n```\n\nbody\n```\n",
+      rest: "after",
+    });
+    expect(splitBufferedAssistantText("Intro\n\n    - ```\n    output\n\nAfter\n\n")).toEqual({
+      ready: "Intro\n\n    - ```\n    output\n\nAfter\n\n",
+      rest: "",
     });
   });
 });
@@ -174,6 +202,32 @@ it.each<{ readonly name: string; readonly mode?: "turn"; readonly steps: Readonl
     ],
   },
   {
+    name: "a rewrite that drops an open code fence",
+    steps: [
+      { at: 0, text: "Intro\n\n```ts\nx()\n", shows: "Intro\n\n" },
+      { at: 400, text: "Retry\n\n- a\n- b", shows: "Retry\n\n- a\n" },
+    ],
+  },
+  {
+    name: "paragraphs separated by carriage-return line endings",
+    steps: [
+      { at: 0, text: "Intro\r\rBody", shows: "Intro\r\r" },
+      { dueAt: 800 },
+      { idle: 800, shows: ["Intro\r\rBody"] },
+      { at: 1_200, text: "Intro\r\rBody\r\rNext", shows: "Intro\r\rBody\r\r" },
+    ],
+  },
+  {
+    name: "CRLF split across snapshots",
+    steps: [
+      { at: 0, text: "Intro\r", shows: null },
+      { at: 400, text: "Intro\r\nBody", shows: null },
+      { at: 800, text: "Intro\r\nBody\r\n\r", shows: "Intro\r\nBody\r\n\r" },
+      { at: 1_200, text: "Intro\r\nBody\r\n\r\nNext", shows: "Intro\r\nBody\r\n\r\n" },
+      { idle: 2_000, shows: ["Intro\r\nBody\r\n\r\nNext"] },
+    ],
+  },
+  {
     name: "turn mode",
     mode: "turn",
     steps: [{ at: 0, text: "A\n\nB", shows: null }, { dueAt: null }],
@@ -192,4 +246,23 @@ it.each<{ readonly name: string; readonly mode?: "turn"; readonly steps: Readonl
         step.shows,
       );
   }
+});
+
+it("scans each streamed line once while a long code fence is still open", () => {
+  const filter = makeAssistantStreamingFilter("paragraph", 800);
+  const lineCount = 400;
+  let text = "Intro\n\n```ts\n";
+  const indexOf = vi.spyOn(String.prototype, "indexOf");
+  try {
+    for (let line = 0; line < lineCount; line++) {
+      text += `const value${line} = ${line};\n`;
+      filter.filter(snapshot("m", text, true), line * 400);
+    }
+    const newlineSearches = indexOf.mock.calls.filter(([search]) => search === "\n").length;
+    expect(newlineSearches).toBeLessThan(lineCount * 4);
+  } finally {
+    indexOf.mockRestore();
+  }
+  text += "```\n";
+  assert.equal(shown(filter.filter(snapshot("m", text, true), lineCount * 400)), text);
 });

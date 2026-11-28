@@ -72,7 +72,7 @@ export const useAtomValue: {
 function createAtomAccessor<A>(registry: AtomRegistry.AtomRegistry, atom: () => Atom.Atom<A>): Accessor<A> {
   const [value, setValue] = createSignal<A>(null as any)
   createComputed(() => {
-    onCleanup(registry.subscribe(atom(), setValue as any, constImmediate))
+    onCleanup(registry.subscribe(atom(), (next) => setValue(() => next), constImmediate))
   })
   return value
 }
@@ -319,8 +319,8 @@ export const useAtomRef = <A>(ref: () => AtomRef.ReadonlyRef<A>): Accessor<A> =>
   const [value, setValue] = createSignal(null as A)
   createComputed(() => {
     const r = ref()
-    setValue(r.value as any)
-    onCleanup(r.subscribe(setValue))
+    setValue(() => r.value)
+    onCleanup(r.subscribe((next) => setValue(() => next)))
   })
   return value
 }

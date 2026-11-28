@@ -135,7 +135,7 @@ const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
   screenshot: () => Effect.succeed({ device, png }),
   close: () => Effect.void,
   testHost: () => Effect.die("not used"),
-  // As for an EAS device, agent-device knows the device by a different id than T3.
+  // As for an Expo device, agent-device knows the device by a different id than T3.
   agentTarget: () =>
     Effect.succeed({
       agentDeviceId: "SIM-UDID",
@@ -235,7 +235,7 @@ it.effect("registers the device tools and returns the screenshot as image conten
       expect(denied.content).toEqual([
         {
           type: "text",
-          text: "Agent device access is turned off for this environment. Ask the user to turn on Agent device access in Settings > Integrations > Devices; it applies when the agent session next starts, such as in a new thread.",
+          text: "Agent device access is turned off for this environment. Ask the user to turn on the Device hub and Agent device access in Settings > Integrations > Devices; it applies when the agent session next starts, such as in a new thread.",
         },
       ]);
     }),
@@ -275,6 +275,58 @@ it.effect("rejects unavailable agent access before booting or opening a device",
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(layerUnavailable),
+        Layer.provide(layerProjectsMock),
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" }),
+        ),
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  );
+});
+
+it.effect("device_open reports a failed host's setup error instead of no devices", () => {
+  const failure = "Device support failed: npm was not found. Install Node.js, which includes npm.";
+  const failedState = {
+    ...state,
+    hostStatus: "failed" as const,
+    hostStatusDetail: failure,
+    hostStatuses: { local: { status: "failed" as const, detail: failure } },
+    devices: [],
+  };
+  const layerFailed = Layer.mock(DeviceService.DeviceService)({
+    state: Effect.succeed(failedState),
+    list: Effect.succeed(failedState),
+    locateDevice: () => Effect.succeedNone,
+    open: () => Effect.die("Must not open a device on a host whose setup failed"),
+  });
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    for (const args of [
+      { platform: "android" },
+      { deviceId: "Pixel_API_35", hostId: "local" },
+      { deviceId: "Pixel_API_35" },
+    ]) {
+      const result = yield* server
+        .callTool({ name: "device_open", arguments: args })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(["device"])),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      const text = result.content
+        .flatMap((entry) => (entry.type === "text" ? [entry.text] : []))
+        .join("\n");
+      expect(result.isError).toBe(true);
+      expect(text).not.toContain("No android devices were found");
+      expect(text).toContain(failure);
+    }
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      McpHttpServer.layerDeviceToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(layerFailed),
         Layer.provide(layerProjectsMock),
         Layer.provide(
           ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" }),
@@ -353,7 +405,7 @@ describe("device targeting across hosts", () => {
     const closed: Array<{ hostId?: string | undefined; deviceId?: string | undefined }> = [];
     const layerDevices = Layer.mock(DeviceService.DeviceService)({
       state: Effect.succeed(multiHostState),
-      list: Effect.succeed(multiHostState),
+      list: Effect.succeed({ ...multiHostState, sessions }),
       agentReadinessIfSupported: () => Effect.succeed(readiness),
       open: (input) =>
         Effect.sync(() => {
@@ -426,6 +478,31 @@ describe("device targeting across hosts", () => {
   };
   const text = (result: McpSchema.CallToolResult) =>
     result.content.flatMap((entry) => (entry.type === "text" ? [entry.text] : [])).join("\n");
+
+  const localOpen = { hostId: device.hostId, deviceId: device.id };
+  const macOpen = { hostId: macIphone.hostId, deviceId: macIphone.id };
+
+  it.effect.each([
+    { selection: "without a host filter", args: {}, open: [localOpen, macOpen] },
+    { selection: "by host label", args: { hostId: "MAC MINI" }, open: [macOpen] },
+    { selection: "by host id", args: { hostId: "local" }, open: [localOpen] },
+  ])("lists open devices for the current thread $selection", ({ args, open }) =>
+    run(
+      [
+        openSession,
+        session(macIphone.hostId, macIphone.id, macIphone.platform),
+        {
+          ...session(macPixel.hostId, macPixel.id, macPixel.platform),
+          threadId: ThreadId.make("other-thread"),
+        },
+      ],
+      ({ call }) =>
+        Effect.gen(function* () {
+          const result = yield* call("device_list", args);
+          expect(result.structuredContent).toHaveProperty("open", open);
+        }),
+    ),
+  );
 
   it.effect("opens a device id that exists only on another host", () =>
     run([], ({ opened, call }) =>
@@ -568,6 +645,19 @@ describe("device targeting across hosts", () => {
           );
         }),
       { locateSession: () => Effect.fail(onTheMac) },
+    ),
+  );
+
+  it.effect("names a device_screenshot argument the tool does not declare", () =>
+    run([session("mac-mini", "MAC-UDID", "ios")], ({ call }) =>
+      Effect.gen(function* () {
+        const result = yield* call("device_screenshot", {
+          deviceId: "MAC-UDID",
+          includeImage: false,
+        });
+        expect(result.isError).toBe(true);
+        expect(text(result)).toContain('Unknown argument "includeImage"');
+      }),
     ),
   );
 

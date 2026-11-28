@@ -7,7 +7,7 @@ export function visibleThreadPullRequests(
   return links.filter((link) => link.source !== "stack-dismissed");
 }
 
-function latestUpdatedAt(link: ThreadPullRequestLink): number {
+export function threadPullRequestUpdatedAtMs(link: ThreadPullRequestLink): number {
   const value = link.snapshot?.updatedAt ?? link.linkedAt;
   const ms = Date.parse(value);
   return Number.isNaN(ms) ? 0 : ms;
@@ -41,9 +41,13 @@ export function threadSearchPullRequests(thread: {
     // Every pull request matches by number and link, but only the newest few
     // by title: a triage thread linked to dozens would match almost any word.
     const newestFirst = [...visibleThreadPullRequests(thread.pullRequests)].sort(
-      (left, right) => latestUpdatedAt(right) - latestUpdatedAt(left),
+      (left, right) => threadPullRequestUpdatedAtMs(right) - threadPullRequestUpdatedAtMs(left),
     );
-    return branch.concat(
+    // The synced link carries the title, so the same PR from the branch would only shadow it.
+    // Only the URL names the host; another forge can share the repository path and number.
+    const branchUrl = thread.branchPullRequest?.url.toLowerCase();
+    const branchIsLinked = newestFirst.some((link) => link.url.toLowerCase() === branchUrl);
+    return (branchIsLinked ? [] : branch).concat(
       newestFirst.map((link, index) =>
         entry(link, index < SEARCHED_PULL_REQUEST_TITLES ? (link.snapshot?.title ?? null) : null),
       ),

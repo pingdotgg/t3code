@@ -6,27 +6,41 @@ import {
   type OrchestrationV2ServerCommand as OrchestrationCommand,
   PullRequestOperationError,
   type OrchestrationProjectShell,
+  type PullRequestActionInput,
+  type PullRequestDiffResult,
+  type PullRequestSubmitReviewInput,
+  type PullRequestActivity,
+  type PullRequestListInput,
+  type PullRequestDetail,
   type PullRequestRef,
   type PullRequestReviewGuideResult,
   type ThreadPullRequestLink,
+  type RuntimeMode,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import type { Tool } from "effect/ai";
+import { McpSchema, type Tool } from "effect/ai";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
+import * as GitManager from "../../../git/GitManager.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import {
   type PullRequestTestThread,
   v2PullRequestThread,
 } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestWatchService from "../../../pullRequest/PullRequestWatchService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
+import * as McpClientInput from "../../McpClientInput.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
@@ -143,6 +157,9 @@ interface HarnessOptions {
     PullRequestReviewGuideResult & { started: boolean },
     PullRequestOperationError
   >;
+  readonly pullRequests?: Partial<PullRequestService.PullRequestService["Service"]>;
+  readonly git?: Partial<GitManager.GitManager["Service"]>;
+  readonly managedPolicy?: Parameters<typeof ServerSettings.layerTest>[1];
 }
 
 const NO_GUIDE: PullRequestReviewGuideResult = { guide: null, run: null, currentHeadSha: "head-1" };
@@ -167,6 +184,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       return { sequence: 1, storedEvents: [] };
     });
   const layerDependencies = Layer.mergeAll(
+    Layer.mock(PullRequestWatchService.PullRequestWatchService)({}),
     Layer.mock(ProjectService.ProjectService)({
       getShell: () => Effect.succeed(Option.fromNullishOr(project)),
       listShells: () => Effect.succeed(options.projects ?? (project ? [project] : [])),
@@ -194,7 +212,13 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
         Effect.succeed(id === thread?.id ? v2PullRequestThread(thread) : null),
       dispatch,
     }),
+    Layer.mock(PullRequestService.PullRequestService)({
+      addressedProject: () => Effect.succeed(project ?? undefined),
+      ...options.pullRequests,
+    }),
+    Layer.mock(GitManager.GitManager)(options.git ?? {}),
     Layer.succeed(SecureRandom.SecureRandom, testCrypto),
+    ServerSettings.layerTest({}, options.managedPolicy),
     McpToolAccessTestkit.liveThreadsLayer,
   );
   const toolkit = yield* PullRequestsToolkit.pipe(
@@ -246,7 +270,9 @@ describe("pull request toolkit handlers", () => {
       const error = yield* harness
         .call("link_pull_request", { threadId: bareId, number: 123 })
         .pipe(Effect.flip);
-      expect(error.message).toBe(`Thread ${bareId} was not found. Did you mean \`mcp:${bareId}\`?`);
+      expect(error.message).toBe(
+        `Thread ${bareId} was not found. Did you mean \`mcp:${bareId}\`? Thread ids belong to one environment: for a thread on a linked one, find it with \`t3_environment_links\` and pass its \`environmentId\` to a tool that takes one.`,
+      );
       expect(error).toMatchObject({ _tag: "OrchestratorMcpFailure", code: "thread_not_found" });
       expect(yield* Ref.get(harness.commands)).toEqual([]);
     }),
@@ -275,93 +301,6 @@ describe("pull request toolkit handlers", () => {
           source: "agent",
         },
       ]);
-    }),
-  );
-
-  it.effect("watching an unlinked pull request links it first", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      const result = yield* harness.call("watch_pull_request", {
-        url: "https://github.com/t3tools/t3code/pull/9",
-      });
-      expect(result).toMatchObject({ number: 9, watching: false, wasWatching: false });
-      expect(yield* Ref.get(harness.commands)).toMatchObject([
-        {
-          type: "thread.pull-request.watch",
-          number: 9,
-          watching: true,
-          link: { url: "https://github.com/t3tools/t3code/pull/9", source: "agent" },
-        },
-      ]);
-    }),
-  );
-
-  it.effect("refuses to watch a merged pull request and stops an existing watch", () =>
-    Effect.gen(function* () {
-      const watch = {
-        startedAt: "2026-08-20T00:00:00.000Z",
-        headSha: null,
-        failedChecks: [],
-        passed: false,
-        passedChecks: [],
-        remarksThrough: "2026-08-20T00:00:00.000Z",
-        remarkIds: [],
-        conflicting: false,
-        wakes: 0,
-      };
-      const merged = makeLink(1, { headBranch: "done" });
-      const harness = yield* makeHarness({
-        thread: makeThread([
-          { ...merged, snapshot: merged.snapshot && { ...merged.snapshot, state: "merged" } },
-          makeLink(2, { headBranch: "idle" }),
-          makeLink(3, { headBranch: "watched", watch }),
-        ]),
-      });
-      const error = yield* harness
-        .call("watch_pull_request", { repository: "t3tools/t3code", number: 1 })
-        .pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "PullRequestNotOpenError", state: "merged" });
-      expect(
-        yield* harness.call("unwatch_pull_request", { repository: "t3tools/t3code", number: 3 }),
-      ).toMatchObject({ wasWatching: true });
-      expect(yield* Ref.get(harness.commands)).toMatchObject([
-        { type: "thread.pull-request.watch", number: 3, watching: false },
-      ]);
-    }),
-  );
-
-  it.effect("watches a pull request saved as closed, since it may have reopened", () =>
-    Effect.gen(function* () {
-      const closed = makeLink(1, { headBranch: "closed" });
-      const harness = yield* makeHarness({
-        thread: makeThread([
-          { ...closed, snapshot: closed.snapshot && { ...closed.snapshot, state: "closed" } },
-        ]),
-      });
-      yield* harness.call("watch_pull_request", { repository: "t3tools/t3code", number: 1 });
-      expect(yield* Ref.get(harness.commands)).toMatchObject([
-        { type: "thread.pull-request.watch", number: 1, watching: true },
-      ]);
-    }),
-  );
-
-  it.effect("refuses a watch from a subagent thread, whose parent owns the pull request", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        thread: {
-          ...makeThread([makeLink(1, { headBranch: "feature" })]),
-          lineage: {
-            rootThreadId: ThreadId.make("parent"),
-            parentThreadId: ThreadId.make("parent"),
-            relationshipToParent: "subagent",
-          },
-        },
-      });
-      const error = yield* harness
-        .call("watch_pull_request", { repository: "t3tools/t3code", number: 1 })
-        .pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "PullRequestWatchFromSubagentError" });
-      expect(yield* Ref.get(harness.commands)).toEqual([]);
     }),
   );
 
@@ -483,6 +422,18 @@ describe("pull request toolkit handlers", () => {
       expect(yield* Ref.get(harness.commands)).toMatchObject([
         { type: "thread.pull-request.link", number: 123, url: supplied },
       ]);
+    }),
+  );
+
+  it.effect("says when repository is not owner/repo on a known host", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ project: makeProject() });
+      const error = yield* harness
+        .call("link_pull_request", { repository: "github.com/org/repo", number: 1 })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "PullRequestRepositoryInvalidError" });
+      expect(error.message).toContain("owner/repo");
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
     }),
   );
 
@@ -622,8 +573,8 @@ describe("pull request toolkit handlers", () => {
         ]),
       });
       const result = yield* harness.call("list_thread_pull_requests", {});
-      expect(result.pullRequests.map((entry) => entry.number)).toEqual([3, 1, 2, 10]);
-      expect(result.pullRequests[0]).toEqual({
+      expect(result.pullRequests.map((entry) => entry.number)).toEqual([1, 2, 3, 10]);
+      expect(result.pullRequests[2]).toEqual({
         host: "github.com",
         repository: "t3tools/t3code",
         number: 3,
@@ -672,8 +623,8 @@ describe("listThreadPullRequests", () => {
       ],
     });
     expect(result.pullRequests.map((entry) => [entry.number, entry.stack])).toEqual([
-      [2, { kind: "native", position: 2, size: 2 }],
       [1, { kind: "native", position: 1, size: 2 }],
+      [2, { kind: "native", position: 2, size: 2 }],
     ]);
     expect(result.chains).toEqual([{ kind: "native", numbers: [1, 2] }]);
   });
@@ -692,6 +643,62 @@ describe("listThreadPullRequests", () => {
       [3, { kind: "derived", position: 2, size: 3 }],
     ]);
     expect(result.chains).toEqual([{ kind: "derived", numbers: [1, 2, 3] }]);
+  });
+
+  it("pages a large list once through, with each page's stacks whole", () => {
+    const thread = {
+      pullRequests: [
+        makeLink(1, { headBranch: "feat-a" }),
+        ...Array.from({ length: 118 }, (_, index) => makeLink(index + 2)),
+        makeLink(120, { headBranch: "feat-z", baseBranch: "feat-a" }),
+      ],
+    };
+    const pages = [listThreadPullRequests(thread)];
+    for (let next = pages[0]!.nextCursor; next !== null; next = pages.at(-1)!.nextCursor) {
+      pages.push(listThreadPullRequests(thread, next));
+    }
+    expect(pages.map((page) => page.pullRequests.length)).toEqual([50, 50, 20]);
+    expect(pages.flatMap((page) => page.pullRequests.map((entry) => entry.number))).toEqual(
+      Array.from({ length: 120 }, (_, index) => index + 1),
+    );
+    const stack = { kind: "derived", numbers: [1, 120] };
+    expect(pages.map((page) => page.chains.length)).toEqual([50, 50, 20]);
+    expect(pages.map((page) => page.chains.filter((chain) => chain.numbers.length > 1))).toEqual([
+      [stack],
+      [],
+      [stack],
+    ]);
+
+    // Unlinking the first page must not shift the cursor past PRs not yet seen.
+    const remaining = { pullRequests: thread.pullRequests.slice(50) };
+    expect(
+      listThreadPullRequests(remaining, pages[0]!.nextCursor!).pullRequests.map(
+        (entry) => entry.number,
+      ),
+    ).toEqual(Array.from({ length: 50 }, (_, index) => index + 51));
+  });
+
+  it("filters by state before paging, counting a PR with no known state as open", () => {
+    const merged = (number: number) => {
+      const link = makeLink(number, { headBranch: `feat-${number}` });
+      return { ...link, snapshot: { ...link.snapshot!, state: "merged" as const } };
+    };
+    const thread = {
+      pullRequests: [
+        ...Array.from({ length: 50 }, (_, index) => merged(index + 1)),
+        ...Array.from({ length: 10 }, (_, index) => makeLink(index + 51)),
+      ],
+    };
+    const open = listThreadPullRequests(thread, undefined, ["open"]);
+    expect(open.pullRequests.map((entry) => entry.number)).toEqual(
+      Array.from({ length: 10 }, (_, index) => index + 51),
+    );
+    expect(open.nextCursor).toBeNull();
+    expect(listThreadPullRequests(thread, undefined, ["merged"]).nextCursor).toBeNull();
+    const unfiltered = listThreadPullRequests(thread);
+    expect(unfiltered.pullRequests).toHaveLength(50);
+    expect(unfiltered.nextCursor).not.toBeNull();
+    expect(listThreadPullRequests(thread, undefined, [])).toEqual(unfiltered);
   });
 });
 
@@ -715,12 +722,33 @@ describe("pull request guide tools", () => {
           }),
           id: ProjectId.make("project-web"),
         };
-        const harness = yield* makeHarness({ projects: [makeProject(), other] });
+        // A fork's canonical key follows its upstream; its own repository is `origin`.
+        const fork = {
+          ...makeProject({
+            canonicalKey: "github.com/acme/web",
+            locator: {
+              source: "git-remote",
+              remoteName: "upstream",
+              remoteUrl: "https://github.com/acme/web.git",
+            },
+            origin: {
+              canonicalKey: "github.com/someone/web",
+              remoteUrl: "https://github.com/someone/web.git",
+            },
+            provider: SourceControlProviderKind.make("github"),
+            displayName: "acme/web",
+            owner: "acme",
+            name: "web",
+          }),
+          id: ProjectId.make("project-fork"),
+        };
+        const harness = yield* makeHarness({ projects: [makeProject(), other, fork] });
         const result = yield* harness.call("write_pull_request_guides", {
           pullRequests: [
             { url: "https://github.com/acme/web/pull/7" },
             { repository: "t3tools/t3code", number: 12 },
             { url: "https://github.com/someone/else/pull/1" },
+            { url: "https://github.com/someone/web/pull/3" },
           ],
         });
         expect(
@@ -729,6 +757,7 @@ describe("pull request guide tools", () => {
           ["acme/web", 7, "started"],
           ["t3tools/t3code", 12, "started"],
           ["someone/else", 1, "failed"],
+          ["someone/web", 3, "started"],
         ]);
         expect(result.guides[2]?.detail).toContain("No project in this environment");
         expect(
@@ -736,6 +765,7 @@ describe("pull request guide tools", () => {
         ).toEqual([
           ["project-web", 7],
           [PROJECT_ID, 12],
+          ["project-fork", 3],
         ]);
       }),
   );
@@ -755,6 +785,36 @@ describe("pull request guide tools", () => {
       expect(result.guides[1]?.detail).toContain("Pass either url");
       expect((yield* Ref.get(harness.guideRequests)).map((ref) => ref.number)).toEqual([5]);
     }),
+  );
+
+  it.effect(
+    "reads a guide on a host readable without a checkout through the caller's project",
+    () =>
+      Effect.gen(function* () {
+        const api = makeProject({
+          canonicalKey: "bitbucket.org/acme/api",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "git@bitbucket.org:acme/api.git",
+          },
+          provider: SourceControlProviderKind.make("bitbucket"),
+          displayName: "acme/api",
+          owner: "acme",
+          name: "api",
+        });
+        const harness = yield* makeHarness({ project: api });
+        const result = yield* harness.call("read_pull_request_guide", {
+          url: "https://bitbucket.org/acme/web/pull-requests/123",
+        });
+        expect(result).toMatchObject({
+          host: "bitbucket.org",
+          repository: "acme/web",
+          number: 123,
+          guide: null,
+          currentHeadSha: "head-1",
+        });
+      }),
   );
 
   it.effect("finds an Azure DevOps checkout for a pull request named by its full path", () =>
@@ -782,6 +842,1437 @@ describe("pull request guide tools", () => {
       expect((yield* Ref.get(harness.guideRequests)).map((ref) => ref.projectId)).toEqual([
         "project-azure",
       ]);
+    }),
+  );
+});
+
+describe("source control tools", () => {
+  const branchThread = {
+    ...makeThread([]),
+    worktreePath: "/workspace/worktree",
+    branchPullRequest: {
+      projectId: PROJECT_ID,
+      repository: "t3tools/t3code",
+      number: 42,
+      url: "https://github.com/t3tools/t3code/pull/42",
+    },
+  };
+  const detail = {
+    title: "Add tools",
+    body: "Adds tools.",
+    state: "open",
+    isDraft: false,
+    visibility: "private",
+    author: null,
+    headBranch: "tools",
+    baseBranch: "main",
+    headSha: "abc123",
+    mergeability: "mergeable",
+    additions: 1,
+    deletions: 0,
+    changedFiles: 1,
+    labels: [],
+    reviewers: [],
+    checks: [
+      { name: "CI", status: "success", description: null, url: null },
+      { name: "Lint", status: "failure", description: null, url: null },
+      { name: "E2E", status: "cancelled", description: null, url: null },
+      { name: "Deploy", status: "pending", description: null, url: null },
+      {
+        name: "Approval",
+        status: "action-required",
+        description: null,
+        url: null,
+        placeholder: true,
+      },
+      { name: "Docs", status: "skipped", description: null, url: null },
+    ],
+  } as unknown as PullRequestDetail;
+  const reviewThread = (id: string, isResolved: boolean) => ({
+    id,
+    path: "a.ts",
+    line: 1,
+    side: "right" as const,
+    isResolved,
+    isOutdated: false,
+    comments: [],
+  });
+  const activity: PullRequestActivity = {
+    comments: [],
+    commentCount: 0,
+    commentsTruncated: false,
+    reviewThreads: [reviewThread("open-thread", false), reviewThread("done-thread", true)],
+    commits: [],
+  };
+
+  it.effect("reads the thread's branch PR compactly, adding only the sections asked", () =>
+    Effect.gen(function* () {
+      const asked: Array<PullRequestRef> = [];
+      let reviewThreadsTruncated = false;
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+          activity: () => Effect.sync(() => ({ ...activity, reviewThreadsTruncated })),
+        },
+      });
+      const compact = yield* harness.call("pull_request_read", {});
+      expect(compact).toMatchObject({
+        visibility: "private",
+        headSha: "abc123",
+        checks: { passed: 2, pending: 1, failed: ["Lint", "E2E"], incomplete: true },
+        unresolvedThreads: 1,
+      });
+      expect(compact.body).toBeUndefined();
+      expect(compact.checkRuns).toBeUndefined();
+      expect(compact.conversation).toBeUndefined();
+      expect(compact.unresolvedThreadsTruncated).toBeUndefined();
+      const result = yield* harness.call("pull_request_read", { include: ["body", "threads"] });
+      expect(asked[1]).toEqual({
+        projectId: PROJECT_ID,
+        host: "github.com",
+        repository: "t3tools/t3code",
+        number: 42,
+        allowStale: false,
+      });
+      expect(result.body).toBe("Adds tools.");
+      expect(result.checkRuns).toBeUndefined();
+      expect(result.conversation?.comments).toBeUndefined();
+      expect(result.conversation?.reviewThreads?.map((thread) => thread.id)).toEqual([
+        "open-thread",
+      ]);
+      // Unfetched threads may be unresolved, so the compact count says it is partial.
+      reviewThreadsTruncated = true;
+      expect(yield* harness.call("pull_request_read", {})).toMatchObject({
+        unresolvedThreads: 1,
+        unresolvedThreadsTruncated: true,
+      });
+      const commentsOnly = yield* harness.call("pull_request_read", { include: ["comments"] });
+      expect(commentsOnly.conversation?.truncated).toBe(false);
+      const threadsOnly = yield* harness.call("pull_request_read", { include: ["threads"] });
+      expect(threadsOnly.conversation?.truncated).toBe(true);
+    }),
+  );
+
+  it.effect("reads an Azure DevOps PR by number at its organization and project", () =>
+    Effect.gen(function* () {
+      const asked: Array<PullRequestRef> = [];
+      const harness = yield* makeHarness({
+        project: makeProject({
+          canonicalKey: "dev.azure.com/contoso/project/_git/repo",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "https://contoso@dev.azure.com/contoso/project/_git/repo",
+          },
+          provider: SourceControlProviderKind.make("azure-devops"),
+          displayName: "contoso/project/_git/repo",
+          owner: "contoso",
+          name: "repo",
+        }),
+        pullRequests: {
+          detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+          activity: () => Effect.succeed(activity),
+        },
+      });
+      const result = yield* harness.call("pull_request_read", { number: 123 });
+      expect(result).toMatchObject({
+        host: "dev.azure.com",
+        repository: "contoso/project/_git/repo",
+        number: 123,
+        url: "https://dev.azure.com/contoso/project/_git/repo/pullrequest/123",
+      });
+      expect(asked).toMatchObject([
+        { host: "dev.azure.com", repository: "contoso/project/_git/repo", number: 123 },
+      ]);
+    }),
+  );
+
+  it.effect("pages a long conversation and the PR list through the cursors they return", () =>
+    Effect.gen(function* () {
+      const comment = (body: string) =>
+        ({ id: body.slice(0, 8), author: null, body, createdAt: "2026-11-01T00:00:00Z" }) as never;
+      const long = (id: string) => ({
+        ...reviewThread(id, false),
+        comments: [comment("x".repeat(20_000))],
+      });
+      const listed: Array<PullRequestListInput> = [];
+      let firstResolved = false;
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          detail: () => Effect.succeed(detail),
+          activity: () =>
+            Effect.sync(() => ({
+              ...activity,
+              reviewThreads: [
+                {
+                  ...long("first"),
+                  isResolved: firstResolved,
+                  nextCommentsCursor: "later",
+                },
+                long("second"),
+                reviewThread("done-thread", true),
+              ],
+            })),
+          threadComments: (input) =>
+            Effect.succeed(
+              input.cursor === "later"
+                ? { comments: [comment("reply")], nextCursor: null }
+                : { comments: [], nextCursor: null },
+            ),
+          list: (input) =>
+            Effect.sync(() => listed.push(input)).pipe(
+              Effect.as({
+                viewers: {},
+                providers: [],
+                entries: [],
+                errors: [],
+                truncated: input.cursors === undefined,
+                nextCursors: input.cursors === undefined ? { "t3tools/t3code": "page-2" } : {},
+              }),
+            ),
+        },
+      });
+      const first = yield* harness.call("pull_request_read", { include: ["threads"] });
+      expect(first.conversation?.reviewThreads).toMatchObject([
+        { id: "first", moreComments: false, comments: [{}, { body: "reply" }] },
+      ]);
+      const cursor = first.conversation?.nextCursor;
+      expect(cursor).toEqual(expect.any(String));
+      // The agent resolves what it read; the next page still starts at the next thread.
+      firstResolved = true;
+      const second = yield* harness.call("pull_request_read", { cursor: cursor! });
+      expect(second.conversation?.comments).toBeUndefined();
+      expect(second.conversation?.reviewThreads?.map((thread) => thread.id)).toEqual(["second"]);
+      expect(second.conversation?.nextCursor).toBeNull();
+      // A cursor past the current end finishes instead of repeating an empty page.
+      const stale = Base64Url.encode(
+        JSON.stringify({ threads: 99, comments: null, includeResolved: false }),
+      );
+      const past = yield* harness.call("pull_request_read", { cursor: stale });
+      expect(past.conversation).toMatchObject({ reviewThreads: [], nextCursor: null });
+
+      const page = yield* harness.call("pull_request_list", {});
+      yield* harness.call("pull_request_list", { cursor: page.nextCursor! });
+      expect(listed.map((input) => input.cursors)).toEqual([
+        undefined,
+        { "t3tools/t3code": "page-2" },
+      ]);
+      const invalid = yield* harness
+        .call("pull_request_read", { cursor: "not-a-cursor" })
+        .pipe(Effect.flip);
+      expect(invalid._tag).toBe("PullRequestCursorInvalidError");
+    }),
+  );
+
+  it.effect("asks for a number when the thread's branch has no PR", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const error = yield* harness.call("pull_request_read", {}).pipe(Effect.flip);
+      expect(error._tag).toBe("PullRequestBranchHasNoneError");
+    }),
+  );
+
+  it.effect("reads the PR this thread opened before status sync reports it", () =>
+    Effect.gen(function* () {
+      const asked: Array<PullRequestRef> = [];
+      const opened = (headBranch: string) =>
+        makeHarness({
+          thread: { ...makeThread([makeLink(43, { source: "created" })]), branch: "tools" },
+          pullRequests: {
+            summary: () => Effect.succeed({ state: "open", headBranch } as never),
+            detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+            activity: () => Effect.succeed(activity),
+          },
+        });
+      const harness = yield* opened("tools");
+      yield* harness.call("pull_request_read", {});
+      expect(asked).toMatchObject([{ number: 43 }]);
+
+      // Before sync, the host says which branch it came from; another branch's is not this one.
+      const moved = yield* opened("old");
+      const unsynced = yield* moved.call("pull_request_read", {}).pipe(Effect.flip);
+      expect(unsynced._tag).toBe("PullRequestBranchHasNoneError");
+
+      // After a switch to another branch, the PR opened from the old one is not the branch's.
+      const switched = yield* makeHarness({
+        thread: {
+          ...makeThread([makeLink(43, { source: "created", headBranch: "old" })]),
+          branch: "new",
+        },
+      });
+      const error = yield* switched
+        .call("pull_request_update", { title: "New title" })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("PullRequestBranchHasNoneError");
+    }),
+  );
+
+  it.effect("merges pinned to the head the agent checked", () =>
+    Effect.gen(function* () {
+      const actions: Array<PullRequestActionInput> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          runAction: (input) => Effect.sync(() => void actions.push(input)),
+          summary: () => Effect.succeed({ state: "open" } as never),
+        },
+      });
+      const result = yield* harness.call("pull_request_merge", {
+        expectedHeadSha: "abc123",
+        method: "squash",
+        auto: true,
+      });
+      expect(result).toMatchObject({ number: 42, state: "open" });
+      expect(actions).toMatchObject([
+        {
+          number: 42,
+          action: "enable-auto-merge",
+          expectedHeadSha: "abc123",
+          mergeMethod: "squash",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("a stack merge pins every open layer up to the PR", () =>
+    Effect.gen(function* () {
+      const actions: Array<PullRequestActionInput> = [];
+      let lowerHead: string | undefined = "bbb";
+      let targetHead = "stale";
+      const layer = (number: number, state: "open" | "merged", headSha: string | undefined) => ({
+        number,
+        state,
+        ...(headSha === undefined ? {} : { headSha }),
+        headBranch: `layer-${number}`,
+      });
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          stack: (_input, options) =>
+            options?.bypassCache !== true
+              ? Effect.die("a merge must not pin heads from the cache")
+              : Effect.succeed({
+                  id: "stack-1",
+                  number: 7,
+                  url: "https://github.com/acme/app/stacks/7",
+                  base: "main",
+                  layers: [
+                    layer(40, "merged", "aaa"),
+                    layer(41, "open", lowerHead),
+                    layer(42, "open", targetHead),
+                    layer(43, "open", "ddd"),
+                  ],
+                }),
+          runAction: (input) => Effect.sync(() => void actions.push(input)),
+          summary: () => Effect.succeed({ state: "merged" } as never),
+        },
+      });
+      yield* harness.call("pull_request_merge", { expectedHeadSha: "ccc", stack: true });
+      expect(actions).toMatchObject([
+        {
+          number: 42,
+          action: "merge",
+          stackNumber: 7,
+          expectedStackHeads: [
+            { number: 41, headSha: "bbb" },
+            { number: 42, headSha: "ccc" },
+          ],
+        },
+      ]);
+      const fullHead = "c0ffee1234567890abcdef1234567890abcdef12";
+      targetHead = fullHead;
+      yield* harness.call("pull_request_merge", { expectedHeadSha: "c0ffee1", stack: true });
+      expect(actions[1]?.expectedStackHeads).toEqual([
+        { number: 41, headSha: "bbb" },
+        { number: 42, headSha: fullHead },
+      ]);
+      lowerHead = undefined;
+      const unpinned = yield* harness
+        .call("pull_request_merge", { expectedHeadSha: "ccc", stack: true })
+        .pipe(Effect.flip);
+      expect(unpinned._tag).toBe("PullRequestForgeError");
+      expect(actions).toHaveLength(2);
+    }),
+  );
+
+  it.effect("re-running checks reopens a watch that saw its checks finish", () =>
+    Effect.gen(function* () {
+      const watch = {
+        startedAt: "2026-08-20T00:00:00.000Z",
+        headSha: "abc123",
+        failedChecks: ["test"],
+        passed: false,
+        passedChecks: [],
+        remarksThrough: "2026-08-20T00:00:00.000Z",
+        remarkIds: [],
+        conflicting: false,
+        wakes: 0,
+      };
+      const rerun = (checksPending: boolean | undefined, reran: boolean) =>
+        Effect.gen(function* () {
+          const harness = yield* makeHarness({
+            thread: {
+              ...branchThread,
+              pullRequests: [
+                makeLink(42, {
+                  watch: checksPending === undefined ? watch : { ...watch, checksPending },
+                }),
+              ],
+            },
+            pullRequests: {
+              rerunChecks: () => Effect.succeed([{ name: "test", rerun: reran, detail: null }]),
+            },
+          });
+          yield* harness.call("ci_rerun", {});
+          return yield* Ref.get(harness.commands);
+        });
+      expect(yield* rerun(false, true)).toMatchObject([
+        { type: "thread.pull-request-watch.checks-reopen", threadId: THREAD_ID },
+      ]);
+      // Nothing re-ran, or the watch has no answer to clear.
+      expect(yield* rerun(false, false)).toEqual([]);
+      expect(yield* rerun(undefined, true)).toEqual([]);
+    }),
+  );
+
+  it.effect("opens a PR from the thread's worktree and links it even if dismissed", () =>
+    Effect.gen(function* () {
+      const opened: Array<{
+        readonly cwd: string;
+        readonly draft: boolean | undefined;
+        readonly private: boolean | undefined;
+      }> = [];
+      const harness = yield* makeHarness({
+        thread: {
+          ...makeThread([makeLink(43, { source: "stack-dismissed" })]),
+          worktreePath: "/workspace/worktree",
+        },
+        git: {
+          createPullRequest: (input) =>
+            Effect.sync(() =>
+              opened.push({ cwd: input.cwd, draft: input.draft, private: input.private }),
+            ).pipe(
+              Effect.as({
+                status: "created" as const,
+                url: "https://github.com/t3tools/t3code/pull/43",
+                number: 43,
+                baseBranch: "main",
+                headBranch: "tools",
+                title: input.title,
+              }),
+            ),
+        },
+      });
+      const result = yield* harness.call("pull_request_create", {
+        title: "Add tools",
+        body: "Adds tools.",
+        draft: true,
+        private: true,
+      });
+      expect(result).toMatchObject({ number: 43, created: true });
+      expect(opened).toEqual([{ cwd: "/workspace/worktree", draft: true, private: true }]);
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.link", number: 43, source: "created" },
+      ]);
+    }),
+  );
+
+  describe("pull_request_create and the repository's push hooks", () => {
+    const opened = (title: string) => ({
+      status: "created" as const,
+      url: "https://github.com/t3tools/t3code/pull/43",
+      number: 43,
+      baseBranch: "main",
+      headBranch: "tools",
+      title,
+    });
+    type PushHooks = Parameters<
+      GitManager.GitManager["Service"]["createPullRequest"]
+    >[0]["pushHooks"];
+    const unapproved = (
+      digest: string,
+      files = ["/workspace/worktree/.husky/pre-push"],
+      commands: ReadonlyArray<{ readonly name: string; readonly command: string }> = [],
+    ) => new GitManager.GitPushHooksUnapprovedError({ branch: "tools", files, commands, digest });
+    /** A checkout whose push would run one hook holding `digest()`; records each attempt. */
+    const hooked = (digest: () => string) => {
+      const attempts: Array<PushHooks> = [];
+      const createPullRequest: GitManager.GitManager["Service"]["createPullRequest"] = (input) =>
+        Effect.suspend(() => {
+          attempts.push(input.pushHooks);
+          const hooks = input.pushHooks;
+          return hooks === undefined || hooks === "off" || hooks.approvedDigest === digest()
+            ? Effect.succeed(opened(input.title))
+            : Effect.fail(unapproved(digest()));
+        });
+      return { attempts, createPullRequest };
+    };
+    const lowerThread = (runtimeMode: RuntimeMode = "auto-accept-edits") => ({
+      ...makeThread([]),
+      runtimeMode,
+      worktreePath: "/workspace/worktree",
+    });
+    const args = { title: "Add tools", body: "Adds tools." };
+    /** A sessionless client: it is asked by the call's answer and calls again with the reply. */
+    const asClient = (
+      elicitation: boolean,
+      reply?: { readonly action: string; readonly state: string },
+    ) => {
+      const request = Ref.makeUnsafe<McpSchema.InputRequired | undefined>(undefined);
+      const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(
+          Effect.provideService(McpClientInput.McpClientInput, { request }),
+          Effect.provideService(
+            McpSchema.McpRequestContext,
+            McpSchema.McpRequestContext.of({
+              clientId: 1,
+              protocolVersion: "2026-07-28",
+              clientCapabilities: new McpSchema.ClientCapabilities(
+                elicitation ? { elicitation: {} } : {},
+              ),
+              ...(reply === undefined
+                ? {}
+                : {
+                    inputResponses: { "push-hooks": { action: reply.action } },
+                    requestState: reply.state,
+                  }),
+            }),
+          ),
+        );
+      return { request, provide };
+    };
+
+    it.effect("a Full access thread pushes as it always has", () =>
+      Effect.gen(function* () {
+        const git = hooked(() => "digest-1");
+        const harness = yield* makeHarness({
+          thread: { ...lowerThread("full-access") },
+          git,
+        });
+        const client = asClient(true);
+        const result = yield* harness.call("pull_request_create", args).pipe(client.provide);
+        expect(result).toMatchObject({ number: 43, created: true });
+        expect(git.attempts).toEqual([undefined]);
+        expect(Ref.getUnsafe(client.request)).toBeUndefined();
+      }),
+    );
+
+    it.effect.each([
+      ["a Supervised thread", { thread: lowerThread("approval-required") }],
+      ["an Auto-accept edits thread", { thread: lowerThread("auto-accept-edits") }],
+      ["an Auto thread", { thread: lowerThread("auto") }],
+      [
+        "a Full access thread in plan mode",
+        { thread: { ...lowerThread("full-access"), interactionMode: "plan" as const } },
+      ],
+      [
+        "a Full access thread above the administrator's limit",
+        {
+          thread: lowerThread("full-access"),
+          managedPolicy: {
+            organization: "Example Corp",
+            lockedSettings: [],
+            limits: { maxRuntimeMode: "auto" },
+          },
+        },
+      ],
+    ] as const)("%s runs no hook before a person is asked", ([, options]) =>
+      Effect.gen(function* () {
+        const git = hooked(() => "digest-1");
+        const harness = yield* makeHarness({ ...options, git });
+        const client = asClient(true);
+        yield* harness.call("pull_request_create", args).pipe(client.provide, Effect.flip);
+        // The only attempt approved no hook, so it pushed nothing.
+        expect(git.attempts).toEqual([{ approvedDigest: null }]);
+        const asked = Ref.getUnsafe(client.request);
+        expect(asked?.requestState).toBe("digest-1 1");
+        expect(asked?.inputRequests).toEqual({
+          "push-hooks": {
+            method: "elicitation/create",
+            params: {
+              mode: "form",
+              message:
+                "Push tools and run this repository's hook file .husky/pre-push (contents digest-1)?",
+              requestedSchema: { type: "object", properties: {} },
+            },
+          },
+        });
+      }),
+    );
+
+    it.effect("names every file the approval covers", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          thread: lowerThread(),
+          git: {
+            createPullRequest: () =>
+              Effect.fail(
+                unapproved("digest-1", [
+                  "/workspace/worktree/.husky/_/pre-push",
+                  "/workspace/worktree/.husky/_/h",
+                  "/workspace/worktree/.husky/pre-push",
+                ]),
+              ),
+          },
+        });
+        const client = asClient(true);
+        yield* harness.call("pull_request_create", args).pipe(client.provide, Effect.flip);
+        expect(JSON.stringify(Ref.getUnsafe(client.request)?.inputRequests)).toContain(
+          "Push tools and run this repository's hook files .husky/_/pre-push, .husky/_/h and .husky/pre-push (contents digest-1)?",
+        );
+      }),
+    );
+
+    it.effect("names the hooks Git's configuration defines, each command on one line", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          thread: lowerThread(),
+          git: {
+            createPullRequest: () =>
+              Effect.fail(
+                unapproved(
+                  "digest-1",
+                  ["/workspace/worktree/.husky/pre-push"],
+                  [
+                    { name: "checks", command: "pnpm run checks" },
+                    { name: "notify", command: "echo done\n\nApprove?" },
+                  ],
+                ),
+              ),
+          },
+        });
+        const client = asClient(true);
+        yield* harness.call("pull_request_create", args).pipe(client.provide, Effect.flip);
+        expect(JSON.stringify(Ref.getUnsafe(client.request)?.inputRequests)).toContain(
+          JSON.stringify(
+            'Push tools and run this repository\'s hook file .husky/pre-push and its configured hooks checks ("pnpm run checks") and notify ("echo done\\n\\nApprove?") (contents digest-1)?',
+          ).slice(1, -1),
+        );
+      }),
+    );
+
+    it.effect("leaves the branch and hooks it names with the thread's session until answered", () =>
+      Effect.gen(function* () {
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
+        const git: Pick<GitManager.GitManager["Service"], "createPullRequest"> = {
+          createPullRequest: (input) =>
+            input.pushHooks !== undefined &&
+            input.pushHooks !== "off" &&
+            input.pushHooks.approvedDigest === "digest-1"
+              ? Effect.succeed(opened(input.title))
+              : Effect.fail(
+                  unapproved(
+                    "digest-1",
+                    ["/workspace/worktree/.husky/pre-push", "/home/dev/.githooks/pre-push"],
+                    [{ name: "checks", command: "pnpm run checks" }],
+                  ),
+                ),
+        };
+        const harness = yield* makeHarness({ thread: lowerThread(), git });
+        const message =
+          'Push tools and run this repository\'s hook files .husky/pre-push and /home/dev/.githooks/pre-push and its configured hook checks ("pnpm run checks") (contents digest-1)?';
+        const withSessions = (client: ReturnType<typeof asClient>) =>
+          Effect.provideService(McpClientInput.McpClientInput, {
+            request: client.request,
+            sessions,
+          });
+
+        const asking = asClient(true);
+        yield* harness
+          .call("pull_request_create", args)
+          .pipe(withSessions(asking), asking.provide, Effect.flip);
+        expect(yield* sessions.findApprovalRequest(THREAD_ID, message)).toMatchObject({
+          message,
+          pushHooks: {
+            branch: "tools",
+            files: [".husky/pre-push", "/home/dev/.githooks/pre-push"],
+            commands: [{ name: "checks", command: "pnpm run checks" }],
+          },
+        });
+
+        const answering = asClient(true, {
+          action: "accept",
+          state: Ref.getUnsafe(asking.request)!.requestState!,
+        });
+        yield* harness
+          .call("pull_request_create", args)
+          .pipe(withSessions(answering), answering.provide);
+        expect(yield* sessions.findApprovalRequest(THREAD_ID, message)).toBeUndefined();
+      }).pipe(Effect.provide(McpProviderSessions.layer)),
+    );
+
+    it.effect("an answer ends its own request and leaves another call's waiting", () =>
+      Effect.gen(function* () {
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
+        // Two branches of one repository: the same hooks, so the same digest and count.
+        let branch = "tools";
+        const git: Pick<GitManager.GitManager["Service"], "createPullRequest"> = {
+          createPullRequest: (input) =>
+            input.pushHooks !== undefined && input.pushHooks !== "off"
+              ? input.pushHooks.approvedDigest === "digest-1"
+                ? Effect.succeed(opened(input.title))
+                : Effect.fail(
+                    new GitManager.GitPushHooksUnapprovedError({
+                      branch,
+                      files: ["/workspace/worktree/.husky/pre-push"],
+                      commands: [],
+                      digest: "digest-1",
+                    }),
+                  )
+              : Effect.succeed(opened(input.title)),
+        };
+        const harness = yield* makeHarness({ thread: lowerThread(), git });
+        const ask = Effect.gen(function* () {
+          const client = asClient(true);
+          yield* harness.call("pull_request_create", args).pipe(
+            Effect.provideService(McpClientInput.McpClientInput, {
+              request: client.request,
+              sessions,
+            }),
+            client.provide,
+            Effect.flip,
+          );
+          return Ref.getUnsafe(client.request)!;
+        });
+        const question = (named: string) =>
+          `Push ${named} and run this repository's hook file .husky/pre-push (contents digest-1)?`;
+
+        yield* ask;
+        branch = "docs";
+        const second = yield* ask;
+        const answering = asClient(true, { action: "accept", state: second.requestState! });
+        yield* harness.call("pull_request_create", args).pipe(
+          Effect.provideService(McpClientInput.McpClientInput, {
+            request: answering.request,
+            sessions,
+          }),
+          answering.provide,
+        );
+
+        expect(yield* sessions.findApprovalRequest(THREAD_ID, question("docs"))).toBeUndefined();
+        expect(yield* sessions.findApprovalRequest(THREAD_ID, question("tools"))).toMatchObject({
+          pushHooks: { branch: "tools" },
+        });
+      }).pipe(Effect.provide(McpProviderSessions.layer)),
+    );
+
+    it.effect("pushes with the hooks a person approved", () =>
+      Effect.gen(function* () {
+        const git = hooked(() => "digest-1");
+        const harness = yield* makeHarness({ thread: lowerThread(), git });
+        const client = asClient(true, { action: "accept", state: "digest-1 1" });
+        const result = yield* harness.call("pull_request_create", args).pipe(client.provide);
+        expect(result).toMatchObject({ number: 43, created: true });
+        expect(result).not.toHaveProperty("note");
+        expect(git.attempts).toEqual([{ approvedDigest: "digest-1" }]);
+        expect(Ref.getUnsafe(client.request)).toBeUndefined();
+      }),
+    );
+
+    it.effect.each(["decline", "cancel"])("pushes nothing when the person answers %s", (action) =>
+      Effect.gen(function* () {
+        const git = hooked(() => "digest-1");
+        const harness = yield* makeHarness({ thread: lowerThread(), git });
+        const client = asClient(true, { action, state: "digest-1 1" });
+        const error = yield* harness
+          .call("pull_request_create", args)
+          .pipe(client.provide, Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "PullRequestForgeError",
+          message:
+            "The person declined to run this repository's push hooks. Nothing was pushed and no PR was opened.",
+        });
+        expect(git.attempts).toEqual([]);
+        expect(yield* Ref.get(harness.commands)).toEqual([]);
+      }),
+    );
+
+    it.effect("pushes nothing after a decline, also when the hooks it named are gone", () =>
+      Effect.gen(function* () {
+        const attempts: Array<PushHooks> = [];
+        const harness = yield* makeHarness({
+          thread: lowerThread(),
+          git: {
+            // Removed while the person read the question: a push now would run no hook.
+            createPullRequest: (input) =>
+              Effect.sync(() => {
+                attempts.push(input.pushHooks);
+                return opened(input.title);
+              }),
+          },
+        });
+        const client = asClient(true, { action: "decline", state: "digest-1 1" });
+        const error = yield* harness
+          .call("pull_request_create", args)
+          .pipe(client.provide, Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "PullRequestForgeError",
+          message:
+            "The person declined to run this repository's push hooks. Nothing was pushed and no PR was opened.",
+        });
+        expect(attempts).toEqual([]);
+        expect(yield* Ref.get(harness.commands)).toEqual([]);
+      }),
+    );
+
+    it.effect("counts the approvals it asks for across a sessionless client's calls", () =>
+      Effect.gen(function* () {
+        // Rewritten before every push: no approval is ever for what the push would run.
+        let version = 0;
+        const attempts: Array<PushHooks> = [];
+        const harness = yield* makeHarness({
+          thread: lowerThread(),
+          git: {
+            createPullRequest: (input) =>
+              Effect.suspend(() => {
+                attempts.push(input.pushHooks);
+                return Effect.fail(unapproved(`digest-${++version}`));
+              }),
+          },
+        });
+        let reply: { readonly action: string; readonly state: string } | undefined;
+        for (const state of ["digest-1 1", "digest-2 2", "digest-3 3"]) {
+          const client = asClient(true, reply);
+          yield* harness.call("pull_request_create", args).pipe(client.provide, Effect.flip);
+          expect(Ref.getUnsafe(client.request)?.requestState).toBe(state);
+          reply = { action: "accept", state };
+        }
+        const last = asClient(true, reply);
+        const error = yield* harness
+          .call("pull_request_create", args)
+          .pipe(last.provide, Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "PullRequestForgeError",
+          message:
+            "This repository's push hooks kept changing while approval was asked. Nothing was pushed.",
+        });
+        expect(Ref.getUnsafe(last.request)).toBeUndefined();
+        // The third approval is tried too.
+        expect(attempts.at(-1)).toEqual({ approvedDigest: "digest-3" });
+      }),
+    );
+
+    it.effect("asks again when the hooks are not the ones the person approved", () =>
+      Effect.gen(function* () {
+        // Edited after the question went out: the approval was for other contents.
+        const git = hooked(() => "digest-2");
+        const harness = yield* makeHarness({ thread: lowerThread(), git });
+        const client = asClient(true, { action: "accept", state: "digest-1 1" });
+        yield* harness.call("pull_request_create", args).pipe(client.provide, Effect.flip);
+        expect(git.attempts).toEqual([{ approvedDigest: "digest-1" }]);
+        const asked = Ref.getUnsafe(client.request);
+        expect(asked?.requestState).toBe("digest-2 2");
+        expect(JSON.stringify(asked?.inputRequests)).toContain("(contents digest-2)");
+      }),
+    );
+
+    it.effect("asks again when the hooks change between the approval and the push", () =>
+      Effect.gen(function* () {
+        let digest = "digest-1";
+        const attempts: Array<PushHooks> = [];
+        const harness = yield* makeHarness({
+          thread: lowerThread(),
+          git: {
+            createPullRequest: (input) =>
+              Effect.suspend(() => {
+                attempts.push(input.pushHooks);
+                const hooks = input.pushHooks;
+                if (hooks === undefined || hooks === "off") return Effect.die("unexpected");
+                // The approved attempt finds the hook rewritten as its push starts.
+                if (hooks.approvedDigest === "digest-1") digest = "digest-2";
+                return Effect.fail(unapproved(digest));
+              }),
+          },
+        });
+        const client = asClient(true, { action: "accept", state: "digest-1 1" });
+        yield* harness.call("pull_request_create", args).pipe(client.provide, Effect.flip);
+        expect(attempts).toEqual([{ approvedDigest: "digest-1" }]);
+        expect(Ref.getUnsafe(client.request)?.requestState).toBe("digest-2 2");
+      }),
+    );
+
+    /** A client with a session that approves every request, and what it was asked. */
+    const approvingSession = () => {
+      const asked: Array<string> = [];
+      const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(
+          Effect.provideService(
+            McpSchema.McpRequestContext,
+            McpSchema.McpRequestContext.of({
+              clientId: 1,
+              protocolVersion: "2025-06-18",
+              clientCapabilities: new McpSchema.ClientCapabilities({ elicitation: {} }),
+            }),
+          ),
+          Effect.provideService(McpSchema.McpServerClient, {
+            getClient: Effect.succeed({
+              elicit: (request: { readonly message: string }) =>
+                Effect.sync(() => {
+                  asked.push(request.message);
+                  return { action: "accept" as const, content: {} };
+                }),
+            }),
+          } as never),
+        );
+      return { asked, provide };
+    };
+    /** Hooks that are rewritten as each of the first `changes` approved pushes starts. */
+    const changingHooks = (changes: number) => {
+      let version = 1;
+      const attempts: Array<PushHooks> = [];
+      const createPullRequest: GitManager.GitManager["Service"]["createPullRequest"] = (input) =>
+        Effect.suspend(() => {
+          attempts.push(input.pushHooks);
+          const hooks = input.pushHooks;
+          if (hooks === undefined || hooks === "off") return Effect.die("unexpected");
+          if (hooks.approvedDigest === `digest-${version}` && version <= changes) version++;
+          return hooks.approvedDigest === `digest-${version}`
+            ? Effect.succeed(opened(input.title))
+            : Effect.fail(unapproved(`digest-${version}`));
+        });
+      return { attempts, createPullRequest };
+    };
+
+    it.effect("pushes with the last approval it asks for", () =>
+      Effect.gen(function* () {
+        const git = changingHooks(2);
+        const harness = yield* makeHarness({ thread: lowerThread(), git });
+        const session = approvingSession();
+        const result = yield* harness.call("pull_request_create", args).pipe(session.provide);
+        expect(result).toMatchObject({ number: 43, created: true });
+        expect(session.asked).toHaveLength(3);
+        expect(git.attempts).toEqual([
+          { approvedDigest: null },
+          { approvedDigest: "digest-1" },
+          { approvedDigest: "digest-2" },
+          { approvedDigest: "digest-3" },
+        ]);
+      }),
+    );
+
+    it.effect("stops asking after three approvals when the hooks keep changing", () =>
+      Effect.gen(function* () {
+        const git = changingHooks(3);
+        const harness = yield* makeHarness({ thread: lowerThread(), git });
+        const session = approvingSession();
+        const error = yield* harness
+          .call("pull_request_create", args)
+          .pipe(session.provide, Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "PullRequestForgeError",
+          message:
+            "This repository's push hooks kept changing while approval was asked. Nothing was pushed.",
+        });
+        expect(session.asked).toHaveLength(3);
+        expect(git.attempts).toHaveLength(4);
+      }),
+    );
+
+    it.effect("pushes without a prompt when the push would run no hook", () =>
+      Effect.gen(function* () {
+        const attempts: Array<PushHooks> = [];
+        const harness = yield* makeHarness({
+          thread: lowerThread(),
+          git: {
+            createPullRequest: (input) =>
+              Effect.sync(() => {
+                attempts.push(input.pushHooks);
+                return opened(input.title);
+              }),
+          },
+        });
+        const client = asClient(true);
+        const result = yield* harness.call("pull_request_create", args).pipe(client.provide);
+        expect(result).toMatchObject({ number: 43, created: true });
+        expect(result).not.toHaveProperty("note");
+        // Still not an unrestricted push: a hook that appears later needs the approval too.
+        expect(attempts).toEqual([{ approvedDigest: null }]);
+        expect(Ref.getUnsafe(client.request)).toBeUndefined();
+      }),
+    );
+
+    it.effect.each([
+      [
+        "did not declare elicitation",
+        <A, E>(call: Effect.Effect<A, E>) => asClient(false).provide(call),
+      ],
+      ["is an in-process caller", <A, E>(call: Effect.Effect<A, E>) => call],
+    ] as const)("pushes with hooks off for a client that %s, and says so", ([, provide]) =>
+      Effect.gen(function* () {
+        const git = hooked(() => "digest-1");
+        const harness = yield* makeHarness({ thread: lowerThread(), git });
+        const result = yield* provide(harness.call("pull_request_create", args));
+        expect(result).toMatchObject({
+          number: 43,
+          created: true,
+          note: "The repository's push hooks were not run, because this client cannot ask a person to approve them.",
+        });
+        expect(git.attempts).toEqual([{ approvedDigest: null }, "off"]);
+      }),
+    );
+
+    describe("in a thread whose adapter shows the request to the person", () => {
+      const UNCONFIRMED =
+        "T3 Code has no approval from the person for this repository's push hooks. Nothing was pushed and no PR was opened. Call again to ask.";
+      const question = (branch = "tools") =>
+        `Push ${branch} and run this repository's hook file .husky/pre-push (contents digest-1)?`;
+      /** The thread's requests, kept for an adapter that passes on what the person answered. */
+      const shown = Effect.gen(function* () {
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* sessions.showsApprovalRequests(ProviderInstanceId.make("codex"));
+        const provide =
+          (client: ReturnType<typeof asClient>) =>
+          <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            effect.pipe(
+              Effect.provideService(McpClientInput.McpClientInput, {
+                request: client.request,
+                sessions,
+              }),
+              client.provide,
+            );
+        return { sessions, provide };
+      });
+      /** One call that ends asking; returns the state its request went out with. */
+      const ask = (
+        harness: Effect.Success<ReturnType<typeof makeHarness>>,
+        provide: Effect.Success<typeof shown>["provide"],
+      ) =>
+        Effect.gen(function* () {
+          const client = asClient(true);
+          yield* harness.call("pull_request_create", args).pipe(provide(client), Effect.flip);
+          return Ref.getUnsafe(client.request)!.requestState!;
+        });
+
+      it.effect("a reply that accepts pushes nothing when the person approved nothing", () =>
+        Effect.gen(function* () {
+          const { provide } = yield* shown;
+          const git = hooked(() => "digest-1");
+          const harness = yield* makeHarness({ thread: lowerThread(), git });
+          const state = yield* ask(harness, provide);
+
+          const error = yield* harness
+            .call("pull_request_create", args)
+            .pipe(provide(asClient(true, { action: "accept", state })), Effect.flip);
+          expect(error).toMatchObject({ _tag: "PullRequestForgeError", message: UNCONFIRMED });
+          // The attempt that asked, and none after the reply.
+          expect(git.attempts).toEqual([{ approvedDigest: null }]);
+          expect(yield* Ref.get(harness.commands)).toEqual([]);
+        }).pipe(Effect.provide(McpProviderSessions.layer)),
+      );
+
+      it.effect("pushes once the person approved the request in the app", () =>
+        Effect.gen(function* () {
+          const { sessions, provide } = yield* shown;
+          const git = hooked(() => "digest-1");
+          const harness = yield* makeHarness({ thread: lowerThread(), git });
+          const state = yield* ask(harness, provide);
+          yield* sessions.answerApprovalRequests(THREAD_ID, question(), true);
+
+          const result = yield* harness
+            .call("pull_request_create", args)
+            .pipe(provide(asClient(true, { action: "accept", state })));
+          expect(result).toMatchObject({ number: 43, created: true });
+          expect(git.attempts).toEqual([{ approvedDigest: null }, { approvedDigest: "digest-1" }]);
+          // One approval is one push: the same reply sent again is not one.
+          const again = yield* harness
+            .call("pull_request_create", args)
+            .pipe(provide(asClient(true, { action: "accept", state })), Effect.flip);
+          expect(again).toMatchObject({ message: UNCONFIRMED });
+          expect(git.attempts).toHaveLength(2);
+        }).pipe(Effect.provide(McpProviderSessions.layer)),
+      );
+
+      it.effect("a reply that accepts pushes nothing when the person declined in the app", () =>
+        Effect.gen(function* () {
+          const { sessions, provide } = yield* shown;
+          const git = hooked(() => "digest-1");
+          const harness = yield* makeHarness({ thread: lowerThread(), git });
+          const state = yield* ask(harness, provide);
+          yield* sessions.answerApprovalRequests(THREAD_ID, question(), false);
+          // A later answer does not replace the person's first.
+          yield* sessions.answerApprovalRequests(THREAD_ID, question(), true);
+
+          const error = yield* harness
+            .call("pull_request_create", args)
+            .pipe(provide(asClient(true, { action: "accept", state })), Effect.flip);
+          expect(error).toMatchObject({ message: UNCONFIRMED });
+          expect(git.attempts).toEqual([{ approvedDigest: null }]);
+        }).pipe(Effect.provide(McpProviderSessions.layer)),
+      );
+
+      it.effect.each(["decline", "cancel"])(
+        "pushes nothing when the reply is %s, whatever the app recorded",
+        (action) =>
+          Effect.gen(function* () {
+            const { sessions, provide } = yield* shown;
+            const git = hooked(() => "digest-1");
+            const harness = yield* makeHarness({ thread: lowerThread(), git });
+            const state = yield* ask(harness, provide);
+            yield* sessions.answerApprovalRequests(THREAD_ID, question(), true);
+
+            const error = yield* harness
+              .call("pull_request_create", args)
+              .pipe(provide(asClient(true, { action, state })), Effect.flip);
+            expect(error).toMatchObject({
+              message:
+                "The person declined to run this repository's push hooks. Nothing was pushed and no PR was opened.",
+            });
+            expect(git.attempts).toEqual([{ approvedDigest: null }]);
+            expect(yield* sessions.findApprovalRequest(THREAD_ID, question())).toBeUndefined();
+          }).pipe(Effect.provide(McpProviderSessions.layer)),
+      );
+
+      it.effect("an approval of one request does not let another through", () =>
+        Effect.gen(function* () {
+          const { sessions, provide } = yield* shown;
+          // Two branches of one repository: the same hooks, so the same digest and count.
+          let branch = "tools";
+          const attempts: Array<PushHooks> = [];
+          const harness = yield* makeHarness({
+            thread: lowerThread(),
+            git: {
+              createPullRequest: (input) =>
+                Effect.suspend(() => {
+                  attempts.push(input.pushHooks);
+                  const hooks = input.pushHooks;
+                  return hooks !== undefined && hooks !== "off" && hooks.approvedDigest === null
+                    ? Effect.fail(
+                        new GitManager.GitPushHooksUnapprovedError({
+                          branch,
+                          files: ["/workspace/worktree/.husky/pre-push"],
+                          commands: [],
+                          digest: "digest-1",
+                        }),
+                      )
+                    : Effect.succeed(opened(input.title));
+                }),
+            },
+          });
+          const tools = yield* ask(harness, provide);
+          branch = "docs";
+          const docs = yield* ask(harness, provide);
+          yield* sessions.answerApprovalRequests(THREAD_ID, question("tools"), true);
+
+          const other = yield* harness
+            .call("pull_request_create", args)
+            .pipe(provide(asClient(true, { action: "accept", state: docs })), Effect.flip);
+          expect(other).toMatchObject({ message: UNCONFIRMED });
+          // The approved request's id under another request's state is not its approval either.
+          const mixed = yield* harness.call("pull_request_create", args).pipe(
+            provide(
+              asClient(true, {
+                action: "accept",
+                state: `digest-2 1 request=${tools.split(" request=")[1]}`,
+              }),
+            ),
+            Effect.flip,
+          );
+          expect(mixed).toMatchObject({ message: UNCONFIRMED });
+          expect(attempts).toEqual([{ approvedDigest: null }, { approvedDigest: null }]);
+        }).pipe(Effect.provide(McpProviderSessions.layer)),
+      );
+
+      it.effect("an approval given before the thread's session was replaced is not kept", () =>
+        Effect.gen(function* () {
+          const { sessions, provide } = yield* shown;
+          const git = hooked(() => "digest-1");
+          const harness = yield* makeHarness({ thread: lowerThread(), git });
+          const state = yield* ask(harness, provide);
+          yield* sessions.answerApprovalRequests(THREAD_ID, question(), true);
+          // A server that restarted has no requests either.
+          yield* sessions.clear(THREAD_ID);
+
+          const error = yield* harness
+            .call("pull_request_create", args)
+            .pipe(provide(asClient(true, { action: "accept", state })), Effect.flip);
+          expect(error).toMatchObject({ message: UNCONFIRMED });
+          expect(git.attempts).toEqual([{ approvedDigest: null }]);
+          // Calling again, without the reply, asks the person again.
+          expect(yield* ask(harness, provide)).toMatch(/^digest-1 1 request=/);
+        }).pipe(Effect.provide(McpProviderSessions.layer)),
+      );
+
+      /** A client with a session; `answer` is what happens between the request and its reply. */
+      const sessionClient = (answer: (message: string) => Effect.Effect<void>) => {
+        const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          effect.pipe(
+            Effect.provideService(
+              McpSchema.McpRequestContext,
+              McpSchema.McpRequestContext.of({
+                clientId: 1,
+                protocolVersion: "2025-06-18",
+                clientCapabilities: new McpSchema.ClientCapabilities({ elicitation: {} }),
+              }),
+            ),
+            Effect.provideService(McpSchema.McpServerClient, {
+              getClient: Effect.succeed({
+                elicit: (request: { readonly message: string }) =>
+                  answer(request.message).pipe(
+                    Effect.as({ action: "accept" as const, content: {} }),
+                  ),
+              }),
+            } as never),
+          );
+        return { provide };
+      };
+
+      it.effect("over a session, a reply that accepts pushes nothing without the person", () =>
+        Effect.gen(function* () {
+          const { sessions } = yield* shown;
+          const git = hooked(() => "digest-1");
+          const harness = yield* makeHarness({ thread: lowerThread(), git });
+          const error = yield* harness.call("pull_request_create", args).pipe(
+            Effect.provideService(McpClientInput.McpClientInput, {
+              request: Ref.makeUnsafe<McpSchema.InputRequired | undefined>(undefined),
+              sessions,
+            }),
+            sessionClient(() => Effect.void).provide,
+            Effect.flip,
+          );
+          expect(error).toMatchObject({ _tag: "PullRequestForgeError", message: UNCONFIRMED });
+          expect(git.attempts).toEqual([{ approvedDigest: null }]);
+          expect(yield* sessions.findApprovalRequest(THREAD_ID, question())).toBeUndefined();
+        }).pipe(Effect.provide(McpProviderSessions.layer)),
+      );
+
+      it.effect("over a session, pushes once the person approved the request in the app", () =>
+        Effect.gen(function* () {
+          const { sessions } = yield* shown;
+          const git = hooked(() => "digest-1");
+          const harness = yield* makeHarness({ thread: lowerThread(), git });
+          const result = yield* harness.call("pull_request_create", args).pipe(
+            Effect.provideService(McpClientInput.McpClientInput, {
+              request: Ref.makeUnsafe<McpSchema.InputRequired | undefined>(undefined),
+              sessions,
+            }),
+            sessionClient((message) => sessions.answerApprovalRequests(THREAD_ID, message, true))
+              .provide,
+          );
+          expect(result).toMatchObject({ number: 43, created: true });
+          expect(git.attempts).toEqual([{ approvedDigest: null }, { approvedDigest: "digest-1" }]);
+        }).pipe(Effect.provide(McpProviderSessions.layer)),
+      );
+    });
+
+    it.effect("asks a client with a session over that session and waits for the answer", () =>
+      Effect.gen(function* () {
+        const git = hooked(() => "digest-1");
+        const harness = yield* makeHarness({ thread: lowerThread(), git });
+        const session = approvingSession();
+        const result = yield* harness.call("pull_request_create", args).pipe(session.provide);
+        expect(result).toMatchObject({ number: 43, created: true });
+        expect(session.asked).toEqual([
+          "Push tools and run this repository's hook file .husky/pre-push (contents digest-1)?",
+        ]);
+        expect(git.attempts).toEqual([{ approvedDigest: null }, { approvedDigest: "digest-1" }]);
+      }),
+    );
+  });
+
+  it.effect("replies to and resolves a review thread, and refuses resolving without one", () =>
+    Effect.gen(function* () {
+      const calls: Array<string> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          replyToThread: (input) => Effect.sync(() => calls.push(`reply ${input.threadId}`)),
+          setThreadResolution: (input) =>
+            input.threadId === "locked-thread"
+              ? Effect.fail(
+                  new PullRequestOperationError({
+                    operation: "setThreadResolution",
+                    detail: "Locked.",
+                  }),
+                )
+              : Effect.sync(() => void calls.push(`resolve ${input.threadId} ${input.resolved}`)),
+        },
+      });
+      const result = yield* harness.call("pull_request_respond", {
+        reviewThreadId: "open-thread",
+        body: "Fixed.",
+        resolved: true,
+      });
+      expect(result).toMatchObject({ replied: true, resolved: true });
+      expect(calls).toEqual(["reply open-thread", "resolve open-thread true"]);
+      const partial = yield* harness
+        .call("pull_request_respond", {
+          reviewThreadId: "locked-thread",
+          body: "Fixed.",
+          resolved: true,
+        })
+        .pipe(Effect.flip);
+      expect(partial.message).toContain("The reply was posted");
+      const error = yield* harness
+        .call("pull_request_respond", { body: "Done", resolved: true })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("PullRequestNothingToDoError");
+    }),
+  );
+
+  it.effect("places review comments by the diff page that shows their line", () =>
+    Effect.gen(function* () {
+      const reviews: Array<PullRequestSubmitReviewInput> = [];
+      const pages: Record<string, PullRequestDiffResult> = {
+        first: {
+          patch:
+            "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,2 +1,2 @@\n-old\n+new\n same\n",
+          truncated: false,
+          nextCursor: "second",
+        },
+        second: {
+          patch:
+            "diff --git a/b.ts b/b.ts\n--- a/b.ts\n+++ b/b.ts\n@@ -9,1 +9,2 @@\n kept\n+added\n",
+          truncated: false,
+          nextCursor: null,
+        },
+      };
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          diff: (input) => Effect.succeed(pages[input.cursor ?? "first"]!),
+          submitReview: (input) => Effect.sync(() => void reviews.push(input)),
+        },
+      });
+      yield* harness.call("pull_request_review", {
+        verdict: "request-changes",
+        body: "Two things.",
+        comments: [
+          { path: "b.ts", line: 10, startLine: 9, body: "Why?" },
+          { path: "a.ts", line: 1, side: "old", body: "Keep this." },
+        ],
+      });
+      expect(reviews).toMatchObject([
+        {
+          number: 42,
+          verdict: "request-changes",
+          body: "Two things.",
+          comments: [
+            {
+              path: "b.ts",
+              position: { kind: "added", newLine: 10 },
+              startPosition: { kind: "context", oldLine: 9, newLine: 9, side: "right" },
+            },
+            { path: "a.ts", position: { kind: "deleted", oldLine: 1 } },
+          ],
+        },
+      ]);
+
+      // A line the diff never shows fails before anything is posted.
+      const error = yield* harness
+        .call("pull_request_review", {
+          verdict: "comment",
+          comments: [{ path: "a.ts", line: 40, body: "Here?" }],
+        })
+        .pipe(Effect.flip);
+      expect(error.message).toContain("a.ts line 40 (new side) is not in this PR's diff");
+      expect(reviews).toHaveLength(1);
+
+      // A range whose start the diff shows names its end, the line that is missing.
+      const rangeError = yield* harness
+        .call("pull_request_review", {
+          verdict: "comment",
+          comments: [{ path: "b.ts", line: 40, startLine: 9, body: "Here?" }],
+        })
+        .pipe(Effect.flip);
+      expect(rangeError.message).toContain("b.ts line 40 (new side) is not in this PR's diff");
+
+      // A range whose end the diff shows still names its start.
+      const startError = yield* harness
+        .call("pull_request_review", {
+          verdict: "comment",
+          comments: [{ path: "b.ts", line: 10, startLine: 2, body: "Here?" }],
+        })
+        .pipe(Effect.flip);
+      expect(startError.message).toContain("b.ts line 2 (new side) is not in this PR's diff");
+      expect(reviews).toHaveLength(1);
+    }),
+  );
+
+  it.effect("pins a review to the head the caller read, and approves only with one", () =>
+    Effect.gen(function* () {
+      const reviews: Array<PullRequestSubmitReviewInput> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          submitReview: (input) => Effect.sync(() => void reviews.push(input)),
+        },
+      });
+      yield* harness.call("pull_request_review", {
+        verdict: "approve",
+        expectedHeadSha: "abc1234def5678",
+      });
+      expect(reviews).toMatchObject([{ verdict: "approve", expectedHeadSha: "abc1234def5678" }]);
+
+      const error = yield* harness
+        .call("pull_request_review", { verdict: "approve" })
+        .pipe(Effect.flip);
+      expect(error.message).toContain("expectedHeadSha");
+      expect(reviews).toHaveLength(1);
+
+      yield* harness.call("pull_request_review", { verdict: "comment", body: "A question." });
+      expect(reviews).toHaveLength(2);
+      expect(reviews[1]).not.toHaveProperty("expectedHeadSha");
+    }),
+  );
+
+  it.effect("updates labels, requests reviewers by login, and closes the PR", () =>
+    Effect.gen(function* () {
+      const calls: Array<unknown> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          setLabels: (input) =>
+            Effect.sync(() => void calls.push(["labels", input.labels, input.applied])),
+          reviewerCandidates: (input) =>
+            Effect.succeed({
+              candidates: [
+                {
+                  id: "MDQ6VXNlcjE=",
+                  kind: "user",
+                  login: input.query === "Octo" ? "octo" : "x",
+                  name: null,
+                  avatarUrl: null,
+                  isRequested: false,
+                },
+                {
+                  id: "core",
+                  kind: "team",
+                  login: "acme/core",
+                  name: null,
+                  avatarUrl: null,
+                  isRequested: false,
+                },
+              ],
+            } as never),
+          requestReviewers: (input) =>
+            Effect.sync(() => void calls.push(["reviewers", input.reviewers])),
+          runAction: (input) => Effect.sync(() => void calls.push(["action", input.action])),
+        },
+      });
+      yield* harness.call("pull_request_update", {
+        addLabels: ["bug"],
+        removeLabels: ["wip"],
+        requestReviewers: ["Octo", "acme/core"],
+        state: "closed",
+      });
+      expect(calls).toEqual([
+        ["labels", ["bug"], true],
+        ["labels", ["wip"], false],
+        [
+          "reviewers",
+          [
+            { id: "MDQ6VXNlcjE=", kind: "user" },
+            { id: "core", kind: "team" },
+          ],
+        ],
+        ["action", "close"],
+      ]);
+      const unknown = yield* harness
+        .call("pull_request_update", { requestReviewers: ["nobody"] })
+        .pipe(Effect.flip);
+      expect(unknown.message).toContain("No reviewer named nobody");
     }),
   );
 });

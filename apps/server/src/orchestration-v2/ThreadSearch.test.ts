@@ -1,10 +1,14 @@
 import { assert, it } from "@effect/vitest";
 import {
+  EnvironmentId,
   EventId,
   MessageId,
+  NodeId,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
+  TurnItemId,
   type OrchestrationV2DomainEvent,
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
@@ -15,19 +19,23 @@ import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+import { EXACT_PHRASE_GAP } from "@t3tools/shared/paletteSearch";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { rebuildMessageSearch } from "./messageSearchIndex.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadSearch from "./ThreadSearch.ts";
 
 const layerTest = Layer.mergeAll(
   ThreadSearch.layer,
-  ProjectionStore.layer,
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
   ProjectStore.layer,
 ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
@@ -127,6 +135,7 @@ const message = (
     readonly minute?: number;
     readonly streaming?: boolean;
     readonly createdBy?: "user" | "agent";
+    readonly runId?: RunId;
   } = {},
 ): OrchestrationV2DomainEvent => ({
   id: EventId.make(`message:${id}`),
@@ -139,7 +148,7 @@ const message = (
     creationSource: role === "user" ? "web" : "provider",
     id: MessageId.make(id),
     threadId,
-    runId: null,
+    runId: options.runId ?? null,
     nodeId: null,
     role,
     text,
@@ -148,6 +157,20 @@ const message = (
     createdAt: at(options.minute ?? 1),
     updatedAt: at(options.minute ?? 1),
   },
+});
+
+// The prefix and suffix are hidden selection context, not text the reader sees.
+const quote = serializeAssistantCitation({
+  version: 1,
+  environmentId: EnvironmentId.make("environment:local"),
+  threadId: ThreadId.make("thread:quoted"),
+  messageId: MessageId.make("quoted-answer"),
+  text: "A lighthouse guides ships safely through the darkness.",
+  comment: "what are you talking about",
+  start: 0,
+  end: 54,
+  prefix: "beacon01",
+  suffix: "harbor",
 });
 
 it.effect.each([true, false])(
@@ -270,7 +293,7 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       for (const match of ['"needle"', null]) {
         const plan = yield* sql<{
           readonly detail: string;
-        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", shortSpellings: "[]", projectId: null, excludedThreadIds: "[]" })}`;
+        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", shortSpellings: "[]", hitLimit: 2000, projectIds: null, excludedThreadIds: "[]" })}`;
         assert.isFalse(
           plan.some((row) => row.detail.includes("TEMP B-TREE")),
           plan.map((row) => row.detail).join("\n"),
@@ -284,6 +307,15 @@ it.layer(layerTest)("ThreadSearch", (it) => {
             plan.map((row) => row.detail).join("\n"),
           );
         }
+        // A cancelled run can hold tens of thousands of items; scanning them per hit took 50 s.
+        assert.isTrue(
+          plan.some(
+            (row) =>
+              row.detail.includes("orchestration_v2_projection_turn_items_message_ordinal_idx") &&
+              row.detail.includes("<expr>=?"),
+          ),
+          plan.map((row) => row.detail).join("\n"),
+        );
       }
     }),
   );
@@ -349,6 +381,96 @@ it.layer(layerTest)("ThreadSearch", (it) => {
     }),
   );
 
+  it.effect("matches the readable text of quotes and their comments", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:search-citation");
+      const threadId = ThreadId.make("thread:citation");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(threadId, project),
+          message(threadId, "citation", "user", `${quote} quiet silver lantern`),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const snippets = (query: string) =>
+        Effect.map(search.search({ query }), (result) =>
+          result.matches
+            .filter((match) => match.threadId === threadId)
+            .map((match) => match.snippet),
+        );
+
+      const readable =
+        "A lighthouse guides ships safely through the darkness. Comment: what are you talking about quiet silver lantern";
+      assert.deepEqual(yield* snippets("what are you talking about"), [
+        `…${readable.slice(readable.indexOf("the darkness"))}`,
+      ]);
+      assert.deepEqual(yield* snippets("ships safely through"), [readable]);
+      assert.deepEqual(yield* snippets("beacon01"), []);
+      assert.deepEqual(yield* snippets("harbor"), []);
+
+      yield* projections.apply(message(threadId, "citation", "user", "quiet silver lantern"));
+      assert.deepEqual(yield* snippets("what are you talking about"), []);
+      assert.deepEqual(yield* snippets("lantern"), ["quiet silver lantern"]);
+    }),
+  );
+
+  it.effect("finds accented, CJK, and apostrophe words of a quote through the index", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:search-citation-index");
+      const threadId = ThreadId.make("thread:citation-index");
+      // The stored link percent-encodes these words; the index must hold them as they read.
+      const encodedQuote = serializeAssistantCitation({
+        version: 1,
+        environmentId: EnvironmentId.make("environment:local"),
+        threadId: ThreadId.make("thread:quoted"),
+        messageId: MessageId.make("quoted-answer"),
+        text: "The kittiwake's résumé mentions 灯台の光 twice.",
+        comment: "naïve question в логах",
+        start: 0,
+        end: 44,
+        prefix: "",
+        suffix: "",
+      });
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [thread(threadId, project), message(threadId, "citation-index", "user", encodedQuote)],
+        projections.apply,
+        { discard: true },
+      );
+      const index = yield* sql`
+        SELECT 1 FROM sqlite_master WHERE name = 'orchestration_v2_message_search'
+      `;
+      assert.lengthOf(index, 1);
+      const threadIds = (query: string) =>
+        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
+
+      for (const query of [
+        "kittiwake's",
+        "kittiwake’s",
+        "résumé",
+        "灯台の光",
+        "naïve",
+        "логах в",
+      ]) {
+        assert.deepEqual(yield* threadIds(query), [threadId], query);
+      }
+      // `t3 doctor` rebuilds the index after VACUUM; quotes must still read.
+      yield* rebuildMessageSearch(sql);
+      assert.deepEqual(yield* threadIds("résumé"), [threadId]);
+
+      yield* projections.apply(message(threadId, "citation-index", "user", "plain words"));
+      assert.deepEqual(yield* threadIds("résumé"), []);
+      assert.deepEqual(yield* threadIds("plain"), [threadId]);
+    }),
+  );
+
   it.effect("indexes a message when it finishes streaming and follows later edits", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -387,6 +509,12 @@ it.layer(layerTest)("ThreadSearch", (it) => {
         [
           thread(parent, project),
           message(parent, "parent", "user", "Rename ThreadSearchService before shipping"),
+          message(
+            parent,
+            "webhook",
+            "assistant",
+            "Run it with https://relay.test/v1/hooks/0123456789abcdef/scheduled-task:7f3a9c1e/whk_secretvalue",
+          ),
           thread(subagent, project, { subagentOf: parent }),
           message(subagent, "subagent", "assistant", "ThreadSearchService renamed"),
           thread(sideChat, project, { sideChatOf: parent, title: "ThreadSearchService question" }),
@@ -401,6 +529,12 @@ it.layer(layerTest)("ThreadSearch", (it) => {
         result.matches.map((match) => [match.threadId, match.snippet]),
         [[parent, "Rename ThreadSearchService before shipping"]],
       );
+      // A snippet cut inside a webhook URL shows its token as withheld, and the token is not searchable.
+      assert.deepEqual(
+        (yield* search.search({ query: "7f3a9c1e" })).matches.map((match) => match.snippet),
+        ["…89abcdef/scheduled-task:7f3a9c1e/[withheld]"],
+      );
+      assert.deepEqual((yield* search.search({ query: "whk_secretvalue" })).matches, []);
       // "ab" alone cannot use the index; with a longer token it narrows the hits.
       assert.deepEqual((yield* search.search({ query: "ab" })).matches, []);
       assert.lengthOf((yield* search.search({ query: "renam be" })).matches, 1);
@@ -584,6 +718,56 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
     }),
   );
 
+  it.effect("finds a query in double quotes only where its words are together", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:exact");
+      const together = ThreadId.make("thread:exact-together");
+      const wrapped = ThreadId.make("thread:exact-wrapped");
+      const apart = ThreadId.make("thread:exact-apart");
+      const apartText = `missing notes. ${"Other words. ".repeat(8)}The osprey files`;
+      // Wrapped as far apart as the matcher accepts: the index must still read it.
+      const wrappedText = ["still missing", "osprey", "files"].join(
+        `\n${" ".repeat(EXACT_PHRASE_GAP - 1)}`,
+      );
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(together, project),
+          message(together, "exact-together", "user", "the Missing osprey files turned up"),
+          message(together, "exact-short-word", "user", "an osprey is back"),
+          thread(wrapped, project),
+          message(wrapped, "exact-wrapped", "assistant", wrappedText),
+          thread(apart, project),
+          message(apart, "exact-apart", "user", apartText),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const threadIds = (query: string) =>
+        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
+      assert.sameMembers(yield* threadIds("missing osprey files"), [together, wrapped, apart]);
+      assert.sameMembers(yield* threadIds('"missing osprey files"'), [together, wrapped]);
+      // Newer messages with the words apart, or close but not together, do not hide the phrase:
+      // the first would fill the candidates the index reads, the second the hits it returns.
+      const addNewer = (id: string, text: string, count: number) => sql`
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${count})
+        INSERT INTO orchestration_v2_projection_messages
+          (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+        SELECT ${id} || i, ${apart}, 'user', 0,
+          ${DateTime.formatIso(at(5))}, ${DateTime.formatIso(at(5))}, json_object('text', ${text})
+        FROM n
+      `;
+      yield* addNewer("exact-close:", "missing the osprey files", 2000);
+      // Nor when the index can read only one of the phrase's words.
+      assert.sameMembers(yield* threadIds('"osprey is"'), [together]);
+      yield* addNewer("exact-apart:", apartText, 10_000);
+      assert.sameMembers(yield* threadIds('"missing osprey files"'), [together, wrapped]);
+    }),
+  );
+
   it.effect("keeps a thread picked for the query when the limit cuts", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -625,47 +809,132 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
     }),
   );
 
-  it.effect("finds a curly apostrophe for a straight one and back", () =>
-    Effect.gen(function* () {
-      const projections = yield* ProjectionStore.ProjectionStoreV2;
-      const search = yield* ThreadSearch.ThreadSearch;
-      const project = ProjectId.make("project:apostrophes");
-      const curly = ThreadId.make("thread:apostrophe-curly");
-      const straight = ThreadId.make("thread:apostrophe-straight");
-      yield* createProject(project);
-      yield* Effect.forEach(
-        [
-          thread(curly, project),
-          message(curly, "apostrophe-curly", "user", "the gannet\u2019s nest"),
-          thread(straight, project),
-          message(straight, "apostrophe-straight", "user", "a kittiwake's nest"),
-        ],
-        projections.apply,
-        { discard: true },
-      );
-      const threadIds = (query: string) =>
-        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
-      assert.deepEqual(yield* threadIds("gannet's"), [curly]);
-      assert.deepEqual(yield* threadIds("kittiwake\u2019s"), [straight]);
-    }),
-  );
-
-  it.effect("leaves out answers to an agent's question, which show in its card", () =>
+  it.effect("leaves out answers in their question card and turns the thread hides", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const search = yield* ThreadSearch.ThreadSearch;
       const project = ProjectId.make("project:answers");
       const asked = ThreadId.make("thread:answers");
+      const rewound = ThreadId.make("thread:rewound");
+      const queued = ThreadId.make("thread:queued");
+      const stopped = ThreadId.make("thread:stopped");
+      const recovered = ThreadId.make("thread:recovered");
+      const restarted = ThreadId.make("thread:restarted");
+      const run = (owner: ThreadId, status: "rolled_back" | "cancelled", started = true) =>
+        ({
+          id: EventId.make(`run:${owner}`),
+          type: "run.created",
+          threadId: owner,
+          runId: RunId.make(`run:${owner}`),
+          nodeId: NodeId.make(`node:${owner}`),
+          providerInstanceId,
+          occurredAt: at(2),
+          payload: {
+            id: RunId.make(`run:${owner}`),
+            threadId: owner,
+            ordinal: 1,
+            providerInstanceId,
+            modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+            providerThreadId: null,
+            userMessageId: MessageId.make(`${owner}:prompt`),
+            rootNodeId: NodeId.make(`node:${owner}`),
+            activeAttemptId: null,
+            status,
+            requestedAt: at(1),
+            startedAt: started ? at(1) : null,
+            completedAt: at(2),
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        }) satisfies OrchestrationV2DomainEvent;
+      const shown = (owner: ThreadId, id: string, as: "turn_start" | "queued_turn" | "reply") =>
+        ({
+          id: EventId.make(`item:${id}`),
+          type: "turn-item.updated",
+          threadId: owner,
+          occurredAt: at(2),
+          payload: {
+            id: TurnItemId.make(id),
+            threadId: owner,
+            runId: RunId.make(`run:${owner}`),
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed",
+            title: null,
+            startedAt: at(1),
+            completedAt: at(1),
+            updatedAt: at(1),
+            messageId: MessageId.make(id),
+            text: "",
+            ...(as === "reply"
+              ? { type: "assistant_message", streaming: false }
+              : {
+                  type: "user_message",
+                  inputIntent: as,
+                  attachments: [],
+                  createdBy: "user",
+                  creationSource: "web",
+                }),
+          },
+        }) satisfies OrchestrationV2DomainEvent;
       yield* createProject(project);
       yield* Effect.forEach(
         [
           thread(asked, project),
           message(asked, "async-answer:request-1", "user", "use the albatross drive"),
+          thread(rewound, project),
+          run(rewound, "rolled_back"),
+          message(rewound, "rewound-reply", "assistant", "the albatross drive is ready", {
+            runId: RunId.make(`run:${rewound}`),
+          }),
+          thread(queued, project),
+          run(queued, "cancelled", false),
+          message(queued, "queued-prompt", "user", "then mount the albatross drive", {
+            runId: RunId.make(`run:${queued}`),
+          }),
+          // A queued prompt usually has no item; an edited one has a queued item.
+          message(queued, "requeued-prompt", "user", "then eject the albatross drive", {
+            runId: RunId.make(`run:${queued}`),
+          }),
+          shown(queued, "requeued-prompt", "queued_turn"),
+          // A stopped turn keeps its prompt and whatever the agent already said.
+          thread(stopped, project),
+          run(stopped, "cancelled"),
+          message(stopped, "stopped-prompt", "user", "format the albatross drive", {
+            runId: RunId.make(`run:${stopped}`),
+          }),
+          shown(stopped, "stopped-prompt", "turn_start"),
+          thread(recovered, project),
+          run(recovered, "cancelled"),
+          message(recovered, "recovered-reply", "assistant", "the albatross drive is formatted", {
+            runId: RunId.make(`run:${recovered}`),
+          }),
+          shown(recovered, "recovered-reply", "reply"),
+          // A restart cancels a turn that already took its queued prompt.
+          thread(restarted, project),
+          run(restarted, "cancelled"),
+          message(restarted, "delivered-prompt", "user", "then label the albatross drive", {
+            runId: RunId.make(`run:${restarted}`),
+          }),
+          shown(restarted, "delivered-prompt", "queued_turn"),
         ],
         projections.apply,
         { discard: true },
       );
-      assert.deepEqual((yield* search.search({ query: "albatross" })).matches, []);
+      assert.deepEqual(
+        (yield* search.search({ query: "albatross" })).matches
+          .map((match) => match.messageId)
+          .sort(),
+        [
+          MessageId.make("delivered-prompt"),
+          MessageId.make("recovered-reply"),
+          MessageId.make("stopped-prompt"),
+        ],
+      );
     }),
   );
 
@@ -676,6 +945,7 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
       const project = ProjectId.make("project:heron");
       const labeled = ThreadId.make("thread:heron-label");
       const addressOnly = ThreadId.make("thread:heron-address");
+      const mention = ThreadId.make("thread:heron-mention");
       yield* createProject(project);
       yield* Effect.forEach(
         [
@@ -683,6 +953,13 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
           message(labeled, "heron-label", "assistant", "See [the heron plan](https://x.dev/a) now"),
           thread(addressOnly, project),
           message(addressOnly, "heron-address", "user", "Read [this](https://heron.dev/b)"),
+          thread(mention, project),
+          message(
+            mention,
+            "heron-mention",
+            "user",
+            String.raw`Fix [\_\_init\_\_.py](pkg/__init__.py), [\_café\_.py](pkg/_caf%C3%A9_.py), [\~\~draft\~\~.md](./notes/~~draft~~.md), [&#91;TODO&#93;.md](notes/%5BTODO%5D.md), and [\&#91;lit\&#93;.md](./notes/%26%2391;lit%26%2393;.md)`,
+          ),
         ],
         projections.apply,
         { discard: true },
@@ -692,6 +969,21 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
         matches.map((match) => [match.threadId, match.snippet]),
         [[labeled, "See the heron plan now"]],
       );
+      for (const query of [
+        "__init__.py",
+        "_café_.py",
+        "~~draft~~.md",
+        "[TODO",
+        "[TODO].md",
+        "&#91;lit&#93;.md",
+      ]) {
+        const mentions = yield* search.search({ query });
+        assert.deepEqual(
+          mentions.matches.map((match) => [match.threadId, match.snippet.includes(query)]),
+          [[mention, true]],
+        );
+      }
+      assert.deepEqual((yield* search.search({ query: "[lit" })).matches, []);
     }),
   );
 
@@ -733,7 +1025,7 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
 });
 
 it.effect.each([true, false])(
-  "ThreadSearch narrows short words outside ASCII before the hit limit (indexed: %s)",
+  "ThreadSearch narrows Cyrillic and accent-folded Latin short words before the hit limit (indexed: %s)",
   (indexed) =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -741,12 +1033,15 @@ it.effect.each([true, false])(
       const sql = yield* SqlClient.SqlClient;
       const project = ProjectId.make("project:short-limit");
       const older = ThreadId.make("thread:short-older");
+      const olderFrench = ThreadId.make("thread:short-older-french");
       const newer = ThreadId.make("thread:short-newer");
       yield* createProject(project);
       yield* Effect.forEach(
         [
           thread(older, project),
           message(older, "older", "user", "В логах ошибка"),
+          thread(olderFrench, project),
+          message(olderFrench, "older-french", "user", "École fermée à Lyon"),
           thread(newer, project),
         ],
         projections.apply,
@@ -763,15 +1058,53 @@ it.effect.each([true, false])(
         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000)
         INSERT INTO orchestration_v2_projection_messages
           (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
-        SELECT 'short-newer-' || i, ${newer}, 'assistant', 0, ${DateTime.formatIso(at(5))},
-          ${DateTime.formatIso(at(5))}, json_object('text', 'ошибка здесь')
-        FROM n
+        SELECT 'short-newer-' || i || '-' || word, ${newer}, 'assistant', 0,
+          ${DateTime.formatIso(at(5))}, ${DateTime.formatIso(at(5))}, json_object('text', text)
+        FROM n, (SELECT 'ru' AS word, 'ошибка здесь' AS text UNION ALL SELECT 'fr', 'fermée ici')
       `;
-      const { matches } = yield* search.search({ query: "ошибка в" });
-      assert.deepEqual(
-        matches.map((match) => match.threadId),
-        [older],
+      const threadIds = (query: string) =>
+        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
+      assert.deepEqual(yield* threadIds("ошибка в"), [older]);
+      assert.deepEqual(yield* threadIds("fermée ec"), [olderFrench]);
+    }).pipe(Effect.provide(layerTest)),
+);
+
+// A two-character CJK word is too short for the index, so it scans even with the index.
+it.effect.each([true, false])(
+  "ThreadSearch finds a curly apostrophe for a straight one and back (indexed: %s)",
+  (indexed) =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:apostrophes");
+      const curly = ThreadId.make("thread:apostrophe-curly");
+      const straight = ThreadId.make("thread:apostrophe-straight");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(curly, project),
+          message(curly, "apostrophe-curly", "user", "部署 the gannet\u2019s nest"),
+          thread(straight, project),
+          message(straight, "apostrophe-straight", "user", "部署 a kittiwake's nest"),
+        ],
+        projections.apply,
+        { discard: true },
       );
+      if (!indexed) {
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_update`;
+        yield* sql`DROP TRIGGER orchestration_v2_message_search_delete`;
+        yield* sql`DROP TABLE orchestration_v2_message_search`;
+      }
+      const threadIds = (query: string) =>
+        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
+      for (const query of ["gannet's", "部署 gannet's"]) {
+        assert.deepEqual(yield* threadIds(query), [curly], query);
+      }
+      for (const query of ["kittiwake\u2019s", "部署 kittiwake\u2019s"]) {
+        assert.deepEqual(yield* threadIds(query), [straight], query);
+      }
     }).pipe(Effect.provide(layerTest)),
 );
 
@@ -791,6 +1124,9 @@ it.layer(layerTest)("ThreadSearch short words outside ASCII", (it) => {
           message(russian, "russian", "user", "В логах ошибка"),
           thread(french, project),
           message(french, "french", "user", "École fermée à Lyon"),
+          message(french, "french-shout", "user", "Météo école"),
+          message(french, "romanian", "user", "Școala închisă"),
+          message(french, "vietnamese", "user", "Hồ Chí Minh"),
         ],
         projections.apply,
         { discard: true },
@@ -801,8 +1137,13 @@ it.layer(layerTest)("ThreadSearch short words outside ASCII", (it) => {
       const assertMatches = Effect.gen(function* () {
         assert.deepEqual(yield* threadIds("ошибка в"), [russian]);
         assert.deepEqual(yield* threadIds("fermée éc"), [french]);
+        assert.deepEqual(yield* threadIds("ecole fermée"), [french]);
+        assert.deepEqual(yield* threadIds("école me"), [french]);
+        assert.deepEqual(yield* threadIds("închisă sc"), [french]);
+        assert.deepEqual(yield* threadIds("chí ho"), [french]);
         // They still narrow: a word the message lacks rules it out.
         assert.deepEqual(yield* threadIds("ошибка я"), []);
+        assert.deepEqual(yield* threadIds("fermée ce"), []);
       });
       yield* assertMatches;
       yield* sql`DROP TABLE orchestration_v2_message_search`;
@@ -901,12 +1242,22 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
           thread(id("elsewhere"), other, { title: "Kestrel nest", settledAt: old }),
           thread(id("note"), project, { title: "Unrelated", settledAt: old }),
           thread(id("new-note"), project, { title: "Unrelated", settledAt: at(50) }),
+          thread(id("archived"), project, {
+            title: "Kestrel nest",
+            settledAt: old,
+            archivedAt: old,
+          }),
+          thread(id("archived-note"), project, {
+            title: "Unrelated",
+            settledAt: old,
+            archivedAt: old,
+          }),
         ],
         projections.apply,
         { discard: true },
       );
       const before = DateTime.formatIso(at(30));
-      const messageThreadIds = [id("new-note"), id("note"), id("old")];
+      const messageThreadIds = [id("new-note"), id("note"), id("archived-note"), id("old")];
       assert.sameMembers(
         [...(yield* search.searchOlderSettled({ query: "kestrel", before, messageThreadIds }))],
         [id("old"), id("elsewhere"), id("note")],
@@ -983,7 +1334,9 @@ it.layer(layerTest)("ThreadSearch.searchThreadsWithOlderSettledRows", (it) => {
       const search = yield* ThreadSearch.ThreadSearch;
       const sql = yield* SqlClient.SqlClient;
       const project = ProjectId.make("project:plover");
+      const otherProject = ProjectId.make("project:plover-other");
       yield* createProject(project);
+      yield* createProject(otherProject);
       const old = ThreadId.make("thread:plover-old");
       const recent = ThreadId.make("thread:plover-recent");
       yield* Effect.forEach(
@@ -1021,18 +1374,40 @@ it.layer(layerTest)("ThreadSearch.searchThreadsWithOlderSettledRows", (it) => {
         titles.threads?.map((row) => row.id),
         [old],
       );
-      // Without the cut it is the plain message search.
-      assert.isUndefined(
-        (yield* ThreadSearch.searchThreadsWithOlderSettledRows({
-          request: { query: "plover" },
+      yield* Effect.forEach(
+        Array.from({ length: 50 }, (_, index) => {
+          const other = ThreadId.make(`thread:plover-other-${index}`);
+          return [
+            thread(other, otherProject),
+            message(other, `plover-other-${index}`, "user", "plover", { minute: 3 }),
+          ];
+        }).flat(),
+        projections.apply,
+        { discard: true },
+      );
+      const searchMessages = (projectIds?: ReadonlyArray<ProjectId>) =>
+        ThreadSearch.searchThreadsWithOlderSettledRows({
+          request: { query: "plover", ...(projectIds === undefined ? {} : { projectIds }) },
           search: search.search,
           searchOlderSettled: search.searchOlderSettled,
           sql,
           readThreads: (threadIds) =>
             projections.readShellSnapshot({ location: "active", threadIds }),
           latestSequence: Effect.succeed(7),
-        })).threads,
+        });
+      // Without the cut it is the plain message search.
+      const unscoped = yield* searchMessages();
+      assert.isUndefined(unscoped.threads);
+      assert.lengthOf(unscoped.matches, 50);
+      assert.notInclude(
+        unscoped.matches.map((match) => match.threadId),
+        recent,
       );
+      assert.deepEqual(
+        (yield* searchMessages([project])).matches.map((match) => match.threadId),
+        [recent],
+      );
+      assert.deepEqual((yield* searchMessages([])).matches, []);
     }),
   );
 });
@@ -1065,6 +1440,37 @@ it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
       assert.include(
         matches.map((match) => match.threadId),
         messageOnly,
+      );
+    }),
+  );
+
+  it.effect("keeps a better title match over a weaker one found by its messages", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:heron");
+      yield* createProject(project);
+      // Six titled threads that each also name the word in a message.
+      yield* Effect.forEach(
+        Array.from({ length: 6 }, (_, index) => {
+          const id = ThreadId.make(`thread:heron-${index + 1}`);
+          return [
+            thread(id, project, { title: `Heron ${index + 1}` }),
+            message(id, `heron-${index + 1}`, "user", "a heron sighting", { minute: 2 }),
+          ];
+        }).flat(),
+        projections.apply,
+        { discard: true },
+      );
+      const byTitle = (yield* search.searchThreads({ query: "heron", limit: 6 })).matches;
+      assert.deepStrictEqual(
+        byTitle.map((match) => match.source),
+        Array.from({ length: 6 }, () => "title"),
+      );
+      const { matches } = yield* search.searchThreads({ query: "heron", limit: 5 });
+      assert.deepStrictEqual(
+        matches.map((match) => match.threadId),
+        byTitle.slice(0, 5).map((match) => match.threadId),
       );
     }),
   );
@@ -1183,6 +1589,7 @@ it.effect("starts snippets a few words before the match so one line shows it", (
       snippet(`x${"🚀".repeat(200)}needle`, "needle"),
       /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/,
     );
+    assert.equal(snippet(`needle${" ".repeat(473)}🚀 tail`, "needle"), "needle 🚀…");
     // Emphasis and code marks go, as the thread shows the text.
     assert.equal(
       ThreadSearch.buildSearchSnippet("Use **bold** and `code` here", 0),
@@ -1201,7 +1608,7 @@ it.effect("searches on the reader worker while the writer is busy", () =>
     const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-thread-search-" });
     const layerFile = Layer.mergeAll(
       ThreadSearch.layer,
-      ProjectionStore.layer,
+      ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
       ProjectStore.layer,
     ).pipe(
       Layer.provideMerge(SqlitePersistence.layerFromPath(path.join(directory, "state.sqlite"))),

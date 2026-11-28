@@ -23,6 +23,14 @@
       "types": "./src/server/CursorAgentSdk.ts",
       "import": "./src/server/CursorAgentSdk.ts"
     },
+    "./server/CursorAgentSdkProcessRunner": {
+      "types": "./src/server/CursorAgentSdkProcessRunner.ts",
+      "import": "./src/server/CursorAgentSdkProcessRunner.ts"
+    },
+    "./server/worker": {
+      "types": "./src/server/CursorAgentSdkWorker.ts",
+      "import": "./src/server/CursorAgentSdkWorker.ts"
+    },
     "./server/accountUsage": {
       "types": "./src/server/accountUsage.ts",
       "import": "./src/server/accountUsage.ts"
@@ -45,11 +53,12 @@
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
-    "@cursor/sdk": "1.2.0",
+    "@cursor/sdk": "1.5.2",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "effect": "catalog:",
+    "jsonc-parser": "3.3.1",
     "yaml": "catalog:"
   },
   "devDependencies": {

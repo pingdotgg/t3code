@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -24,7 +25,10 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 
 const layerDatabase = Layer.mergeAll(
   SqlitePersistence.layerMemory,
-  ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+  ProjectionStore.layer.pipe(
+    Layer.provide(NodeCrypto.layerDigest),
+    Layer.provide(SqlitePersistence.layerMemory),
+  ),
 );
 
 it.effect.each(["sqlite"] as const)(
@@ -351,6 +355,37 @@ it.effect.each(["sqlite"] as const)(
       assert.include(
         (yield* store.getTurnStartContext(threadId, runId)).messages.map((m) => m.id),
         marker.id,
+      );
+      const originalId = MessageId.make("unsent-original");
+      yield* store.apply({
+        id: EventId.make("unsent-original-event"),
+        type: "message.updated",
+        threadId,
+        runId: oldRunId,
+        occurredAt: now,
+        payload: { ...message, id: originalId, runId: oldRunId, text: "Original request" },
+      });
+      yield* putRun({
+        ...run,
+        id: oldRunId,
+        ordinal: 1,
+        status: "interrupted",
+        userMessageId: originalId,
+      });
+      const retryId = RunId.make("unsent-retry");
+      yield* putRun({ ...run, ordinal: 3, manualContinuationOfRunId: retryId });
+      yield* putRun({
+        ...run,
+        id: retryId,
+        ordinal: 2,
+        status: "interrupted",
+        manualContinuationOfRunId: oldRunId,
+      });
+      assert.equal(
+        (yield* store.getTurnStartContext(threadId, runId)).messages.find(
+          (m) => m.id === originalId,
+        )?.text,
+        "Original request",
       );
       const other = ThreadId.make("other");
       yield* putThread({ ...thread, id: other });

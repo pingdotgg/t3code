@@ -80,51 +80,73 @@ describe("makeDrainableWorker", () => {
     }).pipe(Effect.provide(loggerLayer));
   });
 
-  it.live("waits for work enqueued during active processing before draining", () =>
+  it.effect("waits for work enqueued during active processing before draining", () =>
+    Effect.gen(function* () {
+      const processed: string[] = [];
+      const firstStarted = yield* Deferred.make<void>();
+      const releaseFirst = yield* Deferred.make<void>();
+      const secondStarted = yield* Deferred.make<void>();
+      const releaseSecond = yield* Deferred.make<void>();
+
+      const worker = yield* makeDrainableWorker((item: string) =>
+        Effect.gen(function* () {
+          if (item === "first") {
+            yield* Deferred.succeed(firstStarted, undefined).pipe(Effect.orDie);
+            yield* Deferred.await(releaseFirst);
+          }
+
+          if (item === "second") {
+            yield* Deferred.succeed(secondStarted, undefined).pipe(Effect.orDie);
+            yield* Deferred.await(releaseSecond);
+          }
+
+          processed.push(item);
+        }),
+      );
+
+      yield* worker.enqueue("first");
+      yield* Deferred.await(firstStarted);
+
+      const drained = yield* Deferred.make<void>();
+      yield* Effect.forkChild(
+        worker.drain.pipe(
+          Effect.tap(() => Deferred.succeed(drained, undefined).pipe(Effect.orDie)),
+        ),
+      );
+
+      yield* worker.enqueue("second");
+      yield* Deferred.succeed(releaseFirst, undefined);
+      yield* Deferred.await(secondStarted);
+
+      expect(yield* Deferred.isDone(drained)).toBe(false);
+
+      yield* Deferred.succeed(releaseSecond, undefined);
+      yield* Deferred.await(drained);
+
+      expect(processed).toEqual(["first", "second"]);
+    }),
+  );
+
+  it.effect("processes each item in its own trace, not the creating span's", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const processed: string[] = [];
-        const firstStarted = yield* Deferred.make<void>();
-        const releaseFirst = yield* Deferred.make<void>();
-        const secondStarted = yield* Deferred.make<void>();
-        const releaseSecond = yield* Deferred.make<void>();
-
-        const worker = yield* makeDrainableWorker((item: string) =>
-          Effect.gen(function* () {
-            if (item === "first") {
-              yield* Deferred.succeed(firstStarted, undefined).pipe(Effect.orDie);
-              yield* Deferred.await(releaseFirst);
-            }
-
-            if (item === "second") {
-              yield* Deferred.succeed(secondStarted, undefined).pipe(Effect.orDie);
-              yield* Deferred.await(releaseSecond);
-            }
-
-            processed.push(item);
-          }),
-        );
-
-        yield* worker.enqueue("first");
-        yield* Deferred.await(firstStarted);
-
-        const drained = yield* Deferred.make<void>();
-        yield* Effect.forkChild(
-          worker.drain.pipe(
-            Effect.tap(() => Deferred.succeed(drained, undefined).pipe(Effect.orDie)),
+        const traceIds: string[] = [];
+        const span = yield* Effect.makeSpan("owner");
+        const worker = yield* makeDrainableWorker((_: number) =>
+          Effect.currentSpan.pipe(
+            Effect.flatMap((current) => Effect.sync(() => traceIds.push(current.traceId))),
+            Effect.withSpan("item"),
+            Effect.orDie,
           ),
-        );
+        ).pipe(Effect.withParentSpan(span));
 
-        yield* worker.enqueue("second");
-        yield* Deferred.succeed(releaseFirst, undefined);
-        yield* Deferred.await(secondStarted);
+        yield* worker.enqueue(1);
+        yield* worker.enqueue(2);
+        yield* worker.drain;
 
-        expect(yield* Deferred.isDone(drained)).toBe(false);
-
-        yield* Deferred.succeed(releaseSecond, undefined);
-        yield* Deferred.await(drained);
-
-        expect(processed).toEqual(["first", "second"]);
+        expect(traceIds).toHaveLength(2);
+        expect(traceIds).not.toContain(span.traceId);
+        expect(traceIds[0]).not.toEqual(traceIds[1]);
       }),
     ),
   );

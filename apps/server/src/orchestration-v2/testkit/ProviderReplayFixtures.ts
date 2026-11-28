@@ -8,6 +8,7 @@ import * as Path from "effect/Path";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { readProviderReplayTranscript } from "@t3tools/provider-testing/replayTranscript";
+import type { ProviderInstanceRegistry } from "../../provider/ProviderInstanceRegistry.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
 import {
@@ -94,6 +95,8 @@ export interface ReplayFixtureCase {
   readonly buildInput: () => OrchestratorFixtureInput;
   readonly driver: ProviderOrchestratorReplayVariant;
   readonly transformTranscript?: (transcript: ProviderReplayTranscript) => ProviderReplayTranscript;
+  /** The instances the ingestor reads snapshots from, such as an endpoint behind a hub. */
+  readonly providerInstances?: Partial<ProviderInstanceRegistry["Service"]>;
 }
 
 export interface ReplayFixtureRun<
@@ -145,11 +148,12 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
     },
   };
 
-  const result = yield* runOrchestratorV2ProviderReplayScenario(
-    scenario,
-    input.harness,
-    input.driver.runContinuationWorker === true ? { runContinuationWorker: true } : {},
-  ).pipe(provideDeterministicTestRuntime);
+  const result = yield* runOrchestratorV2ProviderReplayScenario(scenario, input.harness, {
+    ...(input.driver.runContinuationWorker === true ? { runContinuationWorker: true } : {}),
+    ...(input.providerInstances === undefined
+      ? {}
+      : { providerInstances: input.providerInstances }),
+  }).pipe(provideDeterministicTestRuntime);
   input.driver.assertOutput(result, transcript);
   assertProviderNativeSubagentRootTurns(result);
   const expectedAbsentWorkspacePaths = input.driver.expectedAbsentWorkspacePaths;

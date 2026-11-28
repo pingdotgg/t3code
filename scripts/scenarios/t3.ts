@@ -1,34 +1,72 @@
 // `test` for web scenarios: e2e's web test plus `t3`, which seeds state and opens the signed-in
 // app. `t3-mobile.ts` is the same for the iOS app.
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { test as base } from "@e2e-dev/web";
+import * as NodeWS from "@effect/platform-node/NodeWS";
+import { test as base, type Cookie } from "@e2e-dev/web";
+import {
+  CommandId,
+  EnvironmentHttpApi,
+  ORCHESTRATION_PROTOCOL_VERSION,
+  type ProjectMutation,
+  ProjectId,
+  WsRpcGroup,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Clock from "effect/Clock";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import {
+  Cookies,
+  FetchHttpClient,
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/http";
+import { RpcClient, RpcSerialization } from "effect/rpc";
+import { Socket } from "effect/socket";
 
 import { APP_DIR, T3_HOME } from "../e2e.config.ts";
-import { run } from "./shell.ts";
+import { run, ScenarioError } from "./shell.ts";
 
 export interface T3State {
   /** Creates a git repository holding `files` and adds it as a project. Returns its path. */
-  readonly project: (title: string, files?: Readonly<Record<string, string>>) => Promise<string>;
+  readonly project: (
+    title: string,
+    files?: Readonly<Record<string, string | Uint8Array>>,
+  ) => Promise<string>;
   /**
    * Starts a thread in a project and plays one replayed turn per message before returning.
-   * `model` is a dev replay recording: showcase, todo-list, approval, question, multi-turn.
+   * `model` is a dev replay recording: showcase, todo-list, approval, question, multi-turn,
+   * command-output.
    */
   readonly thread: (input: {
     readonly project: string;
     readonly title: string;
     readonly messages: ReadonlyArray<string>;
     readonly model?: string;
-  }) => Promise<void>;
+  }) => Promise<T3Thread>;
+}
+
+export interface T3Thread {
+  readonly threadId: string;
 }
 
 export interface T3 extends T3State {
-  /** Opens the app, signed in, at `path`. */
-  readonly open: (path?: string) => Promise<void>;
+  /** Registers a project created through the UI for deletion during fixture teardown. */
+  readonly trackProject: (id: string) => void;
+  /**
+   * Opens the app, signed in, at a path or on a thread `t3.thread` returned. Opening the thread
+   * by its link is the reliable way to reach it: a sidebar row covers its own title text.
+   */
+  readonly open: (target?: string | T3Thread) => Promise<void>;
 }
 
 /** e2e's fixtures are promise functions; this is the one place an Effect becomes a promise. */
@@ -39,7 +77,28 @@ const decodeLaunched = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ threadId: Schema.String })),
 );
 
-/** State for the server on `home`, made through the app's own CLI: real events, not inserted rows. */
+const decodeRuntimeState = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ origin: Schema.String, startedAt: Schema.String })),
+);
+
+type ServerApi = {
+  readonly client: HttpApiClient.ForApi<typeof EnvironmentHttpApi>;
+  readonly headers: { readonly authorization: string };
+};
+
+/**
+ * One API client per running server, signed in once. Each CLI call starts a process that takes
+ * about 0.7 s before it does anything, so per-test state goes through the server's HTTP API. A
+ * server started again on the same home, as the second server is for each test, gets a new one.
+ */
+const serverApis = new Map<string, Promise<ServerApi>>();
+
+const uuid = SecureRandom.SecureRandom.pipe(
+  Effect.flatMap((random) => random.uuidV4()),
+  Effect.provide(NodeCrypto.layer),
+);
+
+/** State for the server on `home`, made through the app's own CLI and API: real events, not inserted rows. */
 export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
   const cli = Effect.fn("scenario.cli")(function* (
     args: ReadonlyArray<string>,
@@ -56,11 +115,56 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
       },
     );
   });
-  const projects: Array<string> = [];
+
+  // The server writes its origin beside its database once it listens. It also prints its pairing
+  // token, which can come first, so a missing file is read again.
+  const runtimeState = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* decodeRuntimeState(
+      yield* fs.readFileString(path.join(home, "userdata", "server-runtime.json")),
+    );
+  }).pipe(
+    Effect.retry({
+      schedule: Schedule.spaced("50 millis"),
+      times: 100,
+      while: (error) => error._tag === "PlatformError" && error.reason._tag === "NotFound",
+    }),
+  );
+  const connect = Effect.fn("scenario.connect")(function* (origin: string) {
+    const issued = yield* cli(["auth", "session", "issue", "--token-only", "--label", "scenario"]);
+    const client = yield* HttpApiClient.make(EnvironmentHttpApi, { baseUrl: origin });
+    return { client, headers: { authorization: `Bearer ${issued.stdout.trim()}` } };
+  }, Effect.provide(FetchHttpClient.layer));
+  const api = Effect.gen(function* () {
+    const { origin, startedAt } = yield* runtimeState;
+    const key = `${home}\n${origin}\n${startedAt}`;
+    return yield* Effect.tryPromise({
+      try: () => {
+        const known = serverApis.get(key);
+        if (known !== undefined) return known;
+        const connecting = runPromise(connect(origin));
+        serverApis.set(key, connecting);
+        // A failed sign-in is not kept: the next test tries again.
+        connecting.catch(() => serverApis.delete(key));
+        return connecting;
+      },
+      catch: (cause) => new ScenarioError({ message: `Could not reach the server API: ${cause}` }),
+    });
+  });
+  const mutate = Effect.fn("scenario.mutate")(function* (mutation: ProjectMutation) {
+    const { client, headers } = yield* api;
+    return yield* client.projects
+      .mutate({ headers, payload: mutation })
+      .pipe(
+        Effect.mapError((cause) => new ScenarioError({ message: `${mutation.type}: ${cause}` })),
+      );
+  });
+  const projects: Array<ProjectId> = [];
 
   const project = Effect.fn("scenario.project")(function* (
     title: string,
-    files: Readonly<Record<string, string>>,
+    files: Readonly<Record<string, string | Uint8Array>>,
   ) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -73,15 +177,23 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
     const workspace = path.join(parent, title);
     for (const [file, content] of Object.entries({ "README.md": "", ...files })) {
       yield* fs.makeDirectory(path.dirname(path.join(workspace, file)), { recursive: true });
-      yield* fs.writeFileString(path.join(workspace, file), content);
+      yield* typeof content === "string"
+        ? fs.writeFileString(path.join(workspace, file), content)
+        : fs.writeFile(path.join(workspace, file), content);
     }
     const git = (args: ReadonlyArray<string>) => run("git", args, { cwd: workspace });
     const author = ["-c", "user.name=Scenario", "-c", "user.email=scenario@example.invalid"];
     yield* git(["init", "--quiet", "--initial-branch=main"]);
     yield* git(["add", "--all"]);
     yield* git([...author, "commit", "--quiet", "--message", "Initial commit"]);
-    yield* cli(["project", "add", workspace, "--title", title]);
-    projects.push(workspace);
+    const created = yield* mutate({
+      type: "project.create",
+      commandId: CommandId.make(yield* uuid),
+      projectId: ProjectId.make(yield* uuid),
+      title,
+      workspaceRoot: workspace,
+    });
+    projects.push(created.id);
     return workspace;
   });
 
@@ -99,10 +211,14 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
     const started = yield* turn(["start", input.project, first, "--title", input.title, ...replay]);
     const { threadId } = yield* decodeLaunched(started.stdout);
     for (const message of rest) yield* turn(["send", threadId, message]);
+    return { threadId } satisfies T3Thread;
   });
 
   return {
     cli,
+    trackProject: (id: string) => {
+      projects.push(ProjectId.make(id));
+    },
     state: {
       project: (title, files = {}) => runPromise(project(title, files)),
       thread: (input) => runPromise(thread(input)),
@@ -110,26 +226,122 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
     // The server outlives the test, so the next one must not see this one's projects.
     cleanup: Effect.forEach(
       projects,
-      (workspace) => cli(["project", "remove", workspace, "--force"]),
+      (projectId) =>
+        Effect.flatMap(uuid, (commandId) =>
+          mutate({
+            type: "project.delete",
+            commandId: CommandId.make(commandId),
+            projectId,
+            force: true,
+          }),
+        ),
       { discard: true },
     ),
   };
 }
 
-const readPairingPath = Effect.gen(function* () {
+const sameSite = { lax: "Lax", strict: "Strict", none: "None" } as const;
+
+/**
+ * Signs in the way the pairing page does and returns the session cookies. Opening the page
+ * instead races its reload after sign-in against the test's next `app.open`.
+ */
+const signIn = Effect.fn("scenario.signIn")(function* (baseUrl: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  return yield* fs.readFileString(path.join(T3_HOME, "pairing-path"));
+  const credential = yield* fs.readFileString(path.join(T3_HOME, "browser-dev-token"));
+  const client = yield* HttpApiClient.make(EnvironmentHttpApi, { baseUrl });
+  // Only the cookies are read: a proof runs this against a base server whose body may differ.
+  const response = yield* client.auth
+    .browserSession({ payload: { credential }, responseMode: "response-only" })
+    .pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.retry({
+        schedule: Schedule.spaced("500 millis"),
+        while: (error) => {
+          if (!HttpClientError.isHttpClientError(error)) return false;
+          const status = error.response?.status;
+          return (
+            error.reason._tag === "TransportError" ||
+            status === 502 ||
+            status === 503 ||
+            status === 504
+          );
+        },
+      }),
+      Effect.timeout("15 seconds"),
+    );
+  // Drops the expired cookies that only clear an older session.
+  const cookies = Cookies.mergeIntoArray(
+    [],
+    baseUrl,
+    response.cookies,
+    yield* Clock.currentTimeMillis,
+  );
+  return cookies.map(({ name, value, options = {} }): Cookie => ({
+    name,
+    value,
+    // The server sets no Domain and `Path=/`, which is what a cookie for the origin gets.
+    url: baseUrl,
+    ...(options.expires && { expires: Math.floor(options.expires.getTime() / 1000) }),
+    ...(options.httpOnly !== undefined && { httpOnly: options.httpOnly }),
+    ...(options.secure !== undefined && { secure: options.secure }),
+    ...(options.sameSite && { sameSite: sameSite[options.sameSite] }),
+  }));
+}, Effect.provide(FetchHttpClient.layer));
+
+/** The id every thread link starts with, asked of the server the app talks to. */
+export const environmentId = (baseUrl: string) =>
+  HttpClient.get(`${baseUrl}/.well-known/t3/environment`).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap(
+      HttpClientResponse.schemaBodyJson(Schema.Struct({ environmentId: Schema.String })),
+    ),
+    Effect.map((environment) => environment.environmentId),
+    Effect.provide(FetchHttpClient.layer),
+  );
+
+/** The typed RPC client of the server on `home` at `origin`, signed in through its own CLI. */
+export const rpcClient = Effect.fn("scenario.rpcClient")(function* (home: string, origin: string) {
+  const issued = yield* makeState(home).cli(["auth", "session", "issue", "--token-only"]);
+  const { ticket } = yield* HttpClient.execute(
+    HttpClientRequest.post(`${origin}/api/auth/websocket-ticket`).pipe(
+      HttpClientRequest.bearerToken(issued.stdout.trim()),
+    ),
+  ).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap(HttpClientResponse.schemaBodyJson(Schema.Struct({ ticket: Schema.String }))),
+    Effect.provide(FetchHttpClient.layer),
+  );
+  // Built into the caller's scope: `Effect.provide` would close the socket once `make` returns.
+  const protocol = yield* Layer.build(
+    RpcClient.layerProtocolSocket().pipe(
+      Layer.provide(
+        Socket.layerWebSocket(
+          `${origin.replace(/^http/, "ws")}/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL_VERSION}&wsTicket=${encodeURIComponent(ticket)}`,
+        ),
+      ),
+      Layer.provide(RpcSerialization.layerJson),
+      Layer.provide(NodeWS.layerWebSocketConstructor),
+    ),
+  );
+  return yield* RpcClient.make(WsRpcGroup).pipe(Effect.provideContext(protocol));
 });
 
 export const test = base.extend<{ t3: T3 }>({
-  t3: async ({ app }, use) => {
-    const { state, cleanup } = makeState(T3_HOME);
+  t3: async ({ app, browser }, use) => {
+    const { state, cleanup, trackProject } = makeState(T3_HOME);
     await use({
       ...state,
-      open: async (path = "/") => {
-        await app.open(await runPromise(readPairingPath));
-        if (path !== "/") await app.open(path);
+      trackProject,
+      open: async (target = "/") => {
+        const baseUrl = app.baseUrl ?? "";
+        await browser.setCookies(await runPromise(signIn(baseUrl)));
+        await app.open(
+          typeof target === "string"
+            ? target
+            : `/${await runPromise(environmentId(baseUrl))}/${target.threadId}`,
+        );
       },
     });
     await runPromise(cleanup);

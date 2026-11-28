@@ -12,6 +12,7 @@ import {
   ComposerListExtensions,
   ComposerTaskItemExtension,
   serializeEditorDoc,
+  splitOrLiftListItem,
 } from "./composer-rich-text-doc";
 
 // ProseMirror's DOM observer can flush on a timer after a test ends, which
@@ -60,7 +61,7 @@ function storedDraft(editor: Editor) {
 
 describe("Backspace at the start of a line", () => {
   it.each([
-    ["- a\n```\nl1\nl2\n```", "- a\nl1\nl2"],
+    ["- a\n```\nl1\nl2\n```", "- a\n\nl1\nl2"],
     ["p\n```ts\nl1\n```", "p\nl1"],
   ])("removes the fence of %j rather than joining its code up", (value, expected) => {
     using editor = makeEditor(value);
@@ -95,6 +96,20 @@ describe("blocks that a list item or quote cannot hold", () => {
     editor.view.dispatch(editor.state.tr.setSelection(TextSelection.atEnd(editor.state.doc)));
     const lines = buildTiptapContent("one\ntwo", (name) => ({ label: name, description: null }));
     editor.commands.insertContent(lines);
-    expect(storedDraft(editor)).toBe("- a\none\ntwo");
+    expect(storedDraft(editor)).toBe("- a\n\none\ntwo");
+  });
+});
+
+describe("Enter in a list item", () => {
+  it.each([
+    ["* [x] done", "* [x] done\n* [ ] "],
+    ["1. [x] done", "1. [x] done\n2. [ ] "],
+    ["* [ ] ", ""],
+    ["1. [x] a\n2. [ ] ", "1. [x] a\n"],
+  ])("continues or leaves the task list from %j", (value, expected) => {
+    using editor = makeEditor(value);
+    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.atEnd(editor.state.doc)));
+    expect(splitOrLiftListItem(editor, () => true)).toBe(true);
+    expect(storedDraft(editor)).toBe(expected);
   });
 });

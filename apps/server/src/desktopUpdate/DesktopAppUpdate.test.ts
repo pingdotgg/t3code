@@ -42,6 +42,7 @@ function report(
   terminal?: {
     readonly outcome: DesktopUpdateStatusReport["outcome"];
     readonly reason?: string;
+    readonly preparedRequestId?: string;
   },
 ): DesktopUpdateStatusReport {
   return {
@@ -50,6 +51,9 @@ function report(
     requestId,
     ...(terminal?.outcome === undefined ? {} : { outcome: terminal.outcome }),
     ...(terminal?.reason === undefined ? {} : { reason: terminal.reason }),
+    ...(terminal?.preparedRequestId === undefined
+      ? {}
+      : { preparedRequestId: terminal.preparedRequestId }),
     state,
   };
 }
@@ -133,6 +137,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("desktop app upda
     }),
   );
 
+  it.effect("commits the original preparation when a retry joins its downloaded update", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness({
+        reports: (requestId) => [
+          report(requestId, makeState({ status: "downloaded", downloadedVersion: "1.2.4" }), {
+            outcome: "ready-to-install",
+            preparedRequestId: "original-preparation",
+          }),
+          report("original-preparation", makeState({ status: "downloaded" }), {
+            outcome: "failed",
+            reason: "installer refused",
+          }),
+        ],
+      });
+      const prepared = yield* service.run(() => Effect.void);
+      expect(prepared.desktopUpdateToken).toBe("original-preparation");
+      expect(
+        (yield* service.commit(prepared.desktopUpdateToken ?? "missing").pipe(Effect.flip)).reason,
+      ).toBe("installer refused");
+    }),
+  );
+
   it.effect("succeeds without an install when a track switch finds the host current", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness({
@@ -176,6 +202,35 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("desktop app upda
         (yield* service.commit(prepared.desktopUpdateToken ?? "missing").pipe(Effect.flip)).reason,
       ).toBe("installer refused");
     }),
+  );
+
+  it.effect.each([true, false])(
+    "carries the track mismatch only for its own failure (%s)",
+    (matchingReason) =>
+      Effect.gen(function* () {
+        const mismatch = "This Stable build can't update from the Nightly track on its own.";
+        const reason = matchingReason ? mismatch : "The desktop update was cancelled.";
+        const { service } = yield* makeHarness({
+          reports: (requestId) => [
+            report(
+              requestId,
+              makeState({
+                status: "error",
+                channel: "nightly",
+                message: mismatch,
+                errorContext: "check",
+                trackMismatch: { buildChannel: "latest" },
+              }),
+              { outcome: "failed", reason },
+            ),
+          ],
+        });
+        const error = yield* service.run(() => Effect.void).pipe(Effect.flip);
+        expect(error.reason).toBe(reason);
+        expect(error.trackMismatch).toEqual(
+          matchingReason ? { buildChannel: "latest", savedChannel: "nightly" } : undefined,
+        );
+      }),
   );
 
   it.effect("fails when the desktop stops reporting before a terminal outcome", () =>

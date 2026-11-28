@@ -15,6 +15,7 @@ import {
   RawEventId,
   RunAttemptId,
   RunId,
+  type RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -25,7 +26,6 @@ import * as Schema from "effect/Schema";
 import * as SqlError from "effect/sql/SqlError";
 
 import { AgentScope } from "@t3tools/shared/AgentScope";
-import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import {
   ProviderTurnAnalytics,
@@ -33,6 +33,7 @@ import {
 } from "../telemetry/ProviderUsageAnalytics.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import { UsageLimitResetFallback } from "../usage/UsageLimitSources.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -47,12 +48,13 @@ export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEven
   {
     providerSessionId: ProviderSessionId,
     threadId: ThreadId,
-    providerEvent: ProviderAdapter.ProviderAdapterV2Event,
+    // The rejected payload cannot be validated again while reporting its normalization failure.
+    eventType: Schema.String,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to normalize provider event ${this.providerEvent.type} for thread ${this.threadId}.`;
+    return `Failed to normalize provider event ${this.eventType} for thread ${this.threadId}.`;
   }
 }
 
@@ -255,6 +257,7 @@ export const layer: Layer.Layer<
     const analytics = yield* ProviderTurnAnalytics;
     const agentScope = yield* AgentScope;
     const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+    const usageLimitResets = yield* UsageLimitResetFallback;
     const scope = yield* Effect.scope;
     const completedTurnAnalytics = new Set<string>();
 
@@ -298,11 +301,14 @@ export const layer: Layer.Layer<
         input: ProviderEventIngestInput,
         providerTurnId: ProviderTurnId,
         threadId = input.threadId,
+        retained: ReadonlyArray<RuntimeRequestId> = [],
       ) {
         const pending = yield* projections.getPendingNativeUserInputs(threadId, providerTurnId);
         const now = yield* DateTime.now;
         const events: Array<OrchestrationV2DomainEvent> = [];
+        const kept = new Set(retained);
         for (const request of pending.runtimeRequests) {
+          if (kept.has(request.id)) continue;
           events.push(
             yield* makeDomainEvent(input, {
               type: "runtime-request.updated",
@@ -313,6 +319,7 @@ export const layer: Layer.Layer<
           );
         }
         for (const node of pending.nodes) {
+          if (node.runtimeRequestId !== null && kept.has(node.runtimeRequestId)) continue;
           events.push(
             yield* makeDomainEvent(input, {
               type: "node.updated",
@@ -324,6 +331,7 @@ export const layer: Layer.Layer<
           );
         }
         for (const item of pending.turnItems) {
+          if (item.type === "user_input_request" && kept.has(item.requestId)) continue;
           events.push(
             yield* makeDomainEvent(input, {
               type: "turn-item.updated",
@@ -463,11 +471,7 @@ export const layer: Layer.Layer<
           switch (input.event.type) {
             case "app_thread.created": {
               const offered = input.event.appThread;
-              const existing = yield* projections.getThread(offered.id).pipe(
-                Effect.catchTags({
-                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
-                }),
-              );
+              const existing = yield* projections.findThread(offered.id);
               if (
                 existing !== null &&
                 (input.event.createOnly === true ||
@@ -489,6 +493,37 @@ export const layer: Layer.Layer<
                           modelSelection: offered.modelSelection,
                           updatedAt: now,
                         },
+                  occurredAt: now,
+                }),
+              ];
+            }
+            case "thread_model_selection.updated": {
+              const { instanceId, changes } = input.event;
+              const thread = yield* projections.getThread(input.event.threadId).pipe(
+                Effect.catchTags({
+                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+                }),
+              );
+              const current = thread?.modelSelection;
+              if (thread === null || current?.instanceId !== instanceId || !current.options) {
+                return [];
+              }
+              let changed = false;
+              const options = current.options.map((option) => {
+                const change = changes.find(
+                  (candidate) => candidate.id === option.id && candidate.from === option.value,
+                );
+                if (change === undefined) return option;
+                changed = true;
+                return { ...option, value: change.to };
+              });
+              if (!changed) return [];
+              const now = yield* DateTime.now;
+              return [
+                yield* makeDomainEvent(input, {
+                  type: "thread.model-selection-updated",
+                  threadId: thread.id,
+                  payload: { ...thread, modelSelection: { ...current, options }, updatedAt: now },
                   occurredAt: now,
                 }),
               ];
@@ -527,6 +562,7 @@ export const layer: Layer.Layer<
                       input,
                       input.event.providerTurn.id,
                       input.event.threadId,
+                      input.event.retainedRuntimeRequestIds,
                     )
                   : []),
                 yield* makeDomainEvent(input, {
@@ -647,24 +683,63 @@ export const layer: Layer.Layer<
             }
             case "background_work.updated":
               return [];
+            case "background_work.lost":
             case "command_output.delta":
             case "prompt_suggestion.updated":
-              // The session manager serves these to clients before ingestion.
+              // The session manager handles these before ingestion.
               return [];
             case "turn.terminal":
-              const dismissed = yield* dismissNativeUserInputs(input, input.event.providerTurnId);
+              const dismissed = yield* dismissNativeUserInputs(
+                input,
+                input.event.providerTurnId,
+                undefined,
+                input.event.retainedRuntimeRequestIds,
+              );
               if (input.event.status !== "failed") {
                 return dismissed;
               }
               const occurredAt = yield* DateTime.now;
-              const failure = (yield* agentScope.oomKilled(input.threadId))
+              const reported = (yield* agentScope.oomKilled(input.threadId))
                 ? { ...input.event.failure, message: "Killed: out of memory.", code: "oom_kill" }
                 : input.event.failure;
+              // A proxied CLI can drop the reset time; the hub still knows when its pool refills.
+              const endpoint =
+                reported.class === "usage_limit" && reported.resetAt == null
+                  ? (yield* Effect.flatMap(
+                      instances.getInstance(input.providerInstanceId),
+                      (instance) => instance?.snapshot.getSnapshot ?? Effect.undefined,
+                    ))?.auth.endpoint
+                  : undefined;
+              const hubResetAt =
+                endpoint === undefined
+                  ? null
+                  : yield* Effect.gen(function* () {
+                      // The failing run's model, which may differ from a selection changed mid-turn.
+                      const { runs } =
+                        input.runId === undefined
+                          ? { runs: [] }
+                          : yield* projections.getThreadRecords(input.threadId, ["runs"], {
+                              runIds: [input.runId],
+                            });
+                      return (
+                        runs[0]?.modelSelection ??
+                        (yield* projections.getThread(input.threadId)).modelSelection
+                      ).model;
+                    }).pipe(
+                      Effect.orElseSucceed(() => null),
+                      Effect.flatMap((model) =>
+                        usageLimitResets.resetAt(input.event.driver, endpoint, model),
+                      ),
+                    );
+              const failure = hubResetAt === null ? reported : { ...reported, resetAt: hubResetAt };
               return [
                 ...dismissed,
                 yield* makeDomainEvent(input, {
                   type: "turn-item.updated",
                   payload: makeProviderFailureTurnItem({
+                    ...(input.event.failureItemId === undefined
+                      ? {}
+                      : { id: input.event.failureItemId }),
                     driver: input.event.driver,
                     threadId: input.threadId,
                     runId: input.runId ?? null,
@@ -690,7 +765,7 @@ export const layer: Layer.Layer<
                 new ProviderEventNormalizeError({
                   providerSessionId: input.providerSessionId,
                   threadId: input.threadId,
-                  providerEvent: input.event,
+                  eventType: input.event.type,
                   cause,
                 }),
             ),
@@ -771,12 +846,7 @@ export const layer: Layer.Layer<
                   );
                   if (created?.event.type !== "thread.created") return storedEvents;
                   const child = created.event.payload;
-                  if (
-                    child.worktreePath === null ||
-                    child.branch === null ||
-                    !isTemporaryWorktreeBranch(child.branch)
-                  )
-                    return storedEvents;
+                  if (child.worktreePath === null || child.branch === null) return storedEvents;
                   // Git renames before scanning committed threads. If that scan missed this
                   // creation, HEAD already has the new name, even if the parent moved away.
                   const branch = yield* git.resolveBranchName(child.worktreePath, "HEAD");
@@ -849,7 +919,9 @@ export const layer: Layer.Layer<
               (effect) =>
                 input.event.type === "app_thread.created"
                   ? threadCommands.withLock(input.event.appThread.id, effect)
-                  : effect,
+                  : input.event.type === "thread_model_selection.updated"
+                    ? threadCommands.withLock(input.event.threadId, effect)
+                    : effect,
             ),
         ),
     });

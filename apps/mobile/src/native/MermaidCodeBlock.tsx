@@ -1,16 +1,17 @@
 import * as Hash from "effect/Hash";
 import { File, Paths } from "expo-file-system";
 import * as Haptics from "expo-haptics";
+import { T, useGT, Var } from "gt-react-native";
 import type { DiagramType } from "pele/lazy";
 import { Suspense, use, useRef, useState } from "react";
 import { PixelRatio, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { parse, Svg, SvgXml } from "react-native-svg";
 
 import { FilePreviewModal } from "../components/ui/FilePreviewModal";
-import { SymbolView, type AppSymbolName } from "../components/ui/AppSymbol";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { mermaidSvgForNative, withDiagramBackground } from "../lib/mermaidSvg";
 import { themeColorWithAlpha } from "../lib/mobileTheme";
+import { CodeBlockFrame, CodeBlockHeaderButton } from "./CodeBlockFrame";
 import type { NativeMarkdownTextStyle } from "./SelectableMarkdownText.types";
 
 type Pele = typeof import("pele/lazy");
@@ -21,7 +22,8 @@ type Diagram =
       readonly width: number;
       readonly height: number;
     }
-  | { readonly status: "error"; readonly message: string };
+  | { readonly status: "error"; readonly reason: "load" }
+  | { readonly status: "error"; readonly reason: "render"; readonly message: string | null };
 
 let peleLoad: Promise<Pele | null> | null = null;
 // Each diagram type is its own chunk, so a thread with one flowchart only
@@ -44,7 +46,6 @@ function loadDiagram(source: string): Promise<Diagram> {
   return load;
 }
 
-const MONOSPACE = Platform.OS === "ios" ? "Menlo" : "monospace";
 // Pele measures labels with metrics close to Helvetica when no canvas is available.
 const DIAGRAM_FONT = Platform.OS === "ios" ? "Helvetica" : "sans-serif";
 
@@ -55,7 +56,7 @@ async function renderDiagram(source: string): Promise<Diagram> {
     // Not cached, so the next mount tries again.
     peleLoad = null;
     diagramLoads.delete(source);
-    return { status: "error", message: "The diagram renderer failed to load." };
+    return { status: "error", reason: "load" };
   }
   let type: DiagramType | null = null;
   try {
@@ -75,7 +76,7 @@ async function renderDiagram(source: string): Promise<Diagram> {
     if (!(await load)) {
       typeLoads.delete(type);
       diagramLoads.delete(source);
-      return { status: "error", message: "The diagram renderer failed to load." };
+      return { status: "error", reason: "load" };
     }
   }
   try {
@@ -89,7 +90,8 @@ async function renderDiagram(source: string): Promise<Diagram> {
   } catch (error) {
     return {
       status: "error",
-      message: error instanceof Error ? error.message : "The diagram could not be rendered.",
+      reason: "render",
+      message: error instanceof Error ? error.message : null,
     };
   }
 }
@@ -130,11 +132,18 @@ function RenderedMermaidBlock(props: MermaidCodeBlockProps) {
 
 function MermaidBlock(props: MermaidCodeBlockProps & { readonly diagram: Diagram | null }) {
   const { code, textStyle, diagram } = props;
+  const gt = useGT();
   const [showCode, setShowCode] = useState(false);
   const [expansion, setExpansion] = useState<Expansion | null>(null);
   const exportSvg = useRef<Svg>(null);
   const secondaryColor = themeColorWithAlpha(textStyle.codeColor, 0.6);
   const codeFontSize = textStyle.fontSize * 0.9;
+  const diagramError =
+    diagram?.status !== "error"
+      ? null
+      : diagram.reason === "load"
+        ? gt("The diagram renderer failed to load.")
+        : (diagram.message ?? gt("The diagram could not be rendered."));
   const svg =
     diagram?.status === "ready"
       ? mermaidSvgForNative(diagram.svg, {
@@ -147,7 +156,7 @@ function MermaidBlock(props: MermaidCodeBlockProps & { readonly diagram: Diagram
           "--pele-border": themeColorWithAlpha(textStyle.color, 0.28),
           "--pele-accent": textStyle.linkColor,
           "--pele-font": DIAGRAM_FONT,
-          "--pele-font-mono": MONOSPACE,
+          "--pele-font-mono": textStyle.monoFontFamily,
         })
       : null;
   const exportXml =
@@ -191,47 +200,35 @@ function MermaidBlock(props: MermaidCodeBlockProps & { readonly diagram: Diagram
     );
   };
 
-  // The header copies the native code block's, which this block replaces once the fence closes.
   return (
-    <View
-      style={[
-        styles.block,
-        {
-          backgroundColor: textStyle.codeBlockBackgroundColor,
-          borderColor: textStyle.dividerColor,
-        },
-      ]}
-    >
-      <View
-        style={[
-          styles.header,
-          { borderBottomColor: themeColorWithAlpha(textStyle.codeColor, 0.2) },
-        ]}
-      >
-        <Text style={[styles.language, { color: secondaryColor, fontSize: codeFontSize * 0.85 }]}>
-          Mermaid
-        </Text>
-        <View style={styles.actions}>
+    <CodeBlockFrame
+      label="Mermaid"
+      textStyle={textStyle}
+      actions={
+        <>
           {svg ? (
-            <HeaderButton
+            <CodeBlockHeaderButton
               icon={showCode ? "flowchart" : "chevron.left.forwardslash.chevron.right"}
-              label={showCode ? "Show diagram" : "Show code"}
-              color={secondaryColor}
+              label={showCode ? gt("Show diagram") : gt("Show code")}
+              textStyle={textStyle}
               onPress={() => setShowCode((value) => !value)}
             />
           ) : null}
-          <HeaderButton
+          <CodeBlockHeaderButton
             icon="doc.on.doc"
-            label="Copy code"
-            color={secondaryColor}
+            label={gt("Copy code")}
+            textStyle={textStyle}
             onPress={() => copyTextWithHaptic(code)}
           />
-        </View>
-      </View>
+        </>
+      }
+    >
       <View style={styles.content}>
         {diagram?.status === "error" ? (
           <Text style={[styles.error, { color: secondaryColor, fontSize: codeFontSize * 0.85 }]}>
-            Unable to render diagram: {diagram.message}
+            <T>
+              Unable to render diagram: <Var>{diagramError}</Var>
+            </T>
           </Text>
         ) : null}
         {svg && diagram?.status === "ready" && !showCode ? (
@@ -240,8 +237,8 @@ function MermaidBlock(props: MermaidCodeBlockProps & { readonly diagram: Diagram
           <View style={styles.diagramRow}>
             <Pressable
               accessibilityRole="imagebutton"
-              accessibilityLabel="Mermaid diagram"
-              accessibilityHint="Opens the diagram full screen"
+              accessibilityLabel={gt("{name} diagram", { name: "Mermaid" })}
+              accessibilityHint={gt("Opens the diagram full screen")}
               onPress={() => {
                 if (expansion) return;
                 void Haptics.selectionAsync();
@@ -261,7 +258,7 @@ function MermaidBlock(props: MermaidCodeBlockProps & { readonly diagram: Diagram
             selectable
             style={{
               color: textStyle.codeColor,
-              fontFamily: MONOSPACE,
+              fontFamily: textStyle.monoFontFamily,
               fontSize: codeFontSize,
               lineHeight: codeFontSize * 1.45,
             }}
@@ -296,45 +293,11 @@ function MermaidBlock(props: MermaidCodeBlockProps & { readonly diagram: Diagram
           onRequestClose={() => setExpansion(null)}
         />
       ) : null}
-    </View>
+    </CodeBlockFrame>
   );
 }
 
-function HeaderButton(props: {
-  readonly icon: AppSymbolName;
-  readonly label: string;
-  readonly color: string;
-  readonly onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={props.label}
-      hitSlop={10}
-      onPress={props.onPress}
-    >
-      <SymbolView name={props.icon} size={14} tintColor={props.color} type="monochrome" />
-    </Pressable>
-  );
-}
-
-// The block slot already applies the code block's outer margins.
 const styles = StyleSheet.create({
-  block: {
-    borderRadius: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    overflow: "hidden",
-  },
-  header: {
-    height: 32,
-    paddingHorizontal: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  language: { fontWeight: "500" },
-  actions: { flexDirection: "row", alignItems: "center", gap: 14 },
   content: { padding: 12 },
   diagramRow: { flexDirection: "row", justifyContent: "center" },
   error: { marginBottom: 8 },

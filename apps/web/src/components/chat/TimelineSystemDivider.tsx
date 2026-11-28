@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 export function TimelineSystemDivider(props: {
   readonly label: string;
@@ -17,14 +17,22 @@ export function TimelineSystemDivider(props: {
   const Icon = props.icon;
   const content = (
     <>
-      {Icon ? <Icon className="size-3 shrink-0" /> : null}
-      <span className="font-medium">{props.label}</span>
+      <span
+        className={cn(
+          "inline-flex items-baseline gap-1.5 align-baseline font-medium",
+          props.wrapDetail && "shrink-0 whitespace-nowrap",
+        )}
+      >
+        {Icon ? <Icon className="size-3 shrink-0 self-center" /> : null}
+        {props.label}
+      </span>
       {props.detail ? (
         <span
           className={cn(
-            "inline-flex min-w-0 items-center opacity-70",
+            "min-w-0 opacity-70",
+            props.wrapDetail ? "ml-1.5 wrap-anywhere" : "inline-flex items-center",
             typeof props.detail === "string" &&
-              (props.wrapDetail ? "max-w-80 whitespace-pre-wrap" : "max-w-80 truncate"),
+              (props.wrapDetail ? "whitespace-pre-wrap" : "max-w-80 truncate"),
           )}
         >
           {props.showDetailSeparator === false ? null : "·\u00a0"}
@@ -43,23 +51,29 @@ export function TimelineSystemDivider(props: {
     >
       <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
       {props.onAction ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                aria-label={props.actionLabel}
-                onClick={props.onAction}
-                className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-full border border-border/70 bg-background px-2.5 py-1 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-              />
-            }
-          >
-            {content}
-          </TooltipTrigger>
-          <TooltipPopup side="top">{props.actionLabel}</TooltipPopup>
-        </Tooltip>
+        <SharedTooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={props.actionLabel}
+              onClick={props.onAction}
+              className={cn(
+                "min-w-0 cursor-pointer rounded-full border border-border/70 bg-background px-2.5 py-1 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+                props.wrapDetail ? "text-center" : "flex items-center gap-1.5",
+              )}
+            />
+          }
+          label={props.actionLabel}
+        >
+          {content}
+        </SharedTooltipTrigger>
       ) : (
-        <span className="flex min-w-0 flex-wrap items-center justify-center gap-1.5 rounded-full px-2 py-1">
+        <span
+          className={cn(
+            "min-w-0 rounded-full px-2 py-1",
+            props.wrapDetail ? "text-center" : "flex flex-wrap items-center justify-center gap-1.5",
+          )}
+        >
           {content}
         </span>
       )}

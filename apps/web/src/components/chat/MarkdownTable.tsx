@@ -1,36 +1,73 @@
-import { Check, Copy } from "lucide";
+import { T, useGT } from "gt-react";
+import { CheckIcon, CopyIcon } from "lucide-react";
 import { useRef, type ComponentProps } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import {
+  serializeTableElementForChat,
   serializeTableElementToCsv,
+  serializeTableElementToHtml,
   serializeTableElementToMarkdown,
 } from "../../markdown-clipboard";
-import { MorphIcon } from "../MorphIcon";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { reportMarkdownActionFailure } from "./markdownActionFailure";
+import { reportMarkdownActionFailure, type TableCopyFormat } from "./markdownActionFailure";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
+
+type TableTextFormat = Exclude<TableCopyFormat, "png" | "chat">;
+
+const TABLE_COPY_SERIALIZERS: Record<TableTextFormat, (table: Element) => string> = {
+  markdown: serializeTableElementToMarkdown,
+  csv: serializeTableElementToCsv,
+  html: serializeTableElementToHtml,
+};
+
+// Loaded on first use; the clipboard write still starts inside the click.
+const renderTablePng = (table: HTMLTableElement) =>
+  import("./tablePng").then((module) => module.renderTablePng(table));
 
 export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
+  const gt = useGT();
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const { copyToClipboard, isCopied: copied } = useCopyToClipboard<"markdown" | "csv">({
+  const {
+    copyToClipboard,
+    copyPngToClipboard,
+    isCopied: copied,
+  } = useCopyToClipboard<TableCopyFormat>({
     timeout: 1200,
     onError: (cause, format) =>
       reportMarkdownActionFailure({ operation: "copy-table", format }, cause),
   });
-  const copyLabel = copied ? "Copied" : "Copy table";
+  const copyLabel = copied ? gt("Copied") : gt("Copy table");
+  // Insecure origins (plain http over a LAN or tailnet) have no async clipboard for images.
+  const canCopyPng =
+    typeof ClipboardItem !== "undefined" && typeof navigator.clipboard?.write === "function";
 
-  const handleCopy = (format: "markdown" | "csv") => {
+  const handleCopy = (format: TableTextFormat) => {
     const table = containerRef.current?.querySelector("table");
     if (!table) return;
+    const text = TABLE_COPY_SERIALIZERS[format](table);
+    // Plain-text targets get the markup; rich targets (mail, docs, wikis) paste a real table.
     copyToClipboard(
-      format === "markdown"
-        ? serializeTableElementToMarkdown(table)
-        : serializeTableElementToCsv(table),
+      text,
       format,
+      format === "html" ? { "text/html": `<meta charset="utf-8">${text}` } : undefined,
+      { requireHtml: format === "html" },
     );
+  };
+
+  const handleCopyForChat = () => {
+    const table = containerRef.current?.querySelector("table");
+    if (!table) return;
+    const { text, html } = serializeTableElementForChat(table);
+    copyToClipboard(text, "chat", { "text/html": html });
+  };
+
+  const handleCopyPng = () => {
+    const table = containerRef.current?.querySelector("table");
+    if (!table) return;
+    copyPngToClipboard(() => renderTablePng(table), "png");
   };
 
   return (
@@ -41,28 +78,41 @@ export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
       {/* Stays within the row's px-1: the chat lane clips sideways overflow. */}
       <div className="mt-0.5 -mx-1 flex items-center justify-end select-none">
         <Menu>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <MenuTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="ghost-muted"
-                      size="icon-xs"
-                      aria-label={copyLabel}
-                    />
-                  }
-                />
-              }
-            >
-              <MorphIcon className="size-3" icon={copied ? Check : Copy} />
-            </TooltipTrigger>
-            <TooltipPopup side="top">{copyLabel}</TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <MenuTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost-muted"
+                    size="icon-xs"
+                    aria-label={copyLabel}
+                  />
+                }
+              />
+            }
+            label={copyLabel}
+          >
+            {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
+          </SharedTooltipTrigger>
           <MenuPopup align="end">
-            <MenuItem onClick={() => handleCopy("markdown")}>Copy as Markdown</MenuItem>
-            <MenuItem onClick={() => handleCopy("csv")}>Copy as CSV</MenuItem>
+            <MenuItem onClick={() => handleCopy("markdown")}>
+              <T>Copy as Markdown</T>
+            </MenuItem>
+            <MenuItem onClick={() => handleCopy("csv")}>
+              <T>Copy as CSV</T>
+            </MenuItem>
+            <MenuItem onClick={() => handleCopy("html")}>
+              <T>Copy as HTML</T>
+            </MenuItem>
+            <MenuItem onClick={handleCopyForChat}>
+              <T>Copy for chat apps</T>
+            </MenuItem>
+            {canCopyPng ? (
+              <MenuItem onClick={handleCopyPng}>
+                <T>Copy as PNG</T>
+              </MenuItem>
+            ) : null}
           </MenuPopup>
         </Menu>
       </div>

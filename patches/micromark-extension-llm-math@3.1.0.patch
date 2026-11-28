@@ -163,7 +163,18 @@ diff --git a/dev/lib/math-flow.js b/dev/lib/math-flow.js
 diff --git a/dev/lib/math-tex-flow.js b/dev/lib/math-tex-flow.js
 --- a/dev/lib/math-tex-flow.js
 +++ b/dev/lib/math-tex-flow.js
-@@ -26,6 +26,7 @@
+@@ -7,6 +7,10 @@
+ import {markdownLineEnding} from 'micromark-util-character'
+ import {codes, constants, types} from 'micromark-util-symbol'
+ 
++// Only EOF proves that every later opener in this flow lacks a closing fence.
++/** @type {WeakMap<TokenizeContext, number>} */
++const failedUntil = new WeakMap()
++
+ /** @type {Construct} */
+ export const mathTexFlow = {
+   tokenize: tokenizeMathFenced,
+@@ -26,6 +30,7 @@
   */
  function tokenizeMathFenced(effects, ok, nok) {
    const self = this
@@ -171,7 +182,15 @@ diff --git a/dev/lib/math-tex-flow.js b/dev/lib/math-tex-flow.js
    const tail = self.events[self.events.length - 1]
    const initialSize =
      tail && tail[1].type === types.linePrefix
-@@ -90,6 +91,7 @@
+@@ -47,6 +52,7 @@
+    * @type {State}
+    */
+   function start(code) {
++    if ((failedUntil.get(self) || 0) > self.now().offset) return nok(code)
+     assert(code === codes.backslash, 'expected `\\`')
+     effects.enter('mathFlow')
+     effects.enter('mathFlowFence')
+@@ -90,6 +96,7 @@
     * @type {State}
     */
    function metaAfter(code) {
@@ -179,15 +198,18 @@ diff --git a/dev/lib/math-tex-flow.js b/dev/lib/math-tex-flow.js
      effects.exit('mathFlowFence')
  
      if (self.interrupt) {
-@@ -245,6 +247,7 @@
+@@ -245,6 +252,10 @@
     * @type {State}
     */
    function after(code) {
-+    if (!closed) return nok(code)
++    if (!closed) {
++      if (code === codes.eof) failedUntil.set(self, self.now().offset)
++      return nok(code)
++    }
      effects.exit('mathFlow')
      return ok(code)
    }
-@@ -327,6 +330,7 @@
+@@ -327,6 +338,7 @@
      function afterSequenceClose(code) {
        if (code === codes.eof || markdownLineEnding(code)) {
          effects.exit('mathFlowFence')
@@ -198,7 +220,32 @@ diff --git a/dev/lib/math-tex-flow.js b/dev/lib/math-tex-flow.js
 diff --git a/dev/lib/math-tex-text.js b/dev/lib/math-tex-text.js
 --- a/dev/lib/math-tex-text.js
 +++ b/dev/lib/math-tex-text.js
-@@ -25,6 +25,7 @@
+@@ -1,5 +1,5 @@
+ /**
+- * @import {Construct, Previous, State, Token, TokenizeContext, Tokenizer} from 'micromark-util-types'
++ * @import {Construct, Event, Previous, State, Token, TokenizeContext, Tokenizer} from 'micromark-util-types'
+  */
+ 
+ import {ok as assert} from 'devlop'
+@@ -7,6 +7,12 @@
+ import {codes, types} from 'micromark-util-symbol'
+ import {mathText} from './math-text.js'
+ 
++// Failed scans are local to a text tokenizer and delimiter, never shared across documents.
++/** @type {WeakMap<Array<Event>, Record<number, number>>} */
++const failedUntil = new WeakMap()
++/** @type {WeakMap<Array<Event>, Record<number, number>>} */
++const singleLineFailedUntil = new WeakMap()
++
+ /** @type {Construct} */
+ export const mathTexText = {
+   tokenize: tokenizeMathText,
+@@ -21,10 +27,12 @@
+  */
+ function tokenizeMathText(effects, ok, nok) {
+   const self = this
++  const failures = self.mathSingleLine ? singleLineFailedUntil : failedUntil
+   /** @type {Token} */
    let token
    /** @type {number} */
    let openSequenceCode
@@ -206,25 +253,50 @@ diff --git a/dev/lib/math-tex-text.js b/dev/lib/math-tex-text.js
  
    return start
  
-@@ -83,7 +84,7 @@
+@@ -66,6 +74,8 @@
+       return nok(code)
+     }
+ 
++    if ((failures.get(self.events)?.[code] || 0) > self.now().offset) return nok(code)
++
+     openSequenceCode = code
+     effects.consume(code)
+     effects.exit('mathTextSequence')
+@@ -83,8 +93,8 @@
     * @type {State}
     */
    function between(code) {
 -    if (code === codes.eof) {
+-      return nok(code)
 +    if (code === codes.eof || code === codes.graveAccent || (self.mathSingleLine && markdownLineEnding(code))) {
-       return nok(code)
++      return unmatched(code)
      }
  
-@@ -124,6 +125,8 @@
+     if (code === codes.backslash) {
+@@ -124,6 +134,8 @@
     * @type {State}
     */
    function data(code) {
-+    if (code === codes.graveAccent) return nok(code)
++    if (code === codes.graveAccent) return unmatched(code)
 +    if (code !== codes.backslash && code !== codes.eof && code !== codes.space && code !== codes.comma && !markdownLineEnding(code) && !(code >= codes.digit0 && code <= codes.digit9)) substantive = true
      if (
        code === codes.eof ||
        code === codes.space ||
-@@ -155,6 +158,7 @@
+@@ -138,6 +150,13 @@
+     return data
+   }
+ 
++  function unmatched(code) {
++    const ends = failures.get(self.events) || {}
++    ends[openSequenceCode] = self.now().offset
++    failures.set(self.events, ends)
++    return nok(code)
++  }
++
+   /**
+    * In closing sequence.
+    *
+@@ -155,6 +174,7 @@
          ? codes.rightParenthesis
          : codes.rightSquareBracket
      if (code === closeSequenceCode) {
@@ -232,7 +304,7 @@ diff --git a/dev/lib/math-tex-text.js b/dev/lib/math-tex-text.js
        effects.consume(code)
        effects.exit('mathTextSequence')
        effects.exit('mathText')
-@@ -180,5 +184,8 @@
+@@ -180,5 +200,8 @@
   */
  function previous(code) {
    // If there is a previous code, there will always be a tail.

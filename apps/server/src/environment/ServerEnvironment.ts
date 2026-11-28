@@ -7,9 +7,11 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -201,10 +203,11 @@ export const make = Effect.gen(function* () {
     launcherManaged: launcher.managed,
   });
   const serverInstallation = serverSelfUpdate === null ? yield* resolveServerInstallation : null;
-  // Desktop and server ship together; a control fd guarantees requestDesktopUpdate support.
-
+  // The desktop reports whether it can install updates; requests travel over its control fd.
   const desktopAppUpdate =
-    serverSelfUpdate === "desktop-managed" && serverConfig.desktopTelemetryControlFd !== undefined;
+    serverSelfUpdate === "desktop-managed" &&
+    serverConfig.desktopAppUpdate === true &&
+    serverConfig.desktopTelemetryControlFd !== undefined;
 
   const databaseMigration = databaseMigrationHead(serverConfig.dbPath);
   const descriptor: ExecutionEnvironmentDescriptor = {
@@ -222,10 +225,15 @@ export const make = Effect.gen(function* () {
       repositoryIdentity: true,
       connectionProbe: true,
       attachmentUploads: true,
+      accessTokenRenewal: true,
       questionAttachments: true,
       fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES },
       pullRequests: true,
       pullRequestChecks: true,
+      issues: true,
+      linkedThreadRefreshes: true,
+      issueLinkedThreads: true,
+      issueTrackerAccounts: true,
       sideChats: true,
       vcsBranchStatus: true,
       inlineMessageContext: true,
@@ -236,6 +244,7 @@ export const make = Effect.gen(function* () {
       storageCleanupRun: true,
       databaseStorage: true,
       otlpEndpointCheck: true,
+      secretSourceCheck: true,
       projectWorktreeCleanup: true,
       settledWorktreeCleanup: true,
       worktreesDirectory: true,
@@ -246,6 +255,7 @@ export const make = Effect.gen(function* () {
       projectProviderInstanceOverrides: true,
       threadSnooze: true,
       threadForceStop: true,
+      hostPressure: true,
       environmentThemes: true,
       usageLimitSources: true,
       providerWorkspaceSnapshotsOnDemand: true,
@@ -267,10 +277,12 @@ export const make = Effect.gen(function* () {
       serverResolvedCommandContext: true,
       threadStop: true,
       ...(hostPlatform === "win32" ? {} : { localServerStop: true }),
+      previewTunnelSetting: true,
       environmentIcon: true,
       projectCloneTracking: true,
       projectOrganization: true,
       ignoredFileListing: true,
+      ignoredFileSearch: true,
       triage: true,
       oneTimeSchedules: true,
       freshContext: true,
@@ -283,20 +295,58 @@ export const make = Effect.gen(function* () {
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
         ? { serverSelfUpdateProgress: true }
         : {}),
+      ...(serverSelfUpdate === "boot-service" ? { serverUpdateStaging: true } : {}),
       ...(desktopAppUpdate ? { desktopAppUpdate: true, desktopAppChannelSwitch: true } : {}),
       serverBrowser: true,
       peerLinks: true,
       mcpModeLimitHeader: true,
       linkFence: true,
+      linkThreadStream: true,
+      linkClientPairing: true,
+      linkPairingForLink: true,
       mcpApprovalCodes: true,
+      peerLinkPairingCodes: true,
       mcpHostedApproval: true,
+      shellThreadFamilies: true,
+      shellOlderSettled: true,
+      agentFeedback: true,
     },
   };
 
+  // Publishing opt-in and relay links change at runtime (also from the `t3 connect` CLI), so the
+  // capability is read per request. The descriptor is the clients' liveness probe: when file I/O
+  // stalls, answer with the last value read and keep one shared read in flight instead of hanging.
+  const scope = yield* Effect.scope;
+  let lastAgentActivityPublishing = false;
+  let pendingRead: Deferred.Deferred<boolean> | undefined;
+  const startRead = Effect.suspend(() => {
+    if (pendingRead !== undefined) return Effect.succeed(pendingRead);
+    const read = Deferred.makeUnsafe<boolean>();
+    pendingRead = read;
+    return readAgentActivityPublishingActive(secrets).pipe(
+      Effect.tap((active) =>
+        Effect.sync(() => {
+          lastAgentActivityPublishing = active;
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          pendingRead = undefined;
+        }),
+      ),
+      Deferred.into(read),
+      Effect.forkIn(scope),
+      Effect.as(read),
+    );
+  }).pipe(Effect.uninterruptible);
+  const agentActivityPublishing = startRead.pipe(
+    Effect.flatMap((read) => Deferred.await(read).pipe(Effect.timeoutOption("1 second"))),
+    Effect.map(Option.getOrElse(() => lastAgentActivityPublishing)),
+  );
+
   return ServerEnvironment.of({
     getEnvironmentId: Effect.succeed(environmentId),
-    // Publishing opt-in and relay links change at runtime; read the capability per request.
-    getDescriptor: readAgentActivityPublishingActive(secrets).pipe(
+    getDescriptor: agentActivityPublishing.pipe(
       Effect.map((agentActivityPublishing) => ({
         ...descriptor,
         capabilities: { ...descriptor.capabilities, agentActivityPublishing },
