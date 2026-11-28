@@ -73,6 +73,7 @@ function BotRow(props: {
       state={status.state}
       mood={status.mood}
       size={20}
+      idleMotion
       live={hovered || reactingTo !== null}
     />
   );
