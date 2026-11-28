@@ -272,7 +272,10 @@ const htmlPreviewFrame = (
   ),
 });
 
-function workspaceAssetRevision(workspaceMutationId: string | null, refreshRevision = 0) {
+function withRefreshRevision(
+  workspaceMutationId: string | null,
+  refreshRevision: number,
+): string | null {
   if (refreshRevision === 0) return workspaceMutationId;
   return workspaceMutationId === null
     ? `refresh:${refreshRevision}`
@@ -297,7 +300,7 @@ export function WorkspaceBrowserPreview(props: {
     workspaceRoot: props.workspaceRoot,
     absolutePath: props.absolutePath,
   });
-  const assetRevision = workspaceAssetRevision(props.workspaceMutationId, props.refreshRevision);
+  const assetRevision = withRefreshRevision(props.workspaceMutationId, props.refreshRevision ?? 0);
   // Each workspace mutation or manual refresh re-mints the URL: a file outside the workspace is
   // signed by its inode, which an atomic replace changes.
   const assetUrl = useAssetUrlState(props.environmentId, resource, assetRevision);
@@ -1919,7 +1922,8 @@ function FilePreviewPanelContent({
                 relativePath={relativePath}
                 threadRef={threadRef}
                 contents={file.data.contents}
-                workspaceMutationId={workspaceMutationId}
+                // A refresh re-mints embedded images too; their cached URLs keep the old bytes.
+                workspaceMutationId={withRefreshRevision(workspaceMutationId, fileRefreshRevision)}
                 readOnly={
                   file.data.truncated || file.data.readOnly === true || isHostFile || !canWriteFiles
                 }
@@ -2132,7 +2136,7 @@ export function WorkspaceLargeTextPreview(props: {
   const assetUrl = useAssetUrlState(
     props.environmentId,
     resource,
-    workspaceAssetRevision(props.workspaceMutationId, props.refreshRevision),
+    withRefreshRevision(props.workspaceMutationId, props.refreshRevision ?? 0),
   );
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const contentRevision = JSON.stringify([

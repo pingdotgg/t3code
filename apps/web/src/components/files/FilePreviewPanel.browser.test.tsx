@@ -1120,6 +1120,32 @@ describe("rendered Markdown relative images", () => {
   });
 });
 
+describe("rendered Markdown image refresh", () => {
+  it("re-mints embedded workspace images when workspace files refresh", async () => {
+    using _settings = setup();
+    localStorage.setItem("t3code.fileExplorerOpen", "true");
+    const seenRevisions: Array<string | null | undefined> = [];
+    state.assetUrlForRevision = (revision) => {
+      seenRevisions.push(revision);
+      return {
+        _tag: "Success",
+        url: `data:image/png;base64,${typeof revision === "string" ? "djI=" : "djE="}`,
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      };
+    };
+    await using screen = await render(markdownPreview(false, "![diagram](diagram.png)\n"));
+    await vi.waitFor(() => expect(seenRevisions).not.toHaveLength(0));
+    const loaded = seenRevisions.at(-1);
+
+    await userEvent.click(screen.getByRole("button", { name: "Refresh workspace files" }));
+
+    await vi.waitFor(() => {
+      expect(seenRevisions.at(-1)).toEqual(expect.any(String));
+      expect(seenRevisions.at(-1)).not.toBe(loaded);
+    });
+  });
+});
+
 function withAppCss() {
   const style = document.createElement("style");
   style.textContent = appCss;

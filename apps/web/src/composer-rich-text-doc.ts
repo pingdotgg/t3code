@@ -492,7 +492,8 @@ const ComposerListItemExtension = ListItem.extend({
       joinBackward:
         () =>
         ({ state, dispatch }) =>
-          (listItemTypeAt(state.selection.$from) !== null &&
+          ((listItemTypeAt(state.selection.$from) !== null ||
+            startsBelowList(state.selection.$from)) &&
             joinTextblockBackward(state, dispatch)) ||
           joinBackward(state, dispatch),
       // Cmd/Option+Delete join forward, which would nest the next item under this one.
@@ -1603,11 +1604,16 @@ function backspaceAcrossList(editor: Editor): boolean {
     // Those join the line above; joinBackward would re-nest them or select the parent line.
     return editor.chain().command(lift).run() || joinTextblockBackward(state, editor.view.dispatch);
   }
+  return startsBelowList($from) && joinTextblockBackward(state, editor.view.dispatch);
+}
+
+function startsBelowList($from: ResolvedPos): boolean {
   const before = $from.depth === 1 ? $from.node(0).maybeChild($from.index(0) - 1) : null;
-  if (before && LIST_NODE_NAMES.has(before.type.name) && $from.parent.type.name !== "codeBlock") {
-    return joinTextblockBackward(state, editor.view.dispatch);
-  }
-  return false;
+  return (
+    before !== null &&
+    LIST_NODE_NAMES.has(before.type.name) &&
+    $from.parent.type.name !== "codeBlock"
+  );
 }
 
 /**
