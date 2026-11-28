@@ -668,7 +668,7 @@ const ReadPullRequestTool = Tool.make("pull_request_read", {
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWithoutForge);
 
 const ListPullRequestsTool = Tool.make("pull_request_list", {
-  description: "List PRs in this thread's repository, recently updated first.",
+  description: "List PRs, latest update first.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     repository: Schema.optional(
