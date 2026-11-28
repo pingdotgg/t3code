@@ -1766,6 +1766,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         transcript.scenario,
       ).pipe(Effect.orDie);
       const changes = yield* makeChangeSignal;
+      const handledNotifications = new Map<string, number>();
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
       const commandStopWatchers: Array<PortScanner.AgentCommandStopWatcher> = [];
@@ -1799,7 +1800,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                         ),
                       handleServerNotification: (method, handler) =>
                         client.handleServerNotification(method, (payload) =>
-                          onNotification(method).pipe(Effect.andThen(handler(payload))),
+                          onNotification(method).pipe(
+                            Effect.andThen(handler(payload)),
+                            Effect.tap(() => {
+                              handledNotifications.set(
+                                method,
+                                (handledNotifications.get(method) ?? 0) + 1,
+                              );
+                              return changes.notify;
+                            }),
+                          ),
                         ),
                       raw: {
                         ...client.raw,
@@ -1901,6 +1911,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         hasPendingBackgroundWork,
         firstTerminal: Deferred.await(firstTerminal),
         until: changes.until,
+        awaitNotification: (method: string, count = 1) =>
+          changes.until(() => (handledNotifications.get(method) ?? 0) >= count),
         awaitTerminal: (count: number) => changes.until(() => terminalEvents().length >= count),
       };
     });
@@ -9807,6 +9819,26 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       expectedMessage: "encrypted conversation history",
     },
     {
+      name: "unclassified-bad-request",
+      code: "other",
+      message: JSON.stringify({
+        error: { message: "Bad Request", type: null, code: null, param: null },
+        status: 400,
+      }),
+      notification: true,
+      expectedClass: "provider_error",
+    },
+    {
+      name: "unclassified-bad-request-with-child",
+      code: "other",
+      message: JSON.stringify({
+        error: { message: "Bad Request", type: null, code: null, param: null },
+        status: 400,
+      }),
+      notification: true,
+      expectedClass: "provider_error",
+    },
+    {
       name: "terminal-disconnection",
       code: "responseStreamDisconnected",
       notification: false,
@@ -9965,7 +9997,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             : []),
           ...(readsReset ? [premium] : []),
           ...(scenario.name === "deferred-reset" ? [snapshot] : []),
-          ...(scenario.name === "deferred-reset"
+          ...(scenario.name === "deferred-reset" ||
+          scenario.name === "unclassified-bad-request-with-child"
             ? [
                 {
                   type: "emit_inbound" as const,
@@ -10114,7 +10147,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ? [{ ...snapshot, label: "account/rateLimits/updated/late" }]
             : []),
           ...("resetAfter" in scenario ? [snapshot] : []),
-          ...(scenario.name === "deferred-reset"
+          ...(scenario.name === "deferred-reset" ||
+          scenario.name === "unclassified-bad-request-with-child"
             ? [
                 {
                   ...snapshot,
@@ -10188,6 +10222,29 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.equal(terminal.failure.class, scenario.expectedClass);
       assert.notInclude(terminal.failure.message, "dummy-sensitive");
       assert.equal(terminal.threadDisposition, "reusable");
+      if (
+        scenario.name === "unclassified-bad-request" ||
+        scenario.name === "unclassified-bad-request-with-child"
+      ) {
+        if (scenario.name === "unclassified-bad-request-with-child") {
+          yield* harness.awaitNotification("turn/completed", 2);
+          yield* harness.until(() =>
+            harness.events.some(
+              (event) =>
+                event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+            ),
+          );
+        }
+        yield* harness.awaitNotification("turn/completed");
+        const result = yield* Effect.flip(
+          harness.runtime.ensureThread({
+            threadId: harness.threadId,
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          }),
+        );
+        assert.nestedPropertyVal(result, "cause._tag", "CodexAppServerRetiredError");
+      }
       if (scenario.name === "message-reset")
         assert.equal(
           terminal.failure.resetAt,

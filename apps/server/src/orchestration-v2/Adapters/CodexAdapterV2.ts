@@ -322,6 +322,19 @@ export function codexProviderTurnTokenUsage(
 const CODEX_ASSISTANT_DELTA_FLUSH_INTERVAL_MS = 50;
 // Plan flushes store three copies; use the client's assistant-text cadence.
 const CODEX_PLAN_DELTA_FLUSH_INTERVAL_MS = 400;
+const decodeUnclassifiedBadRequest = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      status: Schema.Literal(400),
+      error: Schema.Struct({
+        message: Schema.Literal("Bad Request"),
+        type: Schema.Null,
+        code: Schema.Null,
+        param: Schema.Null,
+      }),
+    }),
+  ),
+);
 const CodexBackgroundTerminalTerminateResponse = Schema.Struct({
   terminated: Schema.Boolean,
 });
@@ -2306,6 +2319,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // Queue.fail lets readers take items already buffered before they see the failure.
         // Buffered events drain before the session manager drops this runtime; refuse work meanwhile.
         let retired = false;
+        let badRequestRecoveryPending = false;
         const retireAppServer = (cause: unknown) =>
           Effect.suspend(() => {
             retired = true;
@@ -3040,6 +3054,30 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             return false;
           });
 
+        // Background item updates call this too; avoid spans before recovery is needed.
+        const recoverBadRequestIfIdle = Effect.fnUntraced(function* () {
+          if (!badRequestRecoveryPending || retired) return;
+          if (
+            (yield* Ref.get(activeTurns)).size > 0 ||
+            (yield* Ref.get(pendingRootTurns)).size > 0 ||
+            (yield* Ref.get(settledTurns)).size > 0 ||
+            (yield* Ref.get(pendingMcpAppCaptures)).size > 0 ||
+            goalHolds.size > 0 ||
+            capacityContinuations.size > 0
+          )
+            return;
+          for (const state of imageTurns.values()) {
+            if (state.running.size > 0 || state.saved.size > 0) return;
+          }
+          for (const subagent of (yield* Ref.get(subagentThreads)).values()) {
+            if (subagent.task.status === "running") return;
+          }
+          // Recreate the process on the next attempt, retaining native history and never replaying work.
+          yield* retireAppServer(
+            "Codex returned an unclassified HTTP 400; its idle runtime was retired.",
+          );
+        });
+
         const releaseSettledTurnIfIdle =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (nativeTurnId: string) {
@@ -3081,6 +3119,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               updated.delete(nativeTurnId);
               return updated;
             });
+            yield* recoverBadRequestIfIdle();
           });
 
         /**
@@ -7903,6 +7942,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
             const nativeStatus = mapCodexTurnStatus(payload.turn.status);
+            if (
+              nativeStatus === "failed" &&
+              Option.isSome(
+                decodeUnclassifiedBadRequest(
+                  payload.turn.error?.message ?? context.latestProviderFailure?.nativeMessage,
+                ),
+              )
+            )
+              badRequestRecoveryPending = true;
             const status =
               nativeStatus === "completed" &&
               (yield* Ref.get(interruptingNativeTurns)).has(payload.turn.id)
@@ -7929,6 +7977,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }),
             };
             if (!(yield* retryCapacityFailure(terminal))) yield* finalizeCodexTurn(terminal);
+            yield* recoverBadRequestIfIdle();
           }),
         );
 
