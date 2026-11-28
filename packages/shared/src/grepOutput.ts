@@ -18,6 +18,8 @@ const FILE_HEADING = /^File: (.+)$/;
 const NUMBERED_LINE = /^\s*(?:(?:Line |L)(\d+): ?|(\d+):)(.*)$/;
 const CONTEXT_LINE = /^\s*\d+-/;
 const PATH_LINE_TEXT = /^(\S.*?):(\d+):(.*)$/;
+// A path can contain `:0:` before the actual line number.
+const POSSIBLE_INLINE_MATCH = /^\S.*?:0*[1-9]\d*:/;
 const COLON_HEADING = /^(\S.*):$/;
 const OPENCODE_NUMBERED_LINE = /^\s+Line \d+:/;
 const RIPGREP_NUMBERED_LINE = /^\d+:/;
@@ -36,6 +38,7 @@ export function parseGrepOutput(
   const notes: string[] = [];
   let file: string | undefined;
   let ripgrepFormat: "heading" | "inline" | undefined;
+  let ambiguousHeading = false;
   const lines = output.split(/\r?\n/);
   for (const [index, line] of lines.entries()) {
     const trimmed = line.trim();
@@ -53,6 +56,13 @@ export function parseGrepOutput(
     }
     const numbered = file === undefined ? null : NUMBERED_LINE.exec(line);
     if (file !== undefined && numbered) {
+      if (
+        ripgrepFormat === "heading" &&
+        RIPGREP_NUMBERED_LINE.test(line) &&
+        !POSSIBLE_INLINE_MATCH.test(line)
+      ) {
+        ambiguousHeading = false;
+      }
       const lineNumber = numbered[1] ?? numbered[2];
       matches.push({ fileName: file, line: Number(lineNumber), text: numbered[3] ?? "" });
       continue;
@@ -65,13 +75,11 @@ export function parseGrepOutput(
     const inline =
       colonHeading && OPENCODE_NUMBERED_LINE.test(nextLine) ? null : PATH_LINE_TEXT.exec(line);
     if (ripgrepFormat !== "inline" && RIPGREP_NUMBERED_LINE.test(nextLine)) {
-      // Two inline rows can also look like a bare heading and its numbered match.
-      if (
-        ripgrepFormat === undefined &&
-        PATH_LINE_TEXT.test(nextLine) &&
-        PATH_LINE_TEXT.test(trimmed)
-      ) {
-        return undefined;
+      // Two inline rows can look like a heading and match. Keep parsing to see if a later row
+      // in the grouped output rules out the inline form.
+      if (ripgrepFormat === undefined || ambiguousHeading) {
+        ambiguousHeading =
+          POSSIBLE_INLINE_MATCH.test(trimmed) && POSSIBLE_INLINE_MATCH.test(nextLine);
       }
       file = line;
       ripgrepFormat = "heading";
@@ -99,7 +107,11 @@ export function parseGrepOutput(
     }
     return undefined;
   }
-  if (matches.length === 0 || matches.some((match) => match.line < 1 || !match.fileName.trim())) {
+  if (
+    ambiguousHeading ||
+    matches.length === 0 ||
+    matches.some((match) => match.line < 1 || !match.fileName.trim())
+  ) {
     return undefined;
   }
   const joinedNotes = notes.join("\n");
