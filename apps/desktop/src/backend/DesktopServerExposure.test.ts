@@ -181,23 +181,42 @@ describe("DesktopServerExposure", () => {
     );
   });
 
-  it.effect("falls back to local-only without losing the requested network preference", () =>
+  it.effect("keeps a saved network-accessible mode when boot finishes before DHCP", () => {
+    const networkInterfaces: Record<
+      string,
+      readonly DesktopNetworkInterfaces.DesktopNetworkInterfaceInfo[] | undefined
+    > = {};
+
+    return withHarness(
+      networkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setServerExposureMode("network-accessible");
+
+        const state = yield* serverExposure.configureFromSettings({ port: 4173 });
+        assert.equal(state.mode, "network-accessible");
+        assert.equal(state.endpointUrl, null);
+        assert.equal((yield* serverExposure.backendConfig).bindHost, "0.0.0.0");
+
+        networkInterfaces.en0 = lanNetworkInterfaces.en0;
+        assert.equal((yield* serverExposure.getState).endpointUrl, "http://192.168.1.20:4173");
+      }),
+    );
+  });
+
+  it.effect("refuses to switch to network-accessible without a network address", () =>
     withHarness(
       emptyNetworkInterfaces,
       Effect.gen(function* () {
         const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
 
-        yield* settings.setServerExposureMode("network-accessible");
-
-        const state = yield* serverExposure.configureFromSettings({ port: 4173 });
-        assert.equal(state.mode, "local-only");
-        assert.equal(state.endpointUrl, null);
-        assert.equal((yield* settings.get).serverExposureMode, "network-accessible");
-
-        const backendConfig = yield* serverExposure.backendConfig;
-        assert.equal(backendConfig.bindHost, "127.0.0.1");
-        assert.equal(backendConfig.httpBaseUrl.href, "http://127.0.0.1:4173/");
+        const error = yield* Effect.flip(serverExposure.setMode("network-accessible"));
+        assert.equal(error._tag, "DesktopServerExposureNoNetworkAddressError");
+        assert.equal((yield* settings.get).serverExposureMode, "local-only");
+        assert.equal((yield* serverExposure.backendConfig).bindHost, "127.0.0.1");
       }),
     ),
   );

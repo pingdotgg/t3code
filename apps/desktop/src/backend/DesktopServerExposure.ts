@@ -390,20 +390,11 @@ function resolveRuntimeState(input: {
           !address.internal && address.family === "IPv4" && isTailscaleIpv4Address(address.address),
       ),
     );
-  const exposure = unavailable
-    ? resolveDesktopServerExposure({
-        mode: "local-only",
-        port: input.port,
-        networkInterfaces: input.networkInterfaces,
-        ...(advertisedHostOverride ? { advertisedHostOverride } : {}),
-      })
-    : requestedExposure;
-
   return {
     state: runtimeStateFromResolvedExposure({
       requestedMode: input.requestedMode,
       settings: input.settings,
-      exposure,
+      exposure: requestedExposure,
       port: input.port,
     }),
     unavailable,
@@ -513,6 +504,8 @@ export const make = Effect.gen(function* () {
       yield* Effect.annotateCurrentSpan({ port });
       const settings = yield* desktopSettings.get;
       const currentNetworkInterfaces = yield* readNetworkInterfaces;
+      // Boot can finish before DHCP assigns a LAN address. Keep binding every interface so the
+      // address is advertised once it arrives instead of falling back to local-only until relaunch.
       const resolved = resolveRuntimeState({
         requestedMode: withinPolicy(settings).serverExposureMode,
         settings: withinPolicy(settings),
