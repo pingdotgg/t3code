@@ -47,7 +47,11 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import { ProviderInstanceIcon, providerInstanceNameLabel } from "../../components/ProviderIcon";
+import {
+  ProviderIcon,
+  ProviderInstanceIcon,
+  providerInstanceNameLabel,
+} from "../../components/ProviderIcon";
 import { useNowAfter } from "../../lib/clock";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
@@ -80,6 +84,7 @@ import {
   threadHasUnseenCompletion,
   resolveThreadListV2RowStatus,
   resolveThreadListV2Status,
+  resolveThreadListV2ProviderStack,
   resolveThreadListV2SwipeActions,
   layoutThreadListV2RowMenuActions,
   threadListV2RowAccessibilityLabel,
@@ -850,11 +855,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const dormant = useSwipeRowDormant(props.activationKey);
 
   const selectThread = () => onSelectThread(thread);
-  const providerIconUrl = props.providers?.find(
-    (candidate) =>
-      candidate.instanceId ===
-      (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
-  )?.iconUrl;
+  const { providerStack, providerIconUrl } = useMemo(() => {
+    const provider = props.providers?.find(
+      (candidate) =>
+        candidate.instanceId ===
+        (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
+    );
+    return {
+      providerStack: resolveThreadListV2ProviderStack(thread, props.providers),
+      providerIconUrl: provider?.iconUrl,
+    };
+  }, [thread, props.providers]);
 
   const providerInstance = props.providerInstance;
   const providerNameLabel = providerInstance
@@ -1620,6 +1631,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : null}
         {providerInstance ? (
           <View className="flex-row items-center">
+            {providerStack.slice(0, -1).map((provider) => (
+              // Clipped, not covered: the next logo starts 8px in, and a clip holds on any row
+              // background, including the hover one.
+              <View key={provider.instanceId} className="mr-px w-[7px] overflow-hidden opacity-30">
+                <ProviderIcon provider={provider.driver} iconUrl={provider.iconUrl} size={12} />
+              </View>
+            ))}
             <ProviderInstanceIcon
               iconUrl={providerIconUrl}
               provider={providerInstance.driverKind}

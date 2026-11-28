@@ -14,7 +14,10 @@ import {
   type SnoozePreset,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { resolveThreadConnectionStatus } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadConnectionStatus,
+  resolveThreadProviderStack,
+} from "@t3tools/client-runtime/state/models";
 import {
   threadSearchMatchKey,
   threadSearchSubject,
@@ -37,6 +40,7 @@ import { isListedThreadLineage, type EnvironmentId, type ProjectId } from "@t3to
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import type { MenuAction } from "@react-native-menu/menu";
 
+import type { ThreadListProvider } from "../../state/thread-list-environments";
 import type { ThreadMoveAvailability } from "./threadOrder";
 
 import { relativeTime } from "../../lib/time";
@@ -50,6 +54,19 @@ import {
 } from "./threadOrder";
 
 export const threadListInboxReturns = createInboxReturnTracker();
+
+export function resolveThreadListV2ProviderStack(
+  thread: Pick<EnvironmentThreadShell, "providerInstanceHistory" | "modelSelection" | "runtime">,
+  providers: ReadonlyArray<ThreadListProvider> | undefined,
+): ReadonlyArray<ThreadListProvider> {
+  if (providers === undefined) return [];
+  const stack = resolveThreadProviderStack(thread).flatMap((instanceId) => {
+    const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+    return provider === undefined ? [] : [provider];
+  });
+  const currentInstanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
+  return stack.at(-1)?.instanceId === currentInstanceId ? stack : [];
+}
 
 export type ThreadListV2Status =
   | "connecting"
