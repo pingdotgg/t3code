@@ -5,6 +5,9 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   resolveToolCallDiffTarget,
+  selectRepositoryBranchBaseRef,
+  selectThreadBranchBaseRef,
+  selectThreadGitRepository,
   useDiffPanelSessionStore,
   useDiffPanelStore,
 } from "./diffPanelStore";
@@ -14,6 +17,7 @@ describe("diffPanelStore", () => {
     useDiffPanelStore.setState({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      gitRepositoryByThreadKey: {},
     });
     useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
   });
@@ -148,5 +152,28 @@ describe("diffPanelStore", () => {
     store.selectTurnRepository(ref, RunId.make("run-2"), "/work/api");
     store.selectTurnRepository(ref, RunId.make("run-2"), null);
     expect(selection()).not.toHaveProperty("repository");
+  });
+
+  it("switching the Git repository drops the left repository's commit and base ref", () => {
+    const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
+    const state = () => useDiffPanelStore.getState();
+    const store = state();
+    store.selectBranchBaseRef(ref, "origin/release");
+    store.selectCommit(ref, "abc123");
+    store.selectGitRepository(ref, "/work/base");
+    expect(selectThreadGitRepository(state().gitRepositoryByThreadKey, ref)).toBe("/work/base");
+    expect(state().byThreadKey[scopedThreadKey(ref)]).toEqual({ kind: "branch", baseRef: null });
+    expect(selectThreadBranchBaseRef(state(), ref)).toBeNull();
+
+    store.selectBranchBaseRef(ref, "origin/main");
+    store.selectGitScope(ref, "unstaged");
+    store.selectGitRepository(ref, "/work/base");
+    expect(selectThreadBranchBaseRef(state(), ref)).toBe("origin/main");
+    expect(selectRepositoryBranchBaseRef(state(), ref, "/work/base")).toBe("origin/main");
+    expect(selectRepositoryBranchBaseRef(state(), ref, null)).toBeNull();
+    store.selectGitRepository(ref, null);
+    expect(selectThreadGitRepository(state().gitRepositoryByThreadKey, ref)).toBeNull();
+    expect(state().byThreadKey[scopedThreadKey(ref)]).toEqual({ kind: "unstaged" });
+    expect(selectThreadBranchBaseRef(state(), ref)).toBeNull();
   });
 });

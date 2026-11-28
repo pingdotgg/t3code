@@ -89,6 +89,7 @@ function setup() {
   useDiffPanelStore.setState({
     byThreadKey: {},
     branchBaseRefByThreadKey: {},
+    gitRepositoryByThreadKey: {},
   });
   useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
 }
@@ -155,6 +156,9 @@ it.each(["system", "app"] as const)(
 it("opens an available commit in the closed Diff pane without the pane resetting it", async () => {
   setup();
   const sha = "a".repeat(40);
+  // A remembered task-folder repository and its base ref must not apply to the thread folder's commit.
+  useDiffPanelStore.getState().selectGitRepository(threadRef, "/repo/other");
+  useDiffPanelStore.getState().selectBranchBaseRef(threadRef, "origin/other");
   state.preview.mockResolvedValue(
     AsyncResult.success({ sources: [{ kind: "commit", headRef: sha }] }),
   );
@@ -169,6 +173,8 @@ it("opens an available commit in the closed Diff pane without the pane resetting
       [scopedThreadKey(threadRef)]: { kind: "commit", sha, baseRef: null },
     }),
   );
+  expect(state.preview.mock.calls[0]?.[0]?.input).not.toHaveProperty("baseRef");
+  expect(useDiffPanelStore.getState().gitRepositoryByThreadKey).toEqual({});
 });
 
 it("opens a pull request linked on the Issues page beside its issues", async () => {

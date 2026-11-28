@@ -46,6 +46,7 @@ import {
   resolveToolCallDiffTarget,
   selectThreadBranchBaseRef,
   selectThreadDiffPanelSelection,
+  selectThreadGitRepository,
   useDiffPanelSessionStore,
   useDiffPanelStore,
 } from "../diffPanelStore";
@@ -346,7 +347,9 @@ export default function DiffPanel({
     folders: projectFoldersQuery.data?.folders ?? null,
     threadCwd: activeCwd ?? null,
   });
-  const [gitRepositoryPath, setGitRepositoryPath] = useState<string | null>(null);
+  const gitRepositoryPath = useDiffPanelStore((state) =>
+    selectThreadGitRepository(state.gitRepositoryByThreadKey, panelThreadRef),
+  );
   const gitRepository =
     gitRepositories.find((repository) => repository.repositoryPath === gitRepositoryPath) ??
     (threadFolderIsRepo ? null : (gitRepositories[0] ?? null));
@@ -990,16 +993,17 @@ export default function DiffPanel({
   };
   const selectBranchBaseRef = (baseRef: string | null) => {
     if (!panelThreadRef) return;
-    useDiffPanelStore.getState().selectBranchBaseRef(panelThreadRef, baseRef);
+    const store = useDiffPanelStore.getState();
+    // A base ref belongs to the repository shown, including the one a plain folder falls back to.
+    if (gitRepositoryPath === null && gitRepository !== null) {
+      store.selectGitRepository(panelThreadRef, gitRepository.repositoryPath);
+    }
+    store.selectBranchBaseRef(panelThreadRef, baseRef);
   };
   const selectGitRepository = (value: string) => {
     const nextPath = value === THREAD_FOLDER ? null : value;
-    if (nextPath === (gitRepository?.repositoryPath ?? null)) return;
-    setGitRepositoryPath(nextPath);
-    // A commit or base ref of the repository being left means nothing in the next one.
-    if (selectedCommitSha === null && rememberedBaseRef === null) return;
-    selectBranchBaseRef(null);
-    if (selectedGitScope === "unstaged") selectGitScope("unstaged");
+    if (!panelThreadRef || nextPath === (gitRepository?.repositoryPath ?? null)) return;
+    useDiffPanelStore.getState().selectGitRepository(panelThreadRef, nextPath);
   };
   const selectedTurnValue = selectedTurn ? `turn:${selectedTurn.runId}` : "";
   const selectedCommitValue = selectedCommitSha !== null ? `commit:${selectedCommitSha}` : "";

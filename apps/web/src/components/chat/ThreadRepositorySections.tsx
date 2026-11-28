@@ -32,6 +32,7 @@ import { msg, T, useGT } from "gt-react";
 import { memo, useState } from "react";
 
 import { m } from "~/i18n/messages";
+import { selectRepositoryBranchBaseRef, useDiffPanelStore } from "~/diffPanelStore";
 import { cn } from "~/lib/utils";
 import { useQuietThreadProjection } from "~/state/entities";
 import { filesystemEnvironment, useFilesystemReadAccess } from "~/state/filesystem";
@@ -41,6 +42,7 @@ import { vcsEnvironment } from "~/state/vcs";
 import { useThreadRepositoryPins, useThreadRepositoryPinsStore } from "~/threadRepositoryPinsStore";
 
 import { GitActionsControl } from "../GitActionsControl";
+import { resolveChangesTotals } from "../GitActionsControl.logic";
 import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "../ui/menu";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
@@ -68,6 +70,9 @@ interface ThreadRepositorySectionsProps {
   /** Says so when no repository is listed, instead of leaving the section blank. */
   explainsEmpty: boolean;
   showActions: boolean;
+  showChanges: boolean;
+  /** Opens the Diff panel on the repository at this path. */
+  onOpenChanges?: (repositoryPath: string) => void;
 }
 
 const RepositorySection = memo(function RepositorySection(props: {
@@ -80,6 +85,8 @@ const RepositorySection = memo(function RepositorySection(props: {
   overflow: boolean;
   owner: { readonly threadId?: ThreadId; readonly projectId?: ProjectId };
   showActions: boolean;
+  showChanges: boolean;
+  onOpenChanges: ((repositoryPath: string) => void) | undefined;
   onToggle: (key: string) => void;
   onRemove: (key: string) => void;
 }) {
@@ -88,10 +95,15 @@ const RepositorySection = memo(function RepositorySection(props: {
   const status = useEnvironmentQuery(
     vcsEnvironment.status({
       environmentId: props.threadRef.environmentId,
-      input: { cwd: props.cwd, includeRemote: false },
+      input: { cwd: props.cwd, includeRemote: false, includeBranchChanges: true },
     }),
   );
   const summary = repositorySectionSummary(status.data);
+  // Against the branch's base, as the Changes row counts, so unpushed commits show too.
+  const totals = resolveChangesTotals(status.data);
+  const changesBaseRef = useDiffPanelStore((state) =>
+    selectRepositoryBranchBaseRef(state, props.threadRef, props.sectionKey),
+  );
   const Chevron = props.expanded ? ChevronDownIcon : ChevronRightIcon;
   const bodyId = `thread-repository-${props.sectionKey}`;
   const gt = useGT();
@@ -128,13 +140,14 @@ const RepositorySection = memo(function RepositorySection(props: {
                   #{summary.pullRequest.number}
                 </span>
               ) : null}
-              {summary.changedFiles > 0 ? (
+              {totals &&
+              (totals.insertions > 0 || totals.deletions > 0 || summary.changedFiles > 0) ? (
                 <>
                   <span className="text-diff-addition-foreground">
-                    +{formatDiffCount(summary.insertions)}
+                    +{formatDiffCount(totals.insertions)}
                   </span>
                   <span className="text-diff-deletion-foreground">
-                    -{formatDiffCount(summary.deletions)}
+                    -{formatDiffCount(totals.deletions)}
                   </span>
                 </>
               ) : null}
@@ -149,7 +162,11 @@ const RepositorySection = memo(function RepositorySection(props: {
             threadRef={props.threadRef}
             owner={props.owner}
             showActions={props.showActions}
-            showChanges={false}
+            showChanges={props.showChanges}
+            changesBaseRef={changesBaseRef}
+            {...(props.onOpenChanges
+              ? { onOpenChanges: () => props.onOpenChanges?.(props.sectionKey) }
+              : {})}
           />
           {props.removable ? (
             <ThreadDetailsControl
@@ -299,6 +316,8 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
       overflow={index >= THREAD_REPOSITORY_SECTIONS_VISIBLE}
       owner={owner}
       showActions={props.showActions}
+      showChanges={props.showChanges}
+      onOpenChanges={props.onOpenChanges}
       onToggle={toggle}
       onRemove={remove}
     />
