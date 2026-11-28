@@ -13119,7 +13119,7 @@
   ],
   "bdce0ad68690fdc1": "Lit son historique de sessions, ainsi que sa connexion pour rattacher les limites à votre compte et demander à Anthropic vos crédits de réinitialisation.",
   "8d802467f2a7f93b": "Afficher l’utilisation des agents ?",
-  "9988609527177162": "Choisissez les agents que T3 Code peut lire.",
+  "e686fad5b2c04511": "T3 Code lit ces données dans les fichiers propres à chaque agent, en dehors de l'app. Choisissez les agents à autoriser.",
   "0ef08693f1224444": "Historique de sessions et connexion",
   "bb9866823586b67a": "Base de données d’utilisation et clé Go",
   "8380d6f1828fe191": "Historique de conversations",

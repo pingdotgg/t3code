@@ -13126,7 +13126,7 @@
   ],
   "bdce0ad68690fdc1": "Odczytuje historię sesji oraz dane logowania, aby przypisać limity do Twojego konta i zapytać Anthropic o Twoje kredyty resetu.",
   "8d802467f2a7f93b": "Pokazać użycie agentów?",
-  "9988609527177162": "Wybierz, których agentów T3 Code może odczytywać.",
+  "e686fad5b2c04511": "T3 Code odczytuje te dane z własnych plików każdego agenta, poza aplikacją. Wybierz, którym agentom na to pozwolić.",
   "0ef08693f1224444": "Historia sesji i dane logowania",
   "bb9866823586b67a": "Baza danych użycia i klucz Go",
   "8380d6f1828fe191": "Historia konwersacji",

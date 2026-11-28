@@ -13119,7 +13119,7 @@
   ],
   "bdce0ad68690fdc1": "Liest den Sitzungsverlauf und die Anmeldung, um Limits deinem Konto zuzuordnen und bei Anthropic deine Reset-Guthaben abzufragen.",
   "8d802467f2a7f93b": "Agenten-Nutzung anzeigen?",
-  "9988609527177162": "Wähle, welche Agenten T3 Code lesen darf.",
+  "e686fad5b2c04511": "T3 Code liest das aus den eigenen Dateien jedes Agenten, außerhalb der App. Wähle, welche Agenten du erlaubst.",
   "0ef08693f1224444": "Sitzungsverlauf und Anmeldung",
   "bb9866823586b67a": "Nutzungsdatenbank und Go-Schlüssel",
   "8380d6f1828fe191": "Gesprächsverlauf",

@@ -5740,7 +5740,7 @@
   "175fd48b1f788f46": "Permita o acesso ao uso para mostrar os limites deste agente.",
   "e374560884a7e12b": "{environment} · {detail}",
   "04ce6b74fccf8b83": "Mostrar o uso dos agentes?",
-  "e38d50448a1f4929": "Escolha quais agentes o T3 Code pode ler.",
+  "5018e61a1d6a75a2": "O T3 Code lê isso dos próprios arquivos de cada agente, fora do app. Escolha quais agentes permitir.",
   "0ef08693f1224444": "Histórico de sessões e login",
   "bb9866823586b67a": "Banco de dados de uso e chave do Go",
   "8380d6f1828fe191": "Histórico de conversas",

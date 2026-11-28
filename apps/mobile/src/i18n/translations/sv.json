@@ -5746,7 +5746,7 @@
   "175fd48b1f788f46": "Tillåt användningsåtkomst för att visa agentens gränser.",
   "e374560884a7e12b": "{environment} · {detail}",
   "04ce6b74fccf8b83": "Visa agenternas användning?",
-  "e38d50448a1f4929": "Välj vilka agenter T3 Code får läsa.",
+  "5018e61a1d6a75a2": "T3 Code läser det här från varje agents egna filer, utanför appen. Välj vilka agenter du tillåter.",
   "0ef08693f1224444": "Sessionshistorik och inloggning",
   "bb9866823586b67a": "Användningsdatabas och Go-nyckel",
   "8380d6f1828fe191": "Konversationshistorik",
