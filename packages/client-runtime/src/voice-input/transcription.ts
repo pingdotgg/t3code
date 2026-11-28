@@ -21,7 +21,7 @@ export type PreparedVoiceTranscription = {
   readonly start?: (uri: string, options: VoiceTranscriptionOptions) => Promise<string | null>;
   readonly transcribe: (uri: string, options: VoiceTranscriptionOptions) => Promise<string>;
   /** Present when audio streams during capture; `finish` then replaces `transcribe`. */
-  readonly streaming?: VoiceStreamingSession;
+  readonly streaming?: VoiceStreamingSession | undefined;
 };
 
 export type VoiceTranscriber = {

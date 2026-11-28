@@ -72,12 +72,14 @@ class TextKey extends Data.Class<{
   hasContext: boolean;
   cwd: string | undefined;
   skills: NonNullable<OrchestrationV2SearchThreadInput["skills"]>;
+  theme: OrchestrationV2SearchThreadInput["theme"];
 }> {}
 
 function textKey(
   item: OrchestrationV2TurnItem,
   cwd: string | undefined,
   skills: TextKey["skills"],
+  theme: TextKey["theme"],
 ) {
   return new TextKey({
     text:
@@ -92,12 +94,13 @@ function textKey(
     hasContext: item.type === "user_message" && item.context !== undefined,
     cwd,
     skills,
+    theme,
   });
 }
 
 function parseText(key: TextKey): readonly string[] {
   return key.role === "plan"
-    ? searchablePlanSegments(key.text, key.cwd)
+    ? searchablePlanSegments(key.text, key.cwd, key.theme)
     : (searchableMessageSegments(
         {
           role: key.role,
@@ -107,6 +110,7 @@ function parseText(key: TextKey): readonly string[] {
         },
         key.cwd,
         key.skills,
+        key.theme,
       ) ?? []);
 }
 
@@ -207,6 +211,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
         cwd: Schema.optional(Schema.String),
         query: Schema.optional(Schema.String),
         skills: OrchestrationV2SearchThreadInput.fields.skills,
+        theme: OrchestrationV2SearchThreadInput.fields.theme,
       }),
     ),
   );
@@ -309,7 +314,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
       scans: CompletedScans,
       renderedSnapshot: RenderedSnapshot,
     ) {
-      const { threadId } = input;
+      const { threadId, theme } = input;
       const active = yield* sql<{ cwd: string | null }>`
       SELECT COALESCE(json_extract(t.payload_json, '$.worktreePath'), p.workspace_root) AS cwd
       FROM orchestration_v2_projection_threads t JOIN projection_projects p ON p.project_id = t.project_id
@@ -322,6 +327,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
         cwd,
         query: input.query,
         skills: input.skills ?? [],
+        ...(theme === undefined ? {} : { theme }),
       });
       const cached = scans.get(cacheKey);
       if (cached && cached.sequence === (yield* readRevision(cached.sourceThreadIds))) {
@@ -334,6 +340,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
         threadId,
         cwd,
         skills: input.skills ?? [],
+        ...(theme === undefined ? {} : { theme }),
       });
       const rendered = renderedSnapshot.current;
       if (
@@ -449,7 +456,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
             rendered = row;
           } else {
             const decoded = yield* decode(row);
-            const key = textKey(decoded.item, cwd, input.skills ?? []);
+            const key = textKey(decoded.item, cwd, input.skills ?? [], input.theme);
             const segments =
               decoded.item.type === "assistant_message" &&
               decoded.item.text === "" &&

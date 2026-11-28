@@ -16,6 +16,10 @@ import { useRemoteConnections } from "../../state/use-remote-environment-registr
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
 import { splitEnvironmentSections } from "../connection/environmentSections";
 import { useConnectionController } from "../connection/useConnectionController";
+import {
+  ConnectionTracesSwitch,
+  connectionTracesAvailable,
+} from "../observability/ConnectionTracesSwitch";
 import { optOutOfConnectOnboarding } from "./connectOnboardingOptOut";
 import { hasCloudPublicConfig } from "./publicConfig";
 
@@ -98,6 +102,19 @@ function ConfiguredConnectOnboardingRouteScreen() {
             </Text>
           </View>
         )}
+
+        {isSignedIn && connectionTracesAvailable ? (
+          <View collapsable={false} className="gap-2">
+            <View collapsable={false} className="overflow-hidden rounded-[24px] bg-grouped-card">
+              <ConnectionTracesSwitch />
+            </View>
+            <Text className="px-2 text-sm leading-normal text-foreground-muted">
+              {gt(
+                "Helps the T3 Code team fix connection problems. Traces hold timings, error types, an ID for this app session, and the app version, never your threads, prompts, or code. You can change this in Settings > About T3 Code > Diagnostics.",
+              )}
+            </Text>
+          </View>
+        ) : null}
 
         {userId ? (
           <Button label={gt("Don't show this again")} tone="text" onPress={handleDontShowAgain} />

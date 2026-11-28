@@ -228,6 +228,8 @@ describe("check:changed", () => {
   it.each([
     "packages/shared/src/testing/longTempDir.ts",
     "packages/shared/src/testing/providerEnv.ts",
+    "packages/shared/src/testing/gitEnv.ts",
+    "packages/shared/src/testing/gitRepositoryEnv.ts",
   ])("tests every package when the shared test setup file %s changes", (file) => {
     assert.strictEqual(decide([file], readWorkspace(), false).outputs.test_packages, "");
   });
