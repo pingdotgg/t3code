@@ -372,10 +372,11 @@ export function mergeLearnedRoutes(input: {
   }
   const signature = (routes: ReadonlyArray<ConnectionRoute>) =>
     routes
-      .map(
-        (route) =>
-          `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""} ${connectionRouteKind(route)}`,
-      )
+      .map((route) => {
+        const profile = Option.getOrNull(route.profile);
+        const network = profile?._tag === "BearerConnectionProfile" ? (profile.network ?? "") : "";
+        return `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""} ${connectionRouteKind(route)} ${network}`;
+      })
       .join("\n");
   return signature(saved) === signature(next) ? null : next;
 }
