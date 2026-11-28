@@ -6,7 +6,7 @@ import {
 } from "@t3tools/shared/assistantCitations";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useGT } from "gt-react";
-import { MessageSquarePlusIcon, TextQuoteIcon } from "lucide-react";
+import { PencilIcon, QuoteIcon } from "lucide-react";
 import {
   useEffect,
   useEffectEvent,
@@ -103,7 +103,7 @@ function ResponseCard({
         data-response-card
         aria-label={label}
         // The message's markdown styles colour and underline links; a card is neither.
-        className="block min-w-0 cursor-pointer rounded-lg surface-bubble-quote px-2.5 py-1.5 text-start text-body text-muted-foreground! no-underline! wrap-break-word focus-visible:outline-2 focus-visible:outline-ring"
+        className="block min-w-0 rounded-lg bg-black/10 px-2.5 py-1.5 text-start text-body text-muted-foreground! no-underline! wrap-break-word hover:bg-black/14 focus-visible:outline-2 focus-visible:outline-ring dark:bg-black/35 dark:hover:bg-black/50"
       >
         {title ? (
           <span className="block truncate text-meta text-foreground/80" dir="auto">
@@ -207,10 +207,6 @@ export function AssistantCitationChip({
   };
 }) {
   const gt = useGT();
-  const navigate = useNavigate();
-  const sourceThread = useQuietThreadShell(
-    scopeThreadRef(citation.environmentId, citation.threadId),
-  );
   const sourceLinkProps = useCitationSourceLinkProps(citation);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentPopupRef = useRef<HTMLDivElement>(null);
@@ -282,7 +278,7 @@ export function AssistantCitationChip({
       className="inline-flex min-w-0 items-center gap-[0.2em] self-baseline text-inherit no-underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-current rounded-sm"
       aria-label={gt("View cited assistant text: {label}", { label })}
     >
-      <TextQuoteIcon aria-hidden="true" />
+      <QuoteIcon aria-hidden="true" />
       <ContextChipLabel className="max-w-[16em]" dir={textDirection(label)}>
         {label}
       </ContextChipLabel>
@@ -314,7 +310,7 @@ export function AssistantCitationChip({
             data-citation-comment-trigger="true"
             render={<ContextChipAction />}
           >
-            <MessageSquarePlusIcon aria-hidden="true" />
+            <PencilIcon aria-hidden="true" />
           </PopoverTrigger>
           {commentEditor.open ? (
             <PopoverPopup
@@ -360,9 +356,6 @@ export function AssistantCitationChip({
                 inputRef={commentInputRef}
                 dictationRef={dictationRef}
                 onVoiceSetupOpenChange={setVoiceSetupOpen}
-                onViewSource={() => {
-                  void navigate(assistantCitationNavigation(citation, sourceThread));
-                }}
                 onDraftChange={(comment) => {
                   draftCommentRef.current = comment;
                   commentEditor.onDraftChange?.(comment);

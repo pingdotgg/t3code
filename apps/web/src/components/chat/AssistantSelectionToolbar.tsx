@@ -4,23 +4,22 @@ import {
   type AssistantCitation,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
-import { msg, useGT } from "gt-react";
-import { CopyIcon, TextQuoteIcon } from "lucide-react";
-import { use, useEffect, useRef, useState } from "react";
+import { useGT } from "gt-react";
+import { QuoteIcon } from "lucide-react";
+import { use, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { useStableCallback } from "~/hooks/useStableCallback";
-import { shortcutLabelForCommand } from "~/keybindings";
 import {
   captureAssistantTextSelection,
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
-import { isSelectionRectVisible, observeSelectionActions } from "~/lib/selectionActions";
-import { primaryServerKeybindingsAtom } from "~/state/server";
+import {
+  isSelectionRectVisible,
+  observeSelectionActions,
+  resolveSelectionActionPosition,
+  type SelectionActionPoint,
+} from "~/lib/selectionActions";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "../ui/button";
-import { Kbd } from "../ui/kbd";
-import { toastManager } from "../ui/toast";
 import { BackgroundThreadContext } from "./backgroundThread";
 
 // The one visible selection toolbar registers its cite action here so the
@@ -46,34 +45,30 @@ export function AssistantSelectionToolbar({
   threadRef: ScopedThreadRef;
   onCite: (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
 }) {
-  const backgroundThread = use(BackgroundThreadContext);
   const [selection, setSelection] = useState<{
     citation: AssistantCitation;
-    /** The selection's box; the toolbar centers above it, or below when the top is clipped. */
-    anchor: { centerX: number; top: number; bottom: number };
+    position: SelectionActionPoint;
     sourceAnchor: AssistantCitationSourceAnchor;
   } | null>(null);
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const toolbarRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLButtonElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
+  const backgroundThread = use(BackgroundThreadContext);
   const gt = useGT();
 
-  const attachToolbar = (toolbar: HTMLDivElement | null) => {
-    toolbarRef.current = toolbar;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the toolbar DOM node and clamps its position inside the window before paint
+  useLayoutEffect(() => {
+    const toolbar = toolbarRef.current;
     if (!toolbar || !selection) return;
     const rect = toolbar.getBoundingClientRect();
-    const { anchor } = selection;
-    const above = anchor.top - rect.height - 6;
-    const top = above >= 8 ? above : anchor.bottom + 6;
-    toolbar.style.left = `${Math.max(8, Math.min(anchor.centerX - rect.width / 2, window.innerWidth - rect.width - 8))}px`;
-    toolbar.style.top = `${Math.max(8, Math.min(top, window.innerHeight - rect.height - 8))}px`;
-  };
+    toolbar.style.left = `${Math.max(8, Math.min(selection.position.x, window.innerWidth - rect.width - 8))}px`;
+    toolbar.style.top = `${Math.max(8, Math.min(selection.position.y, window.innerHeight - rect.height - 8))}px`;
+  }, [selection]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to document selectionchange and keydown to track text selections in the viewport
   useEffect(() => {
-    if (!viewport || backgroundThread) return;
+    if (!viewport) return;
     const clear = () => setSelection(null);
-    const update = () => {
+    const update = (pointer: SelectionActionPoint | null) => {
       const nativeSelection = window.getSelection();
       const captured = captureAssistantTextSelection(viewport, nativeSelection);
       const messageId = captured?.source.dataset.assistantCitationSource;
@@ -133,6 +128,16 @@ export function AssistantSelectionToolbar({
         clear();
         return;
       }
+      const rects = captured.range.getClientRects();
+      const pointerOnText =
+        pointer !== null &&
+        Array.from(rects).some(
+          (line) =>
+            pointer.x >= line.left - 8 &&
+            pointer.x <= line.right + 8 &&
+            pointer.y >= line.top - 8 &&
+            pointer.y <= line.bottom + 8,
+        );
       setSelection({
         sourceAnchor: { source: captured.source, range: captured.range, viewport },
         citation: {
@@ -141,11 +146,12 @@ export function AssistantSelectionToolbar({
           messageId: MessageId.make(messageId),
           ...captured.selector,
         },
-        anchor: {
-          centerX: rect.left + rect.width / 2,
-          top: Math.max(rect.top, viewportRect.top),
-          bottom: Math.min(rect.bottom, viewportRect.bottom),
-        },
+        position: resolveSelectionActionPosition({
+          bounds: viewportRect,
+          selectionRect: rects.item(rects.length - 1) ?? rect,
+          pointer: pointerOnText ? pointer : null,
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+        }),
       });
     };
     const actions = observeSelectionActions({
@@ -172,11 +178,10 @@ export function AssistantSelectionToolbar({
       ) {
         return;
       }
-      const firstAction = toolbar.querySelector<HTMLButtonElement>("button:enabled");
-      if (!firstAction) return;
+      if (toolbar.disabled) return;
       event.preventDefault();
       event.stopPropagation();
-      firstAction.focus({ preventScroll: true });
+      toolbar.focus({ preventScroll: true });
     };
     // Tab belongs to the foreground chat; a background timeline only follows its selection.
     if (!backgroundThread) document.addEventListener("keydown", focusActions, true);
@@ -214,44 +219,19 @@ export function AssistantSelectionToolbar({
     };
   }, [citable, citeStable]);
 
-  if (!selection || backgroundThread) return null;
-  const copy = () => {
-    const text = window.getSelection()?.toString() || selection.citation.text;
-    // The native copy runs the chat's copy handlers, so markdown and citations copy like Mod+C.
-    const copied = (() => {
-      try {
-        return document.execCommand("copy");
-      } catch {
-        return false;
-      }
-    })();
-    if (copied) {
-      dismiss();
-      return;
-    }
-    void writeTextToClipboard(text, {
-      target: "selection",
-      unavailableMessage: msg("Clipboard API is unavailable while copying text."),
-      failureMessage: msg("Failed to copy text to the clipboard."),
-    }).then(dismiss, (error: unknown) => {
-      toastManager.add({
-        type: "error",
-        title: gt("Could not copy selection"),
-        description: error instanceof Error ? error.message : gt("An error occurred."),
-      });
-    });
-  };
-  const citeShortcut = shortcutLabelForCommand(keybindings, "chat.citeSelection", {
-    context: { assistantSelection: true },
-  });
+  if (!selection) return null;
   return createPortal(
-    <div
-      ref={attachToolbar}
-      role="toolbar"
-      aria-label={gt("Selection actions")}
-      className="fixed z-50 flex h-8 max-w-[calc(100vw-1rem)] items-center gap-0.5 rounded-project-icon surface-popover p-0.75 [--control-radius:var(--radius-row)]"
-      style={{ left: selection.anchor.centerX, top: selection.anchor.top }}
+    <Button
+      ref={toolbarRef}
+      type="button"
+      size="xs"
+      variant="floating"
+      disabled={tooLong}
+      aria-label={tooLong ? gt("Selection is too long to cite") : gt("Cite selection in composer")}
+      className="fixed z-50 max-w-[calc(100vw-1rem)]"
+      style={{ left: selection.position.x, top: selection.position.y }}
       onPointerDown={(event) => event.preventDefault()}
+      onClick={cite}
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === "Escape" && !event.nativeEvent.isComposing) {
@@ -260,29 +240,11 @@ export function AssistantSelectionToolbar({
         }
       }}
     >
-      {/* Cite is the toolbar's primary action, so it sits on the selected fill. */}
-      <span className={tooLong ? "flex" : "flex rounded-row surface-selected-soft"}>
-        <Button
-          variant="ghost"
-          size="xs"
-          disabled={tooLong}
-          aria-label={
-            tooLong ? gt("Selection is too long to cite") : gt("Cite selection in composer")
-          }
-          aria-keyshortcuts={citeShortcut ?? undefined}
-          onClick={cite}
-        >
-          <TextQuoteIcon aria-hidden="true" />
-          {tooLong ? gt("Shorten selection") : gt("Cite in composer")}
-          {!tooLong && citeShortcut ? <Kbd>{citeShortcut}</Kbd> : null}
-        </Button>
-      </span>
-      <span aria-hidden="true" className="h-4 w-px shrink-0 bg-divider" />
-      <Button variant="ghost" size="xs" onClick={copy}>
-        <CopyIcon aria-hidden="true" />
-        {gt("Copy", { $context: "verb, copies text to the clipboard" })}
-      </Button>
-    </div>,
+      <QuoteIcon aria-hidden="true" className="size-3.5" />
+      {tooLong
+        ? gt("Shorten selection")
+        : gt("Cite", { $context: "verb, button that quotes the selected text" })}
+    </Button>,
     document.body,
   );
 }

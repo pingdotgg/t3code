@@ -173,7 +173,11 @@ async function removeSource() {
 }
 
 async function clickButton(label: string) {
-  await page.getByRole("button", { name: label, exact: true }).click();
+  const button = [...document.querySelectorAll("button")].find(
+    (element) => element.textContent?.trim() === label,
+  );
+  expect(button, `button ${label}`).toBeDefined();
+  await act(async () => button!.click());
 }
 
 describe("citation comment source disappearance", () => {
