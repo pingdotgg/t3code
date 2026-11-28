@@ -69,11 +69,18 @@ export function insertPullRequestCompletion(
   return { ...inserted, cursor: inserted.cursor + 1 };
 }
 
+const MAX_COMPLETION_SEARCH_UNITS = 100;
+
 /** The key a debounce delays: the trigger's sigil and its host search, or `null` with no trigger. */
 export function pullRequestCompletionKey(
   trigger: Pick<PullRequestComposerTrigger, "sigil" | "query"> | null,
 ): string | null {
-  return trigger === null ? null : `${trigger.sigil}${trigger.query.slice(0, 100)}`;
+  if (trigger === null) return null;
+  let end = MAX_COMPLETION_SEARCH_UNITS;
+  const before = trigger.query.charCodeAt(end - 1);
+  const after = trigger.query.charCodeAt(end);
+  if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) end -= 1;
+  return `${trigger.sigil}${trigger.query.slice(0, end)}`;
 }
 
 /**
