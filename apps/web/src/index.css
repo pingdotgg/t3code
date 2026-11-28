@@ -237,6 +237,21 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
        44px under a pane inset 8px on a 52px row). */
     --pane-notch-height: calc(var(--workspace-chrome-row-height) - var(--workspace-pane-inset-top));
   }
+
+  /* A pane under the caption buttons that runs on past the window's edge
+     (--pane-window-end-clip, SurfaceHost.tsx) keeps its room for them on screen. */
+  .wco
+    [data-slot="sidebar"][data-variant="inset"]
+    ~ [data-slot="sidebar-inset"]
+    [data-layout-pane-id] {
+    --workspace-native-controls-inset: calc(
+      var(--workspace-controls-edge-right) + 0.75rem + var(--pane-window-end-clip, 0px)
+    );
+    --workspace-pane-local-controls-right: calc(
+      var(--workspace-pane-controls-right) - var(--workspace-pane-inset) +
+        var(--pane-window-end-clip, 0px)
+    );
+  }
 }
 
 /* The pane notch (pen maP8m, see PaneNotch.tsx): the pane gives up its
@@ -7215,7 +7230,6 @@ body {
     --pane-join-rim-k: 1.6;
     /* The rim's run along the pane's top edge, out from each ear. */
     --pane-join-tail: 36px;
-
     & [data-pane-header] {
       /* From a tab's foot to the pane's top edge, matching the rise above it. */
       --pane-join-drop: calc(

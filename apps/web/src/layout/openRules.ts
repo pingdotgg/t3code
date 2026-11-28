@@ -13,13 +13,16 @@ import type { ThreadRouteTarget } from "../threadRoutes";
 import {
   createLayoutLauncherContent,
   findLayoutLauncherFor,
+  findLayoutTabByContent,
   findLayoutPane,
   findLayoutSurfaceTabs,
   layoutChatSwaps,
+  resizeLayoutColumn,
   selectFocusedTab,
   selectFocusedWorkspace,
   THREAD_TERMINAL_SURFACE_ID,
   type LayoutState,
+  type LayoutTabContent,
   type LayoutTabLocation,
   type LayoutTabDestination,
 } from "./layoutModel";
@@ -251,6 +254,12 @@ export function openPullRequestWorkspace(threadRef: ScopedThreadRef, number: num
   useTerminalUiStateStore.getState().setTerminalOpen(threadRef, true);
 }
 
+/** Column widths captured when companions hide, keyed by thread: session-only like the resize itself. */
+const companionColumnsHiddenByOpen = new Map<
+  string,
+  Array<{ content: LayoutTabContent; width: number; cameraWidth: number | null }>
+>();
+
 function chatThreadRef(target: ThreadRouteTarget): ScopedThreadRef | null {
   if (target.kind === "server") return target.threadRef;
   const draft = useComposerDraftStore.getState().getDraftSession(target.draftId);
@@ -298,6 +307,15 @@ function hideCompanionsOf(threadRef: ScopedThreadRef, workspaceId: string) {
       threadRef,
     ).terminalOpen && terminalTab?.workspace.id === workspaceId;
   if (!panel && !terminal) return;
+  const chat = findThreadChat(layout, threadRef);
+  const locations = [...(chat ? [chat] : []), ...tabs];
+  const columns = new Map(
+    locations.map(({ column, tab, workspace }) => [
+      column.id,
+      { content: tab.content, width: column.width, cameraWidth: workspace.cameraWidth },
+    ]),
+  );
+  companionColumnsHiddenByOpen.set(scopedThreadKey(threadRef), [...columns.values()]);
   useLayoutStore.getState().setHiddenCompanions(scopedThreadKey(threadRef), { panel, terminal });
   if (panel) useRightPanelStore.getState().close(threadRef);
   if (terminal) useTerminalUiStateStore.getState().setTerminalOpen(threadRef, false);
@@ -307,15 +325,34 @@ function showCompanionsOf(threadRef: ScopedThreadRef) {
   const key = scopedThreadKey(threadRef);
   const store = useLayoutStore.getState();
   const hidden = store.hiddenCompanionsByThreadKey[key];
+  const hiddenColumns = companionColumnsHiddenByOpen.get(key) ?? [];
+  companionColumnsHiddenByOpen.delete(key);
   if (!hidden) return;
   store.setHiddenCompanions(key, null);
   const chat = findThreadChat(store.layout, threadRef);
   const focused = selectFocusedTab(store.layout);
   if (!chat) return;
-  if (hidden.panel) useRightPanelStore.getState().syncFromLayout(threadRef, { open: true });
+  if (hidden.panel) {
+    requestLayoutSurfacePlacement(threadRef, layoutSurfacePlacement(chat, false));
+    useRightPanelStore.getState().syncFromLayout(threadRef, { open: true });
+  }
   if (hidden.terminal) {
     requestLayoutSurfacePlacement(threadRef, layoutSurfacePlacement(chat, true));
     useTerminalUiStateStore.getState().setTerminalOpen(threadRef, true);
   }
   if (focused) useLayoutStore.getState().focusTab(focused.id);
+  // A navigation hide refits the remaining columns; returning restores the widths it borrowed.
+  useLayoutStore.setState((state) => {
+    let layout = state.layout;
+    for (const column of hiddenColumns) {
+      const location = findLayoutTabByContent(layout, column.content);
+      if (!location) continue;
+      const scale =
+        column.cameraWidth && location.workspace.cameraWidth
+          ? column.cameraWidth / location.workspace.cameraWidth
+          : 1;
+      layout = resizeLayoutColumn(layout, location.column.id, column.width * scale);
+    }
+    return { layout };
+  });
 }

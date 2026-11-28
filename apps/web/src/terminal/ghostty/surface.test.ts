@@ -648,19 +648,21 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(surface.getSelection()).toBe("row 6\nrow 7\nrow 8");
   });
 
-  it("leaves mostly sideways wheel events to the scroller around it", async () => {
+  it("leaves mostly sideways and Shift+wheel events to the scroller around it", async () => {
     const harness = createHarness();
     await harness.create();
-    const wheel = (deltaX: number, deltaY: number) => {
+    const wheel = (deltaX: number, deltaY: number, shiftKey = false) => {
       const event = Object.assign(new Event("wheel", { cancelable: true }), {
         deltaX,
         deltaY,
         deltaMode: 0,
+        shiftKey,
       });
       harness.canvas.dispatchEvent(event);
       return event.defaultPrevented;
     };
     expect(wheel(-20, 1)).toBe(false);
+    expect(wheel(0, -60, true)).toBe(false);
     expect(wheel(2, -60)).toBe(true);
   });
 

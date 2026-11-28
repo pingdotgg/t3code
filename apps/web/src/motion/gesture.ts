@@ -88,6 +88,16 @@ export function wheelDeltaPx(delta: number, event: WheelEvent): number {
   return delta;
 }
 
+/** Horizontal wheel travel the terminal leaves for the workspace strip. */
+export function sidewaysWheelDelta(
+  event: Pick<WheelEvent, "deltaX" | "deltaY" | "shiftKey" | "ctrlKey" | "metaKey" | "altKey">,
+): number {
+  if (event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && event.deltaX === 0) {
+    return event.deltaY;
+  }
+  return Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : 0;
+}
+
 const WHEEL_EASE_MS = 40;
 interface WheelChase {
   target: number;

@@ -89,6 +89,7 @@ import {
   selectFocusedWorkspace,
   selectLayoutPaneSlots,
   selectLayoutStripSize,
+  selectWindowEndPanes,
   selectWindowStartPaneId,
   type LayoutColumn,
   type LayoutSpan,
@@ -283,6 +284,25 @@ export function selectSurfaceMounts(
 }
 
 /**
+ * Whether a pane sits under the window's caption buttons: unset reads the
+ * slot, a number is how far the pane runs on past the window's right edge.
+ */
+type WindowEnd = number | false | undefined;
+
+function atTrailingEdge(slot: LayoutPaneSlot, atWindowEnd: WindowEnd): boolean {
+  return atWindowEnd === undefined ? !slot.hasRight && !slot.hasAbove : atWindowEnd !== false;
+}
+
+/** A pane cut off by the window moves its caption-button room on screen (index.css). */
+function windowEndStyle(
+  style: React.CSSProperties | undefined,
+  atWindowEnd: WindowEnd,
+): React.CSSProperties | undefined {
+  if (typeof atWindowEnd !== "number" || atWindowEnd === 0) return style;
+  return { ...style, "--pane-window-end-clip": `${atWindowEnd}px` } as React.CSSProperties;
+}
+
+/**
  * Pane edges land on whole pixels, so borders and text stay crisp at any split.
  * Both panes round the same boundary, so the gap between them stays exact.
  */
@@ -358,7 +378,7 @@ function selectShownSlots(
 ): {
   slots: LayoutPaneSlot[];
   stripWidth: number;
-  stripSize: { share: number; minPx: number };
+  stripSize: ReturnType<typeof selectLayoutStripSize>;
   unitWidth: number;
   paneCount: number;
 } {
@@ -389,7 +409,7 @@ function selectShownSlots(
       },
     ],
     stripWidth: 1,
-    stripSize: { share: 1, minPx: 0 },
+    stripSize: { share: 1, minPx: 0, maxShare: 1 },
     unitWidth: viewport.width,
   };
 }
@@ -762,6 +782,9 @@ export function LayoutSurfaceHost({
   // switches preserve terminals, drafts and scroll.
   const [shownOrder, setShownOrder] = useState<readonly string[]>([]);
   const [windowStartPaneId, setWindowStartPaneId] = useState<string | null>(null);
+  const [windowEndPanes, setWindowEndPanes] = useState<ReturnType<
+    typeof selectWindowEndPanes
+  > | null>(null);
   const overviewStartPaneIds = staged ? selectOverviewStartPaneIds(stage, viewportWidth) : null;
   if (overviewStartPaneIds) {
     const landingStartPaneId =
@@ -774,6 +797,14 @@ export function LayoutSurfaceHost({
       : windowStartPaneId === null
         ? undefined
         : paneId === windowStartPaneId;
+  const windowEndClips =
+    overviewStartPaneIds || windowEndPanes === null
+      ? null
+      : new Map(windowEndPanes.map(({ paneId, clipPx }) => [paneId, clipPx]));
+  const atWindowEnd = (paneId: string | undefined): WindowEnd =>
+    windowEndClips === null
+      ? undefined
+      : ((paneId === undefined ? undefined : windowEndClips.get(paneId)) ?? false);
   // A focused surface's chat mounts too, wherever it sits, so it answers the
   // surface's thread keys (cmd+J, alt+cmd+B) after a reload as before one.
   const visibleChatTabIds = [
@@ -954,12 +985,70 @@ export function LayoutSurfaceHost({
     });
   }, [backgroundRef, scrollingWorkspaces, stageGapRef, stagedRef, stripShownRef]);
 
+  const navigationFeedbackRef = useRef<HTMLSpanElement | null>(null);
+  // A double-click on the bare chrome beside the panes, or in a gutter between them, moves focus
+  // one column toward that side of the focused pane; the reveal below brings it on screen.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens on the document: the window's inset margin is chrome outside this host
+  useEffect(() => {
+    if (!active || !scrollingWorkspaces) return;
+    let feedback: Animation | null = null;
+    const navigationAt = (event: MouseEvent) => {
+      const root = rootRef.current;
+      const scroller = scrollerRef.current;
+      const target = event.target;
+      if (!root || !scroller || !(target instanceof Element)) return null;
+      if (!stripShownRef.current) return null;
+      const gutter =
+        target.contains(root) ||
+        target === scroller ||
+        target === stageRef.current ||
+        (root.contains(target) && target.closest("[data-layout-gutter]") !== null);
+      if (!gutter) return null;
+      const view = scroller.getBoundingClientRect();
+      if (event.clientY < view.top || event.clientY > view.bottom) return null;
+      const focused = scroller.querySelector('[data-layout-pane-focused="true"]');
+      const rect = focused?.getBoundingClientRect() ?? view;
+      const direction = event.clientX >= rect.left + rect.width / 2 ? "right" : "left";
+      const current = selectFocusedWorkspace(useLayoutStore.getState().layout);
+      const index = current.columns.findIndex((column) =>
+        column.panes.some((pane) => pane.id === current.focusedPaneId),
+      );
+      if (!current.columns[index + (direction === "right" ? 1 : -1)]) return null;
+      return { direction, view } as const;
+    };
+    const onDoubleClick = (event: MouseEvent) => {
+      if (event.button !== 0) return;
+      const destination = navigationAt(event);
+      if (!destination) return;
+      const indicator = navigationFeedbackRef.current;
+      if (indicator) {
+        feedback?.cancel();
+        indicator.style.left = `${event.clientX - 2}px`;
+        indicator.style.top = `${Math.max(destination.view.top, Math.min(destination.view.bottom - 64, event.clientY - 32))}px`;
+        const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        feedback = indicator.animate([{ opacity: 0.3 }, { opacity: 0 }], {
+          duration: 150,
+          easing: reduced
+            ? "steps(1, end)"
+            : getComputedStyle(indicator).getPropertyValue("--ease-out").trim() || "ease-out",
+        });
+      }
+      useLayoutStore.getState().focusDirection(destination.direction);
+    };
+    document.addEventListener("dblclick", onDoubleClick);
+    return () => {
+      feedback?.cancel();
+      document.removeEventListener("dblclick", onDoubleClick);
+    };
+  }, [active, scrollingWorkspaces]);
+
   // Before the reveal below: leaving the overview hands the strip its scroll
   // back first, so the reveal finds the focused pane in place, not a strip
   // still at 0 that it would spring sideways.
   useOverviewStage(overviewPhase, stage, scrollerRef, stageRef);
 
   const revealedSpan = useRef<LayoutSpan | null>(null);
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reveal the committed focused pane with an imperative camera move after measuring its DOM.
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
@@ -1297,6 +1386,21 @@ export function LayoutSurfaceHost({
         current.left === peeks.left && current.right === peeks.right ? current : peeks,
       );
       setWindowStartPaneId(selectWindowStartPaneId(slots, viewStart * stripPx, stripPx));
+      const ends = selectWindowEndPanes(
+        slots,
+        viewStart * stripPx,
+        stripPx,
+        (viewEnd - viewStart) * stripPx,
+      );
+      setWindowEndPanes((current) =>
+        current?.length === ends.length &&
+        current.every(
+          (pane, index) =>
+            pane.paneId === ends[index]?.paneId && pane.clipPx === ends[index]?.clipPx,
+        )
+          ? current
+          : ends,
+      );
     };
     compute();
     if (!scroller || stripWidth <= 1) return;
@@ -1625,7 +1729,10 @@ export function LayoutSurfaceHost({
               ? undefined
               : stacked
                 ? { width: "100%" }
-                : { width: `max(${stripSize.share * 100}%, ${stripSize.minPx}px)` }
+                : {
+                    // Match clientWidth rounding so fractional sidebar widths do not clamp the camera by a pixel.
+                    width: `min(calc(${stripSize.maxShare} * round(nearest, 100%, 1px)), max(${stripSize.share * 100}%, ${stripSize.minPx}px))`,
+                  }
           }
         >
           {/* Pane motion is off for a drag and cannot animate its release, so the drag's frames
@@ -1647,6 +1754,7 @@ export function LayoutSurfaceHost({
                   focused={false}
                   related={false}
                   atWindowStart={false}
+                  atWindowEnd={false}
                   split
                   staged={false}
                   overview={false}
@@ -1670,6 +1778,7 @@ export function LayoutSurfaceHost({
                 background={background}
                 related={tabId === relatedChatTabId}
                 atWindowStart={atWindowStart(slotByTabId.get(tabId)?.slot.paneId)}
+                atWindowEnd={atWindowEnd(slotByTabId.get(tabId)?.slot.paneId)}
                 split={split}
                 staged={still(slotByTabId.get(tabId)?.slot.paneId)}
                 overview={staged}
@@ -1691,6 +1800,7 @@ export function LayoutSurfaceHost({
                 focused={active && focusedTab?.id === tab.id}
                 active={active}
                 atWindowStart={atWindowStart(slotByTabId.get(tab.id)?.slot.paneId)}
+                atWindowEnd={atWindowEnd(slotByTabId.get(tab.id)?.slot.paneId)}
                 split={split}
                 staged={still(slotByTabId.get(tab.id)?.slot.paneId)}
               >
@@ -1709,6 +1819,7 @@ export function LayoutSurfaceHost({
               near={staged || nearTabIds.has(tabId) || focusedTab?.id === tabId}
               focused={focusedTab?.id === tabId}
               atWindowStart={atWindowStart(placed.slot.paneId)}
+              atWindowEnd={atWindowEnd(placed.slot.paneId)}
               split={split}
               staged={still(placed.slot.paneId)}
             />
@@ -1723,6 +1834,7 @@ export function LayoutSurfaceHost({
                 near
                 focused={false}
                 atWindowStart={false}
+                atWindowEnd={false}
                 split
                 staged={false}
                 closing
@@ -1750,6 +1862,7 @@ export function LayoutSurfaceHost({
               near={placed === null || nearTabIds.has(tabId) || focusedTab?.id === tabId}
               focused={placed !== null && focusedTab?.id === tabId}
               atWindowStart={atWindowStart(paneId)}
+              atWindowEnd={atWindowEnd(paneId)}
               split={split}
               staged={placed !== null && still(paneId)}
               overview={staged}
@@ -1800,6 +1913,12 @@ export function LayoutSurfaceHost({
         </>
       ) : null}
       {active && !split && !staged ? <LonePaneCorners /> : null}
+      <span
+        ref={navigationFeedbackRef}
+        aria-hidden="true"
+        data-layout-navigation-feedback=""
+        className="pointer-events-none fixed z-50 h-16 w-1 rounded-full bg-strong-foreground opacity-0"
+      />
     </SidebarInset>
   );
 }
@@ -1832,6 +1951,7 @@ function LayoutChatSurface({
   background = false,
   related,
   atWindowStart,
+  atWindowEnd,
   split,
   staged,
   overview,
@@ -1854,6 +1974,7 @@ function LayoutChatSurface({
   related: boolean;
   /** Whether this pane starts at the window's left edge; unset reads the slot. */
   atWindowStart: boolean | undefined;
+  atWindowEnd: WindowEnd;
   split: boolean;
   /** Under the overview or off the focused workspace mid-switch: draws its own pane. */
   staged: boolean;
@@ -1873,7 +1994,7 @@ function LayoutChatSurface({
   usePaneKeyboard(surfaceRef, focused, chatKeyboardTarget, false);
   const visible = slot !== null;
   const leadingEdge = slot ? (atWindowStart ?? (!slot.hasLeft && !slot.hasAbove)) : true;
-  const trailingEdge = slot ? !slot.hasRight && !slot.hasAbove : true;
+  const trailingEdge = slot ? atTrailingEdge(slot, atWindowEnd) : true;
   const paneState = {
     tabId: tab.id,
     paneId,
@@ -1915,7 +2036,7 @@ function LayoutChatSurface({
         // A lone pane paints flat before its chat does, not the inset's grain behind it.
         visible && !(split || staged) && "bg-background",
       )}
-      style={placed?.style ?? paneStyle}
+      style={windowEndStyle(placed?.style ?? paneStyle, atWindowEnd)}
       // Not inert while placed or hidden: flipping inert restyles a whole
       // rendered chat. Hidden, content-visibility keeps focus out and
       // aria-hidden tells focus code to skip it; under the overview the
@@ -2115,6 +2236,7 @@ function LayoutSurfaceTabSurface({
   near,
   focused,
   atWindowStart,
+  atWindowEnd,
   split,
   staged,
   overview,
@@ -2129,6 +2251,7 @@ function LayoutSurfaceTabSurface({
   near: boolean;
   focused: boolean;
   atWindowStart: boolean | undefined;
+  atWindowEnd: WindowEnd;
   split: boolean;
   staged: boolean;
   /** Under the overview: one not near draws its thumbnail. */
@@ -2137,7 +2260,7 @@ function LayoutSurfaceTabSurface({
 }) {
   const slot = placed?.slot ?? null;
   const leadingEdge = slot ? (atWindowStart ?? (!slot.hasLeft && !slot.hasAbove)) : true;
-  const trailingEdge = slot ? !slot.hasRight && !slot.hasAbove : true;
+  const trailingEdge = slot ? atTrailingEdge(slot, atWindowEnd) : true;
   const paneState = {
     tabId,
     paneId,
@@ -2171,7 +2294,7 @@ function LayoutSurfaceTabSurface({
         // Hidden as a chat off screen is (see LayoutChatSurface).
         !slot && "top-0 left-0 -translate-x-[calc(100%+100vw)] [content-visibility:hidden]",
       )}
-      style={placed?.style ?? paneStyle}
+      style={windowEndStyle(placed?.style ?? paneStyle, atWindowEnd)}
       aria-hidden={!slot || overview || undefined}
       onPointerDownCapture={() => claimPaneFocus(tabId)}
     >
@@ -2391,6 +2514,7 @@ function LayoutLauncherSurface({
   near,
   focused,
   atWindowStart,
+  atWindowEnd,
   split,
   staged,
   closing = false,
@@ -2402,6 +2526,7 @@ function LayoutLauncherSurface({
   near: boolean;
   focused: boolean;
   atWindowStart: boolean | undefined;
+  atWindowEnd: WindowEnd;
   split: boolean;
   staged: boolean;
   /** Closed: a ghost sliding away, gone once its animation ends. */
@@ -2409,7 +2534,7 @@ function LayoutLauncherSurface({
 }) {
   const { slot } = placed;
   const leadingEdge = atWindowStart ?? (!slot.hasLeft && !slot.hasAbove);
-  const trailingEdge = !slot.hasRight && !slot.hasAbove;
+  const trailingEdge = atTrailingEdge(slot, atWindowEnd);
   const paneState = {
     tabId,
     paneId: slot.paneId,
@@ -2438,7 +2563,7 @@ function LayoutLauncherSurface({
         closing && "pointer-events-none",
         (split || staged) && "overflow-clip rounded-pane pane-surface",
       )}
-      style={placed.style}
+      style={windowEndStyle(placed.style, atWindowEnd)}
       inert={staged || closing}
       onPointerDownCapture={() => claimPaneFocus(tabId)}
     >
@@ -2459,6 +2584,7 @@ function LayoutPageSurface({
   placed,
   focused,
   atWindowStart,
+  atWindowEnd,
   split,
   staged,
   children,
@@ -2468,6 +2594,7 @@ function LayoutPageSurface({
   placed: { slot: LayoutPaneSlot; style: React.CSSProperties } | null;
   focused: boolean;
   atWindowStart: boolean | undefined;
+  atWindowEnd: WindowEnd;
   split: boolean;
   staged: boolean;
   children: React.ReactNode;
@@ -2476,7 +2603,7 @@ function LayoutPageSurface({
   const slot = placed?.slot ?? FULL_SLOT;
   const visible = active && placed !== null;
   const leadingEdge = atWindowStart ?? (!slot.hasLeft && !slot.hasAbove);
-  const trailingEdge = !slot.hasRight && !slot.hasAbove;
+  const trailingEdge = atTrailingEdge(slot, atWindowEnd);
   const paneState = {
     tabId,
     paneId: slot.paneId,
@@ -2505,7 +2632,7 @@ function LayoutPageSurface({
           "pointer-events-none inset-0 -translate-x-[calc(100%+100vw)] [content-visibility:hidden]",
         (split || staged) && "overflow-clip rounded-pane pane-surface",
       )}
-      style={placed?.style}
+      style={windowEndStyle(placed?.style, atWindowEnd)}
       inert={!visible || staged}
       onPointerDownCapture={() => claimPaneFocus(tabId)}
     >
