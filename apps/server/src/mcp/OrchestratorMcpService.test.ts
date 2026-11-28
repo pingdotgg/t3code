@@ -2940,6 +2940,125 @@ describe("OrchestratorMcpService provider resolution", () => {
       ),
   );
 
+  // A Scratch thread's own folder can be a Git repository the plain Scratch root does not track.
+  it.live(
+    "does not hand a worktree child a plain-folder copy when the parent works in an untracked Git repository",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const git = yield* GitVcsDriver.GitVcsDriver;
+        const workspaceRoot = yield* fileSystem.realPath(
+          yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-mcp-delegate-scratch-" }),
+        );
+        const parentCheckout = `${workspaceRoot}/2026-11-28-session`;
+        yield* fileSystem.makeDirectory(parentCheckout);
+        for (const args of [
+          ["init", "-b", "master"],
+          ["config", "user.email", "delegate@example.test"],
+          ["config", "user.name", "Delegate"],
+          ["commit", "--allow-empty", "-m", "init"],
+        ]) {
+          yield* git.execute({ operation: "delegate-scratch-test", cwd: parentCheckout, args });
+        }
+        const parentCommit = (yield* git.resolveCommit({ cwd: parentCheckout, revision: "HEAD" }))
+          .commitSha;
+        const commands: Array<unknown> = [];
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          origin: "app_owned",
+          childThreadId,
+          providerInstanceId: codexInstanceId,
+          model: "gpt-5.4",
+          status: "running",
+          result: null,
+        };
+        const dependencies = Layer.mergeAll(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? (() => {
+                      const parent = parentProjection(commands.length > 0 ? [task] : []);
+                      return {
+                        ...parent,
+                        thread: {
+                          ...parent.thread,
+                          worktreePath: parentCheckout,
+                          branch: "master",
+                        },
+                      } as OrchestrationV2ThreadProjection;
+                    })()
+                  : childProjection,
+              ),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commands.push(command);
+                return {
+                  sequence: 1,
+                  storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+                } as never;
+              }),
+          }),
+          ServerSettings.layerTest(),
+          providerRegistryLayer([
+            providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+          ]),
+          adapterRegistryLayer([codexInstanceId]),
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () =>
+              Effect.succeedSome({ id: projectId, title: "No project", workspaceRoot } as never),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            isNonGitProject: () => Effect.succeed(true),
+          }),
+          Layer.succeed(GitVcsDriver.GitVcsDriver, git),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const result = yield* service
+            .delegateTask(scope, {
+              task: "Edit the repository.",
+              isolation: "worktree",
+              mode: "async",
+              clientRequestId: "worktree-scratch-repo",
+            })
+            .pipe(Effect.result);
+          if (Result.isFailure(result)) {
+            assert.equal(result.failure.code, "invalid_request");
+            return;
+          }
+          assert.include(
+            JSON.stringify((commands[0] as { workspaceStrategy?: unknown }).workspaceStrategy),
+            parentCommit,
+            "the child gets a plain copy of the project root instead of a checkout of the parent's repository",
+          );
+        }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            GitVcsDriver.layer.pipe(
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-delegate-scratch-" }),
+              ),
+              Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+            ),
+          ),
+        ),
+        Effect.scoped,
+      ),
+  );
+
   it.effect("rejects delegation to a provider without a registered adapter", () =>
     Effect.gen(function* () {
       const forkOnlyInstanceId = ProviderInstanceId.make("forkOnly");
