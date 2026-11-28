@@ -508,6 +508,7 @@ export interface LimitPoolWindow {
   readonly remainingPercent: number;
   readonly usedPercent: number;
   readonly pace: LimitPace | null;
+  readonly paceRemainingPercent: number | null;
   readonly resets: ReadonlyArray<{
     readonly member: LimitPoolMember;
     readonly at: number;
@@ -746,6 +747,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       usedPercent: Math.round(usedPercent),
       remainingPercent: Math.round(100 - usedPercent),
       pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),
+      paceRemainingPercent: meanElapsed === null ? null : Math.round((1 - meanElapsed) * 100),
       resets,
     };
   });
@@ -838,6 +840,11 @@ export function isUsageLimitsCommand(prompt: string): boolean {
   return prompt.trim().toLowerCase() === "/usage-limits";
 }
 
+// A hub that could not be read may route any driver. An HTTP quota source never lists accounts
+// here, so its failure says nothing about which providers have limits.
+const unreadableHub = (source: UsageLimitSourceSnapshots[number]) =>
+  source.kind === "cliproxy" && source.error !== undefined && source.accounts.length === 0;
+
 export function hasProviderUsageLimits(
   driver: ServerProvider["driver"],
   providers: readonly ServerProvider[],
@@ -847,8 +854,7 @@ export function hasProviderUsageLimits(
     providersWithLimits(providers).some((provider) => provider.driver === driver) ||
     sources.some(
       (source) =>
-        source.accounts.some((account) => account.driver === driver) ||
-        (source.error !== undefined && source.accounts.length === 0),
+        source.accounts.some((account) => account.driver === driver) || unreadableHub(source),
     )
   );
 }
@@ -860,9 +866,7 @@ export function sameUsageLimitCommandCoverage(
   const coverage = (sources: UsageLimitSourceSnapshots) =>
     new Set(
       sources.flatMap((source) =>
-        source.error !== undefined && source.accounts.length === 0
-          ? ["*"]
-          : source.accounts.map((account) => String(account.driver)),
+        unreadableHub(source) ? ["*"] : source.accounts.map((account) => String(account.driver)),
       ),
     );
   const before = coverage(previous);
@@ -879,9 +883,7 @@ export function withUsageLimitsCommands(
     ...providersWithLimits(providers).map((provider) => provider.driver),
     ...sources.flatMap((source) => source.accounts.map((account) => account.driver)),
   ]);
-  const unreadableSource = sources.some(
-    (source) => source.error !== undefined && source.accounts.length === 0,
-  );
+  const unreadableSource = sources.some(unreadableHub);
   return providers.map((provider) => {
     if (!unreadableSource && !supportedDrivers.has(provider.driver)) return provider;
     const commands = (items: readonly ServerProviderSlashCommand[]) => [

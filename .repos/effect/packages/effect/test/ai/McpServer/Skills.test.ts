@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest"
 import * as McpProtocol from "effect/ai/McpProtocol"
 import * as McpSchema from "effect/ai/McpSchema"
 import * as McpServer from "effect/ai/McpServer"
+import * as Skill from "effect/ai/Skill"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
@@ -134,6 +135,42 @@ describe("McpServer skills", () => {
         assert.strictEqual(
           (yield* readBytes(harness, "skill://acme/billing/refunds/SKILL.md")).toString("utf8"),
           REFUNDS_SKILL_MD
+        )
+      }))
+
+    it.effect("registers a Skill value with the same manifest and files as the raw-files form", () =>
+      Effect.gen(function*() {
+        const refundsSkill = Skill.make({
+          frontmatter: {
+            name: "refunds",
+            description: "Process refunds using the billing tools",
+            license: "Apache-2.0",
+            metadata: { "acme-tools": "issue_refund" }
+          },
+          instructions: "Read references/policy.md before issuing a refund.\n",
+          files: {
+            "references/policy.md": "Refunds above CHF 500 require manager approval.\n",
+            "assets/logo.png": PNG
+          }
+        })
+        const harness = yield* modernHarness(
+          McpServer.skill(refundsSkill, { uri: "skill://acme/billing/refunds/SKILL.md" })
+        )
+        const { message } = yield* call(harness, "skills/list")
+        const [listed] = message.result.skills
+        assert.strictEqual(listed.uri, "skill://acme/billing/refunds/SKILL.md")
+        assert.deepStrictEqual(listed.frontmatter, refundsSkill.frontmatter)
+        assert.deepStrictEqual(
+          listed.resources.map((resource: any) => resource.uri),
+          [
+            "skill://acme/billing/refunds/SKILL.md",
+            "skill://acme/billing/refunds/assets/logo.png",
+            "skill://acme/billing/refunds/references/policy.md"
+          ]
+        )
+        assert.deepStrictEqual(
+          yield* readBytes(harness, "skill://acme/billing/refunds/assets/logo.png"),
+          Buffer.from(PNG)
         )
       }))
 

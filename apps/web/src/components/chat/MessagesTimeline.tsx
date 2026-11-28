@@ -961,17 +961,23 @@ const ConversationTimeline = memo(function ConversationTimeline({
           firstBufferedRow.getBoundingClientRect().top
         : state.scroll;
     const visibleRange = resolveTimelineMinimapVisibleRange({ ...state, scroll });
+    // Long threads share a strip between items; it is in view if any of them is.
+    const stripsInView = new Map<HTMLSpanElement, boolean>();
     for (const [index, item] of minimapItems.entries()) {
       const strip = minimapStripMap.get(item.id);
+      if (!strip) continue;
       const inView = isTimelineMinimapTurnVisible(
         item.rowIndex,
         minimapItems[index + 1]?.rowIndex,
         visibleRange.start,
         visibleRange.end,
       );
+      stripsInView.set(strip, inView || stripsInView.get(strip) === true);
+    }
+    for (const [strip, inView] of stripsInView) {
       const next = inView ? "true" : "false";
       // Avoid dirtying style state on every scroll tick for unchanged strips.
-      if (strip && strip.dataset.inView !== next) {
+      if (strip.dataset.inView !== next) {
         strip.dataset.inView = next;
       }
     }

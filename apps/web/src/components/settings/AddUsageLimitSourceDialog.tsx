@@ -100,8 +100,8 @@ export function AddUsageLimitSourceDialog({
               </T>
             ) : (
               <T>
-                Show the quota of every account the hub pools, next to the providers on{" "}
-                <Var>{environmentLabel}</Var>. The key stays on that server.
+                Show the quota of every Codex, Claude, and Grok account the hub pools, next to the
+                providers on <Var>{environmentLabel}</Var>. The key stays on that server.
               </T>
             )}
           </DialogDescription>

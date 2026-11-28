@@ -7,9 +7,10 @@ import {
 import { Image } from "react-native";
 import type { LinkPillContent, MarkdownStyle } from "react-native-enriched-markdown";
 import type { ComposerContextRecord } from "@t3tools/contracts";
+import type { MessageResolver } from "../i18n/messages";
 import { contextChipAccent, contextChipPresentation } from "../lib/composerChipPresentation";
 import { CONTEXT_CHIP_ICON_SOURCES } from "../lib/contextChipIcons.generated";
-import { FONT_FAMILIES } from "../lib/fontFamilies";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { contextChipIconSource } from "../lib/contextChipIconSource";
 import { markdownFileIconSource } from "../lib/markdownFileIcons";
 import { markdownLinkIcon } from "../lib/markdownLinkIcons";
@@ -42,8 +43,9 @@ function chipCustomization(
 export function enrichedContextLinkCustomization(
   href: string,
   records?: ReadonlyArray<ComposerContextRecord>,
+  resolve?: MessageResolver,
 ) {
-  return chipCustomization(enrichedContextLinkPresentation(href, records));
+  return chipCustomization(enrichedContextLinkPresentation(href, records, resolve));
 }
 
 export function enrichedThreadLinkCustomization(href: string) {
@@ -121,6 +123,7 @@ export function useEnrichedLinkVariants(
 ) {
   const { linkCustomization, skills, models, textStyle, fileEmbedLabel } = props;
   const theme = useUniwindTheme();
+  const { fontFamilies } = useAppearancePreferences();
   const links = useMemo(() => {
     const byUrl = new Map<string, MarkdownLinkCustomization>();
     for (const url of urls) {
@@ -185,7 +188,7 @@ export function useEnrichedLinkVariants(
                       paddingVertical: 2,
                     },
                   }),
-              fontFamily: chipForeground ? FONT_FAMILIES.medium : textStyle.fontFamily,
+              fontFamily: chipForeground ? fontFamilies.medium : textStyle.fontFamily,
               color: chipForeground ?? link.color ?? textStyle.fileTextColor,
               underline: false,
               backgroundColor: "transparent",
@@ -193,7 +196,7 @@ export function useEnrichedLinkVariants(
           ];
         }),
       ),
-    [chipForegrounds, icons, links, textStyle],
+    [chipForegrounds, fontFamilies, icons, links, textStyle],
   );
   const linkPillContent = useMemo<Record<string, LinkPillContent>>(
     () =>

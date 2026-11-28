@@ -757,6 +757,8 @@ export type OrchestrationV2DelegatedCompletionDelivery =
 
 export const OrchestrationV2DelegatedCompletionCohort = Schema.Struct({
   disposition: Schema.Literals(["open", "stopped", "disposed"]),
+  /** Reopened for a follow-up after a Stop; the tasks that Stop interrupted still need the Stop note. */
+  reopenedAfterStop: Schema.optionalKey(Schema.Literal(true)),
   nextGeneration: PositiveInt,
   delivery: Schema.NullOr(OrchestrationV2DelegatedCompletionDelivery),
 });
@@ -830,6 +832,8 @@ export const OrchestrationV2Run = Schema.Struct({
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
   queueHeld: Schema.optional(Schema.Boolean),
+  /** The sender asked for a separate turn; it is not an ordering barrier for a later auto send. */
+  explicitQueue: Schema.optional(Schema.Literal(true)),
   steerWhenReadyRunId: Schema.optional(RunId),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -1812,7 +1816,7 @@ const OrchestrationV2TurnItemBaseFields = {
 } as const;
 
 export const OrchestrationV2FileSearchResult = Schema.Struct({
-  fileName: TrimmedNonEmptyString,
+  fileName: Schema.NonEmptyString,
   line: Schema.optional(PositiveInt),
   column: Schema.optional(PositiveInt),
   preview: Schema.optional(Schema.String),
@@ -2528,14 +2532,19 @@ export function isLiveSubagentShell(
 
 /**
  * A settled top-level thread settled before `beforeMs`. Shells that omit older settled threads
- * count every such thread, so the server and clients share this one rule.
+ * count every such thread, so the server and clients share this one rule. A task delegated from a
+ * linked environment never is: only the client knows whether it lists it under its parent.
  */
 export function isOlderSettledThreadShell(
-  thread: Pick<OrchestrationV2ThreadShell, "lineage" | "settledOverride" | "settledAt">,
+  thread: Pick<
+    OrchestrationV2ThreadShell,
+    "lineage" | "delegatedFrom" | "settledOverride" | "settledAt"
+  >,
   beforeMs: number,
 ): boolean {
   return (
     isListedThreadLineage(thread.lineage) &&
+    thread.delegatedFrom == null &&
     thread.settledOverride === "settled" &&
     thread.settledAt !== null &&
     DateTime.toEpochMillis(thread.settledAt) < beforeMs
@@ -3637,6 +3646,7 @@ export const OrchestrationV2Command = Schema.Union([
     steerFollowUpAfterRunOrdinal: Schema.optional(NonNegativeInt),
     usageLimitRecoveryRequestId: Schema.optional(CommandId),
     deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
+    explicitQueue: Schema.optional(Schema.Literal(true)),
     delegatedCompletion: Schema.optional(
       Schema.Struct({
         parentRunId: RunId,
@@ -4278,10 +4288,10 @@ export type OrchestrationV2GetWorktreeThreadIdsInput =
   typeof OrchestrationV2GetWorktreeThreadIdsInput.Type;
 
 /**
- * The client's thread search. With `olderSettledBefore`, the result also carries the rows of the
- * best matching threads settled before it, which shells that omit older settled threads leave out:
- * title, branch, pull request and project matches (in `projectIds` when given), then message hits.
- * Send the extra keys only to servers that advertise `shellOlderSettled`.
+ * The client's thread search, limited to `projectIds` when given (older servers ignore it). With
+ * `olderSettledBefore`, the result also carries the rows of the best matching threads settled
+ * before it, which shells that omit older settled threads leave out. Send that and the other extra
+ * keys only to servers that advertise `shellOlderSettled`.
  */
 export const OrchestrationV2SearchThreadsInput = Schema.Struct({
   ...OrchestrationSearchThreadsInput.fields,

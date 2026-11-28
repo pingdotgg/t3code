@@ -10,7 +10,28 @@ export {
   mediaMimeTypeFromExtension,
 } from "./mediaPreview.ts";
 import { GENERIC_MIME_TYPES } from "./image.ts";
+import { parseUrl } from "./url.ts";
 import { videoMimeType } from "./video.ts";
+
+const EPUB_PREVIEW_PATH = "/epub-preview.html";
+
+export function epubPreviewRequest(url: URL): { src: string; name: string } | null {
+  const params = new URLSearchParams(url.hash.slice(1));
+  const path = params.get("file");
+  if (!path?.startsWith("/api/assets/")) return null;
+  const asset = parseUrl(path, url.origin);
+  if (asset?.origin !== url.origin || !asset.pathname.startsWith("/api/assets/")) return null;
+  return { src: asset.href, name: params.get("name")?.slice(0, 300) || "EPUB" };
+}
+
+export function epubPreviewUrl(uri: string, name: string) {
+  const asset = parseUrl(uri);
+  if (!asset || (asset.protocol !== "https:" && asset.protocol !== "http:")) return null;
+  if (!asset.pathname.startsWith("/api/assets/") || asset.username || asset.password) return null;
+  const viewer = new URL(EPUB_PREVIEW_PATH, asset.origin);
+  viewer.hash = new URLSearchParams({ file: asset.pathname + asset.search, name }).toString();
+  return viewer.href;
+}
 
 export type FilePreviewKind =
   | "image"
@@ -160,6 +181,8 @@ export function officePreviewKind(file: {
       (!mime ||
         GENERIC_MIME_TYPES.has(mime) ||
         mime === "text/plain" ||
+        ((kind === "docx" || kind === "xlsx" || kind === "pptx") &&
+          (mime === "application/x-ole-storage" || mime === "application/cdfv2")) ||
         (kind === "ipynb" && mime === "application/json")) &&
       file.name.toLowerCase().endsWith(`.${kind}`)
     )

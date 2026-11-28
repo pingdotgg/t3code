@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   filePreviewKind,
   decodeFilePreviewText,
+  epubPreviewRequest,
+  epubPreviewUrl,
   FILE_TEXT_PREVIEW_MAX_BYTES,
   hostPreviewMimeTypeFromExtension,
   isWorkspaceFontPreviewPath,
@@ -13,6 +15,17 @@ import {
 } from "./filePreview.ts";
 
 describe("workspace file previews", () => {
+  it("passes only a same-origin signed file to the EPUB reader", () => {
+    const source = "https://code.example/api/assets/signed/Example.epub?version=1";
+    const viewer = new URL(epubPreviewUrl(source, "Example #1.epub")!);
+    expect(viewer.pathname).toBe("/epub-preview.html");
+    expect(viewer.search).toBe("");
+    expect(epubPreviewRequest(viewer)).toEqual({ src: source, name: "Example #1.epub" });
+    expect(epubPreviewUrl("file:///user/Example.epub", "Example.epub")).toBeNull();
+    viewer.hash = new URLSearchParams({ file: "/api/assets/../../admin" }).toString();
+    expect(epubPreviewRequest(viewer)).toBeNull();
+  });
+
   it.each([
     ["zip", "archive", "application/zip"],
     ["jar", "archive", "application/java-archive"],
@@ -102,6 +115,11 @@ describe("workspace file previews", () => {
     expect(hostPreviewMimeTypeFromExtension(`.${kind}`)).toBe(mimeType);
     expect(filePreviewKind({ name: "download", mimeType })).toBe(kind);
     expect(filePreviewKind({ name, mimeType: "application/zip" })).toBe("archive");
+  });
+  it.each(["docx", "xlsx", "pptx"])("recognizes an encrypted %s with an OLE MIME type", (kind) => {
+    expect(filePreviewKind({ name: `file.${kind}`, mimeType: "application/x-ole-storage" })).toBe(
+      kind,
+    );
   });
   // regression: #10311 previews classify by the literal filename, not URL-like suffixes
   it.each([

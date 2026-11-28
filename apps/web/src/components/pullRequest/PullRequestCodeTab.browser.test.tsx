@@ -7,6 +7,7 @@ import {
   type PullRequestDetailView,
   type PullRequestDiffResult,
 } from "@t3tools/contracts";
+import { RegistryProvider } from "@effect/atom-react";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -109,6 +110,7 @@ vi.mock(import("./usePullRequestFilesViewed"), async () => {
       const viewedPaths = useSyncExternalStore(subscribe, () => mocks.viewedPaths);
       return {
         enabled: viewedPaths !== null,
+        viewedCount: viewedPaths?.size ?? 0,
         isViewed: (path: string) => viewedPaths?.has(path) === true,
         isStale: () => false,
         setViewed: (path: string, viewed: boolean) => {
@@ -220,7 +222,11 @@ const tab = (
     scrollerRef={() => {}}
     environmentId={EnvironmentId.make("environment")}
     reference={detail}
-    detail={detail}
+    detail={{
+      ...detail,
+      changedFiles: mocks.paged ? (mocks.shortPages ? 4 : 41) : 1,
+      capabilities: { ...detail.capabilities, viewedFiles: "host" },
+    }}
     selectedCommitOid={null}
     onSelectedCommitChange={() => {}}
     onRefresh={() => {}}
@@ -463,10 +469,52 @@ it("keeps an unfinished inline comment when a background refresh changes another
   await expect.element(input()).toHaveValue("Unsent review note");
 });
 
+// regression: a source file's fold was keyed by the whole patch's hash, so any refresh dropped it
+it("keeps a source file expanded when a background refresh changes another file", async () => {
+  setup({ paged: false });
+  mocks.withTestFile = true;
+  // Its own registry, so the refreshed patch an earlier test cached is not the starting diff.
+  const backgroundTab = (backgroundRefreshToken: number) => (
+    <RegistryProvider>
+      <PullRequestCodeTab
+        scrollerRef={() => {}}
+        environmentId={EnvironmentId.make("environment")}
+        reference={detail}
+        detail={detail}
+        selectedCommitOid={null}
+        onSelectedCommitChange={() => {}}
+        onRefresh={() => {}}
+        backgroundRefreshToken={backgroundRefreshToken}
+      />
+    </RegistryProvider>
+  );
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(backgroundTab(0), { container });
+  await expect.element(screen.getByText("3 files", { exact: true })).toBeVisible();
+  const diffToggle = async (path: string) => {
+    const header = screen.getByText(path, { exact: true }).first();
+    await expect.element(header).toBeVisible();
+    const { host } = header.element().getRootNode() as ShadowRoot;
+    return page.elementLocator(host).getByRole("button", { name: /^(Expand|Collapse) diff$/ });
+  };
+  const toggle = await diffToggle("early-0.ts");
+  await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
+  await toggle.click();
+  await expect.element(toggle).toHaveAttribute("aria-expanded", "true");
+
+  mocks.refreshed = true;
+  await screen.rerender(backgroundTab(1));
+
+  await expect.element(screen.getByText("4 files", { exact: true })).toBeVisible();
+  await expect.element(await diffToggle("early-0.ts")).toHaveAttribute("aria-expanded", "true");
+});
+
 // Two short pages of a source and a test file each; the next page loads only through the file tree.
 async function renderShortPages(stack: AsyncDisposableStack) {
   setup({ paged: true });
   mocks.shortPages = true;
+  mocks.viewedPaths = new Set(["late.ts"]);
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
   stack.defer(() => {
     window.localStorage.removeItem("t3code.diffHideTestFiles");
@@ -510,11 +558,15 @@ async function renderShortPages(stack: AsyncDisposableStack) {
 it("keeps a later test file folded by hand through a refresh and bulk toggles while hidden", async () => {
   await using stack = new AsyncDisposableStack();
   const { screen, loadNextPage, diffToggle, filter } = await renderShortPages(stack);
+  await expect.element(screen.getByText("4 files", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("1 / 4", { exact: true })).toBeVisible();
   await loadNextPage();
+  await expect.element(screen.getByText("1 / 4", { exact: true })).toBeVisible();
   const lateTest = await diffToggle("late.test.ts");
   await lateTest.click();
   await expect.element(lateTest).toHaveAttribute("aria-expanded", "false");
   await filter.click();
+  await expect.element(screen.getByText("1 / 2", { exact: true })).toBeVisible();
 
   // A refresh drops the loaded later page, so the bulk toggles below run without it.
   await screen.rerender(tab(1));
@@ -563,15 +615,25 @@ it("never requests the diff of a selected commit the pull request no longer has"
 });
 
 it("answers a commit's diff link only once that commit's diff is shown", async () => {
-  setup({ paged: false });
+  setup({ paged: true });
+  mocks.viewedPaths = new Set(["early-0.ts", "late.test.ts"]);
   const container = document.createElement("div");
   container.className = "flex h-[700px] w-[900px]";
   const oid = "c".repeat(40);
   const withCommit = {
     ...detail,
-    commits: [{ oid, messageHeadline: "Linked commit", committedDate: "2026-09-01T00:00:00Z" }],
+    changedFiles: 70,
+    capabilities: { ...detail.capabilities, viewedFiles: "host" as const },
+    commits: [
+      {
+        oid,
+        messageHeadline: "Linked commit",
+        committedDate: "2026-09-01T00:00:00Z",
+        changedFiles: 41,
+      },
+    ],
   };
-  const url = `${detail.url}/commits/${oid}#diff-${bytesToHex(sha256(new TextEncoder().encode("a.ts")))}R2`;
+  const url = `${detail.url}/commits/${oid}#diff-${bytesToHex(sha256(new TextEncoder().encode("early-0.ts")))}R2`;
   const settled = vi.fn();
   const scoped = (selectedCommitOid: string | null, revealUrl?: string) => (
     <PullRequestCodeTab
@@ -587,12 +649,15 @@ it("answers a commit's diff link only once that commit's diff is shown", async (
     />
   );
   await using screen = await render(scoped(null), { container });
-  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("70 files", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("2 / 70", { exact: true })).toBeVisible();
 
   // The panel selects the link's commit after this tab has already seen the link.
   await screen.rerender(scoped(null, url));
   expect(settled).not.toHaveBeenCalled();
   await screen.rerender(scoped(oid, url));
+  await expect.element(screen.getByText("41 files", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("1+ / 41", { exact: true })).toBeVisible();
   await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
 });
 

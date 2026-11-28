@@ -1,7 +1,7 @@
 {
   "name": "@effect/platform-cloudflare",
   "type": "module",
-  "version": "4.1.5",
+  "version": "4.1.6",
   "license": "MIT",
   "description": "Platform specific implementations for Cloudflare Workers and Durable Objects",
   "homepage": "https://effect.website",
@@ -72,7 +72,7 @@
     }
   },
   "dependencies": {
-    "@cloudflare/workers-types": "^5.20261114.1",
+    "@cloudflare/workers-types": "^5.20261121.1",
     "@effect/sql-sqlite-do": "workspace:^"
   },
   "devDependencies": {

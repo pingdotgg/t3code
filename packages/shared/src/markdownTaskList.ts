@@ -27,13 +27,9 @@ function renderedTexts(item: ListItem): string[] {
   );
 }
 
-// Native renderers give other top-level blocks (code, tables, quotes, media) their own views, and
-// each view numbers its tasks from 0. Lists, headings and rules share the text view around them.
-const sharedViewBlocks = new Set(["list", "heading", "thematicBreak"]);
-
 /**
- * Marker offset of the task a native checkbox tap names. Null unless exactly one task has that
- * text and state and could have that index under some split of the document into native views.
+ * Marker offset of the task at the native renderer's document-wide task index, or null unless its
+ * text and pre-tap state match the tap.
  */
 export function markdownTaskMarkerOffset(
   markdown: string,
@@ -43,25 +39,33 @@ export function markdownTaskMarkerOffset(
 ): number | null {
   // Native attachments replace their labels, so the remaining text could name another task.
   if (renderedText.includes("\uFFFC")) return null;
-  const tasks: ListItem[] = [];
+  const tasks: Array<{ readonly item: ListItem; readonly offset: number }> = [];
   const collect = (node: Nodes) => {
-    if (node.type === "listItem" && typeof node.checked === "boolean") tasks.push(node);
+    if (node.type === "listItem") {
+      const first = node.children[0];
+      const emptyTask =
+        first?.type === "paragraph" &&
+        /^\[[ xX]\][ \t]*$/.test(
+          markdown.slice(first.position?.start.offset, first.position?.end.offset),
+        );
+      // Native enrmrkd only recognizes task markers on the same line as their list bullet.
+      const start = node.position?.start.offset;
+      const offset = start === undefined ? null : taskListMarkerOffset(markdown, start);
+      if (
+        (typeof node.checked === "boolean" || emptyTask) &&
+        start !== undefined &&
+        offset !== null &&
+        !/[\r\n]/.test(markdown.slice(start, offset))
+      ) {
+        tasks.push({ item: node, offset });
+      }
+    }
     if ("children" in node) node.children.forEach(collect);
   };
-  const viewStarts = new Set([0]);
-  for (const block of parser.parse(markdown).children) {
-    const before = tasks.length;
-    collect(block);
-    if (sharedViewBlocks.has(block.type)) continue;
-    for (let count = before; count <= tasks.length; count++) viewStarts.add(count);
-  }
-  const rendered = lettersAndDigits(renderedText);
-  const matches = tasks.filter(
-    (task, position) =>
-      task.checked === !checked &&
-      viewStarts.has(position - index) &&
-      renderedTexts(task).includes(rendered),
-  );
-  const start = matches.length === 1 ? matches[0]?.position?.start.offset : undefined;
-  return start === undefined ? null : taskListMarkerOffset(markdown, start);
+  collect(parser.parse(markdown));
+  const task = tasks[index];
+  return task?.item.checked === !checked &&
+    renderedTexts(task.item).includes(lettersAndDigits(renderedText))
+    ? task.offset
+    : null;
 }

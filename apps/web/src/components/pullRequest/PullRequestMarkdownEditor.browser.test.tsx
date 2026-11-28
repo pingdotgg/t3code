@@ -146,6 +146,34 @@ it("completes @mentions and !references on Enter, and Escape closes the list unt
   expect(onSave).not.toHaveBeenCalled();
 });
 
+it.each(["ArrowUp", "ArrowDown"])(
+  "keeps Shift+%s available for native selection while completing mentions",
+  async (key) => {
+    setup();
+    permissions.allowed.add(secondary);
+    await using screen = await openEditor({ value: "previous line\n\nnext line" });
+    const textarea = screen.container.querySelector("textarea")!;
+    await userEvent.click(textarea);
+    const middle = "previous line\n".length;
+    textarea.setSelectionRange(middle, middle);
+    await userEvent.keyboard("@");
+    const first = page.getByRole("option", { name: /julius/ });
+    const second = page.getByRole("option", { name: /theo/ });
+    await expect.element(first).toHaveAttribute("aria-selected", "true");
+    await userEvent.keyboard("{ArrowDown}");
+    await expect.element(second).toHaveAttribute("aria-selected", "true");
+    await userEvent.keyboard("{ArrowUp}");
+    await expect.element(first).toHaveAttribute("aria-selected", "true");
+
+    await userEvent.keyboard(`{Shift>}{${key}}{/Shift}`);
+
+    expect(textarea.selectionStart).toBeLessThan(textarea.selectionEnd);
+    expect(textarea.value).toBe("previous line\n@\nnext line");
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onCancel).not.toHaveBeenCalled();
+  },
+);
+
 it("Escape cancels the edit without closing the right panel sheet", async () => {
   setup();
   permissions.allowed.add(secondary);

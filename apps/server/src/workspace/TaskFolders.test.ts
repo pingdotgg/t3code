@@ -466,7 +466,8 @@ it.live("adopts the checkouts a project's own layout command makes, and runs its
     Effect.gen(function* () {
       const { fileSystem, path, tmp, run, repository, worktreeCount } = yield* fixture;
       const shop = path.join(tmp, "shop");
-      const api = yield* repository("shop/api");
+      const apiName = "api\u2028tools";
+      const api = yield* repository(`shop/${apiName}`);
       const web = yield* repository("shop/web");
       // The project checks `api` out itself, copies its build cache and leaves `web` out.
       yield* fileSystem.writeFileString(
@@ -474,8 +475,7 @@ it.live("adopts the checkouts a project's own layout command makes, and runs its
         JSON.stringify({
           worktreeLayout: {
             // A plain project's folder is no worktree, even when the command leaves a `.git` there.
-            create:
-              'mkdir -p "$T3_WORKTREE_PROJECT_PATH/cache" && git init -q "$T3_WORKTREE_PROJECT_PATH" && printf %s "$T3_WORKTREE_REPOSITORIES" > "$T3_WORKTREE_PROJECT_PATH/chosen" && git -C "$T3_PROJECT_ROOT/api" worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH/api" "$T3_WORKTREE_BASE"',
+            create: `mkdir -p "$T3_WORKTREE_PROJECT_PATH/cache" && git init -q "$T3_WORKTREE_PROJECT_PATH" && printf %s "$T3_WORKTREE_REPOSITORIES" > "$T3_WORKTREE_PROJECT_PATH/chosen" && git -C "$T3_PROJECT_ROOT/${apiName}" worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH/${apiName}" "$T3_WORKTREE_BASE"`,
             // Cleanup never deletes files that exist only here, so the teardown clears its own.
             remove:
               'touch "$T3_PROJECT_ROOT/torn-down" && rm -rf "$T3_WORKTREE_PROJECT_PATH/cache" "$T3_WORKTREE_PROJECT_PATH/chosen" "$T3_WORKTREE_PROJECT_PATH/.git"',
@@ -490,7 +490,7 @@ it.live("adopts the checkouts a project's own layout command makes, and runs its
 
       assert.isFalse(taskFolder.projectIsWorktree);
       assert.deepEqual(taskFolder.repositories, [
-        { repositoryPath: api, worktreePath: path.join(taskFolder.root, "api"), name: "api" },
+        { repositoryPath: api, worktreePath: path.join(taskFolder.root, apiName), name: apiName },
       ]);
       assert.isTrue(yield* fileSystem.exists(path.join(taskFolder.root, "cache")));
       assert.equal(
@@ -498,7 +498,7 @@ it.live("adopts the checkouts a project's own layout command makes, and runs its
         `${api}\n${web}`,
       );
       assert.equal(
-        yield* run(path.join(taskFolder.root, "api"), "symbolic-ref", "--short", "HEAD"),
+        yield* run(path.join(taskFolder.root, apiName), "symbolic-ref", "--short", "HEAD"),
         "feature",
       );
       assert.equal(yield* worktreeCount(web), 1);
@@ -765,6 +765,46 @@ it.live.each([{ linked: false }, { linked: true }])(
         assert.equal(yield* worktreeCount(mono), linked ? 2 : 1);
       }),
     ),
+);
+
+// Reftable repositories keep `ref: refs/heads/.invalid` in HEAD whatever is checked out.
+it.live("adopts a layout command's worktree in a reftable repository", (ctx) =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, tmp, run } = yield* fixture;
+      const [, major = 0, minor = 0] = (
+        /(\d+)\.(\d+)/u.exec(yield* run(tmp, "--version")) ?? []
+      ).map(Number);
+      if (major < 2 || (major === 2 && minor < 45))
+        return ctx.skip("Needs Git 2.45 or later for reftable.");
+      const mono = path.join(tmp, "mono");
+      yield* fileSystem.makeDirectory(mono, { recursive: true });
+      yield* run(mono, "init", "-b", "main", "--ref-format=reftable");
+      yield* run(mono, "config", "user.email", "task-folders@example.test");
+      yield* run(mono, "config", "user.name", "Task folders");
+      yield* fileSystem.writeFileString(
+        path.join(mono, "t3.json"),
+        JSON.stringify({
+          worktreeLayout: {
+            create: 'git worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH"',
+          },
+        }),
+      );
+      yield* run(mono, "add", ".");
+      yield* run(mono, "commit", "-m", "initial");
+      state.workspaceRoot = mono;
+      state.trackedFolders = [];
+      yield* approveLayoutCommands;
+
+      const { taskFolder } = yield* create("feature");
+
+      assert.isTrue(taskFolder.projectIsWorktree);
+      assert.equal(
+        yield* run(taskFolder.projectPath, "symbolic-ref", "--short", "HEAD"),
+        "feature",
+      );
+    }),
+  ),
 );
 
 it.live("starts each repository from the base branch where it has one", () =>

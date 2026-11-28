@@ -1,4 +1,4 @@
-export type TableCopyFormat = "markdown" | "csv" | "html";
+export type TableCopyFormat = "markdown" | "csv" | "html" | "chat" | "png";
 
 interface MarkdownActionFailureContext {
   readonly operation: string;

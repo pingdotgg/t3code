@@ -98,6 +98,8 @@ describe("scoreThreadSearch", () => {
     ]);
     // Short tokens never match mid-word.
     expect(scoreThreadSearch("ci", thread("Decision log"), NOW)).toBeNull();
+    // A vowel sign belongs to its letter, so "ताब" is inside "किताब", not a word of its own.
+    expect(scoreThreadSearch(foldSearchQuery("ताब"), thread("किताब सूची"), NOW)).toBeNull();
   });
 
   it("lets recent activity and frequent opens decide between equal matches", () => {
@@ -752,6 +754,10 @@ describe("findSearchTokenRanges", () => {
     expect(findSearchTokenRanges("models and the model", '"model"')).toEqual([
       { start: 15, end: 20 },
     ]);
+    expect(findSearchTokenRanges("日本日本", '"日本"')).toEqual([
+      { start: 0, end: 2 },
+      { start: 2, end: 4 },
+    ]);
   });
 
   it("highlights a dotted capital I as the message matches it", () => {
@@ -790,6 +796,12 @@ describe("scoreMessageMatch", () => {
     expect(fts?.quality).toBe(1);
     expect(text.slice(fts?.offset)).toMatch(/^FTS and/);
     expect(scoreMessageMatch("saved two drafts", "fts")).toBeNull();
+    expect(scoreMessageMatch("मुझे किताब चाहिए", "ताब")).toBeNull();
+    expect(scoreMessageMatch("⚠️Fix login", "fix")).toEqual({ quality: 1, offset: 2 });
+    expect(scoreMessageMatch("कि⚠️Fix", '"⚠️Fix"')).toEqual({ quality: 1, offset: 2 });
+    expect(scoreMessageMatch("ฉันมีงาน", "งาน")).toEqual({ quality: 1, offset: 5 });
+    expect(scoreMessageMatch("আমি বাংলাদেশে থাকি", "বাংলা")).toEqual({ quality: 0.8, offset: 4 });
+    expect(scoreMessageMatch("ช่วยค้นหาไฟล์นี้", "ค้นหา")?.offset).toBe(4);
     expect(scoreMessageMatch("We trust the build", "rust")).toEqual({ quality: 0.3, offset: 4 });
     expect(scoreMessageMatch("Rust and trust", "rust")).toEqual({ quality: 1, offset: 0 });
     expect(scoreMessageMatch("Use the sidebar", '"sidebar"')).toEqual({ quality: 1, offset: 8 });
