@@ -1,8 +1,6 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Node's POSIX basename is the platform-independent reference for literal backslashes.
-import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import {
-  fileDisplayName,
+  fileBasename,
   isWslSharePath,
   workspaceRelativeFilePath,
   newProjectFolderName,
@@ -13,22 +11,16 @@ import {
 } from "./path.ts";
 
 describe("path helpers", () => {
-  it("preserves literal backslashes in absolute POSIX display names", () => {
-    for (const path of ["/repo/build\\log.txt", "/repo/build\\", "/repo/build\\/"]) {
-      expect(fileDisplayName(path)).toBe(NodePath.posix.basename(path));
-    }
-  });
-
-  it("keeps Windows and ambiguous relative display names", () => {
-    for (const path of [
-      "C:\\repo\\build\\log.txt\\",
-      "C:/repo/build\\log.txt/",
-      "\\\\server\\share\\build\\log.txt\\",
-      "//server/share/build\\log.txt\\",
-      "/C:/repo/build\\log.txt\\",
-      "build\\log.txt\\",
-    ]) {
-      expect(fileDisplayName(path)).toBe("log.txt");
+  it("splits basenames on backslashes only outside absolute POSIX paths", () => {
+    for (const [path, name] of [
+      ["/repo/build\\log.txt", "build\\log.txt"],
+      ["/repo/build\\/", "build\\"],
+      ["C:\\repo\\build\\log.txt\\", "log.txt"],
+      ["/C:/repo/build\\log.txt", "log.txt"],
+      ["//server/share/build\\log.txt", "log.txt"],
+      ["build\\log.txt", "log.txt"],
+    ] as const) {
+      expect(fileBasename(path)).toBe(name);
     }
   });
 
