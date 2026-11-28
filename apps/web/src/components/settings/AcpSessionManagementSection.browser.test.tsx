@@ -1,4 +1,5 @@
 import {
+  AcpRegistryOperationError,
   EnvironmentId,
   ProjectId,
   ProviderDriverKind,
@@ -8,6 +9,7 @@ import {
   type AcpRegistryConfigurableProvider,
 } from "@t3tools/contracts";
 import type { ComponentProps } from "react";
+import * as Cause from "effect/Cause";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -184,6 +186,41 @@ it("rechecks task access after confirming deletion", async () => {
   });
   await screen.click("Delete");
   expect(commands.delete).not.toHaveBeenCalled();
+});
+
+it("keeps Import available and disables Delete after a bound session fails to import history", async () => {
+  setup();
+  commands.import.mockResolvedValueOnce({
+    _tag: "Failure",
+    cause: Cause.fail(
+      new AcpRegistryOperationError({
+        reason: "session_import_failed",
+        message: "Could not import the ACP session history.",
+        pendingHistoryThreadId: ThreadId.make("thread-imported"),
+      }),
+    ),
+  });
+  await using screen = await renderSection();
+  await screen.click("List sessions");
+  expect(screen.button("Delete").disabled).toBe(false);
+
+  let finishRefresh!: (value: unknown) => void;
+  commands.list.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finishRefresh = resolve;
+    }),
+  );
+  await screen.click("Refresh");
+  await screen.click("Import");
+  expect(screen.button("Delete").disabled).toBe(true);
+  await act(async () =>
+    finishRefresh({ _tag: "Success", value: { sessions: [session], nextCursor: null } }),
+  );
+  expect(screen.button("Import").disabled).toBe(false);
+  expect(screen.button("Delete").disabled).toBe(true);
+
+  await screen.click("Import");
+  expect(screen.button("Imported").disabled).toBe(true);
 });
 
 it("keeps a deleted ACP session out of a pending page only", async () => {
