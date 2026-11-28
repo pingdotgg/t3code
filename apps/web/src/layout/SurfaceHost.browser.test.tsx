@@ -1355,6 +1355,48 @@ it("hides a thread's companion splits when switching tabs in the same pane and r
   ).toBeUndefined();
 });
 
+it("lands a thread switch's panes where they rest, while a person's own close still moves", async () => {
+  using fixture = setupPullRequestDrop();
+  const { chatPaneId } = fixture;
+  useLayoutStore.getState().openKeptTab({
+    kind: "chat",
+    target: { kind: "server", threadRef: pullRequestThreadRef },
+  });
+  const chatTab = (ref: typeof threadRef) =>
+    findLayoutChatForThread(useLayoutStore.getState().layout, ref)!.tab.id;
+  useLayoutStore.getState().focusTab(chatTab(threadRef));
+  await using _screen = await renderHost({ viewport: 1200 });
+  const paneMotion = () =>
+    document
+      .getAnimations()
+      .filter((animation) => animation.playState === "running")
+      .map((animation) => (animation.effect as KeyframeEffect).target as HTMLElement)
+      .filter((target) => target.closest("[data-layout-pane-id], [data-layout-closing]") !== null);
+  const panes = () =>
+    [...document.querySelectorAll<HTMLElement>("[data-layout-pane-id]")].map((pane) => {
+      const { left, width } = pane.getBoundingClientRect();
+      return [Math.round(left), Math.round(width)];
+    });
+  await act(() => {
+    requestLayoutSurfacePlacement(threadRef, { kind: "split", paneId: chatPaneId, side: "right" });
+    useRightPanelStore.getState().open(threadRef, "diff");
+    useLayoutStore.getState().focusTab(chatTab(threadRef));
+  });
+  await vi.waitFor(() => expect(paneMotion()).toEqual([]));
+  const withDiff = panes();
+  expect(withDiff).toHaveLength(2);
+
+  for (const delta of [1, -1] as const) {
+    await act(() => focusAdjacentLayoutTab(delta));
+    expect(paneMotion()).toEqual([]);
+    expect(document.querySelector("[data-layout-closing]")).toBeNull();
+  }
+  expect(panes()).toEqual(withDiff);
+
+  await act(() => useRightPanelStore.getState().close(threadRef));
+  expect(document.querySelector("[data-layout-closing]")).not.toBeNull();
+});
+
 it("does not switch tabs when releasing the pointer after Escape cancels a tab drag", async () => {
   using tabs = setup();
   await using _screen = await renderHost();

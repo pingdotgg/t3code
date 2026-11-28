@@ -22,7 +22,7 @@ import {
 import { useLayoutBehavior, type LayoutNewTabPosition } from "./layoutBehavior";
 import { arrangeLayoutChange, useLayoutStore, type LayoutNewTabRequest } from "./layoutStore";
 import { clearPaneTabSelection } from "./paneTabSelection";
-import { followLayoutCompanions } from "./openRules";
+import { followLayoutCompanions, switchesThread } from "./openRules";
 import { layoutChatRoute } from "./useLayoutSettingsSync";
 import { layoutPageHref, layoutRoutePage } from "./pageNavigation";
 import { isAppModalPage, getMainAppHref } from "../components/sidebar/mainAppLocation";
@@ -103,7 +103,11 @@ export function useLayoutRouteSync(
   threadTarget: ThreadRouteTarget | null,
   /** The URL is the index, which shows the layout with no thread behind the URL. */
   atIndex = false,
-): LayoutState {
+): {
+  layout: LayoutState;
+  /** Counts routes that switched to another thread, from the render that first shows each. */
+  switches: number;
+} {
   const navigate = useNavigate();
   const location = useLocation();
   const routePage = layoutRoutePage(location);
@@ -141,6 +145,7 @@ export function useLayoutRouteSync(
   const [sync, setSync] = useState(() => ({
     startedPaused: appModalPaused,
     settled: true,
+    switches: 0,
     request: {
       href:
         routeContent && isReloadedRoute() && findLayoutTabByContent(layout, routeContent)
@@ -158,19 +163,21 @@ export function useLayoutRouteSync(
   if (!appModalPaused && (sync.startedPaused || request.href !== routeHref)) {
     const pending = request.href !== routeHref;
     const restoringWorkspace = sync.startedPaused && location.href === getMainAppHref();
+    const routed =
+      pending && routeContent && !restoringWorkspace
+        ? arrangeLayoutChange(
+            layout,
+            showRouteInLayout(layout, routeContent, promotedDraftId, newTab),
+          )
+        : layout;
     setSync({
       startedPaused: false,
       settled: false,
+      switches: sync.switches + (switchesThread(layout, routed) ? 1 : 0),
       request: {
         href: routeHref,
         base: layout,
-        derived:
-          pending && routeContent && !restoringWorkspace
-            ? arrangeLayoutChange(
-                layout,
-                showRouteInLayout(layout, routeContent, promotedDraftId, newTab),
-              )
-            : layout,
+        derived: routed,
         content: routeContent,
         promotedDraftId,
         newTab,
@@ -281,5 +288,5 @@ export function useLayoutRouteSync(
     }
   }, [navigate, readAppModalPaused]);
 
-  return appModalPaused ? layout : derived;
+  return { layout: appModalPaused ? layout : derived, switches: sync.switches };
 }

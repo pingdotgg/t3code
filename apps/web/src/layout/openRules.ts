@@ -17,7 +17,9 @@ import {
   findLayoutPane,
   findLayoutSurfaceTabs,
   layoutChatSwaps,
+  layoutTabContentKey,
   resizeLayoutColumn,
+  selectFocusedPane,
   selectFocusedTab,
   selectFocusedWorkspace,
   THREAD_TERMINAL_SURFACE_ID,
@@ -266,6 +268,54 @@ function chatThreadRef(target: ThreadRouteTarget): ScopedThreadRef | null {
   return draft ? scopeThreadRef(draft.environmentId, draft.threadId) : null;
 }
 
+/** The thread a tab shows: its chat's, or the one its surface belongs to. */
+function tabThreadKey(content: LayoutTabContent | undefined): string | null {
+  if (content?.kind === "surface") return scopedThreadKey(content.threadRef);
+  if (content?.kind !== "chat") return null;
+  const threadRef = chatThreadRef(content.target);
+  return threadRef ? scopedThreadKey(threadRef) : layoutTabContentKey(content);
+}
+
+/**
+ * Showing `content` in pane `paneId`, which `before` already has, switches to another thread's chat:
+ * a navigation, which panes do not animate. A pane opened beside for it is a person's open, which does.
+ */
+export function isThreadSwitch(
+  before: LayoutState,
+  paneId: string | undefined,
+  content: LayoutTabContent | undefined,
+): boolean {
+  return (
+    content?.kind === "chat" &&
+    paneId !== undefined &&
+    findLayoutPane(before, paneId) !== null &&
+    tabThreadKey(content) !== tabThreadKey(selectFocusedTab(before)?.content)
+  );
+}
+
+const SWITCHING = "data-layout-switching";
+
+/** Marks the document for the frames a thread switch lands in: its pane chrome holds still there
+ * (index.css, PaneTabs). Returns the early unmark. */
+export function markLayoutSwitching(): () => void {
+  const root = document.documentElement;
+  root.setAttribute(SWITCHING, "");
+  let frame = requestAnimationFrame(() => {
+    frame = requestAnimationFrame(() => root.removeAttribute(SWITCHING));
+  });
+  return () => {
+    cancelAnimationFrame(frame);
+    root.removeAttribute(SWITCHING);
+  };
+}
+
+export const isLayoutSwitching = () => document.documentElement.hasAttribute(SWITCHING);
+
+/** `after` focuses another thread's chat than `before` (see `isThreadSwitch`). */
+export function switchesThread(before: LayoutState, after: LayoutState): boolean {
+  return isThreadSwitch(before, selectFocusedPane(after)?.id, selectFocusedTab(after)?.content);
+}
+
 /**
  * Run a chat switch (sidebar click, tab click, ctrl+Tab, route) so a thread's terminal and side
  * panes follow its chat: a chat swapped off a pane hides its companions in that workspace while
@@ -275,6 +325,7 @@ export function followLayoutCompanions(open: () => void): void {
   const before = useLayoutStore.getState().layout;
   open();
   const after = useLayoutStore.getState().layout;
+  if (switchesThread(before, after)) useLayoutStore.getState().noteNavigation();
   for (const swap of layoutChatSwaps(before, after)) {
     const from = chatThreadRef(swap.from);
     const to = chatThreadRef(swap.to);
