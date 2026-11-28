@@ -16,6 +16,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
   applyAntigravityAcpModelSelection,
   antigravityPermissionDisposition,
+  antigravityRuntimeModeForSessionMode,
   antigravityServesT3Code,
   antigravitySessionMeta,
   antigravitySessionMode,
@@ -91,15 +92,41 @@ describe("Antigravity system prompt append", () => {
 });
 
 describe("Antigravity Auto", () => {
+  const fullCliModes = ["default", "accept-edits", "auto", "plan"] as const;
+  const noAutoCliModes = ["default", "accept-edits", "plan"] as const;
+  const minimalCliModes = ["default", "plan"] as const;
+
   it.each([
-    { offered: ["default", "accept-edits", "auto", "plan"], expected: "auto" },
-    { offered: ["default", "accept-edits", "plan"], expected: "default" },
-  ])("runs as $expected when the session offers $offered", ({ offered, expected }) => {
-    const modeState = {
-      currentModeId: "default",
-      availableModes: offered.map((id) => ({ id, name: id })),
-    };
-    expect(antigravitySessionMode("auto", modeState)).toBe(expected);
+    { requested: "auto", offered: fullCliModes, expected: "auto" },
+    { requested: "auto", offered: noAutoCliModes, expected: "default" },
+    { requested: "yolo", offered: fullCliModes, expected: "auto" },
+    { requested: "yolo", offered: noAutoCliModes, expected: "accept-edits" },
+    { requested: "yolo", offered: minimalCliModes, expected: "default" },
+    { requested: "yolo", offered: undefined, expected: "default" },
+    { requested: "auto_edit", offered: fullCliModes, expected: "accept-edits" },
+    { requested: "auto_edit", offered: minimalCliModes, expected: "default" },
+    { requested: "auto_edit", offered: undefined, expected: "default" },
+    { requested: "plan", offered: fullCliModes, expected: "plan" },
+  ])(
+    "maps $requested to $expected when the session offers $offered",
+    ({ requested, offered, expected }) => {
+      const modeState =
+        offered === undefined
+          ? undefined
+          : {
+              currentModeId: "default",
+              availableModes: offered.map((id) => ({ id, name: id })),
+            };
+      expect(antigravitySessionMode(requested, modeState)).toBe(expected);
+    },
+  );
+
+  it("maps managed and CLI session modes back to their granted runtime mode", () => {
+    expect(antigravityRuntimeModeForSessionMode("yolo")).toBe("full-access");
+    expect(antigravityRuntimeModeForSessionMode("auto")).toBe("auto");
+    expect(antigravityRuntimeModeForSessionMode("auto_edit")).toBe("auto-accept-edits");
+    expect(antigravityRuntimeModeForSessionMode("accept-edits")).toBe("auto-accept-edits");
+    expect(antigravityRuntimeModeForSessionMode("default")).toBe("approval-required");
   });
 
   it.each(["execute", "read"] as const)("asks about the %s requests agy's Auto sends", (kind) => {

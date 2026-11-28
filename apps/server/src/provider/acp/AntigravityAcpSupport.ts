@@ -167,19 +167,28 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
 
 /**
  * The agy CLI rejects `yolo` and `auto_edit`, and sessions without native Auto reject `auto`.
- * Those stay in `default`, where it asks before acting and T3 answers from the live runtime
- * policy, so permission changes apply on the next turn without a restart.
+ * Detached subagents inherit the CLI session mode and cannot forward permission prompts over ACP,
+ * so map `yolo` and `auto_edit` to the closest advertised CLI mode (`auto`, then `accept-edits`,
+ * then `default`).
  */
 export function antigravitySessionMode(
   modeId: string,
   modeState: AcpSessionModeState | undefined,
 ): string {
+  const hasMode = (id: string) => modeState?.availableModes.some((mode) => mode.id === id) === true;
   if (modeId === "auto") {
-    return modeState?.availableModes.some((mode) => mode.id === "auto") === true
-      ? "auto"
-      : "default";
+    return hasMode("auto") ? "auto" : "default";
   }
-  return modeId === "yolo" || modeId === "auto_edit" ? "default" : modeId;
+  if (modeId === "yolo") {
+    if (hasMode("auto")) return "auto";
+    if (hasMode("accept-edits")) return "accept-edits";
+    return "default";
+  }
+  if (modeId === "auto_edit") {
+    if (hasMode("accept-edits")) return "accept-edits";
+    return "default";
+  }
+  return modeId;
 }
 
 // Only calls that name T3's server: before agy 1.5.8 "Running <tool>" names no server, so another
@@ -239,12 +248,13 @@ export function antigravityPermissionDisposition(
   return policy.runtimeMode === "auto" ? "ask" : disposition;
 }
 
-/** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */
+/** The runtime mode an Antigravity session mode grants, across managed and CLI mode IDs. */
 export function antigravityRuntimeModeForSessionMode(modeId: string): RuntimeMode | undefined {
   switch (modeId) {
     case "yolo":
       return "full-access";
     case "auto_edit":
+    case "accept-edits":
       return "auto-accept-edits";
     case "auto":
       return "auto";

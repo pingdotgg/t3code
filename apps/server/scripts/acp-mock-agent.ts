@@ -409,12 +409,20 @@ const antigravityModels = [
   { modelId: "gemini-test-high", name: "Gemini Test High" },
 ] satisfies ReadonlyArray<AcpCompat.ModelInfo>;
 
+const antigravityAvailableModes: ReadonlyArray<AcpCompat.SessionMode> =
+  process.env.T3_ACP_AVAILABLE_MODES === undefined
+    ? [
+        { id: "default", name: "Default" },
+        { id: "auto_edit", name: "Auto edit" },
+        { id: "yolo", name: "YOLO" },
+      ]
+    : process.env.T3_ACP_AVAILABLE_MODES.split(",")
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0)
+        .map((id) => ({ id, name: id }));
+
 const availableModes: ReadonlyArray<AcpCompat.SessionMode> = antigravityProfile
-  ? [
-      { id: "default", name: "Default" },
-      { id: "auto_edit", name: "Auto edit" },
-      { id: "yolo", name: "YOLO" },
-    ]
+  ? antigravityAvailableModes
   : copilotModesProfile
     ? [
         { id: copilotModeId("agent"), name: "Agent" },

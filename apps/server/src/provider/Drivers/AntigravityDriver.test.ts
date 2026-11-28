@@ -99,6 +99,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       /** `data` of the agent's "Internal error" response to `session/new`. */
       readonly newSessionErrorData?: unknown;
       readonly initialMode?: string;
+      readonly availableModes?: ReadonlyArray<string>;
       readonly agentVersion?: string;
     } = {},
   ) {
@@ -122,6 +123,9 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         ...(options.initialMode === undefined
           ? []
           : [`export T3_ACP_INITIAL_MODE=${shellQuote(options.initialMode)}`]),
+        ...(options.availableModes === undefined
+          ? []
+          : [`export T3_ACP_AVAILABLE_MODES=${shellQuote(options.availableModes.join(","))}`]),
         `export T3_ACP_AGENT_VERSION=${shellQuote(options.agentVersion ?? "1.5.12")}`,
         `exec ${shellQuote(nodePath)} ${shellQuote(mockAgentPath)} "$@"`,
         "",
@@ -440,44 +444,81 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           },
         ]);
 
-        // The agy CLI rejects `yolo` and `auto_edit`; it stays in `default` and T3 answers its requests.
-        h.controls.selected = yield* h.makeExecutable("runtime cli", { initialMode: "auto_edit" });
-        for (const runtimeMode of ["full-access", "auto-accept-edits"] as const) {
-          const requestsBefore = (yield* h.readRequests).length;
-          const cliThreadId = ThreadId.make(`thread-antigravity-cli-${runtimeMode}`);
-          const cliPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-            runtimeMode,
-            interactionMode: "default",
-            cwd: workspace,
+        // The agy CLI rejects `yolo` and `auto_edit`, mapping them to advertised CLI modes or `default`.
+        const readModeChangesSince = (offset: number) =>
+          h.readRequests.pipe(
+            Effect.map((requests) =>
+              requests
+                .slice(offset)
+                .filter(
+                  (request) =>
+                    request.method === "session/set_config_option" &&
+                    request.params?.configId === "mode",
+                )
+                .map((request) => request.params?.value),
+            ),
+          );
+
+        for (const scenario of [
+          {
+            name: "runtime cli fallback",
+            initialMode: "auto_edit",
+            availableModes: undefined,
+            expectedByMode: {
+              "full-access": "default",
+              "auto-accept-edits": "default",
+            },
+          },
+          {
+            name: "runtime cli native auto",
+            initialMode: "default",
+            availableModes: ["default", "accept-edits", "auto", "plan"],
+            expectedByMode: {
+              "full-access": "auto",
+              "auto-accept-edits": "accept-edits",
+            },
+          },
+        ] as const) {
+          h.controls.selected = yield* h.makeExecutable(scenario.name, {
+            initialMode: scenario.initialMode,
+            ...(scenario.availableModes === undefined
+              ? {}
+              : { availableModes: scenario.availableModes }),
           });
-          const cliSession = yield* h.instance.orchestrationAdapter.openSession({
-            threadId: cliThreadId,
-            providerSessionId: ProviderSessionId.make(`provider-session-cli-${runtimeMode}`),
-            modelSelection,
-            runtimePolicy: cliPolicy,
-          });
-          yield* cliSession.ensureThread({
-            threadId: cliThreadId,
-            modelSelection,
-            runtimePolicy: cliPolicy,
-          });
-          expect(h.launches.at(-1)?.args).toEqual([
-            "acp",
-            "--gemini-dir",
-            h.profileDirectory,
-            "--app-data-dir",
-            "antigravity-acp",
-          ]);
-          expect(
-            (yield* h.readRequests)
-              .slice(requestsBefore)
-              .filter(
-                (request) =>
-                  request.method === "session/set_config_option" &&
-                  request.params?.configId === "mode",
-              )
-              .map((request) => request.params?.value),
-          ).toEqual(["default"]);
+          for (const runtimeMode of ["full-access", "auto-accept-edits"] as const) {
+            const requestsBefore = (yield* h.readRequests).length;
+            const cliThreadId = ThreadId.make(
+              `thread-antigravity-cli-${scenario.name.replaceAll(" ", "-")}-${runtimeMode}`,
+            );
+            const cliPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode,
+              interactionMode: "default",
+              cwd: workspace,
+            });
+            const cliSession = yield* h.instance.orchestrationAdapter.openSession({
+              threadId: cliThreadId,
+              providerSessionId: ProviderSessionId.make(
+                `provider-session-cli-${scenario.name.replaceAll(" ", "-")}-${runtimeMode}`,
+              ),
+              modelSelection,
+              runtimePolicy: cliPolicy,
+            });
+            yield* cliSession.ensureThread({
+              threadId: cliThreadId,
+              modelSelection,
+              runtimePolicy: cliPolicy,
+            });
+            expect(h.launches.at(-1)?.args).toEqual([
+              "acp",
+              "--gemini-dir",
+              h.profileDirectory,
+              "--app-data-dir",
+              "antigravity-acp",
+            ]);
+            expect(yield* readModeChangesSince(requestsBefore)).toEqual([
+              scenario.expectedByMode[runtimeMode],
+            ]);
+          }
         }
       }),
   );

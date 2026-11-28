@@ -556,7 +556,10 @@ export interface AcpAdapterV2Flavor {
    * `reasoningEffort` is its `effortLevel`).
    */
   readonly ownedModelOptionIds?: ReadonlyArray<string>;
-  readonly lockSessionModeToPolicy?: true;
+  /** Ignore a picked session mode in favor of `sessionModeForPolicy`, always or for some policies. */
+  readonly lockSessionModeToPolicy?:
+    | true
+    | ((policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) => boolean);
   readonly sessionModeForPolicy?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   ) => string | undefined;
@@ -2854,9 +2857,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           return modes;
         });
-        const configuredRuntimeMode = yield* Ref.make<
-          ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"] | null
-        >(null);
+        const permissionPolicyInputs = (
+          policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+        ) => ({
+          runtimeMode: policy.runtimeMode,
+          maxRuntimeMode: policy.maxRuntimeMode,
+          approvalPolicy: policy.approvalPolicy,
+          sandboxPolicy: policy.sandboxPolicy,
+        });
+        const configuredPermissionPolicy = yield* Ref.make<ReturnType<
+          typeof permissionPolicyInputs
+        > | null>(null);
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
         const promptRuntimeInstructions = yield* Ref.make(new Map<string, string>());
         const deliveredAppContext = yield* Ref.make(new Map<string, ReadonlyMap<string, string>>());
@@ -8375,6 +8386,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           // options, so the next turn re-applies it against the real ones.
           yield* Ref.set(activeSelection, null);
           yield* Ref.set(activeInteractionMode, null);
+          yield* Ref.set(configuredPermissionPolicy, null);
           // A build snapshot saved before the adoption was seen holds the
           // provisional state; one saved by a deferred openSession
           // configuration already read the adopted options and stays.
@@ -9136,6 +9148,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* setActiveSessionSetup(candidate);
             yield* Ref.set(activeSelection, null);
             yield* Ref.set(activeInteractionMode, null);
+            yield* Ref.set(configuredPermissionPolicy, null);
             yield* Ref.set(promptInstructionStates, new Map());
             yield* Ref.set(promptRuntimeInstructions, new Map());
             yield* Ref.set(deliveredAppContext, new Map());
@@ -9421,10 +9434,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               },
             );
           }
+          const policyMode = flavor.sessionModeForPolicy?.(runtimePolicy);
+          const lock = flavor.lockSessionModeToPolicy;
+          const modeLocked =
+            policyMode !== undefined &&
+            (lock === true || (lock !== undefined && lock(runtimePolicy)));
           for (const selection of configSelections) {
             if (!availableConfigIds.has(selection.id)) continue;
             // Advertised values union models; skip per-model rejections instead of failing session open.
             const option = configOptions.find((candidate) => candidate.id === selection.id);
+            if (modeLocked && option?.category === "mode") continue;
             if (
               option !== undefined &&
               option.type === "select" &&
@@ -9459,8 +9478,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (!advertisedValues.includes(selection.value)) continue;
             yield* runtime.setConfigOption(selection.id, selection.value);
           }
-          const policyMode = flavor.sessionModeForPolicy?.(runtimePolicy);
-          const modeLocked = flavor.lockSessionModeToPolicy && policyMode !== undefined;
           if (policyMode !== undefined) {
             yield* runtime.setMode(policyMode);
           }
@@ -9548,7 +9565,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           yield* validateModelSelection(modelSelection);
           yield* Ref.set(configuredModes, yield* readModes);
-          yield* Ref.set(configuredRuntimeMode, runtimePolicy.runtimeMode);
+          yield* Ref.set(configuredPermissionPolicy, permissionPolicyInputs(runtimePolicy));
           yield* publishSessionConfiguration(runtime);
         });
 
@@ -10380,6 +10397,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* resetPublishedCatalogKey;
           yield* Ref.set(activeSelection, null);
           yield* Ref.set(activeInteractionMode, null);
+          yield* Ref.set(configuredPermissionPolicy, null);
           // A failed prompt may have been dropped, so the fresh runtime sends T3's notes again.
           yield* Ref.set(promptInstructionStates, new Map());
           yield* Ref.set(promptRuntimeInstructions, new Map());
@@ -10736,7 +10754,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 configuredSelection === null ||
                 !modelSelectionsEqual(configuredSelection, turnInput.modelSelection) ||
                 configuredInteractionMode !== turnInput.runtimePolicy.interactionMode ||
-                (yield* Ref.get(configuredRuntimeMode)) !== turnInput.runtimePolicy.runtimeMode
+                !Equal.equals(
+                  yield* Ref.get(configuredPermissionPolicy),
+                  permissionPolicyInputs(turnInput.runtimePolicy),
+                )
               ) {
                 const currentSessionSetup = yield* Ref.get(activeSessionSetup);
                 if (currentSessionSetup === null) {
