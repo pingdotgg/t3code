@@ -155,6 +155,8 @@ describe("LinearIssueTracker", () => {
       const api = yield* tracker;
       for (const [scope, query] of [
         [" eng ", "eng-42"],
+        ["8LAB", "8lab-42"],
+        ["OTHER", "8LAB-42"],
         ["OTHER", "ENG-42"],
         ["OTHER", "42"],
         ["OTHER", "#42"],
@@ -169,7 +171,27 @@ describe("LinearIssueTracker", () => {
           limit: 50,
         });
       }
-      expect(numbers).toEqual([42, undefined, 42, 42]);
+      expect(numbers).toEqual([42, 42, undefined, undefined, 42, 42]);
+    }),
+  );
+
+  it.effect("resolves a digit-leading team by identifier and URL", () =>
+    Effect.gen(function* () {
+      const { tracker } = fakeLinear({
+        T3Viewer: () => ({
+          viewer: JULIUS,
+          organization: { urlKey: "acme" },
+          teams: { nodes: [] },
+        }),
+        T3Issue: (variables) => ({ issue: bareDetail(String(variables.id)) }),
+      });
+      const api = yield* tracker;
+      const detail = yield* api.getIssue({ ...target, scope: "8LAB", key: "8lab-42" });
+      expect(detail.key).toBe("8LAB-42");
+      expect(api.parseIssueUrl(new URL(detail.url))).toMatchObject({
+        scope: "8LAB",
+        key: detail.key,
+      });
     }),
   );
 
