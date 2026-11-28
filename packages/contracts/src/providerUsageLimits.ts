@@ -115,6 +115,7 @@ export const UsageLimitSourceSnapshot = Schema.Struct({
   /** Origin and base path of the hub, which tell apart hubs served from one origin. */
   endpoint: Schema.optional(TrimmedNonEmptyString),
   checkedAt: IsoDateTime,
+  routesClients: Schema.optional(Schema.Boolean),
   accounts: ForwardCompatibleArray(UsageLimitSourceAccount),
   quotaAccounts: Schema.optional(ForwardCompatibleArray(HttpQuotaAccount)),
   /** Hub provider names of enabled accounts that T3 Code cannot read. */
