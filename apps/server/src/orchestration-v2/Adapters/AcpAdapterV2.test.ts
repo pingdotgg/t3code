@@ -10352,7 +10352,7 @@ describe("AcpAdapterV2", () => {
   );
 
   it.effect(
-    "projects a child terminal in the completed-root finalization window exactly once",
+    "projects changed full results in the completed-root finalization window once per result",
     () =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -10380,11 +10380,14 @@ describe("AcpAdapterV2", () => {
           const secondChildSessionId = "mock-child-session-finalize-window-second";
           let firstSubagentStatus: "running" | "completed" = "running";
           let secondSubagentStatus: "waiting" | "completed" = "waiting";
+          let secondSubagentResult: string | null = "SECOND_DONE";
           type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
           let sessionUpdateHandler:
             | Parameters<RuntimeService["handleSessionUpdate"]>[0]
             | undefined;
           const promptSettled = yield* Deferred.make<void>();
+          const nextPromptStarted = yield* Deferred.make<void>();
+          let promptCount = 0;
           const adapter = yield* makeAcpAdapterV2({
             testHooks: {
               afterPromptSettledWithBackgroundWork: () =>
@@ -10417,7 +10420,7 @@ describe("AcpAdapterV2", () => {
                     model: null,
                     status: secondSubagentStatus,
                     childSessionId: secondChildSessionId,
-                    result: secondSubagentStatus === "completed" ? "SECOND_DONE" : null,
+                    result: secondSubagentStatus === "completed" ? secondSubagentResult : null,
                     suppressNormalTool: true,
                   } as AcpAdapterV2SubagentUpdate;
                 }
@@ -10429,6 +10432,12 @@ describe("AcpAdapterV2", () => {
                 environment: { T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS: "1" },
                 wrapRuntime: (runtime) => ({
                   ...runtime,
+                  prompt: (payload, options) =>
+                    ++promptCount === 1
+                      ? runtime.prompt(payload, options)
+                      : Deferred.succeed(nextPromptStarted, undefined).pipe(
+                          Effect.andThen(Effect.never),
+                        ),
                   handleSessionUpdate: (handler) =>
                     Effect.sync(() => {
                       sessionUpdateHandler = handler;
@@ -10490,10 +10499,6 @@ describe("AcpAdapterV2", () => {
               rawOutput: { content: "FIRST_DONE" },
             },
           }).pipe(Effect.provideService(Clock.Clock, blockingClock));
-          for (let attempt = 0; attempt < 10; attempt += 1) {
-            yield* Effect.yieldNow;
-          }
-
           yield* sessionUpdateHandler!({
             sessionId: "mock-session-1",
             update: {
@@ -10506,8 +10511,6 @@ describe("AcpAdapterV2", () => {
             },
           });
           assert.isTrue(yield* hasPendingBackgroundWork);
-
-          while (Option.isSome(yield* Queue.poll(events))) {}
 
           blockNextClockRead = true;
           const adjustFiber = yield* TestClock.adjust("3 seconds").pipe(Effect.forkScoped);
@@ -10524,35 +10527,154 @@ describe("AcpAdapterV2", () => {
               rawOutput: { content: "SECOND_DONE" },
             },
           });
+          for (const result of ["SECOND_FULL_RESULT", "SECOND_FULL_RESULT", null]) {
+            secondSubagentResult = result;
+            yield* sessionUpdateHandler!({
+              sessionId: secondChildSessionId,
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "tool-call-generic-2",
+                title: "second background subagent",
+                kind: "other",
+                status: "completed",
+                rawOutput: { content: result },
+              },
+            });
+          }
           yield* Deferred.succeed(releaseFinalizationClockRead, undefined);
           yield* Fiber.join(adjustFiber);
-          yield* Effect.yieldNow;
-          yield* Effect.yieldNow;
 
           const providerTurnId = idAllocator.derive.providerTurn({
             driver: ACP_TEST_DRIVER,
             nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
           });
-          let completedSubagentUpdates = 0;
-          let rootTerminalStatus: string | null = null;
-          let polled = yield* Queue.poll(events);
-          while (Option.isSome(polled)) {
-            const event = polled.value;
-            if (
-              event.type === "turn_item.updated" &&
-              event.turnItem.type === "subagent" &&
-              event.turnItem.nativeItemRef?.nativeId === "task-finalize-window-second" &&
-              event.turnItem.status === "completed"
-            ) {
-              completedSubagentUpdates += 1;
-            }
-            if (event.type === "turn.terminal" && event.providerTurnId === providerTurnId) {
-              rootTerminalStatus = event.status;
-            }
-            polled = yield* Queue.poll(events);
+          let observed = yield* Stream.fromQueue(events).pipe(
+            Stream.takeUntil(
+              (event) => event.type === "turn.terminal" && event.providerTurnId === providerTurnId,
+            ),
+            Stream.runCollect,
+          );
+          const terminal = observed.at(-1);
+          assert.equal(
+            terminal?.type === "turn.terminal" ? terminal.status : undefined,
+            "completed",
+          );
+          yield* sessionUpdateHandler!({
+            sessionId: secondChildSessionId,
+            update: {
+              sessionUpdate: "agent_message",
+              messageId: "late-child-message",
+              content: [{ type: "text", text: "LATE_CHILD_ONLY" }],
+            },
+          });
+          const snapshot = yield* runtime.readThreadSnapshot({ providerThread });
+          assert.isFalse(
+            snapshot.messages.some((message) => message.text.includes("LATE_CHILD_ONLY")),
+          );
+          for (const result of ["AFTER_CLEANUP_FULL_RESULT", "AFTER_CLEANUP_FULL_RESULT", null]) {
+            secondSubagentResult = result;
+            yield* sessionUpdateHandler!({
+              sessionId: "mock-session-1",
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "tool-call-generic-2",
+                title: "second background subagent",
+                kind: "other",
+                status: "completed",
+                rawOutput: { content: result },
+              },
+            });
           }
-          assert.equal(rootTerminalStatus, "completed");
-          assert.equal(completedSubagentUpdates, 1);
+          const late = yield* Stream.fromQueue(events).pipe(
+            Stream.takeUntil(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "subagent" &&
+                event.turnItem.result === "AFTER_CLEANUP_FULL_RESULT",
+            ),
+            Stream.runCollect,
+          );
+          observed = [...observed, ...late, ...(yield* Queue.clear(events))];
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+              ordinal: 2,
+            }),
+          );
+          yield* Deferred.await(nextPromptStarted);
+          secondSubagentResult = "DURING_NEXT_TURN_FULL_RESULT";
+          yield* sessionUpdateHandler!({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "tool-call-generic-2",
+              title: "second background subagent",
+              kind: "other",
+              status: "completed",
+              rawOutput: { content: secondSubagentResult },
+            },
+          });
+          observed = [
+            ...observed,
+            ...(yield* Stream.fromQueue(events).pipe(
+              Stream.takeUntil(
+                (event) =>
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "subagent" &&
+                  event.turnItem.result === "DURING_NEXT_TURN_FULL_RESULT",
+              ),
+              Stream.runCollect,
+            )),
+            ...(yield* Queue.clear(events)),
+          ];
+          const results = observed.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "subagent" &&
+            event.turnItem.nativeItemRef?.nativeId === "task-finalize-window-second" &&
+            event.turnItem.status === "completed"
+              ? [event.turnItem.result]
+              : [],
+          );
+          assert.deepEqual(results, [
+            "SECOND_DONE",
+            "SECOND_FULL_RESULT",
+            "AFTER_CLEANUP_FULL_RESULT",
+            "DURING_NEXT_TURN_FULL_RESULT",
+          ]);
+          const childUpdates = observed.flatMap((event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.nativeTaskRef?.nativeId === "task-finalize-window-second" &&
+            event.subagent.status === "completed"
+              ? [event.subagent]
+              : [],
+          );
+          assert.deepEqual(
+            childUpdates.map(({ result }) => result),
+            results,
+          );
+          assert.equal(childUpdates[1]?.completedAt, childUpdates[0]?.completedAt);
+          assert.equal(childUpdates[2]?.completedAt, childUpdates[0]?.completedAt);
+          assert.equal(childUpdates[3]?.runId, childUpdates[0]?.runId);
+          assert.equal(childUpdates[3]?.parentNodeId, childUpdates[0]?.parentNodeId);
+          assert.equal(childUpdates[3]?.completedAt, childUpdates[0]?.completedAt);
+          const replies = observed.flatMap((event) =>
+            event.type === "message.updated" &&
+            event.message.threadId === childUpdates[0]?.childThreadId &&
+            event.message.role === "assistant"
+              ? [event.message]
+              : [],
+          );
+          assert.deepEqual(
+            replies.map(({ text }) => text),
+            results,
+          );
+          assert.equal(replies[1]?.id, replies[0]?.id);
+          assert.equal(replies[2]?.id, replies[0]?.id);
+          assert.equal(replies[3]?.id, replies[0]?.id);
           assert.isFalse(
             yield* hasPendingBackgroundWork,
             "finalize-window terminal must clear the carryover pin",

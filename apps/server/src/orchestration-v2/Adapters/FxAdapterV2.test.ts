@@ -14,16 +14,20 @@ import {
 } from "@t3tools/contracts";
 import { ACP_PROTOCOL } from "@t3tools/provider-acp/server/adapter";
 import { FxSettings } from "@t3tools/provider-fx/settings";
-import { FX_DRIVER_KIND, makeFxAdapterV2 } from "@t3tools/provider-fx/testing";
+import { FX_DRIVER_KIND, FX_SESSION_META, makeFxAdapterV2 } from "@t3tools/provider-fx/testing";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
+import {
+  ProviderAdapterV2RuntimePolicy,
+  type ProviderAdapterV2Event,
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -123,6 +127,61 @@ const fxSession = (input: {
   modes: { currentModeId: "ask", availableModes: input.modes.map((id) => ({ id, name: id })) },
 });
 
+const update = (sessionId: string, sessionUpdate: Record<string, unknown>): Frame => ({
+  type: "emit_inbound",
+  label: `session/update:${String(sessionUpdate.sessionUpdate)}`,
+  frame: {
+    kind: "notification",
+    method: "session/update",
+    params: { sessionId, update: sessionUpdate },
+  },
+});
+/** A `libfx/hook` event as fx 0.0.15 sends it once a session opts in. */
+const hookEvent = (sessionId: string, type: string, data: Record<string, unknown>) => ({
+  version: 1,
+  sessionId,
+  rootSessionId: SESSION_ID,
+  parentSessionId: sessionId === SESSION_ID ? null : SESSION_ID,
+  sourceSessionId: null,
+  workId: null,
+  turnId: "turn-1",
+  executionId: `execution-${sessionId}`,
+  stepIndex: 1,
+  timestamp: 1_793_283_383_907,
+  type,
+  data,
+  contentCaptured: true,
+  contentTruncated: false,
+});
+const hook = (sessionId: string, type: string, data: Record<string, unknown>): Frame => ({
+  type: "emit_inbound",
+  label: `libfx/hook:${type}`,
+  frame: { kind: "notification", method: "libfx/hook", params: hookEvent(sessionId, type, data) },
+});
+const subagentReply = (reply: string) =>
+  JSON.stringify({ ok: true, result: reply, error_code: null });
+const subagentCall = (callId: string, task: string) =>
+  update(SESSION_ID, {
+    sessionUpdate: "tool_call",
+    toolCallId: callId,
+    name: "subagent",
+    title: `Subagent · ${task}`,
+    kind: "other",
+    status: "pending",
+    rawInput: { action: "run", task },
+    _meta: { fx: { toolCall: { internal: false } } },
+  });
+/** fx's 200-byte ACP preview of a finished `subagent` call. */
+const subagentPreview = (callId: string, reply: string) =>
+  update(SESSION_ID, {
+    sessionUpdate: "tool_call_update",
+    toolCallId: callId,
+    status: "completed",
+    content: [
+      { type: "content", content: { type: "text", text: subagentReply(reply).slice(0, 199) } },
+    ],
+  });
+
 const initialize: ReadonlyArray<Frame> = [
   outbound("initialize"),
   answer("initialize", {
@@ -161,6 +220,11 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
   readonly loadSessionId?: string;
   /** Then starts a turn on this model. */
   readonly turnModel?: string;
+  /** `libfx/hook` events fx sends after the turn has ended, collected until `until`. */
+  readonly afterTurn?: {
+    readonly hooks: ReadonlyArray<ReturnType<typeof hookEvent>>;
+    readonly until: (event: ProviderAdapterV2Event) => boolean;
+  };
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -180,6 +244,17 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
     FX_DRIVER_KIND,
   );
   const instanceId = ProviderInstanceId.make(`fx-${input.scenario}`);
+  const replayRuntime = makeAcpReplayRuntime({
+    transcript,
+    statusPath,
+    scriptPath: yield* path.fromFileUrl(
+      new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+    ),
+    childProcessSpawner,
+    fileSystem,
+    sessionMeta: () => FX_SESSION_META,
+  });
+  let deliverHook: ((raw: unknown) => Effect.Effect<void>) | undefined;
   const adapter = yield* makeFxAdapterV2({
     instanceId,
     settings: ENABLED_FX_SETTINGS,
@@ -192,15 +267,22 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
           ? { backend: input.defaultBackend ?? "gateway", model: FX_DEFAULT_MODEL }
           : undefined,
       ),
-    makeRuntime: makeAcpReplayRuntime({
-      transcript,
-      statusPath,
-      scriptPath: yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+    makeRuntime: (runtimeInput) =>
+      replayRuntime(runtimeInput).pipe(
+        Effect.map((runtime) => ({
+          ...runtime,
+          handleExtNotification: (method, payload, handler) => {
+            if (method === "libfx/hook") {
+              deliverHook = (raw) =>
+                Schema.decodeUnknownEffect(payload)(raw).pipe(
+                  Effect.flatMap(handler),
+                  Effect.orDie,
+                );
+            }
+            return runtime.handleExtNotification(method, payload, handler);
+          },
+        })),
       ),
-      childProcessSpawner,
-      fileSystem,
-    }),
   });
   const threadId = ThreadId.make(`thread-fx-${input.scenario}`);
   // The thread's effort matches the session's, so no effort write is scripted.
@@ -215,7 +297,7 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
     interactionMode: "default",
     cwd: replayDir,
   });
-  yield* Effect.gen(function* () {
+  const events = yield* Effect.gen(function* () {
     const session = yield* adapter.openSession({
       threadId,
       providerSessionId: ProviderSessionId.make(`provider-session-fx-${input.scenario}`),
@@ -223,7 +305,7 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
       runtimePolicy,
       ...(input.loadSessionId === undefined ? {} : { initialNativeThreadId: input.loadSessionId }),
     });
-    if (input.turnModel === undefined) return;
+    if (input.turnModel === undefined) return [];
     const providerThread = yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
     const now = yield* DateTime.now;
     const turnSelection = selectionOn(input.turnModel);
@@ -268,12 +350,21 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
       modelSelection: turnSelection,
       runtimePolicy,
     });
-    yield* session.events.pipe(
+    const turn = yield* session.events.pipe(
       Stream.takeUntil((event) => event.type === "turn.terminal"),
-      Stream.runDrain,
+      Stream.runCollect,
     );
+    if (input.afterTurn === undefined) return turn;
+    const later = yield* session.events.pipe(
+      Stream.takeUntil(input.afterTurn.until),
+      Stream.runCollect,
+      Effect.forkScoped,
+    );
+    for (const event of input.afterTurn.hooks) yield* deliverHook?.(event) ?? Effect.void;
+    return [...turn, ...(yield* Fiber.join(later))];
   }).pipe(Effect.scoped);
   yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
+  return events;
 });
 
 describe("FxAdapterV2", () => {
@@ -298,7 +389,7 @@ describe("FxAdapterV2", () => {
             outbound("session/new", {
               cwd: "<workspace>",
               mcpServers: "<any>",
-              _meta: { fx: { profileMcpServers: true } },
+              _meta: FX_SESSION_META,
             }),
             answer("session/new", fxSession({ model: FX_DEFAULT_MODEL, modes })),
             ...setConfig(
@@ -325,7 +416,7 @@ describe("FxAdapterV2", () => {
         outbound("session/new", {
           cwd: "<workspace>",
           mcpServers: "<any>",
-          _meta: { fx: { profileMcpServers: true } },
+          _meta: FX_SESSION_META,
         }),
         answer("session/new", fxSession({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES })),
         ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES })),
@@ -353,7 +444,7 @@ describe("FxAdapterV2", () => {
               sessionId: SESSION_ID,
               cwd: "<workspace>",
               mcpServers: "<any>",
-              _meta: { fx: { profileMcpServers: true } },
+              _meta: FX_SESSION_META,
             }),
             answer("session/load", {
               ...fxSession({ model: NAMED_MODEL, modes: FX_0_0_13_MODES }),
@@ -530,5 +621,291 @@ describe("FxAdapterV2", () => {
         answer("session/prompt", { stopReason: "end_turn" }),
       ],
     }).pipe(Effect.provide(testLayer)),
+  );
+  it.effect("retains full replies arriving after failed or cancelled children settle", () =>
+    Effect.gen(function* () {
+      for (const phase of ["failed", "cancelled"] as const) {
+        for (const withPreview of [false, true]) {
+          const reply = `Child ${phase}: ${"The complete diagnostic. ".repeat(20)}`;
+          const childSessionId = "fx-session-child";
+          const events = yield* openFxSession({
+            scenario: `late-${phase}-${withPreview}`,
+            runtimeMode: "approval-required",
+            turnModel: "default",
+            frames: [
+              ...initialize,
+              outbound("session/new"),
+              answer("session/new", {
+                ...fxSession({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES }),
+                _meta: { fx: { hooksVersion: 1 } },
+              }),
+              ...setConfig(
+                "mode",
+                "ask",
+                fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES }),
+              ),
+              outbound("session/prompt"),
+              subagentCall("call_child", "Read package.json"),
+              hook(SESSION_ID, "delegation", {
+                callId: "call_child",
+                childSessionId,
+                phase: "dispatched",
+              }),
+              ...(withPreview ? [subagentPreview("call_child", reply)] : []),
+              hook(SESSION_ID, "delegation", {
+                callId: "call_child",
+                childSessionId,
+                phase,
+              }),
+              hook(SESSION_ID, "tool.end", {
+                call: { callId: "call_child", name: "subagent", provenance: "model" },
+                output: JSON.stringify({ ok: false, result: reply, error_code: null }),
+                status: "success",
+              }),
+              answer("session/prompt", { stopReason: "end_turn" }),
+            ],
+          });
+          const subagents = events.flatMap((event) =>
+            event.type === "subagent.updated" ? [event.subagent] : [],
+          );
+          const terminal = subagents.filter((subagent) => subagent.status === phase);
+          assert.isAtLeast(terminal.length, 2);
+          assert.notEqual(terminal[0]?.result, reply);
+          const settled = terminal.at(-1);
+          assert.equal(settled?.result, reply);
+          assert.equal(settled?.completedAt, terminal[0]?.completedAt);
+          if (phase === "failed") {
+            assert.isFalse(
+              events.some(
+                (event) =>
+                  event.type === "message.updated" &&
+                  event.message.threadId === settled?.childThreadId &&
+                  event.message.role === "assistant",
+              ),
+              "a failed result stays on the task without inventing an assistant reply",
+            );
+          }
+          assert.isTrue(
+            events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "subagent" &&
+                event.turnItem.status === phase &&
+                event.turnItem.result === reply,
+            ),
+          );
+        }
+      }
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("keeps a child's steps and reply when it outlives its parent's turn", () =>
+    Effect.gen(function* () {
+      const reply = `FULL_CHILD_REPLY ${"package.json has twelve lines. ".repeat(12)}`;
+      const childSessionId = "fx-session-child";
+      const childHook = (type: string, data: Record<string, unknown>) =>
+        hookEvent(childSessionId, type, data);
+      const events = yield* openFxSession({
+        scenario: "async-child-outlives-turn",
+        runtimeMode: "approval-required",
+        turnModel: "default",
+        frames: [
+          ...initialize,
+          outbound("session/new"),
+          answer("session/new", {
+            ...fxSession({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES }),
+            _meta: { fx: { hooksVersion: 1 } },
+          }),
+          ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES })),
+          outbound("session/prompt"),
+          update(SESSION_ID, {
+            sessionUpdate: "tool_call",
+            toolCallId: "call_child",
+            name: "subagent",
+            title: "Subagent · reviewer",
+            kind: "other",
+            status: "pending",
+            rawInput: { action: "message", agent: "reviewer", message: "Read package.json" },
+          }),
+          hook(SESSION_ID, "delegation", {
+            callId: "call_child",
+            childSessionId,
+            phase: "dispatched",
+          }),
+          subagentPreview("call_child", "Sent to reviewer."),
+          hook(SESSION_ID, "tool.end", {
+            call: { callId: "call_child", name: "subagent", provenance: "model" },
+            output: subagentReply("Sent to reviewer."),
+            status: "success",
+          }),
+          answer("session/prompt", { stopReason: "end_turn" }),
+        ],
+        afterTurn: {
+          until: (event) =>
+            event.type === "subagent.updated" && event.subagent.status === "completed",
+          hooks: [
+            childHook("tool.start", {
+              call: {
+                callId: "call_read",
+                name: "read_file",
+                provenance: "model",
+                argumentsJson: '{"path":"package.json"}',
+              },
+            }),
+            childHook("tool.end", {
+              call: { callId: "call_read", name: "read_file", provenance: "model" },
+              output: '{"name":"fixture"}',
+              status: "success",
+            }),
+            childHook("model.start", { modelCallId: 1, purpose: "agent" }),
+            childHook("model.end", { modelCallId: 1, output: reply, toolCalls: [] }),
+            childHook("turn.end", { outcome: "completed", error: null }),
+          ],
+        },
+      });
+      assert.isTrue(
+        events.some((event) => event.type === "turn.terminal" && event.status === "completed"),
+      );
+      const settled = events.flatMap((event) =>
+        event.type === "subagent.updated" ? [event.subagent] : [],
+      );
+      const childThreadId = settled.at(-1)?.childThreadId;
+      assert.equal(settled.at(-1)?.result, reply);
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.threadId === childThreadId &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.status === "completed",
+        ),
+        "the child's read step lands in its thread",
+      );
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "message.updated" &&
+            event.message.threadId === childThreadId &&
+            event.message.role === "assistant" &&
+            event.message.text === reply,
+        ),
+        "the child's reply lands in its thread",
+      );
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  // A restart reloads the session: fx replays the finished call from history
+  // with its 200-byte preview and none of the child's steps, which T3 already
+  // holds. The reload confirms hooks, so the next sub-agent shows its steps.
+  it.effect("leaves a reloaded sub-agent's thread alone and follows the next one", () =>
+    Effect.gen(function* () {
+      const earlierReply = `package.json names fx-hooks-fixture. ${"It has five scripts. ".repeat(12)}`;
+      const reply = `tsconfig.json targets ES2023. ${"Strict mode is on. ".repeat(12)}`;
+      const childSessionId = "fx-session-04";
+      const events = yield* openFxSession({
+        scenario: "reload-subagent",
+        runtimeMode: "approval-required",
+        loadSessionId: SESSION_ID,
+        turnModel: "default",
+        frames: [
+          ...initialize,
+          outbound("session/load", {
+            sessionId: SESSION_ID,
+            cwd: "<workspace>",
+            mcpServers: "<any>",
+            _meta: FX_SESSION_META,
+          }),
+          update(SESSION_ID, {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: "Spawn a subagent to read package.json" },
+          }),
+          subagentCall("call_earlier", "Read package.json"),
+          subagentPreview("call_earlier", earlierReply),
+          update(SESSION_ID, {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "The subagent read package.json." },
+          }),
+          answer("session/load", {
+            ...fxSession({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES }),
+            _meta: { fx: { hooksVersion: 1 } },
+          }),
+          ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES })),
+          outbound("session/prompt"),
+          subagentCall("call_next", "Read tsconfig.json"),
+          hook(SESSION_ID, "delegation", {
+            callId: "call_next",
+            childSessionId,
+            workId: "work-1",
+            operationId: null,
+            phase: "dispatched",
+          }),
+          hook(childSessionId, "tool.start", {
+            call: {
+              callId: "call_read",
+              name: "read_file",
+              provenance: "fx_local",
+              argumentsJson: '{"path":"tsconfig.json"}',
+            },
+            rerun: false,
+          }),
+          hook(childSessionId, "tool.end", {
+            call: {
+              callId: "call_read",
+              name: "read_file",
+              provenance: "fx_local",
+              argumentsJson: '{"path":"tsconfig.json"}',
+            },
+            output: '{"compilerOptions":{"target":"ES2023"}}',
+            status: "success",
+            error: null,
+          }),
+          hook(SESSION_ID, "delegation", {
+            callId: "call_next",
+            childSessionId,
+            workId: "work-1",
+            operationId: null,
+            phase: "completed",
+          }),
+          subagentPreview("call_next", reply),
+          hook(SESSION_ID, "tool.end", {
+            call: { callId: "call_next", name: "subagent", provenance: "model" },
+            output: subagentReply(reply),
+            status: "success",
+            error: null,
+          }),
+          answer("session/prompt", { stopReason: "end_turn" }),
+        ],
+      });
+
+      const subagents = events.flatMap((event) =>
+        event.type === "subagent.updated" ? [event.subagent] : [],
+      );
+      assert.deepEqual(
+        [...new Set(subagents.map((subagent) => subagent.nativeTaskRef?.nativeId))],
+        ["call_next"],
+        "the reload projects nothing for the earlier sub-agent",
+      );
+      assert.lengthOf(
+        events.filter((event) => event.type === "app_thread.created"),
+        1,
+      );
+      const settled = subagents.at(-1);
+      assert.equal(settled?.status, "completed");
+      assert.equal(settled?.result, reply);
+      const childItems = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.threadId === settled?.childThreadId
+          ? [event.turnItem]
+          : [],
+      );
+      assert.deepInclude(childItems.at(-1), { type: "assistant_message", text: reply });
+      assert.isTrue(
+        childItems.some(
+          (item) =>
+            item.type === "dynamic_tool" &&
+            item.status === "completed" &&
+            item.title === "Read tsconfig.json",
+        ),
+      );
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 });

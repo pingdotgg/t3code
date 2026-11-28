@@ -35,5 +35,5 @@ All fx instances on a machine share that machine's fx login.
 
 ## Sub-agents and limitations
 
-- **Sub-agents**: Shown as child threads with their task and summarized reply (individual steps are hidden). fx does not forward sub-agent permission prompts—use **Auto** or **Full access** so sub-agents don't stall waiting for approval.
+- **Sub-agents**: Shown as child threads with their task, each tool they run, what they say between tools, and their full reply (cut off with a note past 64 KiB). Steps of a sub-agent's own sub-agents aren't shown. When fx doesn't confirm hook support, a child thread shows only its task and a reply shortened to a couple of lines. fx does not forward sub-agent permission prompts—use **Auto** or **Full access** so sub-agents don't stall waiting for approval.
 - **Not supported**: **Auto-accept edits**, and T3 Code text generation (titles, commit messages, PR descriptions, branch names)—pick another provider for those.
