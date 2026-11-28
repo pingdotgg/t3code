@@ -1,6 +1,7 @@
 import { Button } from "../../components/ui/Button";
 import deviceStreamScript from "@t3tools/mobile-device-stream";
 import {
+  useEffect,
   useEffectEvent,
   useImperativeHandle,
   useLayoutEffect,
@@ -51,6 +52,8 @@ export interface DeviceStreamRef {
 
 type NativeStreamBridge = {
   readonly ref?: Ref<DeviceStreamRef>;
+  /** iOS only: the simulator's hardware keyboard is US, so characters are typed through US keys. */
+  readonly usKeyboardLayout: boolean;
   readonly onUnauthorized: () => Promise<void>;
   readonly onInputConnected: (connected: boolean) => Promise<void>;
 };
@@ -80,6 +83,7 @@ export function DeviceStreamWebView({
       configuration={configuration}
       baseUrl={deviceStreamBaseUrl(Platform.OS, props.platform, props.access.httpBase)}
       background={props.colors.background}
+      usKeyboardLayout={props.usKeyboardLayout}
       onUnauthorized={props.onUnauthorized}
       onInputConnected={props.onInputConnected}
       onRetry={() => {
@@ -106,6 +110,7 @@ function DeviceStreamDocumentView({
   configuration,
   baseUrl,
   background,
+  usKeyboardLayout,
   onUnauthorized,
   onInputConnected,
   onRetry,
@@ -159,6 +164,13 @@ function DeviceStreamDocumentView({
       resetInput();
     };
   }, []);
+  // Not part of the document's configuration: a layout read that answers late must not reload
+  // the stream.
+  const keyboardLayoutScript = `window.T3DeviceStream?.keyboard(${usKeyboardLayout ? "true" : "false"}); true;`;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- passes the simulator's keyboard layout to the WebView device stream when its read answers
+  useEffect(() => {
+    webView.current?.injectJavaScript(keyboardLayoutScript);
+  }, [keyboardLayoutScript]);
   const source = {
     html: deviceStreamDocument(
       configuration,
@@ -206,6 +218,9 @@ function DeviceStreamDocumentView({
         onMessage={(event) => {
           if (!active.current || failed.current) return;
           const message = deviceStreamMessage(event.nativeEvent.data);
+          // The first message proves the stream script runs, which the effect above cannot know.
+          if (message?.type === "input" && !message.connected)
+            webView.current?.injectJavaScript(keyboardLayoutScript);
           if (message?.type === "unauthorized") void onUnauthorized();
           else if (message?.type === "input") void onInputConnected(message.connected);
           else if (message?.type === "retry") onRetry();

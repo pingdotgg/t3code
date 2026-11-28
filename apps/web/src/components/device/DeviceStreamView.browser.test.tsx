@@ -1,5 +1,6 @@
 import { RegistryContext } from "@effect/atom-react";
-import { AtomRegistry } from "effect/reactivity";
+import { Effect } from "effect";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import "~/index.css";
 import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
@@ -9,16 +10,19 @@ import { act, render, stubGlobal } from "../../../test/render";
 vi.mock(import("~/state/device"), async (original) => ({
   ...(await original()),
   useDeviceHubAccess: () => access,
+  deviceDetailReadAtom: () => Atom.make(Effect.never),
 }));
 vi.mock(import("./DevicePhoneViewport"), () => ({
   DevicePhoneViewport: () => <></>,
 }));
 import { DeviceStreamView } from "./DeviceStreamView";
+import { deviceDetailAtom } from "~/state/device";
 
 const access = { httpBase: "http://test", wsBase: "ws://test", query: {}, credentials: true };
 function setup() {
   const registry = AtomRegistry.make();
   const touches: unknown[] = [];
+  const sent: string[] = [];
   const image = vi.spyOn(HTMLImageElement.prototype, "src", "set").mockImplementation(() => {});
   // Select MJPEG without starting a WebCodecs decoder. Input uses the real stream client.
   const decoder = stubGlobal("VideoDecoder", undefined);
@@ -43,7 +47,13 @@ function setup() {
       onmessage?: (event: { data: ArrayBuffer }) => void;
       send(message: string | Uint8Array) {
         if (typeof message !== "string" && message[0] === 0x03) {
-          touches.push(JSON.parse(new TextDecoder().decode(message.subarray(1))));
+          const touch = JSON.parse(new TextDecoder().decode(message.subarray(1)));
+          touches.push(touch);
+          sent.push(`touch ${touch.type}`);
+        }
+        if (typeof message !== "string" && message[0] === 0x06) {
+          const { type, usage } = JSON.parse(new TextDecoder().decode(message.subarray(1)));
+          sent.push(`${type} ${usage.toString(16)}`);
         }
       }
       close() {}
@@ -63,6 +73,23 @@ function setup() {
       decoder[Symbol.dispose]();
     },
     touches,
+    sent,
+    readLayout(usKeyboardLayout: boolean | undefined | "failed") {
+      const key = { environmentId: EnvironmentId.make("test"), hostId: "local", deviceId: "test" };
+      const detail = { ...key, foregroundApp: null, readAt: "" };
+      registry.set(
+        deviceDetailAtom(key),
+        usKeyboardLayout === "failed"
+          ? { detail: null, error: "read failed" }
+          : {
+              detail: {
+                ...detail,
+                settings: usKeyboardLayout === undefined ? {} : { usKeyboardLayout },
+              },
+              error: null,
+            },
+      );
+    },
     async configure(inputUnavailable = false) {
       const json = new TextEncoder().encode(
         JSON.stringify({ width: 400, height: 800, orientation: "portrait", inputUnavailable }),
@@ -204,5 +231,72 @@ it("releases flat pointer ownership when input disconnects", async () => {
     { type: "begin", x: 0.25, y: 0.25 },
     { type: "begin", x: 0.5, y: 0.5 },
     { type: "end", x: 0.75, y: 0.75 },
+  ]);
+});
+
+it("sends Cmd editing shortcuts to the simulator and leaves the rest to the browser", async () => {
+  using input = setup();
+  await using screen = await render(input.view(), options);
+  await act(async () => input.configure());
+  await expect.element(screen.getByText("Input connected", { exact: true })).toBeVisible();
+  const host = screen.getByRole("application").element() as HTMLElement;
+  const press = (code: string, key: string) =>
+    host.dispatchEvent(
+      new KeyboardEvent("keydown", { code, key, metaKey: true, bubbles: true, cancelable: true }),
+    );
+  await act(async () => input.readLayout(true));
+  expect(press("KeyL", "l")).toBe(true);
+  // The browser must compose a dead key with the next letter, so its keydown is not canceled.
+  expect(
+    host.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        code: "BracketLeft",
+        key: "Dead",
+        bubbles: true,
+        cancelable: true,
+      }),
+    ),
+  ).toBe(true);
+  expect(press("KeyA", "a")).toBe(false);
+  expect(input.sent).toEqual(["down e3", "down 4", "up 4"]);
+  // A Cyrillic layout names another letter, so the shortcut goes by its key.
+  expect(press("KeyC", "с")).toBe(false);
+  expect(input.sent.slice(3)).toEqual(["down 6", "up 6"]);
+});
+
+it("sends keys by key place unless the host reports a US simulator layout", async () => {
+  using input = setup();
+  await using screen = await render(input.view(), options);
+  await act(async () => input.configure());
+  await expect.element(screen.getByText("Input connected", { exact: true })).toBeVisible();
+  const host = screen.getByRole("application").element() as HTMLElement;
+  const { send } = flatPointer(screen.container);
+  const type = (code: string, key: string) => {
+    host.dispatchEvent(new KeyboardEvent("keydown", { code, key, bubbles: true }));
+    host.dispatchEvent(new KeyboardEvent("keyup", { code, key, bubbles: true }));
+  };
+  // An AZERTY "a" typed into one field before a touch moves focus to another.
+  type("KeyQ", "a");
+  send("pointerdown", 1);
+  send("pointerup", 1);
+  expect(input.sent).toEqual(["down 14", "up 14", "touch begin", "touch end"]);
+  await act(async () => input.readLayout(true));
+  type("KeyQ", "a");
+  await act(async () => input.readLayout(false));
+  type("KeyQ", "a");
+  // A host that reports no layout, as servers before this setting do, may hold any layout.
+  await act(async () => input.readLayout(undefined));
+  type("KeyQ", "a");
+  await act(async () => input.readLayout("failed"));
+  type("KeyQ", "a");
+  expect(input.sent.slice(4)).toEqual([
+    "down 4",
+    "up 4",
+    "down 14",
+    "up 14",
+    "down 14",
+    "up 14",
+    "down 14",
+    "up 14",
   ]);
 });

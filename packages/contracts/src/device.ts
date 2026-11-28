@@ -402,6 +402,8 @@ export const DeviceSettings = Schema.Struct({
   liquidGlass: Schema.optional(Schema.Literals(["clear", "tinted"])),
   colorFilter: Schema.optional(DeviceColorFilter),
   networkEnabled: Schema.optional(Schema.Boolean),
+  /** iOS: whether the simulator reads hardware keys with a US layout. Absent when unknown. */
+  usKeyboardLayout: Schema.optional(Schema.Boolean),
   location: Schema.optional(
     Schema.NullOr(Schema.Struct({ latitude: Schema.Number, longitude: Schema.Number })),
   ),

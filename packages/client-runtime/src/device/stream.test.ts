@@ -183,6 +183,183 @@ describe("native device stream transport", () => {
       expect(vi.getTimerCount()).toBe(0);
     },
   );
+
+  it("types AltGr characters on Android when the browser also reports Ctrl", async () => {
+    const { client, opened } = setup("android");
+    client.start();
+    const socket = await opened;
+    socket.onopen?.();
+    socket.send.mockClear();
+    const press = (key: string, ctrlKey: boolean, altGraph: boolean) =>
+      client.sendKey(
+        {
+          key,
+          code: "Digit0",
+          ctrlKey,
+          altKey: ctrlKey,
+          metaKey: false,
+          getModifierState: (name: string) => name === "AltGraph" && altGraph,
+        } as unknown as KeyboardEvent,
+        "down",
+      );
+    // Firefox on Windows reports AltGr as Ctrl and Alt.
+    press("@", true, true);
+    press("0", true, false);
+    expect(socket.send.mock.calls).toEqual([[JSON.stringify({ type: "text", text: "@" })]]);
+    client.stop();
+  });
+
+  type Modifiers = Partial<Record<"shiftKey" | "ctrlKey" | "altKey" | "metaKey", boolean>>;
+  const connectIosKeys = async (usLayout: boolean) => {
+    const { client, opened } = setup("ios");
+    client.start();
+    const socket = await opened;
+    socket.onopen?.();
+    socket.onmessage?.({ data: Uint8Array.of(0x83).buffer });
+    const setInputUnavailable = (inputUnavailable: boolean) =>
+      socket.onmessage?.({
+        data: new Uint8Array([
+          0x82,
+          ...new TextEncoder().encode(
+            JSON.stringify({ width: 400, height: 800, orientation: "portrait", inputUnavailable }),
+          ),
+        ]).buffer,
+      });
+    const take = () => {
+      const keys = socket.send.mock.calls.map(([packet]) => {
+        const { type, usage } = JSON.parse(new TextDecoder().decode(packet.subarray(1)));
+        return `${type} ${usage.toString(16)}`;
+      });
+      socket.send.mockClear();
+      return keys;
+    };
+    take();
+    const send = (
+      phase: "down" | "up",
+      code: string,
+      key: string,
+      modifiers: Modifiers = {},
+      altGraph = false,
+    ) =>
+      client.sendKey(
+        {
+          code,
+          key,
+          shiftKey: false,
+          ctrlKey: false,
+          altKey: false,
+          metaKey: false,
+          ...modifiers,
+          getModifierState: (name: string) => name === "AltGraph" && altGraph,
+        } as unknown as KeyboardEvent,
+        phase,
+        usLayout,
+      );
+    const press = (code: string, key: string, modifiers?: Modifiers, altGraph?: boolean) => {
+      send("down", code, key, modifiers, altGraph);
+      send("up", code, key, modifiers, altGraph);
+    };
+    return { client, take, send, press, setInputUnavailable };
+  };
+
+  it("holds a key typed through the US layout until its keyup", async () => {
+    const { client, take, send } = await connectIosKeys(true);
+    // AZERTY "a" sits on the US "q" key.
+    send("down", "KeyQ", "a");
+    send("down", "KeyQ", "a");
+    expect(take()).toEqual(["down 4", "down 4"]);
+    send("up", "KeyQ", "a");
+    expect(take()).toEqual(["up 4"]);
+    send("down", "Space", " ");
+    expect(take()).toEqual(["down 2c"]);
+    send("up", "Space", " ");
+    expect(take()).toEqual(["up 2c"]);
+    client.stop();
+  });
+
+  it("types the character from the user's layout with the US key for it", async () => {
+    const { client, take, send, press } = await connectIosKeys(true);
+
+    // AZERTY Shift+";" types ".", which needs no Shift on the US layout.
+    send("down", "ShiftLeft", "Shift", { shiftKey: true });
+    send("down", "Comma", ".", { shiftKey: true });
+    expect(take()).toEqual(["down e1", "up e1", "down 37"]);
+    send("up", "Comma", ".", { shiftKey: true });
+    send("up", "ShiftLeft", "Shift");
+    expect(take()).toEqual(["up 37", "down e1", "up e1"]);
+
+    // Chromium on Windows: AltGr is a Ctrl key, then AltGraph, and the character has no flags.
+    send("down", "ControlLeft", "Control", { ctrlKey: true });
+    send("down", "AltRight", "AltGraph", {}, true);
+    send("down", "Digit0", "@", {}, true);
+    expect(take()).toEqual(["down e0", "down e6", "up e0", "up e6", "down e1", "down 1f"]);
+    send("up", "Digit0", "@", {}, true);
+    send("up", "AltRight", "AltGraph");
+    send("up", "ControlLeft", "Control");
+    expect(take()).toEqual(["up 1f", "up e1", "down e6", "up e6"]);
+
+    // The US layout types accents with Option dead keys and "€" with Option+Shift+2.
+    press("BracketLeft", "Dead");
+    press("KeyE", "ê");
+    expect(take()).toEqual(["down e2", "down c", "up c", "up e2", "down 8", "up 8"]);
+    send("down", "AltRight", "AltGraph", {}, true);
+    press("KeyE", "€", {}, true);
+    send("up", "AltRight", "AltGraph");
+    expect(take()).toEqual(["down e6", "down e1", "down 1f", "up 1f", "up e1", "up e6"]);
+
+    // A character the US layout cannot type goes by its key place.
+    press("Backquote", "²");
+    expect(take()).toEqual(["down 35", "up 35"]);
+    client.stop();
+  });
+
+  it("sends shortcuts with their modifiers and the letter the user's layout names", async () => {
+    const { client, take, send, press } = await connectIosKeys(true);
+    send("down", "ControlLeft", "Control", { ctrlKey: true });
+    press("KeyQ", "a", { ctrlKey: true });
+    send("up", "ControlLeft", "Control");
+    expect(take()).toEqual(["down e0", "down 4", "up 4", "up e0"]);
+    // A Mac browser keeps the Cmd keydown and sends no keyup for the letter.
+    send("down", "KeyQ", "a", { metaKey: true });
+    expect(take()).toEqual(["down e3", "down 4", "up 4"]);
+    send("up", "MetaLeft", "Meta");
+    expect(take()).toEqual(["up e3"]);
+    // Mac Option+P types "π", which the simulator's US layout also has on Option+P.
+    send("down", "AltLeft", "Alt", { altKey: true });
+    press("KeyP", "π", { altKey: true });
+    send("up", "AltLeft", "Alt");
+    expect(take()).toEqual(["down e2", "down 13", "up 13", "up e2"]);
+    client.stop();
+  });
+
+  it("sends key places when the simulator layout is not US", async () => {
+    const { client, take, send, press } = await connectIosKeys(false);
+    press("KeyQ", "a");
+    press("BracketLeft", "Dead");
+    expect(take()).toEqual(["down 14", "up 14", "down 2f", "up 2f"]);
+    // Firefox on Windows reports AltGr as Ctrl and Alt. The simulator's AltGr is Option alone.
+    const ctrlAlt = { ctrlKey: true, altKey: true };
+    send("down", "ControlLeft", "Control", { ctrlKey: true });
+    send("down", "AltRight", "AltGraph", ctrlAlt, true);
+    press("Digit0", "@", ctrlAlt, true);
+    send("up", "AltRight", "AltGraph", { ctrlKey: true });
+    send("up", "ControlLeft", "Control");
+    expect(take()).toEqual(["down e0", "down e6", "up e0", "down 27", "up 27", "up e6"]);
+    client.stop();
+  });
+
+  it("releases a key whose keyup came while simulator input was closed", async () => {
+    const { client, take, send, setInputUnavailable } = await connectIosKeys(true);
+    send("down", "ShiftLeft", "Shift", { shiftKey: true });
+    send("down", "KeyA", "A", { shiftKey: true });
+    expect(take()).toEqual(["down e1", "down 4"]);
+    setInputUnavailable(true);
+    send("up", "KeyA", "A", { shiftKey: true });
+    send("up", "ShiftLeft", "Shift");
+    setInputUnavailable(false);
+    expect(take()).toEqual(["up 4", "up e1"]);
+    client.stop();
+  });
 });
 
 describe("iOS keypad protocol", () => {
