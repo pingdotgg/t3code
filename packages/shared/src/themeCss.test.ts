@@ -23,6 +23,13 @@ describe("themeCssValueFetches", () => {
     ["background-image", 'url("\u00a0data:/../../probe")', true],
     ["background-image", 'url("data:image/png;base64,AA")', false],
     ["background-image", `url("${SVG_WITH_OWN_GRADIENT}")`, false],
+    [
+      "background-image",
+      String.raw`url("data:image/svg+xml,<svg xmlns=\"http://www.w3.org/2000/svg\"><circle cx=\"4\" cy=\"4\" r=\"2\" fill=\"red\"/></svg>")`,
+      false,
+    ],
+    ["background-image", String.raw`url("\64 ata:image/png;base64,AA")`, true],
+    ["background-image", String.raw`url("https://example.com/\"a")`, true],
     // The url( sits inside a string, so the address after that string is a real remote url().
     ["content", `"url('data:" url("https://evil.example/a") "'"`, true],
     ["--leak", '/* " */ url(https://evil.example/a) /* " */', true],

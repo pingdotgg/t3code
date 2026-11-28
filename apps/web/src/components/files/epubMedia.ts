@@ -22,6 +22,8 @@ export function mediaTime(value: string | undefined): number | undefined {
 
 const nptTime = /^(?:(?:\d+:)?[0-5]\d:[0-5]\d|\d+)(?:\.\d*)?$/;
 const ttmlContent = new Set(["ttml:tt", "ttml:body", "ttml:div", "ttml:p"]);
+const ttmlParameters = "{http://www.w3.org/ns/ttml#parameter}";
+const dfxpParameters = "{http://www.w3.org/2006/04/ttaf1#parameter}";
 
 export function mediaFragment(href: string) {
   const hash = href.indexOf("#");
@@ -51,6 +53,68 @@ function vttTime(seconds: number) {
 }
 
 export function ttmlCaptions(root: XmlNode) {
+  const attributes = root.children.find((node) => node.name === "ttml:tt")?.attrs;
+  function parameter(name: string) {
+    return (attributes?.[ttmlParameters + name] ?? attributes?.[dfxpParameters + name])?.trim();
+  }
+  const rate = parameter("frameRate") ?? "30";
+  const nominalFrameRate = /^\d+$/.test(rate) ? Number(rate) : NaN;
+  const multiplier = parameter("frameRateMultiplier") ?? "1 1";
+  const ratio = /^(\d+)\s+(\d+)$/.exec(multiplier);
+  const frameRate = nominalFrameRate * (Number(ratio?.[1]) / Number(ratio?.[2]));
+  const subFrameRateText = parameter("subFrameRate") ?? "1";
+  const subFrameRate = /^\d+$/.test(subFrameRateText) ? Number(subFrameRateText) : NaN;
+  const tickText = parameter("tickRate");
+  let tickRate = parameter("frameRate") === undefined ? 1 : frameRate * subFrameRate;
+  if (tickText !== undefined) tickRate = /^\d+$/.test(tickText) ? Number(tickText) : NaN;
+  const timeBase = parameter("timeBase") ?? "media";
+  const continuousSmpte = timeBase === "smpte" && parameter("markerMode") === "continuous";
+  const dropMode = parameter("dropMode") ?? "nonDrop";
+
+  function captionTime(value: string | undefined) {
+    const time = value?.trim() ?? "";
+    const tick = /^(\d+(?:\.\d+)?)t$/.exec(time);
+    if (tick) {
+      const seconds = Number.isFinite(tickRate) && tickRate > 0 ? Number(tick[1]) / tickRate : NaN;
+      return Number.isFinite(seconds * 1000) ? seconds : undefined;
+    }
+    const offset = /^(\d+(?:\.\d+)?)f$/.exec(time);
+    const clockMatch = /^(\d{2,}:[0-5]\d:[0-5]\d)(?::(\d{2,})(?:\.(\d+))?)?$/.exec(time);
+    const clock = continuousSmpte || clockMatch?.[2] !== undefined ? clockMatch : null;
+    if (!offset && !clock) return mediaTime(value);
+    if (timeBase !== "media" && !(continuousSmpte && clock)) return;
+    if (!Number.isFinite(frameRate) || frameRate <= 0) return;
+
+    const frames = Number(clock?.[2] ?? offset?.[1] ?? 0);
+    if (clock && frames >= nominalFrameRate) return;
+    let fractionalFrame = 0;
+    if (clock?.[3] !== undefined) {
+      const subFrames = Number(clock[3]);
+      if (!Number.isFinite(subFrameRate) || subFrames >= subFrameRate) return;
+      fractionalFrame = subFrames / subFrameRate;
+    }
+    const clockSeconds = clock ? (mediaTime(clock[1]) ?? NaN) : 0;
+    let seconds = clockSeconds + (frames + fractionalFrame) / frameRate;
+    if (continuousSmpte) {
+      const minutes = Math.floor(clockSeconds / 60);
+      const atMinuteStart = clock?.[2] !== undefined && clockSeconds % 60 === 0;
+      let droppedFrames = 0;
+      // TTML §N.3 counts skipped labels before applying the effective frame rate.
+      if (dropMode === "dropNTSC") {
+        if (atMinuteStart && minutes % 10 !== 0 && frames < 2) return;
+        droppedFrames = (minutes - Math.floor(minutes / 10)) * 2;
+      } else if (dropMode === "dropPAL") {
+        if (atMinuteStart && minutes % 2 === 0 && minutes % 20 !== 0 && frames < 4) return;
+        droppedFrames = (Math.floor(minutes / 2) - Math.floor(minutes / 20)) * 4;
+      } else if (dropMode !== "nonDrop") {
+        return;
+      }
+      seconds =
+        (clockSeconds * nominalFrameRate + frames - droppedFrames + fractionalFrame) / frameRate;
+    }
+    if (Number.isFinite(seconds * 1000)) return seconds;
+  }
+
   const cues: string[] = [];
   function captionText(node: XmlNode): string {
     if (node.name === "ttml:br") return "\n";
@@ -58,9 +122,9 @@ export function ttmlCaptions(root: XmlNode) {
     return node.children.map(captionText).join("");
   }
   function visit(node: XmlNode, start: number, end: number): number {
-    const begin = start + (mediaTime(node.attrs.begin) ?? 0);
-    const until = mediaTime(node.attrs.end);
-    const duration = mediaTime(node.attrs.dur);
+    const begin = start + (captionTime(node.attrs.begin) ?? 0);
+    const until = captionTime(node.attrs.end);
+    const duration = captionTime(node.attrs.dur);
     const finish = Math.min(
       end,
       until === undefined ? Infinity : start + until,

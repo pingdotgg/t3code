@@ -77,6 +77,10 @@ const CASES: ReadonlyArray<readonly [markdown: string, html: string]> = [
     '<p dir="ltr">See <span class="has-[[data-slot=context-chip-label]]:whitespace-nowrap"><a href="http://www.example.com/a_(b)">www.example.com/a_(b)</a>,</span> <span class="has-[[data-slot=context-chip-label]]:whitespace-nowrap"><a href="https://x.dev/path?q=1">https://x.dev/path?q=1</a>.</span> and <span class="has-[[data-slot=context-chip-label]]:whitespace-nowrap"><a href="mailto:me@example.com">me@example.com</a>!</span></p>',
   ],
   [
+    "**已返回总部工作。**据美联社报道\n\n**英伟达宣布恢复其总裁、CEO 和董事职务。**公司于美国当地时间11月23日发布公告",
+    '<p dir="ltr"><strong>已返回总部工作。</strong>据美联社报道</p>\n<p dir="ltr"><strong>英伟达宣布恢复其总裁、CEO 和董事职务。</strong>公司于美国当地时间11月23日发布公告</p>',
+  ],
+  [
     "See https://x.com/dimasike_ and 可以看了：**http://localhost:18780**（已重启）。",
     '<p dir="ltr">See <a href="https://x.com/dimasike_">https://x.com/dimasike_</a> and 可以看了：<strong><a href="http://localhost:18780">http://localhost:18780</a></strong>（已重启）。</p>',
   ],
@@ -336,6 +340,12 @@ describe("wordsHast", () => {
     );
     expect(wordsHtml("x".repeat(30), options)).toBe("x".repeat(24));
     expect(wordsHtml("<!-- only -->", options)).toBe("Thinking");
+    expect(
+      wordsHtml("Checked the cache first[^1] and it was stale.\n\n[^1]: Redis TTL is 60s.", {
+        ...options,
+        extensions: { preview: { ...preview, maxLength: 120 } },
+      }),
+    ).toBe("Checked the cache first and it was stale.");
   });
 
   it("makes a saved file's Markdown inert", () => {

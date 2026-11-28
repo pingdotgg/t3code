@@ -803,13 +803,16 @@ export function PullRequestsPage() {
 
   const visibleStatsKeys = useRef({ key: filterKey, values: new Set<string>() });
   const [statsByRow, setStatsByRow] = useState<PullRequestDiffStats>(() => new Map());
+  // A panel without a host could be showing the same repository on another host.
   if (
     panelEnvironmentId !== null &&
+    renderedPullRequestSurface?.host !== undefined &&
     panelSummary?.additions !== undefined &&
     panelSummary.deletions !== undefined
   ) {
     const stat = {
       ...panelSummary,
+      host: renderedPullRequestSurface?.host,
       environmentId: panelEnvironmentId,
       additions: panelSummary.additions,
       deletions: panelSummary.deletions,
@@ -1120,7 +1123,14 @@ export function PullRequestsPage() {
   const rightPanelMaximized = rightPanelState.isOpen && maximized;
   if (!rightPanelState.isOpen && maximized) setMaximized(false);
   const toggleRightPanelMaximized = () => {
-    if (rightPanelState.isOpen) setMaximized((value) => !value);
+    if (rightPanelState.isOpen) {
+      setMaximized((value) => !value);
+      return;
+    }
+    // A closed panel opens straight into maximized.
+    if (!rightPanelAvailable) return;
+    toggleRightPanel();
+    setMaximized(true);
   };
   const onGuideShown = () => setMaximized(true);
   // updateSearch leaves selectedUrl out, so a reload does not reveal the link again.
@@ -1243,6 +1253,7 @@ export function PullRequestsPage() {
         <RightPanelMaximizeControl
           maximized={rightPanelMaximized}
           onToggle={toggleRightPanelMaximized}
+          shortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggleMaximized")}
         />
       ) : null}
       {panelToggleControls}
@@ -1560,7 +1571,7 @@ export function PullRequestsPage() {
     if (!event.repeat) toggleRightPanel();
   });
   const toggleRightPanelMaximizedFromShortcut = useEffectEvent((event: KeyboardEvent) => {
-    if (!rightPanelState.isOpen) return;
+    if (!rightPanelState.isOpen && !rightPanelAvailable) return;
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) toggleRightPanelMaximized();

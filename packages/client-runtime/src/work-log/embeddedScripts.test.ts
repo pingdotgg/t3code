@@ -42,6 +42,33 @@ describe("embeddedScripts", () => {
     ]);
   });
 
+  it.each([
+    [`bash -c -e "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
+    [`bash -c +e "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
+    [`bash -c -e -- "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
+    [`bash -c - "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
+    [`bash -c -o pipefail "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
+    [`bash -co pipefail "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
+    [`bash -c -oe pipefail "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
+    [`bash -oc pipefail "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
+    [`bash -c +o errexit "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
+    [
+      `zsh -oextendedglob -c "python3 -c 'print(1)'"`,
+      "python3 -c 'print(1)'",
+      "python",
+      "print(1)",
+    ],
+    [`zsh -c --errexit "python3 -c 'print(1)'"`, "python3 -c 'print(1)'", "python", "print(1)"],
+  ])(
+    "extracts nested scripts across POSIX shell options in %s",
+    (command, shellScript, nestedLanguage, nestedScript) => {
+      expect(scriptsOf(command).map(([language, text]) => [language, text])).toEqual([
+        ["shellscript", shellScript],
+        [nestedLanguage, nestedScript],
+      ]);
+    },
+  );
+
   it("highlights a heredoc fed to an interpreter in that interpreter's language", () => {
     const command = `python3 - <<'PY'\n${pythonScript}PY`;
     expect(scriptsOf(command)).toEqual([["python", pythonScript, pythonScript]]);
@@ -58,6 +85,9 @@ describe("embeddedScripts", () => {
     [`bash -Ec 'echo hi'`, "shellscript", "echo hi"],
     [`bash -euo pipefail -c 'echo hi'`, "shellscript", "echo hi"],
     [`bash +x -c 'echo hi'`, "shellscript", "echo hi"],
+    [`bash -c -- -e`, "shellscript", "-e"],
+    [`sh --rcfile /dev/null -c 'echo SCRIPT'`, "shellscript", "echo SCRIPT"],
+    [`fish -c -e "python3 -c 'print(1)'"`, "fish", "-e"],
     [`python3 -c 'print(1)'`, "python", "print(1)"],
     [`py -3 -c 'print(1)'`, "python", "print(1)"],
     [`"C:\\Program Files\\Python312\\python.exe" -c 'print(1)'`, "python", "print(1)"],
@@ -67,6 +97,18 @@ describe("embeddedScripts", () => {
     [`deno eval --config deno.json 'console.log(1)'`, "typescript", "console.log(1)"],
     [`psql -f schema.sql -c 'select 1'`, "sql", "select 1"],
     [`node -C development -e 'console.log(1)'`, "javascript", "console.log(1)"],
+    [
+      `node --input-type module -e "import fs from 'node:fs'"`,
+      "javascript",
+      "import fs from 'node:fs'",
+    ],
+    [
+      `node --env-file .env -e 'console.log(process.env.FOO)'`,
+      "javascript",
+      "console.log(process.env.FOO)",
+    ],
+    [`node --env-file-if-exists .env.local -e 'console.log(1)'`, "javascript", "console.log(1)"],
+    [`node --experimental-loader ./loader.mjs -e 'console.log(1)'`, "javascript", "console.log(1)"],
     [`ruby -e 'puts 1'`, "ruby", "puts 1"],
     [`ruby -I lib -e 'puts 1'`, "ruby", "puts 1"],
     [`ruby -ne 'print if /foo/' input.txt`, "ruby", "print if /foo/"],
@@ -80,6 +122,14 @@ describe("embeddedScripts", () => {
     [`pwsh -NoProfile -Command "Get-ChildItem"`, "powershell", "Get-ChildItem"],
     [`env FOO=1 sudo -u bob python3 -c 'print(1)'`, "python", "print(1)"],
     [`env -- FOO=1 python3 -c 'print(1)'`, "python", "print(1)"],
+    [`timeout 30 python3 -c 'print(1)'`, "python", "print(1)"],
+    [`gtimeout 30 python3 -c 'print(1)'`, "python", "print(1)"],
+    [`timeout -k 5 30s node -e 'console.log(1)'`, "javascript", "console.log(1)"],
+    [`timeout -k5s -v -sKILL 10 bash -c 'echo hi'`, "shellscript", "echo hi"],
+    [`timeout --kill-after 5 --signal KILL 30 bash -c 'echo hi'`, "shellscript", "echo hi"],
+    [`timeout -fk 5 1.5m bash -c 'echo hi'`, "shellscript", "echo hi"],
+    [`timeout -s KILL -v -- 0 bash -c 'echo hi'`, "shellscript", "echo hi"],
+    [`timeout 30 env FOO=1 python3 -c 'print(1)'`, "python", "print(1)"],
     [`node --eval="process.exit(0)"`, "javascript", "process.exit(0)"],
     [`psql --command='select 1'`, "sql", "select 1"],
     [`mysql -c -e 'select 1'`, "sql", "select 1"],
@@ -121,6 +171,18 @@ describe("embeddedScripts", () => {
     ["a ruby -i backup suffix of e", `ruby -ie 'puts 1' input.txt`],
     ["a python -W value of c", `python3 -Wc 'print(1)'`],
     ["a shell whose -c has no script, before a heredoc", `sh -c -- <<'EOF'\necho hi\nEOF`],
+    [
+      "a shell whose -c has only trailing options before a heredoc",
+      `sh -c -e <<'EOF'\necho hi\nEOF`,
+    ],
+    [
+      "a shell whose -co option has no script after its option value",
+      `bash -co pipefail <<'EOF'\necho hi\nEOF`,
+    ],
+    [
+      "a shell with a GNU long option after -c",
+      `bash -c --rcfile /dev/null "python3 -c 'print(1)'"`,
+    ],
     ["a heredoc `cat` sends to stdout while stderr goes to a file", `cat 2>log.ts <<'EOF'\nx\nEOF`],
   ])("finds nothing for %s", (_case, command) => {
     expect(scriptsOf(command)).toEqual([]);

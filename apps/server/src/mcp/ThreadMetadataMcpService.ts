@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { firstLineTitle } from "./firstLineTitle.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { threadNotFound } from "./threadAccess.ts";
 
@@ -70,7 +71,7 @@ function metadataCommand(input: {
         type: "thread.metadata.update",
         commandId: input.commandId,
         threadId: input.threadId,
-        title: input.update.title!,
+        title: firstLineTitle(input.update.title) ?? input.update.title!,
       };
     case "regenerate_title":
       return {

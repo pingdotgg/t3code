@@ -994,6 +994,31 @@ const makeProtocolHttpUnbatched = (client: HttpClient.HttpClient) =>
     }
   }))
 
+const withBatchSpan = <A, E, R>(effect: Effect.Effect<A, E, R>, requests: ReadonlyArray<RequestEncoded>) => {
+  const links: Array<Tracer.SpanLink> = []
+  const seen = new Set<string>()
+  let sampled = false
+  for (const request of requests) {
+    if (request.traceId === undefined || request.spanId === undefined || seen.has(request.spanId)) continue
+    seen.add(request.spanId)
+    const span = Tracer.externalSpan({ traceId: request.traceId, spanId: request.spanId, sampled: request.sampled })
+    sampled ||= span.sampled
+    links.push({ span, attributes: {} })
+  }
+  if (links.length === 0) return effect
+  return Effect.withSpan(effect, "RpcClient.batch", {
+    root: true,
+    sampled,
+    links,
+    attributes: { batchSize: requests.length },
+    captureStackTrace: false
+  }).pipe(
+    // Do not let the opener's tracing settings suppress tracing for other callers.
+    Effect.provideService(Tracer.DisablePropagation, false),
+    Effect.withTracerEnabled(true)
+  )
+}
+
 const makeProtocolHttpBatched = Effect.fnUntraced(function*(client: HttpClient.HttpClient, options: {
   readonly window: Duration.Input
   readonly maxSize?: number | undefined
@@ -1031,7 +1056,7 @@ const makeProtocolHttpBatched = Effect.fnUntraced(function*(client: HttpClient.H
       Effect.raceFirst(Effect.sleep(window), batch.full.await).pipe(
         Effect.andThen(Effect.suspend(() => {
           closeBatch(clientId, batch)
-          return exchange.send(clientId, batch.requests)
+          return withBatchSpan(exchange.send(clientId, batch.requests), batch.requests)
         })),
         Effect.onExit((exit) => {
           closeBatch(clientId, batch)

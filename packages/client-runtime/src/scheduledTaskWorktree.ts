@@ -1,11 +1,11 @@
-import type { VcsRef } from "@t3tools/contracts";
+import { trimAsciiWhitespace, type VcsRef } from "@t3tools/contracts";
 
 /** An empty base is automatic: the project's default branch, else `main` or `master`. */
 export function scheduledTaskWorktreeBaseRef(
   baseRef: string,
   refs: ReadonlyArray<Pick<VcsRef, "name" | "isDefault">>,
 ): string {
-  const picked = baseRef.trim();
+  const picked = trimAsciiWhitespace(baseRef);
   if (picked) return picked;
   const defaultRef = refs.find((ref) => ref.isDefault);
   if (defaultRef) return defaultRef.name;

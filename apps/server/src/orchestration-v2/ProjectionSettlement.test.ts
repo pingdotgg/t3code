@@ -17,7 +17,10 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
+import * as Tracer from "effect/Tracer";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -27,7 +30,10 @@ import {
   resolveAutoSettlementAt,
 } from "./ThreadSettlementService.ts";
 
-const layerSql = ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
+const layerSql = ProjectionStore.layer.pipe(
+  Layer.provide(NodeCrypto.layerDigest),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
+);
 const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
 const old = DateTime.subtract(now, { days: 10 });
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -446,7 +452,33 @@ it.effect("sql: lists only active threads with pull request links, oldest first"
       pullRequests: [pullRequestLink(3), pullRequestLink(4)],
     });
 
-    const threads = yield* store.getThreadsWithPullRequests();
+    const statements: Array<string> = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (endTime, exit) => {
+          end(endTime, exit);
+          const query = span.attributes.get("db.query.text");
+          if (typeof query === "string") statements.push(query);
+        };
+        return span;
+      },
+    });
+    const threads = yield* store.getThreadsWithPullRequests().pipe(Effect.withTracer(tracer));
+    const [sweepQuery] = statements.filter((statement) =>
+      statement.includes("FROM orchestration_v2_projection_threads"),
+    );
+    assert.isDefined(sweepQuery);
+    const sql = yield* SqlClient.SqlClient;
+    // The minute sweeps walk the active shell index in order instead of scanning and sorting.
+    const plan = (yield* sql.unsafe<{ readonly detail: string }>(
+      `EXPLAIN QUERY PLAN ${sweepQuery}`,
+    ))
+      .map((row) => row.detail)
+      .join("\n");
+    assert.include(plan, "orchestration_v2_projection_threads_active_shell_idx");
+    assert.notInclude(plan, "TEMP B-TREE");
     assert.deepEqual(
       threads.map((thread) => [thread.id, thread.settledOverride, thread.pullRequests?.length]),
       [
@@ -464,6 +496,80 @@ it.effect("sql: lists only active threads with pull request links, oldest first"
       ),
       [settled, archived, open],
     );
+  }).pipe(Effect.provide(layerSql)),
+);
+
+it.effect("sql: pull request sweeps decode only threads written since the last read", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const unchanged = yield* createThread("sweep-unchanged", {
+      pullRequests: [pullRequestLink(1)],
+    });
+    const changed = yield* createThread("sweep-changed", { pullRequests: [pullRequestLink(2)] });
+    const archived = yield* createThread("sweep-archived", {
+      archivedAt: old,
+      pullRequests: [pullRequestLink(3)],
+    });
+    const byId = (threads: ReadonlyArray<ProjectionStore.ProjectionThreadPullRequests>) =>
+      new Map(threads.map((thread) => [thread.id, thread]));
+
+    const first = byId(yield* store.getThreadsWithPullRequests());
+    const withArchived = byId(
+      yield* store.getThreadsWithPullRequests(undefined, { includeArchived: true }),
+    );
+    // The other variant reuses rows it shares with the active read.
+    assert.strictEqual(withArchived.get(unchanged), first.get(unchanged));
+    assert.isDefined(withArchived.get(archived));
+
+    yield* createThread("sweep-changed", {
+      pullRequests: [pullRequestLink(2), pullRequestLink(4)],
+    });
+    const sweepSpans: Array<Tracer.NativeSpan> = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        if (span.name === "ProjectionStore.getThreadsWithPullRequests") sweepSpans.push(span);
+        return span;
+      },
+    });
+    const second = byId(yield* store.getThreadsWithPullRequests().pipe(Effect.withTracer(tracer)));
+    assert.deepEqual(
+      [
+        "orchestration_v2.projection_row_count",
+        "orchestration_v2.decode_cache_hit_count",
+        "orchestration_v2.decode_cache_miss_count",
+      ].map((key) => sweepSpans[0]?.attributes.get(key)),
+      [2, 1, 1],
+    );
+    assert.strictEqual(second.get(unchanged), first.get(unchanged));
+    assert.notStrictEqual(second.get(changed), first.get(changed));
+    assert.deepEqual(
+      second.get(changed)?.pullRequests?.map((link) => link.number),
+      [2, 4],
+    );
+  }).pipe(Effect.provide(layerSql)),
+);
+
+it.effect("sql: pull request sweeps evict threads that leave both variants", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const leaving = yield* createThread("sweep-leaving", { pullRequests: [pullRequestLink(1)] });
+    const readBoth = Effect.gen(function* () {
+      const active = yield* store.getThreadsWithPullRequests();
+      yield* store.getThreadsWithPullRequests(undefined, { includeArchived: true });
+      return active.find((thread) => thread.id === leaving);
+    });
+
+    const first = yield* readBoth;
+    assert.isDefined(first);
+    yield* createThread("sweep-leaving", { pullRequests: [] });
+    assert.isUndefined(yield* readBoth);
+
+    // The identical payload returns, so only an evicted entry decodes afresh.
+    yield* createThread("sweep-leaving", { pullRequests: [pullRequestLink(1)] });
+    const restored = yield* readBoth;
+    assert.deepEqual(restored, first);
+    assert.notStrictEqual(restored, first);
   }).pipe(Effect.provide(layerSql)),
 );
 

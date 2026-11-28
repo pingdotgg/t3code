@@ -11,7 +11,7 @@ Use the composer to send prompts, attach files, reference threads or pull reques
 
 The composer renders Markdown live as you type and reveals raw markers when your cursor enters styled text. The agent receives the exact Markdown you typed.
 
-- Disable live styling in **Settings → Chat → Rich text composer**.
+- Disable live styling, list continuation and nesting, and wrapping of selected text in **Settings → Chat → Rich text composer**.
 - Standard Markdown triggers (`- `, `1. `, `- [ ] `, `> `, `# `, `---`, and ` ``` ` + Enter) create lists, quotes, headings, rules, and code blocks.
 - In lists/quotes, `Shift+Enter` continues (or exits on an empty line), and `Tab` / `Shift+Tab` indents or outdents.
 - In code blocks, `Enter` keeps indentation, `Tab` / `Shift+Tab` indents selected lines, and closing ` ``` ` + Enter (or two blank lines) exits the block.
@@ -27,6 +27,11 @@ Files upload to the environment's machine as soon as you attach them, and all up
 
 - **Web and desktop**: Drag, paste, or pick files. Reloading before an upload finishes requires re-attaching.
 - **Mobile**: Pick files, share into T3 Code via the system share sheet, or drag images in Android split screen.
+
+In the desktop app, when the thread's environment runs on this computer, drag a
+folder onto the composer or choose **Folder…** from the attach button to add its
+path. Nothing is uploaded, so there is no size limit; the agent reads the folder
+in place.
 
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
