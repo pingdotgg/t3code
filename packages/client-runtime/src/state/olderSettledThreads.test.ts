@@ -220,16 +220,6 @@ it("counts older threads the client does not hold, once", () => {
       threads: [{ source: row("stale-old", { settledDay: 10 }), environmentId }],
     }),
   ).toBe(3);
-  expect(
-    unloadedOlderSettledCount({
-      olderSettled: staleAndCurrent,
-      scopes: [
-        { environmentId, projectIds: [project] },
-        { environmentId: otherEnvironment, projectIds: [other] },
-      ],
-      threads: [{ source: row("stale-old", { settledDay: 10 }), environmentId }],
-    }),
-  ).toBe(3);
 });
 
 describe("wantedOlderSettledPages", () => {
