@@ -2286,7 +2286,14 @@ export const layerWithOptions = (
               ) {
                 return "skipped" as const;
               }
-              if (input.idleSinceMs !== undefined) {
+              // A native thread a fresh session replaced gets no further sends, so viewing cannot keep it.
+              if (
+                input.idleSinceMs !== undefined &&
+                isLoadKeyFor(
+                  entry.loadedProviderThreadKeyByThread.get(input.threadId),
+                  pending.providerThread,
+                )
+              ) {
                 const viewedRetryMs = yield* viewedRecheckMs(
                   entry.runtime,
                   [input.threadId],

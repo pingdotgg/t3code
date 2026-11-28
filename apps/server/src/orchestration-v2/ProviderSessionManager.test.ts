@@ -5911,9 +5911,13 @@ it.effect(
     }),
 );
 
-it.effect(
-  "ProviderSessionManagerV2 unloads each idle native thread a fresh session replaced in the same app thread",
-  () =>
+it.effect.each([
+  { open: "closed", viewed: false, unloaded: ["native-round-1", "native-round-2"] },
+  // An open thread keeps only the native thread its next send uses.
+  { open: "open", viewed: true, unloaded: ["native-round-1"] },
+])(
+  "ProviderSessionManagerV2 unloads each idle native thread a fresh session replaced in the same $open app thread",
+  ({ viewed, unloaded }) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const effect = Effect.gen(function* () {
@@ -5929,6 +5933,10 @@ it.effect(
         yield* eventSink.write({
           events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
         });
+        if (viewed) {
+          const threadViewers = yield* ThreadViewers.ThreadViewers;
+          yield* threadViewers.view(threadId).pipe(Scope.provide(yield* Scope.make()));
+        }
         const runtime = yield* manager.open({
           threadId,
           providerSessionId,
@@ -5945,6 +5953,7 @@ it.effect(
             now,
             nativeThreadId: `native-round-${round}`,
           });
+          yield* runtime.resumeThread({ providerThread, threadId, modelSelection, runtimePolicy });
           yield* runtime.startTurn({
             appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
             threadId,
@@ -5982,10 +5991,7 @@ it.effect(
         }
 
         yield* TestClock.adjust("1 second");
-        assert.sameMembers(
-          [...(yield* Ref.get(state)).unloadedNativeThreadIds],
-          ["native-round-1", "native-round-2"],
-        );
+        assert.sameMembers([...(yield* Ref.get(state)).unloadedNativeThreadIds], unloaded);
       });
 
       yield* effect.pipe(
