@@ -80,7 +80,7 @@ function odfSpanHidden(styles: Map<string, XmlNode>, name = ""): boolean {
     seen.add(name);
     const style = styles.get(`span\n${name}`);
     const display = style && find(style, "style:text-properties")[0]?.attrs["text:display"]?.trim();
-    if (display === "none" || display === "true") return display === "none";
+    if (display) return display === "none";
     name = style?.attrs["style:parent-style-name"] ?? "";
   }
   return false;
