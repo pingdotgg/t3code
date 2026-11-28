@@ -33,6 +33,12 @@ export interface EarlyLinuxElectronOptions {
 export const resolveLinuxDesktopEntryName = (isDevelopment: boolean): string =>
   isDevelopment ? "com.t3tools.T3Code.Development.desktop" : "com.t3tools.T3Code.desktop";
 
+// XDG Base Directory spec: relative entries are invalid, and unset or empty means the default.
+export const resolveXdgDataDirs = (value: string | undefined): ReadonlyArray<string> => {
+  const dirs = (value ?? "").split(":").filter((dir) => dir.startsWith("/"));
+  return dirs.length > 0 ? dirs : ["/usr/local/share", "/usr/share"];
+};
+
 const trimNonEmpty = (value: string | undefined): string | null => {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : null;

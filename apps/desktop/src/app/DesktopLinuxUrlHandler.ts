@@ -74,12 +74,17 @@ const escapeUrlHandlerExecTarget = (value: string): string =>
     ? escapeDesktopEntryExecArgument(value)
     : escapeDesktopEntryString(value.replaceAll("%", "%%"));
 
-// The AppImage integration entry owns the window identity. This
-// hidden URL-only entry must not compete with it for StartupWMClass matching.
+const GENERATED_DESKTOP_ENTRY_MARKER = "X-T3Code-Generated=true";
+
+const resolveLinuxUrlHandlerEntryName = (desktopEntryName: string): string =>
+  desktopEntryName.replace(/\.desktop$/u, ".UrlHandler.desktop");
+
+// Hidden, so neither competes with an integration entry for StartupWMClass matching. Only the
+// URL handler declares the scheme, so the portal sees one handler and needs no chooser.
 export function renderUrlHandlerDesktopEntry(input: {
   readonly displayName: string;
   readonly execTarget: string;
-  readonly scheme: string;
+  readonly scheme?: string;
   readonly iconPath?: string;
 }): string {
   return [
@@ -91,7 +96,8 @@ export function renderUrlHandlerDesktopEntry(input: {
     "Terminal=false",
     "NoDisplay=true",
     "StartupNotify=false",
-    `MimeType=x-scheme-handler/${input.scheme};`,
+    ...(input.scheme === undefined ? [] : [`MimeType=x-scheme-handler/${input.scheme};`]),
+    GENERATED_DESKTOP_ENTRY_MARKER,
     "",
   ].join("\n");
 }
@@ -128,6 +134,17 @@ export function replacedVersionedAppImagePath(input: {
     : null;
 }
 
+// Recognizes a previous launch's entry, so a user's own override is never deleted.
+// Entries from before the marker always declared the scheme.
+export const isGeneratedUrlHandlerDesktopEntry = (content: string, scheme: string): boolean => {
+  const lines = content.split("\n");
+  return (
+    lines.includes("NoDisplay=true") &&
+    (lines.includes(GENERATED_DESKTOP_ENTRY_MARKER) ||
+      lines.includes(`MimeType=x-scheme-handler/${scheme};`))
+  );
+};
+
 // Docks may look up the Wayland app id without a desktop entry; icon theme lookups are case-sensitive.
 const LINUX_THEME_ICON_SIZE = "256x256";
 
@@ -158,42 +175,78 @@ export const make = Effect.gen(function* () {
     environment.linuxApplicationsDir,
     environment.linuxDesktopEntryName,
   );
+  const urlHandlerEntryName = resolveLinuxUrlHandlerEntryName(environment.linuxDesktopEntryName);
+  const urlHandlerEntryPath = environment.path.join(
+    environment.linuxApplicationsDir,
+    urlHandlerEntryName,
+  );
   const iconsDir = environment.path.join(environment.linuxApplicationsDir, "..", "icons");
   const iconPath = environment.path.join(iconsDir, `${environment.linuxDesktopEntryName}.png`);
   const hicolorDir = environment.path.join(iconsDir, "hicolor");
   const themeIconDir = environment.path.join(hicolorDir, LINUX_THEME_ICON_SIZE, "apps");
 
-  const writeDesktopEntry = Effect.gen(function* () {
-    // Distribution packages that run on a shared Electron set
-    // T3CODE_DESKTOP_LAUNCHER_PATH, because process.execPath is that Electron.
-    // Inside the mounted AppImage, process.execPath points at a transient
-    // /tmp/.mount_* path — the handler must launch the AppImage itself.
-    const execTarget = environment.desktopLauncherPath.pipe(
-      Option.orElse(() => environment.appImagePath),
-      Option.getOrElse(() => process.execPath),
-    );
-    const content = renderUrlHandlerDesktopEntry({
-      displayName: environment.displayName,
-      execTarget,
-      scheme,
-      ...(environment.isPackaged ? { iconPath } : {}),
-    });
-    // Avoid truncating the pre-ready entry while the portal may be reading it.
+  const writeDesktopEntry = Effect.fn("DesktopLinuxUrlHandler.writeDesktopEntry")(
+    function* (path: string, entryScheme: string | undefined) {
+      // Distribution packages that run on a shared Electron set
+      // T3CODE_DESKTOP_LAUNCHER_PATH, because process.execPath is that Electron.
+      // Inside the mounted AppImage, process.execPath points at a transient
+      // /tmp/.mount_* path — the handler must launch the AppImage itself.
+      const execTarget = environment.desktopLauncherPath.pipe(
+        Option.orElse(() => environment.appImagePath),
+        Option.getOrElse(() => process.execPath),
+      );
+      const content = renderUrlHandlerDesktopEntry({
+        displayName: environment.displayName,
+        execTarget,
+        ...(entryScheme === undefined ? {} : { scheme: entryScheme }),
+        ...(environment.isPackaged ? { iconPath } : {}),
+      });
+      // Avoid truncating the pre-ready entry while the portal may be reading it.
+      const existing = yield* fileSystem
+        .readFileString(path)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (existing === content) return;
+      yield* fileSystem.makeDirectory(environment.linuxApplicationsDir, { recursive: true });
+      yield* fileSystem.writeFileString(path, content);
+    },
+    (effect, path) =>
+      effect.pipe(
+        Effect.mapError(
+          (cause) =>
+            new DesktopLinuxUrlHandlerRegistrationError({
+              step: "write-desktop-entry",
+              scheme,
+              desktopEntryPath: path,
+              cause,
+            }),
+        ),
+      ),
+  );
+
+  // A same-named entry in $XDG_DATA_HOME would override a packaged launcher, hiding it from menus.
+  const hasInstalledDesktopEntry = Effect.gen(function* () {
+    for (const dir of environment.linuxSystemApplicationsDirs) {
+      if (dir === environment.linuxApplicationsDir) continue;
+      const candidate = environment.path.join(dir, environment.linuxDesktopEntryName);
+      if (yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
+        return true;
+      }
+    }
+    return false;
+  });
+
+  const removeGeneratedDesktopEntry = Effect.gen(function* () {
     const existing = yield* fileSystem
       .readFileString(desktopEntryPath)
       .pipe(Effect.orElseSucceed(() => null));
-    if (existing === content) return;
-    yield* fileSystem.makeDirectory(environment.linuxApplicationsDir, { recursive: true });
-    yield* fileSystem.writeFileString(desktopEntryPath, content);
+    if (existing === null || !isGeneratedUrlHandlerDesktopEntry(existing, scheme)) return;
+    yield* fileSystem.remove(desktopEntryPath);
   }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new DesktopLinuxUrlHandlerRegistrationError({
-          step: "write-desktop-entry",
-          scheme,
-          desktopEntryPath,
-          cause,
-        }),
+    Effect.catch((error) =>
+      logWarning("stale URL handler entry removal failed", {
+        desktopEntryPath,
+        category: error.reason._tag,
+      }),
     ),
   );
 
@@ -288,7 +341,7 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const command = ChildProcess.make(
         "xdg-mime",
-        ["default", environment.linuxDesktopEntryName, `x-scheme-handler/${scheme}`],
+        ["default", urlHandlerEntryName, `x-scheme-handler/${scheme}`],
         {
           stdin: "ignore",
           stdout: "ignore",
@@ -322,7 +375,13 @@ export const make = Effect.gen(function* () {
     if (environment.platform !== "linux") {
       return;
     }
-    yield* writeDesktopEntry;
+    // The app-id entry is the portal's identity for the window when nothing else provides it.
+    if (yield* hasInstalledDesktopEntry) {
+      yield* removeGeneratedDesktopEntry;
+    } else {
+      yield* writeDesktopEntry(desktopEntryPath, undefined);
+    }
+    yield* writeDesktopEntry(urlHandlerEntryPath, scheme);
     if (!environment.isPackaged) return;
 
     yield* Effect.gen(function* () {
