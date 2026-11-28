@@ -8,6 +8,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
 import { BOOT_SERVICE_UNIT_FILE } from "./bootService.ts";
+import { RESTORE_OOMD_WATCH_SCRIPT } from "./userManagerOom.ts";
 
 const PROTECT_DROP_IN = "90-t3code-protect.conf";
 const SYSTEM_UNIT_DIR = "/etc/systemd/system";
@@ -210,10 +211,12 @@ export const detectRemoteAccessUnits = run("list remote-access services", "syste
   Effect.withSpan("ServiceProtection.detectRemoteAccessUnits"),
 );
 
-const reloadUserManager = run("reload systemd user units", "systemctl", [
-  "--user",
-  "daemon-reload",
-]);
+const reloadUserManager = Effect.andThen(
+  run("reload systemd user units", "systemctl", ["--user", "daemon-reload"]),
+  run("restore systemd-oomd's watch", "/bin/sh", ["-c", RESTORE_OOMD_WATCH_SCRIPT]).pipe(
+    Effect.ignore,
+  ),
+);
 
 const writeDropIns = Effect.fn("ServiceProtection.writeDropIns")(function* (
   dropIns: ReadonlyArray<DropIn>,
@@ -299,7 +302,23 @@ export const installedProtection = Effect.fn("ServiceProtection.installed")(func
     : { ...plan, system, user };
 });
 
+/**
+ * False when the kernel lacks the memory cgroup controller (Raspberry Pi OS
+ * disables it by default), so only OOM scores can apply. True when unknown.
+ */
+export const memoryControllerAvailable = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const controllers = yield* fs
+    .readFileString("/sys/fs/cgroup/cgroup.controllers")
+    .pipe(Effect.option);
+  return Option.match(controllers, {
+    onNone: () => true,
+    onSome: (text) => text.split(/\s+/).includes("memory"),
+  });
+}).pipe(Effect.withSpan("ServiceProtection.memoryControllerAvailable"));
+
 export interface ServiceProtectionState {
+  readonly memoryControllerAvailable: boolean;
   /** The first cgroup from the top that grants the server no memory protection. */
   readonly unprotected: string | undefined;
   readonly oomScoreAdj: number | undefined;
@@ -325,9 +344,11 @@ export const readProtection = Effect.fn("ServiceProtection.read")(function* (use
       Effect.map((text) => text.trim()),
       Effect.orElseSucceed(() => ""),
     );
+  const memoryController = yield* memoryControllerAvailable;
   let unprotected: string | undefined;
   const grants = (value: string) => value !== "" && value !== "0";
-  for (let depth = 1; depth <= controlGroup.length && unprotected === undefined; depth++) {
+  const depths = memoryController ? controlGroup.length : 0;
+  for (let depth = 1; depth <= depths && unprotected === undefined; depth++) {
     const directory = path.join("/sys/fs/cgroup", ...controlGroup.slice(0, depth));
     const low = yield* read(path.join(directory, "memory.low"));
     const min = yield* read(path.join(directory, "memory.min"));
@@ -336,6 +357,7 @@ export const readProtection = Effect.fn("ServiceProtection.read")(function* (use
   const pid = Number(values.get("MainPID") ?? 0);
   const score = pid > 0 ? yield* read(`/proc/${pid}/oom_score_adj`) : "";
   return {
+    memoryControllerAvailable: memoryController,
     unprotected,
     oomScoreAdj: score === "" ? undefined : Number(score),
     setByProtect: yield* fs

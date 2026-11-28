@@ -10,6 +10,7 @@ const BOOTSTRAP_PREFIX_WHITESPACE =
 export const nonPlaceholderMessageCondition = (sql: SqlClient.SqlClient, row = "messages") =>
   sql.literal(`
   CASE
+    WHEN NOT json_valid(${row}.payload_json) THEN NULL
     WHEN substr(json_extract(${row}.payload_json, '$.text'), 1, 11) = 'Ultrathink:' COLLATE NOCASE
       THEN ltrim(substr(json_extract(${row}.payload_json, '$.text'), 12), '${BOOTSTRAP_PREFIX_WHITESPACE}')
     ELSE json_extract(${row}.payload_json, '$.text')
@@ -25,6 +26,7 @@ export const indexedMessageCondition = (sql: SqlClient.SqlClient, row = "message
   sql`
   ${sql.literal(`
   ${row}.streaming = 0
+  AND json_valid(${row}.payload_json)
   AND (
     ${row}.role = 'assistant'
     OR (
@@ -35,6 +37,7 @@ export const indexedMessageCondition = (sql: SqlClient.SqlClient, row = "message
   AND NOT EXISTS (
     SELECT 1 FROM orchestration_v2_projection_threads AS subagent_threads
     WHERE subagent_threads.thread_id = ${row}.thread_id
+      AND json_valid(subagent_threads.payload_json)
       AND json_extract(subagent_threads.payload_json, '$.lineage.relationshipToParent') = 'subagent'
   )
 `)}
@@ -48,13 +51,26 @@ const foldApostrophes = (text: string) => `replace(replace(${text}, '’', '''')
 const readableText = (row: string) =>
   `COALESCE(${row}.search_text, json_extract(${row}.payload_json, '$.text'))`;
 
+// A file mention stores `__init__.py` as `[\_\_init\_\_.py](...)`; the index
+// holds the label as it reads, so search can find the name as typed.
+const LINK_LABEL = /(!?\[)([^\]\n]*)(\]\([^)\s]*\))/g;
+
 /**
  * What search_text holds for a message: its text as it reads, a quote's
  * percent-encoded link replaced by its words and comment. NULL when that is
  * the stored text, so most messages store nothing extra.
  */
 export const readableSearchText = (text: string) => {
-  const readable = assistantCitationsToPlainText(text);
+  const readable = assistantCitationsToPlainText(text).replace(
+    LINK_LABEL,
+    (link, _open: string, label: string) => {
+      const decoded = label.replace(
+        /\\([\\*_~&])|&#9(1|3);/g,
+        (_match, escaped?: string, code?: string) => escaped ?? (code === "1" ? "[" : "]"),
+      );
+      return decoded === label ? link : decoded;
+    },
+  );
   return readable === text ? null : readable;
 };
 
@@ -114,6 +130,7 @@ export const createMessageSearchTriggers = Effect.fn("MessageSearchIndex.createT
         AND (
           old.streaming IS NOT new.streaming
           OR old.role IS NOT new.role
+          OR NOT (json_valid(old.payload_json) AND json_valid(new.payload_json))
           OR ${text("old")} IS NOT ${text("new")}
           OR json_extract(old.payload_json, '$.createdBy')
             IS NOT json_extract(new.payload_json, '$.createdBy')

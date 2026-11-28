@@ -1,7 +1,8 @@
 import { useState } from "react";
+import { flushSync } from "react-dom";
 
 import { cn } from "../../lib/utils";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const REDACTED_TEXT_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 
@@ -31,31 +32,45 @@ export function RedactedSensitiveText(props: {
   readonly hideTooltip: string;
   readonly className?: string;
 }) {
-  const [revealed, setRevealed] = useState(false);
+  const [visibility, setVisibility] = useState<"hidden" | "hiding" | "revealed">("hidden");
+  const revealed = visibility === "revealed";
   const value = props.value?.trim();
   const redacted = value ? redactedPlaceholder(value) : "";
 
   if (!value) return null;
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            className={cn(
-              "min-w-0 cursor-pointer rounded-sm font-mono text-2xs leading-normal transition hover:text-foreground",
-              revealed ? "text-muted-foreground" : "select-none text-muted-foreground blur-xs",
-              props.className,
-            )}
-            onClick={() => setRevealed((current) => !current)}
-            aria-label={props.ariaLabel}
-          >
-            {revealed ? value : redacted}
-          </button>
-        }
-      />
-      <TooltipPopup side="top">{revealed ? props.hideTooltip : props.revealTooltip}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <button
+          type="button"
+          className={cn(
+            "min-w-0 cursor-pointer rounded-sm font-mono text-2xs leading-normal transition hover:text-foreground",
+            revealed ? "text-muted-foreground" : "select-none text-muted-foreground blur-xs",
+            props.className,
+          )}
+          onClick={(event) => {
+            if (!revealed) return setVisibility("revealed");
+            const button = event.currentTarget;
+            flushSync(() => setVisibility("hiding"));
+            const finishHiding = () =>
+              setVisibility((current) => (current === "hiding" ? "hidden" : current));
+            const blur = button
+              .getAnimations()
+              .find(
+                (animation) =>
+                  animation instanceof CSSTransition && animation.transitionProperty === "filter",
+              );
+            // Theme changes suppress the transition; a reversed one settles once revealed.
+            if (blur) void blur.finished.then(finishHiding, finishHiding);
+            else finishHiding();
+          }}
+          aria-label={props.ariaLabel}
+        >
+          {visibility === "hidden" ? redacted : value}
+        </button>
+      }
+      label={revealed ? props.hideTooltip : props.revealTooltip}
+    />
   );
 }

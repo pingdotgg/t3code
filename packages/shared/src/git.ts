@@ -9,6 +9,8 @@ import type {
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 
+import { foldLatinDiacritics } from "./path.ts";
+
 export const WORKTREE_BRANCH_PREFIX = "t3";
 const TEMP_WORKTREE_HEX_TOKEN = "[0-9a-f]{8}";
 const TEMP_WORKTREE_UUID_V4_TOKEN =
@@ -18,9 +20,7 @@ const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(
 );
 
 export function sanitizeBranchFragment(raw: string): string {
-  const normalized = raw
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
+  const normalized = foldLatinDiacritics(raw)
     .trim()
     .toLowerCase()
     .replace(/['"`]/g, "")
@@ -92,7 +92,14 @@ export function resolveAutoFeatureBranchName(
   return resolved;
 }
 
-export function deriveLocalBranchNameFromRemoteRef(branchName: string): string {
+// A remote name can itself contain slashes; the known remote name beats guessing at the first one.
+export function deriveLocalBranchNameFromRemoteRef(
+  branchName: string,
+  remoteName?: string,
+): string {
+  if (remoteName && branchName.startsWith(`${remoteName}/`)) {
+    return branchName.slice(remoteName.length + 1);
+  }
   const firstSeparatorIndex = branchName.indexOf("/");
   if (firstSeparatorIndex <= 0 || firstSeparatorIndex === branchName.length - 1) {
     return branchName;
@@ -155,17 +162,19 @@ export function parseGitRemoteRepository(
   options?: { readonly keepGitSuffix?: boolean },
 ): { readonly host: string; readonly path: string } | null {
   const dropSuffix = options?.keepGitSuffix ? (path: string) => path : stripGitSuffix;
-  const normalized = lowerCaseRemote(value, dropSuffix);
+  const normalized = lowerCaseRemote(value, (remote) => remote);
 
   if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
     try {
       // Apply suffix policy to the path: `.git` may sit before a query or fragment.
       const url = new URL(value.trim().toLowerCase());
-      const repositorySegments = dropSuffix(url.pathname.replace(/\/+$/, ""))
-        .split("/")
-        .filter((segment) => segment.length > 0);
+      const path = canonicalRepositoryPath(url.pathname.replace(/\/+$/, ""));
+      const repositorySegments = path.split("/").filter((segment) => segment.length > 0);
       if (url.hostname && repositorySegments.length > 1) {
-        return { host: url.hostname, path: canonicalRepositoryPath(repositorySegments.join("/")) };
+        return {
+          host: url.hostname,
+          path: dropSuffix(repositorySegments.join("/")).replace(/\/+$/, ""),
+        };
       }
     } catch {
       return null;
@@ -175,13 +184,13 @@ export function parseGitRemoteRepository(
   // A userless one-letter prefix is a Windows drive, not an SCP host.
   const scpStyleHostAndPath = /^[a-z]:/i.test(normalized)
     ? null
-    : /^(?:[a-zA-Z0-9._-]+@)?(\[[0-9a-f:.]+\]|[^@:/\\\s[\]]+):\/?([^/\s]+(?:\/[^/\s]+)+)$/i.exec(
+    : /^(?:[^-@/\\:\s][^/\\:\s]*@)?(\[[0-9a-f:.]+\]|[^@:/\\\s[\]]+):\/?((?:[^/\s]| )+(?:\/(?:[^/\s]| )+)+)$/i.exec(
         normalized,
       );
   const scpHost = scpStyleHostAndPath?.[1];
   const scpPath = scpStyleHostAndPath?.[2];
   if (!scpHost || !scpPath) return null;
-  const path = canonicalRepositoryPath(scpPath);
+  const path = canonicalRepositoryPath(dropSuffix(scpPath).replace(/\/+$/, ""));
   if (!scpHost.startsWith("[")) return { host: scpHost, path };
   try {
     // Spell an IPv6 host as the URL branch does, so `[::1]:a/b` and `ssh://[::1]/a/b` share a key.
@@ -198,7 +207,16 @@ export function parseGitRemoteRepository(
  */
 export function normalizeGitRemoteUrl(value: string): string {
   const repository = parseGitRemoteRepository(value);
-  return repository === null ? lowerCaseRemote(value) : `${repository.host}/${repository.path}`;
+  if (repository !== null) return `${repository.host}/${repository.path}`;
+  // The key is shown to clients and persisted, so a URL it cannot parse keeps only what names the
+  // repository: no password, query or fragment, and a user only over SSH, where it is a login name.
+  const remote = lowerCaseRemote(value);
+  const url = /^([a-z][a-z0-9+.-]*):\/\/(?:([^/?#]*)@)?([^?#]*)/.exec(remote);
+  if (url === null) return remote;
+  const [, scheme = "", userinfo = "", rest = ""] = url;
+  const colonIndex = userinfo.indexOf(":");
+  const user = colonIndex === -1 ? userinfo : userinfo.slice(0, colonIndex);
+  return lowerCaseRemote(`${scheme}://${scheme === "ssh" && user ? `${user}@` : ""}${rest}`);
 }
 
 function* gitConfigLines(configText: string) {
@@ -241,8 +259,19 @@ function parseGitConfigValue(raw: string): string {
     if (!quoted && (char === "#" || char === ";")) break;
     out += char;
   }
-  return out.trim();
+  return trimGitWhitespace(out);
 }
+
+// Git trims only ASCII whitespace; String#trim would also drop U+2028/U+2029 from a value.
+function trimGitWhitespace(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && GIT_WHITESPACE.has(value[start]!)) start += 1;
+  while (end > start && GIT_WHITESPACE.has(value[end - 1]!)) end -= 1;
+  return value.slice(start, end);
+}
+
+const GIT_WHITESPACE = new Set([" ", "\t", "\n", "\r", "\f", "\v"]);
 
 function isTrueGitConfigValue(value: string): boolean {
   if (value === "true" || value === "yes" || value === "on") return true;
@@ -283,22 +312,21 @@ export function parseOriginUrlFromGitConfig(configText: string): string | null {
   let section: string | null = null;
   let originUrl: string | null = null;
   let firstRemoteUrl: string | null = null;
-  const joined = configText.replace(/\\\r?\n[ \t]*/g, "");
-  for (const rawLine of joined.split(/\r?\n/)) {
-    let line = rawLine.trim();
+  for (const rawLine of gitConfigLines(configText)) {
+    let line = trimGitWhitespace(rawLine);
     if (line.length === 0 || line.startsWith("#") || line.startsWith(";")) continue;
     // Git preserves case in quoted remote subsections but lowercases legacy dotted ones,
     // and accepts the first setting on the section header's own line.
-    const header = /^\[\s*remote(?:\s+"([^"]+)"|\.([^\]\s]+))\s*\](.*)$/i.exec(line);
+    const header = /^\[\s*remote(?:\s+"((?:\\.|[^"\\])+)"|\.([^\]\s]+))\s*\](.*)$/is.exec(line);
     if (header) {
-      section = header[1] ?? header[2]?.toLowerCase() ?? null;
-      line = header[3]!.trim();
+      section = header[1]?.replace(/\\(.)/g, "$1") ?? header[2]?.toLowerCase() ?? null;
+      line = trimGitWhitespace(header[3]!);
     } else if (line.startsWith("[")) {
       section = null;
       continue;
     }
     if (section === null) continue;
-    const match = /^url\s*=\s*(.*)$/i.exec(line);
+    const match = /^url\s*=\s*(.*)$/is.exec(line);
     if (!match) continue;
     const url = parseGitConfigValue(match[1] ?? "");
     if (url.length === 0) continue;

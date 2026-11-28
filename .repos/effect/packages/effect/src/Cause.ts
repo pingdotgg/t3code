@@ -1765,7 +1765,7 @@ export const UnknownError: new(cause: unknown, message?: string) => UnknownError
  *
  * Annotations are stored as a `Context` on each reason and can be
  * retrieved later via {@link reasonAnnotations} or {@link annotations}.
- * The runtime uses this to attach stack traces and spans.
+ * The runtime attaches stack traces without overwriting existing annotations.
  *
  * - Returns a new `Cause`.
  * - By default, existing keys are preserved. Pass `{ overwrite: true }` to

@@ -62,11 +62,25 @@ optional options object with the following fields:
 }
 ```
 
-- **`startImmediately`** — When `true`, the forked fiber begins executing
-  immediately rather than being deferred. Defaults to `undefined` (deferred).
-- **`uninterruptible`** — Controls whether the forked fiber can be interrupted.
-  `true` makes it uninterruptible, `"inherit"` inherits the parent's
-  interruptibility, and `undefined` uses the default behavior.
+- **`startImmediately`** — Defaults to `false` (also when omitted): the fork
+  returns before the new fiber runs the effect. With `true`, it runs synchronously
+  until it first suspends, yields, or completes, before the forking fiber
+  continues. Deferred startup does not promise a particular scheduler turn.
+- **`uninterruptible`** — Defaults to `false` (also when omitted): the new fiber is
+  interruptible even when forked from an uninterruptible region. With `true`, it
+  starts uninterruptible, as if the effect were wrapped in
+  `Effect.uninterruptible`. `Fiber.interrupt` waits for it to finish, and the fiber
+  keeps its own result. Explicit `Effect.interruptible` regions can still be
+  interrupted. `"inherit"` copies the forking fiber's interruptibility at the fork.
+
+These options do not change ownership. A `forkChild` fiber is interrupted when its
+parent exits; a `forkDetach` fiber is independent of the parent's lifetime.
+`forkIn` and `forkScoped` bind the fiber to a scope instead of the forking fiber.
+Forking and scope registration are interruption-safe, so interrupting the forker
+cannot leave the new fiber outside the scope. Closing the scope from another
+fiber interrupts the scoped fiber and waits for its finalizers. Uninterruptible
+work can delay closure; a fiber closing its own scope is not interrupted or
+awaited by that close.
 
 **Usage as data-last (curried)**
 

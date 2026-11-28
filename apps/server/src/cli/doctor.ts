@@ -13,12 +13,16 @@ import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntim
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as CliService from "./service.ts";
 
-const formatBytes = (bytes: number) =>
-  bytes >= 1024 ** 3
+// Pick the unit after rounding, so a size just under 1 GiB reads "1.00 GiB", not "1024.0 MiB".
+const formatBytes = (bytes: number) => {
+  const mebibytes = (bytes / 1024 ** 2).toFixed(1);
+  const kibibytes = Math.ceil(bytes / 1024);
+  return Number(mebibytes) >= 1024
     ? `${(bytes / 1024 ** 3).toFixed(2)} GiB`
-    : bytes >= 1024 ** 2
-      ? `${(bytes / 1024 ** 2).toFixed(1)} MiB`
-      : `${Math.ceil(bytes / 1024)} KiB`;
+    : kibibytes >= 1024
+      ? `${mebibytes} MiB`
+      : `${kibibytes} KiB`;
+};
 
 const formatElapsed = (nanos: bigint) => {
   const seconds = Number(nanos / 1_000_000_000n);
@@ -68,10 +72,20 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
   yield* Console.log(
     `Database: ${formatBytes(status.databaseBytes)}, ${formatBytes(status.reclaimableBytes)} reclaimable.`,
   );
+  const legacyRecords = status.legacyOnlyRecords;
   if (status.legacyDatabaseBytes !== null) {
     yield* Console.log(
       `Database from before 0.1.0: ${formatBytes(status.legacyDatabaseBytes)}, kept for rolling back.`,
     );
+    if (legacyRecords === null) {
+      yield* Console.log(
+        "  Could not check for missing projects or threads. Keep the old database.",
+      );
+    } else if (legacyRecords.projects > 0 || legacyRecords.threads > 0) {
+      yield* Console.log(
+        `  The current database is missing legacy records. Projects missing: ${legacyRecords.projects}. Threads missing: ${legacyRecords.threads}. Keep the old database for recovery.`,
+      );
+    }
   }
   const repairs = [
     ...(status.incrementalVacuumEnabled && status.reclaimableBytes === 0
@@ -90,13 +104,16 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
               status.reclaimableBytes >= DATABASE_COMPACTION_RECOMMENDED_BYTES,
           },
         ]),
-    ...(status.legacyDatabaseBytes === null
+    ...(status.legacyDatabaseBytes === null ||
+    legacyRecords === null ||
+    legacyRecords.projects > 0 ||
+    legacyRecords.threads > 0
       ? []
       : [
           {
             id: "legacy" as const,
             title: "Delete the database from before 0.1.0",
-            description: `Frees ${formatBytes(status.legacyDatabaseBytes)}. Your threads and settings are already in the current database.\n  Warning: after this, a T3 Code version before 0.1.0 starts with no threads or settings, so you can no longer roll back.`,
+            description: `Frees ${formatBytes(status.legacyDatabaseBytes)}.\n  Warning: after this, a T3 Code version before 0.1.0 starts with no threads or settings, so you can no longer roll back.`,
             recommended: false,
           },
         ]),
@@ -192,7 +209,9 @@ export const doctorCommand = Command.make("doctor", {
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       const logLevel = yield* GlobalFlag.LogLevel;
-      const config = yield* resolveCliAuthConfig(flags, logLevel);
+      const config = yield* resolveCliAuthConfig(flags, logLevel, {
+        prepareDirectories: !flags.dryRun,
+      });
       yield* runDoctor(config, { fix: flags.fix, dryRun: flags.dryRun }).pipe(
         Effect.provide(Layer.merge(DatabaseMaintenance.layer, CliService.layer(config))),
       );

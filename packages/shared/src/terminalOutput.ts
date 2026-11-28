@@ -27,7 +27,7 @@ interface TerminalScreen {
   readonly row: number;
   readonly col: number;
   readonly pen: string;
-  readonly saved: { readonly row: number; readonly col: number } | null;
+  readonly saved: { readonly row: number; readonly col: number; readonly pen?: string } | null;
 }
 
 export const EMPTY_TERMINAL_OUTPUT: TerminalOutputState = {
@@ -65,6 +65,63 @@ function lineLength(line: Line): number {
 const lineWidths = new WeakMap<Line, number>();
 const ZERO_WIDTH = /[\p{Mark}\p{Default_Ignorable_Code_Point}]/u;
 const ASCII = /^[\x00-\x7f]*$/u;
+
+const DETACHED_MARK = /[\p{Mark}\p{Default_Ignorable_Code_Point}\uDC00-\uDFFF]/u;
+const EMOJI_MODIFIER = /\p{Emoji_Modifier}/u;
+const EMOJI_MODIFIER_BASE = /\p{Emoji_Modifier_Base}/u;
+const VARIATION_SELECTOR = /\p{Variation_Selector}/u;
+const REGIONAL_INDICATOR = /\p{Regional_Indicator}/u;
+
+/** The emoji base a modifier after `preceding` would attach to, past any variation selectors. */
+function emojiBaseBefore(preceding: Iterable<string>): string | undefined {
+  for (const character of preceding) {
+    if (!VARIATION_SELECTOR.test(character)) {
+      return EMOJI_MODIFIER_BASE.test(character) ? character : undefined;
+    }
+  }
+  return undefined;
+}
+
+function isDetachedTailStart(
+  character: string,
+  precedingCharacters: () => Iterable<string>,
+): boolean {
+  if (DETACHED_MARK.test(character)) return true;
+  if (EMOJI_MODIFIER.test(character)) return emojiBaseBefore(precedingCharacters()) !== undefined;
+  if (REGIONAL_INDICATOR.test(character)) {
+    let odd = false;
+    for (const preceding of precedingCharacters()) {
+      if (!REGIONAL_INDICATOR.test(preceding)) break;
+      odd = !odd;
+    }
+    return odd;
+  }
+  return false;
+}
+
+function* previousCharacters(text: string, end: number): Generator<string> {
+  while (end > 0) {
+    if (text[end - 1] === "m") {
+      let start = end - 1;
+      while (start > 0 && /[0-9;:]/u.test(text[start - 1]!)) start -= 1;
+      if (start >= 2 && text.startsWith(`${ESC}[`, start - 2)) {
+        end = start - 2;
+        continue;
+      }
+    }
+    const pair = end >= 2 ? text.codePointAt(end - 2)! : 0;
+    const start = end - (pair > 0xffff ? 2 : 1);
+    yield text.slice(start, end);
+    end = start;
+  }
+}
+
+function* previousRunCharacters(runs: Line, index: number, end: number): Generator<string> {
+  for (let previous = index; previous >= 0; previous -= 1) {
+    const { text } = runs[previous]!;
+    yield* previousCharacters(text, previous === index ? end : text.length);
+  }
+}
 
 function characterWidth(character: string): number {
   return ZERO_WIDTH.test(character) ? 0 : eastAsianWidth(character.codePointAt(0)!);
@@ -154,9 +211,8 @@ function trimLineStart(runs: Array<Run>, count: number): number {
     let cut = Math.min(remaining, run.text.length);
     // A retained tail must start at a complete character, with no detached marks.
     while (cut < run.text.length) {
-      const code = run.text.charCodeAt(cut);
       const character = String.fromCodePoint(run.text.codePointAt(cut)!);
-      if (!(code >= 0xdc00 && code <= 0xdfff) && characterWidth(character) !== 0) break;
+      if (!isDetachedTailStart(character, () => previousRunCharacters(runs, dropped, cut))) break;
       cut += character.length;
     }
     removedWidth += textWidth(run.text.slice(0, cut));
@@ -312,7 +368,7 @@ function applySgr(attributes: Attributes, params: ReadonlyArray<number>): void {
 
 const STRING_SEQUENCE_INTRODUCERS = new Set(["]", "P", "X", "_", "^"]);
 
-/** Length of a complete escape sequence starting at `index` (an ESC), or -1 if unfinished. */
+/** Length of a complete escape sequence whose introducer follows `index`, or -1 if unfinished. */
 function escapeLength(input: string, index: number): number {
   const next = input[index + 1];
   if (next === undefined) return -1;
@@ -321,14 +377,28 @@ function escapeLength(input: string, index: number): number {
   if (next === "[") {
     for (let cursor = index + 2; cursor < input.length; cursor += 1) {
       const code = input.charCodeAt(cursor);
+      // Like xterm.js, a new ESC cancels an unfinished CSI so the next sequence parses intact.
+      if (code === 0x1b) return cursor - index;
+      // CAN and SUB cancel the CSI and are consumed.
+      if (code === 0x18 || code === 0x1a) return cursor - index + 1;
       if (code >= 0x40 && code <= 0x7e) return cursor - index + 1;
+      // Like xterm.js, a non-ASCII code point aborts the CSI and is consumed, both halves of a surrogate pair.
+      if (code >= 0x80) {
+        if (code >= 0xd800 && code <= 0xdbff) {
+          if (cursor + 1 >= input.length) return -1;
+          const low = input.charCodeAt(cursor + 1);
+          if (low >= 0xdc00 && low <= 0xdfff) return cursor - index + 2;
+        }
+        return cursor - index + 1;
+      }
     }
     return -1;
   }
   if (STRING_SEQUENCE_INTRODUCERS.has(next)) {
-    // BEL/ST ends string sequences; also stop at newlines so stray binary introducers cannot hide later output.
+    // ST (and BEL for OSC) ends string sequences; also stop at newlines so stray binary introducers cannot hide later output.
     for (let cursor = index + 2; cursor < input.length; cursor += 1) {
-      if (input[cursor] === "\u0007") return cursor - index + 1;
+      if (next === "]" && input[cursor] === "\u0007") return cursor - index + 1;
+      if (input[cursor] === "\u0018" || input[cursor] === "\u001a") return cursor - index + 1;
       if (input[cursor] === "\n") return cursor - index;
       // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.
       if (input[cursor] === ESC) {
@@ -351,6 +421,11 @@ function escapeLength(input: string, index: number): number {
   // After intermediates, a control or ESC is not a final byte; end before it so it is still processed.
   const final = input.charCodeAt(cursor);
   if (cursor > index + 1 && (final < 0x30 || final > 0x7e)) return cursor - index;
+  if (final >= 0xd800 && final <= 0xdbff) {
+    if (cursor + 1 >= input.length) return -1;
+    const low = input.charCodeAt(cursor + 1);
+    if (low >= 0xdc00 && low <= 0xdfff) return cursor - index + 2;
+  }
   return cursor - index + 1;
 }
 
@@ -408,7 +483,7 @@ class Terminal {
   row: number;
   col: number;
   pen: string;
-  saved: { row: number; col: number } | null;
+  saved: { row: number; col: number; pen?: string } | null;
   /** Output was discarded on purpose (scrollback cleared or window over budget). */
   dropped = false;
   readonly maxChars: number;
@@ -570,12 +645,23 @@ class Terminal {
     if (sequence[1] === "[") {
       this.csi(sequence.slice(2, -1), sequence.at(-1)!);
     } else if (sequence === `${ESC}7`) {
-      this.saved = { row: this.row, col: this.col };
+      this.saved = { row: this.row, col: this.col, pen: this.pen };
     } else if (sequence === `${ESC}8`) {
-      if (this.saved !== null) this.moveTo(this.saved.row, this.saved.col);
+      if (this.saved !== null) {
+        this.moveTo(this.saved.row, this.saved.col);
+        if (this.saved.pen !== undefined) this.pen = this.saved.pen;
+      }
     } else if (sequence === `${ESC}M`) {
       this.moveTo(this.row - 1, this.col);
     }
+  }
+
+  private control(code: number): boolean {
+    if (code === 0x0a) this.newline();
+    else if (code === 0x0d) this.col = 0;
+    else if (code === 0x08) this.col = Math.max(0, this.col - 1);
+    else return code === 0x07; // BEL has no screen effect.
+    return true;
   }
 
   /** Applies `input`; returns the unfinished escape left at its end. */
@@ -591,23 +677,32 @@ class Terminal {
       }
       flush(index);
       printable = index + 1;
-      if (code === 0x0a) this.newline();
-      else if (code === 0x0d) this.col = 0;
-      else if (code === 0x08) this.col = Math.max(0, this.col - 1);
-      else if (code === 0x1b) {
-        const length = escapeLength(input, index);
-        if (length === -1) {
-          const fragment = input.slice(index);
-          if (fragment.length <= MAX_PENDING_ESCAPE) return fragment;
+      if (code === 0x1b) {
+        let start = index + 1;
+        while (this.control(input.charCodeAt(start))) start += 1;
+        const length = escapeLength(input, start - 1);
+        const end = length === -1 ? -1 : start - 1 + length;
+        let sequence = ESC + input.slice(start, end === -1 ? input.length : end);
+        if (sequence[1] === "[") {
+          // Apply controls now and leave them out of the CSI, including any pending fragment.
+          sequence = sequence.replace(/[\u0007\b\n\r]/gu, (control) => {
+            this.control(control.charCodeAt(0));
+            return "";
+          });
+        }
+        if (end === -1) {
+          if (sequence.length <= MAX_PENDING_ESCAPE) return sequence;
           // Retain the introducer and possible ST prefix so long string payloads stay hidden until termination.
-          if (STRING_SEQUENCE_INTRODUCERS.has(fragment[1]!)) {
-            return fragment.slice(0, 2) + (fragment.endsWith(ESC) ? ESC : "");
+          if (STRING_SEQUENCE_INTRODUCERS.has(sequence[1]!)) {
+            return sequence.slice(0, 2) + (sequence.endsWith(ESC) ? ESC : "");
           }
           return "";
         }
-        this.escape(input.slice(index, index + length));
-        index += length - 1;
-        printable = index + 1;
+        this.escape(sequence);
+        index = end - 1;
+        printable = end;
+      } else {
+        this.control(code);
       }
     }
     const last = input.charCodeAt(input.length - 1);
@@ -644,18 +739,31 @@ export function terminalOutputTail(
 ): { readonly text: string; readonly truncated: boolean } {
   if (text.length <= maxChars) return { text, truncated: false };
   let start = text.length - maxChars;
+  if (text[start - 1] === "\n") return { text: text.slice(start), truncated: true };
   const newline = text.indexOf("\n", start);
   // Drop the partial first line unless that would discard most of the tail.
   if (newline !== -1 && newline - start < maxChars / 4) {
     return { text: text.slice(newline + 1), truncated: true };
   }
-  // Cutting inside a line: never split an escape, and keep the colour in force.
+  // Cutting inside a line: never split an escape, keep the colour in force, and skip
+  // detached marks and modifiers, and lone low surrogates.
   const style = styleAt(text, start);
+  let prefix = style.prefix;
   start = style.start;
-  // Never start on a lone low surrogate.
-  const first = text.charCodeAt(start);
-  if (first >= 0xdc00 && first <= 0xdfff) start += 1;
-  return { text: style.prefix + text.slice(start), truncated: true };
+  while (start < text.length) {
+    if (text.startsWith(`${ESC}[`, start)) {
+      const end = text.indexOf("m", start + 2);
+      if (end === -1) break;
+      const seq = text.slice(start, end + 1);
+      prefix = seq === sgr("") ? "" : seq;
+      start = end + 1;
+      continue;
+    }
+    const character = String.fromCodePoint(text.codePointAt(start)!);
+    if (!isDetachedTailStart(character, () => previousCharacters(text, start))) break;
+    start += character.length;
+  }
+  return { text: start < text.length ? prefix + text.slice(start) : "", truncated: true };
 }
 
 /**
@@ -670,16 +778,25 @@ function terminalOutputTailParts(
   for (const part of parts) total += part.length;
   if (total <= maxChars) return { parts, truncated: false };
   const start = total - maxChars;
+  let previousEndedWithNewline = false;
   let offset = 0;
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index]!;
     if (offset + part.length > start) {
-      const newline = part.indexOf("\n", Math.max(0, start - offset));
+      const localStart = start - offset;
+      if (
+        localStart >= 0 &&
+        (localStart === 0 ? previousEndedWithNewline : part[localStart - 1] === "\n")
+      ) {
+        return { parts: [part.slice(localStart), ...parts.slice(index + 1)], truncated: true };
+      }
+      const newline = part.indexOf("\n", Math.max(0, localStart));
       if (newline !== -1) {
         if (offset + newline - start >= maxChars / 4) break;
         return { parts: [part.slice(newline + 1), ...parts.slice(index + 1)], truncated: true };
       }
     }
+    if (part.length > 0) previousEndedWithNewline = part.endsWith("\n");
     offset += part.length;
   }
   return { parts: [terminalOutputTail(parts.join(""), maxChars).text], truncated: true };
@@ -743,22 +860,34 @@ export function appendTerminalOutput(
 export function terminalOutputResumeText(state: TerminalOutputState): string {
   const { screen } = state;
   const lastRow = screen.lines.length - 1;
-  // Moves are relative to the last line, and a viewer only holds the lines in `text`.
-  let reachable = 0;
-  let cursor = 0;
-  while (reachable < LIVE_LINES - 1) {
-    const newline = state.text.indexOf("\n", cursor);
-    if (newline === -1) break;
-    reachable += 1;
-    cursor = newline + 1;
+  // A full live window can hide retained scrollback from the display tail until the next redraw.
+  let replay = screen.settled.join("");
+  if (replay !== "" && lastRow < LIVE_LINES - 1) {
+    // Scroll the history out with blank rows, then clear them before replaying the live window.
+    replay += "\n".repeat(LIVE_LINES - 1) + `${ESC}[2J`;
   }
-  const up = (row: number) => Math.min(lastRow - row, reachable);
+  replay += screen.lines.map(serializeLine).join("\n");
+  const up = (row: number) => lastRow - row;
   const goTo = (row: number, col: number) =>
     (up(row) > 0 ? `${ESC}[${up(row)}A` : "") + `${ESC}[${col + 1}G`;
   let suffix = "";
+  let pen = "";
   if (screen.saved !== null) {
-    suffix += `${goTo(screen.saved.row, screen.saved.col)}${ESC}7`;
-    if (up(screen.saved.row) > 0) suffix += `${ESC}[${up(screen.saved.row)}B`;
+    const save = screen.saved.pen === undefined ? `${ESC}[s` : `${ESC}7`;
+    if (screen.saved.pen !== undefined && screen.saved.pen !== "") {
+      suffix += sgr(screen.saved.pen);
+      pen = screen.saved.pen;
+    }
+    if (screen.saved.row > lastRow) {
+      const extra = screen.saved.row - lastRow;
+      suffix +=
+        "\n".repeat(extra) +
+        `${ESC}[${screen.saved.col + 1}G${save}` +
+        `${ESC}[${extra}A${ESC}[${lineWidth(screen.lines[lastRow]!) + 2}G${ESC}[J`;
+    } else {
+      suffix += `${goTo(screen.saved.row, screen.saved.col)}${save}`;
+      if (up(screen.saved.row) > 0) suffix += `${ESC}[${up(screen.saved.row)}B`;
+    }
   }
   if (
     screen.saved !== null ||
@@ -767,8 +896,8 @@ export function terminalOutputResumeText(state: TerminalOutputState): string {
   ) {
     suffix += goTo(screen.row, screen.col);
   }
-  if (screen.pen !== "") suffix += sgr(screen.pen);
-  return state.text + suffix + state.pending;
+  if (screen.pen !== pen) suffix += sgr(screen.pen);
+  return replay + suffix + state.pending;
 }
 
 export function normalizeTerminalOutput(
@@ -960,8 +1089,31 @@ export function terminalOutputSpans(
   return spans;
 }
 
-const SGR_PATTERN = new RegExp(`${ESC}\\[[0-9;]*m`, "gu");
+// Colours and the cursor, erase and mode controls a saved transcript cannot replay.
+const CSI_PATTERN = new RegExp(`${ESC}\\[[0-?]*[ -/]*[@-~]`, "gu");
 
 export function terminalOutputPlainText(text: string): string {
-  return text.replace(SGR_PATTERN, "");
+  return text.replace(CSI_PATTERN, "");
+}
+
+// tqdm redraws a progress bar after a carriage return; JupyterLab shows only what the last
+// redraws leave on the line. Walking the frames from the last keeps this linear.
+function lastFrame(line: string): string {
+  const frames = line.split("\r");
+  let row = frames.pop()!;
+  if (frames.length === 0) return row;
+  let width = textWidth(row);
+  for (const frame of frames.reverse()) {
+    const frameWidth = textWidth(frame);
+    if (frameWidth <= width) continue;
+    row += sliceLine([{ pen: "", text: frame }], width, frameWidth)[0]?.text ?? "";
+    width = frameWidth;
+  }
+  return row;
+}
+
+export function terminalOutputCollapseRedraws(text: string): string {
+  return /\r(?!\n)/.test(text)
+    ? text.replaceAll("\r\n", "\n").split("\n").map(lastFrame).join("\n")
+    : text;
 }

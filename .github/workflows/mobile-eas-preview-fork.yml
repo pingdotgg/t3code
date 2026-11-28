@@ -1,11 +1,18 @@
 name: Mobile EAS Preview (Fork)
+run-name: "${{ github.event.label.name == '🚀 Mobile Continuous Deployment' && github.event.pull_request.head.repo.full_name != github.repository && format('Mobile preview of #{0} at {1}', github.event.pull_request.number, github.event.pull_request.head.sha) || '' }}"
 
 # EAS previews for fork PRs. This runs the PR's code with an Expo token: the
-# app config and plugins run on this runner, the iOS client builds on EAS and
-# the Android one on Blacksmith (android-build), with preview signing credentials. The label is the maintainer's sign-off
-# that they reviewed that code, so it covers exactly the commit it was applied
-# to: this pins that commit and consumes the label before running anything. A
-# later push deploys nothing until the label is applied again.
+# app config and plugins run on a runner; both clients build on Blacksmith
+# with preview signing credentials. So every job that does waits for an
+# approval in the `mobile-preview-fork` environment on every run.
+#
+# The label only requests a build, and counts only from someone with write
+# access. The `request` job consumes it, pins the PR's head commit from the
+# label event, and names that commit in the run title, the job summary and a
+# PR comment. It reads no secrets and checks out nothing. The approval is the
+# sign-off that the named commit was reviewed: the jobs after it build that
+# commit and no other. A later push deploys nothing until the label is applied
+# again and that run is approved.
 #
 # Same-repo PRs deploy on every push while labeled, via mobile-eas-preview.yml.
 
@@ -17,27 +24,21 @@ permissions:
   contents: read
 
 jobs:
-  preview:
-    name: EAS Preview
+  request:
+    name: Preview request
     if: >-
       github.event.pull_request.head.repo.full_name != github.repository &&
       github.event.label.name == '🚀 Mobile Continuous Deployment'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    concurrency:
-      group: mobile-eas-preview-fork-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     permissions:
       contents: read
       pull-requests: write
     outputs:
-      build: ${{ steps.client.outputs.build }}
-      fingerprint: ${{ steps.client.outputs.fingerprint }}
-    env:
-      APP_VARIANT: preview
-      NODE_OPTIONS: --max-old-space-size=8192
-      MOBILE_VERSION_POLICY: fingerprint
+      sha: ${{ steps.pin.outputs.sha }}
     steps:
-      # If a maintainer removed the label first, that removal wins.
+      # The label counts only from someone with write access, who could push a
+      # same-repo branch and get this build anyway. If a maintainer removed the
+      # label first, that removal wins.
       - id: consume
         name: Consume the deployment label
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
@@ -50,16 +51,114 @@ jobs:
                 issue_number: context.payload.pull_request.number,
                 name: context.payload.label.name,
               });
-              core.setOutput("consumed", "true");
             } catch (error) {
               if (error.status !== 404) throw error;
               core.info("The label was removed before this run could consume it. Skipping.");
               core.setOutput("consumed", "false");
+              return;
             }
+            const sender = context.payload.sender.login;
+            const { data: access } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: sender,
+            });
+            const authorized = ["admin", "maintain", "write"].includes(access.permission);
+            if (!authorized) {
+              core.warning(`${sender} has ${access.permission} access; a fork preview needs write access. Label removed, nothing built.`);
+            }
+            core.setOutput("consumed", String(authorized));
+
+      # The review screen of a pull_request_target run shows the base branch,
+      # so the commit is named here, where the reviewer reads it before
+      # approving. The jobs below take it from this job's output. Nothing is
+      # requested unless the environment exists with required reviewers: a
+      # workflow that names a missing environment creates it without any.
+      - id: pin
+        name: Name the commit to build
+        if: steps.consume.outputs.consumed == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          ENVIRONMENT: mobile-preview-fork
+        with:
+          script: |
+            const name = process.env.ENVIRONMENT;
+            let rules = [];
+            try {
+              const { data } = await github.request("GET /repos/{owner}/{repo}/environments/{environment_name}", {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                environment_name: name,
+              });
+              rules = data.protection_rules ?? [];
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            if (!rules.some((rule) => rule.type === "required_reviewers" && rule.reviewers?.length > 0)) {
+              core.setFailed(`The ${name} environment has no required reviewers. Nothing built.`);
+              return;
+            }
+            const pull = context.payload.pull_request;
+            const sha = pull.head.sha;
+            if (!/^[0-9a-f]{40}$/.test(sha)) {
+              core.setFailed("The label event carries no head commit. Nothing built.");
+              return;
+            }
+            const repository = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}`;
+            const body = [
+              `Mobile preview requested by ${context.payload.sender.login} for commit [\`${sha}\`](${repository}/pull/${pull.number}/commits/${sha}).`,
+              "",
+              `It builds after an approval in the \`${name}\` environment: [review this run](${repository}/actions/runs/${context.runId}). Approving builds exactly this commit; a later push needs the label again.`,
+            ].join("\n");
+            await core.summary.addRaw(body, true).write();
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pull.number,
+              body,
+            });
+            core.setOutput("sha", sha);
+
+  preview:
+    name: EAS Preview
+    needs: request
+    if: needs.request.outputs.sha != ''
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    environment:
+      name: mobile-preview-fork
+    concurrency:
+      group: mobile-eas-preview-fork-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      ios_group: ${{ steps.ios_update.outputs.group }}
+      ios_client: ${{ steps.ios_client.outputs.link }}
+      group: ${{ steps.update.outputs.group }}
+      client: ${{ steps.client.outputs.link }}
+      ios_build: ${{ steps.ios_client.outputs.build }}
+      ios_fingerprint: ${{ steps.ios_client.outputs.fingerprint }}
+      build: ${{ steps.client.outputs.build }}
+      fingerprint: ${{ steps.client.outputs.fingerprint }}
+    env:
+      APP_VARIANT: preview
+      NODE_OPTIONS: --max-old-space-size=8192
+      MOBILE_VERSION_POLICY: fingerprint
+    steps:
+      - name: Confirm the PR is still open
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const { data: pull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            if (pull.state !== "open") core.setFailed(`PR #${pull.number} is no longer open; not building.`);
 
       - id: expo-token
         name: Check for EXPO_PREVIEW_TOKEN
-        if: steps.consume.outputs.consumed == 'true'
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
         run: |
@@ -70,51 +169,31 @@ jobs:
             echo "EXPO_PREVIEW_TOKEN is not set; skipping EAS preview."
           fi
 
-      # The head SHA from the label event, not the branch, so a push after the
-      # label cannot swap in unreviewed code. No credentials stay in .git for
-      # the PR's scripts to read.
+      # The commit the request job named, not the branch, so a push after the
+      # label builds nothing. No credentials stay in .git for the PR's scripts
+      # to read.
       - name: Checkout reviewed commit
         if: steps.expo-token.outputs.present == 'true'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ needs.request.outputs.sha }}
           fetch-depth: 0
           # No sparse-checkout: see mobile-eas-preview.yml.
 
-      # The comment script comes from main, not from the PR.
+      # Scripts and actions come from main, not from the PR.
       - name: Checkout trusted scripts
         if: steps.expo-token.outputs.present == 'true'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           path: .trusted
-          sparse-checkout: .github/scripts
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
 
-      # The steps below run the PR's dependency and build scripts; they get no token.
-      # checkout keeps it in a file under RUNNER_TEMP that .git/config includes, so both
-      # go. Asking checkout not to persist it fails here: that cleanup runs `git submodule
-      # foreach`, which stops at the vendored gitlinks under .repos (no .gitmodules entry).
+      # The steps below run dependency and build scripts; they get no token.
       - name: Drop checkout credentials
         if: steps.expo-token.outputs.present == 'true'
-        run: |
-          for dir in . .trusted; do
-            [ -e "$dir/.git" ] || continue
-            git -C "$dir" config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
-              rm -f "$file"
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            git -C "$dir" config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            if git -C "$dir" config --local --get-regexp 'extraheader|includeif'; then
-              echo "::error::checkout credentials are still configured in $dir"
-              exit 1
-            fi
-          done
-          rm -f "$RUNNER_TEMP"/git-credentials-*.config
-          if ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
-            echo "::error::a checkout credential file is still present"
-            exit 1
-          fi
+        uses: ./.trusted/.github/actions/drop-checkout-credentials
 
       # No caches: pull_request_target saves them under main's scope, where
       # trusted workflows with other secrets would restore what PR code wrote.
@@ -140,8 +219,7 @@ jobs:
         if: steps.expo-token.outputs.present == 'true'
         uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8.2.1
         with:
-          # Pinned and installed with npm for the same reasons as mobile-eas-preview.yml.
-          eas-version: 21.8.0
+          eas-version: latest
           eas-cache: false
           token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
           packager: npm
@@ -164,23 +242,40 @@ jobs:
           }
           NODE
 
-      - name: Deploy with fingerprint check
+      - id: ios_client
+        name: Find the iOS client for this fingerprint
         if: steps.expo-token.outputs.present == 'true'
-        uses: expo/expo-github-action/continuous-deploy-fingerprint@5273c2136bd09c2a341fe3340d3e767ce5a13015 # v9.0.2
+        working-directory: apps/mobile
+        shell: bash
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
-          RUNNER_DEBUG: "1"
-          # The action only comments for pull_request events; this hook gives
-          # it the PR under pull_request_target. Without it, it skips the comment.
-          EXPO_TEST_GITHUB_PULL: ${{ github.event.pull_request.number }}
-        with:
-          profile: preview:dev
-          branch: pr-${{ github.event.pull_request.number }}
-          # Android is below: its client builds on Blacksmith (android-build).
-          platform: ios
-          environment: preview
-          working-directory: apps/mobile
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          hash="$(eas env:exec --non-interactive preview "npx expo-updates fingerprint:generate --platform ios" | sed -n '/^{/,$p' | jq -er '.hash | select(type == "string" and length > 0)')"
+          echo "fingerprint=$hash" >> "$GITHUB_OUTPUT"
+          tag="mobile-ios-preview-build/$hash"
+          link=""
+          if git fetch --quiet origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null; then
+            link="$(git tag -l --format='%(contents)' "$tag" | node "$GITHUB_WORKSPACE/.trusted/.github/scripts/mobile-ios-preview-record.cjs" read)"
+          fi
+          if [ -z "$link" ]; then
+            link="$(eas build:list --platform ios --build-profile preview:dev --runtime-version "$hash" --status finished --limit 5 --json --non-interactive \
+              | sed -n '/^\[/,$p' \
+              | jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '[.[] | select((.expirationDate // "9999") > $now)][0] | select(. != null) | "https://expo.dev/accounts/pingdotgg/projects/t3-code/builds/\(.id)"')"
+          fi
+          echo "link=$link" >> "$GITHUB_OUTPUT"
+          if [ -z "$link" ]; then echo "build=true" >> "$GITHUB_OUTPUT"; fi
+
+      - id: ios_update
+        name: Publish the iOS update
+        if: steps.expo-token.outputs.present == 'true'
+        working-directory: apps/mobile
+        shell: bash
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          group="$(eas update --auto --branch "pr-$PR" --platform ios --environment preview --non-interactive --json | sed -n '/^\[/,$p' | jq -er '.[0].group')"
+          echo "group=$group" >> "$GITHUB_OUTPUT"
 
       # Android, as in mobile-eas-preview.yml: the same fingerprint command the Expo
       # action runs. A client built for a same-repo PR (its tag) or by EAS is reused.
@@ -218,28 +313,23 @@ jobs:
           group="$(eas update --auto --branch "pr-$PR" --platform android --environment preview --non-interactive --json | sed -n '/^\[/,$p' | jq -er '.[0].group')"
           echo "group=$group" >> "$GITHUB_OUTPUT"
 
-      - name: Comment
-        if: steps.expo-token.outputs.present == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-          FINGERPRINT: ${{ steps.client.outputs.fingerprint }}
-          CLIENT: ${{ steps.client.outputs.link }}
-          GROUP: ${{ steps.update.outputs.group }}
-        run: node .trusted/.github/scripts/mobile-preview-comment.cjs
-
-  # The reviewed commit's Android client, built cold: no sticky disk, because PR
+  # Each client job waits for its own approval in the environment, once the
+  # preview job has finished. The reviewed commit's Android client, built cold: no sticky disk, because PR
   # code could leave Gradle or ccache state that trusted builds would restore, and
   # no build record tag, so nobody else is served an APK a fork's code built.
   android-build:
     name: Android preview client
-    needs: preview
+    needs: [request, preview]
     if: needs.preview.outputs.build == 'true'
     runs-on: blacksmith-32vcpu-ubuntu-2404
     timeout-minutes: 60
+    environment:
+      name: mobile-preview-fork
     permissions:
       contents: read
-      pull-requests: write
+      pull-requests: read
+    outputs:
+      client: ${{ steps.build.outputs.link }}
     env:
       APP_VARIANT: preview
       NODE_OPTIONS: --max-old-space-size=8192
@@ -248,97 +338,54 @@ jobs:
       # Phones only: emulators use the development client from the native-client cache.
       ORG_GRADLE_PROJECT_reactNativeArchitectures: armeabi-v7a,arm64-v8a
     steps:
+      - name: Confirm the PR is still open
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const { data: pull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            if (pull.state !== "open") core.setFailed(`PR #${pull.number} is no longer open; not building.`);
+
       - name: Checkout reviewed commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ needs.request.outputs.sha }}
           fetch-depth: 0
 
-      # The comment script comes from main, not from the PR.
+      # Scripts and actions come from main, not from the PR.
       - name: Checkout trusted scripts
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           path: .trusted
-          sparse-checkout: .github/scripts
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
 
-      # The steps below run the PR's dependency and build scripts; they get no token.
-      # checkout keeps it in a file under RUNNER_TEMP that .git/config includes, so both
-      # go. Asking checkout not to persist it fails here: that cleanup runs `git submodule
-      # foreach`, which stops at the vendored gitlinks under .repos (no .gitmodules entry).
+      # The steps below run dependency and build scripts; they get no token.
       - name: Drop checkout credentials
-        run: |
-          for dir in . .trusted; do
-            [ -e "$dir/.git" ] || continue
-            git -C "$dir" config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
-              rm -f "$file"
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            git -C "$dir" config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            if git -C "$dir" config --local --get-regexp 'extraheader|includeif'; then
-              echo "::error::checkout credentials are still configured in $dir"
-              exit 1
-            fi
-          done
-          rm -f "$RUNNER_TEMP"/git-credentials-*.config
-          if ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
-            echo "::error::a checkout credential file is still present"
-            exit 1
-          fi
+        uses: ./.trusted/.github/actions/drop-checkout-credentials
 
-      - name: Setup Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      # Cold: no sticky disk or EAS cache that trusted builds would restore.
+      - name: Build
+        uses: ./.trusted/.github/actions/eas-local-build
         with:
-          node-version-file: package.json
-
-      - name: Enable corepack
-        run: |
-          npm install --global corepack@latest
-          corepack enable
-          pnpm --version
-
-      - name: Install mobile dependencies
-        run: pnpm install --frozen-lockfile --filter=@t3tools/mobile...
-
-      - name: Setup Java
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - name: Setup EAS
-        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8.2.1
-        with:
-          eas-version: latest
-          eas-cache: false
-          token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
-          packager: npm
-
-      - name: Pull preview environment variables
-        working-directory: apps/mobile
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
-        run: |
-          eas env:pull preview --non-interactive
-          node --input-type=module <<'NODE'
-          import { appendFileSync, readFileSync } from "node:fs";
-          import { parseEnv } from "node:util";
-          const env = parseEnv(readFileSync(".env.local", "utf8"));
-          const googleServicesFile = env.T3CODE_ANDROID_GOOGLE_SERVICES_FILE;
-          if (googleServicesFile) {
-            appendFileSync(process.env.GITHUB_ENV, `T3CODE_ANDROID_GOOGLE_SERVICES_FILE=${googleServicesFile}\n`);
-          }
-          NODE
+          platform: android
+          profile: preview:dev
+          environment: preview
+          expo-token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
+          output: ${{ runner.temp }}/t3code-preview.apk
+          cache: "false"
 
       - id: build
-        name: Build and upload
+        name: Upload
         working-directory: apps/mobile
         shell: bash
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
         run: |
-          eas build --local --platform android --profile preview:dev --non-interactive --output "$RUNNER_TEMP/t3code-preview.apk"
           eas upload --platform android --build-path "$RUNNER_TEMP/t3code-preview.apk" --fingerprint "$FINGERPRINT" --non-interactive --json | tee "$RUNNER_TEMP/upload.json"
           link="$(sed -n '/^{/,$p' "$RUNNER_TEMP/upload.json" | jq -r '.url // empty')"
           if [ -z "$link" ]; then
@@ -347,9 +394,107 @@ jobs:
           fi
           echo "link=$link" >> "$GITHUB_OUTPUT"
 
+  ios-build:
+    name: iOS preview client
+    needs: [request, preview]
+    if: needs.preview.outputs.ios_build == 'true'
+    runs-on: blacksmith-12vcpu-macos-27
+    timeout-minutes: 60
+    environment:
+      name: mobile-preview-fork
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      client: ${{ steps.build.outputs.link }}
+    env:
+      APP_VARIANT: preview
+      NODE_OPTIONS: --max-old-space-size=8192
+      MOBILE_VERSION_POLICY: fingerprint
+      FINGERPRINT: ${{ needs.preview.outputs.ios_fingerprint }}
+    steps:
+      - name: Confirm the PR is still open
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const { data: pull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            if (pull.state !== "open") core.setFailed(`PR #${pull.number} is no longer open; not building.`);
+
+      - name: Checkout reviewed commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.request.outputs.sha }}
+          fetch-depth: 0
+
+      # Scripts and actions come from main, not from the PR.
+      - name: Checkout trusted scripts
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          path: .trusted
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
+
+      # The steps below run dependency and build scripts; they get no token.
+      - name: Drop checkout credentials
+        uses: ./.trusted/.github/actions/drop-checkout-credentials
+
+      # Cold: no sticky disk or EAS cache that trusted builds would restore.
+      - name: Build
+        uses: ./.trusted/.github/actions/eas-local-build
+        with:
+          platform: ios
+          profile: preview:dev
+          environment: preview
+          expo-token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
+          output: ${{ runner.temp }}/t3code-preview.ipa
+          cache: "false"
+
+      - id: build
+        name: Upload
+        working-directory: apps/mobile
+        shell: bash
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
+        run: |
+          eas upload --platform ios --build-path "$RUNNER_TEMP/t3code-preview.ipa" --fingerprint "$FINGERPRINT" --non-interactive --json | tee "$RUNNER_TEMP/upload.json"
+          link="$(sed -n '/^{/,$p' "$RUNNER_TEMP/upload.json" | jq -r '.url // empty')"
+          if [ -z "$link" ]; then
+            echo "::error::eas upload returned no install link"
+            exit 1
+          fi
+          echo "link=$link" >> "$GITHUB_OUTPUT"
+
+  comment:
+    name: Mobile preview comment
+    needs: [request, preview, android-build, ios-build]
+    if: always() && !cancelled() && needs.preview.result == 'success'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    concurrency:
+      group: mobile-preview-comment-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout comment script
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: .github/scripts
+
       - name: Comment
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
-          CLIENT: ${{ steps.build.outputs.link }}
-        run: node .trusted/.github/scripts/mobile-preview-comment.cjs
+          PR_HEAD_SHA: ${{ needs.request.outputs.sha }}
+          ANDROID_FINGERPRINT: ${{ needs.preview.outputs.fingerprint }}
+          ANDROID_GROUP: ${{ needs.preview.outputs.group }}
+          ANDROID_CLIENT: ${{ needs.android-build.outputs.client || needs.preview.outputs.client }}
+          IOS_FINGERPRINT: ${{ needs.preview.outputs.ios_fingerprint }}
+          IOS_GROUP: ${{ needs.preview.outputs.ios_group }}
+          IOS_CLIENT: ${{ needs.ios-build.outputs.client || needs.preview.outputs.ios_client }}
+        run: node .github/scripts/mobile-preview-comment.cjs

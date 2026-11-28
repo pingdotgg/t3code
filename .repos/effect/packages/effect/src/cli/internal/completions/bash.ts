@@ -46,7 +46,8 @@ const buildFlagGroupDeclarations = (
   lines.push(`  done`)
   lines.push(`  local _filtered_flags=""`)
   groups.forEach((forms, index) => {
-    lines.push(`  [[ -n "$_used_${index}" ]] || _filtered_flags+=" ${forms.join(" ")}"`)
+    const guard = flags[index].repeatable === true ? "" : `[[ -n "$_used_${index}" ]] || `
+    lines.push(`  ${guard}_filtered_flags+=" ${forms.join(" ")}"`)
   })
   lines.push(``)
 }
@@ -173,15 +174,16 @@ const pathsHelper = (helpers: Helpers, lines: Array<string>): void => {
   lines.push(``)
 }
 
+const choicesCompletion = (values: ReadonlyArray<string>, helpers: Helpers): string =>
+  `${helpers.choices} "$cur" "$_comp_word" ${values.map((value) => `'${escapeForBash(value)}'`).join(" ")}`
+
 const valueCompletion = (
   type: Completions.FlagType | Completions.ArgumentType,
   helpers: Helpers
 ): string | undefined => {
   switch (type._tag) {
-    case "Choice": {
-      const values = type.values.map((value) => `'${escapeForBash(value)}'`).join(" ")
-      return `${helpers.choices} "$cur" "$_comp_word" ${values}`
-    }
+    case "Choice":
+      return choicesCompletion(type.values, helpers)
     case "Path":
       return `${helpers.paths} ${type.pathType === "directory" ? "-d" : "-f"} "$cur" "$_comp_word"`
     default:
@@ -327,8 +329,8 @@ const generateFunction = (
       lines.push(`  fi`)
     }
   } else if (descriptor.subcommands.length > 0) {
-    const subNames = descriptor.subcommands.map((s) => s.name)
-    lines.push(`  COMPREPLY=( $(compgen -W '${subNames.join(" ")}' -- "$cur") )`)
+    // Unlike `compgen -W`, the choice helper replaces only the text after a word break such as `:`.
+    lines.push(`  ${choicesCompletion(descriptor.subcommands.map((s) => s.name), helpers)}`)
   }
 
   lines.push(`}`)

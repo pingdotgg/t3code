@@ -23,7 +23,7 @@ import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as ServerSettings from "../serverSettings.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
-import { applySpeechAliases } from "./customWords.ts";
+import { applySpeechAliases, speechRecognitionWords } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
 import { decodeSpeechPcm, SpeechInvalidAudioError } from "./SpeechService.ts";
 
@@ -75,7 +75,10 @@ function audioBody(
   const form = new FormData();
   form.set("model", endpoints[provider].model);
   if (language !== "auto") form.set(provider === "openai" ? "languages[]" : "language", language);
-  for (const { term } of options.speechCustomWords) {
+  for (const term of speechRecognitionWords(
+    options.speechHints,
+    options.speechCustomWords.map(({ term }) => term),
+  )) {
     if (provider === "openai" && /[<>\r\n]/.test(term)) continue;
     form.append(provider === "openai" ? "keywords[]" : "keyterm", term);
   }

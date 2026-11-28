@@ -61,7 +61,6 @@ describe("snapshot deadline diagnostics", () => {
           title: "",
           loading: false,
           visibleText: "",
-          interactiveElements: [],
         }),
         ariaSnapshot: async () => "",
         ...options.page,
@@ -275,6 +274,23 @@ describe("server browser element refs", () => {
   };
   const repeatedRows = `<ul>${Array.from({ length: 5 }, (_, i) => `<li>row ${i + 1}<button data-testid="delete-row" onclick="this.parentElement.remove()">delete</button></li>`).join("")}</ul>`;
 
+  it("does not report an empty interactiveElements list beside a tree full of controls", async () => {
+    await page.setContent(
+      `<a href="#signin">Sign in</a><button>Open menu</button><button>Dismiss local database notice</button>`,
+    );
+    const result = await takeSnapshot();
+    expect(buttonLocator(result.accessibilityTree, "Open menu")).toBeDefined();
+    expect(String(result.accessibilityTree)).toContain('link "Sign in"');
+    const elements = (
+      result as { readonly interactiveElements?: ReadonlyArray<{ readonly name: string }> }
+    ).interactiveElements;
+    if (elements !== undefined) {
+      expect(elements.map((element) => element.name)).toEqual(
+        expect.arrayContaining(["Sign in", "Open menu", "Dismiss local database notice"]),
+      );
+    }
+  });
+
   it("clicks the fifth repeated delete control without touching row one", async () => {
     await page.setContent(repeatedRows);
     const result = await takeSnapshot();
@@ -373,6 +389,55 @@ describe("server browser element refs", () => {
       "inside iframe",
     );
     expect(await page.getByRole("textbox", { name: "parent" }).inputValue()).toBe("");
+  });
+
+  it("types after a click by coordinates into a shadow-root field, and refuses a field inside an editable frame", async () => {
+    await page.setContent(
+      `<div id="host"></div><div contenteditable="true"><iframe srcdoc="<input id=inner>"></iframe></div><script>document.getElementById("host").attachShadow({mode:"open"}).innerHTML = "<input id=field>";</script>`,
+    );
+    const field = page.locator("#host #field");
+    const box = (await field.boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await ServerBrowserPage.type(page, { text: "shadow" });
+    expect(await field.inputValue()).toBe("shadow");
+
+    // Refused for now: focus inside a frame cannot be checked from the top document.
+    const inner = page.frameLocator("iframe").locator("#inner");
+    await inner.click();
+    await expect(ServerBrowserPage.type(page, { text: "frame" })).rejects.toMatchObject({
+      tag: "PreviewAutomationTargetNotEditableError",
+    });
+    expect(await inner.inputValue()).toBe("");
+  });
+
+  it("types into a field that builds its value from keydown, with and without clear", async () => {
+    await page.setContent(
+      `<input id=a><input id=b><script>for(const f of[a,b]){f.keys="";f.onkeydown=e=>{if(e.key.length===1){e.preventDefault();f.keys+=e.key}}}</script>`,
+    );
+    const keys = (selector: string) =>
+      page.locator(selector).evaluate((field) => (field as unknown as { keys: string }).keys);
+    await ServerBrowserPage.type(page, { locator: "#a", text: "girona42" });
+    expect(await keys("#a")).toBe("girona42");
+    await ServerBrowserPage.type(page, { locator: "#b", text: "girona42", clear: true });
+    expect(await keys("#b")).toBe("girona42");
+    await ServerBrowserPage.type(page, { locator: "#b", text: "a".repeat(501), clear: true });
+    expect(await keys("#b")).toBe(`girona42${"a".repeat(501)}`);
+
+    await page.setContent(
+      `<form onsubmit="event.preventDefault();sent.value='sent'"><label for=e>Email</label><input id=e value=old><input id=d type=date value=2020-02-02><label>Tint <input id=c type=color></label><input id=r type=range><textarea id=t></textarea><input id=sent></form>`,
+    );
+    await ServerBrowserPage.type(page, { locator: "text=Email", text: "a@b.c", clear: true });
+    expect(await page.locator("#e").inputValue()).toBe("a@b.c");
+    await ServerBrowserPage.type(page, { locator: "#d", text: "2026-01-31", clear: true });
+    expect(await page.locator("#d").inputValue()).toBe("2026-01-31");
+    await ServerBrowserPage.type(page, { locator: "text=Tint", text: "#ff0000", clear: true });
+    expect(await page.locator("#c").inputValue()).toBe("#ff0000");
+    await ServerBrowserPage.type(page, { locator: "#r", text: "70", clear: true });
+    expect(await page.locator("#r").inputValue()).toBe("70");
+    await ServerBrowserPage.type(page, { locator: "#e", text: "x\ny" });
+    await ServerBrowserPage.type(page, { locator: "#t", text: "one\r\ntwo" });
+    expect(await page.locator("#t").inputValue()).toBe("one\ntwo");
+    expect(await page.locator("#sent").inputValue()).toBe("");
   });
 
   it("shows dotted fields as dots wherever their value appears, keeping text values and refs", async () => {
@@ -926,6 +991,79 @@ describe("server browser evaluate", () => {
         "Runtime.evaluate",
         "Runtime.terminateExecution",
       ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("server browser type", () => {
+  // As on a desktop tab whose Playwright utility world never answers.
+  const stalledPage = (focusAnswer: () => Promise<unknown>, typed: string[]) =>
+    ({
+      locator: () => ({ last: () => ({ count: () => new Promise<number>(() => {}) }) }),
+      evaluate: focusAnswer,
+      keyboard: { type: async (text: string) => void typed.push(text) },
+    }) as unknown as Page;
+
+  it("types into the focused field when Playwright's utility world never answers", async () => {
+    vi.useFakeTimers();
+    try {
+      const typed: string[] = [];
+      let outcome: unknown = "pending";
+      const page = stalledPage(async () => true, typed);
+      void ServerBrowserPage.type(page, { text: "hello", timeoutMs: 300 }).then(
+        () => (outcome = "typed"),
+        (error: unknown) => (outcome = error),
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      expect(outcome).toBe("typed");
+      expect(typed).toEqual(["hello"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops at its timeout without typing when the page never answers", async () => {
+    vi.useFakeTimers();
+    try {
+      const typed: string[] = [];
+      let outcome: unknown = "pending";
+      const page = stalledPage(() => new Promise(() => {}), typed);
+      void ServerBrowserPage.type(page, { text: "hello", timeoutMs: 300 }).then(
+        () => (outcome = "typed"),
+        (error: unknown) => (outcome = error),
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      expect(outcome).toMatchObject({
+        tag: "PreviewAutomationTimeoutError",
+        detail: { timeoutMs: 300 },
+      });
+      expect(typed).toEqual([]);
+
+      // A target whose element is found but whose page then stops answering.
+      const fill = vi.fn(async () => {});
+      const hung = {
+        locator: () => ({ evaluate: () => new Promise(() => {}), fill }),
+        keyboard: { type: async (text: string) => void typed.push(text) },
+      } as unknown as Page;
+      void ServerBrowserPage.type(hung, {
+        locator: "#field",
+        text: "hello",
+        clear: true,
+        timeoutMs: 300,
+      }).then(
+        () => (outcome = "typed"),
+        (error: unknown) => (outcome = error),
+      );
+      outcome = "pending";
+      await vi.advanceTimersByTimeAsync(300);
+      expect(outcome).toMatchObject({
+        tag: "PreviewAutomationTimeoutError",
+        detail: { timeoutMs: 300 },
+      });
+      expect(fill).not.toHaveBeenCalled();
+      expect(typed).toEqual([]);
     } finally {
       vi.useRealTimers();
     }

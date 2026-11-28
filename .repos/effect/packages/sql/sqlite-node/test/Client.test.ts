@@ -1,7 +1,7 @@
 import { NodeFileSystem } from "@effect/platform-node"
 import { SqliteClient } from "@effect/sql-sqlite-node"
 import { assert, describe, it } from "@effect/vitest"
-import { Cause, Duration, Effect, Exit, Fiber, FileSystem, Option, References } from "effect"
+import { Cause, Deferred, Duration, Effect, Exit, Fiber, FileSystem, Option, References } from "effect"
 import { Reactivity } from "effect/reactivity"
 import { ConnectionError, SqlError } from "effect/sql/SqlError"
 import { TestClock } from "effect/testing"
@@ -40,6 +40,20 @@ const makeLockedDatabase = Effect.gen(function*() {
 // node:sqlite blocks the Vitest worker; concurrent tests would share a running
 // timeout while waiting for each other's queries.
 describe("Client", { concurrent: false }, () => {
+  it.effect("should disable query-only transforms", () =>
+    Effect.gen(function*() {
+      const sql = yield* SqliteClient.make({
+        filename: ":memory:",
+        transformQueryNames: (name) => name === "firstName" ? "first_name" : name
+      }).pipe(Effect.provide(Reactivity.layer))
+      const withoutTransforms = sql.withoutTransforms()
+      yield* sql`CREATE TABLE test (first_name TEXT, "firstName" TEXT)`
+      yield* sql`INSERT INTO test (first_name, "firstName") VALUES ('John', 'Jane')`
+
+      const select = withoutTransforms`SELECT ${withoutTransforms("firstName")} FROM test`
+      assert.deepStrictEqual(yield* select, [{ firstName: "Jane" }])
+    }))
+
   it.effect("releases completed nested savepoints", () =>
     Effect.gen(function*() {
       const sql = yield* makeClient
@@ -168,6 +182,45 @@ describe("Client", { concurrent: false }, () => {
       yield* sql.withTransaction(sql`INSERT INTO test (name) VALUES ('hello')`)
       const rows = yield* sql`SELECT * FROM test`
       assert.deepStrictEqual(rows, [{ id: 1, name: "hello" }])
+    }))
+
+  it.effect("keeps a fiber that outlives its transaction out of another transaction", () =>
+    Effect.gen(function*() {
+      const sql = yield* makeClient
+      yield* sql`CREATE TABLE t (who TEXT)`
+      const go = yield* Deferred.make<void>()
+      const done = yield* Deferred.make<void>()
+      const idle = yield* Deferred.make<void>()
+
+      const stale = yield* sql.withTransaction(Effect.forkChild(
+        Effect.all([
+          Effect.andThen(Deferred.await(go), Effect.flip(sql`INSERT INTO t VALUES ('stale fiber')`)).pipe(
+            Effect.ensuring(Deferred.succeed(done, undefined))
+          ),
+          // On an idle connection, a stale SAVEPOINT would start a transaction and block the next BEGIN.
+          Effect.andThen(Deferred.await(idle), Effect.flip(sql.withTransaction(Effect.void)))
+        ])
+      ))
+      const other = yield* Effect.forkChild(Effect.exit(sql.withTransaction(Effect.gen(function*() {
+        yield* sql`INSERT INTO t VALUES ('other transaction')`
+        yield* Deferred.succeed(go, undefined)
+        yield* Deferred.await(done)
+        return yield* Effect.fail("rollback")
+      }))))
+
+      yield* Fiber.join(other)
+      yield* Deferred.succeed(idle, undefined)
+      const errors = yield* Fiber.join(stale)
+      for (const error of errors) {
+        assert.deepStrictEqual(
+          [error.reason._tag, error.reason.message, error.isRetryable],
+          ["UnknownError", "SqlClient: the transaction has already ended", false]
+        )
+      }
+      assert.deepStrictEqual(yield* sql`SELECT who FROM t`, [])
+      // The connection is still usable for new transactions.
+      yield* sql.withTransaction(sql`INSERT INTO t VALUES ('after')`)
+      assert.deepStrictEqual(yield* sql`SELECT who FROM t`, [{ who: "after" }])
     }))
 
   it.effect.each(["ABORT", "ROLLBACK", "nested ROLLBACK"] as const)(

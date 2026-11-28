@@ -44,10 +44,15 @@ export interface ThreadVisitTrackerOptions {
    * that keeps its own watermark for them records the visit here instead.
    */
   readonly markLocalVisit?: (ref: ScopedThreadRef, visitedAt: string) => void;
+  /**
+   * Whether the user can see the thread right now. While false, nothing is
+   * recorded; the open and the watermark catch up when it turns true.
+   */
+  readonly viewingAtom?: Atom.Atom<boolean>;
 }
 
 /**
- * While mounted, a tracker counts as the user viewing the thread: mounting it
+ * While mounted and `viewingAtom` holds, a tracker counts as the user viewing the thread: mounting it
  * records one open (which also feeds search ranking), and every shell update
  * after that advances the visit watermark, throttled while a run streams.
  */
@@ -129,6 +134,7 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
       const onShell = (shell: VisitedShell | null) => {
         clearTimer();
         if (shell === null) return;
+        if (options.viewingAtom && !registry.get(options.viewingAtom)) return;
 
         const shellUpdatedAtMs = Date.parse(shell.updatedAt);
         if (Number.isNaN(shellUpdatedAtMs)) return;
@@ -203,6 +209,10 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
       get.subscribe(sessionGenerationAtom, () =>
         onShell(registry.get(options.threadShellAtom(ref))),
       );
+      if (options.viewingAtom)
+        get.subscribe(options.viewingAtom, () =>
+          onShell(registry.get(options.threadShellAtom(ref))),
+        );
     }).pipe(Atom.withLabel(`thread-visit-tracker:${key}`));
   });
   return (ref: ScopedThreadRef | null) => (ref === null ? IDLE_TRACKER : family(threadKey(ref)));

@@ -51,6 +51,7 @@ export interface AcpClientOptions {
   readonly onTermination?: AcpProtocol.AcpPatchedProtocolOptions["onTermination"];
   readonly onOutgoingResponseFailure?: AcpProtocol.AcpPatchedProtocolOptions["onOutgoingResponseFailure"];
   readonly onOutgoingResponse?: AcpProtocol.AcpPatchedProtocolOptions["onOutgoingResponse"];
+  readonly onUndecodableNotification?: AcpProtocol.AcpPatchedProtocolOptions["onUndecodableNotification"];
   readonly transformStdout?: (
     stdout: ChildProcessSpawner.ChildProcessHandle["stdout"],
   ) => AcpProtocol.AcpStdio["stdin"];
@@ -797,6 +798,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     | undefined;
   let negotiatedProtocolGeneration: 1 | 2 | undefined;
   let sessionDeleteSupported = false;
+  let advertisedClientCapabilities: AcpSchema.InitializeRequest["clientCapabilities"] | undefined;
 
   const runNotificationHandlers = <A>(
     registration: BufferedNotificationHandler<A>,
@@ -919,6 +921,9 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
       ? { onOutgoingResponseFailure: options.onOutgoingResponseFailure }
       : {}),
     ...(options.onOutgoingResponse ? { onOutgoingResponse: options.onOutgoingResponse } : {}),
+    ...(options.onUndecodableNotification
+      ? { onUndecodableNotification: options.onUndecodableNotification }
+      : {}),
     transformSessionUpdate: (notification) => {
       const normalized =
         negotiatedProtocolGeneration === 1
@@ -983,6 +988,16 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
               CLIENT_METHODS.elicitation_create,
               cause,
             ).toProtocolError(),
+          ),
+          Effect.filterOrFail(
+            (request) =>
+              advertisedClientCapabilities === undefined ||
+              (request.mode !== "form" && request.mode !== "url") ||
+              advertisedClientCapabilities.elicitation?.[request.mode] != null,
+            (request) =>
+              AcpError.AcpRequestError.invalidParams(
+                `Elicitation mode '${request.mode}' was not advertised by the client.`,
+              ).toProtocolError(),
           ),
           Effect.flatMap((request) =>
             runHandler(
@@ -1088,24 +1103,27 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     },
     agent: {
       initialize: (payload) =>
-        callRpc(
-          AGENT_METHODS.initialize,
-          rpc[AGENT_METHODS.initialize](toNegotiatingInitializeRequest(payload)),
-        ).pipe(
-          Effect.map((response) => {
-            // ACP v1 protocolVersion values were not generation identifiers in
-            // every shipped agent. Antigravity, for example, reports version 2
-            // with the v1 agentInfo/agentCapabilities response shape.
-            const isV2 = isV2InitializeResponse(response);
-            negotiatedProtocolGeneration = isV2 ? 2 : 1;
-            const normalized = isV2
-              ? normalizeInitializeResponse(response)
-              : (response as AcpSchema.InitializeResponse);
-            sessionDeleteSupported =
-              normalized.agentCapabilities?.sessionCapabilities?.delete != null;
-            return normalized;
-          }),
-        ),
+        Effect.suspend(() => {
+          advertisedClientCapabilities = payload.clientCapabilities ?? {};
+          return callRpc(
+            AGENT_METHODS.initialize,
+            rpc[AGENT_METHODS.initialize](toNegotiatingInitializeRequest(payload)),
+          ).pipe(
+            Effect.map((response) => {
+              // ACP v1 protocolVersion values were not generation identifiers in
+              // every shipped agent. Antigravity, for example, reports version 2
+              // with the v1 agentInfo/agentCapabilities response shape.
+              const isV2 = isV2InitializeResponse(response);
+              negotiatedProtocolGeneration = isV2 ? 2 : 1;
+              const normalized = isV2
+                ? normalizeInitializeResponse(response)
+                : (response as AcpSchema.InitializeResponse);
+              sessionDeleteSupported =
+                normalized.agentCapabilities?.sessionCapabilities?.delete != null;
+              return normalized;
+            }),
+          );
+        }),
       authenticate: (payload) =>
         negotiatedProtocolGeneration === 1
           ? callRpc(

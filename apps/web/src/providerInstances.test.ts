@@ -71,6 +71,66 @@ describe("isProviderInstancePickerReady", () => {
     expect(entry?.status).toBe("ready");
     expect(entry && isProviderInstancePickerReady(entry)).toBe(false);
   });
+
+  it("offers a warning provider's models on its usable sub-providers only", () => {
+    const backendModel = (slug: string, subProvider: string) => ({ ...model(slug), subProvider });
+    const fx = (models: ServerProvider["models"]) => ({
+      ...provider({
+        provider: ProviderDriverKind.make("fx"),
+        instanceId: "fx",
+        status: "warning",
+        models,
+      }),
+      subProviders: [
+        { name: "Gateway" },
+        { name: "Codex", unavailableReason: "Signed out. Run `fx login codex` on this machine." },
+      ],
+    });
+    const ready = (snapshot: ServerProvider) =>
+      deriveProviderInstanceEntries([snapshot]).map(isProviderInstancePickerReady)[0];
+
+    expect(
+      ready(fx([model("default", false, true), backendModel("openai/gpt-5.5", "Gateway")])),
+    ).toBe(true);
+    expect(ready(fx([model("default", false, true), backendModel("gpt-5.5", "Codex")]))).toBe(
+      false,
+    );
+  });
+
+  it("keeps offering the models a refresh retained when the catalog did not arrive in time", () => {
+    const [entry] = deriveProviderInstanceEntries([
+      {
+        ...provider({
+          provider: ProviderDriverKind.make("codex"),
+          instanceId: "codex",
+          status: "warning",
+          models: [model("gpt-5.5", false, true), model("gpt-5.4")],
+        }),
+        message: "Codex did not return its model catalog in time.",
+      },
+    ]);
+
+    expect(entry && isProviderInstancePickerReady(entry)).toBe(true);
+    expect(
+      entry && isProviderInstancePickerReady({ ...entry, models: [model("bailian", true)] }),
+    ).toBe(true);
+    expect(entry && isProviderInstancePickerReady({ ...entry, models: [] })).toBe(false);
+  });
+
+  it("offers a failed provider's models only while the server marks them retained", () => {
+    const failed = provider({
+      provider: ProviderDriverKind.make("codex"),
+      instanceId: "codex",
+      status: "error",
+      models: [model("gpt-5.5", false, true)],
+    });
+    const ready = (snapshot: ServerProvider) =>
+      deriveProviderInstanceEntries([snapshot]).map(isProviderInstancePickerReady)[0];
+
+    expect(ready({ ...failed, modelsRetained: true })).toBe(true);
+    expect(ready(failed)).toBe(false);
+    expect(ready({ ...failed, status: "warning", auth: { status: "unknown" } })).toBe(false);
+  });
 });
 
 describe("applyProviderInstanceSettings", () => {

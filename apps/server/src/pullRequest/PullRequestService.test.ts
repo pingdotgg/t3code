@@ -40,6 +40,7 @@ import {
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
+import { resolveTarget } from "./pullRequestTarget.ts";
 
 function project(input: {
   readonly id: string;
@@ -376,6 +377,146 @@ function makeService(input: {
   );
 }
 
+it.effect(
+  "lists and reads pull requests of every repository a multi-repository project tracks",
+  () =>
+    Effect.gen(function* () {
+      const identityOf = (repository: string) =>
+        project({ id: "x", title: "x", workspaceRoot: "/x", repository }).repositoryIdentity!;
+      const identities: Record<string, ReturnType<typeof identityOf>> = {
+        "/ws/web": identityOf("acme/web"),
+        "/ws/api": identityOf("acme/api"),
+      };
+      const detailCwds: Array<string> = [];
+      const service = yield* makeService({
+        projects: [
+          {
+            ...project({ id: "p1", title: "workspace", workspaceRoot: "/ws" }),
+            trackedFolders: [
+              { name: "web", path: "/ws/web", discovered: true },
+              { name: "api", path: "/ws/api", discovered: true },
+              { name: "notes", path: "/ws/notes" },
+            ],
+          },
+          project({ id: "p2", title: "api", workspaceRoot: "/api", repository: "acme/api" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            listChangeRequests: ({ repository }) =>
+              Effect.succeed({
+                items: [changeRequest(repository === "acme/web" ? 1 : 2, "2026-07-02T00:00:00Z")],
+                truncated: false,
+                continues: false,
+              }),
+            getChangeRequest: ({ cwd }) =>
+              Effect.sync(() => {
+                detailCwds.push(cwd);
+                return hostedChangeRequest("Body");
+              }),
+            listChangeRequestStats: ({ changeRequests }) =>
+              Effect.succeed(
+                changeRequests.map(({ repository, number }) => ({
+                  repository,
+                  number,
+                  additions: repository === "acme/web" ? 10 : 20,
+                  deletions: 0,
+                })),
+              ),
+          }),
+        ],
+        resolveRepositoryIdentity: (cwd) => Effect.succeed(identities[cwd] ?? null),
+      });
+      const result = yield* service.list({ state: "open", projectIds: ["p1" as ProjectId] });
+      assert.deepStrictEqual(
+        result.entries
+          .map(({ projectId, repository, number }) => `${projectId} ${repository}#${number}`)
+          .toSorted(),
+        ["p1 acme/api#2", "p1 acme/web#1"],
+      );
+      const { stats } = yield* service.listStats({
+        refs: [
+          { projectId: "p1" as ProjectId, repository: "acme/web", number: 7 },
+          { projectId: "p1" as ProjectId, repository: "acme/api", number: 7 },
+          // The same repository as its own project, listed after the workspace that tracks it.
+          { projectId: "p2" as ProjectId, repository: "acme/api", number: 8 },
+          // One pull request asked for by both projects reaches both.
+          { projectId: "p2" as ProjectId, repository: "acme/api", number: 7 },
+        ],
+      });
+      assert.deepStrictEqual(
+        stats
+          .map(
+            ({ projectId, repository, number, additions }) =>
+              `${projectId} ${repository}#${number} +${additions}`,
+          )
+          .toSorted(),
+        ["p1 acme/api#7 +20", "p1 acme/web#7 +10", "p2 acme/api#7 +20", "p2 acme/api#8 +20"],
+      );
+      yield* service.detail({ projectId: "p1" as ProjectId, repository: "acme/api", number: 2 });
+      assert.deepStrictEqual(detailCwds, ["/ws/api"]);
+      // A pull request named by number alone has no one repository to default to.
+      assert.notExists((yield* service.addressedProject("p1" as ProjectId))?.repositoryIdentity);
+    }),
+);
+
+it.effect("keeps a repository's line counts apart from its mirror on another host", () =>
+  Effect.gen(function* () {
+    const identities: Record<string, OrchestrationProjectShell["repositoryIdentity"]> = {
+      "/m/github": project({ id: "x", title: "x", workspaceRoot: "/x", repository: "acme/api" })
+        .repositoryIdentity,
+      "/m/gitlab": project({
+        id: "x",
+        title: "x",
+        workspaceRoot: "/x",
+        repository: "acme/api",
+        provider: "gitlab",
+      }).repositoryIdentity,
+    };
+    const statsFrom = (additions: number) => ({
+      listChangeRequestStats: ({
+        changeRequests,
+      }: {
+        readonly changeRequests: ReadonlyArray<{ repository: string; number: number }>;
+      }) =>
+        Effect.succeed(
+          changeRequests.map(({ repository, number }) => ({
+            repository,
+            number,
+            additions,
+            deletions: 0,
+          })),
+        ),
+    });
+    const service = yield* makeService({
+      projects: [
+        {
+          ...project({ id: "p1", title: "mirrors", workspaceRoot: "/m" }),
+          trackedFolders: [
+            { name: "github", path: "/m/github", discovered: true },
+            { name: "gitlab", path: "/m/gitlab", discovered: true },
+          ],
+        },
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), statsFrom(10)),
+        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), statsFrom(20)),
+      ],
+      resolveRepositoryIdentity: (cwd) => Effect.succeed(identities[cwd] ?? null),
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/api", number: 7 };
+    const { stats } = yield* service.listStats({
+      refs: [
+        { ...ref, host: "github.com" },
+        { ...ref, host: "gitlab.com" },
+      ],
+    });
+    assert.deepStrictEqual(stats.map(({ host, additions }) => `${host} +${additions}`).toSorted(), [
+      "github.com +10",
+      "gitlab.com +20",
+    ]);
+  }),
+);
+
 it.effect("lists GitHub Enterprise PRs for a stored unknown repository after host discovery", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
@@ -422,6 +563,15 @@ it.effect("lists GitHub Enterprise PRs for a stored unknown repository after hos
       result.entries.map(({ host, number }) => [host, number]),
       [["code.example.test", 42]],
     );
+    // Agents get the forge tools only where the host is one T3 reads.
+    assert.isTrue(yield* service.servesProject("p1" as ProjectId));
+    assert.isFalse(yield* service.servesProject("p2" as ProjectId));
+    // ...and those tools build PR URLs through the same refined forge.
+    const target = yield* resolveTarget(
+      { repository: "team/project", number: 42 },
+      yield* service.addressedProject("p1" as ProjectId),
+    );
+    assert.strictEqual(target.url, "https://code.example.test/team/project/pull/42");
   }),
 );
 
@@ -1428,6 +1578,161 @@ it.effect(
     }),
 );
 
+it.effect(
+  "reads logs of the failing checks, or of the one named, and names the checks it lacks",
+  () =>
+    Effect.gen(function* () {
+      const asked: Array<ReadonlyArray<string>> = [];
+      let failing = 0;
+      const check = (name: string, status: "success" | "failure" | "cancelled") => ({
+        name,
+        status,
+        description: null,
+        url: `https://github.com/acme/web/runs/${name.length}`,
+      });
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequestChecks: () =>
+              Effect.succeed({
+                state: "open",
+                checks: [
+                  check("Lint", "success"),
+                  check("Test", "failure"),
+                  check("E2E", "cancelled"),
+                  ...Array.from({ length: failing }, (_, index) =>
+                    check(`Shard ${index}`, "failure"),
+                  ),
+                ],
+              }),
+            getCheckLogs: (input) =>
+              Effect.sync(() => {
+                asked.push(input.checks.map((entry) => entry.name));
+                return input.checks.map((entry) => ({
+                  ...entry,
+                  log: "boom",
+                  truncated: false,
+                  detail: null,
+                }));
+              }),
+          }),
+        ],
+      });
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      yield* service.checkLogs({ ...reference, tailLines: 50 });
+      yield* service.checkLogs({ ...reference, check: "lint", tailLines: 50 });
+      const missing = yield* Effect.flip(
+        service.checkLogs({ ...reference, check: "Deploy", tailLines: 50 }),
+      );
+      assert.deepStrictEqual(asked, [["Test", "E2E"], ["Lint"]]);
+      assert.include(missing.message, "Lint, Test, E2E");
+
+      failing = 6;
+      asked.length = 0;
+      const many = yield* service.checkLogs({ ...reference, tailLines: 50 });
+      // The host is asked for five; the other three come back unread, by name.
+      assert.lengthOf(asked[0] ?? [], 5);
+      assert.deepStrictEqual(
+        many.map((log) => [log.name, log.log]),
+        [
+          ["Test", "boom"],
+          ["E2E", "boom"],
+          ["Shard 0", "boom"],
+          ["Shard 1", "boom"],
+          ["Shard 2", "boom"],
+          ["Shard 3", null],
+          ["Shard 4", null],
+          ["Shard 5", null],
+        ],
+      );
+      assert.include(many.at(-1)?.detail ?? "", "Ask for this check by name");
+    }),
+);
+
+it.effect.each([false, true])(
+  "re-reads checks after a rerun instead of serving the failed ones (rerun fails: %s)",
+  (failAfterRerun) =>
+    Effect.gen(function* () {
+      let rerun = false;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequestChecks: () =>
+              Effect.succeed({
+                state: "open" as const,
+                checks: [
+                  {
+                    name: "Test",
+                    status: rerun ? ("pending" as const) : ("failure" as const),
+                    description: null,
+                    url: null,
+                  },
+                ],
+              }),
+            // A failure can come after one run already restarted.
+            rerunChecks: (input) =>
+              Effect.suspend(() => {
+                rerun = true;
+                return failAfterRerun
+                  ? Effect.fail(requestFailed)
+                  : Effect.succeed(
+                      input.checks.map((check) => ({ ...check, rerun: true, detail: null })),
+                    );
+              }),
+          }),
+        ],
+      });
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      assert.equal((yield* service.checks(reference))?.checks[0]?.status, "failure");
+      yield* service.rerunChecks(reference).pipe(Effect.ignore);
+      assert.equal((yield* service.checks(reference))?.checks[0]?.status, "pending");
+    }),
+);
+
+it.effect("refuses a merge or review whose head moved past expectedHeadSha and pins the host", () =>
+  Effect.gen(function* () {
+    const head = "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567";
+    const pinned: Array<string | undefined> = [];
+    const reviewed: Array<string | undefined> = [];
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: () => Effect.succeed({ ...hostedChangeRequest("Body"), headSha: head }),
+          getChangeRequestSummary: () => Effect.succeed(changeRequest(1, "2026-09-03T00:00:00Z")),
+          runAction: (input) => Effect.sync(() => void pinned.push(input.expectedHeadSha)),
+          submitReview: (input) => Effect.sync(() => void reviewed.push(input.expectedHeadSha)),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const approval = { ...reference, verdict: "approve" as const, body: "", comments: [] };
+    const unseen = yield* Effect.flip(
+      service.submitReview({ ...approval, expectedHeadSha: "0a1b2c4" }),
+    );
+    assert.include(unseen.message, head);
+    yield* service.submitReview({ ...approval, expectedHeadSha: "0a1b2c3d4" });
+    assert.deepStrictEqual(reviewed, [head]);
+    const refused = yield* Effect.flip(
+      service.runAction({ ...reference, action: "merge", expectedHeadSha: "0a1b2c4" }),
+    );
+    assert.include(refused.message, head);
+    const tooShort = yield* Effect.flip(
+      service.runAction({ ...reference, action: "merge", expectedHeadSha: "0a1b2c" }),
+    );
+    assert.include(tooShort.message, head);
+    yield* service.runAction({ ...reference, action: "merge", expectedHeadSha: head });
+    yield* service.runAction({ ...reference, action: "merge", expectedHeadSha: "0A1B2C3D4" });
+    assert.deepStrictEqual(pinned, [head, head]);
+  }),
+);
+
 it.effect("publishes a merge for immediate settlement only after host confirmation", () =>
   Effect.gen(function* () {
     const mergedAt = "2026-09-03T02:00:00.000Z";
@@ -2375,7 +2680,10 @@ it.effect.each([
   }),
 );
 
-it.effect("refuses Azure cross-organization reads and writes without its checkout", () =>
+it.effect.each([
+  { case: "another organization", repository: "org-b/project/_git/web" },
+  { case: "a sibling repository", repository: "org-a/project/_git/web-e2e" },
+])("refuses Azure reads and writes in $case without its checkout", ({ repository }) =>
   Effect.gen(function* () {
     const service = yield* makeService({
       projects: [
@@ -2399,15 +2707,48 @@ it.effect("refuses Azure cross-organization reads and writes without its checkou
     const reference = {
       projectId: "org-a" as ProjectId,
       host: "dev.azure.com",
-      repository: "org-b/project/_git/web",
+      repository,
       number: 7,
     };
     const readError = yield* Effect.flip(
       service.summary(reference, { recoverTransientFailure: false }),
     );
     const writeError = yield* Effect.flip(service.runAction({ ...reference, action: "close" }));
-    assert.strictEqual(readError._tag, "PullRequestUnavailableError");
-    assert.strictEqual(writeError._tag, "PullRequestUnavailableError");
+    for (const error of [readError, writeError]) {
+      expect(error).toMatchObject({
+        _tag: "PullRequestUnavailableError",
+        reason: "repository-without-project",
+        message: `${repository} is not a project in T3 Code. Add it as a project to read its change requests.`,
+      });
+    }
+  }),
+);
+
+// regression: #37633 any checkout on the host routes the read, so name the host, not the repository
+it.effect("names the host when no project has a checkout on it for a host-routed read", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "wrapper", title: "Wrapper", workspaceRoot: "/work" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
+          getChangeRequestSummary: () => Effect.die("no checkout to read through"),
+        }),
+      ],
+    });
+    const error = yield* Effect.flip(
+      service.summary(
+        {
+          projectId: "wrapper" as ProjectId,
+          host: "gitlab.com",
+          repository: "acme/web",
+          number: 7,
+        },
+        { recoverTransientFailure: false },
+      ),
+    );
+    assert.strictEqual(error._tag, "PullRequestUnavailableError");
+    expect(error.message).not.toContain("acme/web is not a project");
+    expect(error.message).toContain("gitlab.com");
   }),
 );
 
@@ -2898,6 +3239,47 @@ it.effect("close and reopen notify subscribed readers after invalidating their c
   }),
 );
 
+it.effect("a refused merge notifies readers so they re-read the conflicting state", () =>
+  Effect.gen(function* () {
+    let mergeable = true;
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequestSummary: () =>
+            Effect.succeed({
+              ...changeRequest(1, "2026-09-16T00:00:00.000Z"),
+              mergeability: mergeable ? "mergeable" : "conflicting",
+            }),
+          runAction: () =>
+            Effect.suspend(() => {
+              mergeable = false;
+              return Effect.fail(
+                new PullRequestProviderError({
+                  provider: SourceControlProviderKind.make("github"),
+                  operation: "runAction",
+                  reason: "failed",
+                  detail: "Pull Request has merge conflicts",
+                }),
+              );
+            }),
+        }),
+      ],
+    });
+
+    assert.strictEqual((yield* service.summary(reference)).mergeability, "mergeable");
+    const refreshed = yield* service.subscribeRefreshes.pipe(
+      Stream.take(1),
+      Stream.mapEffect(() => service.summary(reference)),
+      Stream.runHead,
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* Effect.flip(service.runAction({ ...reference, action: "merge" }));
+    assert.strictEqual(Option.getOrThrow(yield* Fiber.join(refreshed)).mergeability, "conflicting");
+  }),
+);
+
 it.effect("reads a host's repositories in one search, and files the rows back under each", () =>
   Effect.gen(function* () {
     const asked: Array<ReadonlyArray<string>> = [];
@@ -3185,6 +3567,7 @@ it.effect("fills in the line counts for the rows it is given", () =>
     assert.deepStrictEqual(result.stats, [
       {
         projectId: "p1" as ProjectId,
+        host: "github.com",
         repository: "acme/web",
         number: 1,
         additions: 12,
@@ -3246,6 +3629,40 @@ it.effect("reads the fresh diff when detail or summary discovers a changed revis
     yield* service.summary(reference, { recoverTransientFailure: false });
     assert.strictEqual((yield* service.diff(reference)).patch, patch);
     assert.strictEqual(diffCalls, 3);
+  }),
+);
+
+it.effect("keeps a withheld file's read out of the page's cached diff", () =>
+  Effect.gen(function* () {
+    const provider = fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+      getDiff: (input) =>
+        Effect.succeed({
+          patch: input.path === undefined ? "page" : `file ${input.path}`,
+          truncated: input.path === undefined,
+          nextCursor: null,
+        }),
+    });
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [provider],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 10 };
+    assert.strictEqual((yield* service.diff(ref)).patch, "page");
+    assert.strictEqual(
+      (yield* service.diff({ ...ref, path: "sdk.patch" })).patch,
+      "file sdk.patch",
+    );
+    assert.strictEqual((yield* service.diff(ref)).patch, "page");
+
+    // A host that would answer with its whole diff must not be cached as one file's.
+    const wholeDiffOnly = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        { ...provider, capabilities: { ...provider.capabilities, withheldFileDiff: false } },
+      ],
+    });
+    const error = yield* Effect.flip(wholeDiffOnly.diff({ ...ref, path: "sdk.patch" }));
+    assert.strictEqual(error._tag, "PullRequestOperationError");
   }),
 );
 
@@ -3458,6 +3875,7 @@ it.effect(
               Effect.succeed({
                 ...changeRequest(1, "2026-07-02T00:00:00Z"),
                 isDraft: true,
+                rebaseRequired: false,
                 reviewDecision: "approved",
                 checksState: "passing",
               }),
@@ -3467,6 +3885,7 @@ it.effect(
                 deletions: 3,
                 changedFiles: 5,
                 mergeability: "conflicting",
+                rebaseRequired: true,
               }),
           }),
         ],
@@ -3474,6 +3893,8 @@ it.effect(
       yield* service.summary(reference);
       const detail = yield* service.detail(reference);
       const summary = yield* service.summary(reference);
+      assert.strictEqual(detail.rebaseRequired, true);
+      assert.strictEqual(summary.rebaseRequired, true);
       assert.strictEqual(summary.isDraft, false);
       assert.deepStrictEqual(summary.author, detail.author);
       assert.strictEqual(summary.additions, 14);
@@ -3597,7 +4018,15 @@ it.effect.each(["github", "azure-devops"])(
             getChangeRequest: () =>
               Effect.succeed({
                 ...hostedChangeRequest("Description"),
-                checks: [{ name: "build", status: "success", description: null, url: null }],
+                checks: [
+                  {
+                    name: "build",
+                    status: provider === "github" ? "action-required" : "success",
+                    description: null,
+                    url: null,
+                  },
+                ],
+                ...(provider === "github" ? { workflowApprovalsRequired: 1 } : {}),
               }),
             getChangeRequestChecks: () =>
               Effect.sync(() => {
@@ -3613,6 +4042,7 @@ it.effect.each(["github", "azure-devops"])(
         state: detail.state,
         checks: detail.checks,
         observedAt: detail.observedAt,
+        ...(provider === "github" ? { workflowApprovalsRequired: 1 } : {}),
       });
       expect(reads).toBe(0);
       yield* TestClock.adjust("16 seconds");
@@ -4893,6 +5323,66 @@ it.effect("authorizes cold source reads with paginated paths without fetching pa
   }),
 );
 
+const activityListing = (...oids: ReadonlyArray<string>) => ({
+  getChangeRequestActivity: () =>
+    Effect.succeed({
+      comments: [],
+      commentCount: 0,
+      commentsTruncated: false,
+      reviewThreads: [],
+      commits: oids.map((oid) => ({
+        oid,
+        messageHeadline: "Change",
+        committedDate: "2026-01-01T00:00:00.000Z",
+      })),
+    }),
+});
+
+it.effect("reads a commit's diff only for a commit the change request lists", () =>
+  Effect.gen(function* () {
+    const listed = "a".repeat(40);
+    const read: Array<string | undefined> = [];
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          ...activityListing(listed, "b".repeat(40)),
+          getDiff: (input) =>
+            Effect.sync(() => {
+              read.push(input.commit);
+              return {
+                patch: "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n+x\n",
+                truncated: false,
+                nextCursor: null,
+              };
+            }),
+          getDiffFileContents: (input) =>
+            Effect.sync(() => {
+              read.push(input.commit);
+              return { oldContents: "old", newContents: "new" };
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const file = { changeType: "change" as const, oldPath: "a.ts", newPath: "a.ts" };
+
+    for (const commit of ["c".repeat(40), "abcdef", "A".repeat(41), ""]) {
+      const diff = yield* service.diff({ ...ref, commit }).pipe(Effect.flip);
+      const contents = yield* service
+        .diffFileContents({ ...ref, ...file, commit })
+        .pipe(Effect.flip);
+      assert.strictEqual(diff.reason, "not-found");
+      assert.strictEqual(contents.reason, "not-found");
+    }
+    assert.deepStrictEqual(read, []);
+
+    yield* service.diff({ ...ref, commit: "AAAAAAA" });
+    yield* service.diffFileContents({ ...ref, ...file, commit: "aaaaaaa" });
+    assert.deepStrictEqual(read, [listed, listed]);
+  }),
+);
+
 it.effect.each(["commit", "credential", "expiry", "refresh"] as const)(
   "keeps cold metadata membership in its original scope through an in-flight %s",
   (boundary) =>
@@ -4912,6 +5402,7 @@ it.effect.each(["commit", "credential", "expiry", "refresh"] as const)(
               Effect.suspend(() =>
                 use({ accountId: "101", viewer: "octocat", credentialFingerprint: credential }),
               ),
+            ...activityListing("a".repeat(40)),
             getDiff: () => Effect.die("Membership must not fetch patch hunks"),
             getDiffFilePaths: (input) =>
               Effect.gen(function* () {
@@ -5076,6 +5567,7 @@ it.effect.each(["commit", "credential"] as const)(
               Effect.suspend(() =>
                 use({ accountId: "101", viewer: "octocat", credentialFingerprint: credential }),
               ),
+            ...activityListing("a".repeat(40)),
             getDiff: () =>
               Effect.sync(() => ({
                 patch:
@@ -5133,6 +5625,7 @@ it.effect.each(["expiry", "commit expiry", "cache hit", "commit cache hit", "ref
         ],
         providers: [
           fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            ...activityListing("a".repeat(40)),
             getDiff: () =>
               Effect.gen(function* () {
                 if (++diffReads !== 1) return { patch: "", truncated: false, nextCursor: null };

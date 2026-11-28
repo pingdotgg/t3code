@@ -22,6 +22,14 @@ describe("Enriched link presentation", () => {
       "app.tsx:12:3",
       "src/http.ts:42-64",
       "http.ts:42-64",
+      "app/(auth)/login/page.tsx",
+      "src/routes/[id]/+page.svelte",
+      "app/routes/posts.$id.tsx",
+      "node_modules/@scope/pkg/index.js",
+      "+page.svelte:42",
+      "[id].tsx:10:2",
+      "posts.$id.tsx:18-24",
+      "(auth).tsx:5",
     ]) {
       expect(ENRICHED_INLINE_FILE_LINK_REGEX.test(path), path).toBe(true);
     }
@@ -34,7 +42,11 @@ describe("Enriched link presentation", () => {
       "https://example.com/app.tsx",
       "x + y",
       "README.md",
+      "Dockerfile",
+      "docker/Dockerfiles",
       "/app/settings",
+      "me@example.com:80",
+      "+page.svelte",
     ]) {
       expect(ENRICHED_INLINE_FILE_LINK_REGEX.test(text), text).toBe(false);
     }
@@ -66,6 +78,7 @@ describe("Enriched link presentation", () => {
       "Try (model:codex/gpt-6.1).",
       "Try [model:codex/gpt-6.1] next",
       '"model:codex/gpt-6.1"',
+      "‏model:codex/gpt-6.1 هذا شرح",
     ]) {
       const source = regex?.exec(text)?.[0];
       expect(source, text).toBe("model:codex/gpt-6.1");

@@ -29,11 +29,28 @@ export interface AgentScopeShape {
    */
   readonly kill: (threadId: string) => Effect.Effect<boolean>;
   /**
+   * Where agents' memory can be read: the cgroup of the agents slice and of each
+   * live agent scope, with the thread that owns it. Undefined without scopes.
+   */
+  readonly controlGroups: Effect.Effect<AgentControlGroups | undefined>;
+  /**
    * Forgets the thread's scope. The session manager calls it before it opens
    * a provider session, so a scope only answers for the session that launched
    * it, even when the next session runs without one (Cursor, OpenCode).
    */
   readonly clear: (threadId: string) => Effect.Effect<void>;
+}
+
+export interface AgentControlGroups {
+  /** Relative to the cgroup root, such as `/user.slice/.../app-t3code-agents.slice`. */
+  readonly slice: string;
+  readonly scopes: ReadonlyArray<{
+    readonly path: string;
+    /** Undefined for a process several threads share. */
+    readonly threadId: string | undefined;
+    /** What launched it, such as `claude` or `codex`. */
+    readonly agent: string;
+  }>;
 }
 
 export interface AgentScopeCommand {
@@ -49,6 +66,7 @@ export const AgentScope = Context.Reference<AgentScopeShape>("@t3tools/shared/Ag
     oomKilled: () => Effect.succeed(false),
     stop: () => Effect.void,
     kill: () => Effect.succeed(false),
+    controlGroups: Effect.undefined,
     clear: () => Effect.void,
   }),
 });
@@ -94,13 +112,14 @@ export function agentScopeCommand(input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly scope?: AgentSystemdScope | undefined;
+  readonly shell?: string | undefined;
 }): AgentScopeCommand {
-  const { command, args, scope } = input;
+  const { command, args, scope, shell = "/bin/sh" } = input;
   if (scope === undefined) {
-    return { command: "/bin/sh", args: ["-c", LAUNCH_SCRIPT, "t3-agent", command, ...args] };
+    return { command: shell, args: ["-c", LAUNCH_SCRIPT, "t3-agent", command, ...args] };
   }
   return {
-    command: "/bin/sh",
+    command: shell,
     args: [
       "-c",
       SCOPED_LAUNCH_SCRIPT,

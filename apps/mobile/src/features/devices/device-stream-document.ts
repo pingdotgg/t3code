@@ -18,6 +18,11 @@ export interface DeviceStreamConfiguration {
     readonly buttonForeground: string;
     readonly buttonBorder: string;
   };
+  /** Translated in React Native: the WebView cannot load the catalogs. */
+  readonly labels: {
+    readonly screen: string;
+    readonly reconnectingControls: string;
+  };
 }
 
 export function deviceStreamBaseUrl(
@@ -33,10 +38,15 @@ export function deviceStreamBaseUrl(
   return `${new URL(httpBase).origin}/`;
 }
 
-export function deviceStreamDocument(configuration: string, script: string) {
+export function deviceStreamDocument(
+  configuration: string,
+  script: string,
+  stoppedDetail = "Device viewer stopped unexpectedly.",
+) {
   const safeConfiguration = configuration.replace(/</g, "\\u003c");
   const safeScript = script.replace(/<\/script/gi, "<\\/script");
-  const failure = `window.ReactNativeWebView.postMessage(JSON.stringify({type:"status",status:"error",detail:"Device viewer stopped unexpectedly."}));`;
+  const safeStoppedDetail = JSON.stringify(stoppedDetail).replace(/</g, "\\u003c");
+  const failure = `window.ReactNativeWebView.postMessage(JSON.stringify({type:"status",status:"error",detail:${safeStoppedDetail}}));`;
   return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"></head><body><script>window.addEventListener("error",function(){${failure}});window.addEventListener("unhandledrejection",function(){${failure}});\n${safeScript}\ntry{T3DeviceStream.start(${safeConfiguration});}catch{${failure}}</script></body></html>`;
 }
 

@@ -43,6 +43,7 @@ const ClientCacheSummaryRows = Schema.Array(
 
 const MobileDatabaseOperation = Schema.Literals([
   "open",
+  "close",
   "migrate",
   "load-cache",
   "list-cache",
@@ -127,7 +128,11 @@ const makeAvailable = Effect.gen(function* () {
       },
       catch: databaseError("open"),
     }),
-    (openDatabase) => Effect.promise(() => openDatabase.closeAsync()).pipe(Effect.ignore),
+    (openDatabase) =>
+      Effect.tryPromise({
+        try: () => openDatabase.closeAsync(),
+        catch: databaseError("close"),
+      }).pipe(Effect.ignore),
   );
 
   yield* Effect.tryPromise({

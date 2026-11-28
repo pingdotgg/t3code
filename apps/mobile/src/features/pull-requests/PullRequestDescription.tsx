@@ -1,3 +1,4 @@
+import { mediaReferenceFileName } from "@t3tools/client-runtime/media-reference";
 import { splitPullRequestBody } from "@t3tools/client-runtime/pull-request-markdown";
 import {
   PullRequestImageAttachment,
@@ -5,11 +6,12 @@ import {
   PullRequestMediaContext,
 } from "./PullRequestMedia";
 import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
+import { T, useGT, useMessages } from "gt-react-native";
 import { useContext, useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { pullRequestImageSource } from "./pullRequestMediaSource";
-import { parseMarkdownDocument } from "../../lib/markdownDocument";
+import { markdownReferenceDefinitions, parseMarkdownDocument } from "../../lib/markdownDocument";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -22,39 +24,51 @@ const COLLAPSED_HEIGHT = 240;
 
 export function PullRequestDescription(props: {
   readonly markdown: string;
-  readonly onCollapse: () => void;
-  readonly expanded: boolean;
-  readonly onExpandedChange: (expanded: boolean) => void;
+  /** Clips a long description behind "Show more"; absent, it is always shown in full. */
+  readonly collapse?: {
+    readonly expanded: boolean;
+    readonly onExpandedChange: (expanded: boolean) => void;
+    readonly onCollapse: () => void;
+  };
   readonly footer?: ReactNode;
   readonly onTaskListChange?: ComponentProps<typeof PullRequestMarkdown>["onTaskListChange"];
 }) {
-  const { expanded, onExpandedChange } = props;
+  const { collapse } = props;
+  const expanded = collapse?.expanded ?? true;
+  const gt = useGT();
+  const messages = useMessages();
   const [bodyHeight, setBodyHeight] = useState(0);
   const mediaContext = useContext(PullRequestMediaContext);
   const { themeVariables: colors } = useAppearancePreferences();
   const fadeColor = colors[Platform.OS === "android" ? "--color-sheet-solid" : "--color-screen"];
   const content = useMemo(() => {
     const document = parseMarkdownDocument(props.markdown);
-    const content = pullRequestDescriptionContent(document, splitPullRequestBody(props.markdown));
+    const content = pullRequestDescriptionContent(
+      document,
+      splitPullRequestBody(props.markdown, markdownReferenceDefinitions),
+      messages,
+    );
     return {
       ...content,
       attachments: content.attachments.filter((attachment) => !isBotBadgeImage(attachment.uri)),
     };
-  }, [props.markdown]);
+  }, [props.markdown, messages]);
   const gallery: FilePreviewItem[] = content.attachments
     .filter((attachment) => attachment.kind === "image")
     .map((attachment) => {
       return {
         ...pullRequestImageSource(attachment.uri, mediaContext),
-        name: new URL(attachment.uri).pathname.split("/").pop() || "Image",
+        name: mediaReferenceFileName({ kind: "url", url: attachment.uri }) || gt("Image"),
       };
     });
-  const canCollapse = bodyHeight > COLLAPSED_HEIGHT;
+  const canCollapse = collapse !== undefined && bodyHeight > COLLAPSED_HEIGHT;
   const collapsed = canCollapse && !expanded;
   return (
     <View className="gap-5">
       <View className="gap-3">
-        <PullRequestSectionHeading>Description</PullRequestSectionHeading>
+        <PullRequestSectionHeading>
+          <T>Description</T>
+        </PullRequestSectionHeading>
         {props.markdown.trim() ? (
           <View className="overflow-hidden">
             <View
@@ -108,14 +122,16 @@ export function PullRequestDescription(props: {
                 />
               </View>
             ) : null}
-            {canCollapse ? (
+            {collapse !== undefined && canCollapse ? (
               <Pressable
                 accessibilityRole="button"
                 accessibilityState={{ expanded }}
-                accessibilityLabel={expanded ? "Collapse description" : "Expand description"}
+                accessibilityLabel={
+                  expanded ? gt("Collapse description") : gt("Expand description")
+                }
                 onPress={() => {
-                  if (expanded) props.onCollapse();
-                  onExpandedChange(!expanded);
+                  if (expanded) collapse.onCollapse();
+                  collapse.onExpandedChange(!expanded);
                 }}
                 style={
                   collapsed
@@ -125,7 +141,7 @@ export function PullRequestDescription(props: {
                 className="min-h-11 flex-row items-center justify-center gap-1 py-2 active:opacity-70"
               >
                 <Text className="text-xs font-t3-medium text-foreground">
-                  {expanded ? "Show less" : "Show more"}
+                  {expanded ? gt("Show less") : gt("Show more")}
                 </Text>
                 <SymbolView
                   name={expanded ? "chevron.up" : "chevron.down"}
@@ -136,13 +152,17 @@ export function PullRequestDescription(props: {
             ) : null}
           </View>
         ) : (
-          <Text className="text-sm text-foreground-muted">No description provided.</Text>
+          <Text className="text-sm text-foreground-muted">
+            <T>No description provided.</T>
+          </Text>
         )}
         {props.footer}
       </View>
       {content.attachments.length ? (
         <View className="gap-3">
-          <PullRequestSectionHeading>Attachments</PullRequestSectionHeading>
+          <PullRequestSectionHeading>
+            <T>Attachments</T>
+          </PullRequestSectionHeading>
           <ScrollView
             horizontal
             keyboardShouldPersistTaps="always"

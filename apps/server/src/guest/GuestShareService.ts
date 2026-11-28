@@ -52,7 +52,6 @@ import { coalesceThreadLiveStream } from "../orchestration-v2/ThreadLiveEventCoa
 import { buildBoundedThreadStreamSnapshot } from "../orchestration-v2/ThreadStream.ts";
 import {
   projectTurnItemForDetail,
-  projectTurnItemForWire,
   threadStreamEventItem,
 } from "../orchestration-v2/WireProjection.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
@@ -217,6 +216,16 @@ const threadOf = (event: OrchestrationV2DomainEvent): OrchestrationV2AppThread |
       return null;
   }
 };
+
+/** A guest sees that a file changed, never the text of the change, whatever its status. */
+const withoutFileText = (item: OrchestrationV2TurnItem): OrchestrationV2TurnItem => {
+  if (item.type !== "file_change") return item;
+  const { diffStr: _diff, oldStr: _old, newStr: _new, ...shown } = item;
+  return shown;
+};
+const rowWithoutFileText = <Row extends { readonly item: OrchestrationV2TurnItem }>(
+  row: Row,
+): Row => ({ ...row, item: withoutFileText(row.item) });
 
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -481,6 +490,12 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const endsShareFor = (shareId: GuestShareId) => (event: OrchestrationV2DomainEvent) => {
+    if (event.type === "thread.archived" || event.type === "thread.deleted") return true;
+    const updated = threadOf(event);
+    return updated !== null && updated.guestShare?.id !== shareId;
+  };
+
   /** Completes once the session no longer opens its share, so open reads end with it. */
   const untilRevoked = (session: string) =>
     authorize(session, "session").pipe(
@@ -550,11 +565,7 @@ const make = Effect.gen(function* () {
     if (initialView === null) return yield* inactive;
 
     const ended: GuestStreamEvent = { type: "ended" };
-    const endsShare = (event: OrchestrationV2DomainEvent) => {
-      if (event.type === "thread.archived" || event.type === "thread.deleted") return true;
-      const updated = threadOf(event);
-      return updated !== null && updated.guestShare?.id !== share.id;
-    };
+    const endsShare = endsShareFor(share.id);
     const live = orchestrator
       .streamStoredEventsFrom({ threadId: thread.id, afterSequence: snapshot.snapshotSequence })
       .pipe(
@@ -566,12 +577,16 @@ const make = Effect.gen(function* () {
           if (item.kind !== "event") return [];
           if (endsShare(item.event)) return [ended];
           if (item.event.type === "turn-item.updated") rememberSent(share.id, [item.event.payload]);
+          const shown =
+            item.event.type === "turn-item.updated"
+              ? { ...item, event: { ...item.event, payload: withoutFileText(item.event.payload) } }
+              : item;
           const updated = threadOf(item.event);
           const view = updated === null ? null : viewOf(updated);
           return view === null
-            ? [{ type: "thread", item }]
+            ? [{ type: "thread", item: shown }]
             : [
-                { type: "thread", item },
+                { type: "thread", item: shown },
                 { type: "view", view },
               ];
         }),
@@ -585,7 +600,11 @@ const make = Effect.gen(function* () {
     );
     const openingSnapshot = buildBoundedThreadStreamSnapshot({
       snapshotSequence: snapshot.snapshotSequence,
-      projection: snapshot.projection,
+      projection: {
+        ...snapshot.projection,
+        turnItems: snapshot.projection.turnItems.map(withoutFileText),
+        visibleTurnItems: snapshot.projection.visibleTurnItems.map(rowWithoutFileText),
+      },
     });
     const opening: ReadonlyArray<GuestStreamEvent> = [
       { type: "view", view: initialView },
@@ -638,18 +657,27 @@ const make = Effect.gen(function* () {
     session: string,
     itemId: string,
   ) {
-    const { thread } = yield* authorize(session, "session");
-    const item = yield* orchestrator
-      .getTurnItem({ threadId: thread.id, itemId: TurnItemId.make(itemId) })
-      .pipe(Effect.mapError(() => unavailable));
-    return item === null ? yield* unavailable : { thread, item };
+    const { thread, share } = yield* authorize(session, "session");
+    const id = TurnItemId.make(itemId);
+    const item =
+      (yield* orchestrator
+        .getTurnItem({ threadId: thread.id, itemId: id })
+        .pipe(Effect.mapError(() => unavailable))) ??
+      // A fork shows its source's earlier items, which stay in the source thread.
+      (thread.forkedFrom === null
+        ? null
+        : yield* orchestrator.getTimelinePage(thread.id, { itemId: id, limit: 1 }).pipe(
+            Effect.map((page) => page.items[0]?.item ?? null),
+            Effect.mapError(() => unavailable),
+          ));
+    return item === null ? yield* unavailable : { thread, share, item };
   });
 
   const render = Effect.fn("GuestShareService.render")(function* (session: string, itemId: string) {
-    const { thread, item } = yield* threadItem(session, itemId);
+    const { item } = yield* threadItem(session, itemId);
     if (item.type !== "dynamic_tool") return yield* unavailable;
     const reference = htmlRenderFromToolItem(item);
-    const [attachmentId] = threadHtmlRenderAttachmentIds(thread.id, [item]);
+    const [attachmentId] = threadHtmlRenderAttachmentIds(item.threadId, [item]);
     const path =
       attachmentId === undefined
         ? null
@@ -660,10 +688,7 @@ const make = Effect.gen(function* () {
 
   const item = Effect.fn("GuestShareService.item")(function* (session: string, itemId: string) {
     const { item } = yield* threadItem(session, itemId);
-    return {
-      item:
-        item.type === "file_change" ? projectTurnItemForWire(item) : projectTurnItemForDetail(item),
-    };
+    return { item: projectTurnItemForDetail(withoutFileText(item)) };
   });
 
   const history = Effect.fn("GuestShareService.history")(function* (
@@ -678,19 +703,36 @@ const make = Effect.gen(function* () {
       share.id,
       page.items.map((row) => row.item),
     );
-    return page;
+    return { ...page, items: page.items.map(rowWithoutFileText) };
   });
 
   const commandOutput = Effect.fn("GuestShareService.commandOutput")(function* (
     session: string,
     itemId: string,
   ) {
-    const { thread, item } = yield* threadItem(session, itemId);
+    const { thread, share, item } = yield* threadItem(session, itemId);
     if (item.type !== "command_execution") return yield* unavailable;
-    return commandOutputs.subscribe({ threadId: thread.id, itemId: item.id }).pipe(
+    const afterSequence = yield* orchestrator
+      .getThreadEventSequence(thread.id)
+      .pipe(Effect.mapError(() => unavailable));
+    // A share that ends before the cursor is read fails this check; one that ends after it ends
+    // `shareEnded`.
+    yield* authorize(session, "session");
+    const endsShare = endsShareFor(share.id);
+    const shareEnded = orchestrator
+      .streamStoredEventsFrom({ threadId: thread.id, afterSequence })
+      .pipe(
+        Stream.filter((stored) => endsShare(stored.event)),
+        Stream.runHead,
+        Effect.ignore,
+      );
+    const untilExpiry = Effect.sleep(
+      Math.max(0, Date.parse(share.expiresAt) - DateTime.toEpochMillis(yield* DateTime.now)),
+    );
+    return commandOutputs.subscribe({ threadId: item.threadId, itemId: item.id }).pipe(
       // A lost hub stream ends the output; the row reloads it when reopened.
       Stream.catchCause(() => Stream.empty),
-      Stream.interruptWhen(untilRevoked(session)),
+      Stream.interruptWhen(Effect.raceAll([shareEnded, untilExpiry, untilRevoked(session)])),
     );
   });
 

@@ -5,6 +5,11 @@
  * interrupt one or many fibers, check unknown values, access the current fiber,
  * and attach manually managed fibers to a `Scope` for cleanup.
  *
+ * Waiting on a fiber does not make it a child of the waiting fiber. Interrupting
+ * an observer only stops that wait, but does not change existing ownership:
+ * a child created with `Effect.forkChild` is still interrupted when its parent
+ * exits, whether or not the parent was waiting on it.
+ *
  * @stability stable
  * @since 2.0.0
  */
@@ -81,6 +86,11 @@ export interface Fiber<out A, out E = never> extends Pipeable {
   readonly cache: Fiber.Cache
   readonly currentDispatcher: SchedulerDispatcher
   readonly addObserver: (cb: (exit: Exit<A, E>) => void) => () => void
+  /**
+   * Requests interruption without waiting for the fiber to finish. Optional
+   * annotations are attached to the `Interrupt` reason as with
+   * {@link interruptAs}, which also waits for the fiber to finish.
+   */
   readonly interruptUnsafe: (
     fiberId?: number | undefined,
     annotations?: Context.Context<never> | undefined
@@ -197,8 +207,10 @@ export {
    *
    * **Details**
    *
-   * The returned Effect always succeeds with an `Exit` describing the fiber's
-   * outcome.
+   * When the wait completes, it succeeds with an `Exit` describing the fiber's
+   * outcome. Interrupting the waiting fiber only stops the wait; it does not
+   * itself interrupt the awaited fiber. Existing parent-child lifetime rules
+   * still apply.
    *
    * **Gotchas**
    *
@@ -235,6 +247,10 @@ export {
  * interruptions.
  *
  * **Details**
+ *
+ * Interrupting the waiting fiber only stops the wait; it does not itself
+ * interrupt the awaited fibers. Existing parent-child lifetime rules still
+ * apply.
  *
  * The returned array is ordered like the input iterable.
  *
@@ -282,6 +298,12 @@ export const awaitAll: <A extends Fiber<any, any>>(
  * Use when you need a forked fiber's failure to fail the current Effect because
  * that fiber is part of the current workflow.
  *
+ * **Details**
+ *
+ * Interrupting the waiting fiber only stops the wait; it does not itself
+ * interrupt the awaited fiber. Existing parent-child lifetime rules still
+ * apply.
+ *
  * **Gotchas**
  *
  * Joining a failed fiber propagates the fiber's Cause. Use {@link await_ await} when
@@ -318,6 +340,10 @@ export const join: <A, E>(self: Fiber<A, E>) => Effect<A, E> = effect.fiberJoin
  * rather than the `Exit` values.
  *
  * **Details**
+ *
+ * Interrupting the waiting fiber only stops the wait; it does not itself
+ * interrupt the awaited fibers. Existing parent-child lifetime rules still
+ * apply.
  *
  * If any fiber fails, the returned `Effect` fails with that fiber's cause and
  * stops waiting for additional results. This does not interrupt the remaining
@@ -398,11 +424,19 @@ export const interrupt: <A, E>(self: Fiber<A, E>) => Effect<void> = effect.fiber
  * **Details**
  *
  * The returned Effect completes only after the interrupted fiber has completed.
+ * Any supplied annotations are attached to the `Interrupt` reason for this
+ * request. Read them with `Cause.reasonAnnotations`, or use `Cause.annotations`
+ * to read the merged annotations from all reasons in the cause.
  *
  * **Gotchas**
  *
- * The supplied ID affects the recorded interruptor. It does not make
- * interruption synchronous or force uninterruptible regions to stop early.
+ * - The supplied ID identifies the interruptor; it does not force an
+ *   uninterruptible region to stop early. If the fiber finishes in that region
+ *   without receiving the interruption, or has already exited, its exit does
+ *   not contain this request's annotations.
+ * - The runtime preserves caller-supplied keys except for `Cause.StackTrace`
+ *   and `Cause.InterruptorStackTrace`. If you supply either runtime-owned key,
+ *   which value you get is unspecified.
  *
  * **Example** (Interrupting a fiber as another fiber)
  *

@@ -7,9 +7,21 @@ import { reportAtomCommandResult, settlePromise } from "../state/runtime.ts";
  */
 export interface CloudAccountSource {
   readonly addListener: (
-    listener: (resources: { readonly user?: { readonly id: string } | null | undefined }) => void,
+    listener: (resources: {
+      readonly client?: { readonly id?: string | null | undefined } | null | undefined;
+      readonly user?: { readonly id: string } | null | undefined;
+    }) => void,
   ) => () => void;
 }
+
+/**
+ * Clerk's load status cannot prove its API answered: offline it emits an
+ * id-less client, and a failed launch fetch emits a "client_init" placeholder
+ * built from the session cookie. Only a real /v1/client response has an id.
+ */
+const isClientFromClerkApi = (
+  client: { readonly id?: string | null | undefined } | null | undefined,
+) => Boolean(client?.id) && client?.id !== "client_init";
 
 interface CloudAccountSignIn {
   readonly _tag: "SignIn";
@@ -32,7 +44,8 @@ export type CloudAccountStep =
 /**
  * `previous` is undefined until Clerk's first emission. A first emission that
  * is signed out still cleans up, so data left by an account that signed out
- * while the app was closed does not linger.
+ * while the app was closed does not linger. The service only plans that step
+ * once Clerk's API has confirmed the sign-out.
  */
 export function planCloudAccountStep(
   previous: string | null | undefined,
@@ -200,7 +213,17 @@ export function createCloudAccountService<S extends CloudAccountSource>(
           // Clerk reports `user: undefined` until it loads; pending sessions
           // still carry a user and count as signed in.
           if (resources.user === undefined) return;
-          observe(source, resources.user?.id ?? null);
+          const next = resources.user?.id ?? null;
+          // An unreachable Clerk API at launch looks signed out; stay unobserved
+          // until Clerk confirms it, so saved environments survive offline starts.
+          if (
+            next === null &&
+            state._tag === "Unobserved" &&
+            !isClientFromClerkApi(resources.client)
+          ) {
+            return;
+          }
+          observe(source, next);
         }),
       };
       attached = current;

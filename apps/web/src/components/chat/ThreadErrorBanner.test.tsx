@@ -42,4 +42,21 @@ describe("ThreadErrorBanner", () => {
       ),
     ).toBe(true);
   });
+
+  it("reappears when a later run fails with the same error on the same thread", () => {
+    const error = "Turn failed";
+    const dismissedKey = getThreadErrorBannerKey("env:thread-c", error, "run-a");
+    dismissThreadErrorBannerForSession(dismissedKey);
+    const laterRunKey = getThreadErrorBannerKey("env:thread-c", error, "run-b");
+
+    expect(isThreadErrorBannerDismissedForSession(dismissedKey)).toBe(true);
+    expect(isThreadErrorBannerDismissedForSession(laterRunKey)).toBe(false);
+    expect(
+      shouldShowThreadErrorBanner(
+        "env:thread-c",
+        error,
+        isThreadErrorBannerDismissedForSession(laterRunKey),
+      ),
+    ).toBe(true);
+  });
 });

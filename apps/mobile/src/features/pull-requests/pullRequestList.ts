@@ -10,8 +10,10 @@ import {
   type PullRequestListResult,
   type PullRequestListStatsInput,
 } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
 import type { PullRequestListControls } from "../../persistence/mobile-preferences";
 import { compareTimestamps } from "../../lib/time";
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export const PR_LIST_PAGE_SIZE = 30;
 export type { PullRequestListControls } from "../../persistence/mobile-preferences";
@@ -188,6 +190,7 @@ export function pullRequestListRowsAreEqual(
       previous.title === next.title &&
       previous.url === next.url &&
       previous.state === next.state &&
+      previous.visibility === next.visibility &&
       previous.isDraft === next.isDraft &&
       previous.mergeability === next.mergeability &&
       previous.baseBranch === next.baseBranch &&
@@ -355,31 +358,45 @@ export function pullRequestFilterChoices(input: {
   readonly query: string;
 }): readonly string[] {
   const needle = input.query.trim().toLowerCase();
-  const seen = new Set<string>();
-  const rows: string[] = [];
-  const add = (value: string) => {
-    const key = value.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    rows.push(value);
-  };
   const loaded = input.suggestions.filter((value) => value.toLowerCase().includes(needle));
-  for (const value of input.selected) add(value);
-  // Loaded matches alone could fill the list, so the host's answers get room after the first half.
-  for (const value of loaded.slice(0, FILTER_CHOICE_LIMIT / 2)) add(value);
-  for (const value of input.hosted) add(value);
-  for (const value of loaded.slice(FILTER_CHOICE_LIMIT / 2)) add(value);
-  return rows.slice(0, FILTER_CHOICE_LIMIT);
+  return distinctIgnoringCase([
+    ...input.selected,
+    // Loaded matches alone could fill the list, so the host's answers get room after the first half.
+    ...loaded.slice(0, FILTER_CHOICE_LIMIT / 2),
+    ...input.hosted,
+    ...loaded.slice(FILTER_CHOICE_LIMIT / 2),
+  ]).slice(0, FILTER_CHOICE_LIMIT);
+}
+
+/** Each value once whatever its case; the first spelling wins. Hosts match labels and logins that way. */
+export function distinctIgnoringCase(values: readonly string[]) {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const key = value.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export const includesIgnoringCase = (values: readonly string[], value: string) =>
+  values.some((held) => held.toLowerCase() === value.toLowerCase());
+
+/** The labels picked after `label` is tapped: tapping one already picked, in any case, drops it. */
+export function toggledPullRequestLabels(selected: readonly string[], label: string) {
+  return includesIgnoringCase(selected, label)
+    ? selected.filter((held) => held.toLowerCase() !== label.toLowerCase())
+    : [...selected, label].slice(0, 10);
 }
 
 export function pullRequestListFacets(entries: readonly PullRequestListEntry[]) {
   return {
-    authors: [
-      ...new Set(entries.flatMap((entry) => (entry.author ? [entry.author.login] : []))),
-    ].sort((a, b) => a.localeCompare(b)),
-    labels: [...new Set(entries.flatMap((entry) => entry.labels.map((label) => label.name)))].sort(
-      (a, b) => a.localeCompare(b),
-    ),
+    authors: distinctIgnoringCase(
+      entries.flatMap((entry) => (entry.author ? [entry.author.login] : [])),
+    ).sort((a, b) => a.localeCompare(b)),
+    labels: distinctIgnoringCase(
+      entries.flatMap((entry) => entry.labels.map((label) => label.name)),
+    ).sort((a, b) => a.localeCompare(b)),
     labelColors: pullRequestLabelColors(entries.flatMap((entry) => entry.labels)),
   };
 }
@@ -465,36 +482,49 @@ export function filterPullRequestList<
 
 export function pullRequestListReviewStatus(
   entry: Pick<PullRequestListEntry, "reviewDecision" | "viewerReviewRequested">,
+  resolve: MessageResolver = m,
 ) {
   if (entry.reviewDecision === "changes-requested")
     return {
-      label: "Changes",
-      accessibleLabel: "Changes requested",
+      label: resolve(msg("Changes", { $context: "review status badge: changes requested" })),
+      accessibleLabel: resolve(msg("Changes requested")),
       icon: "person.fill.xmark",
       tint: "accent-danger-foreground",
     } as const;
   if (entry.reviewDecision === "approved")
     return {
-      label: "Approved",
-      accessibleLabel: "Reviews approved",
+      label: resolve(msg("Approved", { $context: "review status badge" })),
+      accessibleLabel: resolve(msg("Reviews approved")),
       icon: "person.fill.checkmark",
       tint: "accent-adaptive-emerald-600-400",
     } as const;
   if (entry.viewerReviewRequested)
     return {
-      label: "Your review",
-      accessibleLabel: "Your review requested",
+      label: resolve(msg("Your review")),
+      accessibleLabel: resolve(msg("Your review requested")),
       icon: "person.badge.clock",
       tint: "accent-warning-foreground",
     } as const;
   if (entry.reviewDecision === "review-required")
     return {
-      label: "Review",
-      accessibleLabel: "Review required",
+      label: resolve(msg("Review", { $context: "review status badge: review required" })),
+      accessibleLabel: resolve(msg("Review required")),
       icon: "person.badge.clock",
       tint: "accent-icon-muted",
     } as const;
   return null;
+}
+
+export function pullRequestListDiffStatsLabel(
+  entry: Pick<PullRequestListEntry, "additions" | "deletions">,
+  resolve: MessageResolver = m,
+) {
+  return resolve(
+    msg(
+      "{additions, plural, one {{additions} addition} other {{additions} additions}}, {deletions, plural, one {{deletions} deletion} other {{deletions} deletions}}",
+      { additions: entry.additions, deletions: entry.deletions },
+    ),
+  );
 }
 
 export function pullRequestLabelColor(color: string | null) {
