@@ -73,7 +73,7 @@ export class GitWorkflowService extends Context.Service<
     readonly readStatusRefreshRefs: GitVcsDriver.GitVcsDriver["Service"]["readStatusRefreshRefs"];
     readonly readStatusPoll: GitVcsDriver.GitVcsDriver["Service"]["readStatusPoll"];
     readonly readRefSnapshot: GitVcsDriver.GitVcsDriver["Service"]["readRefSnapshot"];
-    readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
+    readonly invalidateStatus: GitManager.GitManager["Service"]["invalidateStatus"];
     /** The checkout's own HEAD file, inside a linked worktree's admin directory when there is one. */
     readonly headPath: (cwd: string) => Effect.Effect<string | null, never>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
