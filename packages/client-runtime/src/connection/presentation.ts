@@ -1,4 +1,5 @@
 import type { ServerConfig } from "@t3tools/contracts";
+import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import * as Option from "effect/Option";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -173,6 +174,22 @@ export function environmentMcpUrl(input: {
     if (mcpUrl !== null) return mcpUrl;
   }
   return null;
+}
+
+/**
+ * The MCP address for the environment this app runs. Agents only sign in over https or
+ * loopback, so a plain-http LAN address is not offered.
+ */
+export function localEnvironmentMcpUrl(input: {
+  readonly entry: ConnectionCatalogEntry;
+}): string | null {
+  const mcpUrl = environmentMcpUrl({ entry: input.entry });
+  return mcpUrl !== null && isAgentSignInMcpUrl(mcpUrl) ? mcpUrl : null;
+}
+
+function isAgentSignInMcpUrl(mcpUrl: string): boolean {
+  const url = new URL(mcpUrl);
+  return url.protocol === "https:" || isLocalLoopbackHost(url.hostname);
 }
 
 function mcpUrlFromBase(httpBaseUrl: string): string | null {

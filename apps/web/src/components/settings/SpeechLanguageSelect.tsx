@@ -14,6 +14,10 @@ export function languageLabel(code: string, locale = "en"): string {
   return languageNames.of(code) ?? code;
 }
 
+export function compareLanguageLabels(left: string, right: string, locale: string): number {
+  return languageLabel(left, locale).localeCompare(languageLabel(right, locale), locale);
+}
+
 type ModelLanguages = Pick<
   Extract<EnvironmentSpeechStatus, { supported: true }>,
   "languages" | "supportsLanguageDetection"
@@ -68,9 +72,7 @@ export function SpeechLanguageSelect({
           </SelectItem>
         ) : null}
         {languages
-          .toSorted((left, right) =>
-            languageLabel(left, locale).localeCompare(languageLabel(right, locale)),
-          )
+          .toSorted((left, right) => compareLanguageLabels(left, right, locale))
           .map((code) => (
             <SelectItem key={code} value={code}>
               {languageLabel(code, locale)}

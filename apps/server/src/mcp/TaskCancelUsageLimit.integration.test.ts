@@ -49,6 +49,150 @@ const driver = ProviderDriverKind.make("claudeAgent");
 const instanceId = ProviderInstanceId.make("claudeAgent");
 const modelSelection = { instanceId, model: "claude-test" };
 
+type StartedTurn = {
+  readonly turn: ProviderAdapter.ProviderAdapterV2TurnInput;
+  readonly events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>;
+};
+
+const makeAdapter = (
+  cwd: string,
+  turns: Array<StartedTurn>,
+  interrupt: () => Effect.Effect<void>,
+) => {
+  const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
+    instanceId,
+    driver,
+    getCapabilities: () => Effect.succeed(ClaudeProviderCapabilitiesV2),
+    planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+    openSession: (input) =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        return {
+          instanceId,
+          driver,
+          providerSessionId: input.providerSessionId,
+          providerSession: {
+            id: input.providerSessionId,
+            driver,
+            providerInstanceId: instanceId,
+            status: "ready",
+            cwd,
+            model: modelSelection.model,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            createdAt: now,
+            updatedAt: now,
+            lastError: null,
+          },
+          events: Stream.fromQueue(events),
+          ensureThread: ({ threadId }) =>
+            Effect.succeed({
+              id: ProviderThreadId.make(`provider-thread:${threadId}`),
+              driver,
+              providerInstanceId: instanceId,
+              providerSessionId: input.providerSessionId,
+              appThreadId: threadId,
+              ownerNodeId: null,
+              nativeThreadRef: { driver, nativeId: `native:${threadId}`, strength: "strong" },
+              nativeConversationHeadRef: null,
+              status: "idle",
+              firstRunOrdinal: null,
+              lastRunOrdinal: null,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+            }),
+          resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
+          startTurn: (turn) =>
+            Effect.gen(function* () {
+              turns.push({ turn, events });
+              yield* Queue.offer(events, {
+                type: "provider_turn.updated",
+                driver,
+                providerTurn: {
+                  id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
+                  providerThreadId: turn.providerThread.id,
+                  nodeId: turn.rootNodeId,
+                  runAttemptId: turn.attemptId,
+                  nativeTurnRef: null,
+                  ordinal: turn.providerTurnOrdinal,
+                  status: "running",
+                  startedAt: now,
+                  completedAt: null,
+                },
+              });
+            }),
+          steerTurn: () => Effect.die("unused"),
+          interruptTurn: () => Effect.suspend(interrupt),
+          respondToRuntimeRequest: () => Effect.die("unused"),
+          readThreadSnapshot: () => Effect.die("unused"),
+          rollbackThread: () => Effect.die("unused"),
+          forkThread: () => Effect.die("unused"),
+        };
+      }),
+  };
+  return adapter;
+};
+
+const makeLayer = (
+  adapter: ProviderAdapter.ProviderAdapterV2["Service"],
+  sweeps: Map<string, Effect.Effect<void>>,
+) => {
+  const layerAdapters = ProviderAdapterRegistry.layerSingle(adapter);
+  const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
+    { name: "task-cancel-usage-limit" },
+    layerAdapters,
+    { runEffectWorker: false },
+  );
+  const layerOrchestration = Layer.merge(
+    layerOrchestrator,
+    ThreadManagementService.layer.pipe(
+      Layer.provide(layerOrchestrator),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+    ),
+  );
+  const layerRecovery = UsageLimitRecoveryWorker.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(Scheduler.Scheduler, {
+          register: <E, R>(name: string, work: Effect.Effect<void, E, R>) =>
+            Effect.gen(function* () {
+              const context = yield* Effect.context<R>();
+              sweeps.set(name, work.pipe(Effect.provideContext(context), Effect.orDie));
+            }),
+        }),
+        ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+        ServerSettings.layerTest({ autoResumeLimitedThreads: true }),
+      ),
+    ),
+  );
+  const layerTest = Layer.merge(
+    OrchestratorMcpService.layer.pipe(
+      Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+      Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+    ),
+    layerRecovery,
+  ).pipe(
+    Layer.provideMerge(layerOrchestration),
+    Layer.provide(
+      Layer.mergeAll(
+        layerAdapters,
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        ServerSettings.layerTest(),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        NodeServices.layer,
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+  return layerTest;
+};
+
 // A delegated child that fails on a usage limit is armed to continue at the reset.
 // Once its parent cancels the task, nothing is waiting for that continuation.
 it.effect.each([
@@ -62,137 +206,10 @@ it.effect.each([
       const cwd = yield* checkpointWorkspace("task-cancel-usage-limit");
       // Set while the provider's usage-limit result is already on its way.
       let limitInFlight: Effect.Effect<void> = Effect.void;
-      const turns: Array<{
-        readonly turn: ProviderAdapter.ProviderAdapterV2TurnInput;
-        readonly events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>;
-      }> = [];
-      const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
-        instanceId,
-        driver,
-        getCapabilities: () => Effect.succeed(ClaudeProviderCapabilitiesV2),
-        planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
-        openSession: (input) =>
-          Effect.gen(function* () {
-            const now = yield* DateTime.now;
-            const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-            return {
-              instanceId,
-              driver,
-              providerSessionId: input.providerSessionId,
-              providerSession: {
-                id: input.providerSessionId,
-                driver,
-                providerInstanceId: instanceId,
-                status: "ready",
-                cwd,
-                model: modelSelection.model,
-                capabilities: ClaudeProviderCapabilitiesV2,
-                createdAt: now,
-                updatedAt: now,
-                lastError: null,
-              },
-              events: Stream.fromQueue(events),
-              ensureThread: ({ threadId }) =>
-                Effect.succeed({
-                  id: ProviderThreadId.make(`provider-thread:${threadId}`),
-                  driver,
-                  providerInstanceId: instanceId,
-                  providerSessionId: input.providerSessionId,
-                  appThreadId: threadId,
-                  ownerNodeId: null,
-                  nativeThreadRef: { driver, nativeId: `native:${threadId}`, strength: "strong" },
-                  nativeConversationHeadRef: null,
-                  status: "idle",
-                  firstRunOrdinal: null,
-                  lastRunOrdinal: null,
-                  handoffIds: [],
-                  forkedFrom: null,
-                  createdAt: now,
-                  updatedAt: now,
-                }),
-              resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
-              startTurn: (turn) =>
-                Effect.gen(function* () {
-                  turns.push({ turn, events });
-                  yield* Queue.offer(events, {
-                    type: "provider_turn.updated",
-                    driver,
-                    providerTurn: {
-                      id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
-                      providerThreadId: turn.providerThread.id,
-                      nodeId: turn.rootNodeId,
-                      runAttemptId: turn.attemptId,
-                      nativeTurnRef: null,
-                      ordinal: turn.providerTurnOrdinal,
-                      status: "running",
-                      startedAt: now,
-                      completedAt: null,
-                    },
-                  });
-                }),
-              steerTurn: () => Effect.die("unused"),
-              interruptTurn: () => Effect.suspend(() => limitInFlight),
-              respondToRuntimeRequest: () => Effect.die("unused"),
-              readThreadSnapshot: () => Effect.die("unused"),
-              rollbackThread: () => Effect.die("unused"),
-              forkThread: () => Effect.die("unused"),
-            };
-          }),
-      };
-      const layerAdapters = ProviderAdapterRegistry.layerSingle(adapter);
-      const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
-        { name: "task-cancel-usage-limit" },
-        layerAdapters,
-        { runEffectWorker: false },
-      );
-      const layerOrchestration = Layer.merge(
-        layerOrchestrator,
-        ThreadManagementService.layer.pipe(
-          Layer.provide(layerOrchestrator),
-          Layer.provide(ServerSettings.layerTest()),
-          Layer.provide(
-            CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
-          ),
-        ),
-      );
+      const turns: Array<StartedTurn> = [];
+      const adapter = makeAdapter(cwd, turns, () => limitInFlight);
       const sweeps = new Map<string, Effect.Effect<void>>();
-      const layerRecovery = UsageLimitRecoveryWorker.layer.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            Layer.succeed(Scheduler.Scheduler, {
-              register: <E, R>(name: string, work: Effect.Effect<void, E, R>) =>
-                Effect.gen(function* () {
-                  const context = yield* Effect.context<R>();
-                  sweeps.set(name, work.pipe(Effect.provideContext(context), Effect.orDie));
-                }),
-            }),
-            ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
-            ServerSettings.layerTest({ autoResumeLimitedThreads: true }),
-          ),
-        ),
-      );
-      const layerTest = Layer.merge(
-        OrchestratorMcpService.layer.pipe(
-          Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
-          Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
-        ),
-        layerRecovery,
-      ).pipe(
-        Layer.provideMerge(layerOrchestration),
-        Layer.provide(
-          Layer.mergeAll(
-            layerAdapters,
-            Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
-            Layer.mock(ProjectService.ProjectService)({}),
-            Layer.mock(SecretRequests.SecretRequests)({}),
-            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-            ServerSettings.layerTest(),
-            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
-        ),
-      );
+      const layerTest = makeLayer(adapter, sweeps);
 
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -347,4 +364,146 @@ it.effect.each([
         );
       }).pipe(Effect.provide(layerTest));
     }),
+);
+
+// task_cancel promises to stop the task's queued turns in its child thread. A follow-up the
+// parent queued there with t3_thread_send is one of them, and a held leftover blocks
+// "Turn into project" as unfinished work.
+it.effect("task_cancel cancels the follow-up its parent queued in the child", () =>
+  Effect.gen(function* () {
+    const cwd = yield* checkpointWorkspace("task-cancel-queued-follow-up");
+    const turns: Array<StartedTurn> = [];
+    // Set once the child runs: the provider confirms Stop by ending its turn.
+    let onInterrupt: Effect.Effect<void> = Effect.void;
+    const layerTest = makeLayer(
+      makeAdapter(cwd, turns, () => onInterrupt),
+      new Map(),
+    );
+
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const parentThreadId = ThreadId.make("thread:task-cancel-follow-up-parent");
+      const turnRunning = () =>
+        orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-parent"),
+        threadId: parentThreadId,
+        projectId: ProjectId.make("project:task-cancel-follow-up"),
+        title: "Parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: cwd,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const parentRunning = yield* turnRunning();
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("start-parent"),
+        threadId: parentThreadId,
+        messageId: MessageId.make("message:start-parent"),
+        text: "Delegate a long task",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* worker.drain();
+      yield* Fiber.join(parentRunning);
+
+      const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+      const childRunning = yield* turnRunning();
+      yield* orchestrator.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("delegate"),
+        parentThreadId,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId!,
+        task: "Run sleep 150",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        completionWake: "always",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      yield* worker.drain();
+      yield* Fiber.join(childRunning);
+      const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
+      const childThreadId = task.childThreadId!;
+      const child = turns.find((entry) => entry.turn.threadId === childThreadId)!;
+      const childTurn = (yield* orchestrator.getThreadProjection(childThreadId)).providerTurns[0]!;
+      const now = yield* DateTime.now;
+      onInterrupt = Effect.forEach(
+        [
+          {
+            type: "provider_turn.updated",
+            driver,
+            providerTurn: { ...childTurn, status: "interrupted", completedAt: now },
+          },
+          {
+            type: "turn.terminal",
+            driver,
+            providerThreadId: childTurn.providerThreadId,
+            providerTurnId: childTurn.id,
+            runOrdinal: child.turn.runOrdinal,
+            status: "interrupted",
+            failure: null,
+            threadDisposition: "reusable",
+          },
+        ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+        (event) => Queue.offer(child.events, event),
+        { discard: true },
+      );
+
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:task-cancel-follow-up"),
+        requestNamespace: "provider-session:task-cancel-follow-up",
+        thread: {
+          threadId: parentThreadId,
+          providerSessionId: "provider-session:task-cancel-follow-up",
+          providerInstanceId: instanceId,
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+      const sent = yield* service.sendToThread(scope, {
+        threadId: childThreadId,
+        message: "Also check the logs",
+        mode: "queue",
+        clientRequestId: "queue-follow-up",
+      });
+      yield* worker.drain();
+      assert.equal(sent.status, "queued");
+
+      const cancelled = yield* service.cancelTask(scope, {
+        taskId: task.id,
+        clientRequestId: "cancel-task",
+      });
+      yield* worker.drain();
+      assert.equal(cancelled.status, "cancel_requested");
+
+      const childAfter = yield* orchestrator.getThreadProjection(childThreadId);
+      assert.equal(
+        childAfter.runs.find((run) => run.id === child.turn.runId)?.status,
+        "interrupted",
+      );
+      const followUp = childAfter.runs.find((run) => run.id === sent.runId)!;
+      assert.equal(followUp.status, "cancelled");
+      assert.isFalse(Orchestrator.threadHasUnfinishedWork(childAfter));
+    }).pipe(Effect.provide(layerTest));
+  }),
 );

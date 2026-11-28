@@ -748,6 +748,24 @@ describe("ChatMarkdown skill chips", () => {
 });
 
 describe("ChatMarkdown headings", () => {
+  it("keeps user-content in authored fragments distinct from the sanitizer prefix", async () => {
+    setup();
+    await using screen = await renderText(
+      "[Open deployment](#deployment)\n\n" +
+        "[Open user content deployment](#user-content-deployment)\n\n" +
+        "## Deployment\n\n## User Content Deployment",
+    );
+    const [deployment, userContentDeployment] = screen.container.querySelectorAll("h2");
+    using scrollDeployment = vi.spyOn(deployment!, "scrollIntoView");
+    using scrollUserContentDeployment = vi.spyOn(userContentDeployment!, "scrollIntoView");
+
+    await userEvent.click(screen.getByRole("link", { name: "Open deployment" }));
+    await userEvent.click(screen.getByRole("link", { name: "Open user content deployment" }));
+
+    expect(scrollDeployment).toHaveBeenCalledExactlyOnceWith({ block: "start" });
+    expect(scrollUserContentDeployment).toHaveBeenCalledExactlyOnceWith({ block: "start" });
+  });
+
   it("keeps insight streaming, reference links, and heading anchors in one message", async () => {
     setup();
     const rule = "─".repeat(20);

@@ -99,6 +99,7 @@ import {
   deriveThreadActivityRun,
   deriveLatestThreadRun,
   presentProviderStarting,
+  pendingProviderStartup,
   deriveThreadStructureRuntime,
   limitRecoveryOwnsSnooze,
 } from "@t3tools/client-runtime/state/thread-execution";
@@ -168,6 +169,7 @@ import {
   derivePhase,
   deriveActiveWorkStartedAt,
   deriveCanInterruptRunningThread,
+  findLatestTaskList,
   findRevertCheckpoint,
   isLatestRunSettled,
 } from "../session-logic";
@@ -1572,6 +1574,7 @@ export default function ChatView(props: ChatViewProps) {
     localDispatchStartedAt,
     isPreparingWorktree: isLocallyPreparingWorktree,
     isSendBusy,
+    localDispatchProviderInstanceId,
     backgroundSubmissionPending,
   } = useLocalDispatchState({
     environmentId,
@@ -1638,15 +1641,24 @@ export default function ChatView(props: ChatViewProps) {
     deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
     runlessWorkStartedAt;
   // Until the server has the run, a send shows the provider it is starting, not the thinking brain.
+  const dispatchedProviderEntry =
+    providerInstanceEntries.find((entry) => entry.instanceId === localDispatchProviderInstanceId) ??
+    selectedProviderEntry;
+  const dispatchedProviderStartup =
+    dispatchedProviderEntry === undefined
+      ? null
+      : pendingProviderStartup(serverProjection, dispatchedProviderEntry.instanceId);
   const providerStartingRun =
     activeActivityRun?.providerStartingLabelMsg !== undefined
       ? activeActivityRun
       : isSendBusy &&
-          selectedProviderEntry !== undefined &&
+          dispatchedProviderEntry !== undefined &&
+          dispatchedProviderStartup !== null &&
           (activeActivityRun === null || !ACTIVE_RUN_STATUSES.has(activeActivityRun.status))
         ? presentProviderStarting({
-            instanceId: selectedProviderEntry.instanceId,
-            driver: selectedProviderEntry.driverKind,
+            instanceId: dispatchedProviderEntry.instanceId,
+            driver: dispatchedProviderEntry.driverKind,
+            phase: dispatchedProviderStartup.phase,
           })
         : null;
   const activeRunPreparing = activeActivityRun?.status === "preparing";
@@ -4373,6 +4385,7 @@ export default function ChatView(props: ChatViewProps) {
                     sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
                     contextWindow: activeContextWindow,
                   }}
+                  taskList={findLatestTaskList(serverProjection)}
                 />
 
                 <PullRequestThreadDialogHost

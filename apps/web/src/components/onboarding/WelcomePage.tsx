@@ -130,9 +130,11 @@ const SCAN_LIMIT_MESSAGE = msg(
 export function WelcomePage({
   environmentId,
   onDone,
+  reviewProjects = false,
 }: {
   readonly environmentId: EnvironmentId;
   readonly onDone: (projectRef?: ScopedProjectRef) => void | Promise<void>;
+  readonly reviewProjects?: boolean;
 }) {
   const { environments } = useEnvironments();
   const gt = useGT();
@@ -299,11 +301,14 @@ export function WelcomePage({
                 isPrimary={isPrimary}
                 onImportSourceEnabled={() => scans[0]?.refresh()}
               />
-              <ProjectsSection
-                scan={scans[0]}
-                projectImport={projectImport}
-                isImporting={isImporting}
-              />
+              <div id={`projects:${environmentId}`}>
+                <ProjectsSection
+                  scan={scans[0]}
+                  projectImport={projectImport}
+                  isImporting={isImporting}
+                  initiallyReviewing={reviewProjects}
+                />
+              </div>
               {showPhone ? <PhoneSection environmentId={environmentId} /> : null}
             </div>
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
@@ -351,7 +356,7 @@ function TelemetryNotice({ environmentId }: { readonly environmentId: Environmen
     <p className="mt-auto pt-12 text-caption leading-relaxed text-muted-foreground">
       {telemetryOff === undefined ? (
         <T>
-          T3 Code collects anonymous usage data to improve the app. To opt out, see the{" "}
+          T3 Code collects pseudonymous product usage data to improve the app. To opt out, see the{" "}
           <InlineButton
             tone="muted"
             render={<a href={PRIVACY_POLICY_URL} target="_blank" rel="noreferrer noopener" />}
@@ -796,15 +801,17 @@ function ProjectsSection({
   scan,
   projectImport,
   isImporting,
+  initiallyReviewing,
 }: {
   readonly scan: ReturnType<typeof useProjectScans>[number] | undefined;
   readonly projectImport: ReturnType<typeof useProjectImport>;
   readonly isImporting: boolean;
+  readonly initiallyReviewing: boolean;
 }) {
   const gt = useGT();
   const m = useMessages();
   const importSourcesLabel = useImportSourcesLabel();
-  const [reviewing, setReviewing] = useState(false);
+  const [reviewing, setReviewing] = useState(initiallyReviewing);
   const {
     canWrite,
     candidates,

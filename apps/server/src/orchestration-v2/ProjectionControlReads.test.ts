@@ -19,6 +19,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -195,7 +196,10 @@ function fixtureEvents(now: DateTime.Utc): ReadonlyArray<OrchestrationV2DomainEv
 const storageCases = [
   {
     storage: "sqlite" as const,
-    storeLayer: ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+    storeLayer: ProjectionStore.layer.pipe(
+      Layer.provide(NodeCrypto.layerDigest),
+      Layer.provideMerge(SqlitePersistence.layerMemory),
+    ),
   },
 ];
 
