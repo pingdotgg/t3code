@@ -270,7 +270,7 @@ export function PullRequestActionsMenu({
           onClick={() => void createThread?.()}
         >
           <SquarePenIcon className="size-3.5" />
-          {gt("Create thread")}
+          <T>Create thread</T>
         </MenuItem>
         <MenuItem disabled={refreshing} onClick={() => void refreshFromHost()}>
           <RefreshIcon size="sm" refreshing={refreshing} />
