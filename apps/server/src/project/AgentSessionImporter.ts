@@ -286,7 +286,10 @@ const make = Effect.gen(function* () {
       ).pipe(Option.flatMapNullishOr((payload) => payload.importedTranscripts));
       if (Option.isNone(imported) || imported.value.length === 0) return Effect.succeed([]);
       return orchestrator.getThreadRecords(runtime.threadId, []).pipe(
-        Effect.map(({ thread }) => (thread.projectId === input.projectId ? imported.value : [])),
+        // A deleted thread's transcripts are not imported: re-importing restores the thread.
+        Effect.map(({ thread }) =>
+          thread.projectId === input.projectId && thread.deletedAt === null ? imported.value : [],
+        ),
         Effect.catch((cause) =>
           isProjectionStoreThreadNotFoundError(cause.cause)
             ? Effect.succeed([])
@@ -352,66 +355,6 @@ const make = Effect.gen(function* () {
             },
             { onConflict: "ignore" },
           );
-          const existing = yield* Effect.option(orchestrator.getThreadRecords(threadId, []));
-          if (Option.isSome(existing)) {
-            if (existing.value.thread.projectId !== input.projectId) {
-              return yield* new AgentSessionThreadProjectConflictError({
-                threadId,
-                expectedProjectId: input.projectId,
-                actualProjectId: existing.value.thread.projectId,
-              });
-            }
-            if (existing.value.thread.historyOrigin !== "v1_import") {
-              return yield* new AgentSessionThreadModifiedError({ threadId });
-            }
-            // A transcript can change after the import. A thread without runs holds only
-            // imported history, so it takes the changed messages; record the transcript
-            // only once the thread holds exactly its messages.
-            const current = yield* threadCommands.withLock(
-              threadId,
-              Effect.gen(function* () {
-                const { messages: stored, runs } = yield* orchestrator.getThreadRecords(threadId, [
-                  "messages",
-                  "runs",
-                ]);
-                const changed = thread.messages.flatMap((message, index) =>
-                  stored[index]?.role === message.role && stored[index]?.text === message.text
-                    ? []
-                    : messageEvents({ threadId, index, message }),
-                );
-                if (changed.length === 0 && stored.length === thread.messages.length) return true;
-                if (runs.length > 0 || stored.length > thread.messages.length) return false;
-                const events = [
-                  ...(thread.omittedMessageCount > 0
-                    ? [
-                        historyTruncatedEvent({
-                          threadId,
-                          at: existing.value.thread.createdAt,
-                          omittedMessageCount: thread.omittedMessageCount,
-                        }),
-                      ]
-                    : []),
-                  ...changed,
-                ];
-                // Import event ids name a message slot, and a slot's later revisions need their own.
-                yield* eventSink.write({
-                  events: yield* Effect.forEach(events, (event) =>
-                    Effect.map(idAllocator.allocate.event({ threadId }), (id) => ({
-                      ...event,
-                      id,
-                    })),
-                  ),
-                });
-                return true;
-              }),
-            );
-            if (!current) return false;
-            yield* persistRuntime;
-            yield* runtimes.recordImportedTranscript({ threadId, source });
-            importedThreadIds.add(threadId);
-            return null;
-          }
-
           const model = thread.model ?? DEFAULT_MODEL_BY_PROVIDER[driver] ?? DEFAULT_MODEL;
           const providerThreadId = idAllocator.derive.providerThread({
             driver,
@@ -456,6 +399,82 @@ const make = Effect.gen(function* () {
             lastVisitedAt: null,
             deletedAt: null,
           };
+          const existing = yield* Effect.option(orchestrator.getThreadRecords(threadId, []));
+          if (Option.isSome(existing)) {
+            if (existing.value.thread.projectId !== input.projectId) {
+              return yield* new AgentSessionThreadProjectConflictError({
+                threadId,
+                expectedProjectId: input.projectId,
+                actualProjectId: existing.value.thread.projectId,
+              });
+            }
+            if (existing.value.thread.historyOrigin !== "v1_import") {
+              return yield* new AgentSessionThreadModifiedError({ threadId });
+            }
+            // A transcript can change after the import. A thread without runs holds only
+            // imported history, so it takes the changed messages; record the transcript
+            // only once the thread holds exactly its messages. A deleted thread comes back
+            // as a new import would create it.
+            const result = yield* threadCommands.withLock(
+              threadId,
+              Effect.gen(function* () {
+                const {
+                  thread: storedThread,
+                  messages: stored,
+                  runs,
+                } = yield* orchestrator.getThreadRecords(threadId, ["messages", "runs"]);
+                const restoring = storedThread.deletedAt !== null;
+                const changed = thread.messages.flatMap((message, index) =>
+                  stored[index]?.role === message.role && stored[index]?.text === message.text
+                    ? []
+                    : messageEvents({ threadId, index, message }),
+                );
+                if (!restoring && changed.length === 0 && stored.length === thread.messages.length)
+                  return null;
+                if (runs.length > 0 || stored.length > thread.messages.length) return false;
+                const events: Array<OrchestrationV2DomainEvent> = [
+                  ...(restoring
+                    ? [
+                        {
+                          id: EventId.make(`${IMPORT_EVENT_PREFIX}:thread:${threadId}:created`),
+                          type: "thread.created" as const,
+                          threadId,
+                          providerInstanceId: thread.providerInstanceId,
+                          occurredAt: createdAt,
+                          payload: appThread,
+                        },
+                      ]
+                    : []),
+                  ...(thread.omittedMessageCount > 0
+                    ? [
+                        historyTruncatedEvent({
+                          threadId,
+                          at: existing.value.thread.createdAt,
+                          omittedMessageCount: thread.omittedMessageCount,
+                        }),
+                      ]
+                    : []),
+                  ...changed,
+                ];
+                // Import event ids name a message slot, and a slot's later revisions need their own.
+                yield* eventSink.write({
+                  events: yield* Effect.forEach(events, (event) =>
+                    Effect.map(idAllocator.allocate.event({ threadId }), (id) => ({
+                      ...event,
+                      id,
+                    })),
+                  ),
+                });
+                return restoring ? true : null;
+              }),
+            );
+            if (result === false) return false;
+            yield* persistRuntime;
+            yield* runtimes.recordImportedTranscript({ threadId, source });
+            importedThreadIds.add(threadId);
+            return result;
+          }
+
           const providerThread: OrchestrationV2ProviderThread = {
             id: providerThreadId,
             driver,

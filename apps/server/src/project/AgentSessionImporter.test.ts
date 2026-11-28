@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
+  type AgentSessionImportSource,
   type AgentSessionSource,
   type ServerSettingsError,
   EventId,
@@ -750,6 +751,50 @@ it.effect("re-import brings back an imported thread deleted from the same projec
       deletedAt: null,
       messages: ["Fix it", "Fixed", "Continue in the terminal", "Continued in the terminal"],
     });
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("re-import brings back a deleted imported thread whose transcript is unchanged", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const session = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "7b1d3e5f-2a4c-4e6b-8d0f-1a3c5e7b9d2f",
+      "claudeAgent",
+    );
+    const threadId = importId(session);
+    // Reports a recorded transcript as already imported, as the real scanner does.
+    const scanner = {
+      scan: Effect.die("unused"),
+      recentThreads: (_root: string, completed: ReadonlyArray<AgentSessionImportSource> = []) =>
+        Stream.make(
+          completed.some((source) => source.providerSessionId === session.source.providerSessionId)
+            ? ({ _tag: "AlreadyImported", source: session.source } as const)
+            : session,
+        ),
+    };
+    const importer = yield* makeImporter([], Effect.void, undefined, undefined, undefined, {
+      workspaceRoot: "/workspace/project",
+      scanner,
+    });
+    yield* importer.run;
+    const { thread } = yield* projections.getThreadRecords(threadId, []);
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(`${threadId}:deleted`),
+          type: "thread.deleted",
+          threadId,
+          occurredAt: now,
+          payload: { ...thread, deletedAt: now, updatedAt: now },
+        },
+      ],
+    });
+
+    expect(yield* importer.run).toEqual({ importedCount: 1, skippedCount: 0 });
+    expect((yield* projections.getThread(threadId)).deletedAt).toBeNull();
+    expect(yield* importer.run).toEqual({ importedCount: 0, skippedCount: 0 });
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
