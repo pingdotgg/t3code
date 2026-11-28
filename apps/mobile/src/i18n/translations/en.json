@@ -5740,6 +5740,7 @@
   "bd2cfcb7be24cd38": "Viewed files are hidden from this review.",
   "6ae1484aa5bd2bc8": "Show viewed files",
   "15db3431c35d4927": "{count, plural, one {{count} viewed hidden} other {{count} viewed hidden}}",
+  "2461bdd8e58e0a72": "T3 Connect environments cannot be renamed here.",
   "45fa271ea0e1ac8e": "Beta",
   "e4e91d155cb6a9b4": "Boring sidebar (group by project)",
   "3a678332fc7142f7": "Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders.",
