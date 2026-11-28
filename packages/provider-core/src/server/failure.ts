@@ -144,6 +144,7 @@ function curatedCauseMessages(cause: unknown): {
         case "ClaudeCodeRootRefusalError":
         case "ClaudeCodeStartupExitError":
         case "ClaudeConversationNotFoundError":
+        case "ClaudeStartupRefusedError":
         case "CursorModelUnavailableError":
         case "CodexGoalObjectiveTooLongError":
         case "CodexAppServerUnresponsiveError":

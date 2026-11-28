@@ -10146,6 +10146,73 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect.each([
+    { name: "before init", init: false },
+    { name: "after init", init: true },
+  ])("shows a curated refusal when Claude refuses to start $name", ({ init }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-startup-refused"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      if (init) {
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid: "00000000-0000-4000-8000-000000000611",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      }
+      yield* Queue.offer(harness.sdkMessages, {
+        ...makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000610",
+          result: "",
+          subtype: "error_during_execution",
+          isError: true,
+          errors: ["Acme Private requires organization settings that are still loading."],
+          terminalReason: null,
+        }),
+        startup_failure_reason: "org_config_required_unavailable",
+      } as SDKMessage);
+
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.include(terminal.failure.message, "settings your organization requires");
+      assert.notInclude(terminal.failure.message, "Acme Private");
+      // Only a fresh CLI that never sent init wrote no session for orchestration to resume.
+      assert.equal(terminal.promptDropped, init ? undefined : true);
+      const providerTurn = harness.events.findLast(
+        (event) => event.type === "provider_turn.updated",
+      );
+      assert.equal(
+        providerTurn?.type === "provider_turn.updated"
+          ? providerTurn.providerTurn.promptDropped
+          : "missing",
+        init ? undefined : true,
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   const lastProviderTurn = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) => {
     const event = events.findLast((candidate) => candidate.type === "provider_turn.updated");
     if (event?.type !== "provider_turn.updated") {
@@ -16686,6 +16753,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
     const deadStreamEnded = yield* Deferred.make<void>();
     let opened = 0;
+    const openedResumes: Array<boolean> = [];
     const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
       instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
       settings: DEFAULT_CLAUDE_SETTINGS,
@@ -16708,9 +16776,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       continuationRequests: { offer: () => Effect.void },
       queryRunner: {
         allocateSessionId: Effect.succeed(`native-${name}`),
-        open: () =>
+        open: (input) =>
           Effect.gen(function* () {
             opened += 1;
+            openedResumes.push(input.options.resume !== undefined);
             const sdkMessages = yield* Queue.unbounded<SDKMessage>();
             return {
               // The first CLI exits without writing a frame.
@@ -16766,9 +16835,77 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         text: "Continue with the plan.",
         attachments: [],
         providerTurnOrdinal,
+        nativeThreadHasTurns: false,
       });
-    return { runtime, turnInput };
+    return { runtime, turnInput, openedResumes };
   });
+
+  it.effect("opens a fresh session after Claude Code refuses to start a new one", () =>
+    Effect.gen(function* () {
+      const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
+        "claude-query-startup-refused",
+        Stream.fail(
+          new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+            method: "fromAsyncIterable",
+            cause: new ClaudeAdapterV2.ClaudeStartupRefusedError({
+              reason: "org_config_required_unavailable",
+              cause: new Error("Claude Code returned an error result"),
+            }),
+          }),
+        ),
+      );
+      const started = yield* harness.runtime.startTurn(harness.turnInput("a", 1)).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(started));
+      if (Exit.isFailure(started)) {
+        assert.include(
+          makeProviderFailure({ cause: started.cause, class: "transport_error" }).message,
+          "settings your organization requires",
+        );
+      }
+      // The refused start wrote no session, so resuming it fails "No conversation found".
+      yield* harness.runtime.startTurn(harness.turnInput("b", 2));
+      assert.deepStrictEqual(harness.openedResumes, [false, false]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("opens a fresh session after a new Claude Code process exits before init", () =>
+    Effect.gen(function* () {
+      const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
+        "claude-query-startup-exit",
+        Stream.fail(
+          new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+            method: "fromAsyncIterable",
+            cause: new ClaudeAdapterV2.ClaudeCodeStartupExitError({
+              status: "exit code 1",
+              guidance: "",
+              cause: new Error("Claude Code process exited with code 1"),
+            }),
+          }),
+        ),
+      );
+      yield* harness.runtime.startTurn(harness.turnInput("a", 1)).pipe(Effect.exit);
+      yield* harness.runtime.startTurn(harness.turnInput("b", 2));
+      assert.deepStrictEqual(harness.openedResumes, [false, false]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
 
   it.effect("shows Claude's root refusal when its query exits before the turn starts", () =>
     Effect.scoped(

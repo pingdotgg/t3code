@@ -898,6 +898,23 @@ export class ClaudeConversationNotFoundError extends Schema.TaggedError<ClaudeCo
   }
 }
 
+const claudeStartupRefusalMessage = (reason: string) =>
+  reason === "org_config_required_unavailable"
+    ? "Claude Code could not load the settings your organization requires before a session starts. This usually clears in a few seconds; send the message again."
+    : `Claude Code refused to start (${reason}). Check the server logs for its message, then send the message again.`;
+
+export class ClaudeStartupRefusedError extends Schema.TaggedError<ClaudeStartupRefusedError>()(
+  "ClaudeStartupRefusedError",
+  {
+    reason: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return claudeStartupRefusalMessage(this.reason);
+  }
+}
+
 export class ClaudeCodeStartupExitError extends Schema.TaggedError<ClaudeCodeStartupExitError>()(
   "ClaudeCodeStartupExitError",
   {
@@ -1825,6 +1842,7 @@ export const layerQueryRunner: Layer.Layer<
       let stderrClosed: Promise<void> = Promise.resolve();
       let answered = false;
       let conversationMissing = false;
+      let startupFailureReason: string | undefined;
       const appendStderr = (text: string) => {
         if (answered) return;
         stderrTail = (stderrTail + text).slice(-CLAUDE_STDERR_TAIL_LENGTH);
@@ -2005,16 +2023,18 @@ export const layerQueryRunner: Layer.Layer<
                 return yield* queryRunnerError(
                   refusedRoot
                     ? new ClaudeCodeRootRefusalError({ cause })
-                    : conversationMissing ||
-                        (!answered && stderrTail.includes(CLAUDE_CONVERSATION_NOT_FOUND))
-                      ? new ClaudeConversationNotFoundError({ cause })
-                      : startupExit !== undefined
-                        ? new ClaudeCodeStartupExitError({
-                            status: startupExit.status,
-                            guidance: providerProcessExitGuidance(stderrTail),
-                            cause,
-                          })
-                        : cause,
+                    : startupFailureReason !== undefined
+                      ? new ClaudeStartupRefusedError({ reason: startupFailureReason, cause })
+                      : conversationMissing ||
+                          (!answered && stderrTail.includes(CLAUDE_CONVERSATION_NOT_FOUND))
+                        ? new ClaudeConversationNotFoundError({ cause })
+                        : startupExit !== undefined
+                          ? new ClaudeCodeStartupExitError({
+                              status: startupExit.status,
+                              guidance: providerProcessExitGuidance(stderrTail),
+                              cause,
+                            })
+                          : cause,
                   "fromAsyncIterable",
                 );
               }),
@@ -2023,12 +2043,13 @@ export const layerQueryRunner: Layer.Layer<
           Stream.tap((message) =>
             Effect.sync(() => {
               answered = true;
-              if (
-                message.type === "result" &&
-                message.subtype !== "success" &&
-                message.errors.some((error) => error.startsWith(CLAUDE_CONVERSATION_NOT_FOUND))
-              ) {
-                conversationMissing = true;
+              if (message.type === "result" && message.subtype !== "success") {
+                if (
+                  message.errors.some((error) => error.startsWith(CLAUDE_CONVERSATION_NOT_FOUND))
+                ) {
+                  conversationMissing = true;
+                }
+                startupFailureReason = message.startup_failure_reason;
               }
             }),
           ),
@@ -5413,7 +5434,10 @@ function providerFailureFromResult(
       : terminalResultError(message.terminal_reason, failureHint ?? apiErrorMessage);
   if (message.subtype !== "success") {
     return makeProviderFailure({
-      message: listedError ?? structuredError ?? message.errors.join("\n"),
+      message:
+        message.startup_failure_reason === undefined
+          ? (listedError ?? structuredError ?? message.errors.join("\n"))
+          : claudeStartupRefusalMessage(message.startup_failure_reason),
       code: message.subtype,
       class: failureClass,
     });
@@ -5765,6 +5789,10 @@ interface ActiveClaudeSubagent {
   lastAssistantMessageId: string | null;
 }
 
+// A fresh CLI writes its session only after init, so failing before then leaves nothing to resume.
+const claudeQueryLeftNoSession = (query: ClaudeLiveQueryContext) =>
+  !query.resumed && !query.receivedInit;
+
 interface ClaudeLiveQueryContext {
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly nativeThreadId: string;
@@ -5783,6 +5811,7 @@ interface ClaudeLiveQueryContext {
   readonly requestedPermissionMode: PermissionMode;
   // The CLI may fall back from the requested mode on its first init frame.
   openedPermissionMode: PermissionMode;
+  readonly resumed: boolean;
   receivedInit: boolean;
   // Init listed a server still connecting or needing a sign-in; a result checks which it was.
   checkMcpSignIns: boolean;
@@ -10273,6 +10302,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly failure?: OrchestrationV2ProviderFailure;
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
+          readonly promptDropped?: boolean;
         }) {
           // A turn stopped by the retry budget settles as failed with the retry's error.
           const retryBudgetFailure = requested.context.retryBudgetFailure;
@@ -10510,6 +10540,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                         retryStartedAt: providerRetry.startedAt,
                       }),
                   threadDisposition,
+                  ...(input.promptDropped === true ? { promptDropped: true as const } : {}),
                 }
               : {
                   type: "turn.terminal",
@@ -10532,6 +10563,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     status: input.status,
                     completedAt: input.completedAt,
                   }),
+                  ...(input.status === "failed" && input.promptDropped === true
+                    ? { promptDropped: true as const }
+                    : {}),
                   turnTokenUsage: normalizeClaudeTurnTokenUsage(
                     input.result,
                     input.context.subagentsByTaskId.size > 0 ||
@@ -10785,6 +10819,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ...(interrupted
                 ? {}
                 : {
+                    promptDropped: claudeQueryLeftNoSession(closedQuery),
                     failure: makeProviderFailure({
                       cause: cause === undefined ? undefined : Cause.squash(cause),
                       ...(cause === undefined ? {} : claudeProcessExitFailure(cause)),
@@ -13211,6 +13246,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               completedAt,
               result: message,
               ...(terminalFailure === null ? {} : { failure: terminalFailure }),
+              promptDropped: claudeQueryLeftNoSession(liveQuery),
             });
           }
         });
@@ -14437,6 +14473,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             promptEchoMode: "unknown",
             requestedPermissionMode: queryOptions.permissionMode,
             openedPermissionMode: queryOptions.permissionMode,
+            resumed: shouldResume,
             receivedInit: false,
             checkMcpSignIns: false,
             capabilities: new Set(),
@@ -14583,6 +14620,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   context.exitCause = exit.cause;
                   if (isClaudeConversationNotFound(exit.cause)) {
                     missingNativeThreads.add(context.nativeThreadId);
+                  }
+                  if (claudeQueryLeftNoSession(context)) {
+                    yield* Ref.update(openedNativeThreads, (current) => {
+                      const updated = new Set(current);
+                      updated.delete(context.nativeThreadId);
+                      return updated;
+                    });
                   }
                 }
                 const heldContext = yield* Ref.get(activeTurn);
