@@ -40,9 +40,3 @@ export function parseGitLabAuthStatusHosts(text: string): ReadonlyArray<GitLabAu
   flush();
   return hosts;
 }
-
-export function findAuthenticatedGitLabHost(
-  hosts: ReadonlyArray<GitLabAuthStatusHost>,
-): GitLabAuthStatusHost | undefined {
-  return hosts.find((host) => host.account !== null);
-}

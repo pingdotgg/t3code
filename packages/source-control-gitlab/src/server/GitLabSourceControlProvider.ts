@@ -22,7 +22,7 @@ import {
   type SourceControlCliDiscoverySpec,
   type SourceControlUnknownRemoteRefinementInput,
 } from "@t3tools/source-control-core/server/discovery";
-import { findAuthenticatedGitLabHost, parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
+import { parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 
 const decodeLinkSubject = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
@@ -56,9 +56,18 @@ function toChangeRequest(summary: GitLabCli.GitLabMergeRequestSummary): ChangeRe
   };
 }
 
+const INCOMPLETE_AUTH_DETAIL =
+  "The GitLab account list is incomplete because glab output was truncated.";
+
 function parseGitLabAuth(input: SourceControlAuthProbeInput) {
+  if (input.stdoutTruncated || input.stderrTruncated) {
+    return providerAuth({ status: "unknown", detail: INCOMPLETE_AUTH_DETAIL });
+  }
   const output = combinedAuthOutput(input);
-  const authenticatedHost = findAuthenticatedGitLabHost(parseGitLabAuthStatusHosts(output));
+  const accounts = parseGitLabAuthStatusHosts(output).flatMap(({ host, account }) =>
+    account === null ? [] : [{ host, account, active: true, authenticated: true }],
+  );
+  const authenticatedHost = accounts[0];
   const account =
     authenticatedHost?.account ??
     matchFirst(output, [
@@ -69,7 +78,10 @@ function parseGitLabAuth(input: SourceControlAuthProbeInput) {
   const host = authenticatedHost?.host ?? parseCliHost(output);
 
   if (account) {
-    return providerAuth({ status: "authenticated", account, host });
+    return {
+      ...providerAuth({ status: "authenticated", account, host }),
+      ...(accounts.length > 0 ? { accounts } : {}),
+    };
   }
 
   if (input.exitCode !== 0) {
@@ -144,18 +156,49 @@ export const discovery = {
   label: "GitLab",
   executable: "glab",
   versionArgs: ["--version"],
-  // Without --all, glab 1.79+ checks only the current host unless that is gitlab.com; older
-  // glab lists every host and rejects --all. --all waits on every host, so ask it only after
-  // the current host reports signed out.
-  authArgs: ["auth", "status"],
-  // A probe that names no host covers every host glab has a login for, so it runs without the
-  // environment token; the default host is asked with it last, by name.
-  authRetryArgs: (environment) => [
-    ["auth", "status", "--all"],
-    ...(GitLabCli.hasEnvironmentToken(environment)
-      ? [["auth", "status", "--hostname", GitLabCli.defaultHost(environment)]]
-      : []),
-  ],
+  authArgs: ["auth", "status", "--all"],
+  authMaxOutputBytes: 64_000,
+  completeAuthProbe: Effect.fn("GitLabSourceControlProvider.completeAuthProbe")(
+    function* (all, run, environment) {
+      let auth = all;
+      if (all.accounts?.length !== 1) {
+        // Check the current host for the primary account, or when older glab rejects --all.
+        const current = yield* run(["auth", "status"]);
+        const allIncomplete = Option.getOrUndefined(all.detail) === INCOMPLETE_AUTH_DETAIL;
+        if (current.status === "authenticated") {
+          const accounts = current.accounts ?? [];
+          const additional = all.accounts?.filter(
+            (account) => !accounts.some((entry) => entry.host === account.host),
+          );
+          auth = {
+            ...current,
+            ...(additional?.length ? { accounts: [...accounts, ...additional] } : {}),
+            ...(allIncomplete ? { detail: all.detail } : {}),
+          };
+        } else if (all.status !== "authenticated" && !allIncomplete) {
+          auth = current;
+        }
+      }
+
+      const host = GitLabCli.defaultHost(environment);
+      if (
+        !GitLabCli.hasEnvironmentToken(environment) ||
+        auth.accounts?.some((account) => account.host === host)
+      ) {
+        return auth;
+      }
+
+      const named = yield* run(["auth", "status", "--hostname", host]);
+      if (named.status !== "authenticated") return auth;
+      if (auth.status === "authenticated") {
+        const account = named.accounts?.find((entry) => entry.host === host);
+        return account ? { ...auth, accounts: [...(auth.accounts ?? []), account] } : auth;
+      }
+      return Option.getOrUndefined(auth.detail) === INCOMPLETE_AUTH_DETAIL
+        ? { ...named, detail: auth.detail }
+        : named;
+    },
+  ),
   probeEnv: (args, environment) => {
     const named = args.indexOf("--hostname");
     return named !== -1 &&

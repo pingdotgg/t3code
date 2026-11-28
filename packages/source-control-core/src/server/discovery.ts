@@ -23,6 +23,8 @@ import type * as SourceControlHost from "./SourceControlHost.ts";
 export interface SourceControlAuthProbeInput {
   readonly stdout: string;
   readonly stderr: string;
+  readonly stdoutTruncated?: boolean;
+  readonly stderrTruncated?: boolean;
   readonly exitCode: SourceControlHost.SourceControlProcessOutput["exitCode"];
 }
 
@@ -45,8 +47,12 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   /** Another program shares the executable's name; one that rejects `versionArgs` is not this CLI. */
   readonly rejectedVersionMeansMissing?: boolean;
   readonly authArgs: ReadonlyArray<string>;
-  /** Asked in order while the answer is signed out; one counts only when it finds a sign-in. */
-  readonly authRetryArgs?: (environment: NodeJS.ProcessEnv) => ReadonlyArray<ReadonlyArray<string>>;
+  /** May add accounts or fall back to another auth command. */
+  readonly completeAuthProbe?: (
+    first: SourceControlProviderAuth,
+    run: (args: ReadonlyArray<string>) => Effect.Effect<SourceControlProviderAuth>,
+    environment: NodeJS.ProcessEnv,
+  ) => Effect.Effect<SourceControlProviderAuth>;
   /** Environment overrides for one auth or remote probe. */
   readonly probeEnv?: (
     args: ReadonlyArray<string>,
@@ -56,6 +62,7 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
     context: SourceControlProvider.SourceControlProviderContext,
   ) => ReadonlyArray<string>;
   readonly probeTimeoutMs?: number;
+  readonly authMaxOutputBytes?: number;
   readonly parseAuth: (input: SourceControlAuthProbeInput) => SourceControlProviderAuth;
   /** `null` when the CLI holds nothing for the remote; `undefined` when its output cannot say. */
   readonly refineUnknownRemote?: (
@@ -297,7 +304,7 @@ export function probeSourceControlProvider(input: {
         ...(spec.probeEnv ? { env: spec.probeEnv(args, environment) } : {}),
         allowNonZeroExit: true,
         timeoutMs: probeTimeoutMs(spec),
-        maxOutputBytes: 8_000,
+        maxOutputBytes: spec.authMaxOutputBytes ?? 8_000,
         appendTruncationMarker: true,
       })
       .pipe(
@@ -309,12 +316,9 @@ export function probeSourceControlProvider(input: {
   const auth = Effect.gen(function* () {
     const environment = yield* HostProcess.Environment;
     const first = yield* runAuth(spec.authArgs, environment);
-    if (first.status !== "unauthenticated") return first;
-    for (const retryArgs of spec.authRetryArgs?.(environment) ?? []) {
-      const retry = yield* runAuth(retryArgs, environment);
-      if (retry.status === "authenticated") return retry;
-    }
-    return first;
+    return spec.completeAuthProbe
+      ? yield* spec.completeAuthProbe(first, (args) => runAuth(args, environment), environment)
+      : first;
   });
 
   const missing = (item: DiscoveryProbeResult): SourceControlProviderDiscoveryItem => ({
