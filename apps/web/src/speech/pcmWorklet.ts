@@ -8,7 +8,7 @@ declare function registerProcessor(name: string, processor: typeof AudioWorkletP
 
 class PcmCaptureProcessor extends AudioWorkletProcessor {
   private readonly resampler = new PcmResampler(sampleRate);
-  private chunk = new Float32Array(8_000);
+  private chunk = new Float32Array(1_600);
   private length = 0;
   private recording = false;
   private flushed = false;
@@ -61,7 +61,7 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
     const mono = new Float32Array(channels[0].length);
     for (const channel of channels)
       for (let i = 0; i < mono.length; i++) mono[i]! += channel[i]! / channels.length;
-    // Metering must not wait for the half-second transcription chunks.
+    // Metering must not wait for the transcription chunks.
     for (const sample of mono) {
       this.levelEnergy += sample * sample;
       this.levelSamples++;
