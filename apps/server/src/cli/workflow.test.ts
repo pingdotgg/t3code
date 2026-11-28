@@ -282,6 +282,6 @@ it.effect("list reports truncation on stderr while keeping --json stdout a bare 
         structuredContent: { runs: [makeRun("waiting")], truncated: false },
       }),
     );
-    assert.lengthOf(complete.errors, 1);
+    assert.deepStrictEqual(complete.errors, jsonTruncated.errors);
   }),
 );
