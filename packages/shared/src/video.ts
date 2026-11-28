@@ -2,6 +2,8 @@ import { GENERIC_MIME_TYPES } from "./image.ts";
 
 const VIDEO_MIME_TYPE_BY_EXTENSION = new Map([
   ["avi", "video/x-msvideo"],
+  ["m2t", "video/mp2t"],
+  ["m2ts", "video/mp2t"],
   ["m4v", "video/mp4"],
   ["mkv", "video/x-matroska"],
   ["mov", "video/quicktime"],
