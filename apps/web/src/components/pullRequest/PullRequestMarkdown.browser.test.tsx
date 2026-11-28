@@ -1,5 +1,11 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { type AssetResource, EnvironmentId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  type AssetResource,
+  EnvironmentId,
+  type ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../../test/render";
@@ -20,13 +26,23 @@ function setup() {
 
 async function renderBody(
   host: string,
-  options: { lineBreaks?: boolean; repository?: string; text?: string } = {},
+  options: {
+    lineBreaks?: boolean;
+    repository?: string;
+    text?: string;
+    threadRef?: ScopedThreadRef;
+  } = {},
 ) {
-  const { repository = null, text = "first line\nsecond line", ...props } = options;
+  const {
+    repository = null,
+    text = "first line\nsecond line",
+    threadRef = null,
+    ...props
+  } = options;
   const context = {
     extensions: {},
     lineBreaks: sourceControlClients.get(host).hardLineBreaks ?? false,
-    threadRef: null,
+    threadRef,
     repository,
   };
   return render(
@@ -60,6 +76,28 @@ it("lets text the host did not write opt out of the host's breaks", async () => 
   await using screen = await renderBody("github", { lineBreaks: false });
   await expect.element(screen.getByText(/first line/)).toBeInTheDocument();
   expect(screen.container.querySelectorAll("p br")).toHaveLength(0);
+});
+
+it("links and loads only paths inside the checkout", async () => {
+  setup();
+  await using screen = await renderBody("github", {
+    threadRef: scopeThreadRef(EnvironmentId.make("local"), ThreadId.make("thread")),
+    text: [
+      "See `/etc/hosts`, `../outside.ts`, [key](~/.ssh/id_rsa), [up](file:///etc/hosts),",
+      "![rc](/home/alice/.bashrc), ![leak](/home/alice/private.png), ![ok](docs/shot.png)",
+      "and `packages/x/y.ts`.",
+    ].join(" "),
+  });
+  await expect.element(screen.getByRole("link", { name: "y.ts" })).toBeInTheDocument();
+  const links = [...screen.container.querySelectorAll("a")];
+  expect(links.map((link) => link.getAttribute("href"))).toEqual(["/repo/packages/x/y.ts"]);
+  expect([...screen.container.querySelectorAll("code")].map((c) => c.textContent)).toEqual([
+    "/etc/hosts",
+    "../outside.ts",
+  ]);
+  expect(requested.map((resource) => resource?._tag === "media-file" && resource.path)).toEqual([
+    "/repo/docs/shot.png",
+  ]);
 });
 
 it("loads the body's host media in the pull request's repository, not the checkout's", async () => {
