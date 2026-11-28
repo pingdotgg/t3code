@@ -381,6 +381,31 @@ it.layer(layerTest)("ThreadSearch", (it) => {
     }),
   );
 
+  it.effect("starts a found message's snippet with no detached skin tone", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:search-skin-tones");
+      const threadId = ThreadId.make("thread:skin-tones");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(threadId, project),
+          message(threadId, "tones", "user", `${"👍🏽".repeat(10)}OKlighthouse`),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const snippets = (query: string) =>
+        Effect.map(search.search({ query }), (result) =>
+          result.matches
+            .filter((match) => match.threadId === threadId)
+            .map((match) => match.snippet),
+        );
+      assert.deepEqual(yield* snippets("lighthouse"), [`…${"👍🏽".repeat(5)}OKlighthouse`]);
+    }),
+  );
+
   it.effect("matches the readable text of quotes and their comments", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -1590,6 +1615,10 @@ it.effect("starts snippets a few words before the match so one line shows it", (
       /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/,
     );
     assert.equal(snippet(`needle${" ".repeat(473)}🚀 tail`, "needle"), "needle 🚀…");
+    // Nor before a mark or skin tone that would lose the character it belongs to.
+    const thai = "ภาษาไทยเขียนต่อกันไม่เว้นวรรคระหว่างคำนะค้นหาคำนี้";
+    assert.equal(snippet(thai, "ค้นหา"), "…นไม่เว้นวรรคระหว่างคำนะค้นหาคำนี้");
+    assert.equal(snippet(`${"👍🏽".repeat(10)}OKneedle`, "needle"), `…${"👍🏽".repeat(5)}OKneedle`);
     // Emphasis and code marks go, as the thread shows the text.
     assert.equal(
       ThreadSearch.buildSearchSnippet("Use **bold** and `code` here", 0),
