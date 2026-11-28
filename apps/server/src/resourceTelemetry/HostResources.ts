@@ -1,4 +1,4 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect has no free-space query.
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect has no free-space query, and its calls cannot be kept to one in flight.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import type {
@@ -122,7 +122,7 @@ export function blockDeviceActivity(
 }
 
 // Types on an anonymous device (major 0) whose waits still end at a block device, or nowhere.
-// Network and FUSE filesystems are absent on purpose, and so is anything unknown.
+// Network filesystems are absent on purpose, and so is anything unknown.
 const LOCAL_ANONYMOUS_FILESYSTEMS = new Set([
   "autofs",
   "bcachefs",
@@ -161,19 +161,41 @@ const LOCAL_ANONYMOUS_FILESYSTEMS = new Set([
 ]);
 
 /**
- * Whether `/proc/self/mountinfo` has a filesystem whose stalls may never reach a block device
- * (NFS, CIFS, 9p, FUSE). Being mounted is enough: no counter tells a stalled mount from an
- * unused one, and looking for stuck tasks misses every stall that ends between two samples.
+ * The mounts in `/proc/self/mountinfo` whose stalls may never reach a block device. NFS keeps
+ * counters and the GVFS bridge lists its shares, so those two can be told idle from in use.
+ * Nothing tells that of the rest, nor of an unreadable table: there, being mounted is enough.
  */
-export function mountsOffBlockDevices(mountinfo: string): boolean {
+export function mountsOffBlockDevices(
+  mountinfo: string,
+  ownAppDir: string | undefined,
+): { readonly nfs: boolean; readonly gvfs: ReadonlyArray<string>; readonly unknown: boolean } {
   const mounts = mountinfo.split("\n").filter((line) => line.trim() !== "");
-  return (
-    mounts.length === 0 ||
-    mounts.some((line) => {
-      const mount = /^\d+ \d+ (\d+):\d+ .* - (\S+) /.exec(line);
-      return !mount || (mount[1] === "0" && !LOCAL_ANONYMOUS_FILESYSTEMS.has(mount[2]!));
-    })
-  );
+  const gvfs: Array<string> = [];
+  let nfs = false;
+  let unknown = mounts.length === 0;
+  for (const line of mounts) {
+    const mount = /^\d+ \d+ (\d+):\d+ \S+ (\S+) .* - (\S+) /.exec(line);
+    const type = mount?.[3] ?? "";
+    const mountPoint = (mount?.[2] ?? "").replace(/\\(\d{3})/g, (_, octal: string) =>
+      String.fromCharCode(Number.parseInt(octal, 8)),
+    );
+    if (mount?.[1] !== "0") unknown ||= !mount;
+    else if (type === "nfs" || type === "nfs4") nfs = true;
+    else if (type === "fuse.gvfsd-fuse") gvfs.push(mountPoint);
+    // The AppImage this server runs from is a FUSE mount of a local file.
+    else if (type.startsWith("fuse.") && mountPoint === ownAppDir?.replace(/\/+$/, "")) continue;
+    else unknown ||= !LOCAL_ANONYMOUS_FILESYSTEMS.has(type);
+  }
+  return { nfs, gvfs, unknown };
+}
+
+/**
+ * Every NFS mount's `events` and `bytes` lines from `/proc/self/mountstats`. They count each
+ * call into the filesystem as it starts, so a stall that began and ended between two samples
+ * still moves them.
+ */
+function nfsCounters(mountstats: string): string {
+  return (mountstats.match(/^\s*(?:events|bytes):.*$/gm) ?? []).join("\n");
 }
 
 export interface BlockReading {
@@ -361,6 +383,7 @@ function cgroupNumber(text: string, pattern: RegExp): number | null {
 const make = Effect.fn("makeHostResources")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcess.Platform;
+  const environment = yield* HostProcess.Environment;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const agentScope = yield* AgentScope.AgentScope;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
@@ -372,29 +395,32 @@ const make = Effect.fn("makeHostResources")(function* () {
     readonly usage: ReadonlyMap<string, number>;
   } | null>(null);
   const blockReadings = yield* Ref.make<ReadonlyArray<BlockReading>>([]);
+  const lastNfsCounters = yield* Ref.make<string | null>(null);
 
   const readFile = (path: string) => fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
 
-  // libuv cannot cancel a started `statfs`, so a hung mount gets at most one in flight.
-  const pendingStatfs = new Set<string>();
-  const readDiskSpace = (directory: string) =>
+  // libuv cannot cancel a started call, so a hung mount gets at most one of a kind in flight.
+  const pendingOnMount = new Set<string>();
+  const onMount = <A>(call: string, directory: string, run: (directory: string) => Promise<A>) =>
     Effect.promise(() => {
-      if (pendingStatfs.has(directory)) return Promise.resolve(null);
-      pendingStatfs.add(directory);
+      const key = `${call} ${directory}`;
+      if (pendingOnMount.has(key)) return Promise.resolve(null);
+      pendingOnMount.add(key);
       // An unreadable volume is reported as unknown, not as an error.
-      return NodeFSP.statfs(directory)
+      return run(directory)
         .catch(() => null)
-        .finally(() => pendingStatfs.delete(directory));
+        .finally(() => pendingOnMount.delete(key));
     }).pipe(
       // A hung network mount must not hold the sample.
       Effect.timeoutOption("1 second"),
+      Effect.map((result) => (result._tag === "Some" ? result.value : null)),
+    );
+  const readDiskSpace = (directory: string) =>
+    onMount("statfs", directory, (path) => NodeFSP.statfs(path)).pipe(
       Effect.map((stats) =>
-        stats._tag === "Some" && stats.value !== null
-          ? {
-              free: stats.value.bavail * stats.value.bsize,
-              total: stats.value.blocks * stats.value.bsize,
-            }
-          : null,
+        stats === null
+          ? null
+          : { free: stats.bavail * stats.bsize, total: stats.blocks * stats.bsize },
       ),
     );
 
@@ -423,8 +449,23 @@ const make = Effect.fn("makeHostResources")(function* () {
   const readBlockDevices = Effect.gen(function* () {
     const devices = yield* fs.readDirectory("/sys/block").pipe(Effect.orElseSucceed(() => []));
     const activity = blockDeviceActivity(yield* readFile("/proc/diskstats"), new Set(devices));
+    const offBlock = mountsOffBlockDevices(
+      yield* readFile("/proc/self/mountinfo"),
+      environment.APPDIR,
+    );
+    const nfs = offBlock.nfs ? nfsCounters(yield* readFile("/proc/self/mountstats")) : "";
+    // Compared with the reading before, however old: the counters only ever grow.
+    const nfsBefore = yield* Ref.getAndSet(lastNfsCounters, nfs);
+    const nfsIdle = offBlock.nfs ? nfs !== "" && nfs === nfsBefore : !nfsBefore;
+    // The bridge shows each share it carries as an entry; with none, nothing can wait on it.
+    const gvfsShares = yield* Effect.forEach(offBlock.gvfs, (directory) =>
+      onMount("readdir", directory, (path) => NodeFSP.readdir(path)),
+    );
     const bounded =
-      activity !== null && !mountsOffBlockDevices(yield* readFile("/proc/self/mountinfo"));
+      activity !== null &&
+      !offBlock.unknown &&
+      nfsIdle &&
+      gvfsShares.every((shares) => shares?.length === 0);
     return {
       at: yield* Clock.currentTimeMillis,
       busyMs: bounded ? activity.busyMs : null,
@@ -440,7 +481,7 @@ const make = Effect.fn("makeHostResources")(function* () {
     );
     yield* Ref.set(blockReadings, [...kept, reading]);
     if (kept.length > 0) return blockBusyPercent([...kept, reading]);
-    if (ioFull < IO_ELEVATED * EXIT_RATIO) return null;
+    if (ioFull < IO_ELEVATED * EXIT_RATIO || reading.busyMs === null) return null;
     yield* Effect.sleep("200 millis");
     return blockBusyPercent([reading, yield* readBlockDevices]);
   });
