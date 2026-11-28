@@ -1707,6 +1707,67 @@ it.layer(
     { skip: !symlinksSupported || windowsHost },
   );
 
+  // A registry whose `latest` tag names another platform's prerelease: npm install
+  // fails with EBADPLATFORM, so it must be neither offered nor installed through `@latest`.
+  it.effect(
+    "does not offer a platform-specific prerelease that npm reports as latest",
+    () =>
+      Effect.gen(function* () {
+        const prerelease = "1.1.0-alpha.4-win32-x64";
+        const tempDir = yield* makeTempDir("t3-npm-latest-prerelease");
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        writeExecutable(NodePath.join(npmBinDir, "npm"));
+        const link = linkIntoPackage(tempDir, "package-tool", [
+          "lib",
+          "node_modules",
+          "@example",
+          "package-tool",
+        ]);
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          { binaryPath: link, env: { PATH: npmBinDir } },
+        ).pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: "" }),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner(
+              (_command, args) =>
+                JSON.stringify(
+                  args[0] === "outdated"
+                    ? {
+                        "@example/package-tool": {
+                          current: "1.0.0",
+                          wanted: prerelease,
+                          latest: prerelease,
+                        },
+                      }
+                    : { dependencies: { "@example/package-tool": { version: "1.0.0" } } },
+                ),
+              (args) => (args[0] === "outdated" ? 1 : 0),
+            ),
+          ),
+        );
+
+        const provider = yield* enrichProviderSnapshotWithVersionAdvisory(
+          installedPackageToolProvider,
+          capabilities,
+        ).pipe(
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make(),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("npm answers for the package")),
+          ),
+        );
+        expect(provider.versionAdvisory?.latestVersion).not.toBe(prerelease);
+        expect(provider.versionAdvisory?.status).not.toBe("behind_latest");
+      }),
+    { skip: !symlinksSupported || windowsHost },
+  );
+
   it.effect(
     "asks npm about every provider package installed into the same global prefix",
     () =>
