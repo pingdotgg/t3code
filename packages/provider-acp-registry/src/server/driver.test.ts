@@ -501,6 +501,72 @@ describe("acpRegistrySnapshotReadiness", () => {
     ]);
   });
 
+  // Nodecode offers one model under a paid and a free group, with the same name in both.
+  it("keeps the group of a grouped model select visible in the picker", () => {
+    const provider = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ agentId: "nodecode" }),
+      checkedAt: "2026-11-28T10:00:00.000Z",
+      inspection: {
+        status: "ready",
+        agentId: "nodecode",
+        version: "0.1.17",
+        distribution: "binary",
+      },
+      probe: {
+        probe: {
+          instanceId: identity.instanceId,
+          ready: true,
+          icon: null,
+          authMethods: [],
+          models: [],
+          currentModelId: null,
+          configOptions: [],
+          sessionManagement: noSessionManagement,
+        },
+        slashCommands: [],
+        skills: [],
+      },
+    });
+    const live = applyAcpRegistryLiveConfiguration(
+      provider,
+      normalizeAcpRegistryLiveConfiguration([
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "nodecode-free/nodecode-cyber-v1",
+          options: [
+            {
+              groupId: "nodecode",
+              name: "nodecode",
+              options: [
+                { value: "nodecode/nodecode-cyber-v1", name: "Cyber v1" },
+                { value: "nodecode/nodecode-decide-v1", name: "nodecode-decide-v1" },
+              ],
+            },
+            {
+              groupId: "nodecode-free",
+              name: "nodecode-free",
+              options: [{ value: "nodecode-free/nodecode-cyber-v1", name: "Cyber v1" }],
+            },
+          ],
+        },
+      ]),
+      [],
+    );
+    const shown = (slug: string) => {
+      const model = live.models.find((candidate) => candidate.slug === slug);
+      return [model?.name, model?.subProvider].filter(Boolean).join(" · ");
+    };
+
+    expect(shown("nodecode-free/nodecode-cyber-v1")).not.toEqual(
+      shown("nodecode/nodecode-cyber-v1"),
+    );
+    expect(shown("nodecode-free/nodecode-cyber-v1")).toContain("nodecode-free");
+  });
+
   it("projects discovery without claiming authentication when no login methods are advertised", () => {
     const snapshot = buildCheckedAcpRegistrySnapshot({
       ...identity,
