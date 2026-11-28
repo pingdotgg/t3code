@@ -3031,8 +3031,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       linked.push(item);
     }
     // A landed link already refocuses the editor once the draft renders. Focusing now would
-    // let the editor write its stale text back over the link (see ComposerAttachInput).
-    if (linked.length === 0) focusComposer();
+    // let the editor write its stale text back over the link (see ComposerAttachInput), and a
+    // sibling insert from the same paste (a folder link) may not have rendered yet either, so
+    // the fallback waits for the next frame too.
+    if (linked.length === 0) scheduleComposerFocus();
     return { linked, missing };
   };
 
