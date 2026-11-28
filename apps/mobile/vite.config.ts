@@ -59,6 +59,7 @@ const reactTests = [
   "src/state/use-vcs-action-state.test.tsx",
   "src/features/terminal/useTerminalExitNavigation.test.tsx",
   "src/features/threads/use-thread-list-now.test.tsx",
+  "src/features/keyboard/HardwareKeyboardCommandProvider.test.tsx",
   "src/features/threads/use-composer-command-menu.select.test.tsx",
   "src/features/threads/useSidebarRowThreadKey.test.tsx",
   "src/features/threads/ThreadScreenHost.test.tsx",
