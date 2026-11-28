@@ -1024,7 +1024,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "diagnostics",
     title: msg("Diagnostics"),
     to: "/settings/maintenance",
-    searchTerms: [msg("logs traces processes resource history failures spans cpu memory")],
+    searchTerms: [
+      msg("logs traces processes resource history failures spans cpu memory"),
+      msg("Live Processes"),
+      msg("Latest Failures"),
+      msg("Most Common Failures"),
+      msg("Slowest Spans"),
+      msg("Top Span Names"),
+    ],
   },
   {
     id: "agent-feedback",
@@ -1040,6 +1047,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "open-source-licenses",
     title: msg("Open source licenses"),
     to: "/settings/about",
+    searchTerms: [msg("Third-party notices")],
   },
   {
     id: "keybindings",
