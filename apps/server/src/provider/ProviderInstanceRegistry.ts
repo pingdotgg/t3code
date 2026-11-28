@@ -725,8 +725,8 @@ export const makeProviderInstanceRegistry = Effect.fn(
         );
         // A failed re-read keeps the working instance and the value it already holds.
         if (unreadable.length === 0 && !Equal.equals(secrets, current.secrets)) {
-          rebuild.add(instanceId);
-          carried.set(instanceId, secrets);
+          rebuild.add(current.instance.instanceId);
+          carried.set(current.instance.instanceId, secrets);
         }
       }
       yield* reconcileWithR(configMap, rebuild, false, carried);
