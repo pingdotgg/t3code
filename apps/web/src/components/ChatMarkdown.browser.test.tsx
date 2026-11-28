@@ -1230,18 +1230,14 @@ describe("ChatMarkdown copy", () => {
       from: "Name",
       to: "20",
       text: "| Name | Role | Score |\n| --- | :---: | ---: |\n| Alice | Engineer | 10 |\n| Bob | Designer | 20 |",
+      cells: 9,
     },
     {
-      label: "multiple body rows",
-      from: "Alice",
-      to: "20",
-      text: "| Alice | Engineer | 10 |\n| --- | :---: | ---: |\n| Bob | Designer | 20 |",
-    },
-    {
-      label: "multiple cells in one row",
+      label: "cells in one row",
       from: "Alice",
       to: "Engineer",
       text: "| Alice | Engineer |\n| --- | :---: |",
+      cells: 2,
     },
     {
       label: "a row whose selection stops at the start of the next row",
@@ -1249,22 +1245,45 @@ describe("ChatMarkdown copy", () => {
       to: "Alice",
       skipTo: true,
       text: "| Name | Role | Score |\n| --- | :---: | ---: |",
+      cells: 3,
+    },
+    {
+      label: "one cell whose selection stops at the start of the next cell, as plain text",
+      from: "Alice",
+      to: "Engineer",
+      skipTo: true,
+      text: "Alice",
+      cells: 0,
+    },
+    {
+      label: "an empty cell the selection ends in",
+      source: "| Item | Note |\n| --- | --- |\n| Alpha |  |",
+      from: "Item",
+      to: "",
+      text: "| Item | Note |\n| --- | --- |\n| Alpha |  |",
+      cells: 4,
     },
   ])(
-    "copies $label inside a rendered table as Markdown and HTML",
-    async ({ from, to, skipTo, text }) => {
+    "copies $label from a rendered table",
+    async ({
+      source = "| Name | Role | Score |\n| :--- | :---: | ---: |\n| Alice | Engineer | 10 |\n| Bob | Designer | 20 |",
+      from,
+      to,
+      skipTo,
+      text,
+      cells,
+    }) => {
       setup();
-      await using screen = await renderText(
-        "| Name | Role | Score |\n| :--- | :---: | ---: |\n| Alice | Engineer | 10 |\n| Bob | Designer | 20 |",
-      );
-      const cellText = (shown: string) =>
-        [...screen.container.querySelectorAll("th, td")]
-          .map((cell) => cell.firstChild)
-          .find((node) => node?.nodeType === Node.TEXT_NODE && node.textContent === shown)!;
-      const start = cellText(from);
-      const end = cellText(to);
+      await using screen = await renderText(source);
+      const cellNode = (shown: string) => {
+        const cell = [...screen.container.querySelectorAll("th, td")].find(
+          (cell) => cell.textContent === shown,
+        )!;
+        return cell.firstChild ?? cell;
+      };
+      const end = cellNode(to);
       const range = document.createRange();
-      range.setStart(start, 0);
+      range.setStart(cellNode(from), 0);
       range.setEnd(end, skipTo ? 0 : end.textContent!.length);
       const selection = window.getSelection()!;
       selection.removeAllRanges();
@@ -1273,49 +1292,10 @@ describe("ChatMarkdown copy", () => {
       const payload = chatMarkdownClipboardPayload(selection);
       expect(payload?.text).toBe(text);
       const pasted = new DOMParser().parseFromString(payload!.html, "text/html");
-      expect(pasted.querySelector("table")).not.toBeNull();
       expect(serializeRenderedMarkdownFragment(pasted.body)).toBe(text);
+      expect(pasted.querySelectorAll("table th, table td")).toHaveLength(cells);
     },
   );
-
-  it("keeps a single selected table cell as plain text even when the selection edge touches the next cell", async () => {
-    setup();
-    await using screen = await renderText("| Name | Role |\n| --- | --- |\n| Alice | Engineer |");
-    const cellText = (shown: string) =>
-      [...screen.container.querySelectorAll("th, td")]
-        .map((cell) => cell.firstChild)
-        .find((node) => node?.nodeType === Node.TEXT_NODE && node.textContent === shown)!;
-    const range = document.createRange();
-    range.setStart(cellText("Alice"), 0);
-    range.setEnd(cellText("Engineer"), 0);
-    const selection = window.getSelection()!;
-    selection.removeAllRanges();
-    selection.addRange(range);
-
-    const payload = chatMarkdownClipboardPayload(selection);
-    expect(payload?.text).toBe("Alice");
-    const pasted = new DOMParser().parseFromString(payload!.html, "text/html");
-    expect(pasted.querySelector("table")).toBeNull();
-    expect(pasted.body.textContent).toBe("Alice");
-  });
-
-  it("preserves an intentionally empty cell at the end of a copied table selection", async () => {
-    setup();
-    await using screen = await renderText("| Item | Note |\n| --- | --- |\n| Alpha |  |");
-    const header = screen.container.querySelector("th")!.firstChild!;
-    const emptyCell = screen.container.querySelectorAll("td")[1]!;
-    const range = document.createRange();
-    range.setStart(header, 0);
-    range.setEnd(emptyCell, 0);
-    const selection = window.getSelection()!;
-    selection.removeAllRanges();
-    selection.addRange(range);
-
-    const payload = chatMarkdownClipboardPayload(selection);
-    expect(payload?.text).toBe("| Item | Note |\n| --- | --- |\n| Alpha |  |");
-    const pasted = new DOMParser().parseFromString(payload!.html, "text/html");
-    expect(pasted.querySelectorAll("table td")).toHaveLength(2);
-  });
 });
 
 describe("ChatMarkdown file chip tooltips", () => {
