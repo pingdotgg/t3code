@@ -1,6 +1,12 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
 import * as DateTime from "effect/DateTime";
-import { DEFAULT_SNOOZE_PRESETS, type SnoozePresetSetting } from "@t3tools/contracts/settings";
+import type { ThreadPullRequestLink } from "@t3tools/contracts";
+import {
+  DEFAULT_SNOOZE_PRESETS,
+  MAX_SNOOZE_PRESET_MINUTES,
+  type SnoozePresetSetting,
+} from "@t3tools/contracts/settings";
+import { snoozablePullRequests } from "@t3tools/shared/threadPullRequests";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 import { mFallback, msg } from "gt-i18n";
@@ -214,12 +220,15 @@ export interface SnoozePreset {
   readonly label: string;
   readonly whenLabel: string;
   readonly snoozedUntil: string;
+  readonly untilPullRequest?: true;
 }
 
 export interface SnoozePresetOptions {
   readonly presets?: ReadonlyArray<SnoozePresetSetting>;
   readonly formatTime?: (date: Date) => string;
   readonly locale?: string | undefined;
+  /** The thread's pull requests, from a server that honors snoozing until they update. */
+  readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink>;
 }
 
 function snoozeTimeOfDayLabel(date: Date): string {
@@ -345,7 +354,29 @@ export function resolveSnoozePreset(
   };
 }
 
-/** The snooze menu: soonest first, one row per wake minute. */
+/** "Until PR updates", capped at the longest snooze a preset allows. */
+function pullRequestSnoozePreset(
+  pullRequests: ReadonlyArray<ThreadPullRequestLink>,
+  now: Date,
+  resolve: MFunctionType,
+): SnoozePreset | null {
+  const open = snoozablePullRequests(pullRequests);
+  if (open.length === 0) return null;
+  return {
+    id: "pull-request",
+    label: resolve(msg("Until PR updates")),
+    whenLabel:
+      open.length === 1
+        ? `#${open[0]!.number}`
+        : resolve(
+            msg("{count, plural, one {{count} PR} other {{count} PRs}}", { count: open.length }),
+          ),
+    snoozedUntil: new Date(now.getTime() + MAX_SNOOZE_PRESET_MINUTES * 60_000).toISOString(),
+    untilPullRequest: true,
+  };
+}
+
+/** The snooze menu: soonest first, one row per wake minute, then "Until PR updates". */
 export function resolveSnoozePresets(
   now: Date,
   options: SnoozePresetOptions = {},
@@ -355,20 +386,22 @@ export function resolveSnoozePresets(
   // minute tie, and the stable sort keeps whichever comes first in settings.
   const wakeMinute = (preset: SnoozePreset) => Math.floor(Date.parse(preset.snoozedUntil) / 60_000);
   const seen = new Set<number>();
-  return (
-    (options.presets ?? DEFAULT_SNOOZE_PRESETS)
-      .flatMap(
-        (setting) =>
-          resolveSnoozePreset(setting, now, options.formatTime, resolve, options.locale) ?? [],
-      )
-      // flatMap returned a new array; Hermes has no `toSorted`.
-      .sort((a, b) => wakeMinute(a) - wakeMinute(b))
-      .filter((preset) => {
-        if (seen.has(wakeMinute(preset))) return false;
-        seen.add(wakeMinute(preset));
-        return true;
-      })
-  );
+  const pullRequest = options.pullRequests
+    ? pullRequestSnoozePreset(options.pullRequests, now, resolve)
+    : null;
+  const timed = (options.presets ?? DEFAULT_SNOOZE_PRESETS)
+    .flatMap(
+      (setting) =>
+        resolveSnoozePreset(setting, now, options.formatTime, resolve, options.locale) ?? [],
+    )
+    // flatMap returned a new array; Hermes has no `toSorted`.
+    .sort((a, b) => wakeMinute(a) - wakeMinute(b))
+    .filter((preset) => {
+      if (seen.has(wakeMinute(preset))) return false;
+      seen.add(wakeMinute(preset));
+      return true;
+    });
+  return pullRequest ? [...timed, pullRequest] : timed;
 }
 
 /**
@@ -414,6 +447,17 @@ export function snoozeWakeLabel(
     return resolve(msg("{hours}h", { hours: String(Math.ceil(minutes / 60)) }));
   }
   return resolve(msg("{days}d", { days: String(Math.ceil(minutes / (24 * 60))) }));
+}
+
+/** A snoozed thread's compact wake badge; a pull request snooze has no meaningful time. */
+export function threadSnoozeWakeLabel(
+  thread: { readonly snoozedUntil: string; readonly snoozeUntilPullRequest?: boolean | undefined },
+  options: { readonly now: string },
+  resolve: MFunctionType = mFallback,
+): string {
+  return thread.snoozeUntilPullRequest === true
+    ? resolve(msg("PR", { $context: "a snoozed thread wakes when its pull request updates" }))
+    : snoozeWakeLabel(thread.snoozedUntil, options, resolve);
 }
 
 export type CustomSnoozeInput =

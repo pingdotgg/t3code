@@ -1,6 +1,5 @@
 import type {
   OrchestrationV2AppThread,
-  PullRequestSnoozeTrigger,
   ThreadPullRequestLink,
   ThreadPullRequestSnapshot,
 } from "@t3tools/contracts";
@@ -9,8 +8,7 @@ import * as DateTime from "effect/DateTime";
 
 import { threadPullRequestKeysEqual } from "../sourceControl/threadPullRequests.ts";
 
-function snapshotMeetsTrigger(
-  trigger: PullRequestSnoozeTrigger,
+function pullRequestUpdated(
   before: ThreadPullRequestSnapshot,
   after: ThreadPullRequestSnapshot,
   watched: boolean,
@@ -18,26 +16,18 @@ function snapshotMeetsTrigger(
   const reviewed =
     (after.reviewDecision === "approved" || after.reviewDecision === "changes-requested") &&
     after.reviewDecision !== before.reviewDecision;
+  const conflicted = after.mergeability === "conflicting" && before.mergeability !== "conflicting";
+  // A watching agent answers its own checks; the user hears if it gets stuck.
   const checksFinished =
+    !watched &&
     before.checksState === "pending" &&
     (after.checksState === "passing" || after.checksState === "failing");
-  const conflicted = after.mergeability === "conflicting" && before.mergeability !== "conflicting";
-  switch (trigger) {
-    case "review":
-      return reviewed;
-    case "checks":
-      return checksFinished;
-    case "conflict":
-      return conflicted;
-    case "update":
-      // A watching agent answers its own checks; the user hears if it gets stuck.
-      return reviewed || conflicted || (checksFinished && !watched);
-  }
+  return reviewed || conflicted || checksFinished;
 }
 
 /**
- * Wakes a pull request snooze the way its timer would, by ending it now, when a change to the
- * thread's pull requests meets its trigger or leaves none open.
+ * Ends a pull request snooze now, as its timer would, when a sync brings a review verdict, a
+ * merge conflict or finished checks, or leaves no pull request open.
  */
 export function wakePullRequestSnooze<
   Thread extends Pick<OrchestrationV2AppThread, "snoozedUntil" | "snoozeUntilPullRequest">,
@@ -47,19 +37,19 @@ export function wakePullRequestSnooze<
   after: ReadonlyArray<ThreadPullRequestLink>,
   now: DateTime.Utc,
 ): Thread {
-  const trigger = thread.snoozeUntilPullRequest;
-  if (trigger == null || thread.snoozedUntil == null) return thread;
+  if (thread.snoozeUntilPullRequest !== true || thread.snoozedUntil == null) return thread;
   if (DateTime.toEpochMillis(thread.snoozedUntil) <= DateTime.toEpochMillis(now)) return thread;
   const open = snoozablePullRequests(after);
-  const met =
+  const wake =
     open.length === 0 ||
     open.some((link) => {
+      // A pull request's first read is its baseline, not news.
       const previous = before.find((candidate) => threadPullRequestKeysEqual(candidate, link));
       return (
         previous?.snapshot != null &&
         link.snapshot !== null &&
-        snapshotMeetsTrigger(trigger, previous.snapshot, link.snapshot, link.watch !== undefined)
+        pullRequestUpdated(previous.snapshot, link.snapshot, link.watch !== undefined)
       );
     });
-  return met ? { ...thread, snoozedUntil: now, snoozeUntilPullRequest: null } : thread;
+  return wake ? { ...thread, snoozedUntil: now, snoozeUntilPullRequest: false } : thread;
 }

@@ -28,7 +28,6 @@ import {
 import { ProviderInteractionMode, ProviderRequestKind, RuntimeMode } from "./providerPolicy.ts";
 import { PullRequestState } from "./pullRequest.ts";
 import {
-  PullRequestSnoozeTrigger,
   ThreadLinkedPullRequest,
   ThreadPullRequestKey,
   ThreadPullRequestLinkSource,
@@ -418,8 +417,8 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
   snoozedUntil: Schema.NullOr(IsoDateTime),
-  /** Set while the snooze also waits on this change to the thread's open pull requests. */
-  snoozeUntilPullRequest: Schema.optional(PullRequestSnoozeTrigger),
+  /** True while the snooze also ends when the thread's open pull requests update. */
+  snoozeUntilPullRequest: Schema.optional(Schema.Boolean),
   /** Absent from linked environments that predate it. */
   pinned: Schema.optional(Schema.Boolean),
   /** Absent from linked environments that predate it. */
@@ -497,8 +496,8 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
   snoozedUntil: Schema.NullOr(IsoDateTime),
-  /** Set while the snooze also waits on this change to the thread's open pull requests. */
-  snoozeUntilPullRequest: Schema.optional(PullRequestSnoozeTrigger),
+  /** True while the snooze also ends when the thread's open pull requests update. */
+  snoozeUntilPullRequest: Schema.optional(Schema.Boolean),
   /** Absent from linked environments that predate it. */
   pinned: Schema.optional(Schema.Boolean),
   /** Absent from linked environments that predate it. */

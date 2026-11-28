@@ -263,9 +263,9 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
     snoozePresetsByEnvironmentId,
-    snoozePullRequestPresetsByEnvironmentId,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
+    pullRequestSnoozeEnvironmentIds,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
@@ -469,11 +469,9 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             onSettleThread={settleThread}
             snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
             snoozePresets={snoozePresetsByEnvironmentId.get(thread.environmentId)}
-            snoozePullRequestPresets={snoozePullRequestPresetsByEnvironmentId.get(
-              thread.environmentId,
-            )}
             pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
             autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
+            pullRequestSnoozeSupported={pullRequestSnoozeEnvironmentIds.has(thread.environmentId)}
             reorderSupported={
               item.item.pinned
                 ? pinReorderEnvironmentIds.has(thread.environmentId)

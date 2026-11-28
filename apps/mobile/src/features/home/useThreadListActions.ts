@@ -249,7 +249,11 @@ export function useThreadListActions(): {
   readonly archiveThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly settleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
-  readonly snoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => Promise<boolean>;
+  readonly snoozeThread: (
+    thread: EnvironmentThreadShell,
+    snoozedUntil: string,
+    untilPullRequest?: boolean,
+  ) => Promise<boolean>;
   readonly unsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly unsettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly pinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
@@ -337,7 +341,11 @@ export function useThreadListActions(): {
                   if (!checkThreadOperationPermission(thread, failureTitle, true)) return false;
                   const result = await snoozeMutation({
                     environmentId: thread.environmentId,
-                    input: { threadId: thread.id, snoozedUntil: step.snoozedUntil },
+                    input: {
+                      threadId: thread.id,
+                      snoozedUntil: step.snoozedUntil,
+                      ...(step.untilPullRequest === true ? { untilPullRequest: true } : {}),
+                    },
                   });
                   if (result._tag === "Failure") {
                     const error = Cause.squash(result.cause);
@@ -380,7 +388,11 @@ export function useThreadListActions(): {
     }
     return succeeded;
   };
-  const snoozeThread = async (thread: EnvironmentThreadShell, snoozedUntil: string) => {
+  const snoozeThread = async (
+    thread: EnvironmentThreadShell,
+    snoozedUntil: string,
+    untilPullRequest?: boolean,
+  ) => {
     if (!checkThreadOperationPermission(thread, m(msg("Could not snooze thread")), true)) {
       return false;
     }
@@ -425,6 +437,7 @@ export function useThreadListActions(): {
             input: {
               threadId: thread.id,
               snoozedUntil,
+              ...(untilPullRequest === true ? { untilPullRequest: true } : {}),
             },
           }),
         (result) => result._tag === "Success",
@@ -859,8 +872,9 @@ export function useThreadListActions(): {
     settleThread: useStableCallback((thread: EnvironmentThreadShell) =>
       settleThread(liveThread(thread)),
     ),
-    snoozeThread: useStableCallback((thread: EnvironmentThreadShell, snoozedUntil: string) =>
-      snoozeThread(liveThread(thread), snoozedUntil),
+    snoozeThread: useStableCallback(
+      (thread: EnvironmentThreadShell, snoozedUntil: string, untilPullRequest?: boolean) =>
+        snoozeThread(liveThread(thread), snoozedUntil, untilPullRequest),
     ),
     unsnoozeThread: useStableCallback((thread: EnvironmentThreadShell) =>
       unsnoozeThread(liveThread(thread)),

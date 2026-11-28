@@ -6,7 +6,7 @@ import {
   pickSnoozePreset,
   QUEUED_TURN_START_GRACE_MS,
   resolveSnoozePresets,
-  snoozeWakeLabel,
+  threadSnoozeWakeLabel,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
@@ -33,7 +33,12 @@ import {
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
-import { isListedThreadLineage, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
+import {
+  isListedThreadLineage,
+  type EnvironmentId,
+  type ProjectId,
+  type ThreadPullRequestLink,
+} from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import type { MenuAction } from "@react-native-menu/menu";
 
@@ -89,11 +94,19 @@ export function resolveThreadListV2SnoozePresets(
     readonly secondary: "snooze" | null;
     readonly now: string;
     readonly presets: ReadonlyArray<SnoozePresetSetting> | undefined;
+    readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
   },
   resolve: MessageResolver = m,
 ): ReadonlyArray<SnoozePreset> {
   return input.secondary === "snooze"
-    ? resolveSnoozePresets(new Date(input.now), presetOptions(input.presets), resolve)
+    ? resolveSnoozePresets(
+        new Date(input.now),
+        {
+          ...presetOptions(input.presets),
+          ...(input.pullRequests ? { pullRequests: input.pullRequests } : {}),
+        },
+        resolve,
+      )
     : [];
 }
 
@@ -614,7 +627,14 @@ export function buildThreadListV2ListItems(input: {
   const threadItems = input.items.map((item): ThreadListV2ListItem => {
     const snoozeWakeLabelText =
       item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
-        ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow }, resolve)
+        ? threadSnoozeWakeLabel(
+            {
+              snoozedUntil: item.thread.snoozedUntil,
+              snoozeUntilPullRequest: item.thread.snoozeUntilPullRequest,
+            },
+            { now: input.snoozeLabelNow },
+            resolve,
+          )
         : undefined;
     // Put the clock on items so recycler equality limits ticks to rows displaying snooze preset times.
     const snoozePresetMinute =

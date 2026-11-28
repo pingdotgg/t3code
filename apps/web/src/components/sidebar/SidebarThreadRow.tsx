@@ -35,6 +35,7 @@ import {
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 
 import type { TimestampFormat } from "@t3tools/contracts/settings";
@@ -122,7 +123,7 @@ import {
   useLinkedThreadPullRequest,
   ThreadSearchPullRequestNumber,
 } from "../ThreadStatusIndicators";
-import { pickSnoozePreset, resolveSnoozePresets, type SnoozePreset } from "../Sidebar.snooze";
+import { pickSnoozePreset, resolveThreadSnoozePresets, type SnoozeChoice } from "../Sidebar.snooze";
 import { useThreadShell } from "../../state/entities";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch";
@@ -430,16 +431,18 @@ function SidebarThreadTooltip({
 function SnoozeMenuButton(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSnooze: (preset: Pick<SnoozePreset, "snoozedUntil">) => void;
+  onSnooze: (preset: SnoozeChoice) => void;
   timestampFormat: TimestampFormat;
   environmentId: EnvironmentId;
+  pullRequests: ReadonlyArray<ThreadPullRequestLink>;
 }) {
-  const { open, onOpenChange, onSnooze, timestampFormat, environmentId } = props;
+  const { open, onOpenChange, onSnooze, timestampFormat, environmentId, pullRequests } = props;
   const gt = useGT();
   const messages = useMessages();
+  const thread = { environmentId, pullRequests };
   const presets = open
     ? // oxlint-disable-next-line react/purity -- Presets are resolved only while the menu is open, so each opening reads a fresh time.
-      resolveSnoozePresets(new Date(), timestampFormat, environmentId, messages)
+      resolveThreadSnoozePresets(new Date(), timestampFormat, thread, messages)
     : [];
   return (
     <Menu open={open} onOpenChange={onOpenChange}>
@@ -656,7 +659,7 @@ type SidebarThreadRowProps = {
     event: PointerEvent,
   ) => void;
   onUnsettle: (threadRef: ScopedThreadRef) => void;
-  onSnooze: (threadRef: ScopedThreadRef, preset: Pick<SnoozePreset, "snoozedUntil">) => void;
+  onSnooze: (threadRef: ScopedThreadRef, preset: SnoozeChoice) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
   onUnpin: (threadRef: ScopedThreadRef) => void;
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
@@ -998,7 +1001,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     event.stopPropagation();
     onUnpin(threadRef);
   };
-  const handleSnoozePreset = (preset: Pick<SnoozePreset, "snoozedUntil">) => {
+  const handleSnoozePreset = (preset: SnoozeChoice) => {
     onSnooze(threadRef, preset);
   };
   const [snoozeMenuOpenRaw, setSnoozeMenuOpen] = useState(false);
@@ -1722,6 +1725,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         onSnooze={handleSnoozePreset}
                         timestampFormat={props.timestampFormat}
                         environmentId={thread.environmentId}
+                        pullRequests={thread.pullRequests}
                       />
                     ) : null}
                     {props.settlementSupported ? (

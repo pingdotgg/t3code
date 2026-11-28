@@ -1,10 +1,10 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadPullRequestLink } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { msg } from "gt-react";
 import {
   pickSnoozePreset as pickSharedSnoozePreset,
   resolveSnoozePresets as resolveSharedSnoozePresets,
-  snoozeWakeLabel,
+  threadSnoozeWakeLabel,
   type SnoozePreset,
 } from "@t3tools/client-runtime/state/thread-settled";
 
@@ -15,7 +15,10 @@ import { serverEnvironment } from "../state/server";
 import { formatShortTimestamp } from "../timestampFormat";
 import { toastManager } from "./ui/toast";
 
-export { snoozeWakeLabel, type SnoozePreset };
+export { threadSnoozeWakeLabel, type SnoozePreset };
+
+/** What a snooze action needs from a menu row, the custom dialog, or an Undo. */
+export type SnoozeChoice = { readonly snoozedUntil: string; readonly untilPullRequest?: boolean };
 
 /** The snooze menu for a thread, from its environment's presets, read when the menu opens. */
 export function resolveSnoozePresets(
@@ -25,6 +28,29 @@ export function resolveSnoozePresets(
   resolve: MessageResolver = m,
 ): ReadonlyArray<SnoozePreset> {
   return resolveSharedSnoozePresets(now, snoozeOptions(timestampFormat, environmentId), resolve);
+}
+
+/** A single thread's snooze menu: the time presets, then "Until PR updates" where it applies. */
+export function resolveThreadSnoozePresets(
+  now: Date,
+  timestampFormat: TimestampFormat,
+  thread: {
+    readonly environmentId: EnvironmentId;
+    readonly pullRequests: ReadonlyArray<ThreadPullRequestLink>;
+  },
+  resolve: MessageResolver = m,
+): ReadonlyArray<SnoozePreset> {
+  const supported =
+    appAtomRegistry.get(serverEnvironment.configValueAtom(thread.environmentId))?.environment
+      .capabilities.threadSnoozeUntilPullRequest === true;
+  return resolveSharedSnoozePresets(
+    now,
+    {
+      ...snoozeOptions(timestampFormat, thread.environmentId),
+      ...(supported ? { pullRequests: thread.pullRequests } : {}),
+    },
+    resolve,
+  );
 }
 
 /** A shown menu choice as picked; see the shared `pickSnoozePreset`. */

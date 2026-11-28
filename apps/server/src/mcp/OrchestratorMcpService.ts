@@ -940,9 +940,7 @@ function threadSnooze(
     snoozed,
     snoozedUntil:
       snoozed && thread.snoozedUntil != null ? DateTime.formatIso(thread.snoozedUntil) : null,
-    ...(snoozed && thread.snoozeUntilPullRequest != null
-      ? { snoozeUntilPullRequest: thread.snoozeUntilPullRequest }
-      : {}),
+    ...(snoozed && thread.snoozeUntilPullRequest === true ? { snoozeUntilPullRequest: true } : {}),
   };
 }
 

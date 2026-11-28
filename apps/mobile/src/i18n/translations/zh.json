@@ -5707,5 +5707,9 @@
   "f6cf1627f4acc5ef": "评论可见范围",
   "eb1fd384ad5919dd": "内部备注",
   "b45f0b467e9406d0": "回复客户",
-  "15e5597f8f93ce12": "{start} 至 {end}"
+  "15e5597f8f93ce12": "{start} 至 {end}",
+  "784eceb3489793d5": "直到 PR 更新",
+  "affc8e3f430bb845": "{count, plural, other {{count} 个 PR}}",
+  "e8019d388fb8258b": "PR",
+  "9694ba86f72beeaf": "已暂缓，直到 PR 更新"
 }

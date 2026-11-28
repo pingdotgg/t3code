@@ -426,7 +426,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       let command: OrchestrationV2Command;
       switch (input.action) {
         case "snooze":
-          if (input.snoozedUntil === undefined && input.untilPullRequest === undefined) {
+          if (input.snoozedUntil === undefined && input.untilPullRequest !== true) {
             return yield* new OrchestratorMcpFailure({
               code: "invalid_request",
               message: "snooze requires snoozedUntil or untilPullRequest.",
@@ -440,9 +440,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               DateTime.formatIso(
                 DateTime.add(yield* DateTime.now, { minutes: MAX_SNOOZE_PRESET_MINUTES }),
               ),
-            ...(input.untilPullRequest === undefined
-              ? {}
-              : { untilPullRequest: input.untilPullRequest }),
+            ...(input.untilPullRequest === true ? { untilPullRequest: true } : {}),
           };
           break;
         case "unsnooze":

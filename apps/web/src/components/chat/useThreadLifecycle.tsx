@@ -663,9 +663,11 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       <ThreadStatusLine
         icon={<AlarmClockIcon />}
         label={
-          snoozeWake
-            ? gt("Snoozed, {remaining} left", { remaining: snoozeWake })
-            : gt("Snoozed", { $context: "thread status" })
+          activeThreadShell?.snoozeUntilPullRequest === true
+            ? gt("Snoozed until the PR updates")
+            : snoozeWake
+              ? gt("Snoozed, {remaining} left", { remaining: snoozeWake })
+              : gt("Snoozed", { $context: "thread status" })
         }
         clockMinute={nowMinute}
         actionLabel={isUnsnoozing ? gt("Waking...") : gt("Wake now")}

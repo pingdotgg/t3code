@@ -514,6 +514,38 @@ describe("pickSnoozePreset", () => {
     });
     expect(picked?.snoozedUntil).toBe(localDate(2026, 8, 31, 9).toISOString());
   });
+
+  it("offers and keeps Until PR updates only while a pull request is open", () => {
+    const now = localDate(2026, 4, 8, 15);
+    const pullRequest = (state: "open" | "merged") => ({
+      host: "github.com",
+      repository: "acme/app",
+      number: 12,
+      url: "https://github.com/acme/app/pull/12",
+      source: "manual" as const,
+      linkedAt: "2026-04-01T00:00:00.000Z",
+      snapshot: {
+        state,
+        title: "Add things",
+        headBranch: "feature",
+        baseBranch: "main",
+        isDraft: false,
+        updatedAt: null,
+        syncedAt: "2026-04-08T12:00:00.000Z",
+      },
+      stack: null,
+    });
+    const shown = resolveSnoozePresets(now, { pullRequests: [pullRequest("open")] });
+    const picked = pickSnoozePreset({ shown, id: "pull-request", now });
+    expect(shown.at(-1)).toBe(picked);
+    expect(picked).toMatchObject({ label: "Until PR updates", whenLabel: "#12" });
+    expect(picked?.untilPullRequest).toBe(true);
+    expect(
+      resolveSnoozePresets(now, { pullRequests: [pullRequest("merged")] }).some(
+        (preset) => preset.untilPullRequest,
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("snoozeWakeLabel", () => {

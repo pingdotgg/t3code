@@ -5704,5 +5704,9 @@
   "f6cf1627f4acc5ef": "댓글 공개 범위",
   "eb1fd384ad5919dd": "내부 메모",
   "b45f0b467e9406d0": "고객에게 답변",
-  "15e5597f8f93ce12": "{start}~{end}"
+  "15e5597f8f93ce12": "{start}~{end}",
+  "784eceb3489793d5": "PR이 업데이트될 때까지",
+  "affc8e3f430bb845": "{count, plural, other {PR {count}개}}",
+  "e8019d388fb8258b": "PR",
+  "9694ba86f72beeaf": "PR이 업데이트될 때까지 다시 알림 설정됨"
 }

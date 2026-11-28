@@ -5726,5 +5726,9 @@
   "f6cf1627f4acc5ef": "Kommentarens synlighet",
   "eb1fd384ad5919dd": "Intern anteckning",
   "b45f0b467e9406d0": "Svara kunden",
-  "15e5597f8f93ce12": "{start} till {end}"
+  "15e5597f8f93ce12": "{start} till {end}",
+  "784eceb3489793d5": "Tills PR:en uppdateras",
+  "affc8e3f430bb845": "{count, plural, one {{count} PR} other {{count} PR:er}}",
+  "e8019d388fb8258b": "PR",
+  "9694ba86f72beeaf": "Snoozad tills PR:en uppdateras"
 }

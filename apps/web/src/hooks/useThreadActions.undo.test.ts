@@ -65,7 +65,6 @@ const threadShell = vi.hoisted(() => ({
   activeOrderKey: null as string | null,
   unsettledAt: null as string | null,
   snoozedUntil: null as string | null,
-  snoozeUntilPullRequest: null as "review" | null,
   projectId: "project",
   environmentId: "undo-env",
   session: null,
@@ -128,7 +127,6 @@ beforeEach(() => {
   threadShell.activeOrderKey = null;
   threadShell.unsettledAt = null;
   threadShell.snoozedUntil = null;
-  threadShell.snoozeUntilPullRequest = null;
   shellLoaded.current = true;
 });
 afterEach(() => {
@@ -306,7 +304,6 @@ describe("settle and snooze Undo", () => {
     const snoozedUntil = "2030-01-01T09:00:00.000Z";
     threadShell.pinnedAt = "2026-01-01T00:00:00.000Z";
     threadShell.snoozedUntil = snoozedUntil;
-    threadShell.snoozeUntilPullRequest = "review";
     const actions = useThreadActions();
     await actions.settleThread(target);
     await currentUndo()();
@@ -317,7 +314,7 @@ describe("settle and snooze Undo", () => {
     });
     expect(commands.snooze).toHaveBeenCalledExactlyOnceWith({
       environmentId: target.environmentId,
-      input: { threadId: target.threadId, snoozedUntil, untilPullRequest: "review" },
+      input: { threadId: target.threadId, snoozedUntil },
     });
   });
 

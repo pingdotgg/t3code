@@ -13662,7 +13662,7 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("PR link events", (it
           commandId: CommandId.make(`pr-snooze-snooze-${suffix}`),
           threadId,
           snoozedUntil: "2099-01-01T00:00:00.000Z",
-          untilPullRequest: "review",
+          untilPullRequest: true,
         });
       const refused = yield* Effect.flip(snooze("without-pr"));
       assert.include(String(refused.cause), "no open pull request");
@@ -13695,10 +13695,7 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("PR link events", (it
         });
       yield* sync("baseline", "review-required");
       yield* snooze("with-pr");
-      assert.equal(
-        (yield* orchestrator.getThreadShell(threadId))?.snoozeUntilPullRequest,
-        "review",
-      );
+      assert.isTrue((yield* orchestrator.getThreadShell(threadId))?.snoozeUntilPullRequest);
 
       yield* sync("approved", "approved");
       const [row] = yield* sql<{ event_type: string }>`
@@ -13707,7 +13704,7 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("PR link events", (it
       assert.equal(row?.event_type, "thread.pull-request-synced");
       const woken = yield* orchestrator.getThreadShell(threadId);
       assert.deepEqual(woken?.snoozedUntil, yield* DateTime.now);
-      assert.isNull(woken?.snoozeUntilPullRequest);
+      assert.isUndefined(woken?.snoozeUntilPullRequest);
     }),
   );
 

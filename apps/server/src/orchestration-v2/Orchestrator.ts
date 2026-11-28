@@ -5086,7 +5086,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       if (
-        command.untilPullRequest !== undefined &&
+        command.untilPullRequest === true &&
         snoozablePullRequests(threadPullRequestsOf(thread)).length === 0
       ) {
         return yield* new OrchestratorDispatchError({
@@ -5173,7 +5173,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             snoozedUntil,
-            snoozeUntilPullRequest: command.untilPullRequest ?? null,
+            snoozeUntilPullRequest: command.untilPullRequest === true,
             limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
             snoozedAt: now,
             updatedAt: now,
@@ -5291,7 +5291,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             Date.parse(limitRecovery.resetAt) > DateTime.toEpochMillis(now)
               ? {
                   snoozedUntil: DateTime.makeUnsafe(limitRecovery.resetAt),
-                  snoozeUntilPullRequest: null,
+                  snoozeUntilPullRequest: false,
                   // Recovery updates acknowledge the same stopped run; their timestamps must not trigger fresh failure wakes.
                   snoozedAt: now,
                 }

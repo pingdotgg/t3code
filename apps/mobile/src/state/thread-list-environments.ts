@@ -12,7 +12,7 @@ export type ThreadListProvider = Pick<
   "instanceId" | "driver" | "enabled" | "displayName" | "accentColor" | "iconUrl"
 >;
 
-const capabilityKeys = ["threadAutoSettleOptOut"] as const;
+const capabilityKeys = ["threadAutoSettleOptOut", "threadSnoozeUntilPullRequest"] as const;
 
 function selectEnvironment(config: ServerConfig, isConnected: boolean) {
   return {
@@ -30,10 +30,6 @@ function selectEnvironment(config: ServerConfig, isConnected: boolean) {
     machineKind: resolveEnvironmentMachineKind(config),
     capabilities: config.environment.capabilities,
     snoozePresets: config.settings.snoozePresets,
-    snoozePullRequestPresets:
-      config.environment.capabilities.threadSnoozeUntilPullRequest === true
-        ? config.settings.snoozePullRequestPresets
-        : undefined,
   };
 }
 
@@ -66,21 +62,18 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
   const loadedEnvironmentIds = new Set<EnvironmentId>();
   const autoSettleOptOutEnvironmentIds = new Set<EnvironmentId>();
   const reorderableEnvironmentIds = new Set<EnvironmentId>();
+  const pullRequestSnoozeEnvironmentIds = new Set<EnvironmentId>();
   const snoozePresetsByEnvironmentId = new Map<EnvironmentId, ListEnvironment["snoozePresets"]>();
-  const snoozePullRequestPresetsByEnvironmentId = new Map<
-    EnvironmentId,
-    ListEnvironment["snoozePullRequestPresets"]
-  >();
   for (const [
     id,
-    { providers, machineKind, capabilities, isConnected, snoozePresets, snoozePullRequestPresets },
+    { providers, machineKind, capabilities, isConnected, snoozePresets },
   ] of environments) {
     providersByEnvironmentId.set(id, providers);
     snoozePresetsByEnvironmentId.set(id, snoozePresets);
-    snoozePullRequestPresetsByEnvironmentId.set(id, snoozePullRequestPresets);
     machineByEnvironmentId.set(id, machineKind);
     loadedEnvironmentIds.add(id);
     if (capabilities.threadAutoSettleOptOut === true) autoSettleOptOutEnvironmentIds.add(id);
+    if (capabilities.threadSnoozeUntilPullRequest === true) pullRequestSnoozeEnvironmentIds.add(id);
     if (isConnected) reorderableEnvironmentIds.add(id);
   }
   return {
@@ -88,13 +81,13 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
     machineByEnvironmentId,
     settlementEnvironmentIds: loadedEnvironmentIds,
     snoozeEnvironmentIds: loadedEnvironmentIds,
+    pullRequestSnoozeEnvironmentIds,
     pinningEnvironmentIds: loadedEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
     pinReorderEnvironmentIds: reorderableEnvironmentIds,
     activeReorderEnvironmentIds: reorderableEnvironmentIds,
     titleRegenerationEnvironmentIds: loadedEnvironmentIds,
     snoozePresetsByEnvironmentId,
-    snoozePullRequestPresetsByEnvironmentId,
   };
 }
 
@@ -118,20 +111,12 @@ export function createThreadListEnvironmentsAtom(
       if (prior && JSON.stringify(prior.snoozePresets) === JSON.stringify(selected.snoozePresets)) {
         selected.snoozePresets = prior.snoozePresets;
       }
-      if (
-        prior &&
-        JSON.stringify(prior.snoozePullRequestPresets) ===
-          JSON.stringify(selected.snoozePullRequestPresets)
-      ) {
-        selected.snoozePullRequestPresets = prior.snoozePullRequestPresets;
-      }
       const unchanged =
         prior &&
         prior.providers === selected.providers &&
         prior.machineKind === selected.machineKind &&
         prior.isConnected === selected.isConnected &&
         prior.snoozePresets === selected.snoozePresets &&
-        prior.snoozePullRequestPresets === selected.snoozePullRequestPresets &&
         capabilityKeys.every(
           (key) => (prior.capabilities[key] === true) === (selected.capabilities[key] === true),
         );

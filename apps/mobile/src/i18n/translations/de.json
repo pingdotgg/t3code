@@ -5726,5 +5726,9 @@
   "f6cf1627f4acc5ef": "Sichtbarkeit des Kommentars",
   "eb1fd384ad5919dd": "Interne Notiz",
   "b45f0b467e9406d0": "Dem Kunden antworten",
-  "15e5597f8f93ce12": "{start} bis {end}"
+  "15e5597f8f93ce12": "{start} bis {end}",
+  "784eceb3489793d5": "Bis der PR sich ändert",
+  "affc8e3f430bb845": "{count, plural, one {{count} PR} other {{count} PRs}}",
+  "e8019d388fb8258b": "PR",
+  "9694ba86f72beeaf": "Zurückgestellt, bis der PR sich ändert"
 }

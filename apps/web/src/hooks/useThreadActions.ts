@@ -267,7 +267,7 @@ function snoozeInput(target: ScopedThreadRef, choice: SnoozeChoice) {
   return {
     threadId: target.threadId,
     snoozedUntil: choice.snoozedUntil,
-    ...(choice.untilPullRequest ? { untilPullRequest: choice.untilPullRequest } : {}),
+    ...(choice.untilPullRequest === true ? { untilPullRequest: true } : {}),
   };
 }
 

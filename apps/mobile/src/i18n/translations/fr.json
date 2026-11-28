@@ -5720,5 +5720,9 @@
   "f6cf1627f4acc5ef": "Visibilité du commentaire",
   "eb1fd384ad5919dd": "Note interne",
   "b45f0b467e9406d0": "Répondre au client",
-  "15e5597f8f93ce12": "{start} à {end}"
+  "15e5597f8f93ce12": "{start} à {end}",
+  "784eceb3489793d5": "Jusqu’à une mise à jour de la PR",
+  "affc8e3f430bb845": "{count, plural, one {{count} PR} other {{count} PR}}",
+  "e8019d388fb8258b": "PR",
+  "9694ba86f72beeaf": "Reporté jusqu’à une mise à jour de la PR"
 }
