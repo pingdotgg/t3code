@@ -252,13 +252,12 @@ export function WorkflowRunsView({
   const openRunId = listedFor(selected);
   // The run that is open stays listed whatever it asks, as one opened by its link may ask
   // another kind: the list never points at nothing.
-  const listed =
+  const matchesKind =
     kind === EVERY_KIND
-      ? ofWorkflow
-      : ofWorkflow.filter(
-          (node) =>
-            workflowRunAsksKind(snapshot.workflows, node, kind) || node.run.runId === openRunId,
-        );
+      ? undefined
+      : (node: WorkflowRunNode) =>
+          workflowRunAsksKind(snapshot.workflows, node, kind) || node.run.runId === openRunId;
+  const listed = matchesKind === undefined ? ofWorkflow : ofWorkflow.filter(matchesKind);
   // With no run named, the one shown is one the list has: with a kind picked, one that asks it.
   const fallback = all.find((node) => node.run.runId === defaultWorkflowRunId(groups)) ?? null;
   const shown =
@@ -295,18 +294,7 @@ export function WorkflowRunsView({
     // With none of the picked workflow's skipped runs left, no toggle says the list was cut.
     showingSkipped || skipped === 0,
     m,
-    section === null
-      ? undefined
-      : {
-          workflow: section.name,
-          groups,
-          matchesKind:
-            kind === EVERY_KIND
-              ? undefined
-              : (node) =>
-                  workflowRunAsksKind(snapshot.workflows, node, kind) ||
-                  node.run.runId === openRunId,
-        },
+    section === null ? undefined : { workflow: section.name, groups, matchesKind },
   );
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">

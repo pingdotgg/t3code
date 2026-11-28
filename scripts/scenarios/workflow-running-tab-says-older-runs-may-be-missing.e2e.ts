@@ -2,7 +2,7 @@ import { expect } from "e2e";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 
 import { T3_HOME } from "../e2e.config.ts";
 import { makeState, rpcClient, runPromise, test, WEB } from "./t3.ts";
@@ -58,17 +58,21 @@ test(
       await t3.project("demo");
       await workflowsOn(true);
       await start("napper");
-      const burst = await start("burst");
-      // The burst's 500 runs take about two minutes on a laptop.
+      await start("burst");
+      // Once all 500 ticks the burst invokes are listed as done, the burst and the sleeping run
+      // are past the list's 500 newest.
       await runPromise(
-        cli(["workflow", "show", burst, "--json"]).pipe(
-          Effect.map((shown) => JSON.parse(shown.stdout).run.status as string),
-          Effect.repeat({
-            schedule: Schedule.spaced("2 seconds"),
-            until: (status) => status === "completed",
-          }),
-          Effect.timeout("4 minutes"),
-        ),
+        Effect.gen(function* () {
+          const client = yield* rpcClient(T3_HOME, app.baseUrl ?? "");
+          yield* client["workflows.subscribe"]({}).pipe(
+            Stream.filter(
+              (update) =>
+                update.runs.filter((run) => run.workflow === "tick" && run.status === "completed")
+                  .length === 500,
+            ),
+            Stream.runHead,
+          );
+        }).pipe(Effect.scoped, Effect.timeout("4 minutes")),
       );
 
       await browser.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
