@@ -224,6 +224,31 @@ describe("Pi MCP tool exposure", () => {
     ui: { notify: () => undefined },
   };
 
+  it.each([204, "offline"] as const)(
+    "starts a fresh MCP session and restores the tool loadout after startup discovery fails (DELETE %s)",
+    async (deleteResult) => {
+      const bridge = await loadMcpBridge({
+        modern: true,
+        toolSearchAvailable: true,
+        activatesOnRegistration: true,
+        startupRetry: { deleteResult },
+      });
+
+      await bridge.handlers.get("session_start")!(
+        { systemPrompt: "" },
+        { model: { api: "openai-completions" }, ui: { notify: assert.fail } },
+      );
+
+      assert.deepEqual(bridge.sessionTerminationAttempts, [
+        { sessionId: "1", authorization: "Bearer fixture-token" },
+      ]);
+      assert.include(bridge.getActiveTools(), "tool_search");
+      assert.notInclude(bridge.getActiveTools(), "mcp__t3_code__orchestrator_capabilities");
+      const result = await bridge.callModelTool("mcp__t3-code__preview_snapshot", {});
+      assert.deepEqual(result.content, [{ type: "text", text: "browser snapshot" }]);
+    },
+  );
+
   it("keeps orchestration direct and optional bridge tools discoverable on modern Pi", async () => {
     const bridge = await loadMcpBridge({
       modern: true,

@@ -63,12 +63,18 @@ export async function loadMcpBridge(
     readonly allowsTool?: (name: string) => boolean;
     readonly runtimeMode?: string;
     readonly inputSchema?: Record<string, unknown>;
+    readonly startupRetry?: { readonly deleteResult: 204 | "offline" };
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
   const tools: RegisteredTool[] = [];
   const requests: Array<{ readonly method: string; readonly params?: unknown }> = [];
   let activeTools = ["read"];
+  let session = 0;
+  const sessionTerminationAttempts: Array<{
+    readonly sessionId: string | undefined;
+    readonly authorization: string | undefined;
+  }> = [];
   let bridgeSourcePath = "/fixture/pi-t3-extension.ts";
   const transports: Array<{
     readonly url: string;
@@ -115,7 +121,12 @@ export async function loadMcpBridge(
     Type: { Unsafe: (schema: unknown) => schema },
     fetch: async (
       url: string,
-      transport: { body: string; headers: Record<string, string>; signal?: AbortSignal },
+      transport: {
+        method: string;
+        body: string;
+        headers: Record<string, string>;
+        signal?: AbortSignal;
+      },
     ) => {
       transport.signal?.throwIfAborted();
       transports.push({
@@ -123,12 +134,33 @@ export async function loadMcpBridge(
         authorization: transport.headers.authorization!,
         signal: transport.signal,
       });
+      const sessionId = transport.headers["mcp-session-id"];
+      if (transport.method === "DELETE") {
+        sessionTerminationAttempts.push({
+          sessionId,
+          authorization: transport.headers.authorization,
+        });
+        const deleteResult = options.startupRetry?.deleteResult ?? 204;
+        if (deleteResult === "offline") throw new Error("Network unavailable");
+        return new Response(null, { status: deleteResult });
+      }
       const request = JSON.parse(transport.body) as {
         id: number;
         method: string;
         params?: unknown;
       };
       requests.push(request);
+      const headers = new Headers({ "content-type": "application/json" });
+      if (options.startupRetry !== undefined) {
+        if (request.method === "initialize") {
+          if (sessionId !== undefined) return new Response(null, { status: 400 });
+          headers.set("mcp-session-id", String(++session));
+        } else if (sessionId !== String(session)) {
+          return new Response(null, { status: 404 });
+        } else if (request.method === "tools/list" && session === 1) {
+          return new Response(null, { status: 503 });
+        }
+      }
       const result =
         request.method === "tools/list"
           ? { tools: catalog }
@@ -136,7 +168,7 @@ export async function loadMcpBridge(
             ? (options.result ?? { content: [{ type: "text", text: "browser snapshot" }] })
             : {};
       return new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }), {
-        headers: { "content-type": "application/json" },
+        headers,
       });
     },
     pi: {
@@ -227,6 +259,7 @@ export async function loadMcpBridge(
     requests,
     servers,
     transports,
+    sessionTerminationAttempts,
     getActiveTools: () => activeTools,
     restoreActiveTools: (names: string[]) => {
       activeTools = names;
