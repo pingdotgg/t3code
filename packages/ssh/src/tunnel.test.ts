@@ -391,16 +391,16 @@ describe("ssh tunnel scripts", () => {
     },
   );
 
-  // sha256sum and shasum escape a newline in a file name they print, so the home path has one.
-  const checksumTools =
-    NodeChildProcess.spawnSync("sh", ["-c", 'command -v "$1"', "sh", "shasum"]).status === 0
-      ? ["sha256sum", "shasum"]
-      : ["sha256sum"];
+  // run-t3.sh reads either tool, and the host may ship just one of them.
+  const checksumTools = ["sha256sum", "shasum"].filter(
+    (tool) => NodeChildProcess.spawnSync("sh", ["-c", 'command -v "$1"', "sh", tool]).status === 0,
+  );
   it.each(checksumTools)("names missing gzip after verifying with %s", (checksum) => {
     const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-runner-"));
     try {
       const bin = NodePath.join(root, "bin");
       const release = NodePath.join(root, "release");
+      // sha256sum and shasum escape a newline in a file name they print, so the home path has one.
       const home = NodePath.join(root, "home\ncache");
       const archive = `t3-${ARCHIVE.archiveVersion}-linux-x64.tar.gz`;
       NodeFS.mkdirSync(bin);
@@ -410,21 +410,13 @@ describe("ssh tunnel scripts", () => {
         mode: 0o755,
       });
       NodeChildProcess.execFileSync("tar", ["-czf", archive, "t3"], { cwd: release });
-      NodeChildProcess.execFileSync("sh", ["-c", `sha256sum ${archive} > SHA256SUMS`], {
-        cwd: release,
-      });
-      for (const tool of [
+      // shasum defaults to SHA-1, and the sums must be SHA-256 whichever tool the host has.
+      NodeChildProcess.execFileSync(
         "sh",
-        "mkdir",
-        "mktemp",
-        "cat",
-        "rm",
-        "grep",
-        "cut",
-        checksum,
-        "tar",
-        "mv",
-      ]) {
+        ["-c", `${checksum}${checksum === "shasum" ? " -a 256" : ""} ${archive} > SHA256SUMS`],
+        { cwd: release },
+      );
+      for (const tool of ["sh", "mkdir", "mktemp", "cat", "rm", "grep", "cut", checksum, "mv"]) {
         NodeFS.symlinkSync(
           NodeChildProcess.execFileSync("sh", ["-c", `command -v ${tool}`], {
             encoding: "utf8",
@@ -432,6 +424,16 @@ describe("ssh tunnel scripts", () => {
           NodePath.join(bin, tool),
         );
       }
+      // GNU tar runs gzip to unpack but BSD tar (macOS) does not, so a stub stands in
+      // for a tar that needs it whatever the host ships.
+      const realTar = NodeChildProcess.execFileSync("sh", ["-c", "command -v tar"], {
+        encoding: "utf8",
+      }).trim();
+      NodeFS.writeFileSync(
+        NodePath.join(bin, "tar"),
+        `#!/bin/sh\ncommand -v gzip >/dev/null 2>&1 || { printf 'tar: gzip: No such file or directory\\n' >&2; exit 2; }\nexec '${realTar}' "$@"\n`,
+        { mode: 0o755 },
+      );
       NodeFS.writeFileSync(
         NodePath.join(bin, "uname"),
         '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac\n',
