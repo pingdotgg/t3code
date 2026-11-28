@@ -33,6 +33,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import {
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
+  ANTIGRAVITY_SIGN_IN_UNVERIFIED_MESSAGE,
   resolveAntigravityInstanceDirectories,
 } from "../antigravityAuthSupport.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -618,6 +619,42 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(snapshot.supportsTextGeneration).toBe(false);
         expect(h.acquisitions).toHaveLength(2);
         expect(h.releases).toEqual([h.first.version, h.signedOut.version]);
+        yield* h.assertClosed;
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "keeps the sign-in when the CLI could not reach Google to refresh it",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.refresh();
+        const before = yield* h.instance.snapshot.getSnapshot;
+        h.controls.selected = h.signedOut;
+        const logDirectory = h.path.join(h.profileDirectory, "antigravity-acp", "log");
+        const logPath = h.path.join(logDirectory, "acp-server-20261123_104149-36034.log");
+        yield* h.fs.makeDirectory(logDirectory, { recursive: true });
+        yield* h.fs.writeFileString(
+          logPath,
+          [
+            "I1123 10:41:49.597903 11 keyring.go:64] keyringAuth: loaded token, expiry=2020-01-01 00:00:00 +0000 UTC expired=true",
+            "W1123 10:41:59.598012 11 keyring.go:111] keyringAuth: timed out after 10s, skipping keyring auth",
+            "",
+          ].join("\n"),
+        );
+        expect((yield* h.refresh().pipe(Effect.flip)).detail).toBe(
+          ANTIGRAVITY_SIGN_IN_UNVERIFIED_MESSAGE,
+        );
+        const kept = yield* h.instance.snapshot.getSnapshot;
+        expect(kept.auth.status).toBe(before.auth.status);
+        expect(kept.models).toEqual(before.models);
+
+        yield* h.fs.writeFileString(
+          logPath,
+          'I1123 10:43:43.194712 283 keyring.go:76] keyringAuth: saved token invalid: oauth2: "invalid_grant" "Bad Request"\n',
+        );
+        expect((yield* h.refresh().pipe(Effect.flip)).detail).toContain("Sign in to Antigravity");
+        expect((yield* h.instance.snapshot.getSnapshot).auth.status).toBe("unauthenticated");
         yield* h.assertClosed;
       }),
   );

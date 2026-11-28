@@ -43,6 +43,8 @@ import {
   antigravityAuthConfigIssue,
   antigravityAuthLabel,
   antigravityAuthUsesBrowser,
+  antigravityTokenRefreshUnreachable,
+  ANTIGRAVITY_SIGN_IN_UNVERIFIED_MESSAGE,
   buildAntigravityAcpSpawnInput,
   isAntigravitySignInRequiredError,
   prepareAntigravityProfile,
@@ -416,6 +418,26 @@ export const AntigravityDriver: ProviderDriver<
           ),
         start: () =>
           startCompatible().pipe(
+            Effect.catchIf(isAntigravitySignInRequiredError, (cause) =>
+              antigravityTokenRefreshUnreachable(profileDirectory).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+                Effect.flatMap((unreachable) =>
+                  Effect.fail(
+                    unreachable
+                      ? new AcpErrors.AcpTransportError({
+                          detail: ANTIGRAVITY_SIGN_IN_UNVERIFIED_MESSAGE,
+                          cause: new ProviderSetupError({
+                            instanceId,
+                            operation: "runtime",
+                            detail: ANTIGRAVITY_SIGN_IN_UNVERIFIED_MESSAGE,
+                          }),
+                        })
+                      : cause,
+                  ),
+                ),
+              ),
+            ),
             Effect.tapError((cause): Effect.Effect<void> =>
               runtimeInput.onAuthorizationUrl === undefined &&
               isAntigravitySignInRequiredError(cause)
