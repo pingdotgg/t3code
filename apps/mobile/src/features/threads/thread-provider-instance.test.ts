@@ -185,7 +185,11 @@ describe("createThreadRowProviderInstanceResolver", () => {
         projectSettingsOverrides:
           enabled === undefined
             ? {}
-            : { [work.projectId]: { providerInstances: { codex: { enabled } } } },
+            : {
+                [work.projectId]: {
+                  providerInstances: { [ProviderInstanceId.make("codex")]: { enabled } },
+                },
+              },
       },
     });
     const configs = Atom.make<ReadonlyMap<EnvironmentId, ServerConfig>>(
