@@ -1,7 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
 import {
-  acpMcpFallbackInstructions,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
@@ -11,44 +10,22 @@ import {
 } from "./orchestrationInstructions.ts";
 
 describe("ACP terminal fallback", () => {
-  it("sends the Windows launcher sentence only to a Windows host", () => {
-    const noMcp = t3AcpPromptWithInstructions({
-      prompt: "Hello.",
-      state: {
-        interactionMode: "default",
-        hasT3Mcp: false,
-        hasDeviceTools: false,
-        platform: "linux",
-      },
-    });
-    assert.notInclude(noMcp, "ACP fallback");
-    assert.notInclude(noMcp, "acp-mcp-call");
-
-    const linuxFallback = t3AcpPromptWithInstructions({
-      prompt: "Hello.",
-      state: {
-        interactionMode: "default",
-        hasT3Mcp: true,
-        hasDeviceTools: false,
-        platform: "linux",
-      },
-    });
-    assert.include(linuxFallback, acpMcpFallbackInstructions("linux"));
-    assert.include(linuxFallback, "T3_ACP_MCP_NODE");
-    assert.notInclude(linuxFallback, "T3_ACP_MCP_CALL");
-
-    const winFallback = t3AcpPromptWithInstructions({
-      prompt: "Hello.",
-      state: {
-        interactionMode: "default",
-        hasT3Mcp: true,
-        hasDeviceTools: false,
-        platform: "win32",
-      },
-    });
-    assert.include(winFallback, acpMcpFallbackInstructions("win32"));
-    assert.include(winFallback, "T3_ACP_MCP_CALL");
-    assert.include(winFallback, acpMcpFallbackInstructions("linux"));
+  it("sends the Windows launcher sentence unless the host is known not to be Windows", () => {
+    const prompt = (platform?: NodeJS.Platform) =>
+      t3AcpPromptWithInstructions({
+        prompt: "Hello.",
+        state: {
+          interactionMode: "default",
+          hasT3Mcp: true,
+          hasDeviceTools: false,
+          ...(platform === undefined ? {} : { platform }),
+        },
+      });
+    assert.include(prompt("linux"), "T3_ACP_MCP_NODE");
+    assert.notInclude(prompt("linux"), "T3_ACP_MCP_CALL");
+    assert.include(prompt("win32"), "T3_ACP_MCP_NODE");
+    assert.include(prompt("win32"), "T3_ACP_MCP_CALL");
+    assert.include(prompt(), "T3_ACP_MCP_CALL");
   });
 });
 

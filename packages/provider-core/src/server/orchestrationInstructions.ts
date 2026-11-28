@@ -68,9 +68,9 @@ const T3_CODE_ACP_DEFERRED_PROXY_INSTRUCTIONS =
 const T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS = `ACP fallback: if the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call them through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset for a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`.`;
 const T3_CODE_ACP_MCP_FALLBACK_WINDOWS_INSTRUCTIONS = ` On Windows, run \`T3_ACP_MCP_CALL\` instead and pipe the JSON to stdin, as in PowerShell \`'{}' | & $env:T3_ACP_MCP_CALL orchestrator_capabilities -\`, writing non-ASCII characters as \`\\uXXXX\` escapes.`;
 
-/** The Windows launcher sentence is sent only to agents on a Windows host. */
-export const acpMcpFallbackInstructions = (platform?: NodeJS.Platform): string =>
-  platform === "win32"
+/** A host known not to be Windows gets the fallback without the Windows launcher sentence. */
+const acpMcpFallbackInstructions = (platform?: NodeJS.Platform): string =>
+  platform === undefined || platform === "win32"
     ? T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS + T3_CODE_ACP_MCP_FALLBACK_WINDOWS_INSTRUCTIONS
     : T3_CODE_ACP_MCP_FALLBACK_INSTRUCTIONS;
 
