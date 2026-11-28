@@ -219,6 +219,44 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
+  it("keeps a fence opened on a list marker in the list, closing it on its close or dedent", () => {
+    const actual = {
+      id: "attachment:1",
+      kind: "attachment",
+      url: "https://example.com/actual.mp4",
+      media: "video",
+    };
+    const listCode = "- ```text\n  https://example.com/sample.mp4\n  ```";
+    expect(split(`${listCode}\n\nhttps://example.com/actual.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: listCode, sourceOffset: 0 },
+      actual,
+    ]);
+    const unclosed = "1. ```text\n   https://example.com/sample.mp4";
+    expect(split(`${unclosed}\nhttps://example.com/actual.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: unclosed, sourceOffset: 0 },
+      actual,
+    ]);
+    const tabbed = "- ```text\n\tcode()\n  https://example.com/sample.mp4\n  ```";
+    expect(split(`${tabbed}\n\nhttps://example.com/actual.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: tabbed, sourceOffset: 0 },
+      actual,
+    ]);
+    const deepCloser = "- ```text\n\t\t```\n  https://example.com/sample.mp4\n  ```";
+    expect(split(`${deepCloser}\n\nhttps://example.com/actual.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: deepCloser, sourceOffset: 0 },
+      actual,
+    ]);
+    expect(split("- ```js`x\n\n  https://example.com/actual.mp4")).toEqual([
+      { id: "markdown:0", kind: "markdown", text: "- ```js`x", sourceOffset: 0 },
+      actual,
+    ]);
+    const shown = "```markdown\n- ```\nhttps://example.com/sample.mp4\n```";
+    expect(split(`${shown}\n\nhttps://example.com/actual.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: shown, sourceOffset: 0 },
+      actual,
+    ]);
+  });
+
   it("does not let a different fence marker close an open fence", () => {
     const body = "```\n~~~\nhttps://example.com/demo.mp4\n```";
     expect(split(body)).toEqual([
@@ -497,6 +535,13 @@ describe("media on custom hosts", () => {
       "Recording",
     ],
     ["[Demo](https://example.com/demo(1).mp4)", "https://example.com/demo(1).mp4", "video", "Demo"],
+    [
+      "[Demo [v2]](https://example.com/demo.mp4)",
+      "https://example.com/demo.mp4",
+      "video",
+      "Demo [v2]",
+    ],
+    ["[`[`](https://example.com/demo.mp4)", "https://example.com/demo.mp4", "video", "`[`"],
     [
       "[Demo](https://example.com/demo\\(1\\).mp4)",
       "https://example.com/demo(1).mp4",

@@ -1,7 +1,9 @@
 import { type DesktopWslState, EnvironmentId } from "@t3tools/contracts";
+import { createAdvertisedEndpoint } from "@t3tools/shared/advertisedEndpoint";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  endpointDefaultPreferenceKey,
   isServerNetworkAccessible,
   parseManualDesktopSshTarget,
   resolveAccessEnvironmentId,
@@ -182,6 +184,24 @@ describe("selectQrEndpointOption", () => {
   it("skips non-QR-shareable options in the fallback so the panel never opens on loopback", () => {
     expect(selectQrEndpointOption(options, "tailscale-ip:gone", "nope")?.id).toBe(
       "tailscale-ip:http://100.84.12.7:4780",
+    );
+  });
+});
+
+describe("endpointDefaultPreferenceKey", () => {
+  it("keeps two VPN addresses apart so setting one default does not mark the other", () => {
+    const vpnEndpoint = (address: string) =>
+      createAdvertisedEndpoint({
+        id: `vpn-ip:http://${address}:3773`,
+        label: "VPN IP",
+        provider: { id: "vpn", label: "VPN", kind: "private-network", isAddon: true },
+        httpBaseUrl: `http://${address}:3773`,
+        reachability: "private-network",
+        source: "desktop-addon",
+      });
+
+    expect(endpointDefaultPreferenceKey(vpnEndpoint("100.81.22.33"))).not.toBe(
+      endpointDefaultPreferenceKey(vpnEndpoint("100.82.22.33")),
     );
   });
 });

@@ -25,7 +25,9 @@ import {
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
@@ -326,6 +328,25 @@ export const startEnvironment = Effect.fn("environment.start")(function* (
     return yield* new EnvironmentError({ message: `Thread ${threadId} never settled.` });
   });
 
+  /** Whether a message with `text` is persisted in the thread; false when none lands in 30 seconds. */
+  const delivered = Effect.fn("environment.delivered")(function* (
+    threadId: ThreadId,
+    text: string,
+  ) {
+    const head = yield* client["orchestration.subscribeThread"]({ threadId }).pipe(
+      Stream.filter((item) =>
+        item.kind === "snapshot"
+          ? item.projection.messages.some((message) => message.text === text)
+          : item.kind === "event" &&
+            item.event.type === "message.updated" &&
+            item.event.payload.text === text,
+      ),
+      Stream.runHead,
+      Effect.timeoutOption("30 seconds"),
+    );
+    return Option.isSome(Option.flatten(head));
+  });
+
   /** A settled thread of `turns` request and reply pairs, for scroll and jank cases. */
   const longThread = Effect.fn("environment.longThread")(function* (title: string, turns: number) {
     const threadId = yield* launch(title, "Summarize the module. [[eval:stream:400:0]]");
@@ -385,6 +406,7 @@ export const startEnvironment = Effect.fn("environment.start")(function* (
       for (const thread of threads)
         if ((yield* projection(thread.id)).runs.length) yield* settled(thread.id);
     }),
+    delivered,
     waitForPendingInput: (threadId: ThreadId) =>
       until("a pending question", threadId, (value) =>
         value.runtimeRequests.find((request) => request.status === "pending"),
