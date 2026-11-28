@@ -565,6 +565,7 @@ export function UsageProviderChart({
         </div>
 
         <UsageChartPlot
+          key={`${resolution}:${first}:${last}`}
           periods={periods}
           columns={columns}
           stepX={stepX}

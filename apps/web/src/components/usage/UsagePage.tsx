@@ -413,7 +413,7 @@ export function UsagePage() {
         <WorkspaceBreadcrumbSeparator />
         <WorkspaceBreadcrumbItem className="min-w-10 shrink">
           <UsageEnvironmentFilter
-            environments={environments}
+            environments={rangeWindow === null ? environments : rangeUsage.environments}
             selectedEnvironments={reportEnvironments}
             selectedEnvironmentIds={selectedEnvironmentIds}
             onSelectionChange={setSelectedEnvironmentIds}
@@ -629,7 +629,7 @@ export function UsagePage() {
                 : enumerateHourStarts(reportWindow.sinceTime, reportWindow.untilTime),
             resolution: shownHourly ? "hour" : "day",
             timeZone: shownWindow.timeZone,
-            referenceTime: reportWindow.untilTime,
+            referenceTime: shownWindow.untilTime,
             hour12,
           }}
           onSetPrice={(model) => setPriceDialog({ model })}

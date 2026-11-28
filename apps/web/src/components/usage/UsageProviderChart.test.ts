@@ -13,9 +13,16 @@ describe("usageRangeWindow", () => {
 
   it("includes both selected dates when dragging backwards", () => {
     const range = usageRange("2026-10-15", "2026-10-14");
-    expect(usageRangeWindow({ ...window, resolution: "day" }, range)).toEqual({
-      ...window,
+    const preset = {
       resolution: "day",
+      timeZone: window.timeZone,
+      sinceDay: UsageDay.make("2026-10-12"),
+      untilDay: UsageDay.make("2026-10-18"),
+    } as const;
+    expect(usageRangeWindow(preset, range)).toEqual({
+      ...preset,
+      sinceDay: UsageDay.make("2026-10-14"),
+      untilDay: UsageDay.make("2026-10-15"),
     });
   });
 
