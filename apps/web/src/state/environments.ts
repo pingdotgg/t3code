@@ -84,6 +84,11 @@ export function readEnvironment(environmentId: EnvironmentId): EnvironmentPresen
   return presentation ? projectEnvironmentPresentation(environmentId, presentation) : null;
 }
 
+/** Every saved environment's id now, this machine's own included. */
+export function readEnvironmentIds(): ReadonlySet<EnvironmentId> {
+  return new Set(appAtomRegistry.get(environmentPresentations.presentationsAtom).keys());
+}
+
 export function useEnvironment(
   environmentId: EnvironmentId | null,
 ): EnvironmentPresentation | null {
