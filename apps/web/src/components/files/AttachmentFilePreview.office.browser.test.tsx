@@ -249,16 +249,18 @@ it.each([
   },
 );
 
-it("reports the final slide at maximum scroll after page visibility changes", async () => {
+it("reports manual scrolls at maximum scroll but not clamped slide jumps", async () => {
   const { OfficePages } = await import("./office/OfficePages");
   const changed = vi.fn();
+  const scrollRef: { current: ((index: number, y?: number) => void) | null } = { current: null };
   const container = document.createElement("div");
-  container.style.cssText = "display:flex;flex-direction:column;width:400px;height:400px";
+  container.style.cssText = "display:flex;flex-direction:column;width:400px;height:500px";
   await using screen = await render(
     <OfficePages
       pages={Array.from({ length: 6 }, () => ({ width: 400, height: 240 }))}
       kind="slide"
       paint={async () => undefined}
+      scrollRef={scrollRef}
       onPageChange={changed}
       onError={(error) => {
         throw error;
@@ -276,6 +278,23 @@ it("reports the final slide at maximum scroll after page visibility changes", as
     scroller.scrollTop = 10;
   });
   await vi.waitFor(() => expect(changed).toHaveBeenLastCalledWith(0));
+  changed.mockClear();
+  const scrolled = new Promise<void>((resolve) =>
+    scroller.addEventListener("scroll", () => resolve(), { once: true }),
+  );
+  await act(() => scrollRef.current?.(4));
+  await scrolled;
+  expect(changed).not.toHaveBeenCalled();
+  await act(() => {
+    scrollRef.current?.(5);
+    scroller.scrollTop = 10;
+  });
+  await vi.waitFor(() => expect(changed).toHaveBeenLastCalledWith(0));
+  await act(() => {
+    scrollRef.current?.(4);
+    scroller.scrollTop -= 1;
+  });
+  await vi.waitFor(() => expect(changed).toHaveBeenLastCalledWith(5));
 });
 
 it("preserves merged text across tile clears", async () => {

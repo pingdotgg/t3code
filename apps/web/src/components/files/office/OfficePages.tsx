@@ -34,6 +34,7 @@ export function OfficePages(props: {
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const rows = useRef(new Map<number, HTMLDivElement>());
+  const programmaticScroll = useRef<number | null>(null);
   const [width, setWidth] = useState(0);
   const [settledWidth, setSettledWidth] = useState(0);
   const [mounted, setMounted] = useState(6);
@@ -66,10 +67,13 @@ export function OfficePages(props: {
       (index: number, y = 0) => {
         const row = rows.current.get(index);
         const page = props.pages[index];
+        const before = scroller.current?.scrollTop;
         if (row && page)
           scroller.current?.scrollTo({
             top: row.offsetTop + y * Math.min(1, Math.max(0, width - 48) / page.width) - 24,
           });
+        if (scroller.current && scroller.current.scrollTop !== before)
+          programmaticScroll.current = scroller.current.scrollTop;
       },
     [props.pages, width],
   );
@@ -80,7 +84,10 @@ export function OfficePages(props: {
       data-office-pages
       onScroll={() => {
         const root = scroller.current;
+        const expected = programmaticScroll.current;
+        programmaticScroll.current = null;
         if (!root || !props.onPageChange) return;
+        if (expected !== null && root.scrollTop === expected) return;
         if (
           root.scrollHeight > root.clientHeight &&
           root.scrollTop + root.clientHeight >= root.scrollHeight - 1
