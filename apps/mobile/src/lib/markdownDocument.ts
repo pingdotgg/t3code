@@ -11,7 +11,12 @@ import {
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { hasRightToLeftLetter, textDirection } from "@t3tools/shared/textDirection";
 
-const parser = unified().use(remarkParse).use(remarkGfm).use(remarkKeepWindowsProsePaths);
+// Like web's user messages: `~one~` stays literal, `~~two~~` strikes.
+const GFM_OPTIONS = { singleTilde: false };
+const parser = unified()
+  .use(remarkParse)
+  .use(remarkGfm, GFM_OPTIONS)
+  .use(remarkKeepWindowsProsePaths);
 export type MarkdownNode = Root | RootContent;
 
 interface MarkdownEdit {
@@ -459,7 +464,68 @@ function mayHaveTableUnderText(markdown: string): boolean {
 
 /** md4c starts tables only at paragraph starts; insert breaks to match GFM. */
 export function markdownWithTableBreaks(markdown: string): string {
-  return transformNativeMarkdown(markdown, undefined, true);
+  return markdownWithLiteralSingleTildes(transformNativeMarkdown(markdown, undefined, true));
+}
+
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+
+/**
+ * Offsets of the single tildes in a text node's source, outside `$…$`, `$$…$$`, `\(…\)` and
+ * `\[…\]` (flanked as md4c does): md4c hands math to LaTeX unescaped, where `\~` would be an
+ * accent. A closer search that fails is not repeated, so the scan stays linear.
+ */
+function singleTildeOffsets(raw: string): number[] {
+  const offsets: number[] = [];
+  const unclosed = new Set<string>();
+  const skipTo = (index: number, closer: string) => {
+    if (unclosed.has(closer)) return -1;
+    let close = raw.indexOf(closer, index);
+    if (closer.startsWith("$"))
+      while (close !== -1 && WORD_CHAR.test(raw[close + closer.length] ?? ""))
+        close = raw.indexOf(closer, close + 1);
+    if (close === -1) unclosed.add(closer);
+    return close === -1 ? -1 : close + closer.length - 1;
+  };
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index];
+    if (char === "\\") {
+      const next = raw[index + 1];
+      const end =
+        next === "(" || next === "[" ? skipTo(index + 2, next === "(" ? "\\)" : "\\]") : -1;
+      index = end === -1 ? index + 1 : end;
+    } else if (char === "$") {
+      const delimiter = raw[index + 1] === "$" ? "$$" : "$";
+      const opens = !WORD_CHAR.test(raw[index - 1] ?? "");
+      const end = opens ? skipTo(index + delimiter.length, delimiter) : -1;
+      index = end === -1 ? index + delimiter.length - 1 : end;
+    } else if (char === "~") {
+      let end = index + 1;
+      while (raw[end] === "~") end += 1;
+      if (end - index === 1) offsets.push(index);
+      index = end - 1;
+    }
+  }
+  return offsets;
+}
+
+/** md4c strikes `~one~` and has no flag to stop it, so escape the tildes GFM leaves literal here. */
+function markdownWithLiteralSingleTildes(markdown: string): string {
+  if (!/(?<!~)~(?!~)/.test(markdown)) return markdown;
+  const [, source] = splitLeadingBom(markdown);
+  const edits: MarkdownEdit[] = [];
+  const visit = (node: MarkdownNode) => {
+    const start = node.position?.start.offset;
+    if (node.type === "text" && start !== undefined) {
+      for (const offset of singleTildeOffsets(source.slice(start, node.position?.end.offset)))
+        edits.push({ start: start + offset, end: start + offset, content: "\\" });
+      return;
+    }
+    // An autolink's text is its URL, which an escape would change.
+    if (node.type === "link" && start !== undefined && source[start] !== "[") return;
+    if ("children" in node) node.children.forEach(visit);
+  };
+  visit(parser.parse(markdown));
+  return applyMarkdownEdits(markdown, edits);
 }
 
 // `>` covers a destination continued on a blockquote line.
@@ -498,7 +564,7 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
   }
   unified()
     .use(remarkParse)
-    .use(remarkGfm)
+    .use(remarkGfm, GFM_OPTIONS)
     .use(function (this: Processor) {
       (this.data().fromMarkdownExtensions ??= []).push({
         exit: { resourceDestinationString: record, definitionDestinationString: record },
@@ -571,7 +637,9 @@ export function parseMarkdownDocument(markdown: string): Root {
 }
 
 export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
-  return transformNativeMarkdown(markdownForNativeParsing(markdown), fileLink, true);
+  return markdownWithLiteralSingleTildes(
+    transformNativeMarkdown(markdownForNativeParsing(markdown), fileLink, true),
+  );
 }
 
 /** Native media slots only cover standalone images; nested file embeds must become links. */
