@@ -235,8 +235,9 @@ function serializeDetails(details: Element): string {
 }
 
 // Prose that would read as inline Markdown once pasted back: a backslash before punctuation,
-// backticks, brackets, and emphasis or strikethrough runs (user remark-gfm sets singleTilde: false).
-const INLINE_MARKDOWN = /\\(?=[!-/:-@[-`{-~\n]|$)|[`[\]]|\*+|_+|~{2,}/g;
+// backticks, opening brackets, and emphasis or strikethrough runs (user remark-gfm sets
+// singleTilde: false). A closing bracket stays bare: `\[…\]` would read as display math.
+const INLINE_MARKDOWN = /\\(?=[!-/:-@[-`{-~\n]|$)|[`[]|\*+|_+|~{2,}/g;
 const ESCAPED_PUNCTUATION = /\\([!-/:-@[-`{-~])/g;
 
 /** Escapes rendered prose so it parses back to the same text, leaving runs that cannot open or close. */
@@ -345,7 +346,9 @@ export function restorePastedMarkdownLinks(plain: string, html: string): string 
 
 function markdownAnchor(label: string, href: string, inTableCell: boolean): string {
   const destination = escapeTablePipes(href.replace(/[\\()]/g, "\\$&"), inTableCell);
-  return `[${label}](${destination})`;
+  // Prose leaves `]` bare, but inside a label it would end the label.
+  const text = outsideCode(label, (prose) => prose.replace(/(?<!\\)((?:\\\\)*)\]/g, "$1\\]"));
+  return `[${text}](${destination})`;
 }
 
 function serializeAnchor(anchor: Element, inTableCell: boolean): string {
