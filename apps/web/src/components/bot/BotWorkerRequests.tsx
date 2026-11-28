@@ -53,6 +53,7 @@ function WorkerQuestion({
 }: {
   request: Extract<BotWorkerRequest, { kind: "user-input" }>;
 }) {
+  const title = request.title;
   const gt = useGT();
   const { thread, userInput } = request;
   const canOperate = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
@@ -163,41 +164,46 @@ function WorkerQuestion({
           }
           onAdvance={advance}
           onDismiss={() => void onDismiss()}
+          label={
+            <span className="max-w-1/3 min-w-0 truncate font-medium text-foreground">{title}</span>
+          }
+          footer={
+            <form
+              className="flex items-center gap-2 px-3 pb-3 pt-1"
+              onSubmit={(event) => {
+                event.preventDefault();
+                advance();
+              }}
+            >
+              {question !== null && question.allowCustomAnswer !== false ? (
+                <Input
+                  size="compact"
+                  className="min-w-0 flex-1"
+                  aria-label={gt("Your answer")}
+                  placeholder={gt("Type your own answer")}
+                  value={progress.customAnswer}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    updateAnswer(question.id, (target, draft) =>
+                      setPendingUserInputCustomAnswer(target, draft, event.currentTarget.value),
+                    )
+                  }
+                />
+              ) : (
+                <span className="flex-1" />
+              )}
+              {notice !== null ? (
+                <p role="alert" className="min-w-0 truncate text-destructive">
+                  {notice}
+                </p>
+              ) : null}
+              <Button type="submit" size="xs" disabled={disabled || !progress.canAdvance}>
+                {progress.isLastQuestion ? <T>Send answer</T> : <T>Next</T>}
+              </Button>
+            </form>
+          }
         />
       </BackgroundThreadContext>
-      <form
-        className="flex items-center gap-2 px-3 pb-3 pt-1"
-        onSubmit={(event) => {
-          event.preventDefault();
-          advance();
-        }}
-      >
-        {question !== null && question.allowCustomAnswer !== false ? (
-          <Input
-            size="compact"
-            className="min-w-0 flex-1"
-            aria-label={gt("Your answer")}
-            placeholder={gt("Type your own answer")}
-            value={progress.customAnswer}
-            disabled={disabled}
-            onChange={(event) =>
-              updateAnswer(question.id, (target, draft) =>
-                setPendingUserInputCustomAnswer(target, draft, event.currentTarget.value),
-              )
-            }
-          />
-        ) : (
-          <span className="flex-1" />
-        )}
-        {notice !== null ? (
-          <p role="alert" className="min-w-0 truncate text-destructive">
-            {notice}
-          </p>
-        ) : null}
-        <Button type="submit" size="xs" disabled={disabled || !progress.canAdvance}>
-          {progress.isLastQuestion ? <T>Send answer</T> : <T>Next</T>}
-        </Button>
-      </form>
     </>
   );
 }
@@ -209,23 +215,16 @@ function WorkerRequestCard({ request }: { request: BotWorkerRequest }) {
       aria-label={gt("Request from {title}", { title: request.title })}
       className="rounded-lg border border-border bg-background text-xs"
     >
-      <p className="flex min-w-0 items-center gap-1 px-3 pt-2.5 pb-1 text-muted-foreground">
-        {request.kind === "approval" ? (
+      {request.kind === "approval" ? (
+        <p className="flex min-w-0 items-center gap-1 px-3 pt-2.5 pb-1 text-muted-foreground">
           <T>
             <Var>
               <WorkerLink thread={request.thread} title={request.title} />
             </Var>{" "}
             needs your approval
           </T>
-        ) : (
-          <T>
-            <Var>
-              <WorkerLink thread={request.thread} title={request.title} />
-            </Var>{" "}
-            has a question
-          </T>
-        )}
-      </p>
+        </p>
+      ) : null}
       {request.kind === "approval" ? (
         <div className="px-3 pb-3 pt-1">
           <OtherThreadApproval thread={request.thread} approval={request.approval} />
