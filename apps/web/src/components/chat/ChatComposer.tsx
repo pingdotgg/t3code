@@ -276,6 +276,7 @@ import {
   resolveComposerDispatchMode,
   type ComposerDispatchMode,
 } from "@t3tools/client-runtime/state/composer-dispatch";
+import { parseCodexFeedbackCommand } from "@t3tools/client-runtime/state/threads";
 import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
@@ -1515,13 +1516,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerDraftTarget,
     attachmentDraftTarget,
     attachmentTargetKey,
-    attachmentTargetKeyRef,
     questionAttachmentTarget,
     pendingUserInputs,
     composerContextRecords,
     composerImages,
-    composerFilesRef,
-    promptRef,
     pendingThreadImportsRef,
     addComposerFilesToDraft,
     removedQueuedAttachments: activeRemovedEditingQueuedAttachments,
@@ -2765,21 +2763,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // An open question owns the space above the composer. Only a machine problem,
   // which is why an answer could not go through, stays beside it.
   const replyTo = composerDraft?.replyTo ?? null;
-  const draftRunsLocally = composerRunsDraftLocally({
+  const holdsNoAttachedContext =
+    composerImages.length + composerFiles.length === 0 &&
+    composerSendState.sendableTerminalContexts.length === 0 &&
+    composerPreviewAnnotations.length === 0 &&
+    composerReviewComments.length === 0 &&
+    composerThreadContexts.length === 0 &&
+    composerEnvironmentContexts.length === 0;
+  const codexFeedbackOffered = selectedProvider === "codex" && multipleModelSelections === null;
+  const commandRunsLocally = composerRunsDraftLocally({
     text: prompt,
-    holdsOnlyText:
-      composerImages.length + composerFiles.length === 0 &&
-      composerSendState.sendableTerminalContexts.length === 0 &&
-      composerPreviewAnnotations.length === 0 &&
-      composerReviewComments.length === 0 &&
-      composerThreadContexts.length === 0 &&
-      composerEnvironmentContexts.length === 0 &&
-      replyTo === null,
+    holdsOnlyText: holdsNoAttachedContext && replyTo === null,
     sideChat: props.sideChatAvailable === true || (props.sideChatDisabledReason ?? null) !== null,
     usageLimits: props.onUsageLimitsCommand !== undefined,
-    codexFeedback: selectedProvider === "codex" && multipleModelSelections === null,
+    codexFeedback: codexFeedbackOffered,
     freshSession: props.onFreshSession !== undefined,
   });
+  // `/feedback` runs with a pending reply too, which then stays in the bar.
+  const feedbackRunsLocally =
+    codexFeedbackOffered && holdsNoAttachedContext && parseCodexFeedbackCommand(prompt) !== null;
+  const draftRunsLocally = commandRunsLocally || feedbackRunsLocally;
   const replyBannerItems: readonly ComposerBannerStackItem[] = replyTo
     ? [
         {

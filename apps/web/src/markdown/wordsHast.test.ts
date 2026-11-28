@@ -336,6 +336,12 @@ describe("wordsHast", () => {
     );
     expect(wordsHtml("x".repeat(30), options)).toBe("x".repeat(24));
     expect(wordsHtml("<!-- only -->", options)).toBe("Thinking");
+    expect(
+      wordsHtml("Checked the cache first[^1] and it was stale.\n\n[^1]: Redis TTL is 60s.", {
+        ...options,
+        extensions: { preview: { ...preview, maxLength: 120 } },
+      }),
+    ).toBe("Checked the cache first and it was stale.");
   });
 
   it("makes a saved file's Markdown inert", () => {

@@ -1,3 +1,5 @@
+import * as Effect from "effect/Effect";
+import { Atom } from "effect/reactivity";
 import { GITHUB_EMOJI_ALIASES } from "./githubEmojiAliases.ts";
 import { sourceControlClients } from "./sourceControlClients.ts";
 
@@ -18,6 +20,7 @@ export type PullRequestBodySegment =
       readonly kind: "attachment";
       readonly url: string;
       readonly media: "video" | "image" | "unknown";
+      readonly label?: string;
     }
   | {
       readonly id: string;
@@ -43,11 +46,23 @@ const VIDEO_TAG_MAX_LINES = 8;
 const INDENTED_CODE_PATTERN = /^(?: {4}| {0,3}\t)/u;
 const BARE_URL_PATTERN = /^<?(https?:\/\/\S+?)>?$/u;
 const IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|gif|webp|avif|heic|heif|svg)$/iu;
-const MARKDOWN_LINK_PATTERN = /^\[[^\]]*\]\((https?:\/\/[^\s)]+)\)$/u;
+const MARKDOWN_LINK_PATTERN = /^\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)$/u;
 const VIDEO_EXTENSION_PATTERN = /\.(?:mp4|webm|mov|m4v|ogv)$/iu;
 
 // Stops at the next `<`, so matching stays linear in the length of the line.
-const VIDEO_TAG_SRC_PATTERN = /<(?:video|source)\b[^<>]*\bsrc\s*=\s*["']([^"']+)["']/iu;
+const VIDEO_SOURCE_TAG_PATTERN = /<(?:video|source)(?=[\s/>])((?:[^<>"']|"[^"]*"|'[^']*')*)>/giu;
+const HTML_ATTRIBUTE_PATTERN = /([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+)))?/gu;
+
+function videoTagSource(html: string): string | undefined {
+  for (const tag of html.matchAll(VIDEO_SOURCE_TAG_PATTERN)) {
+    for (const attribute of tag[1]!.matchAll(HTML_ATTRIBUTE_PATTERN)) {
+      if (attribute[1]!.toLowerCase() !== "src") continue;
+      const value = attribute[2] ?? attribute[3] ?? attribute[4];
+      if (value) return value;
+    }
+  }
+  return undefined;
+}
 
 const STANDALONE_VIDEO_TAG_PATTERN = /^\s*<video\b/iu;
 const VIDEO_TAG_END_PATTERN = /<\/video>\s*$/iu;
@@ -79,18 +94,48 @@ function webUrl(url: string): URL | null {
 
 function attachmentFromLine(
   line: string,
-): { url: string; media: "video" | "image" | "unknown" } | null {
-  const url =
-    BARE_URL_PATTERN.exec(line.trim())?.[1] ?? MARKDOWN_LINK_PATTERN.exec(line.trim())?.[1];
+): Omit<Extract<PullRequestBodySegment, { kind: "attachment" }>, "id" | "kind"> | null {
+  const trimmed = line.trim();
+  const link = MARKDOWN_LINK_PATTERN.exec(trimmed);
+  const url = link?.[2] ?? BARE_URL_PATTERN.exec(trimmed)?.[1];
   if (url === undefined) return null;
   // Only the path names the file: `report?file=demo.mp4` is a page, not a video.
   const path = webUrl(url)?.pathname;
   if (path === undefined) return null;
-  if (VIDEO_EXTENSION_PATTERN.test(path) || sourceControlClients.mediaUrl(url)?.kind === "video") {
-    return { url, media: "video" };
-  }
-  if (IMAGE_EXTENSION_PATTERN.test(path)) return { url, media: "image" };
-  return null;
+  const media = VIDEO_EXTENSION_PATTERN.test(path)
+    ? "video"
+    : IMAGE_EXTENSION_PATTERN.test(path)
+      ? "image"
+      : sourceControlClients.mediaUrl(url)?.kind;
+  if (media === undefined) return null;
+  const label = link?.[1]?.trim();
+  return label ? { url, media, label } : { url, media };
+}
+
+export function makePullRequestMediaKindAtom(
+  fetchMedia: (
+    url: string,
+    options: { headers: Record<string, string>; signal: AbortSignal },
+  ) => Promise<Pick<Response, "ok" | "headers" | "body">>,
+) {
+  return Atom.family((url: string | null) =>
+    Atom.make(
+      Effect.promise(async (signal) => {
+        if (url === null) return null;
+        try {
+          const response = await fetchMedia(url, { headers: { Range: "bytes=0-0" }, signal });
+          void response.body?.cancel().catch(() => undefined);
+          if (!response.ok) return null;
+          const type = response.headers.get("content-type")?.trim().toLowerCase();
+          if (type?.startsWith("image/")) return "image" as const;
+          if (type?.startsWith("video/")) return "video" as const;
+          return null;
+        } catch {
+          return null;
+        }
+      }),
+    ),
+  );
 }
 
 type TableRows = ReadonlyArray<ReadonlyArray<PullRequestBodyTableCell>>;
@@ -338,7 +383,7 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       cursor += 1;
     }
     const source = VIDEO_TAG_END_PATTERN.test(lines[cursor]!)
-      ? VIDEO_TAG_SRC_PATTERN.exec(lines.slice(index, cursor + 1).join("\n"))?.[1]
+      ? videoTagSource(lines.slice(index, cursor + 1).join("\n"))
       : undefined;
     if (source !== undefined && webUrl(source) !== null) {
       flushMarkdown();

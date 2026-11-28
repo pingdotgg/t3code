@@ -37,6 +37,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -72,7 +73,10 @@ declare module "node:sqlite" {
 }
 
 const layerTest = Layer.mergeAll(
-  ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+  ProjectionStore.layer.pipe(
+    Layer.provide(NodeCrypto.layerDigest),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
+  ),
   SqlitePersistence.layerMemory,
 );
 const modelSelection = {
@@ -413,7 +417,14 @@ it.effect("routes full projection reads to readers and retains uncommitted write
         );
       }),
     );
-  }).pipe(Effect.provide(ProjectionStore.layer.pipe(Layer.provideMerge(layerReaderDatabase)))),
+  }).pipe(
+    Effect.provide(
+      ProjectionStore.layer.pipe(
+        Layer.provide(NodeCrypto.layerDigest),
+        Layer.provideMerge(layerReaderDatabase),
+      ),
+    ),
+  ),
 );
 
 it.effect("record reads restrict provider histories to delivery identities", () =>
@@ -867,6 +878,60 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
         .join("\n"),
       "USING COVERING INDEX orchestration_v2_projection_turn_items_thread_type_idx",
     );
+    // Turn starts and checkpoints read one run's items; sorted, SQLite would walk the thread too.
+    const rolledBackRun = RunId.make("run:idle-compaction:rolled-back");
+    const rolledBackItem = TurnItemId.make("item:idle-compaction:rolled-back");
+    const runlessItem = TurnItemId.make("item:idle-compaction:runless");
+    yield* store.apply({
+      id: EventId.make("event:idle-compaction:runless-item"),
+      type: "turn-item.updated",
+      threadId,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: runlessItem,
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 2,
+        status: "completed",
+        title: "run-less note",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "command_execution",
+        input: "true",
+      },
+    });
+    for (const [runFilter, expectedIds] of [
+      [{ turnItemRunIds: [rolledBackRun] }, [rolledBackItem]],
+      [{ turnItemRunIds: [null] }, [runlessItem]],
+      [{ turnItemRunIds: [rolledBackRun, null] }, [rolledBackItem, runlessItem]],
+      [{ turnItemRunId: rolledBackRun }, [rolledBackItem]],
+    ] as const) {
+      const byRun = traceSqlStatements();
+      const runItems = yield* store
+        .getThreadRecords(threadId, ["turnItems"], runFilter)
+        .pipe(Effect.withTracer(byRun.tracer));
+      assert.deepEqual(
+        runItems.turnItems.map((item) => item.id),
+        [...expectedIds],
+      );
+      const runQuery = byRun.statements.find((statement) =>
+        statement.includes("FROM orchestration_v2_projection_turn_items"),
+      );
+      assert.isDefined(runQuery);
+      assert.include(
+        (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${runQuery}`))
+          .map((row) => row.detail)
+          .join("\n"),
+        "USING COVERING INDEX orchestration_v2_projection_turn_items_thread_run_idx (thread_id=? AND run_id=?)",
+      );
+    }
     assert.deepEqual(
       records.providerTurns.map((turn) => turn.id),
       ["turn:idle-newest"],

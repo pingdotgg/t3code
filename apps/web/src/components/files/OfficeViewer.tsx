@@ -1,14 +1,16 @@
+import { FilePasswordPrompt } from "./FilePasswordPrompt";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 /* oxlint-disable react/no-array-index-key -- Spreadsheet rows and columns retain their source positions. */
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import type { OfficePreviewKind } from "@t3tools/shared/filePreview";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useContext, useEffect, useRef, useState } from "react";
 import { m } from "~/i18n/messages";
 import { useStableCallback } from "~/hooks/useStableCallback";
 
 import VirtualTablePreview from "./VirtualTablePreview";
+import { PreviewPositionKey } from "./previewPosition";
 
 import {
   Select,
@@ -83,6 +85,7 @@ function ExtendedOfficeViewer(props: {
     OfficeWorkerResult,
     { type: "epub-page" }
   > | null>(null);
+  const [incorrectPassword, setIncorrectPassword] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sheetPages, setSheetPages] = useState(new Map<string, string[][]>());
   const pendingPages = useRef(new Set<string>());
@@ -98,7 +101,9 @@ function ExtendedOfficeViewer(props: {
   const [count, setCount] = useState(0);
   const [fileSize, setFileSize] = useState(props.sizeBytes);
   const [page, setPage] = useState(0);
+  const filePositionKey = useContext(PreviewPositionKey);
   const workerRef = useRef<Worker | null>(null);
+  const submitPassword = useRef<((password: string) => void) | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the Office fetch, preparation worker, and timeout for this source and release them on cleanup.
   useEffect(() => {
@@ -118,17 +123,26 @@ function ExtendedOfficeViewer(props: {
       worker.terminate();
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-    timerRef.current = setTimeout(
-      () => fail(m(msg("This document took too long to preview. Open it in another app."))),
-      30_000,
-    );
+    const startTimeout = () =>
+      setTimeout(
+        () => fail(m(msg("This document took too long to preview. Open it in another app."))),
+        30_000,
+      );
+    timerRef.current = startTimeout();
+    submitPassword.current = (password) => {
+      timerRef.current = startTimeout();
+      worker.postMessage({ type: "unlock", password }, []);
+    };
     worker.addEventListener("error", () =>
       fail(m(msg("Could not load the Office viewer. Close the file and try again."))),
     );
     worker.addEventListener("message", (event: MessageEvent<OfficeWorkerResult>) => {
       if (controller.signal.aborted) return;
       const result = event.data;
-      if (result.type === "error") fail(previewFailureText(result));
+      if (result.type === "password") {
+        if (timerRef.current) clearTimeout(timerRef.current);
+        setIncorrectPassword(result.incorrect);
+      } else if (result.type === "error") fail(previewFailureText(result));
       else if (result.type === "epub") {
         if (timerRef.current) clearTimeout(timerRef.current);
         setEpub(result);
@@ -167,6 +181,7 @@ function ExtendedOfficeViewer(props: {
         fail(thrownErrorMessage(cause, m) ?? m(msg("Could not read this file."))),
       );
     return () => {
+      submitPassword.current = null;
       controller.abort();
       worker.terminate();
       workerRef.current = null;
@@ -190,6 +205,16 @@ function ExtendedOfficeViewer(props: {
           {gt("{error} Save it or open it in another app.", { error })}
         </p>
       </div>
+    );
+  if (incorrectPassword !== null)
+    return (
+      <FilePasswordPrompt
+        incorrect={incorrectPassword}
+        onSubmit={(password) => {
+          setIncorrectPassword(null);
+          submitPassword.current?.(password);
+        }}
+      />
     );
   if (notebook)
     return (
@@ -334,19 +359,23 @@ function ExtendedOfficeViewer(props: {
               <T>This sheet is empty.</T>
             </p>
           ) : (
-            <VirtualTablePreview
-              key={page}
-              name={`${props.name}: ${sheetName(page)}`}
-              count={sheet.rowCount}
-              columns={sheet.columns}
-              getRows={(index) => (index === 0 ? sheet.rows : sheetPages.get(`${page}:${index}`))}
-              loadPage={(index) => {
-                const key = `${page}:${index}`;
-                if (pendingPages.current.has(key)) return;
-                pendingPages.current.add(key);
-                workerRef.current?.postMessage({ type: "sheet-page", sheet: page, index });
-              }}
-            />
+            <PreviewPositionKey
+              value={filePositionKey === null ? null : `${filePositionKey}:${page}`}
+            >
+              <VirtualTablePreview
+                key={page}
+                name={`${props.name}: ${sheetName(page)}`}
+                count={sheet.rowCount}
+                columns={sheet.columns}
+                getRows={(index) => (index === 0 ? sheet.rows : sheetPages.get(`${page}:${index}`))}
+                loadPage={(index) => {
+                  const key = `${page}:${index}`;
+                  if (pendingPages.current.has(key)) return;
+                  pendingPages.current.add(key);
+                  workerRef.current?.postMessage({ type: "sheet-page", sheet: page, index });
+                }}
+              />
+            </PreviewPositionKey>
           )}
         </>
       ) : (

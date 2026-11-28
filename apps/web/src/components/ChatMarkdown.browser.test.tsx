@@ -748,6 +748,24 @@ describe("ChatMarkdown skill chips", () => {
 });
 
 describe("ChatMarkdown headings", () => {
+  it("keeps user-content in authored fragments distinct from the sanitizer prefix", async () => {
+    setup();
+    await using screen = await renderText(
+      "[Open deployment](#deployment)\n\n" +
+        "[Open user content deployment](#user-content-deployment)\n\n" +
+        "## Deployment\n\n## User Content Deployment",
+    );
+    const [deployment, userContentDeployment] = screen.container.querySelectorAll("h2");
+    using scrollDeployment = vi.spyOn(deployment!, "scrollIntoView");
+    using scrollUserContentDeployment = vi.spyOn(userContentDeployment!, "scrollIntoView");
+
+    await userEvent.click(screen.getByRole("link", { name: "Open deployment" }));
+    await userEvent.click(screen.getByRole("link", { name: "Open user content deployment" }));
+
+    expect(scrollDeployment).toHaveBeenCalledExactlyOnceWith({ block: "start" });
+    expect(scrollUserContentDeployment).toHaveBeenCalledExactlyOnceWith({ block: "start" });
+  });
+
   it("keeps insight streaming, reference links, and heading anchors in one message", async () => {
     setup();
     const rule = "─".repeat(20);
@@ -1263,5 +1281,33 @@ describe("ChatMarkdown host media", () => {
       expect(screen.container.textContent).toContain(MISSING_FILE_ACCESS_MESSAGE),
     );
     expect(screen.container.textContent).not.toContain("Retry video");
+  });
+});
+
+describe("ChatMarkdown copy of line breaks", () => {
+  it.each([
+    { text: "first line\nsecond line", user: true },
+    { text: "first line  \nsecond line", user: false },
+    { text: "first line\\\nsecond line", user: false },
+  ])("copies each line break once: $text", async ({ text, user }) => {
+    setup();
+    await using screen = await renderText(
+      text,
+      user
+        ? {
+            className: "user-message-markdown",
+            lineBreaks: true,
+            parseRawHtml: false,
+            extensions: { userMessage: true, leadingWhitespace: true },
+          }
+        : undefined,
+    );
+    const range = document.createRange();
+    range.selectNodeContents(screen.container);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    expect(chatMarkdownClipboardPayload(selection)?.text).toBe("first line\nsecond line");
   });
 });

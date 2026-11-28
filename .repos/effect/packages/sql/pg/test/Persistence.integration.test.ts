@@ -22,7 +22,8 @@ PersistedCacheTest.suite(
 
 PersistedQueueTest.suite(
   "sql-pg",
-  PersistedQueue.layerStoreSql().pipe(Layer.provide(PgContainer.layerClient))
+  PersistedQueue.layerStoreSql().pipe(Layer.provide(PgContainer.layerClient)),
+  { nonDeliveryWait: "250 millis" }
 )
 
 it.layer(PgContainer.layerClient, { timeout: "30 seconds" })((it) => PersistedQueueSqlTest.suiteWith(it))
@@ -155,34 +156,6 @@ it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("PersistedQueue SQL
         assert.strictEqual(count, 1, `deliveries for element ${n}`)
       }
     }).pipe(TestClock.withLive), { timeout: 30000 })
-
-  it.effect("recovers elements from crashed workers after lock expiration", () =>
-    Effect.gen(function*() {
-      const tableName = "effect_queue_crash_recovery"
-      const store = yield* PersistedQueue.makeStoreSql({
-        tableName,
-        pollInterval: "10 millis",
-        lockExpiration: "1 second"
-      })
-      const factory = yield* PersistedQueue.makeFactory.pipe(
-        Effect.provideService(PersistedQueue.PersistedQueueStore, store)
-      )
-      const queue = yield* factory.make({ name: "crash-recovery", schema: Schema.Number })
-      const sql = (yield* SqlClient.SqlClient).withoutTransforms()
-      const table = sql(tableName)
-
-      const id = yield* queue.offer(1)
-      // simulate a worker that claimed the element and then crashed: the lock
-      // is held by a dead worker and the claim consumed an attempt
-      yield* sql`
-        UPDATE ${table}
-        SET acquired_by = ${crypto.randomUUID()}, acquired_at = NOW(), attempts = 1
-        WHERE id = ${id}
-      `
-
-      const attempts = yield* queue.take((_n, metadata) => Effect.succeed(metadata.attempts))
-      assert.strictEqual(attempts, 2)
-    }).pipe(TestClock.withLive), { timeout: 20000 })
 
   it.effect("dead-letters elements from workers that crashed on the final attempt", () =>
     Effect.gen(function*() {

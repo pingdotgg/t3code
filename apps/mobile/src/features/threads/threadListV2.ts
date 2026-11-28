@@ -14,7 +14,6 @@ import {
   type SnoozePreset,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
 import {
   threadSearchMatchKey,
   threadSearchSubject,
@@ -37,7 +36,6 @@ import { isListedThreadLineage, type EnvironmentId, type ProjectId } from "@t3to
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import type { MenuAction } from "@react-native-menu/menu";
 
-import type { ThreadListProvider } from "../../state/thread-list-environments";
 import type { ThreadMoveAvailability } from "./threadOrder";
 
 import { relativeTime } from "../../lib/time";
@@ -51,22 +49,6 @@ import {
 } from "./threadOrder";
 
 export const threadListInboxReturns = createInboxReturnTracker();
-
-export function resolveThreadListV2ProviderDrivers(
-  thread: Pick<EnvironmentThreadShell, "providerInstanceHistory" | "modelSelection" | "runtime">,
-  providers: ReadonlyArray<ThreadListProvider> | undefined,
-): ReadonlyArray<string> {
-  if (providers === undefined) return [];
-  const stack = resolveThreadProviderStack(thread);
-  const drivers = stack.flatMap((instanceId) => {
-    const driver = providers.find((provider) => provider.instanceId === instanceId)?.driver;
-    return driver === undefined ? [] : [driver];
-  });
-  const currentDriver = providers.find(
-    (provider) => provider.instanceId === stack[stack.length - 1],
-  )?.driver;
-  return currentDriver === undefined ? [] : drivers;
-}
 
 export type ThreadListV2Status =
   | "approval"
@@ -308,6 +290,18 @@ export function resolveThreadListV2Status(
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
   return "ready";
+}
+
+export function threadListV2ShowMoreAccessibilityLabel(
+  hiddenCount: number,
+  resolve: MessageResolver = m,
+): string {
+  return resolve(
+    msg(
+      "{count, plural, one {Show {count} more settled thread} other {Show {count} more settled threads}}",
+    ),
+    { count: Math.min(hiddenCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT) },
+  );
 }
 
 export function threadListV2RowAccessibilityLabel(

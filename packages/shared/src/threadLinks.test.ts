@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { mFallback } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 
 import {
   formatHostedThreadLink,
@@ -184,6 +186,102 @@ describe("thread links", () => {
     },
   );
 
+  it.each([
+    ["a blank line", "Intro\n\n", "    ", "~~~", ""],
+    ["an indented heading", "Intro\n  # Example\n", "    ", "~~~", ""],
+    ["a closed fence", "Intro\n```\nexample\n```\n", "    ", "~~~", ""],
+    ["a literal list marker", "# Example\n", "    ", "- ```md", ""],
+    ["a heading in a quote", "> # Example\n", ">     ", "~~~", "> "],
+  ])(
+    "keeps indented code literal and rewrites prose after %s",
+    (_name, before, indent, fence, quote) => {
+      const inside = "<t3-thread://v2/local/code>";
+      const outside = "<t3-thread://v2/local/prose>";
+      const example = `${before}${indent}${fence}\n${indent}${inside}\n${quote.trimEnd()}\n${quote}See `;
+      expect(replaceThreadLinks(`${example}${outside}`, () => "linked")).toBe(`${example}linked`);
+    },
+  );
+
+  it.each([
+    ["a paragraph with four spaces", "Intro\n    ~~~"],
+    ["a paragraph with a tab", "Intro\n\t```"],
+    ["a list paragraph", "- Intro\n      ~~~"],
+    ["an HTML block", "<div>\n    ~~~\n</div>"],
+    ["deeply nested quotes", ">".repeat(6000) + " text\n\n    ~~~"],
+  ])("rewrites the prose link after %s", (_name, before) => {
+    const prose = `${before}\n\nSee `;
+    expect(replaceThreadLinks(`${prose}<t3-thread://v2/local/prose>`, () => "linked")).toBe(
+      `${prose}linked`,
+    );
+  });
+
+  it("rewrites a link in footnote prose before an indented fence", () => {
+    const footnote = "Note[^n].\n\n[^n]: note\n\n    See ";
+    expect(
+      replaceThreadLinks(`${footnote}<t3-thread://v2/local/prose>\n\n    ~~~`, () => "linked"),
+    ).toBe(`${footnote}linked\n\n    ~~~`);
+  });
+
+  it.each([
+    ["a paragraph code span", "Intro\n    ```\n    <t3-thread://v2/local/code>\n    ```"],
+    [
+      "a fence with over-indented markers",
+      "~~~\n    ~~~\n    ~~~\n<t3-thread://v2/local/code>\n~~~",
+    ],
+    [
+      "a fence in a footnote",
+      "Note[^n].\n\n[^n]: note\n\n    ~~~\n    <t3-thread://v2/local/code>\n    ~~~",
+    ],
+  ])("keeps links literal inside %s and rewrites the link after it", (_name, code) => {
+    const prose = `${code}\n\nSee `;
+    expect(replaceThreadLinks(`${prose}<t3-thread://v2/local/prose>`, () => "linked")).toBe(
+      `${prose}linked`,
+    );
+  });
+
+  it.each([
+    ["4 spaces", "    ```md\n    <t3-thread://v1/abc>\n    ```", ""],
+    ["tab", "\t```md\n\t<t3-thread://v1/abc>\n\t```", ""],
+    ["list + 5 spaces", "-     ```md\n      <t3-thread://v1/abc>\n      ```", ""],
+    ["nested list", "- a\n  -     ```md\n        <t3-thread://v1/abc>\n        ```", ""],
+    ["nested list with tab", "-\t-     ~~~\n          <t3-thread://v1/abc>", ""],
+    ["quote + 5 spaces", ">     ```md\n>     <t3-thread://v1/abc>\n>     ```", "> "],
+    [
+      "spaced nested quote + 5 spaces",
+      ">    >     ```md\n>    >     <t3-thread://v1/abc>",
+      ">    > ",
+    ],
+    ["quote + list + 5 spaces", "> -     ```md\n>       <t3-thread://v1/abc>\n>       ```", "> "],
+    ["quote + space + tab + list", "> \t-     ```md\n>         <t3-thread://v1/abc>", "> "],
+    [
+      "quote + list after para",
+      "> para\n> -     ```md\n>       <t3-thread://v1/abc>\n>       ```",
+      "> ",
+    ],
+    ["1. after paragraph", "Intro\n1.     ```md\n       <t3-thread://v1/abc>\n       ```", ""],
+    ["ordered list >= 2 after blank", "Intro\n\n2.     ```md\n       <t3-thread://v1/abc>", ""],
+    [
+      "quote after blank line past closer",
+      "Example\n\n>       ~~~\n>       ~~~\n>       <t3-thread://v1/abc>",
+      "> ",
+    ],
+    ["quote after autolink", "<https://example.com>\n>     ~~~\n>     <t3-thread://v1/abc>", "> "],
+    ["blank line inside indented code", "    ```md\n\n    <t3-thread://v1/abc>", ""],
+    ["quote after indented code", "    ```md\n>     ```\n>     <t3-thread://v1/abc>", "> "],
+    ["4 spaces after closer", "    ```md\n    a\n    ```\n    <t3-thread://v1/abc>", ""],
+    ["4 spaces with U+2028", "    ```\u2028<t3-thread://v1/t1>```", ""],
+    ["hosted link", "    ```\n    https://app.t3.codes/threads/env/thr\n    ```", ""],
+  ])(
+    "keeps links inside fence-looking indented code blocks literal (%s)",
+    (_name, block, prose) => {
+      expect(replaceThreadLinks(block, () => "linked")).toBe(block);
+      const after = `${block}\n${prose.trimEnd()}\n${prose}See `;
+      expect(replaceThreadLinks(`${after}<t3-thread://v2/local/t>`, () => "linked")).toBe(
+        `${after}linked`,
+      );
+    },
+  );
+
   it("leaves links inside code spans and fences as written", () => {
     const markdown = [
       "Live [old](t3-thread://v1/t1), literal `[old](t3-thread://v1/t1)`.",
@@ -210,6 +308,8 @@ describe("thread links", () => {
     expect(relabelThreadLinks(nested.join("\n"), local, () => "New")).toBe(
       [...nested.slice(0, 3), "> > [New](t3-thread://v2/local/t1)"].join("\n"),
     );
+    const deepNested = "> > > > > ```\n> > > > > <t3-thread://v2/local/t1> ```";
+    expect(relabelThreadLinks(deepNested, local, () => "New")).toBe(deepNested);
     const labels: Array<string | undefined> = [];
     const separated = "[Label\u2028> > example](t3-thread://v1/t1)";
     expect(replaceThreadLinks(separated, (_link, label) => void labels.push(label))).toBe(
@@ -229,12 +329,45 @@ describe("thread links", () => {
       ["> ```ts", '> const fence = "```";', `> ${hidden}`, "> ```", `> ${after}`],
       ["> ```", ` > ${hidden}`, "> ```", after],
       ["- ```bash", "  echo hi", "  ```", "", after],
+      ["- ```text", `  ${hidden}`, "", after],
+      ["- item", "", "  ```text", `  ${hidden}`, "", after],
+      ["[^note]: - ```text", "      https://app.t3.codes/threads/local/in-code", "", after],
+      [
+        "[^outer]: [^inner]: - ```text",
+        "          https://app.t3.codes/threads/local/in-code",
+        "",
+        after,
+      ],
       ["- > ```md", `  > ${hidden}`, "  > ```", "", after],
       [">> ```md", `> > ${hidden}`, ">> ```", `> ${after}`],
       ["> > ~~~", `>> ${hidden}`, ">> ~~~", after],
       ["1. Run:", "", "    ```bash", '    echo "```"', `    ${hidden}`, "    ```", "", after],
       ["````md", "```", hidden, "````", after],
       ["Use ~~~ to mark it.", after],
+      ["> para", ">     ~~~", `>     ${after}`],
+      ["> para", `>     ~~~ ${after}`],
+      ["- > para", "  >     ```md", `  >     ${after}`],
+      [`Intro\u2028-     ~~~ ${after}`],
+      ["Intro", `2.     ~~~ ${after}`],
+      ["Intro", `2. -     ~~~ ${after}`],
+      [">\t-     ```md", `>       ${after}`],
+      ["> para", "lazy", ">     ~~~", `>     ${after}`],
+      ["> para", "> 2. >", `> 2.     ~~~ ${after}`],
+      ["> para\r", ">     ~~~\r", `>     ${after}`],
+      [`> para\r\r>     ~~~\r>     ${hidden}\r> ${after}`],
+      ["para", "    -     ```", `    ${after}`],
+      ["para", "    -     ```", `          ${after}`],
+      ["    ~~~", `-   ${after}`],
+      ["    ~~~md", "    ~~~", "    ~~~", after],
+      ["- item", "  >     ~~~", `  >     ${hidden}`, `    ${after}`],
+      ["10. >     ```md", `    >     ${hidden} \`\`\``, "", after],
+      ["  - >     ```md", `    >     ${hidden} \`\`\``, "", after],
+      ["> - Run this:", ">", ">     ```bash", ">   echo hi", ">", ">     ```", `>     ${after}`],
+      ["Example", "", ">     ~~~", ">\t\t~~~", `>     ${hidden}`, ">\t\t~~~", `> ${after}`],
+      [after, ">     ~~~", `>     ${hidden}`],
+      [`1.       \`\`\`md ${hidden}`, `   \t${after}`],
+      [">      ```md", `> \t${after}`],
+      [">     ```md", `>\t ${after}`],
       ["```" + hidden + "``` then", after],
       ["Use ```example", hidden, "end``` then", after],
       ["Stray ` tick", "", after, "and `code`"],
@@ -408,5 +541,23 @@ describe("hosted thread links", () => {
         expected === undefined ? [] : [ref("there", "t1")],
       );
     }
+  });
+
+  it("keeps relabeled links navigable when the thread id contains a space", () => {
+    const linkUrl = (markdown: string) => {
+      const paragraph = unified().use(remarkParse).parse(markdown).children[0];
+      const node = paragraph?.type === "paragraph" ? paragraph.children[0] : undefined;
+      return node?.type === "link" ? node.url : undefined;
+    };
+    const thread = ref("local", "work item");
+    const titles = titlesIn({ local: { "work item": "Review", "work%20item": "Encoded" } });
+
+    const relabeled = relabelThreadLinks(hostedThreadLink(thread), local, titles);
+    expect(parseThreadLinkHref(linkUrl(relabeled) ?? "")).toEqual(thread);
+    expect(threadLinkRefs(relabeled, local)).toEqual([thread]);
+
+    const v1Relabeled = relabelThreadLinks("[old](t3-thread://v1/work%20item)", local, titles);
+    expect(linkUrl(v1Relabeled)).toBe("t3-thread://v1/work%20item");
+    expect(formatThreadLink(v1("work item"))).toBe("<t3-thread://v1/work%20item>");
   });
 });

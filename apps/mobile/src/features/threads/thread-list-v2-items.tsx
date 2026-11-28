@@ -47,11 +47,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import {
-  ProviderIcon,
-  ProviderInstanceIcon,
-  providerInstanceNameLabel,
-} from "../../components/ProviderIcon";
+import { ProviderInstanceIcon, providerInstanceNameLabel } from "../../components/ProviderIcon";
 import { useNowAfter } from "../../lib/clock";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
@@ -77,14 +73,13 @@ import { canTurnThreadIntoProject, turnThreadIntoProject } from "./turnThreadInt
 import { threadCanArchive } from "../home/threadArchive";
 import { useCanShareWithGuest } from "./useCanShareWithGuest";
 import {
-  THREAD_LIST_V2_SETTLED_PAGE_COUNT,
+  threadListV2ShowMoreAccessibilityLabel,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozePresets,
   threadHasUnseenCompletion,
   resolveThreadListV2RowStatus,
   resolveThreadListV2Status,
-  resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
   layoutThreadListV2RowMenuActions,
   threadListV2RowAccessibilityLabel,
@@ -396,6 +391,7 @@ export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(pro
   readonly onPress: () => void;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const label =
     props.state === "loading"
       ? gt("Loading", { $context: "older threads are loading" })
@@ -410,12 +406,7 @@ export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(pro
       accessibilityRole="button"
       accessibilityLabel={
         props.state === undefined
-          ? gt(
-              "{count, plural, one {Show {count} more settled threads} other {Show {count} more settled threads}}",
-              {
-                count: Math.min(props.hiddenCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT),
-              },
-            )
+          ? threadListV2ShowMoreAccessibilityLabel(props.hiddenCount, messages)
           : label
       }
       disabled={props.state === "loading"}
@@ -836,17 +827,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const dormant = useSwipeRowDormant(props.activationKey);
 
   const selectThread = () => onSelectThread(thread);
-  const { providerDrivers, providerIconUrl } = useMemo(() => {
-    const provider = props.providers?.find(
-      (candidate) =>
-        candidate.instanceId ===
-        (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
-    );
-    return {
-      providerDrivers: resolveThreadListV2ProviderDrivers(thread, props.providers),
-      providerIconUrl: provider?.iconUrl,
-    };
-  }, [thread, props.providers]);
+  const providerIconUrl = props.providers?.find(
+    (candidate) =>
+      candidate.instanceId ===
+      (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
+  )?.iconUrl;
 
   const providerInstance = props.providerInstance;
   const providerNameLabel = providerInstance
@@ -1598,16 +1583,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : null}
         {providerInstance ? (
           <View className="flex-row items-center">
-            {providerDrivers.slice(0, -1).map(
-              (driver, index) => (
-                /* oxlint-disable react/no-array-index-key -- Provider history can repeat a driver; these decorative icons have no local state. */ <View
-                  key={`${driver}:${index}`}
-                  className="-mr-1 opacity-30"
-                >
-                  <ProviderIcon provider={driver} size={12} />
-                </View>
-              ) /* oxlint-enable react/no-array-index-key */,
-            )}
             <ProviderInstanceIcon
               iconUrl={providerIconUrl}
               provider={providerInstance.driverKind}
