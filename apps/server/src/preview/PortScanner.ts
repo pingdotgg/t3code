@@ -4,6 +4,8 @@ import {
   PreviewStopLocalServerError,
   ThreadId,
   type DiscoveredLocalServer,
+  type PreviewProbeDiscoveredServerTlsInput,
+  type PreviewProbeDiscoveredServerTlsResult,
   type PreviewStopLocalServerInput,
 } from "@t3tools/contracts";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -29,6 +31,7 @@ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ProcessLauncher from "../process/ProcessLauncher.ts";
 import * as WindowsTcpListeners from "../process/windowsTcpListeners.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { probeTlsListener } from "./tlsProbe.ts";
 
 export class PortDiscovery extends Context.Service<
   PortDiscovery,
@@ -70,6 +73,10 @@ export class PortDiscovery extends Context.Service<
     readonly stopServer: (
       input: PreviewStopLocalServerInput,
     ) => Effect.Effect<void, PreviewStopLocalServerError>;
+    /** Probed when a user opens a discovered server, never during a scan. */
+    readonly probeTls: (
+      input: PreviewProbeDiscoveredServerTlsInput,
+    ) => Effect.Effect<PreviewProbeDiscoveredServerTlsResult>;
   }
 >()("t3/preview/PortScanner/PortDiscovery") {}
 
@@ -773,25 +780,35 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     return [...seen.values()].toSorted((left, right) => left.port - right.port);
   });
 
-  const probeWebUrl = Effect.fn("PortDiscovery.probeWebUrl")((url: string) =>
-    httpClient.get(url).pipe(
-      Effect.map((response) => {
-        const location = response.headers.location?.trim();
-        if (NAVIGATION_REDIRECT_STATUSES.has(response.status) && location) return url;
-        if (response.status < 200 || response.status >= 300) return null;
-        if (response.status === 204 || response.status === 205) return null;
-        const contentType = response.headers["content-type"]
-          ?.split(";", 1)[0]
-          ?.trim()
-          .toLowerCase();
-        return contentType === "text/html" || contentType === "application/xhtml+xml" ? url : null;
-      }),
-      Effect.scoped,
-      Effect.timeoutOption(WEB_PROBE_TIMEOUT),
-      Effect.map(Option.getOrNull),
-      Effect.orElseSucceed(() => null),
-      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
-    ),
+  /**
+   * What a configured-URL probe learned: the listener serves a web page, it answered
+   * HTTP but is not a web page, or the request failed before any usable HTTP response.
+   * Only the last case may fall back to a TLS handshake.
+   */
+  type WebProbeOutcome = "web" | "rejected" | null;
+
+  const probeWebUrl = Effect.fn("PortDiscovery.probeWebUrl")(
+    (url: string): Effect.Effect<WebProbeOutcome> =>
+      httpClient.get(url).pipe(
+        Effect.map((response) => {
+          const location = response.headers.location?.trim();
+          if (NAVIGATION_REDIRECT_STATUSES.has(response.status) && location) return "web";
+          if (response.status < 200 || response.status >= 300) return "rejected";
+          if (response.status === 204 || response.status === 205) return "rejected";
+          const contentType = response.headers["content-type"]
+            ?.split(";", 1)[0]
+            ?.trim()
+            .toLowerCase();
+          return contentType === "text/html" || contentType === "application/xhtml+xml"
+            ? "web"
+            : "rejected";
+        }),
+        Effect.scoped,
+        Effect.timeoutOption(WEB_PROBE_TIMEOUT),
+        Effect.map(Option.getOrNull),
+        Effect.orElseSucceed(() => null),
+        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+      ),
   );
 
   const makeWebProbeGroups = (
@@ -847,11 +864,47 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         return cachedProbe?.pid === pid && cachedProbe.expiresAtMillis > nowMillis
           ? Effect.succeed({ group, probe: cachedProbe, fresh: false })
           : probeWebUrl(group.url).pipe(
-              Effect.map((result) => ({
-                group,
-                probe: { pid, isWeb: result !== null, expiresAtMillis: 0 },
-                fresh: true,
-              })),
+              Effect.flatMap((result) => {
+                if (result === "web") {
+                  return Effect.succeed({
+                    group,
+                    probe: { pid, isWeb: true, expiresAtMillis: 0 },
+                    fresh: true,
+                  });
+                }
+                if (result === "rejected") {
+                  // The listener answered HTTP, so it speaks HTTP rather than TLS-only:
+                  // keep the rejection instead of letting the TLS fallback reclassify
+                  // it as web.
+                  return Effect.succeed({
+                    group,
+                    probe: { pid, isWeb: false, expiresAtMillis: 0 },
+                    fresh: true,
+                  });
+                }
+                const url = new URL(group.url);
+                if (url.protocol !== "https:") {
+                  return Effect.succeed({
+                    group,
+                    probe: { pid, isWeb: false, expiresAtMillis: 0 },
+                    fresh: true,
+                  });
+                }
+                // A failed https:// probe falls back to a TLS handshake, so a listener with
+                // a locally issued certificate (mkcert) still counts as web. Probe the
+                // configured URL's host, not the discovered record's: the record may name
+                // a different loopback address than the URL the user configured.
+                return probeTlsListener({
+                  host: url.hostname,
+                  port: group.server.port,
+                }).pipe(
+                  Effect.map((tls) => ({
+                    group,
+                    probe: { pid, isWeb: tls, expiresAtMillis: 0 },
+                    fresh: true,
+                  })),
+                );
+              }),
             );
       },
       { concurrency: WEB_PROBE_CONCURRENCY },
@@ -1322,6 +1375,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     // Subscribers see the server leave now rather than on the next poll.
     signalUntilStopped(input).pipe(Effect.andThen(pollIfRetained));
 
+  const probeTls: PortDiscovery["Service"]["probeTls"] = (input) =>
+    probeTlsListener(input).pipe(Effect.map((tls) => ({ tls })));
+
   return PortDiscovery.of({
     scan: scanOnce,
     subscribe,
@@ -1331,6 +1387,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     trackAgent,
     watchAgentCommandStops,
     stopServer,
+    probeTls,
   });
 }).pipe(Effect.withSpan("PortDiscovery.make"));
 

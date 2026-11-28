@@ -14,6 +14,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { isLoopbackHost } from "@t3tools/shared/preview";
 import { T, useGT, Var } from "gt-react";
+import { isElectron } from "~/env";
 import { m } from "~/i18n/messages";
 import { CableIcon, GlobeIcon, SquareIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { type MouseEvent, useState } from "react";
@@ -39,6 +40,7 @@ import { previewEnvironment } from "../../state/preview";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { openDiscoveredPort } from "../preview/openDiscoveredPort";
+import { resolveDiscoveredServerOpenUrl } from "../preview/resolveDiscoveredServerOpenUrl";
 import { Spinner } from "../ui/spinner";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -78,6 +80,9 @@ function ThreadServersList(props: ThreadServersPanelProps) {
   const locality = useForwardLocality(forwardable ? props.environmentId : null);
   const canForward = locality === "remote";
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
+  const probeDiscoveredServerTls = useAtomCommand(previewEnvironment.probeDiscoveredServerTls, {
+    reportFailure: false,
+  });
   const stopServer = useAtomCommand(previewEnvironment.stopLocalServer, {
     label: "thread server stop",
   });
@@ -100,51 +105,81 @@ function ThreadServersList(props: ThreadServersPanelProps) {
     );
   };
 
-  const open = async (server: DiscoveredLocalServer, event: MouseEvent<HTMLElement>) => {
+  const open = async (listed: DiscoveredLocalServer, event: MouseEvent<HTMLElement>) => {
     if (event.button > 1) return;
     // Like links: modified and middle clicks go to the system browser.
-    if (event.metaKey || event.ctrlKey || event.button === 1) {
-      event.preventDefault();
-      // This machine's browser reaches another environment's loopback only through a forward.
-      // Starting a forward runs the probe; only a confirmed local environment opens directly.
-      const forwarding = forwardable && locality !== "local";
-      const url = forwarding
-        ? await forwardPort(props.environmentId, server.port).then(
-            (forward) => forwardedUrl(forward, server.url),
-            (error: unknown) => {
-              reportFailure(gt("Could not forward port {port}", { port: server.port }), error);
-              return null;
-            },
-          )
-        : resolveExternalServerUrl(props.environmentId, server.url);
-      if (url === null) return;
-      // Without a forward, a remote environment's localhost would open this machine's instead.
-      if (
-        !forwarding &&
-        locality !== "local" &&
-        tunnelsEnvironmentLoopback(environment?.entry.target) &&
-        isLoopbackHost(new URL(url).hostname)
-      ) {
-        reportFailure(
-          gt("Unable to open in browser"),
-          new Error(
-            gt(
-              "localhost:{port} runs on another machine, and port forwarding isn't available for it right now.",
-              { port: server.port },
+    const external = event.metaKey || event.ctrlKey || event.button === 1;
+    if (external) event.preventDefault();
+    // Reserve the browser tab synchronously: the probe below awaits, and browsers can
+    // drop user activation during that wait and block the later open. window.open with
+    // noopener,noreferrer returns null, so reserve without features and null the opener
+    // instead — same protection, usable reference. Desktop opens through the bridge.
+    const pending = external && !isElectron ? window.open("", "_blank") : null;
+    if (pending) pending.opener = null;
+    const openReserved = async (): Promise<boolean> => {
+      // Discovered listeners are listed as plain HTTP; an HTTPS-only dev server would fail there.
+      const server = {
+        ...listed,
+        url: await resolveDiscoveredServerOpenUrl({
+          threadRef,
+          port: listed,
+          probeTls: probeDiscoveredServerTls,
+        }),
+      };
+      if (external) {
+        // This machine's browser reaches another environment's loopback only through a forward.
+        // Starting a forward runs the probe; only a confirmed local environment opens directly.
+        const forwarding = forwardable && locality !== "local";
+        const url = forwarding
+          ? await forwardPort(props.environmentId, server.port).then(
+              (forward) => forwardedUrl(forward, server.url),
+              (error: unknown) => {
+                reportFailure(gt("Could not forward port {port}", { port: server.port }), error);
+                return null;
+              },
+            )
+          : resolveExternalServerUrl(props.environmentId, server.url);
+        if (url === null) return false;
+        // Without a forward, a remote environment's localhost would open this machine's instead.
+        if (
+          !forwarding &&
+          locality !== "local" &&
+          tunnelsEnvironmentLoopback(environment?.entry.target) &&
+          isLoopbackHost(new URL(url).hostname)
+        ) {
+          reportFailure(
+            gt("Unable to open in browser"),
+            new Error(
+              gt(
+                "localhost:{port} runs on another machine, and port forwarding isn't available for it right now.",
+                { port: server.port },
+              ),
             ),
-          ),
-        );
-        return;
+          );
+          return false;
+        }
+        if (pending) {
+          pending.location.href = url;
+        } else {
+          await readLocalApi()
+            ?.shell.openExternal(url)
+            .catch((error: unknown) => reportFailure(gt("Unable to open in browser"), error));
+        }
+        return true;
       }
-      await readLocalApi()
-        ?.shell.openExternal(url)
-        .catch((error: unknown) => reportFailure(gt("Unable to open in browser"), error));
-      return;
-    }
-    const result = await openDiscoveredPort({ threadRef, port: server, openPreview });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      reportFailure(gt("Unable to open preview"), squashAtomCommandFailure(result));
-    }
+      const result = await openDiscoveredPort({ threadRef, port: server, openPreview });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        reportFailure(gt("Unable to open preview"), squashAtomCommandFailure(result));
+      }
+      return true;
+    };
+    // React Compiler cannot analyze try/finally, so a failed open reports false and
+    // the reserved tab closes here; an unexpected throw closes it before propagating.
+    const opened = await openReserved().catch((error: unknown) => {
+      pending?.close();
+      throw error;
+    });
+    if (!opened) pending?.close();
   };
 
   const stop = async (server: DiscoveredLocalServer) => {
