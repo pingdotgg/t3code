@@ -1,8 +1,10 @@
-import type {
-  ProviderInstanceId,
-  ServerProvider,
-  ServerProviderUsageWindow,
-  UsageLimitSourceSnapshots,
+import {
+  AuthProvidersManageScope,
+  type EnvironmentId,
+  type ProviderInstanceId,
+  type ServerProvider,
+  type ServerProviderUsageWindow,
+  type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import {
   type LimitPace,
@@ -15,14 +17,17 @@ import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 import { Link } from "@tanstack/react-router";
 import { msg, useGT, useLocale, useMessages } from "gt-react";
 import { CalendarRangeIcon, GaugeIcon, Minimize2Icon, TimerIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
+import { useEnvironmentScope } from "../../state/session";
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import { formatContextWindowTokens } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { UsageAccessDialog } from "../usage/UsageAccessDialog";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { formatContextWindowCompactionMessage } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
@@ -45,7 +50,7 @@ export interface ThreadDetailsUsageInput {
   readonly sources: UsageLimitSourceSnapshots;
   readonly contextWindow: ContextWindowSnapshot | null;
 }
-type UsageTone = "error" | "warning" | null;
+export type UsageTone = "error" | "warning" | null;
 
 function limitTone(left: number): UsageTone {
   if (left <= 10) return "error";
@@ -55,11 +60,12 @@ function limitTone(left: number): UsageTone {
 
 /** Provider limits share the canvas's icon, label, meter, percentage and reset columns; each row opens the usage page. */
 export function ThreadDetailsUsage({
+  environmentId,
   providerInstanceId,
   model,
   providers,
   sources,
-}: Omit<ThreadDetailsUsageInput, "contextWindow">) {
+}: Omit<ThreadDetailsUsageInput, "contextWindow"> & { readonly environmentId: EnvironmentId }) {
   const gt = useGT();
   const m = useMessages();
   const nowMinute = useNowMinute();
@@ -79,7 +85,18 @@ export function ThreadDetailsUsage({
     (notice !== null || !limits?.windows.length);
   return (
     <ThreadDetailsSection title={gt("Usage limits")} variant="usage">
-      {showUnavailable ? (
+      {limits?.needsUsageAccess && providerInstanceId !== null ? (
+        <>
+          <UsageAccessRow
+            environmentId={environmentId}
+            instanceId={providerInstanceId}
+            providers={providers}
+          />
+          {quotas.map(({ key, accountLabel, window }) => (
+            <LimitRow key={key} window={window} now={now} accountLabel={accountLabel} />
+          ))}
+        </>
+      ) : showUnavailable ? (
         <UsageRow
           label={gt("Limits", { $context: "usage limits row label" })}
           icon={<TimerIcon />}
@@ -106,6 +123,55 @@ export function ThreadDetailsUsage({
         </>
       )}
     </ThreadDetailsSection>
+  );
+}
+
+/** Limits that need T3 to read the agent's sign-in, which the user has not allowed yet. */
+function UsageAccessRow({
+  environmentId,
+  instanceId,
+  providers,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly instanceId: ProviderInstanceId;
+  readonly providers: readonly ServerProvider[];
+}) {
+  const gt = useGT();
+  const [open, setOpen] = useState(false);
+  const canAnswer = useEnvironmentScope(environmentId, AuthProvidersManageScope);
+  const provider = providers.find((entry) => entry.instanceId === instanceId);
+  if (provider === undefined) return null;
+  return (
+    <>
+      <div className="flex h-8 items-center gap-2 ps-3 pe-2 text-meta">
+        <span className="shrink-0 text-muted-foreground [&>svg]:size-4">
+          <TimerIcon />
+        </span>
+        <span className="min-w-0 flex-1 truncate">
+          {gt("Limits", { $context: "usage limits row label" })}
+        </span>
+        {canAnswer ? (
+          <Button size="micro" variant="secondary" onClick={() => setOpen(true)}>
+            {gt("Set up", { $context: "allow reading an agent's usage limits" })}
+          </Button>
+        ) : (
+          <span className="text-muted-foreground">{gt("Unavailable")}</span>
+        )}
+      </div>
+      {open ? (
+        <UsageAccessDialog
+          prompts={[
+            {
+              environmentId,
+              environmentLabel: "",
+              instanceId,
+              driver: provider.driver,
+            },
+          ]}
+          onOpenChange={setOpen}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -336,7 +402,7 @@ function PoolRow({ window, now }: { readonly window: LimitPoolWindow; readonly n
 }
 
 /** With `opensUsage` the row links to the usage page. */
-function UsageRow({
+export function UsageRow({
   label,
   icon,
   fill,

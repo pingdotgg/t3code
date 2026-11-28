@@ -1,5 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { groupIconFallbacks } from "@t3tools/client-runtime/state/project-grouping";
 import type { ContextMenuSource } from "@t3tools/contracts";
 import { ChevronDownIcon, SquarePenIcon } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
@@ -90,7 +91,11 @@ export function SidebarProjectFolderHeader(props: {
           );
         }}
       >
-        <ProjectFavicon project={group} className="size-4 shrink-0" />
+        <ProjectFavicon
+          project={group}
+          fallbackProjects={groupIconFallbacks(group.memberProjects, group)}
+          className="size-4 shrink-0"
+        />
         <span className="min-w-0 flex-1 truncate text-label text-sidebar-foreground/90">
           {group.displayName}
         </span>

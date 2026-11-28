@@ -26,6 +26,10 @@ describe("Enriched link presentation", () => {
       "src/routes/[id]/+page.svelte",
       "app/routes/posts.$id.tsx",
       "node_modules/@scope/pkg/index.js",
+      "+page.svelte:42",
+      "[id].tsx:10:2",
+      "posts.$id.tsx:18-24",
+      "(auth).tsx:5",
     ]) {
       expect(ENRICHED_INLINE_FILE_LINK_REGEX.test(path), path).toBe(true);
     }
@@ -41,6 +45,8 @@ describe("Enriched link presentation", () => {
       "Dockerfile",
       "docker/Dockerfiles",
       "/app/settings",
+      "me@example.com:80",
+      "+page.svelte",
     ]) {
       expect(ENRICHED_INLINE_FILE_LINK_REGEX.test(text), text).toBe(false);
     }

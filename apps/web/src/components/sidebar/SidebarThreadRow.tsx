@@ -55,6 +55,7 @@ import {
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
+  UnplugIcon,
   UserRoundIcon,
   XIcon,
 } from "lucide-react";
@@ -137,6 +138,10 @@ import { InlineButton } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
+import {
+  SidebarThreadHostPressureIcon,
+  SidebarThreadHostPressureLine,
+} from "./SidebarThreadHostPressure";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { ActivityShimmerOverlay } from "../chat/TimelineRowParts";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
@@ -235,6 +240,21 @@ const SIDEBAR_STATUSES: Record<
   SidebarV2TopStatusKind,
   { readonly label: string; readonly Icon: typeof CircleDashedIcon; readonly className: string }
 > = {
+  connecting: {
+    label: msg("Connecting"),
+    Icon: UnplugIcon,
+    className: "text-muted-foreground",
+  },
+  reconnecting: {
+    label: msg("Reconnecting"),
+    Icon: UnplugIcon,
+    className: "text-muted-foreground",
+  },
+  offline: {
+    label: msg("Offline"),
+    Icon: UnplugIcon,
+    className: "text-muted-foreground",
+  },
   working: {
     label: msg("Working", { $context: "thread status" }),
     Icon: CircleDashedIcon,
@@ -462,6 +482,7 @@ function SidebarThreadTooltip({
             <MiddleTruncate value={formatWorktreePathForDisplay(worktreePath)} className="flex" />
           </div>
         ) : null}
+        <SidebarThreadHostPressureLine environmentId={thread.environmentId} threadId={thread.id} />
         {branchMismatch ? (
           <div className="flex min-w-0 items-start gap-2 text-warning">
             <CircleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
@@ -1045,6 +1066,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     event.stopPropagation();
     onUnsnooze(threadRef);
   };
+  const handlePinClick = (event: ReactMouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onPin(threadRef);
+  };
   const handleUnpinClick = (event: ReactMouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1052,11 +1078,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
   const handleSnoozePreset = (preset: Pick<SnoozePreset, "snoozedUntil">) => {
     onSnooze(threadRef, preset);
-  };
-  const handlePinClick = (event: ReactMouseEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
-    onPin(threadRef);
   };
   const [snoozeMenuOpenRaw, setSnoozeMenuOpen] = useState(false);
   // The React Compiler caches render results on their inputs, so a clock read
@@ -1348,6 +1369,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     )
   ) : null;
 
+  const hostPressureIcon = (
+    <SidebarThreadHostPressureIcon environmentId={thread.environmentId} threadId={thread.id} />
+  );
+
   const multiline = variant === "folder-multiline";
   const inFolder = variant === "folder" || multiline;
   const diff = latestRunDiff(thread);
@@ -1464,6 +1489,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             {title}
             {multiline ? titleLineIcons : null}
             {pinIndicator}
+            {hostPressureIcon}
             {multiline ? null : terminalStatusIcon}
             {multiline ? null : issueBadge}
             {isRegeneratingTitle ? (
@@ -1646,6 +1672,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
             {pinIndicator}
+            {hostPressureIcon}
             {props.projectDisplayName ? (
               <span
                 className={cn("min-w-0 flex-1 truncate font-normal text-secondary-label text-meta")}
