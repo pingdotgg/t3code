@@ -104,6 +104,42 @@ function openRouterBody(model: string, audio: ArrayBuffer, language: string) {
   });
 }
 
+const Message = Schema.Struct({ message: Schema.optional(Schema.String) });
+const OpenRouterError = Schema.Struct({
+  error: Schema.Struct({
+    message: Schema.optional(Schema.String),
+    metadata: Schema.optional(Schema.Struct({ raw: Schema.optional(Schema.String) })),
+  }),
+});
+// A wrapped upstream failure; ElevenLabs nests its message as `detail.message`.
+const UpstreamError = Schema.Struct({
+  detail: Schema.optional(Schema.Union([Schema.String, Message])),
+  error: Schema.optional(Message),
+  message: Schema.optional(Schema.String),
+});
+const decodeUpstreamError = Schema.decodeUnknownEffect(Schema.fromJsonString(UpstreamError));
+
+// OpenRouter words a 404 for "no endpoint satisfies the data policy" like "No endpoints found
+// matching your data policy (Zero data retention)"; the upstream 403 says "ZRM mode". A bare
+// "data policy" also covers other filters, such as free model training, so it is not a marker.
+const zeroRetentionMarker = /zdr|zrm|zero[\s-]*(data[\s-]*)?retention/i;
+
+/**
+ * Whether OpenRouter refused the request because zero data retention is unavailable. Only this
+ * category is exposed; the upstream text itself is never kept.
+ */
+const refusedZeroRetention = Effect.fn("CloudSpeech.refusedZeroRetention")(function* (
+  response: HttpClientResponse.HttpClientResponse,
+) {
+  const { error } = yield* HttpClientResponse.schemaBodyJson(OpenRouterError)(response);
+  if (zeroRetentionMarker.test(error.message ?? "")) return true;
+  if (response.status === 404) return false;
+  const raw = yield* decodeUpstreamError(error.metadata?.raw);
+  return [raw.detail, raw.error, raw.message].some((value) =>
+    zeroRetentionMarker.test(typeof value === "string" ? value : (value?.message ?? "")),
+  );
+});
+
 export class CloudSpeech extends Context.Service<
   CloudSpeech,
   {
@@ -226,9 +262,16 @@ export const layer = Layer.effect(
             reason: current ? "key-changed" : "missing-key",
           });
         const response = yield* execute(request).pipe(Effect.mapError(unavailable));
-        if (response.status < 200 || response.status >= 300)
+        if (response.status < 200 || response.status >= 300) {
+          // OpenRouter answers 403/404 when the key's provider has no zero-retention endpoint. The
+          // status alone would blame the key or the model.
+          const zeroRetention =
+            provider === "openrouter" &&
+            [403, 404].includes(response.status) &&
+            (yield* refusedZeroRetention(response).pipe(Effect.orElseSucceed(() => false)));
           return yield* new CloudSpeechError({
             provider,
+            ...(zeroRetention ? { refusal: "zero-retention-unavailable" as const } : {}),
             reason:
               response.status === 429
                 ? "rate-limit"
@@ -238,6 +281,7 @@ export const layer = Layer.effect(
                     ? "model-unavailable"
                     : "unavailable",
           });
+        }
         const { text } = yield* HttpClientResponse.schemaBodyJson(
           EnvironmentSpeechTranscriptionResult,
         )(response).pipe(Effect.mapError(unavailable));

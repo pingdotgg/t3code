@@ -1,10 +1,12 @@
 import * as Schema from "effect/Schema";
 import { expect, it } from "vite-plus/test";
 
-import { EnvironmentSpeechModel, EnvironmentSpeechStatus } from "./speech.ts";
+import { CloudSpeechError, EnvironmentSpeechModel, EnvironmentSpeechStatus } from "./speech.ts";
 
 const decodeStatus = Schema.decodeUnknownSync(EnvironmentSpeechStatus);
 const encodeStatus = Schema.encodeSync(EnvironmentSpeechStatus);
+const encodeCloudError = Schema.encodeSync(CloudSpeechError);
+const decodeCloudError = Schema.decodeUnknownSync(CloudSpeechError);
 const decodeModel = Schema.decodeUnknownSync(EnvironmentSpeechModel);
 const encodeModel = Schema.encodeSync(EnvironmentSpeechModel);
 
@@ -94,4 +96,31 @@ it.each([
       }),
     ).toThrow();
   }
+});
+
+it("shows fixed zero-retention copy for the refusal and round-trips it", () => {
+  const plain = new CloudSpeechError({ provider: "openrouter", reason: "rejected-key" });
+  const refused = new CloudSpeechError({
+    provider: "openrouter",
+    reason: "rejected-key",
+    refusal: "zero-retention-unavailable",
+  });
+  expect(plain.message).toContain("rejected this API key");
+  expect(refused.message).toContain(
+    "OpenRouter couldn’t route this model with zero data retention",
+  );
+  const encoded = encodeCloudError(refused);
+  expect(encoded).toEqual({
+    _tag: "CloudSpeechError",
+    provider: "openrouter",
+    reason: "rejected-key",
+    refusal: "zero-retention-unavailable",
+  });
+  expect(decodeCloudError(encoded).message).toBe(refused.message);
+  // An error from an older server has no refusal and still decodes.
+  expect(encodeCloudError(plain)).not.toHaveProperty("refusal");
+  expect(
+    decodeCloudError({ _tag: "CloudSpeechError", provider: "openrouter", reason: "rejected-key" })
+      .message,
+  ).toBe(plain.message);
 });
