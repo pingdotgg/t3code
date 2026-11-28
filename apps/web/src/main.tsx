@@ -19,6 +19,25 @@ const router = startAppServices();
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 
+// VDI/VM absolute pointers can report `any-hover: none` while delivering real mouse events.
+// Capture phase: a handler that stops propagation must not hide the pointer type.
+if (!window.matchMedia("(any-hover: hover)").matches) {
+  const root = document.documentElement;
+  const options = { capture: true, passive: true };
+  window.addEventListener(
+    "pointermove",
+    (event) => root.toggleAttribute("data-mouse-hover", event.pointerType === "mouse"),
+    options,
+  );
+  // A tap may never move, so presses clear the marker before its hover sticks. They never set
+  // it: the app replays synthetic mouse presses (HostedBrowserWebview).
+  window.addEventListener(
+    "pointerdown",
+    (event) => event.pointerType !== "mouse" && root.removeAttribute("data-mouse-hover"),
+    options,
+  );
+}
+
 const app = <AppRoot router={router} />;
 
 // Split by runtime to keep Clerk out of local startup and clerk-js out of browser builds.
