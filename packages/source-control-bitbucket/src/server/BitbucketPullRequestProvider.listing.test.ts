@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
+import type { PullRequestListFilters } from "@t3tools/contracts";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
@@ -31,6 +33,20 @@ it.effect("pages through rows that share an update instant by excluding those al
           Layer.provide(
             Layer.mock(BitbucketApi.BitbucketApi)({
               request: ({ url }) => {
+                const statuses = /pullrequests\/(\d+)\/statuses/.exec(url);
+                if (statuses !== null) {
+                  return Effect.succeed({
+                    body: JSON.stringify({
+                      values: [
+                        {
+                          key: "ci",
+                          state: Number(statuses[1]) % 2 === 1 ? "FAILED" : "SUCCESSFUL",
+                        },
+                      ],
+                    }),
+                    truncated: false,
+                  });
+                }
                 const filter =
                   new URL(url, "https://api.bitbucket.org").searchParams.get("q") ?? "";
                 filters.push(filter);
@@ -66,6 +82,7 @@ it.effect("pages through rows that share an update instant by excluding those al
         involvement: "all",
         viewer: "bilal",
         limit: 2,
+        filters: { checks: "failing" },
         ...(cursor === undefined ? {} : { cursor }),
       });
 
@@ -75,6 +92,10 @@ it.effect("pages through rows that share an update instant by excluding those al
       [1, 2],
     );
     assert.isTrue(first.truncated);
+    assert.deepStrictEqual(
+      first.items.map((item) => item.checksState),
+      ["failing", "passing"],
+    );
 
     // The cursor carries the instant cut to the millisecond, as the app normalizes it.
     const second = yield* list({
@@ -100,5 +121,297 @@ it.effect("pages through rows that share an update instant by excluding those al
       [5],
     );
     assert.isFalse(last.truncated);
+  }),
+);
+
+it.effect("reads each open row's check results, skipping rows a filter will drop", () =>
+  Effect.gen(function* () {
+    let headSha = "head-1";
+    const row = (id: number) => ({
+      id,
+      title: `Pull request ${id}`,
+      state: "OPEN",
+      created_on: "2026-10-11T00:00:00.000000+00:00",
+      updated_on: "2026-10-11T00:00:00.000000+00:00",
+      source: { branch: { name: `feat/${id}` }, commit: { hash: headSha } },
+      draft: id === 3,
+      reviewers: id === 4 ? [{ nickname: "reviewer" }] : [],
+      destination: { branch: { name: "main" } },
+      links: { html: { href: `https://bitbucket.org/acme/web/pull-requests/${id}` } },
+    });
+    const urls: string[] = [];
+    const provider = yield* BitbucketPullRequestProvider.make.pipe(
+      Effect.provide(
+        BitbucketPullRequestApi.layer.pipe(
+          Layer.provide(
+            Layer.mock(BitbucketApi.BitbucketApi)({
+              request: ({ url }) => {
+                urls.push(url);
+                const statuses = /pullrequests\/(\d+)\/statuses/.exec(url);
+                const values =
+                  statuses === null
+                    ? [row(1), row(2), row(3), row(4)]
+                    : [
+                        {
+                          key: "ci",
+                          name: "ci",
+                          state: statuses[1] === "1" ? "FAILED" : "SUCCESSFUL",
+                        },
+                      ];
+                return Effect.succeed({ body: JSON.stringify({ values }), truncated: false });
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+    const list = (filters?: PullRequestListFilters, repository = "acme/web") =>
+      provider.listChangeRequests({
+        cwd: "/w",
+        repository,
+        host: "bitbucket.org",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+        filters,
+      });
+
+    const statusReads = () => urls.filter((url) => url.includes("/statuses")).length;
+    const unfiltered = yield* list();
+    assert.deepStrictEqual(
+      unfiltered.items.map((item) => item.checksState),
+      ["failing", "passing", "passing", "passing"],
+    );
+    assert.strictEqual(statusReads(), 4);
+
+    const filters = { checks: "failing", review: "none", draft: "hide" } as const;
+    const filtered = yield* list(filters);
+    assert.deepStrictEqual(
+      filtered.items.map((item) => item.checksState),
+      ["failing", "passing", undefined, undefined],
+    );
+    assert.deepStrictEqual(
+      filtered.items.map((item) => item.number),
+      [1, 2, 3, 4],
+    );
+    // The first listing already read rows 1 and 2, so the filtered one reads nothing new.
+    assert.strictEqual(statusReads(), 4);
+    yield* list(filters);
+    assert.strictEqual(statusReads(), 4);
+    headSha = "head-2";
+    yield* list(filters);
+    assert.strictEqual(statusReads(), 6);
+    yield* list(filters, "acme/other");
+    assert.strictEqual(statusReads(), 8);
+    // A finished result stays for its head commit; it only changes on a re-run.
+    yield* TestClock.adjust("2 minutes");
+    yield* list(filters);
+    assert.strictEqual(statusReads(), 8);
+    yield* TestClock.adjust("30 minutes");
+    yield* list(filters);
+    assert.strictEqual(statusReads(), 10);
+  }),
+);
+
+it.effect.each(["pending", "absent"] as const)("rereads a %s check result after a minute", (kind) =>
+  Effect.gen(function* () {
+    const firstState = kind === "pending" ? "INPROGRESS" : null;
+    const pullRequestRow = (id: number) => ({
+      id,
+      title: `Pull request ${id}`,
+      state: "OPEN",
+      created_on: "2026-10-11T00:00:00.000000+00:00",
+      updated_on: "2026-10-11T00:00:00.000000+00:00",
+      source: { branch: { name: `feat/${id}` }, commit: { hash: `sha${id}` } },
+      destination: { branch: { name: "main" } },
+      links: { html: { href: `https://bitbucket.org/acme/web/pull-requests/${id}` } },
+    });
+    const listInput = {
+      cwd: "/w",
+      repository: "acme/web",
+      host: "bitbucket.org",
+      involvement: "all",
+      viewer: "bilal",
+      limit: 10,
+    } as const;
+    let state: string | null = firstState;
+    const reads: string[] = [];
+    const provider = yield* BitbucketPullRequestProvider.make.pipe(
+      Effect.provide(
+        BitbucketPullRequestApi.layer.pipe(
+          Layer.provide(
+            Layer.mock(BitbucketApi.BitbucketApi)({
+              request: ({ url }) => {
+                if (url.includes("/statuses")) {
+                  reads.push(url);
+                  return Effect.succeed({
+                    body: JSON.stringify({
+                      values: state === null ? [] : [{ key: "ci", name: "ci", state }],
+                    }),
+                    truncated: false,
+                  });
+                }
+                return Effect.succeed({
+                  body: JSON.stringify({ values: [pullRequestRow(1)] }),
+                  truncated: false,
+                });
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+
+    const first = yield* provider.listChangeRequests({ ...listInput, state: "open" });
+    yield* TestClock.adjust("30 seconds");
+    yield* provider.listChangeRequests({ ...listInput, state: "open" });
+    assert.strictEqual(reads.length, 1);
+    state = "SUCCESSFUL";
+    yield* TestClock.adjust("31 seconds");
+    const later = yield* provider.listChangeRequests({ ...listInput, state: "open" });
+
+    assert.strictEqual(first.items[0]?.checksState, firstState === null ? null : "pending");
+    assert.strictEqual(later.items[0]?.checksState, "passing");
+    assert.strictEqual(reads.length, 2);
+  }),
+);
+
+it.effect.each([401, 403, 404, 429, 500])(
+  "reports HTTP %s status failures instead of caching them as no checks",
+  (status) =>
+    Effect.gen(function* () {
+      let failing = true;
+      const error = new BitbucketApi.BitbucketResponseError({
+        operation: "request",
+        status,
+        responseBodyLength: 0,
+        retryAt: 120_000,
+      });
+      const provider = yield* BitbucketPullRequestProvider.make.pipe(
+        Effect.provide(
+          BitbucketPullRequestApi.layer.pipe(
+            Layer.provide(
+              Layer.mock(BitbucketApi.BitbucketApi)({
+                request: ({ url }) => {
+                  if (url.includes("/statuses")) {
+                    return failing
+                      ? Effect.fail(error)
+                      : Effect.succeed({
+                          body: JSON.stringify({ values: [{ key: "ci", state: "SUCCESSFUL" }] }),
+                          truncated: false,
+                        });
+                  }
+                  return Effect.succeed({
+                    body: JSON.stringify({
+                      values: [
+                        {
+                          id: 1,
+                          title: "PR",
+                          state: "OPEN",
+                          created_on: "2026-10-11T00:00:00Z",
+                          updated_on: "2026-10-11T00:00:00Z",
+                          source: { branch: { name: "feature" } },
+                          destination: { branch: { name: "main" } },
+                          links: {
+                            html: { href: "https://bitbucket.org/acme/web/pull-requests/1" },
+                          },
+                        },
+                      ],
+                    }),
+                    truncated: false,
+                  });
+                },
+              }),
+            ),
+          ),
+        ),
+      );
+      const input = {
+        cwd: "/w",
+        repository: "acme/web",
+        host: "bitbucket.org",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+        filters: { checks: "passing" },
+      } as const;
+      const result = yield* Effect.result(provider.listChangeRequests(input));
+      assert.deepStrictEqual(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.strictEqual(
+          result.failure.reason,
+          status === 401
+            ? "unauthenticated"
+            : status === 404
+              ? "not-found"
+              : status === 429
+                ? "rate-limited"
+                : "failed",
+        );
+        if (status === 429) assert.strictEqual(result.failure.retryAt, 120_000);
+      }
+      failing = false;
+      assert.strictEqual(
+        (yield* provider.listChangeRequests(input)).items[0]?.checksState,
+        "passing",
+      );
+    }),
+);
+
+it.effect("reads checks only for rows by the filtered author", () =>
+  Effect.gen(function* () {
+    const row = (id: number, nickname: string) => ({
+      id,
+      title: `Pull request ${id}`,
+      state: "OPEN",
+      created_on: "2026-10-11T00:00:00Z",
+      updated_on: "2026-10-11T00:00:00Z",
+      author: { nickname },
+      source: { branch: { name: `feat/${id}` } },
+      destination: { branch: { name: "main" } },
+      links: { html: { href: `https://bitbucket.org/acme/web/pull-requests/${id}` } },
+    });
+    const urls: string[] = [];
+    const provider = yield* BitbucketPullRequestProvider.make.pipe(
+      Effect.provide(
+        BitbucketPullRequestApi.layer.pipe(
+          Layer.provide(
+            Layer.mock(BitbucketApi.BitbucketApi)({
+              request: ({ url }) => {
+                urls.push(url);
+                const values = url.includes("/statuses")
+                  ? [{ key: "ci", state: "SUCCESSFUL" }]
+                  : [row(1, "Ana"), row(2, "bilal")];
+                return Effect.succeed({ body: JSON.stringify({ values }), truncated: false });
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+
+    const listed = yield* provider.listChangeRequests({
+      cwd: "/w",
+      repository: "acme/web",
+      host: "bitbucket.org",
+      state: "open",
+      involvement: "all",
+      viewer: "bilal",
+      limit: 10,
+      filters: { author: "ana", checks: "passing" },
+    });
+
+    assert.deepStrictEqual(
+      listed.items.map((item) => item.checksState),
+      ["passing", undefined],
+    );
+    assert.deepStrictEqual(
+      urls
+        .filter((url) => url.includes("/statuses"))
+        .map((url) => /pullrequests\/(\d+)/.exec(url)?.[1]),
+      ["1"],
+    );
   }),
 );
