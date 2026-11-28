@@ -1757,17 +1757,6 @@ export const layerWithOptions = (
               pinnedForMs: now - pinnedSinceMs,
             });
           }
-          // Checked after the probes so a client that opens the thread meanwhile still keeps it.
-          const viewedRetryMs = yield* viewedRecheckMs(
-            entry.runtime,
-            entry.attachedThreadIds,
-            input.idleSinceMs,
-          );
-          if (viewedRetryMs !== null) {
-            // Recheck on this fiber; scheduleIdleReleaseInternal would interrupt it and self-deadlock.
-            yield* Effect.sleep(Duration.millis(viewedRetryMs));
-            return yield* releaseIfStillIdle(input);
-          }
           // Closing skips the threads' own idle unloads, so archive delivered children first.
           yield* Effect.forEach(
             entry.idleThreadUnloads,
@@ -1781,6 +1770,17 @@ export const layerWithOptions = (
               }),
             { discard: true },
           );
+          // Checked after the probes and archives so a client that opens the thread meanwhile still keeps it.
+          const viewedRetryMs = yield* viewedRecheckMs(
+            entry.runtime,
+            entry.attachedThreadIds,
+            input.idleSinceMs,
+          );
+          if (viewedRetryMs !== null) {
+            // Recheck on this fiber; scheduleIdleReleaseInternal would interrupt it and self-deadlock.
+            yield* Effect.sleep(Duration.millis(viewedRetryMs));
+            return yield* releaseIfStillIdle(input);
+          }
           // Adapter probes yield; guard busyTurns and idleGeneration atomically when removing the entry.
           yield* releaseEntry({
             providerSessionId: input.providerSessionId,
