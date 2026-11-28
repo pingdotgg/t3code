@@ -3627,6 +3627,86 @@ it.effect("ends a running root command when the provider stream fails mid-turn",
   }),
 );
 
+it.effect.each([{ outlivedRoot: false }, { outlivedRoot: true }] as const)(
+  "ends the tool call node of a running root command when its provider process dies (%o)",
+  ({ outlivedRoot }) =>
+    Effect.gen(function* () {
+      const key = "stream-error-running-command-node";
+      const ids = backgroundScenarioIds(key);
+      const nodeId = NodeId.make(`${ids.subagentNodeId}:tool-call`);
+      const { finalEvents } = yield* captureRootRunTermination({
+        key,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: () =>
+          Stream.make(
+            {
+              type: "node.updated" as const,
+              driver,
+              node: {
+                id: nodeId,
+                threadId: ids.threadId,
+                runId: ids.runId,
+                parentNodeId: ids.rootNodeId,
+                rootNodeId: ids.rootNodeId,
+                kind: "tool_call",
+                status: "running",
+                countsForRun: true,
+                providerThreadId: ids.providerThreadId,
+                providerTurnId: ids.rootProviderTurnId,
+                nativeItemRef: null,
+                runtimeRequestId: null,
+                checkpointScopeId: null,
+                startedAt: DateTime.makeUnsafe("2026-07-21T12:00:00.000Z"),
+                completedAt: null,
+              },
+            } as ProviderAdapter.ProviderAdapterV2Event,
+            (() => {
+              const event = backgroundTurnItemEvent(ids, "command_execution", "running", 1);
+              return event.type === "turn_item.updated"
+                ? { ...event, turnItem: { ...event.turnItem, nodeId } }
+                : event;
+            })(),
+          ).pipe(
+            outlivedRoot
+              ? Stream.concat(Stream.make(rootTerminalEvent(ids, "completed")))
+              : (stream) => stream,
+            Stream.concat(
+              Stream.fail(
+                new ProviderAdapter.ProviderAdapterEventStreamError({
+                  driver,
+                  providerSessionId: ProviderSessionId.make(`session:${key}`),
+                  cause: "provider process exited",
+                }),
+              ),
+            ),
+          ),
+        interruptTurn: (input) =>
+          Effect.fail(
+            new ProviderAdapter.ProviderAdapterInterruptError({
+              driver,
+              providerThreadId: input.providerThread.id,
+              providerTurnId: input.providerTurnId,
+              cause: "provider already exited",
+            }),
+          ),
+      });
+      const ended = finalEvents.flatMap((event) =>
+        event.type === "node.updated" || event.type === "turn-item.updated"
+          ? [
+              [
+                event.type,
+                event.payload.id,
+                event.payload.status,
+                event.payload.completedAt !== null,
+              ],
+            ]
+          : [],
+      );
+      assert.deepInclude(ended, ["node.updated", nodeId, "interrupted", true]);
+      assert.deepInclude(ended, ["turn-item.updated", ids.itemId, "interrupted", true]);
+    }),
+);
+
 it.effect("fails the run when a released session's interrupt exits interrupted", () =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
@@ -4154,11 +4234,14 @@ function captureRootRunTermination(input: {
         if (event.type === "turn_item.updated")
           stored.turnItems.set(event.turnItem.id, event.turnItem);
       });
-    const loadUnsettledWork = (threadId: ThreadId) =>
+    const loadUnsettledWork = (threadId: ThreadId, nodeIds: ReadonlyArray<NodeId>) =>
       Effect.sync(() => {
+        const requested = new Set(nodeIds);
         const work = {
           subagents: [...stored.subagents.values()].filter((row) => row.threadId === threadId),
-          nodes: [...stored.nodes.values()].filter((row) => row.threadId === threadId),
+          nodes: [...stored.nodes.values()].filter(
+            (row) => row.threadId === threadId && requested.has(row.id),
+          ),
           turnItems: [...stored.turnItems.values()].filter((row) => row.threadId === threadId),
         };
         return input.settleStored?.(work) ?? work;
