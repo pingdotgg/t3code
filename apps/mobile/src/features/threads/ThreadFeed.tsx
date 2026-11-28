@@ -563,12 +563,13 @@ function AssistantShareButton(props: {
   readonly buttonSize: number;
   readonly iconSize: number;
 }) {
+  const gt = useGT();
   if (props.text.trim().length === 0) return null;
 
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="Share response"
+      accessibilityLabel={gt("Share response")}
       onPress={() => {
         void Haptics.selectionAsync();
         Share.share({ message: props.text }).catch((cause: unknown) =>
