@@ -550,6 +550,113 @@ export function serializeTableElementToCsv(table: Element): string {
   return lines.join("\n");
 }
 
+// CJK, emoji, flags and keycaps count as two columns: close enough to East Asian Width for chat fonts.
+const WIDE_GRAPHEME =
+  /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3|[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/u;
+let graphemes: Intl.Segmenter | undefined;
+
+function monospaceWidth(text: string): number {
+  graphemes ??= new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  let width = 0;
+  for (const { segment } of graphemes.segment(text)) width += WIDE_GRAPHEME.test(segment) ? 2 : 1;
+  return width;
+}
+
+function padToWidth(text: string, width: number, align: string): string {
+  const gap = width - monospaceWidth(text);
+  if (align === "right") return " ".repeat(gap) + text;
+  if (align === "center") {
+    const left = Math.floor(gap / 2);
+    return " ".repeat(left) + text + " ".repeat(gap - left);
+  }
+  return text + " ".repeat(gap);
+}
+
+/**
+ * Space-aligned columns for chat apps. The plain text is a code fence, which WhatsApp and
+ * Slack show monospaced; rich targets (Teams, Slack) paste the HTML flavor as a code block.
+ */
+export function serializeTableElementForChat(table: Element): MarkdownClipboardPayload {
+  // Lay cells onto the grid the table renders, so values after a span stay under their headers.
+  // As in the HTML table model, a row group bounds every rowspan and an empty row still takes a row.
+  // Row groups in document order, with footers last as rendered; consecutive rows directly in
+  // the table form one group.
+  const groups: Element[][] = [];
+  const footers: Element[][] = [];
+  let looseRows: Element[] | undefined;
+  for (const child of table.children) {
+    if (child.tagName === "TR") {
+      if (!looseRows) groups.push((looseRows = []));
+      looseRows.push(child);
+      continue;
+    }
+    looseRows = undefined;
+    if (TABLE_SECTION_TAGS.has(child.tagName)) {
+      const rows = [...child.children].filter((row) => row.tagName === "TR");
+      (child.tagName === "TFOOT" ? footers : groups).push(rows);
+    }
+  }
+  groups.push(...footers);
+  const grid: Array<{ slots: Array<{ text: string; cell: Element }>; hasCells: boolean }> = [];
+  for (const groupRows of groups) {
+    const start = grid.length;
+    for (const _ of groupRows) grid.push({ slots: [], hasCells: false });
+    groupRows.forEach((row, offset) => {
+      const gridRow = grid[start + offset]!;
+      let column = 0;
+      for (const cell of row.children) {
+        if (cell.tagName !== "TH" && cell.tagName !== "TD") continue;
+        gridRow.hasCells = true;
+        while (gridRow.slots[column]) column++;
+        const text = csvCellText(cell).replace(/\s+/g, " ").trim();
+        const colSpan = Math.max(1, tableCellSpan(cell, "colSpan", "colspan"));
+        const remaining = groupRows.length - offset;
+        // rowspan="0" runs to the end of its row group.
+        const rowSpan = Math.min(tableCellSpan(cell, "rowSpan", "rowspan") || remaining, remaining);
+        for (let down = 0; down < rowSpan; down++) {
+          for (let across = 0; across < colSpan; across++) {
+            grid[start + offset + down]!.slots[column + across] = {
+              text: down === 0 && across === 0 ? text : "",
+              cell,
+            };
+          }
+        }
+        column += colSpan;
+      }
+    });
+  }
+  const rows = grid.filter((gridRow) => gridRow.hasCells).map((gridRow) => gridRow.slots);
+  if (rows.length === 0) return { text: "", html: "" };
+  const columns = Math.max(...rows.map((gridRow) => gridRow.length));
+  const texts = rows.map((gridRow) =>
+    Array.from({ length: columns }, (_, column) => gridRow[column]?.text ?? ""),
+  );
+  const widths = Array.from({ length: columns }, (_, column) =>
+    Math.max(1, ...texts.map((cells) => monospaceWidth(cells[column] ?? ""))),
+  );
+  const aligns = widths.map((_, column) => {
+    const header = rows[0]?.[column]?.cell as HTMLElement | undefined;
+    return header?.style?.textAlign || header?.getAttribute("align") || "";
+  });
+  const line = (cells: string[]) =>
+    widths
+      .map((width, column) => padToWidth(cells[column] ?? "", width, aligns[column] ?? ""))
+      .join("  ")
+      .trimEnd();
+  const [header = [], ...body] = texts;
+  const lines = [
+    line(header),
+    widths.map((width) => "-".repeat(width)).join("  "),
+    ...body.map(line),
+  ];
+  const aligned = lines.join("\n");
+  const fence = codeFenceFor(aligned);
+  return {
+    text: `${fence}\n${aligned}\n${fence}`,
+    html: `<meta charset="utf-8"><pre>${escapeHtml(aligned)}</pre>`,
+  };
+}
+
 const TABLE_SECTION_TAGS = new Set(["THEAD", "TBODY", "TFOOT"]);
 // Elements that start a new line inside a copied cell.
 const HTML_CELL_BLOCK_TAGS = new Set([
@@ -694,12 +801,19 @@ function parseTableSpan(value: string | null): number {
   return Number.isNaN(span) || span < 0 ? 1 : span;
 }
 
+// The DOM normalizes spans; the attribute fallback covers non-DOM callers.
+function tableCellSpan(
+  cell: Element,
+  property: "colSpan" | "rowSpan",
+  attribute: "colspan" | "rowspan",
+): number {
+  const span = (cell as Partial<HTMLTableCellElement>)[property];
+  return typeof span === "number" ? span : parseTableSpan(cell.getAttribute(attribute));
+}
+
 function htmlSpanAttributes(cell: Element): string {
-  // The DOM normalizes spans; the attribute fallback covers non-DOM callers.
-  const { colSpan, rowSpan } = cell as Partial<HTMLTableCellElement>;
-  const columns =
-    typeof colSpan === "number" ? colSpan : parseTableSpan(cell.getAttribute("colspan"));
-  const rows = typeof rowSpan === "number" ? rowSpan : parseTableSpan(cell.getAttribute("rowspan"));
+  const columns = tableCellSpan(cell, "colSpan", "colspan");
+  const rows = tableCellSpan(cell, "rowSpan", "rowspan");
   let attributes = columns > 1 ? ` colspan="${columns}"` : "";
   // rowspan="0" runs to the end of its section.
   if (rows !== 1) attributes += ` rowspan="${rows}"`;
