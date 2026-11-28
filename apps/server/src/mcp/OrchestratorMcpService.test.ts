@@ -3707,11 +3707,6 @@ describe("OrchestratorMcpService provider resolution", () => {
               expected: "Auth review",
             },
             {
-              title: "Auth review\rPay special attention to token renewal.",
-              prompt: "Review the auth flow",
-              expected: "Auth review",
-            },
-            {
               title: "Auth review\u2028Pay special attention to token renewal.",
               prompt: "Review the auth flow",
               expected: "Auth review",

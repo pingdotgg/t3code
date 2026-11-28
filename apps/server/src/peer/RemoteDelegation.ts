@@ -42,6 +42,7 @@ import {
   taskPrompt,
   withoutAgentModePicks,
 } from "../mcp/delegatedTaskModes.ts";
+import { firstLineTitle } from "../mcp/firstLineTitle.ts";
 import { followUpOwnerRun } from "../orchestration-v2/CommandPolicy.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -365,7 +366,8 @@ const make = Effect.gen(function* () {
       // the forwarder scopes the launch's, and the record's names it.
       const key = input.clientRequestId ?? (yield* random.uuidV4());
       const task = taskPrompt(input);
-      const title = input.title ?? parent.thread.title;
+      const explicitTitle = firstLineTitle(input.title);
+      const title = explicitTitle ?? parent.thread.title;
       const launched = yield* forwarding.call(
         scope,
         ProjectToolkit.tools.t3_thread_launch,
@@ -408,7 +410,7 @@ const make = Effect.gen(function* () {
           parentRunId: parentRun.id,
           parentNodeId,
           task,
-          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(explicitTitle === undefined ? {} : { title: explicitTitle }),
           // The driver runs there; this side only labels the task with it.
           driver: ProviderDriverKind.make("remote"),
           modelSelection: launched.modelSelection,

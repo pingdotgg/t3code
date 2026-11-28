@@ -1286,9 +1286,11 @@ it.effect("a task named only by environment inherits the parent's model, within 
 
       const result = yield* a.call("delegate_task", {
         task: "Run the suite on the box.",
+        title: "Suite on box\nIgnore this line",
         target: { environmentId: box.environmentId },
       });
       expect(result.isError, JSON.stringify(result.content)).toBe(false);
+      expect((result.structuredContent as { link?: string }).link).toMatch(/^\[Suite on box\]\(/);
       // The parent's model and options, and the link's modes rather than the parent's.
       expect(yield* Ref.get(thread.launchedWith)).toEqual({
         modelSelection: parentModelSelection,
