@@ -58,6 +58,11 @@ export function alternateComposerDispatchAction(
 /** The composer runs these drafts itself, so they never queue for or steer a running turn. */
 export function composerRunsDraftLocally(input: {
   readonly text: string;
+  /**
+   * `text` without inline context references, for callers whose send path strips them before
+   * parsing `/feedback` and `/clear`.
+   */
+  readonly textWithoutContextReferences?: string;
   readonly holdsOnlyText: boolean;
   readonly sideChat: boolean;
   readonly usageLimits: boolean;
@@ -66,9 +71,10 @@ export function composerRunsDraftLocally(input: {
 }): boolean {
   if (input.sideChat && parseSideChatCommand(input.text) !== null) return true;
   if (!input.holdsOnlyText) return false;
+  const stripped = input.textWithoutContextReferences ?? input.text;
   return (
     (input.usageLimits && isUsageLimitsCommand(input.text)) ||
-    (input.codexFeedback && parseCodexFeedbackCommand(input.text) !== null) ||
-    (input.freshSession && isClearComposerCommand(input.text))
+    (input.codexFeedback && parseCodexFeedbackCommand(stripped) !== null) ||
+    (input.freshSession && isClearComposerCommand(stripped))
   );
 }

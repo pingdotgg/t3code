@@ -70,4 +70,13 @@ it("treats only the commands the composer runs itself as local", () => {
   expect(composerRunsDraftLocally({ ...all, text: "fix the bug" })).toBe(false);
   expect(composerRunsDraftLocally({ ...all, holdsOnlyText: false, text: "/clear" })).toBe(false);
   expect(composerRunsDraftLocally({ ...all, holdsOnlyText: false, text: "/side why?" })).toBe(true);
+  const local = (command: string) =>
+    composerRunsDraftLocally({
+      ...all,
+      text: `[Reply](t3-context://v1/response/gone) ${command}`,
+      textWithoutContextReferences: command,
+    });
+  expect(local("/feedback slow")).toBe(true);
+  expect(local("/clear")).toBe(true);
+  expect(local("/usage-limits")).toBe(false);
 });

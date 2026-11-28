@@ -92,6 +92,14 @@ function acceptAttachmentUploads(): Disposable {
 
 // One input event, where typing a key at a time takes seconds on a loaded CI runner.
 const insertText = (text: string) => cdp().send("Input.insertText", { text });
+// Pasting plain text inserts an inline context reference with no backing record.
+const pasteOrphanReference = (editor: Element) => {
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", "[gone](t3-context://v1/response/response_gone) ");
+  editor.dispatchEvent(
+    new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+  );
+};
 
 /** Holds every call to `method` until `release`, then ends it with `end`, until disposed. */
 class LaunchRefused extends Schema.TaggedError<LaunchRefused>()("LaunchRefused", {}) {}
@@ -1130,6 +1138,7 @@ it("/feedback with a pending reply runs as feedback and keeps the reply when the
 
   const editor = page.getByTestId("composer-editor");
   await userEvent.click(editor);
+  pasteOrphanReference(editor.element());
   await insertText("/feedback slow");
   // Pressing it runs feedback, so it does not offer to steer the running turn.
   await expect.element(page.getByRole("button", { name: "Submit message" })).toBeVisible();
@@ -1141,6 +1150,49 @@ it("/feedback with a pending reply runs as feedback and keeps the reply when the
     .toBeVisible();
   await expect.element(replyBar).toBeVisible();
   expect(editor.element().textContent).toBe("");
+});
+
+it("/clear beside an orphan reference shows plain send, but not while an image compresses", async () => {
+  const thread = threadWithHistory("clear-orphan-reference", 1);
+  using _environment = installFakeEnvironment([thread], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+  const running = { ...thread.runs[0]!, status: "running" as const, completedAt: null };
+  await act(() => emitThreadEvent(thread.id, { type: "run.updated", payload: running }));
+  await expect.element(page.getByRole("button", { name: "Stop generation" })).toBeVisible();
+
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.click(editor);
+  pasteOrphanReference(editor.element());
+  await insertText("/clear ");
+  await expect.element(page.getByRole("button", { name: "Submit message" })).toBeVisible();
+
+  // The send path waits for the compressing image and sends the draft as a message.
+  const compressed = Promise.withResolvers<void>();
+  compression.gate = compressed.promise;
+  using _compression = {
+    [Symbol.dispose]: () => {
+      compression.gate = null;
+      compressed.resolve();
+    },
+  };
+  const clipboardData = new DataTransfer();
+  clipboardData.items.add(new File([PNG], "shot.png", { type: "image/png" }));
+  editor
+    .element()
+    .dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+  await expect.element(page.getByRole("button", { name: "Steer message" })).toBeVisible();
 });
 
 it("/side sends the draft's attachments and context, and keeps them when it does not start", async () => {
