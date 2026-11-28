@@ -302,23 +302,26 @@ const FENCE_LIKE_LINE =
   /^(?:[ \t>*+\-\d.)]*(?<footnote>\[\^(?:\\[^\r\n]|[^\\\]\r\n])+\]:))*[ \t>*+\-\d.)]*(?:`{3}|~{3})/m;
 const LIST_ITEM_LINE = /^[ \t>]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|\r?$)/m;
 
-function parsedCodeRanges(markdown: string) {
-  // Parse only when a fence-looking line could be indented code in its container, or when a
-  // list or footnote could end a fence that has no closing marker.
-  const candidates = new RegExp(FENCE_LIKE_LINE, "gm");
-  let candidate = candidates.exec(markdown);
-  if (!LIST_ITEM_LINE.test(markdown)) {
-    while (candidate && !candidate.groups?.footnote && !/ {4}|\t/.test(candidate[0])) {
-      candidate = candidates.exec(markdown);
+function parsedSkippedRanges(markdown: string) {
+  // Parse only when a fence-looking line could be indented code in its container, when a
+  // list or footnote could end a fence that has no closing marker, or when a link reference
+  // definition may hold a bare or angle-bracketed destination.
+  if (!markdown.includes("]:")) {
+    const candidates = new RegExp(FENCE_LIKE_LINE, "gm");
+    let candidate = candidates.exec(markdown);
+    if (!LIST_ITEM_LINE.test(markdown)) {
+      while (candidate && !candidate.groups?.footnote && !/ {4}|\t/.test(candidate[0])) {
+        candidate = candidates.exec(markdown);
+      }
     }
+    if (!candidate) return undefined;
   }
-  if (!candidate) return undefined;
 
   const ranges: Array<{ start: number; end: number }> = [];
   const pending: Nodes[] = [markdownParser.parse(markdown)];
   while (pending.length > 0) {
     const node = pending.pop()!;
-    if (node.type === "code" || node.type === "inlineCode") {
+    if (node.type === "code" || node.type === "inlineCode" || node.type === "definition") {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
       if (start !== undefined && end !== undefined) ranges.push({ start, end });
@@ -341,19 +344,19 @@ export function replaceThreadLinks(
   if (markdown.startsWith("\uFEFF"))
     return `\uFEFF${replaceThreadLinks(markdown.slice(1), replace)}`;
   // Hermes' matchAll yields matches without `groups`; exec keeps them.
-  const codeRanges = parsedCodeRanges(markdown);
-  const pattern = new RegExp(codeRanges ? THREAD_LINK : THREAD_LINK_OUTSIDE_CODE);
-  const source = codeRanges ? markdown : threadLinkSource(markdown);
+  const skippedRanges = parsedSkippedRanges(markdown);
+  const pattern = new RegExp(skippedRanges ? THREAD_LINK : THREAD_LINK_OUTSIDE_CODE);
+  const source = skippedRanges ? markdown : threadLinkSource(markdown);
   let result = "";
   let cursor = 0;
   let lines: ReturnType<typeof codeSpanLines> | undefined;
   let lineIndex = 0;
   let rangeIndex = 0;
   for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
-    while (codeRanges?.[rangeIndex] && codeRanges[rangeIndex]!.end <= match.index) {
+    while (skippedRanges?.[rangeIndex] && skippedRanges[rangeIndex]!.end <= match.index) {
       rangeIndex++;
     }
-    const range = codeRanges?.[rangeIndex];
+    const range = skippedRanges?.[rangeIndex];
     if (range && range.start <= match.index) {
       pattern.lastIndex = range.end;
       continue;

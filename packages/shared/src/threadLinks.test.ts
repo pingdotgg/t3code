@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { mFallback } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
+import type { Definition } from "mdast";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 
 import {
   formatHostedThreadLink,
@@ -539,5 +542,41 @@ describe("hosted thread links", () => {
         expected === undefined ? [] : [ref("there", "t1")],
       );
     }
+  });
+
+  it("keeps Markdown reference link definitions intact when relabeling", () => {
+    const parser = unified().use(remarkParse);
+    const definitionUrl = (markdown: string) =>
+      parser.parse(markdown).children.find((node): node is Definition => node.type === "definition")
+        ?.url;
+
+    const hosted = "https://app.t3.codes/threads/local/demo";
+    for (const [markdown, expectedUrl] of [
+      [`[Review][thread]\n\n[thread]: ${hosted}`, hosted],
+      [`[Review][thread]\n\n[thread]:${hosted}`, hosted],
+      [`[Review][thread]\n\n[thread]: <${hosted}>`, hosted],
+      [`[Review][thread]\n\n[thread]: <t3-thread://v2/local/demo>`, "t3-thread://v2/local/demo"],
+      [`[Review][thread]\n\n[thread]:\n  ${hosted}`, hosted],
+      [`[Review][thread]\n\n  [thread]: ${hosted} "Demo"`, hosted],
+    ] as const) {
+      for (const title of [() => "Demo", () => undefined]) {
+        const relabeled = relabelThreadLinks(markdown, local, title);
+        expect(relabeled).toBe(markdown);
+        expect(definitionUrl(relabeled)).toBe(expectedUrl);
+      }
+    }
+
+    const quoted = `> [Review][thread]\n>\n> [thread]: ${hosted}`;
+    expect(relabelThreadLinks(quoted, local, () => "Demo")).toBe(quoted);
+
+    const withLiveAfter = `[Review][thread]\n\n[thread]: ${hosted}\n\nSee ${hosted}`;
+    expect(relabelThreadLinks(withLiveAfter, local, () => "Demo")).toBe(
+      `[Review][thread]\n\n[thread]: ${hosted}\n\nSee [Demo](t3-thread://v2/local/demo)`,
+    );
+
+    const paragraphContinuation = `Intro\n[thread]: ${hosted}`;
+    expect(relabelThreadLinks(paragraphContinuation, local, () => "Demo")).toBe(
+      `Intro\n[thread]: [Demo](t3-thread://v2/local/demo)`,
+    );
   });
 });
