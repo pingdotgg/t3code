@@ -441,6 +441,22 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
                   )
                 }
               />
+              {gitStatus.data?.remotes && gitStatus.data.refName ? (
+                <ListRow
+                  icon="cloud"
+                  label={gt("Push remote")}
+                  description={gitStatus.data.pushRemote ?? gt("Not chosen")}
+                  disabled={busy}
+                  onPress={() =>
+                    presentRoute(() =>
+                      navigation.navigate("GitRemote", {
+                        environmentId: String(environmentId),
+                        threadId: String(threadId),
+                      }),
+                    )
+                  }
+                />
+              ) : null}
               {linkedPrActions.canLink ? (
                 <ListRow
                   icon="link"

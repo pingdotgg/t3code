@@ -48,6 +48,13 @@ A turn's diff shows only that turn's own edits, commits, and conflict fixes—ex
   - GitHub, GitLab, and Azure DevOps support auto-merge; GitHub also supports approving fork workflows and opening revert PRs.
   - Azure DevOps comments must be edited on the host site; Bitbucket cannot reopen declined PRs.
 
+If a repository has several remotes, choose where a branch pushes with the remote selector next
+to the branch selector (on mobile, under the thread's Git options). The branch keeps pulling from
+the remote it tracks, so a fork branch can pull from `origin` and push to your fork. If a branch has
+no remote chosen and none is named `origin` or set as `remote.pushDefault`, T3 Code asks before
+pushing it. If a fork PR's badge is missing because several remotes hold that branch, set the
+branch's upstream with `git branch --set-upstream-to=<remote>/<branch>`.
+
 ### Review guides (beta)
 
 Turn on **Settings → Source control & issues → Review guides** to add a **Guide** tab to pull requests. Click **Write guide** to have Claude or Codex read the PR in a temporary read-only checkout and produce an ordered tour of the change (highlighting **Look closely** spots and grouping mechanical changes at the end).
