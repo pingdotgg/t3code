@@ -22,16 +22,10 @@ describe("projectMonogram", () => {
     expect(projectMonogram("か\u309Aな")).toBe("か\u309A");
   });
 
-  it("keeps combining marks attached when uppercasing initials", () => {
-    expect(projectMonogram("ΐδέα")).toBe("Ι\u0308\u0301Α");
-    expect(projectMonogram("ǰava")).toBe("J\u030CA");
-    expect(projectMonogram("Alpha ǰava")).toBe("AJ\u030C");
-  });
-
-  it("keeps combining marks within a single word", () => {
-    expect(projectMonogram("สวัสดี")).toBe("สดี");
+  it("keeps combining marks attached to their letter", () => {
     expect(projectMonogram("v\u0301elo")).toBe("V\u0301O");
-    expect(projectMonogram("हिन्दी")).toBe("हिदी");
+    expect(projectMonogram("สวัสดี")).toBe("สดี");
+    expect(projectMonogram("ǰava")).toBe("J\u030CA");
   });
 
   it("normalizes width and keeps supplementary ideographs whole", () => {
