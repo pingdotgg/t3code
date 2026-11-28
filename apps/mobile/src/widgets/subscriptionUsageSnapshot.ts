@@ -112,12 +112,17 @@ function clockLabel(at: number, from: number) {
   );
 }
 
-function widgetAccounts(window: LimitPoolWindow, resolve: MessageResolver): WidgetLimitAccount[] {
-  const bases = window.columns.map((column) => accountName(column.account, resolve));
+function widgetAccounts(
+  window: LimitPoolWindow,
+  accounts: readonly LimitAccount[],
+  resolve: MessageResolver,
+): WidgetLimitAccount[] {
+  const bases = accounts.map((account) => accountName(account, resolve));
   // Redacted initials can collide, and the widget keys segments by name.
   const taken = new Set(bases);
   const used = new Set<string>();
-  return window.columns.map((column, index) => {
+  const memberByAccount = new Map(window.members.map((member) => [member.account.key, member]));
+  return accounts.map((source, index) => {
     const base = bases[index] ?? "";
     let name = base;
     if (used.has(name)) {
@@ -127,24 +132,25 @@ function widgetAccounts(window: LimitPoolWindow, resolve: MessageResolver): Widg
       taken.add(name);
     }
     used.add(name);
-    const color = normalizeProviderAccentColor(column.account.accentColor);
+    const color = normalizeProviderAccentColor(source.accentColor);
     // expo-widgets cannot convert an explicit undefined into a Kotlin value.
     const account = { name, ...(color && { color }) };
-    if (column.window === null) return account;
-    const checkedAt = Date.parse(column.account.limits.checkedAt);
-    const resetsAt = column.window.resetsAt ? Date.parse(column.window.resetsAt) : NaN;
+    const member = memberByAccount.get(source.key);
+    if (!member) return account;
+    const checkedAt = Date.parse(source.limits.checkedAt);
+    const resetsAt = member.window.resetsAt ? Date.parse(member.window.resetsAt) : NaN;
     // A reset at or before the observation already happened.
     const reset = resetsAt > checkedAt;
     return {
       ...account,
-      remaining: remainingPercent(column.window),
-      refill: reset ? column.refillPercent : 0,
+      remaining: remainingPercent(member.window),
+      refill: reset ? member.refillPercent : 0,
       ...(reset && {
         resetsAt,
         reset: clockLabel(resetsAt, checkedAt),
       }),
-      ...(column.window.windowDurationMins && {
-        durationMs: column.window.windowDurationMins * 60_000,
+      ...(member.window.windowDurationMins && {
+        durationMs: member.window.windowDurationMins * 60_000,
       }),
     };
   });
@@ -289,7 +295,7 @@ function subscriptionUsageProps(
                     ? resolve(msg("Next reset {time}", { time: resetTime(window.resets[0].at) }))
                     : resolve(msg("Reset {time}", { time: resetTime(window.resets[0].at) }))
                   : resolve(msg("Reset time unavailable")),
-                accounts: widgetAccounts(window, resolve),
+                accounts: widgetAccounts(window, pool.accounts, resolve),
               }))
             : [],
         };

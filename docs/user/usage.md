@@ -32,6 +32,8 @@ Usage aggregates history across Codex, Claude Code, Grok Build, OpenCode, Antigr
 
 **Usage → Limits** pools subscription quotas per provider across connected environments and hubs (deduplicating the same account signed in on multiple machines).
 
+Each row shares its space equally among accounts that report that window, except for explicit monthly $0 spend caps. The headline averages their remaining quotas, weighted by allowance when every allowance is known. Each segment shows its account's remaining percentage. For providers with multiple accounts, the card shows the next account reset. Open an account's details to see its availability after reset.
+
 - **In chat**: Run `/usage-limits` in the composer to view the current model's snapshot without running the agent, or enable **Settings → Appearance → Thread details → Usage limits** (web/desktop).
 - **Reset credits**: Click an account segment/row to inspect plan details and redeem banked Codex/Claude reset credits via **Use reset** (Claude resets unavailable on macOS Keychain logins).
 - **Provider notes**:

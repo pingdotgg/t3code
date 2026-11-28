@@ -12,7 +12,7 @@ import {
   remainingPercent,
   type ResetCreditChoice,
 } from "@t3tools/shared/usageLimits";
-import { T, Var, useGT, useMessages } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
@@ -43,7 +43,6 @@ import {
   collectExternalUsageLinks,
   collectLimitNotices,
   cursorUsageWindowDetails,
-  formatDuration,
   formatResetsIn,
   resetCreditChoices,
 } from "@t3tools/shared/usageLimitsCopy";
@@ -209,9 +208,11 @@ function SegmentPopover({
         {timeLeft !== null ? (
           <Row label={gt("Even pace")}>{gt("{timeLeft}% left by now", { timeLeft })}</Row>
         ) : null}
-        {reset && reset.restoresPercent > 0 ? (
-          <Row label={gt("Restores", { $context: "a reset credit restores part of the pool" })}>
-            {gt("+{percent}% of pool", { percent: reset.restoresPercent })}
+        {reset && reset.member.refillPercent > 0 ? (
+          <Row label={gt("After reset")}>
+            {gt("{percent}% left on this account", {
+              percent: Math.round(Math.min(100, remaining + reset.member.refillPercent)),
+            })}
           </Row>
         ) : null}
       </div>
@@ -548,10 +549,12 @@ function PoolBar({
   pool,
   color,
   now,
+  providerAccountCount,
 }: {
   readonly pool: LimitPoolWindow;
   readonly color: string;
   readonly now: number;
+  readonly providerAccountCount: number;
 }) {
   const restores = new Map(pool.resets.map((reset) => [reset.member.account.key, reset]));
   const gt = useGT();
@@ -572,7 +575,7 @@ function PoolBar({
               color={normalizeProviderAccentColor(member.account.accentColor) ?? color}
               now={now}
               index={position + 1}
-              showAccountName={pool.columns.length > 1}
+              showAccountName={providerAccountCount > 1}
             />
           ) : pool.kind === "monthly" && member.account.limits.zeroSpendCap ? (
             <div
@@ -597,17 +600,20 @@ function PoolWindowCard({
   pool,
   color,
   now,
+  providerAccountCount,
   label,
   description,
 }: {
   readonly pool: LimitPoolWindow;
   readonly color: string;
   readonly now: number;
+  readonly providerAccountCount: number;
   readonly label?: string | null | undefined;
   readonly description?: string | undefined;
 }) {
   const m = useMessages();
-  const nextRefill = pool.resets.find((reset) => reset.at > now && reset.restoresPercent > 0);
+  const gt = useGT();
+  const nextReset = pool.resets.find((reset) => reset.at > now);
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
@@ -620,23 +626,27 @@ function PoolWindowCard({
           </span>
           <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
             <span>
-              <T context="remaining usage percentage">left</T>
+              {pool.members.length > 1 ? (
+                <T context="average remaining usage across accounts">average left</T>
+              ) : (
+                <T context="remaining usage percentage">left</T>
+              )}
             </span>
             {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
           </span>
         </span>
-        {nextRefill && pool.columns.length > 1 ? (
-          <span className="text-xs text-muted-foreground tabular-nums">
-            <T context="usage limit refill">
-              <span className="font-medium text-foreground">
-                ↻ +<Var>{nextRefill.restoresPercent}</Var>%
-              </span>{" "}
-              in <Var>{formatDuration(nextRefill.at - now, m)}</Var>
-            </T>
+        {pool.members.length > 1 ? (
+          <span className="text-xs text-muted-foreground">
+            {gt("Across {count} accounts", { count: pool.members.length })}
+          </span>
+        ) : null}
+        {nextReset && providerAccountCount > 1 ? (
+          <span className="text-xs font-medium text-foreground tabular-nums">
+            {formatResetsIn(nextReset.member.window, now, m, "account")}
           </span>
         ) : null}
       </div>
-      <PoolBar pool={pool} color={color} now={now} />
+      <PoolBar pool={pool} color={color} now={now} providerAccountCount={providerAccountCount} />
       {description ? (
         <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
       ) : null}
@@ -668,6 +678,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
           <PoolWindowCard
             key={`${window.kind}:${window.id}`}
             pool={window}
+            providerAccountCount={pool.accounts.length}
             color={color}
             now={now}
             label={details?.label}

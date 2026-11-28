@@ -12332,36 +12332,19 @@
   "0d2c1db7fa27153e": "Zurücksetzung",
   "e164fc7ee32dd6a4": "Gleichmäßiges Tempo",
   "f017b7b86d1968e8": "{timeLeft} % sollten jetzt übrig sein",
-  "07fdf12ac5b965fa": "Stellt wieder her",
-  "0bd938825ffcf992": "+{percent} % des Kontingents",
+  "0823a39756bb74a0": "Nächste Kontozurücksetzung jetzt",
+  "49012e2676b17322": "Nächste Kontozurücksetzung in Kürze",
+  "a43d270db904770e": "Nächste Kontozurücksetzung in {duration}",
+  "25aac459cb293af7": "Nach der Zurücksetzung",
+  "6229f9d89ef02482": "{percent}% auf diesem Konto übrig",
+  "d343b39fa4fc62f3": "Über {count} Konten",
+  "da49725ab92240bc": "im Durchschnitt übrig",
   "09c0e00d7fb55402": "Reset-Guthaben wird verwendet…",
   "4df3ff1be768a7ab": "{name}: {remaining} % übrig",
   "7aaaff1c6484f25c": "Segment",
   "8bcab2ef61de6518": "0-$-Limit",
   "a16b48709357a5a7": "Nutzung verwalten",
   "a00e74aaa421c524": "übrig",
-  "0e34c3076c08feb2": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        "↻ +",
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "%"
-      ]
-    },
-    " ",
-    "in ",
-    {
-      "i": 3,
-      "k": "_gt_value_3",
-      "v": "v"
-    }
-  ],
   "8bd6f07136317c8f": "Kein Anbieter in den ausgewählten Umgebungen meldet Abo-Limits.",
   "87f5d0c61b335f38": "Nutzung in ChatGPT mit deinem verbundenen Konto ansehen.",
   "5b4c71b36b979e80": "Kosten",

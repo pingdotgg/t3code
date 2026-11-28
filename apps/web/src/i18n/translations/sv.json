@@ -12338,36 +12338,19 @@
   "0d2c1db7fa27153e": "Återställs",
   "e164fc7ee32dd6a4": "Jämn takt",
   "f017b7b86d1968e8": "{timeLeft} % kvar vid det här laget",
-  "07fdf12ac5b965fa": "Återställer",
-  "0bd938825ffcf992": "+{percent} % av poolen",
+  "0823a39756bb74a0": "Nästa kontoåterställning sker nu",
+  "49012e2676b17322": "Nästa kontoåterställning sker strax",
+  "a43d270db904770e": "Nästa kontoåterställning om {duration}",
+  "25aac459cb293af7": "Efter återställning",
+  "6229f9d89ef02482": "{percent}% kvar på det här kontot",
+  "d343b39fa4fc62f3": "För {count} konton",
+  "da49725ab92240bc": "kvar i genomsnitt",
   "09c0e00d7fb55402": "Använder återställningskredit…",
   "4df3ff1be768a7ab": "{name}: {remaining} % kvar",
   "7aaaff1c6484f25c": "Segment",
   "8bcab2ef61de6518": "Tak på 0 $",
   "a16b48709357a5a7": "Hantera användning",
   "a00e74aaa421c524": "kvar",
-  "0e34c3076c08feb2": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        "↻ +",
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "%"
-      ]
-    },
-    " ",
-    "om ",
-    {
-      "i": 3,
-      "k": "_gt_value_3",
-      "v": "v"
-    }
-  ],
   "8bd6f07136317c8f": "Ingen leverantör i de valda miljöerna rapporterar abonnemangsgränser.",
   "87f5d0c61b335f38": "Visa användning i ChatGPT med ditt anslutna konto.",
   "5b4c71b36b979e80": "Kostnad",
