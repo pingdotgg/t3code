@@ -475,6 +475,30 @@ it.effect("starts a named project as a committed repository, and suffixes a take
   ),
 );
 
+it.effect("draws a named project's icon from its words with their combining marks", () =>
+  withScratch(() =>
+    withGitEnv(
+      TEST_IDENTITY,
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const icon = (name: string) =>
+          folders
+            .createNamedProject({ name })
+            .pipe(
+              Effect.flatMap((created) =>
+                fileSystem.readFileString(path.join(created.workspaceRoot, "assets", "icon.svg")),
+              ),
+            );
+
+        assert.include(yield* icon("สวัสดี โลก"), ">สโ</text>");
+        assert.include(yield* icon("हिन्दी ऐप"), ">हिऐ</text>");
+      }),
+    ),
+  ),
+);
+
 it.effect("gives concurrent named projects with the same name distinct folders", () =>
   withScratch(() =>
     withGitEnv(
