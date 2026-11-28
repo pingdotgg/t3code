@@ -55,9 +55,15 @@ export function extractDevinSubagentUpdate(
   };
 }
 
-// Devin's plan exit offers several allow_once options in no promised order; T3 never answers with bypass.
+// Devin's plan exit offers several allow_once options in no promised order, and it marks project,
+// global and bypass grants allow_always too. T3 answers only with options scoped to this session.
 export function devinAnswerablePermissionOptions(
   request: AcpSchema.RequestPermissionRequest,
 ): ReadonlyArray<AcpSchema.PermissionOption> {
-  return request.options.filter((option) => option.optionId.trim() !== "plan_bypass");
+  return request.options.filter((option) => {
+    const optionId = option.optionId.trim();
+    return (
+      optionId !== "plan_bypass" && (option.kind !== "allow_always" || optionId === "allow_session")
+    );
+  });
 }
