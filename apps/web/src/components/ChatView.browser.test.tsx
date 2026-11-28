@@ -1327,3 +1327,110 @@ it("a new thread on a branch with changes opens them from thread details", async
   // The panel reads the draft's checkout; without one it asks for a thread instead.
   await expect.element(page.getByText("Loading changes...")).toBeVisible();
 });
+
+function runningCodexThread(name: string) {
+  const history = threadWithHistory(name, 1);
+  const at = DateTime.makeUnsafe("2026-03-17T19:12:28.000Z");
+  const providerThread: OrchestrationV2ProviderThread = {
+    id: ProviderThreadId.make(`provider-thread-${name}`),
+    driver: ProviderDriverKind.make("codex"),
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerSessionId: null,
+    appThreadId: history.id,
+    ownerNodeId: null,
+    nativeThreadRef: null,
+    nativeConversationHeadRef: null,
+    status: "idle",
+    firstRunOrdinal: 1,
+    lastRunOrdinal: 1,
+    handoffIds: [],
+    forkedFrom: null,
+    pendingBackgroundTasks: [],
+    contextUsage: null,
+    nativeMetadata: null,
+    goal: null,
+    createdAt: at,
+    updatedAt: at,
+  };
+  return { ...history, providerThreads: [providerThread] };
+}
+
+async function renderRunningThread(thread: ReturnType<typeof runningCodexThread>) {
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  const app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+  const running = { ...thread.runs[0]!, status: "running" as const, completedAt: null };
+  await act(() => emitThreadEvent(thread.id, { type: "run.updated", payload: running }));
+  await expect.element(page.getByRole("button", { name: "Stop generation" })).toBeVisible();
+  return app;
+}
+
+it("labels the send button Submit when a recordless reference precedes /feedback during a run", async () => {
+  const thread = runningCodexThread("feedback-recordless-ref");
+  using _environment = installFakeEnvironment([thread], { acceptCommands: true });
+  const uploads: ProviderUploadFeedbackInput[] = [];
+  using _upload = answerRpc(
+    WS_METHODS.providerUploadFeedback,
+    (input: ProviderUploadFeedbackInput) => {
+      uploads.push(input);
+      return Effect.fail(new ProviderUploadFeedbackError({ threadId: input.threadId }));
+    },
+  );
+  await using _app = await renderRunningThread(thread);
+
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.click(editor);
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", "[Reply](t3-context://v1/response/response_gone) ");
+  editor
+    .element()
+    .dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+  await insertText("/feedback slow");
+  // Enter runs feedback locally, so the button must not offer to steer the running turn.
+  await expect.element(page.getByRole("button", { name: "Submit message" })).toBeVisible();
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() => expect(uploads).toEqual([{ threadId: thread.id, reason: "slow" }]));
+});
+
+it("labels the send button Steer for /feedback while an image compresses during a run", async () => {
+  const thread = runningCodexThread("feedback-compressing-image");
+  using _environment = installFakeEnvironment([thread], { acceptCommands: true });
+  await using _app = await renderRunningThread(thread);
+  const compressed = Promise.withResolvers<void>();
+  compression.gate = compressed.promise;
+  using _compression = { [Symbol.dispose]: () => (compression.gate = null) };
+  using _uploads = acceptAttachmentUploads();
+
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.click(editor);
+  const clipboardData = new DataTransfer();
+  clipboardData.items.add(new File([PNG], "shot.png", { type: "image/png" }));
+  editor
+    .element()
+    .dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+  await insertText("/feedback slow");
+  // Enter waits for the image and steers it into the turn with the text, so say so.
+  await expect.element(page.getByRole("button", { name: "Steer message" })).toBeVisible();
+  await userEvent.keyboard("{Enter}");
+  compressed.resolve();
+  await vi.waitFor(() =>
+    expect(dispatchedCommands()).toContainEqual(
+      expect.objectContaining({
+        type: "message.dispatch",
+        threadId: thread.id,
+        text: "/feedback slow",
+        attachments: [expect.objectContaining({ type: "image", id: "upload-1" })],
+      }),
+    ),
+  );
+});
