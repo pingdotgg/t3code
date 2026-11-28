@@ -12934,7 +12934,6 @@
   "cad7e919311efc25": "Branch and worktree",
   "df74c436e01b97ff": "Running terminals",
   "df7ebb6a9956b51f": "Spacer",
-  "845de59dc5599bbd": "Version control",
   "9db2c6b4f5d086b4": "Lineage and side chats",
   "5312a2a79a6d39cf": "Height",
   "9bfbb6a68489aac2": "Height",
@@ -12942,7 +12941,6 @@
   "a942e191017bff65": "Fit content",
   "86aeee3566767d60": "Lines stay even when a thread has nothing for them.",
   "6633a00c1e8e1733": "A line with nothing to show folds away.",
-  "564d42b3b753dd3f": "Choose what the thread details card shows, and in what order. You can also right-click the card.",
-  "c0ede1d3fde64a54": "Thread details sections, top first",
-  "a9c09e58a52fd070": "Off"
+  "da7d4dbce803bc20": "Move {name}",
+  "84907d3f205da004": "Choose what the thread details card shows. On the card, right-click for this list or drag an item to move it."
 }

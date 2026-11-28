@@ -12925,7 +12925,6 @@
   "cad7e919311efc25": "Branch e worktree",
   "df74c436e01b97ff": "Terminais em execução",
   "df7ebb6a9956b51f": "Espaçador",
-  "845de59dc5599bbd": "Controle de versão",
   "9db2c6b4f5d086b4": "Linhagem e conversas paralelas",
   "5312a2a79a6d39cf": "Altura",
   "9bfbb6a68489aac2": "Altura",
@@ -12933,7 +12932,6 @@
   "a942e191017bff65": "Ajustar ao conteúdo",
   "86aeee3566767d60": "As linhas ficam mesmo quando uma conversa não tem nada para elas.",
   "6633a00c1e8e1733": "Uma linha sem nada para mostrar é recolhida.",
-  "564d42b3b753dd3f": "Escolha o que o cartão de detalhes da conversa mostra e em que ordem. Você também pode clicar com o botão direito no cartão.",
-  "c0ede1d3fde64a54": "Seções dos detalhes da conversa, de cima para baixo",
-  "a9c09e58a52fd070": "Desativado"
+  "da7d4dbce803bc20": "Mover {name}",
+  "84907d3f205da004": "Escolha o que o cartão de detalhes da conversa mostra. No cartão, clique com o botão direito para ver esta lista ou arraste um item para movê-lo."
 }

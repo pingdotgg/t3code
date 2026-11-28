@@ -12925,7 +12925,6 @@
   "cad7e919311efc25": "Branche et worktree",
   "df74c436e01b97ff": "Terminaux en cours",
   "df7ebb6a9956b51f": "Espace",
-  "845de59dc5599bbd": "Gestion de versions",
   "9db2c6b4f5d086b4": "Lignée et discussions annexes",
   "5312a2a79a6d39cf": "Hauteur",
   "9bfbb6a68489aac2": "Hauteur",
@@ -12933,7 +12932,6 @@
   "a942e191017bff65": "Adapter au contenu",
   "86aeee3566767d60": "Les lignes restent même quand un fil n’a rien à y afficher.",
   "6633a00c1e8e1733": "Une ligne sans contenu se replie.",
-  "564d42b3b753dd3f": "Choisissez ce que la carte des détails du fil affiche, et dans quel ordre. Vous pouvez aussi faire un clic droit sur la carte.",
-  "c0ede1d3fde64a54": "Sections des détails du fil, du haut vers le bas",
-  "a9c09e58a52fd070": "Désactivé"
+  "da7d4dbce803bc20": "Déplacer {name}",
+  "84907d3f205da004": "Choisissez ce qu’affiche la carte des détails du fil. Sur la carte, faites un clic droit pour cette liste ou faites glisser un élément pour le déplacer."
 }

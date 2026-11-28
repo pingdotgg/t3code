@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  moveThreadDetailsSection,
+  moveThreadDetailsBlock,
   resolveThreadDetailsOrder,
   resolveThreadDetailsVisibility,
   setThreadDetailsItem,
@@ -36,41 +36,40 @@ describe("thread details items", () => {
     expect(setThreadDetailsItem(hidden, servers, true)).toEqual({});
   });
 
-  it("orders sections from the saved list, keeping unknown ids out and missing ones near their default neighbor", () => {
+  it("orders blocks from the saved list, keeping unknown ids out and missing ones near their default neighbor", () => {
     expect(
       resolveThreadDetailsOrder({
-        threadDetailsOrder: [
-          "relationships",
-          "retired",
-          "workspace",
-          "versionControl",
-          "automations",
-          "usage",
-          "context",
-          "relationships",
-        ],
+        threadDetailsOrder: ["relationships", "retired", "environment", "branch", "relationships"],
       }),
     ).toEqual([
       "relationships",
-      "workspace",
-      "versionControl",
-      "servers",
-      "automations",
       "usage",
       "context",
+      "environment",
+      "openIn",
+      "scripts",
+      "branch",
+      "git",
+      "repositories",
+      "servers",
+      "automations",
     ]);
   });
 
   it("saves an order equal to the default as empty", () => {
     const order = resolveThreadDetailsOrder({ threadDetailsOrder: [] });
-    const moved = moveThreadDetailsSection(order, "relationships", -10);
-    expect(moved[0]).toBe("relationships");
+    const moved = moveThreadDetailsBlock(order, "usage", "environment");
+    expect(moved[0]).toBe("usage");
     expect(
-      moveThreadDetailsSection(
+      moveThreadDetailsBlock(
         resolveThreadDetailsOrder({ threadDetailsOrder: moved }),
+        "usage",
         "relationships",
-        4,
       ),
     ).toEqual([]);
+    expect(moveThreadDetailsBlock(order, "environment", "openIn").slice(0, 2)).toEqual([
+      "openIn",
+      "environment",
+    ]);
   });
 });

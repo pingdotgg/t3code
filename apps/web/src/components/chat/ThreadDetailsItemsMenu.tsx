@@ -1,5 +1,4 @@
 import { T, useMessages } from "gt-react";
-import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
 import {
   getClientSettings,
   updateClientSettings,
@@ -9,64 +8,20 @@ import { MenuCheckboxItem, MenuGroup, MenuGroupLabel, MenuItem, MenuSeparator } 
 import {
   isDefaultThreadDetailsOrder,
   isDefaultThreadDetailsVisibility,
-  moveThreadDetailsSection,
   resolveThreadDetailsOrder,
   resolveThreadDetailsVisibility,
   RESET_THREAD_DETAILS_ITEMS,
   setThreadDetailsItem,
   THREAD_DETAILS_ITEMS,
-  THREAD_DETAILS_SECTIONS,
-  type ThreadDetailsSectionId,
 } from "./threadDetailsItems";
 
-/**
- * Menu body that shows and hides thread details items. The card's context menu and Settings share
- * it; right-clicking a section also offers to move that section.
- */
-export function ThreadDetailsItemsMenuItems(props: {
-  readonly section?: ThreadDetailsSectionId | null;
-  /** The sections the card shows right now. A move passes one of them, so it always shows. */
-  readonly shownSections?: () => ReadonlyArray<ThreadDetailsSectionId>;
-}) {
+/** Menu body that shows and hides thread details items. The card's context menu and Settings share it. */
+export function ThreadDetailsItemsMenuItems() {
   const visibility = useClientSettings(resolveThreadDetailsVisibility);
   const order = useClientSettings(resolveThreadDetailsOrder);
   const m = useMessages();
-  const section = THREAD_DETAILS_SECTIONS.find((candidate) => candidate.id === props.section);
-  const neighbor = (direction: -1 | 1) => {
-    if (!section) return undefined;
-    const shown = props.shownSections?.() ?? [];
-    const others = order.filter((id) => id === section.id || shown.includes(id));
-    return others[others.indexOf(section.id) + direction];
-  };
-  const move = (direction: -1 | 1) => {
-    const passes = neighbor(direction);
-    if (!section || passes === undefined) return;
-    updateClientSettings({
-      threadDetailsOrder: moveThreadDetailsSection(
-        order,
-        section.id,
-        order.indexOf(passes) - order.indexOf(section.id),
-      ),
-    });
-  };
   return (
     <>
-      {section ? (
-        <>
-          <MenuGroup>
-            <MenuGroupLabel>{m(section.label)}</MenuGroupLabel>
-            <MenuItem disabled={neighbor(-1) === undefined} onClick={() => move(-1)}>
-              <ArrowUpIcon aria-hidden />
-              <T>Move up</T>
-            </MenuItem>
-            <MenuItem disabled={neighbor(1) === undefined} onClick={() => move(1)}>
-              <ArrowDownIcon aria-hidden />
-              <T>Move down</T>
-            </MenuItem>
-          </MenuGroup>
-          <MenuSeparator />
-        </>
-      ) : null}
       <MenuGroup>
         <MenuGroupLabel>
           <T>Show in thread details</T>

@@ -15,7 +15,6 @@ import { Button } from "../ui/button";
 import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
-import { ThreadDetailsOrderList } from "./ThreadDetailsOrderList";
 
 export function ThreadDetailsItemsRow() {
   const gt = useGT();
@@ -27,7 +26,7 @@ export function ThreadDetailsItemsRow() {
     <SettingsRow
       {...searchableSetting("thread-details-items")}
       description={gt(
-        "Choose what the thread details card shows, and in what order. You can also right-click the card.",
+        "Choose what the thread details card shows. On the card, right-click for this list or drag an item to move it.",
       )}
       resetAction={
         isDefaultThreadDetailsVisibility(visibility) &&
@@ -63,10 +62,6 @@ export function ThreadDetailsItemsRow() {
           </MenuPopup>
         </Menu>
       }
-    >
-      <div className="mt-3 pb-2">
-        <ThreadDetailsOrderList order={order} visibility={visibility} />
-      </div>
-    </SettingsRow>
+    />
   );
 }

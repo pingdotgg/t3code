@@ -12932,7 +12932,6 @@
   "cad7e919311efc25": "Gren och worktree",
   "df74c436e01b97ff": "Terminaler som körs",
   "df7ebb6a9956b51f": "Mellanrum",
-  "845de59dc5599bbd": "Versionshantering",
   "9db2c6b4f5d086b4": "Härkomst och sidochattar",
   "5312a2a79a6d39cf": "Höjd",
   "9bfbb6a68489aac2": "Höjd",
@@ -12940,7 +12939,6 @@
   "a942e191017bff65": "Anpassa efter innehåll",
   "86aeee3566767d60": "Raderna finns kvar även när en tråd saknar innehåll för dem.",
   "6633a00c1e8e1733": "En rad utan innehåll fälls ihop.",
-  "564d42b3b753dd3f": "Välj vad kortet med tråddetaljer visar och i vilken ordning. Du kan också högerklicka på kortet.",
-  "c0ede1d3fde64a54": "Avsnitt i tråddetaljer, översta först",
-  "a9c09e58a52fd070": "Av"
+  "da7d4dbce803bc20": "Flytta {name}",
+  "84907d3f205da004": "Välj vad kortet med tråddetaljer visar. På kortet högerklickar du för den här listan eller drar ett objekt för att flytta det."
 }

@@ -1,4 +1,5 @@
 import type { ClientSettings } from "@t3tools/contracts";
+import { arrayMove } from "@dnd-kit/sortable";
 import { msg } from "gt-react";
 
 // Ids are stored in client settings, so never rename one.
@@ -70,102 +71,61 @@ export function isDefaultThreadDetailsVisibility(visibility: ThreadDetailsVisibi
   return THREAD_DETAILS_ITEMS.every((item) => visibility[item.id] === item.defaultVisible);
 }
 
-// The card's sections, which move as a unit. Ids are stored in client settings, so never rename one.
-export const THREAD_DETAILS_SECTIONS = [
-  {
-    id: "workspace",
-    label: msg("Workspace"),
-    items: ["environment", "openIn", "scripts"],
-    headingIds: ["thread-details-workspace-heading"],
-  },
-  {
-    id: "versionControl",
-    label: msg("Version control"),
-    items: ["branch", "gitActions", "changes"],
-    headingIds: ["thread-details-version-control-heading"],
-  },
+// The card's movable blocks. A block in a group shares one section with group neighbors next to it.
+// Ids are stored in client settings, so never rename one.
+export const THREAD_DETAILS_BLOCKS = [
+  { id: "environment", group: "workspace", label: msg("Environment and worktree") },
+  { id: "openIn", group: "workspace", label: msg("Open in editor") },
+  { id: "scripts", group: "workspace", label: msg("Project scripts") },
+  { id: "branch", group: "versionControl", label: msg("Branch and pull request") },
+  { id: "git", group: "versionControl", label: msg("Git actions") },
+  { id: "repositories", group: "versionControl", label: msg("Repositories") },
   {
     id: "servers",
+    group: null,
     label: msg("Servers", { $context: "thread details item: running dev servers" }),
-    items: ["servers"],
-    headingIds: ["thread-details-servers-heading"],
   },
-  {
-    id: "automations",
-    label: msg("Automations"),
-    items: ["automations"],
-    headingIds: ["thread-details-automations-heading"],
-  },
-  {
-    id: "relationships",
-    label: msg("Lineage and side chats"),
-    items: ["lineage", "sideChats"],
-    headingIds: ["thread-details-lineage-heading", "thread-details-side-chats-heading"],
-  },
-  {
-    id: "usage",
-    label: msg("Usage limits"),
-    items: ["usage"],
-    headingIds: ["thread-details-usage-heading"],
-  },
-  {
-    id: "context",
-    label: msg("Context window"),
-    items: ["context"],
-    headingIds: ["thread-details-context-heading"],
-  },
-] as const satisfies ReadonlyArray<{
-  id: string;
-  label: unknown;
-  items: ReadonlyArray<ThreadDetailsItemId>;
-  headingIds: ReadonlyArray<string>;
-}>;
+  { id: "automations", group: null, label: msg("Automations") },
+  { id: "relationships", group: null, label: msg("Lineage and side chats") },
+  { id: "usage", group: null, label: msg("Usage limits") },
+  { id: "context", group: null, label: msg("Context window") },
+] as const;
 
-export type ThreadDetailsSectionId = (typeof THREAD_DETAILS_SECTIONS)[number]["id"];
+export type ThreadDetailsBlockId = (typeof THREAD_DETAILS_BLOCKS)[number]["id"];
 
-const DEFAULT_SECTION_ORDER = THREAD_DETAILS_SECTIONS.map((section) => section.id);
+const DEFAULT_BLOCK_ORDER = THREAD_DETAILS_BLOCKS.map((block) => block.id);
 
-/** Saved order first; a section it never mentions, such as one added later, keeps its default neighbor. */
+/** Saved order first; a block it never mentions, such as one added later, keeps its default neighbor. */
 export function resolveThreadDetailsOrder(
   settings: Pick<ClientSettings, "threadDetailsOrder">,
-): ReadonlyArray<ThreadDetailsSectionId> {
+): ReadonlyArray<ThreadDetailsBlockId> {
   const order = [
     ...new Set(
-      settings.threadDetailsOrder.filter((id): id is ThreadDetailsSectionId =>
-        DEFAULT_SECTION_ORDER.includes(id as ThreadDetailsSectionId),
+      settings.threadDetailsOrder.filter((id): id is ThreadDetailsBlockId =>
+        DEFAULT_BLOCK_ORDER.includes(id as ThreadDetailsBlockId),
       ),
     ),
   ];
-  DEFAULT_SECTION_ORDER.forEach((id, index) => {
+  DEFAULT_BLOCK_ORDER.forEach((id, index) => {
     if (order.includes(id)) return;
-    const previous = DEFAULT_SECTION_ORDER[index - 1];
+    const previous = DEFAULT_BLOCK_ORDER[index - 1];
     order.splice(previous === undefined ? 0 : order.indexOf(previous) + 1, 0, id);
   });
   return order;
 }
 
-/** Moves a section by `steps`; an order equal to the default saves as `[]`. */
-export function moveThreadDetailsSection(
-  order: ReadonlyArray<ThreadDetailsSectionId>,
-  id: ThreadDetailsSectionId,
-  steps: number,
+/** Moves a block to where `target` is; an order equal to the default saves as `[]`. */
+export function moveThreadDetailsBlock(
+  order: ReadonlyArray<ThreadDetailsBlockId>,
+  id: ThreadDetailsBlockId,
+  target: ThreadDetailsBlockId,
 ): ClientSettings["threadDetailsOrder"] {
-  const from = order.indexOf(id);
-  const to = Math.max(0, Math.min(order.length - 1, from + steps));
-  const next = order.filter((candidate) => candidate !== id);
-  next.splice(to, 0, id);
+  const next = arrayMove([...order], order.indexOf(id), order.indexOf(target));
   return isDefaultThreadDetailsOrder(next) ? [] : next;
 }
 
-export function isDefaultThreadDetailsOrder(order: ReadonlyArray<ThreadDetailsSectionId>) {
-  return order.join() === DEFAULT_SECTION_ORDER.join();
-}
-
-/** The section a heading id belongs to, for the card's right-click menu. */
-export function threadDetailsSectionForHeading(headingId: string | undefined) {
-  return THREAD_DETAILS_SECTIONS.find((section) =>
-    (section.headingIds as ReadonlyArray<string>).includes(headingId ?? ""),
-  );
+export function isDefaultThreadDetailsOrder(order: ReadonlyArray<ThreadDetailsBlockId>) {
+  return order.join() === DEFAULT_BLOCK_ORDER.join();
 }
 
 /** Also clears the retired Labs flag, so Usage and Context return to off. */
