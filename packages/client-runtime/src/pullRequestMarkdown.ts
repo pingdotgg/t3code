@@ -46,6 +46,7 @@ function indentColumns(line: string): number {
   for (const char of /^[ \t]*/u.exec(line)![0]) column += char === "\t" ? 4 - (column % 4) : 1;
   return column;
 }
+
 /**
  * How far a `<video>` tag may reach for its closing tag. Real embeds are one to three lines,
  * and the bound keeps an unclosed tag from making each one rescan the rest of the body.
@@ -368,7 +369,12 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       markdown.push(line);
       continue;
     }
-    if (openFence !== null && line.trim() && indentColumns(line) < openFence.itemIndent) {
+    if (
+      openFence !== null &&
+      openFence.itemIndent > 0 &&
+      line.trim() &&
+      indentColumns(line) < openFence.itemIndent
+    ) {
       openFence = null;
     }
     const fenceMatch = FENCE_PATTERN.exec(line);
