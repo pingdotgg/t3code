@@ -114,6 +114,8 @@ const Idle = Schema.Struct({
   scriptPct: Schema.Number,
   stylePct: Schema.Number,
   layoutPct: Schema.Number,
+  /** What React rendered in the window, with nothing clicked or typed (`--renders`). */
+  renders: Schema.optional(Renders),
 });
 export type Idle = typeof Idle.Type;
 
@@ -257,7 +259,11 @@ export function flatten(metrics: ClientMetrics): Map<string, number[]> {
       add(`memory.${entry.label}.heapMB`, entry.heapMB);
       add(`memory.${entry.label}.domNodes`, entry.domNodes);
     }
-    for (const entry of run.idle) add(`idle.${entry.label}.taskPct`, entry.taskPct);
+    for (const entry of run.idle) {
+      add(`idle.${entry.label}.taskPct`, entry.taskPct);
+      add(`idle.${entry.label}.renders`, entry.renders?.renders);
+      add(`idle.${entry.label}.commits`, entry.renders?.commits);
+    }
     if (run.soak && run.soak.length > 2) {
       const slopes = soakSlopes(run.soak);
       add("soak.heapMBPerIteration", slopes.heapMB);
@@ -349,6 +355,12 @@ export function summaryTable(metrics: ClientMetrics) {
   const rendered = [
     ...switches.map((entry) => ({ key: `switch to ${entry.case} (${entry.visit})`, ...entry })),
     ...steps.map((entry) => ({ key: `${entry.case}: ${entry.step}`, ...entry })),
+    ...metrics.runs.flatMap((run) =>
+      run.idle.map((entry) => ({
+        key: `${Math.round(entry.seconds)} s ${entry.label}, a thread streaming`,
+        renders: entry.renders,
+      })),
+    ),
   ].filter((entry) => entry.renders !== undefined);
   if (rendered.length > 0) {
     lines.push(

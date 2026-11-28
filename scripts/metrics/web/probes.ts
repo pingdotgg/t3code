@@ -30,9 +30,10 @@ export const RENDER_PROBE = `(() => {
   };
   const isEffect = (value) => value && typeof value === "object" && "create" in value && "deps" in value && "tag" in value;
   // Only state, reducer and store hooks have a queue; memo, callback and ref slots move because something upstream did.
+  // ChatView holds over 1,200 hook slots; a walk that stops short reports its late state changes as context.
   const changedStateSlot = (previous, next) => {
     let a = previous.memoizedState, b = next.memoizedState;
-    for (let slot = 0; a && b && slot < 800; slot++, a = a.next, b = b.next) {
+    for (let slot = 0; a && b && slot < 4000; slot++, a = a.next, b = b.next) {
       if (b.queue !== null && !isEffect(b.memoizedState) && !Object.is(a.memoizedState, b.memoizedState)) return slot;
     }
     return -1;
@@ -78,7 +79,7 @@ export const RENDER_PROBE = `(() => {
           } else cause = "context";
           if (state.slotNames.includes(name)) {
             let a = previous.memoizedState, b = node.memoizedState;
-            for (let slot = 0; a && b && slot < 600; slot++, a = a.next, b = b.next) {
+            for (let slot = 0; a && b && slot < 4000; slot++, a = a.next, b = b.next) {
               if (Object.is(a.memoizedState, b.memoizedState) || isEffect(b.memoizedState)) continue;
               const out = [];
               diff(a.memoizedState, b.memoizedState, "#" + slot, out, 0);
