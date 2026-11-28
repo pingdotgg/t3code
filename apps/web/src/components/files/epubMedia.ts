@@ -64,12 +64,20 @@ export function ttmlCaptions(root: XmlNode) {
   const frameRate = nominalFrameRate * (Number(ratio?.[1]) / Number(ratio?.[2]));
   const subFrameRateText = parameter("subFrameRate") ?? "1";
   const subFrameRate = /^\d+$/.test(subFrameRateText) ? Number(subFrameRateText) : NaN;
+  const tickText = parameter("tickRate");
+  let tickRate = parameter("frameRate") === undefined ? 1 : frameRate * subFrameRate;
+  if (tickText !== undefined) tickRate = /^\d+$/.test(tickText) ? Number(tickText) : NaN;
   const timeBase = parameter("timeBase") ?? "media";
   const continuousSmpte = timeBase === "smpte" && parameter("markerMode") === "continuous";
   const dropMode = parameter("dropMode") ?? "nonDrop";
 
   function captionTime(value: string | undefined) {
     const time = value?.trim() ?? "";
+    const tick = /^(\d+(?:\.\d+)?)t$/.exec(time);
+    if (tick) {
+      const seconds = Number.isFinite(tickRate) && tickRate > 0 ? Number(tick[1]) / tickRate : NaN;
+      return Number.isFinite(seconds * 1000) ? seconds : undefined;
+    }
     const offset = /^(\d+(?:\.\d+)?)f$/.exec(time);
     const clockMatch = /^(\d{2,}:[0-5]\d:[0-5]\d)(?::(\d{2,})(?:\.(\d+))?)?$/.exec(time);
     const clock = continuousSmpte || clockMatch?.[2] !== undefined ? clockMatch : null;
