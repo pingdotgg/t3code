@@ -627,6 +627,9 @@ Third}`;
       [{ kernelspec }, "python"],
       [{ language_info: { name: "" }, kernelspec }, "python"],
       [{ language_info: { name: "python" }, kernelspec: { language: "r" } }, "python"],
+      [{ kernelspec: { name: "Python3" } }, "python"],
+      [{ kernelspec: { name: { toString: null } } }, "text"],
+      [{ language_info: { name: { toString: null } }, kernelspec: { language: "r" } }, "r"],
     ] as const) {
       expect(
         openNotebook(bytes(JSON.stringify({ nbformat: 4, metadata, cells: [] }))),
@@ -1005,6 +1008,35 @@ Third}`;
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html).toBe(
       "<p>Gate code is posted.</p><p>Shown field visible note<span data-odf-whitespace> </span>end.</p><p>Kept paragraph.</p><p>Outer stays.</p>",
+    );
+  });
+
+  it("omits ODT text hidden by paragraph styles", async () => {
+    const xml = [
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">',
+      '<office:automatic-styles><style:style style:name="P1" style:family="paragraph"><style:text-properties text:display="none"/></style:style>',
+      '<style:style style:name="P2" style:family="paragraph" style:parent-style-name="Retired"/>',
+      '<style:style style:name="Shown" style:family="text"><style:text-properties text:display="true"/></style:style></office:automatic-styles>',
+      "<office:body><office:text>",
+      '<text:p text:style-name="P1">Use the obsolete west entrance.</text:p>',
+      '<text:h text:outline-level="2" text:style-name="Retired">Retired section</text:h>',
+      '<text:p text:style-name="P2">Draft <text:span text:style-name="Shown">North entrance</text:span> only.</text:p>',
+      '<text:p text:style-name="TextOnly">Paragraph ignores text family.</text:p>',
+      "<text:p>Keep this.</text:p>",
+      "</office:text></office:body></office:document-content>",
+    ].join("");
+    const styles =
+      '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:styles>' +
+      '<style:style style:name="Retired" style:family="paragraph"><style:text-properties text:display="none"/></style:style>' +
+      '<style:style style:name="TextOnly" style:family="text"><style:text-properties text:display="none"/></style:style>' +
+      "</office:styles></office:document-styles>";
+    const result = await openDocument(
+      new JSZip().file("content.xml", xml).file("styles.xml", styles),
+      "odt",
+    );
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      "<p><span>North entrance</span></p><p>Paragraph ignores text family.</p><p>Keep this.</p>",
     );
   });
 
