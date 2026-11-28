@@ -16,6 +16,7 @@ import {
   type ThreadPullRequestLink,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
+import { parseGitRemoteRepository } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -270,6 +271,20 @@ function projectForPullRequest(
   };
   if (preferred !== undefined && matches(preferred)) return preferred;
   return projects.find(matches);
+}
+
+/** The project whose own repositories, on any of their hosts, include `repository`. */
+function projectHoldingRepository(
+  projects: ReadonlyArray<OrchestrationProjectShell>,
+  repository: string,
+  preferred: OrchestrationProjectShell,
+): OrchestrationProjectShell | undefined {
+  const holds = (project: OrchestrationProjectShell) =>
+    ownPullRequestRepositories(project.repositoryIdentity).some(({ key }) =>
+      projectForPullRequest([project], { host: key.host, repository }, undefined),
+    );
+  if (holds(preferred)) return preferred;
+  return projects.find(holds);
 }
 
 const isPushHooksUnapproved = Schema.is(GitManager.GitPushHooksUnapprovedError);
@@ -607,6 +622,29 @@ const make = Effect.gen(function* () {
     if (project === undefined) {
       return yield* new PullRequestProjectNotFoundError({ repository: input.repository ?? "" });
     }
+    // A repository named by URL is on that URL's host. One another registered project holds is on
+    // that project's host and forge.
+    // The key is spelled as the forge spells project keys: Azure DevOps keeps `.git` in a name.
+    const remoteKey =
+      input.repository === undefined || parseGitRemoteRepository(input.repository) === null
+        ? null
+        : sourceControlDefinitions.repositoryKeyFromRemote(input.repository);
+    const [remoteHost, ...remotePath] = remoteKey?.split("/") ?? [];
+    const remote =
+      remoteHost === undefined || remotePath.length === 0
+        ? null
+        : { host: remoteHost, path: remotePath.join("/") };
+    const repository = remote?.path ?? input.repository;
+    let holder = project;
+    if (input.number !== undefined && repository !== undefined) {
+      const known = yield* projects
+        .listShells()
+        .pipe(Effect.mapError((cause) => new PullRequestForgeError({ cause })));
+      holder =
+        (remote === null
+          ? projectHoldingRepository(known, repository, project)
+          : projectForPullRequest(known, { host: remote.host, repository }, project)) ?? project;
+    }
     // Status sync sets branchPullRequest later, so a PR this thread just opened counts too,
     // unless it is another branch's.
     const opened =
@@ -624,14 +662,14 @@ const make = Effect.gen(function* () {
         : (sourceControlDefinitions.repositorySelector(project.repositoryIdentity) ?? undefined);
     const named =
       input.number !== undefined
-        ? { number: input.number, repository: input.repository ?? branchRepository }
+        ? { number: input.number, repository: repository ?? branchRepository, host: remote?.host }
         : branchPullRequest === null
           ? null
           : { number: branchPullRequest.number, repository: branchPullRequest.repository };
     if (named === null) return yield* new PullRequestBranchHasNoneError();
-    const target = yield* resolveTarget(named, project);
+    const target = yield* resolveTarget(named, holder);
     const ref: PullRequestRef = {
-      projectId: project.id,
+      projectId: holder.id,
       host: target.host,
       repository: target.repository,
       number: target.number,

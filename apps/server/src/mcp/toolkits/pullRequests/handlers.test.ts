@@ -988,6 +988,115 @@ describe("source control tools", () => {
     }),
   );
 
+  it.effect("reads a PR of another project's repository on that project's forge", () =>
+    Effect.gen(function* () {
+      const asked: Array<PullRequestRef> = [];
+      const gitlab = {
+        ...makeProject({
+          canonicalKey: "gitlab.com/example-team/service",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "https://gitlab.com/example-team/service.git",
+          },
+          provider: SourceControlProviderKind.make("gitlab"),
+          displayName: "example-team/service",
+          owner: "example-team",
+          name: "service",
+        }),
+        id: ProjectId.make("project-gitlab"),
+      };
+      const harness = yield* makeHarness({
+        projects: [makeProject(), gitlab],
+        pullRequests: {
+          detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+          activity: () => Effect.succeed(activity),
+        },
+      });
+      const result = yield* harness.call("pull_request_read", {
+        number: 123,
+        repository: "example-team/service",
+      });
+      expect(result).toMatchObject({
+        host: "gitlab.com",
+        url: "https://gitlab.com/example-team/service/-/merge_requests/123",
+      });
+      expect(asked).toMatchObject([{ host: "gitlab.com", repository: "example-team/service" }]);
+    }),
+  );
+
+  it.effect("reads a PR of a repository named by its URL on that URL's forge", () =>
+    Effect.gen(function* () {
+      const asked: Array<PullRequestRef> = [];
+      const gitlab = {
+        ...makeProject({
+          canonicalKey: "gitlab.com/example-team/service",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "https://gitlab.com/example-team/service.git",
+          },
+          provider: SourceControlProviderKind.make("gitlab"),
+          displayName: "example-team/service",
+          owner: "example-team",
+          name: "service",
+        }),
+        id: ProjectId.make("project-gitlab"),
+      };
+      const harness = yield* makeHarness({
+        projects: [makeProject(), gitlab],
+        pullRequests: {
+          detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+          activity: () => Effect.succeed(activity),
+        },
+      });
+      const result = yield* harness.call("pull_request_read", {
+        number: 123,
+        repository: "https://gitlab.com/example-team/service",
+      });
+      expect(result).toMatchObject({
+        host: "gitlab.com",
+        url: "https://gitlab.com/example-team/service/-/merge_requests/123",
+      });
+      expect(asked).toMatchObject([{ host: "gitlab.com", repository: "example-team/service" }]);
+    }),
+  );
+
+  it.effect("keeps .git in an Azure DevOps repository named by its URL", () =>
+    Effect.gen(function* () {
+      const asked: Array<PullRequestRef> = [];
+      const azure = (name: string) => ({
+        ...makeProject({
+          canonicalKey: `dev.azure.com/org/project/_git/${name}`,
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: `https://dev.azure.com/org/project/_git/${name}`,
+          },
+          provider: SourceControlProviderKind.make("azure-devops"),
+          displayName: `org/project/_git/${name}`,
+          owner: "org",
+          name,
+        }),
+        id: ProjectId.make(`project-${name}`),
+      });
+      const harness = yield* makeHarness({
+        projects: [makeProject(), azure("web"), azure("web.git")],
+        pullRequests: {
+          detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+          activity: () => Effect.succeed(activity),
+        },
+      });
+      yield* harness.call("pull_request_read", {
+        number: 9,
+        repository: "https://dev.azure.com/org/project/_git/web.git",
+      });
+      expect(asked).toMatchObject([
+        { projectId: "project-web.git", repository: "org/project/_git/web.git" },
+      ]);
+    }),
+  );
+
   it.effect("pages a long conversation and the PR list through the cursors they return", () =>
     Effect.gen(function* () {
       const comment = (body: string) =>
