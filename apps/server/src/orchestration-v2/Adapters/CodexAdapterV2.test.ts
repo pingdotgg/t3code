@@ -859,10 +859,8 @@ function codexReplayPreamble(input: {
 }
 
 /**
- * Every turn/start follows a config/read, and a thread's first turn on a connection names it
- * unless the transcript names it itself. A thread start, resume or fork follows a config/read
- * unless it retries a failed request or the transcript reads config itself. Inserts those
- * exchanges and shifts later client ids.
+ * Inserts the config/read before each turn/start and thread start, resume or fork, and names a
+ * thread before its first turn, unless the transcript already has them. Shifts later client ids.
  */
 function withConfigReadBeforeTurnStart(
   entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>,
@@ -907,7 +905,9 @@ function withConfigReadBeforeTurnStart(
           { config: {}, origins: {} },
         ]);
       }
-      if (frame.method === "turn/start") {
+      const previous = result.at(-1);
+      const hasConfigRead = previous?.type === "emit_inbound" && previous.label === "config/read";
+      if (frame.method === "turn/start" && !hasConfigRead) {
         if (!namedThreads.has(params.threadId)) {
           namedThreads.add(params.threadId);
           exchanges.push(["thread/name/set", { threadId: params.threadId, name: threadName }, {}]);
@@ -1758,6 +1758,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
     onNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
     models?: CodexAdapterV2.CodexAdapterV2Options["models"],
+    runtimePolicy = CODEX_TEST_RUNTIME_POLICY,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1842,13 +1843,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         threadId,
         providerSessionId: ProviderSessionId.make(`provider-session-${transcript.scenario}`),
         modelSelection: CODEX_TEST_MODEL_SELECTION,
-        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        runtimePolicy,
         promptSuggestions,
       });
       const providerThread = yield* runtime.ensureThread({
         threadId,
         modelSelection: CODEX_TEST_MODEL_SELECTION,
-        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        runtimePolicy,
       });
       const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
       const firstTerminal = yield* Deferred.make<void>();
@@ -2967,6 +2968,179 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.isBelow(requests.indexOf("thread/inject_items"), requests.indexOf("turn/start"));
       }).pipe(
         Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each([
+    { platform: "darwin", runtimeMode: "auto", resolves: true },
+    { platform: "darwin", runtimeMode: "full-access", resolves: false },
+    { platform: "win32", runtimeMode: "auto", resolves: false },
+  ] as const)(
+    "runs $platform $runtimeMode Codex turns in the physical workspace: $resolves",
+    ({ platform, runtimeMode, resolves }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-symlink-" });
+        const target = `${root}/physical`;
+        const alias = `${root}/alias`;
+        yield* fs.makeDirectory(target);
+        yield* fs.symlink(target, alias);
+        const turnCwd = resolves ? yield* fs.realPath(target) : alias;
+        const policy = { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode, cwd: alias };
+        const turnDefaults =
+          runtimeMode === "auto"
+            ? {
+                approvalPolicy: "on-request",
+                approvalsReviewer: "auto_review",
+                sandboxPolicy: { type: "workspaceWrite" },
+              }
+            : {
+                approvalPolicy: "never",
+                approvalsReviewer: "user",
+                sandboxPolicy: { type: "dangerFullAccess" },
+              };
+        const requests: Array<unknown> = [];
+        const preamble = codexReplayPreamble({
+          nativeThreadId: "physical-workspace",
+          nativeTurnId: "physical-turn",
+          prompt: "Inspect the workspace.",
+        });
+        const entries: Array<CodexReplay.CodexAppServerReplayEntry> = [
+          ...preamble.slice(0, 5),
+          {
+            type: "expect_outbound",
+            label: "resume alias",
+            frame: {
+              id: 3,
+              method: "thread/resume",
+              params: {
+                threadId: "physical-workspace",
+                excludeTurns: true,
+                config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "resume alias",
+            frame: {
+              id: 3,
+              result: { thread: { id: "physical-workspace", updatedAt: 1782622440 } },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "thread/name/set",
+            frame: {
+              id: 4,
+              method: "thread/name/set",
+              params: { threadId: "physical-workspace", name: CODEX_TEST_THREAD_TITLE },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "thread/name/set",
+            frame: { id: 4, result: {} },
+          },
+          // Config reads keep the registered path, as the thread requests do.
+          {
+            type: "expect_outbound",
+            label: "config/read",
+            frame: {
+              id: 5,
+              method: "config/read",
+              params: { cwd: "/workspace", includeLayers: false },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "config/read",
+            frame: { id: 5, result: { config: {}, origins: {} } },
+          },
+          {
+            type: "expect_outbound",
+            label: "turn/start",
+            frame: {
+              id: 6,
+              method: "turn/start",
+              params: {
+                threadId: "physical-workspace",
+                input: [{ type: "text", text: "Inspect the workspace." }],
+                cwd: "/turn-workspace",
+                model: "gpt-5.4",
+                ...turnDefaults,
+                summary: "auto",
+                collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
+              },
+            },
+          },
+          ...preamble
+            .slice(6)
+            .map((entry) =>
+              entry.type !== "runtime_exit" && Predicate.hasProperty(entry.frame, "id")
+                ? withReplayRequestId(entry, 6)
+                : entry,
+            ),
+        ];
+        const transcript = yield* decodeReplayTranscriptJson(
+          (yield* encodeReplayTranscriptJson(
+            makeCodexReplayTranscript({
+              scenario: `physical-workspace-${platform}-${runtimeMode}`,
+              entries,
+            }),
+          ))
+            .replaceAll(yield* encodeStringJson("/workspace"), yield* encodeStringJson(alias))
+            .replaceAll(
+              yield* encodeStringJson("/turn-workspace"),
+              yield* encodeStringJson(turnCwd),
+            ),
+        );
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method, params) =>
+            Effect.sync(() => {
+              if (method === "thread/start" || method === "thread/resume") requests.push(params);
+            }),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          policy,
+        );
+        yield* harness.runtime.resumeThread({
+          providerThread: harness.providerThread,
+          runtimePolicy: policy,
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+        });
+        assert.lengthOf(requests, 2);
+        // Codex keys project trust and config on the thread cwd, so thread requests keep the alias.
+        for (const request of requests) assert.propertyVal(request, "cwd", alias);
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("physical-attempt"),
+            text: "Inspect the workspace.",
+          }),
+          runtimePolicy: policy,
+        });
+        assert.equal(policy.cwd, alias);
+        assert.equal(harness.runtime.providerSession.cwd, alias);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(HostProcess.Platform, platform),
         Effect.provide(
           Layer.mergeAll(
             IdAllocator.layer,
