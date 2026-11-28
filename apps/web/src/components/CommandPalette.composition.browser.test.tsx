@@ -2,10 +2,19 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  EnvironmentId,
+  ProjectId,
+} from "@t3tools/contracts";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { act, render, stubGlobal } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
+import { moveDraftToProject } from "../lib/moveDraftToProject";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { projectEnvironment } from "../state/projects";
 import { sourceControlEnvironment } from "../state/sourceControl";
@@ -24,6 +33,7 @@ const scopes = vi.hoisted(() => ({
   createNewProject: vi.fn<() => Promise<typeof createdProject>>(),
   openDraft: vi.fn<() => Promise<void>>(),
   addProject: vi.fn<() => Promise<{ _tag: "Success"; value: { projectId: string } }>>(),
+  waitForProject: vi.fn<() => Promise<EnvironmentProject | undefined>>(),
 }));
 const setup = (deniedScope?: string, sourceControl?: unknown, isBrowsePending = false) => {
   scopes.denied = deniedScope;
@@ -35,6 +45,7 @@ const setup = (deniedScope?: string, sourceControl?: unknown, isBrowsePending = 
     value: { projectId: "project-cloned" },
   });
   scopes.isBrowsePending = isBrowsePending;
+  scopes.waitForProject.mockReset().mockResolvedValue(undefined);
 };
 const githubAvailable = {
   versionControlSystems: [],
@@ -131,7 +142,7 @@ vi.mock("../state/entities", async (original) => ({
   useAnyEnvironmentHiding: () => false,
   useEnvironmentThreadRefs: () => [],
   useServerConfigs: () => new Map(),
-  waitForProject: async () => undefined,
+  waitForProject: scopes.waitForProject,
 }));
 vi.mock("../state/queries", async (original) => ({
   ...(await original<typeof import("../state/queries")>()),
@@ -298,7 +309,7 @@ it("tells screen readers whether a new project will be published", async () => {
   await expect.element(option).toHaveAttribute("aria-checked", "true");
 });
 
-async function startLateProjectAdd(source: string, input: string) {
+async function startLateProjectAdd(source: string, input: string, draftId?: DraftId) {
   const finished = Promise.withResolvers<void>();
   const created = Promise.withResolvers<typeof createdProject>();
   scopes.createNewProject.mockReturnValue(created.promise);
@@ -307,7 +318,7 @@ async function startLateProjectAdd(source: string, input: string) {
     await finished.promise;
     return { _tag: "Success", value: { projectId: "project-added" } };
   });
-  await act(() => openCommandPalette({ open: "add-project" }));
+  await act(() => openCommandPalette({ open: "add-project", ...(draftId && { draftId }) }));
   await page.getByText(source, { exact: true }).click();
   const search = page.getByRole("combobox");
   await search.fill(input);
@@ -365,6 +376,50 @@ it.each(["/", "/?panel=files"])(
     expect(scopes.openDraft).toHaveBeenCalledOnce();
   },
 );
+
+it.each([
+  { selection: [], expected: "added" },
+  { selection: ["other"], expected: "other" },
+  { selection: ["other", "original"], expected: "original" },
+])("keeps the draft's project selection after switching threads (%j)", async (row) => {
+  setup();
+  const environmentId = EnvironmentId.make("local");
+  const draftId = DraftId.make("draft-adding-project");
+  const project = (name: string): EnvironmentProject => ({
+    id: ProjectId.make(name),
+    environmentId,
+    title: name,
+    workspaceRoot: `/workspace/${name}`,
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    createdAt: "2026-03-01T00:00:00.000Z",
+    updatedAt: "2026-03-01T00:00:00.000Z",
+    scripts: [],
+  });
+  const store = useComposerDraftStore.getState();
+  store.setProjectDraftThreadId(
+    scopeProjectRef(environmentId, ProjectId.make("original")),
+    draftId,
+  );
+  store.setPrompt(draftId, "Keep this draft");
+  scopes.waitForProject.mockResolvedValue(project("added"));
+  try {
+    await using screen = await render(<CommandPalette>{null}</CommandPalette>);
+    const finish = await startLateProjectAdd("Local folder", "/workspace/added", draftId);
+    await userEvent.keyboard("{Escape}");
+    await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+    await act(() => {
+      for (const name of row.selection) moveDraftToProject(draftId, project(name));
+    });
+    await act(() => screen.router!.navigate({ to: "/local/another-thread" }));
+    await finish();
+
+    expect(screen.router!.state.location.pathname).toBe("/local/another-thread");
+    expect(store.getDraftSession(draftId)?.projectId).toBe(row.expected);
+  } finally {
+    store.clearDraftThread(draftId);
+  }
+});
 
 it("keeps a reopened palette open after a late folder pick", async () => {
   setup();
