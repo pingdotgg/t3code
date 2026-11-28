@@ -3866,6 +3866,129 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
       assert.equal((yield* runtime!.getModeState)?.currentModeId, "default");
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
+
+  it.effect("refuses edits in Plan even with full access, and allows them again in Default", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let requestPermission: Parameters<RuntimeService["handleRequestPermission"]>[0] | undefined;
+      const prompting = yield* Queue.unbounded<Deferred.Deferred<void>>();
+      const instanceId = ProviderInstanceId.make("antigravity-plan-permission-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_ANTIGRAVITY: "1" },
+            },
+          }).pipe(
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+            Effect.map((runtime): RuntimeService => ({
+              ...runtime,
+              handleRequestPermission: (handler) =>
+                Effect.sync(() => {
+                  requestPermission = handler;
+                }).pipe(Effect.andThen(runtime.handleRequestPermission(handler))),
+              prompt: (_payload, promptOptions) =>
+                Effect.gen(function* () {
+                  if (promptOptions?.dispatched !== undefined) {
+                    yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                  }
+                  const release = yield* Deferred.make<void>();
+                  yield* Queue.offer(prompting, release);
+                  yield* Deferred.await(release);
+                  return { stopReason: "end_turn" as const };
+                }),
+            })),
+          ),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+      const threadId = ThreadId.make("thread-antigravity-plan-permission");
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const policy = (interactionMode: "plan" | "default") =>
+        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode,
+          cwd: process.cwd(),
+        });
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-plan-permission"),
+        modelSelection,
+        runtimePolicy: policy("plan"),
+      });
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* session.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: policy("plan"),
+      });
+      // Frames as agy 1.5.16 sends write_to_file in its own Plan mode once told to proceed.
+      const answerEdit = (interactionMode: "plan" | "default", ordinal: number) =>
+        Effect.gen(function* () {
+          yield* session.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy: policy(interactionMode),
+              modelSelection,
+              ordinal,
+              now: yield* DateTime.now,
+            }),
+          );
+          const release = yield* Queue.take(prompting);
+          const target = path.join(process.cwd(), "hello.txt");
+          const response = yield* requestPermission!(
+            {
+              sessionId: "mock-session-1",
+              toolCall: {
+                toolCallId: `call_write_${ordinal}`,
+                title: "File hello.txt",
+                kind: "edit",
+                status: "pending",
+                rawInput: { Content: "hi", Overwrite: true, Path: target },
+                locations: [{ path: target }],
+              },
+              options: [
+                { optionId: "allow", name: "Allow", kind: "allow_once" },
+                { optionId: "deny", name: "Deny", kind: "reject_once" },
+              ],
+            },
+            { requestId: `permission-${ordinal}`, method: "session/request_permission" },
+          );
+          yield* Deferred.succeed(release, undefined);
+          yield* Stream.fromQueue(events).pipe(
+            Stream.filter((event) => event.type === "turn.terminal"),
+            Stream.runHead,
+          );
+          return response;
+        });
+
+      assert.deepEqual(yield* answerEdit("plan", 1), {
+        outcome: { outcome: "selected", optionId: "deny" },
+      });
+      assert.deepEqual(yield* answerEdit("default", 2), {
+        outcome: { outcome: "selected", optionId: "allow" },
+      });
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
 });
 
 describe("AntigravityAdapterV2 session system prompt", () => {

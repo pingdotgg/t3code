@@ -3,6 +3,7 @@ import {
   type AntigravityAuthMethod,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  type ProviderInteractionMode,
   type ProviderSendTurnInput,
   type RuntimeMode,
 } from "@t3tools/contracts";
@@ -221,12 +222,27 @@ function isAntigravityT3McpRequest(request: EffectAcpSchema.RequestPermissionReq
   return tool !== undefined && isAntigravityT3McpTool(tool, rawInput);
 }
 
+const ANTIGRAVITY_READ_KINDS = new Set(["read", "search", "think"]);
+const ANTIGRAVITY_MUTATION_KINDS = new Set(["edit", "delete", "move"]);
+
 export function antigravityPermissionDisposition(
-  policy: AcpRuntimePolicy,
+  policy: AcpRuntimePolicy & { readonly interactionMode?: ProviderInteractionMode },
   request: EffectAcpSchema.RequestPermissionRequest,
 ) {
   const disposition = acpPermissionDisposition(policy, request);
   if (disposition === "deny") return "deny";
+  // agy's Plan mode still edits and runs commands once told to proceed, so T3 keeps plan
+  // turns read-only: edits are refused and other actions need the user, as Claude's Plan does.
+  const kind = request.toolCall.kind ?? "other";
+  if (
+    policy.interactionMode === "plan" &&
+    !ANTIGRAVITY_READ_KINDS.has(kind) &&
+    !isAntigravityT3McpRequest(request)
+  ) {
+    return ANTIGRAVITY_MUTATION_KINDS.has(kind) || policy.approvalPolicy === "never"
+      ? "deny"
+      : "ask";
+  }
   // T3 authorizes its own MCP server, so Auto and Auto-accept edits run it unasked, as Claude does.
   if (
     (policy.runtimeMode === "auto" || policy.runtimeMode === "auto-accept-edits") &&
