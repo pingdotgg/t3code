@@ -11,7 +11,23 @@ function progress(animation: Animation) {
     : (animation.effect?.getComputedTiming().progress ?? 0);
 }
 
-/** Position the list so all direct children's offsetTop share an origin. */
+export function forEachSidebarListRow(
+  list: HTMLElement,
+  visit: (row: HTMLElement, folder?: HTMLElement) => void,
+) {
+  for (const child of list.children) {
+    if (!(child instanceof HTMLElement)) continue;
+    if (child.hasAttribute("data-sidebar-folder-group")) {
+      for (const row of child.firstElementChild?.children ?? []) {
+        if (row instanceof HTMLElement) visit(row, child);
+      }
+    } else {
+      visit(child);
+    }
+  }
+}
+
+/** Position the list and each folder group so a row's offsets plus its folder's share an origin. */
 export function createSidebarListMotion(parent: HTMLUListElement) {
   let positions: Map<HTMLElement, RowPosition> | null = null;
   let disposed = false;
@@ -132,19 +148,16 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
         suspend();
         return;
       }
-      const next = new Map(
-        Array.from(parent.children)
-          .filter((node): node is HTMLElement => node instanceof HTMLElement && !exiting.has(node))
-          .map((node) => [
-            node,
-            {
-              top: node.offsetTop,
-              left: node.offsetLeft,
-              width: node.offsetWidth,
-              height: node.offsetHeight,
-            },
-          ]),
-      );
+      const next = new Map<HTMLElement, RowPosition>();
+      forEachSidebarListRow(parent, (node, folder) => {
+        if (exiting.has(node)) return;
+        next.set(node, {
+          top: node.offsetTop + (folder?.offsetTop ?? 0),
+          left: node.offsetLeft + (folder?.offsetLeft ?? 0),
+          width: node.offsetWidth,
+          height: node.offsetHeight,
+        });
+      });
       let fadeCount = 0;
       if (positions !== null) {
         for (const [node, position] of positions) {
@@ -252,11 +265,11 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     release() {
       suspend();
       const origin = parent.getBoundingClientRect().top;
-      released = new Map(
-        Array.from(parent.children)
-          .filter((node): node is HTMLElement => node instanceof HTMLElement && !exiting.has(node))
-          .map((node) => [node, node.getBoundingClientRect().top - origin]),
-      );
+      const tops = new Map<HTMLElement, number>();
+      forEachSidebarListRow(parent, (node) => {
+        if (!exiting.has(node)) tops.set(node, node.getBoundingClientRect().top - origin);
+      });
+      released = tops;
     },
     suspend,
     dispose() {

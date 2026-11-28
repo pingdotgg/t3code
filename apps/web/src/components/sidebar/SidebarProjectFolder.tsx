@@ -1,16 +1,22 @@
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { groupIconFallbacks } from "@t3tools/client-runtime/state/project-grouping";
 import type { ContextMenuSource } from "@t3tools/contracts";
 import { ChevronDownIcon, SquarePenIcon } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { contextMenuSourceOf } from "../../contextMenuSource";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useUiStateStore } from "../../uiStateStore";
-import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
+import {
+  animateSidebarLayoutChanges,
+  resolveSidebarFolderDot,
+  resolveThreadLastVisitedAt,
+} from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
@@ -39,10 +45,12 @@ export function sidebarFolderRowId(projectKey: string) {
  * count and chevron, with the count only while closed and a status dot whenever hidden
  * threads need you.
  */
-export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHeader(props: {
+export const SidebarProjectFolder = memo(function SidebarProjectFolder(props: {
   group: SidebarProjectSnapshot;
   collapsed: boolean;
   hiddenThreads: readonly EnvironmentThreadShell[];
+  sortableDisabled: boolean;
+  children: ReactNode;
   onToggle: (group: SidebarProjectSnapshot) => void;
   onNewThread: (group: SidebarProjectSnapshot) => void;
   onContextMenu: (
@@ -55,6 +63,11 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   const m = useMessages();
   const { group, collapsed, hiddenThreads } = props;
   const rowId = sidebarFolderRowId(group.projectKey);
+  const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: rowId,
+    disabled: props.sortableDisabled,
+    animateLayoutChanges: animateSidebarLayoutChanges,
+  });
   const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const hasHiddenThreads = hiddenThreads.length > 0;
   const dot = hasHiddenThreads
@@ -71,15 +84,13 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
       )
     : null;
   const hasCount = collapsed && hiddenThreads.length > 0;
-  return (
-    <li
-      data-testid="sidebar-project-folder"
-      className="group/project-folder relative mt-2 list-none first:mt-0"
-    >
+  const header = (
+    <li data-testid="sidebar-project-folder" className="group/project-folder relative list-none">
       <button
         type="button"
         data-sidebar-row={rowId}
         aria-expanded={!collapsed}
+        {...listeners}
         onClick={() => props.onToggle(group)}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -89,7 +100,10 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
             contextMenuSourceOf(event),
           );
         }}
-        className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className={cn(
+          "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          isDragging && "bg-sidebar-row-active",
+        )}
       >
         <ProjectFavicon
           project={group}
@@ -149,6 +163,22 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
           <SquarePenIcon aria-hidden />
         </SharedTooltipTrigger>
       </span>
+    </li>
+  );
+  return (
+    <li
+      ref={setNodeRef}
+      data-sidebar-folder-group={rowId}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      className={cn(
+        "relative mt-2 list-none first:mt-0",
+        isDragging && "z-20 rounded-(--control-radius) bg-sidebar shadow-lg",
+      )}
+    >
+      <ul role="presentation" className="flex flex-col gap-px">
+        {header}
+        {props.children}
+      </ul>
     </li>
   );
 });
