@@ -785,6 +785,52 @@ it.effect("a purge already under way leaves a re-imported deleted thread its his
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
+it.effect("re-import waits for a deleted thread's queued teardown before bringing it back", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const session = candidate(CODEX_MODEL_SELECTION, "teardown-pending");
+    const threadId = importId(session);
+    yield* (yield* makeImporter([session])).run;
+    const { thread } = yield* projections.getThreadRecords(threadId, []);
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(`${threadId}:deleted`),
+          type: "thread.deleted",
+          threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: { ...thread, deletedAt: now, updatedAt: now },
+        },
+      ],
+    });
+    yield* sql`
+      INSERT INTO orchestration_v2_effect_outbox (
+        effect_id, command_id, thread_id, effect_type, payload_json, status,
+        available_at, created_at, updated_at
+      ) VALUES (
+        'effect:teardown-pending', 'command:teardown-pending', ${threadId}, 'terminal.cleanup',
+        '{"type":"terminal.cleanup"}', 'pending', ${timestamp}, ${timestamp}, ${timestamp}
+      )
+    `;
+
+    expect(yield* (yield* makeImporter([session])).run).toEqual({
+      importedCount: 0,
+      skippedCount: 1,
+    });
+    expect((yield* projections.getThreadRecords(threadId, [])).thread.deletedAt).toEqual(now);
+
+    yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'succeeded'`;
+    expect(yield* (yield* makeImporter([session])).run).toEqual({
+      importedCount: 1,
+      skippedCount: 0,
+    });
+    expect((yield* projections.getThreadRecords(threadId, [])).thread.deletedAt).toBeNull();
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
 it.effect("re-import leaves an import thread that has runs at its stored messages", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;

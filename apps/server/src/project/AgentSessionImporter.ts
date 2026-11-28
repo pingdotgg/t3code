@@ -525,11 +525,13 @@ const make = Effect.gen(function* () {
                 threadId,
                 Effect.gen(function* () {
                   yield* maintenance.purgeDeletedThread(threadId);
-                  const kept = yield* orchestrator.getThreadRecords(threadId, ["messages", "runs"]);
+                  // The purge leaves a thread that a live fork still shows or that queued teardown
+                  // still reads; its title marks one that ran. That teardown works by thread id,
+                  // so it must not find the thread restored.
+                  const kept = yield* orchestrator.getThreadRecords(threadId, []);
                   if (
                     kept.thread.deletedAt === null ||
-                    kept.runs.length > 0 ||
-                    kept.messages.length > thread.messages.length
+                    kept.thread.title !== ProjectionMaintenance.DELETED_THREAD_TITLE
                   ) {
                     return null;
                   }
