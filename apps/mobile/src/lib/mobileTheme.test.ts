@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import * as mobileTheme from "./mobileTheme";
+import { buildGhosttyThemeConfig, getMobileTerminalTheme } from "../features/terminal/terminalTheme";
 import {
   BUILT_IN_THEME_IDS,
   BUILT_IN_THEMES,
@@ -57,6 +59,22 @@ function compositeOver(overlay: string, background: string): string {
 }
 
 describe("mobile themes", () => {
+  it("uses specified ANSI colors in the native terminal and keeps omitted slots", () => {
+    const original = getMobileTerminalTheme("grove", "dark");
+    using _colors = vi.spyOn(mobileTheme, "getMobileThemeColors").mockReturnValue({
+      ...mobileTheme.getMobileThemeColors("grove", "dark"),
+      terminalAnsiRed: "#123456",
+      terminalAnsiBrightWhite: "oklch(1 0 0)",
+    });
+    const theme = getMobileTerminalTheme("grove", "dark");
+    expect(theme.palette[1]).toBe("#123456");
+    expect(theme.palette[15]).toBe("#ffffff");
+    expect(theme.palette.filter((_, index) => index !== 1 && index !== 15)).toEqual(
+      original.palette.filter((_, index) => index !== 1 && index !== 15),
+    );
+    expect(buildGhosttyThemeConfig(theme)).toContain("palette = 1=#123456\n");
+  });
+
   it("declares every runtime theme variable in the static stylesheet", () => {
     const generatedVariables = createMobileThemeVariables(T3_CHAT_THEME.colors, "light");
     expect(Object.keys(readDefaultMobileThemeVariables("light")).sort()).toEqual(

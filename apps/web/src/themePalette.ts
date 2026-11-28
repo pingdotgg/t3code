@@ -18,6 +18,7 @@ import {
   T3_CODE_DARK_THEME_COLORS,
   RESERVED_THEME_IDS,
   THEME_COLOR_ROLES,
+  TERMINAL_ANSI_COLOR_ROLES,
   type ThemeAppearance,
   type ThemeColorRole,
   type ThemeColors,
@@ -544,7 +545,7 @@ function themeRgbToThemeColor(color: ThemeRgbColor): string {
 
 function decodeThemeColors(colors: ThemeColors): ThemeColors {
   return Object.fromEntries(
-    THEME_COLOR_ROLES.map((role) => {
+    THEME_COLOR_ROLES.filter((role) => colors[role] !== undefined).map((role) => {
       const color = toCanonicalThemeColor(colors[role]);
       if (!color) {
         throw new Error(
@@ -1712,6 +1713,22 @@ const APP_THEME_VARIABLES: Readonly<Record<ThemeColorRole, string>> = {
   terminalSelection: "--app-theme-terminal-selection-background",
   terminalScrollbar: "--app-theme-terminal-scrollbar",
   terminalScrollbarHover: "--app-theme-terminal-scrollbar-hover",
+  terminalAnsiBlack: "--app-theme-terminal-ansi-black",
+  terminalAnsiRed: "--app-theme-terminal-ansi-red",
+  terminalAnsiGreen: "--app-theme-terminal-ansi-green",
+  terminalAnsiYellow: "--app-theme-terminal-ansi-yellow",
+  terminalAnsiBlue: "--app-theme-terminal-ansi-blue",
+  terminalAnsiMagenta: "--app-theme-terminal-ansi-magenta",
+  terminalAnsiCyan: "--app-theme-terminal-ansi-cyan",
+  terminalAnsiWhite: "--app-theme-terminal-ansi-white",
+  terminalAnsiBrightBlack: "--app-theme-terminal-ansi-bright-black",
+  terminalAnsiBrightRed: "--app-theme-terminal-ansi-bright-red",
+  terminalAnsiBrightGreen: "--app-theme-terminal-ansi-bright-green",
+  terminalAnsiBrightYellow: "--app-theme-terminal-ansi-bright-yellow",
+  terminalAnsiBrightBlue: "--app-theme-terminal-ansi-bright-blue",
+  terminalAnsiBrightMagenta: "--app-theme-terminal-ansi-bright-magenta",
+  terminalAnsiBrightCyan: "--app-theme-terminal-ansi-bright-cyan",
+  terminalAnsiBrightWhite: "--app-theme-terminal-ansi-bright-white",
 };
 
 export function getThemeColorVariable(role: ThemeColorRole): string {
@@ -1732,6 +1749,7 @@ export function applyThemeColorPreview(
 
   root.dataset.themeId = THEME_PREVIEW_ID;
   root.classList.toggle("dark", appearance === "dark");
+  for (const role of TERMINAL_ANSI_COLOR_ROLES) root.style.removeProperty(APP_THEME_VARIABLES[role]);
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
@@ -1750,6 +1768,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   const palette = getThemeDefinition(theme);
   applyThemeCss(palette?.css);
   applyThemeBackground(palette?.id);
+  for (const role of TERMINAL_ANSI_COLOR_ROLES) root.style.removeProperty(APP_THEME_VARIABLES[role]);
 
   if (palette) {
     root.dataset.themeId = palette.id;

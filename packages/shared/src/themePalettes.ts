@@ -27,6 +27,25 @@ export type BuiltInThemeId = (typeof BUILT_IN_THEME_IDS)[number];
 export type MobileThemeId = (typeof MOBILE_THEME_IDS)[number];
 export type ThemeAppearance = "light" | "dark";
 
+export const TERMINAL_ANSI_COLOR_ROLES = [
+  "terminalAnsiBlack",
+  "terminalAnsiRed",
+  "terminalAnsiGreen",
+  "terminalAnsiYellow",
+  "terminalAnsiBlue",
+  "terminalAnsiMagenta",
+  "terminalAnsiCyan",
+  "terminalAnsiWhite",
+  "terminalAnsiBrightBlack",
+  "terminalAnsiBrightRed",
+  "terminalAnsiBrightGreen",
+  "terminalAnsiBrightYellow",
+  "terminalAnsiBrightBlue",
+  "terminalAnsiBrightMagenta",
+  "terminalAnsiBrightCyan",
+  "terminalAnsiBrightWhite",
+] as const;
+
 export const THEME_COLOR_ROLES = [
   "canvas",
   "chrome",
@@ -89,10 +108,15 @@ export const THEME_COLOR_ROLES = [
   "terminalSelection",
   "terminalScrollbar",
   "terminalScrollbarHover",
+  ...TERMINAL_ANSI_COLOR_ROLES,
 ] as const;
 
 export type ThemeColorRole = (typeof THEME_COLOR_ROLES)[number];
-export type ThemeColors = Readonly<Record<ThemeColorRole, string>>;
+type TerminalAnsiColorRole = (typeof TERMINAL_ANSI_COLOR_ROLES)[number];
+export type ThemeColors = Readonly<
+  Record<Exclude<ThemeColorRole, TerminalAnsiColorRole>, string> &
+    Partial<Record<TerminalAnsiColorRole, string>>
+>;
 export type ThemeVariants = Readonly<Partial<Record<ThemeAppearance, ThemeColors>>>;
 export type ThemeDefinition = Readonly<{
   id: string;

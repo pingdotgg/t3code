@@ -1,4 +1,5 @@
 import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
+import { TERMINAL_ANSI_COLOR_ROLES } from "@t3tools/shared/themePalettes";
 import { parse, type ParseError } from "jsonc-parser";
 import { msg } from "gt-react";
 
@@ -383,6 +384,11 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
     "button.foreground",
   );
   overrides.accentForeground = readableOn(accentHex, derived.accentForeground, "button.foreground");
+  for (const role of TERMINAL_ANSI_COLOR_ROLES) {
+    const key = `terminal.${role.slice("terminal".length).replace(/^A/, "a")}`;
+    const color = solidOver(terminal, key);
+    if (color) overrides[role] = color;
+  }
 
   const name = resolveName(value);
   const generatedId = themeIdFromName(name);

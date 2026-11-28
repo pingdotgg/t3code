@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { TERMINAL_ANSI_COLOR_ROLES } from "@t3tools/shared/themePalettes";
 
 import {
   getThemeColorsForMode,
@@ -6,6 +7,7 @@ import {
   themeColorToHex,
   THEME_FILE_VERSION,
   toCanonicalThemeColor,
+  serializeThemeFile,
 } from "./themePalette";
 import {
   isVsCodeThemeFile,
@@ -66,6 +68,40 @@ const VSCODE_DARK = {
 };
 
 describe("theme import text", () => {
+  it("keeps all VS Code ANSI slots through a theme-file round trip", () => {
+    const ansiColors = Object.fromEntries(
+      TERMINAL_ANSI_COLOR_ROLES.map((role, index) => [
+        `terminal.${role.slice("terminal".length).replace(/^A/, "a")}`,
+        `#${(index * 0x101010).toString(16).padStart(6, "0")}`,
+      ]),
+    );
+    const theme = parseVsCodeThemeFile({
+      ...VSCODE_DARK,
+      colors: { ...VSCODE_DARK.colors, ...ansiColors },
+    });
+    const restored = parseThemeFile(JSON.parse(serializeThemeFile(theme)));
+    for (const [index, role] of TERMINAL_ANSI_COLOR_ROLES.entries()) {
+      expect(asHex(theme.colors[role]!)).toBe(
+        `#${(index * 0x101010).toString(16).padStart(6, "0")}`,
+      );
+      expect(restored.colors[role]).toBe(theme.colors[role]);
+    }
+  });
+
+  it("leaves missing or invalid ANSI slots unset and composites translucent colors", () => {
+    const theme = parseVsCodeThemeFile({
+      ...VSCODE_DARK,
+      colors: {
+        ...VSCODE_DARK.colors,
+        "terminal.ansiRed": "#ffffff80",
+        "terminal.ansiBlue": "invalid",
+      },
+    });
+    expect(asHex(theme.colors.terminalAnsiRed!)).toBe("#888888");
+    expect(theme.colors.terminalAnsiBlue).toBeUndefined();
+    expect(theme.colors.terminalAnsiBrightRed).toBeUndefined();
+  });
+
   it("preserves conversion of ordinary VS Code JSON", () => {
     expect(parseThemeImport(JSON.stringify(VSCODE_DARK))).toEqual(
       parseVsCodeThemeFile(VSCODE_DARK),
