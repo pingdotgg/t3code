@@ -220,9 +220,10 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     S["DecodingServices"] | Scope.Scope
   > {
     // One fixed folder: Claude Code keeps a ~/.claude/projects entry for every cwd it runs in.
+    // Voice cleanup gets a fresh scratch folder per call and reads no project files either.
     const titleDirectory = path.join(serverConfig.providerStatusCacheDir, "claude-title");
     const workingDirectory =
-      operation === "generateThreadTitle"
+      operation === "generateThreadTitle" || operation === "generateTranscriptionPostProcessing"
         ? yield* fileSystem.makeDirectory(titleDirectory, { recursive: true }).pipe(
             Effect.as(titleDirectory),
             Effect.mapError((cause) =>
