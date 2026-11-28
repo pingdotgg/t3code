@@ -78,7 +78,7 @@ import {
   WorkspaceBreadcrumbText,
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
-import { UsageAccessCard, type UsageAccessPrompt } from "./UsageAccessDialog";
+import { UsageAccessQuestion, type UsageAccessPrompt } from "./UsageAccessDialog";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
@@ -540,7 +540,7 @@ export function UsagePage() {
         <ScrollArea className="min-h-0 flex-1" observeContent>
           <WorkspacePageContainer width="wide">
             {accessPrompts.length > 0 ? (
-              <UsageAccessCard prompts={accessPrompts} />
+              <UsageAccessQuestion prompts={accessPrompts} />
             ) : selectedEnvironments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {environments.length === 0

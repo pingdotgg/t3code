@@ -13,6 +13,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { T, useGT, useMessages } from "gt-react";
+import { ChartColumnIcon } from "lucide-react";
 import { useState } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -31,6 +32,14 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "../ui/empty";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 
@@ -221,23 +230,27 @@ function UsageAccessActions({ choices }: { readonly choices: UsageAccessChoices 
 }
 
 /** The Usage page's own content until every listed agent has an answer. The rest of the app stays usable. */
-export function UsageAccessCard({ prompts }: { readonly prompts: readonly UsageAccessPrompt[] }) {
+export function UsageAccessQuestion({
+  prompts,
+}: {
+  readonly prompts: readonly UsageAccessPrompt[];
+}) {
   const choices = useUsageAccessChoices(prompts, () => {});
   return (
-    <div className="flex min-h-[min(34rem,70vh)] items-center justify-center">
-      <section
-        aria-labelledby="usage-access-title"
-        className="w-full max-w-md rounded-2xl border bg-popover shadow-lg/5"
-      >
-        <div className="flex flex-col gap-2 p-6 pb-4">
-          <h2 id="usage-access-title" className="text-xl leading-snug font-semibold">
-            <UsageAccessTitle />
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            <UsageAccessIntro />
-          </p>
-        </div>
-        <div className="px-6 pb-6">
+    <Empty role="region" aria-labelledby="usage-access-title" className="min-h-[min(34rem,70vh)]">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <ChartColumnIcon />
+        </EmptyMedia>
+        <EmptyTitle id="usage-access-title" role="heading" aria-level={2}>
+          <UsageAccessTitle />
+        </EmptyTitle>
+        <EmptyDescription>
+          <UsageAccessIntro />
+        </EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <div className="w-full text-start">
           <UsageAccessRows
             prompts={prompts}
             declined={choices.declined}
@@ -245,11 +258,11 @@ export function UsageAccessCard({ prompts }: { readonly prompts: readonly UsageA
             onToggle={choices.toggle}
           />
         </div>
-        <div className="flex justify-end gap-2 rounded-b-2xl border-t bg-muted/72 px-6 py-4">
+        <div className="flex gap-2">
           <UsageAccessActions choices={choices} />
         </div>
-      </section>
-    </div>
+      </EmptyContent>
+    </Empty>
   );
 }
 

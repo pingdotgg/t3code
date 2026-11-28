@@ -12,12 +12,13 @@ import {
   type UsageAccessRequest,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { T, useGT, useMessages } from "gt-react-native";
+import { useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
 import { View } from "react-native";
 
-import { AppText as Text } from "../../components/ui/AppText";
+import { ProviderIcon } from "../../components/ProviderIcon";
 import { Button } from "../../components/ui/Button";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { ErrorBanner } from "../../components/ui/ErrorBanner";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
@@ -97,77 +98,79 @@ export function UsageAccessCard({ prompts }: { readonly prompts: readonly UsageA
   };
 
   return (
-    <SettingsSection
-      title={gt("Show agent usage?")}
-      footer={gt("You can change this for each agent in web or desktop Settings → Providers.")}
-    >
-      <View className="gap-1 px-4 pt-4">
-        <Text className="text-sm text-foreground-muted">
-          <T>T3 Code reads this from each agent to chart cost, tokens, and limits.</T>
-        </Text>
-      </View>
-      {prompts.map((prompt) => {
-        const key = promptKey(prompt);
-        const snapshot = providersByEnvironment
-          .get(prompt.environmentId)
-          ?.find((provider) => provider.instanceId === prompt.instanceId);
-        const label = resolveProviderInstanceDisplayName(
-          snapshot ?? { instanceId: prompt.instanceId, driver: prompt.driver },
-        );
-        const allowed = !declined.has(key);
-        return (
-          <ListRowLayout
-            key={key}
-            label={label}
-            description={
-              showEnvironment
-                ? gt("{environment} · {detail}", {
-                    environment: prompt.environmentLabel,
-                    detail: usageAccessReadsLabel(prompt.driver, messages),
-                  })
-                : usageAccessReadsLabel(prompt.driver, messages)
-            }
-            disabled={saving}
-            accessory={
-              <ThemedSwitch
-                accessibilityLabel={label}
+    <View>
+      <EmptyState
+        variant="plain"
+        title={gt("Show agent usage?")}
+        detail={gt("T3 Code reads this from each agent to chart cost, tokens, and limits.")}
+      />
+      <View className="gap-5">
+        <SettingsSection
+          footer={gt("You can change this for each agent in web or desktop Settings → Providers.")}
+        >
+          {prompts.map((prompt) => {
+            const key = promptKey(prompt);
+            const snapshot = providersByEnvironment
+              .get(prompt.environmentId)
+              ?.find((provider) => provider.instanceId === prompt.instanceId);
+            const label = resolveProviderInstanceDisplayName(
+              snapshot ?? { instanceId: prompt.instanceId, driver: prompt.driver },
+            );
+            const allowed = !declined.has(key);
+            return (
+              <ListRowLayout
+                key={key}
+                leading={
+                  <ProviderIcon provider={prompt.driver} iconUrl={snapshot?.iconUrl} size={20} />
+                }
+                label={label}
+                description={
+                  showEnvironment
+                    ? gt("{environment} · {detail}", {
+                        environment: prompt.environmentLabel,
+                        detail: usageAccessReadsLabel(prompt.driver, messages),
+                      })
+                    : usageAccessReadsLabel(prompt.driver, messages)
+                }
                 disabled={saving}
-                style={{ alignSelf: "center" }}
-                value={allowed}
-                onValueChange={(value) =>
-                  setDeclined((current) => {
-                    const next = new Set(current);
-                    if (value) next.delete(key);
-                    else next.add(key);
-                    return next;
-                  })
+                accessory={
+                  <ThemedSwitch
+                    accessibilityLabel={label}
+                    disabled={saving}
+                    style={{ alignSelf: "center" }}
+                    value={allowed}
+                    onValueChange={(value) =>
+                      setDeclined((current) => {
+                        const next = new Set(current);
+                        if (value) next.delete(key);
+                        else next.add(key);
+                        return next;
+                      })
+                    }
+                  />
                 }
               />
-            }
+            );
+          })}
+        </SettingsSection>
+        {error ? <ErrorBanner message={error} /> : null}
+        <View className="gap-2.5">
+          <Button
+            label={gt("Allow")}
+            tone="primary"
+            fullWidth
+            loading={saving}
+            disabled={prompts.every((prompt) => declined.has(promptKey(prompt)))}
+            onPress={() => void answer(true)}
           />
-        );
-      })}
-      {error ? (
-        <View className="px-4">
-          <ErrorBanner message={error} />
+          <Button
+            label={gt("Don't allow")}
+            fullWidth
+            disabled={saving}
+            onPress={() => void answer(false)}
+          />
         </View>
-      ) : null}
-      <View className="flex-row justify-end gap-2 px-4 pb-4 pt-1">
-        <Button
-          label={gt("Don't allow")}
-          size="compact"
-          disabled={saving}
-          onPress={() => void answer(false)}
-        />
-        <Button
-          label={gt("Allow")}
-          tone="primary"
-          size="compact"
-          loading={saving}
-          disabled={prompts.every((prompt) => declined.has(promptKey(prompt)))}
-          onPress={() => void answer(true)}
-        />
       </View>
-    </SettingsSection>
+    </View>
   );
 }

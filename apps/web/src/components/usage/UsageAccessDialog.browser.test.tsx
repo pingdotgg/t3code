@@ -28,7 +28,7 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
 }));
 
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { UsageAccessCard, type UsageAccessPrompt } from "./UsageAccessDialog";
+import { UsageAccessQuestion, type UsageAccessPrompt } from "./UsageAccessDialog";
 
 const environmentId = EnvironmentId.make("primary");
 const prompt = (driver: string): UsageAccessPrompt => ({
@@ -43,7 +43,7 @@ it("says what each agent's access reads and saves only the agents left on", asyn
   state.mutateProviderInstance.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   await using screen = await render(
     <RegistryContext.Provider value={appAtomRegistry}>
-      <UsageAccessCard prompts={[prompt("claudeAgent"), prompt("codex")]} />
+      <UsageAccessQuestion prompts={[prompt("claudeAgent"), prompt("codex")]} />
     </RegistryContext.Provider>,
   );
   await expect.element(screen.getByText("Session history and sign-in")).toBeVisible();
