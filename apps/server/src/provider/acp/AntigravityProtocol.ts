@@ -578,11 +578,12 @@ export function normalizeAntigravitySessionUpdate(
   };
 }
 
-function antigravityUpdateSteps(
-  rawInput: unknown,
-):
-  | Extract<EffectAcpSchema.SessionUpdate, { readonly sessionUpdate: "plan" }>["entries"]
-  | undefined {
+type AntigravityPlanEntries = Extract<
+  EffectAcpSchema.SessionUpdate,
+  { readonly sessionUpdate: "plan" }
+>["entries"];
+
+function antigravityUpdateSteps(rawInput: unknown): AntigravityPlanEntries | undefined {
   if (!Predicate.isObject(rawInput) || !Array.isArray(rawInput.steps)) return undefined;
   const steps: ReadonlyArray<unknown> = rawInput.steps;
   return steps.flatMap((step) =>
@@ -594,9 +595,11 @@ function antigravityUpdateSteps(
             status:
               step.status === "done"
                 ? "completed"
-                : typeof step.status === "string"
-                  ? step.status
-                  : "pending",
+                : step.status === "skipped"
+                  ? "cancelled"
+                  : typeof step.status === "string"
+                    ? step.status
+                    : "pending",
           },
         ]
       : [],
@@ -604,11 +607,11 @@ function antigravityUpdateSteps(
 }
 
 /**
- * agy reports its update_steps checklist only as tool calls, never as ACP `plan` updates. Each
- * call carrying steps becomes a plan update; its other updates name it by id only and are dropped.
+ * agy reports its update_steps checklist only as tool calls, never as ACP `plan` updates. Buffer
+ * each call's steps until it completes so rejected calls do not overwrite the task list.
  */
 export function makeAntigravityUpdateStepsPlans() {
-  const calls = new Set<string>();
+  const calls = new Map<string, AntigravityPlanEntries | undefined>();
   return (
     notification: EffectAcpSchema.SessionNotification,
   ): EffectAcpSchema.SessionNotification | undefined => {
@@ -617,18 +620,29 @@ export function makeAntigravityUpdateStepsPlans() {
       return notification;
     }
     const key = `${notification.sessionId}\u0000${update.toolCallId}`;
+    const isMcp = Predicate.isObject(update._meta) && update._meta.is_mcp_tool_call === true;
     if (
+      !isMcp &&
       update.title === "Run update_steps" &&
-      (update.kind === undefined || update.kind === null || update.kind === "other")
+      (update.kind === undefined || update.kind === null || update.kind === "other") &&
+      !calls.has(key)
     ) {
-      calls.add(key);
+      calls.set(key, undefined);
     }
     if (!calls.has(key)) return notification;
-    if (update.status === "completed" || update.status === "failed") calls.delete(key);
-    const entries = antigravityUpdateSteps(update.rawInput);
-    return entries === undefined
-      ? undefined
-      : { ...notification, update: { sessionUpdate: "plan", entries } };
+    const entries = antigravityUpdateSteps(update.rawInput) ?? calls.get(key);
+    if (update.status === "completed") {
+      calls.delete(key);
+      return entries === undefined || entries.length === 0
+        ? undefined
+        : { ...notification, update: { sessionUpdate: "plan", entries } };
+    }
+    if (update.status === "failed") {
+      calls.delete(key);
+      return undefined;
+    }
+    calls.set(key, entries);
+    return undefined;
   };
 }
 

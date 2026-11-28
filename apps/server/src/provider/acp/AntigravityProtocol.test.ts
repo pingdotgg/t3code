@@ -15,6 +15,7 @@ import {
   normalizeAntigravityToolCall,
   sanitizeAntigravityToolPayload,
   makeAntigravityReadRepair,
+  makeAntigravityUpdateStepsPlans,
 } from "./AntigravityProtocol.ts";
 import {
   mergeToolCallState,
@@ -982,5 +983,188 @@ describe("Antigravity served reads", () => {
       }).toolCall,
     );
     expect(foreignCall.data.rawInput).toEqual({ message: "Hello", toolSummary: "Send greeting" });
+  });
+});
+
+describe("Antigravity update_steps plans", () => {
+  it("waits for completion before emitting a plan and drops rejected calls", () => {
+    const plans = makeAntigravityUpdateStepsPlans();
+    const start = plans({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-1",
+        title: "Run update_steps",
+        kind: "other",
+        status: "in_progress",
+        rawInput: {
+          steps: [
+            { title: "Done step", status: "done" },
+            { title: "Skipped step", status: "skipped" },
+            { title: "Active step", status: "in_progress" },
+            { title: "Failed step", status: "failed" },
+          ],
+        },
+      },
+    });
+    expect(start).toBeUndefined();
+
+    const completed = plans({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-1",
+        status: "completed",
+      },
+    });
+    expect(completed).toEqual({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "plan",
+        entries: [
+          { content: "Done step", priority: "medium", status: "completed" },
+          { content: "Skipped step", priority: "medium", status: "cancelled" },
+          { content: "Active step", priority: "medium", status: "in_progress" },
+          { content: "Failed step", priority: "medium", status: "failed" },
+        ],
+      },
+    });
+
+    expect(
+      plans({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call-2",
+          title: "Run update_steps",
+          kind: "other",
+          status: "in_progress",
+          rawInput: { steps: [] },
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      plans({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "call-2",
+          status: "failed",
+          rawOutput: "Encountered error in tool execution: steps must not be empty",
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("handles single-frame completed calls and ignores empty or MCP update_steps calls", () => {
+    const plans = makeAntigravityUpdateStepsPlans();
+    expect(
+      plans({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call-history",
+          title: "Run update_steps",
+          kind: "other",
+          status: "completed",
+          rawInput: { steps: [{ title: "Replayed", status: "done" }] },
+        },
+      }),
+    ).toEqual({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "plan",
+        entries: [{ content: "Replayed", priority: "medium", status: "completed" }],
+      },
+    });
+
+    expect(
+      plans({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call-empty",
+          title: "Run update_steps",
+          kind: "other",
+          status: "completed",
+          rawInput: { steps: [] },
+        },
+      }),
+    ).toBeUndefined();
+
+    // An explicit empty replacement must not fall back to earlier buffered steps.
+    expect(
+      plans({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call-cleared-on-complete",
+          title: "Run update_steps",
+          kind: "other",
+          status: "in_progress",
+          rawInput: { steps: [{ title: "Stale step", status: "in_progress" }] },
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      plans({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "call-cleared-on-complete",
+          status: "completed",
+          rawInput: { steps: [] },
+        },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      plans({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call-cleared-before-complete",
+          title: "Run update_steps",
+          kind: "other",
+          status: "in_progress",
+          rawInput: { steps: [{ title: "Stale step", status: "in_progress" }] },
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      plans({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "call-cleared-before-complete",
+          status: "in_progress",
+          rawInput: { steps: [] },
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      plans({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "call-cleared-before-complete",
+          status: "completed",
+        },
+      }),
+    ).toBeUndefined();
+
+    const mcpNotification = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call-mcp",
+        title: "Run update_steps",
+        kind: "other",
+        status: "in_progress",
+        rawInput: { steps: [{ title: "Foreign MCP", status: "done" }] },
+        _meta: { is_mcp_tool_call: true },
+      },
+    } satisfies EffectAcpSchema.SessionNotification;
+    expect(plans(mcpNotification)).toEqual(mcpNotification);
   });
 });
