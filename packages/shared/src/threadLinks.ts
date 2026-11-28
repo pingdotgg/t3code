@@ -54,7 +54,7 @@ const LINK_PATTERNS = [
   String.raw`\[${LABEL}\]\((?:<[^<>\n]*>|[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\)`,
   String.raw`<(?<autolink>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>`,
   // After a URL character the hosted link is part of a longer URL, such as a redirect target.
-  String.raw`(?<![A-Za-z0-9%/?#=&@+-])(?<bare>${HOSTED_LINK})(?![\w%/?#-]|(?:\.+[\w%/?#-]))`,
+  String.raw`(?<![A-Za-z0-9%/?#=&@+-])(?<bare>${HOSTED_LINK})(?!\.*[\w%/?#-])`,
 ].join("|");
 const THREAD_LINK = new RegExp(`${ESCAPED_CHARACTER}|${LINK_PATTERNS}`, "gm");
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(

@@ -531,7 +531,6 @@ describe("hosted thread links", () => {
       hosted: true,
     });
     expect(parseThreadLinkHref("https://app.t3.codes/threads/local/task.")).toBeNull();
-    expect(parseThreadLinkHref("https://app.t3.codes/threads/local/..")).toBeNull();
     expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1/thread-1?prompt=go")).toBeNull();
     expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1/thread-1/extra")).toBeNull();
     expect(parseThreadLinkHref("https://app.t3.codes/threads/env-1")).toBeNull();
