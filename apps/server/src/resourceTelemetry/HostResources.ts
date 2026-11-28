@@ -129,20 +129,23 @@ function hasNetworkFilesystem(mounts: string): boolean {
     .some((line) => NETWORK_FILESYSTEMS.has(line.trim().split(/\s+/)[2] ?? ""));
 }
 
-/** The busiest device's share of the interval with I/O in flight, in percent. */
+/**
+ * An upper bound on the share of the interval any task waited on a local disk, in percent:
+ * disks stalling at different times add up.
+ */
 export function diskBusyPercent(
   before: ReadonlyMap<string, number>,
   after: ReadonlyMap<string, number>,
   elapsedMillis: number,
 ): number | null {
   if (elapsedMillis <= 0) return null;
-  let busiest: number | null = null;
+  let busy: number | null = null;
   for (const [device, ticks] of after) {
     const previous = before.get(device);
     if (previous === undefined || ticks < previous) continue;
-    busiest = Math.max(busiest ?? 0, Math.min(100, ((ticks - previous) / elapsedMillis) * 100));
+    busy = (busy ?? 0) + ((ticks - previous) / elapsedMillis) * 100;
   }
-  return busiest;
+  return busy === null ? null : Math.min(100, busy);
 }
 
 export interface PressureSample {
@@ -156,10 +159,10 @@ export interface PressureSample {
   readonly cpuSome: number | null;
   readonly ioFull: number | null;
   /**
-   * The busiest block device's busy percent over about the same minute. PSI also counts
+   * The block devices' combined busy percent over about the same minute. PSI also counts
    * waits that touch no disk, such as a terminal idling in `io_uring_enter`, but tasks
-   * cannot all wait on a disk for longer than some disk has I/O in flight. Null while a
-   * network filesystem is mounted, since its stalls are real but touch no local disk.
+   * cannot all wait on disks for longer than the disks have I/O in flight. Null when a task
+   * stuck on a network filesystem was seen, since those stalls touch no local disk.
    */
   readonly diskBusy: number | null;
   /** One-minute load average per CPU, where PSI is missing. */
@@ -317,6 +320,9 @@ const make = Effect.fn("makeHostResources")(function* () {
   >([]);
 
   const readFile = (path: string) => fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
+  const readDirectory = (path: string) =>
+    fs.readDirectory(path).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+  const lastStuckTaskAt = yield* Ref.make<number | null>(null);
 
   // libuv cannot cancel a started `statfs`, so a hung mount gets at most one in flight.
   const pendingStatfs = new Set<string>();
@@ -388,6 +394,28 @@ const make = Effect.fn("makeHostResources")(function* () {
     return diskBusyPercent(oldest.ticks, ticks, now - oldest.at);
   });
 
+  // A task stuck on storage sleeps uninterruptibly (`D`); an idle io_uring waiter does not.
+  const anyTaskStuck = Effect.fnUntraced(function* () {
+    for (const pid of yield* readDirectory("/proc")) {
+      if (!/^\d+$/.test(pid)) continue;
+      for (const tid of yield* readDirectory(`/proc/${pid}/task`)) {
+        const stat = yield* readFile(`/proc/${pid}/task/${tid}/stat`);
+        if (stat.charAt(stat.lastIndexOf(")") + 2) === "D") return true;
+      }
+    }
+    return false;
+  });
+
+  // Network filesystem stalls never reach a block device, so while one is mounted the
+  // disk cap holds only if no task was seen stuck in the last minute.
+  const networkStallSeen = Effect.fnUntraced(function* () {
+    if (!hasNetworkFilesystem(yield* readFile("/proc/mounts"))) return false;
+    const now = yield* Clock.currentTimeMillis;
+    if (yield* anyTaskStuck()) yield* Ref.set(lastStuckTaskAt, now);
+    const stuckAt = yield* Ref.get(lastStuckTaskAt);
+    return stuckAt !== null && now - stuckAt <= DISK_BUSY_WINDOW_MS;
+  });
+
   // Untraced: it runs every few seconds while a client listens.
   const samplePressure = Effect.fnUntraced(function* () {
     const linux = platform === "linux";
@@ -410,10 +438,15 @@ const make = Effect.fn("makeHostResources")(function* () {
         : null;
     const disk = yield* diskSpace;
     const ioFull = psiAverage(ioPsi, "full", "avg60");
+    const ioNeedsCheck = ioFull !== null && ioFull >= IO_ELEVATED * EXIT_RATIO;
+    const diskBusyShare = linux ? yield* sampleDiskBusy(ioNeedsCheck) : null;
     const diskBusy =
-      linux && !hasNetworkFilesystem(yield* readFile("/proc/mounts"))
-        ? yield* sampleDiskBusy(ioFull !== null && ioFull >= IO_ELEVATED * EXIT_RATIO)
-        : null;
+      diskBusyShare !== null &&
+      ioNeedsCheck &&
+      diskBusyShare < ioFull &&
+      (yield* networkStallSeen())
+        ? null
+        : diskBusyShare;
     const sample: PressureSample = {
       memorySome: psiAverage(memoryPsi, "some", "avg10"),
       memoryFull: psiAverage(memoryPsi, "full", "avg10"),

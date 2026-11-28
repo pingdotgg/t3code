@@ -110,6 +110,14 @@ const linuxHost = (files: Record<string, ReadonlyArray<string>>) => {
             reads.set(path, index + 1);
             return Effect.succeed(values[Math.min(index, values.length - 1)]!);
           },
+          readDirectory: (path) =>
+            Effect.succeed([
+              ...new Set(
+                Object.keys(files)
+                  .filter((file) => file.startsWith(`${path}/`))
+                  .map((file) => file.slice(path.length + 1).split("/")[0]!),
+              ),
+            ]),
         }),
         Layer.succeed(HostProcess.Platform, "linux"),
         NativeTelemetryClient.layerTest(),
@@ -303,7 +311,7 @@ describe("pressure levels", () => {
     expect(HostResources.psiAverage("", "full", "avg10")).toBeNull();
   });
 
-  it("reads how busy the busiest disk was", () => {
+  it("reads how busy the disks were", () => {
     const stats = (nvme: number, sda: number) =>
       ` 259       0 nvme0n1 5 0 9 1 7 0 3 2 0 ${nvme} 4 0 0 0 0 0 0\n` +
       `   8       0 sda 5 0 9 1 7 0 3 2 0 ${sda} 4 0 0 0 0 0 0\n`;
@@ -319,9 +327,24 @@ describe("pressure levels", () => {
     ).toBe(100);
     expect(
       HostResources.diskBusyPercent(before, HostResources.diskBusyTicks(stats(1030, 510)), 2000),
-    ).toBe(1.5);
+    ).toBe(2);
     expect(HostResources.diskBusyTicks("")).toEqual(new Map());
     expect(HostResources.diskBusyPercent(before, new Map(), 2000)).toBeNull();
+  });
+
+  it("adds up disks that stalled at different times", () => {
+    const stats = (a: number, b: number) =>
+      `   8       0 sda 5 0 9 1 7 0 3 2 0 ${a} 4 0 0 0 0 0 0\n` +
+      `   8      16 sdb 5 0 9 1 7 0 3 2 0 ${b} 4 0 0 0 0 0 0\n`;
+    const diskBusy = HostResources.diskBusyPercent(
+      HostResources.diskBusyTicks(stats(0, 0)),
+      HostResources.diskBusyTicks(stats(12_000, 12_000)),
+      60_000,
+    );
+    expect(diskBusy).toBe(40);
+    expect(
+      HostResources.nextPressureLevels(HostResources.CALM, { ...quiet, ioFull: 40, diskBusy }).io,
+    ).toBe("severe");
   });
 
   it("keeps small agents listed while rounding large ones coarsely", () => {
@@ -534,20 +557,28 @@ describe("HostResources pressure on Linux", () => {
     ),
   );
 
-  it.effect("keeps io pressure from a network filesystem while local disks are idle", () =>
+  const withNfsMount = (taskState: "D" | "S") =>
+    pressured({
+      "/proc/pressure/cpu": [calmCpu],
+      "/proc/pressure/io": [ioStalled],
+      "/proc/diskstats": [diskstats(1000), diskstats(1000)],
+      "/proc/mounts": ["/dev/nvme1n1p2 / ext4 rw 0 0\nnas:/work /mnt/work nfs4 rw,hard 0 0\n"],
+      "/proc/4242/task/4242/stat": ["4242 (ghostty) S 1 4242 4242 0 -1\n"],
+      "/proc/4242/task/4250/stat": [`4250 (node (worker)) ${taskState} 1 4242 4242 0 -1\n`],
+    });
+
+  it.effect("keeps io pressure from a task stuck on a network filesystem", () =>
     Effect.gen(function* () {
       setup();
       expect(yield* firstIo).toBe("severe");
-    }).pipe(
-      Effect.provide(
-        pressured({
-          "/proc/pressure/cpu": [calmCpu],
-          "/proc/pressure/io": [ioStalled],
-          "/proc/diskstats": [diskstats(1000), diskstats(1000)],
-          "/proc/mounts": ["/dev/nvme1n1p2 / ext4 rw 0 0\nnas:/work /mnt/work nfs4 rw,hard 0 0\n"],
-        }),
-      ),
-    ),
+    }).pipe(Effect.provide(withNfsMount("D"))),
+  );
+
+  it.effect("ignores io PSI from idle waits on a host with an unused network mount", () =>
+    Effect.gen(function* () {
+      setup();
+      expect(yield* firstIo).toBe("none");
+    }).pipe(Effect.provide(withNfsMount("S"))),
   );
 
   it.effect("reports io pressure while a disk is busy", () =>
