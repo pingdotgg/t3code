@@ -542,10 +542,12 @@ export function DevicePanel(props: {
                       <LabeledSection
                         key={group.platform}
                         label={
-                          group.platform === "ios"
-                            ? gt("iOS Simulators")
-                            : group.devices.some((device) => device.physical)
-                              ? gt("Android Devices")
+                          group.devices.some((device) => device.physical)
+                            ? group.platform === "ios"
+                              ? gt("iOS Devices")
+                              : gt("Android Devices")
+                            : group.platform === "ios"
+                              ? gt("iOS Simulators")
                               : gt("Android Emulators")
                         }
                       >

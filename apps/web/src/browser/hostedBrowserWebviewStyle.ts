@@ -16,9 +16,12 @@ export interface HostedBrowserWebviewWrapperStyle {
   readonly pointerEvents: "auto" | "none";
   readonly borderRadius?: number;
   readonly visibility?: "hidden" | "visible";
+  readonly opacity?: number;
 }
 
 const HIDDEN_BROWSER_WEBVIEW_OFFSET = -100_000;
+// Translucent themes show the parked guest through the app; 0 would let the compositor skip it and stall captures.
+const PARKED_BROWSER_WEBVIEW_OPACITY = 0.01;
 
 export function resolveHostedBrowserWebviewWrapperStyle(input: {
   readonly active: boolean;
@@ -61,6 +64,7 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
       zIndex: -1,
       pointerEvents: "none",
       visibility: "visible",
+      opacity: PARKED_BROWSER_WEBVIEW_OPACITY,
     };
   }
 

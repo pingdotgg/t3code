@@ -64,9 +64,10 @@ import {
 } from "./RunExecutionService.ts";
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
-const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
-  Layer.provide(layerTestDatabase),
-);
+const layerTestStores = Layer.merge(
+  EventStore.layer,
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layer)),
+).pipe(Layer.provide(layerTestDatabase));
 
 const layerTestEventSink = EventSink.layer.pipe(
   Layer.provide(Layer.mergeAll(layerTestStores, layerTestDatabase)),

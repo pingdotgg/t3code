@@ -319,6 +319,7 @@ export default function LargeTextViewer(props: {
         <VirtualTablePreview
           name={props.name}
           count={meta.count}
+          indexing={!meta.complete}
           columns={meta.columns}
           header={header}
           columnKinds={columnKinds}

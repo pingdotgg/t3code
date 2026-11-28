@@ -6,6 +6,7 @@ import { normalizeMarkdownFragmentId } from "~/components/chat/markdownFragments
 import { Spinner } from "~/components/ui/spinner";
 import type { MarkdownExtensions } from "~/markdown/wordsHast";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
+import { createPositionMemory, previewPositionKey } from "./previewPosition";
 import {
   buildMarkdownFootnotesSection,
   findFootnoteRefChunkIndex,
@@ -18,7 +19,6 @@ import {
 } from "@t3tools/shared/markdownChunks";
 
 const ESTIMATED_LINE_PX = 24;
-const MAX_SAVED_POSITIONS = 100;
 const FOOTNOTE_TARGET_ID = /^fn-\d+$/;
 const FOOTNOTE_REF_ID = /^fnref-(\d+)(?:-(\d+))?$/;
 
@@ -26,8 +26,10 @@ const CHUNK_FOOTNOTES_OMIT: MarkdownExtensions = { footnotes: "omit" };
 const CHUNK_FOOTNOTES_OMIT_SEEDED: MarkdownExtensions = { footnotes: "omit-seeded" };
 const CHUNK_FOOTNOTES_ONLY: MarkdownExtensions = { footnotes: "only" };
 
-/** Reading positions outlive the preview, which unmounts when the file or thread changes. */
-const savedPositions = new Map<string, { readonly index: number; readonly viewOffset: number }>();
+const savedPositions = createPositionMemory<{
+  readonly index: number;
+  readonly viewOffset: number;
+}>();
 
 type ChunkItem =
   | {
@@ -86,12 +88,12 @@ export function ChunkedMarkdown(props: {
   }
   const containerRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
-  const positionKey = JSON.stringify([
+  const positionKey = previewPositionKey(
     props.threadRef.environmentId,
     props.threadRef.threadId,
     props.cwd,
     props.relativePath,
-  ]);
+  );
   const saved = savedPositions.get(positionKey);
   // The list applies its initial index once, so wait for the saved chunk to stream in.
   const awaitingSaved = props.loading && saved !== undefined && saved.index >= items.length;
@@ -206,14 +208,10 @@ export function ChunkedMarkdown(props: {
         onScroll={() => {
           const list = listRef.current?.getState();
           if (!list) return;
-          savedPositions.delete(positionKey);
           savedPositions.set(positionKey, {
             index: list.start,
             viewOffset: list.positionAtIndex(list.start) - list.scroll,
           });
-          if (savedPositions.size > MAX_SAVED_POSITIONS) {
-            savedPositions.delete(savedPositions.keys().next().value!);
-          }
         }}
         extraData={extraData}
         keyExtractor={(item) => (item.kind === "footnotes" ? "footnotes" : String(item.index))}

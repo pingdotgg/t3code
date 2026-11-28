@@ -10,6 +10,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
+  trimAsciiWhitespace,
   type AgentSessionProjectCandidate,
   type AgentSessionProjectGit,
   type AgentSessionScanResult,
@@ -45,6 +46,7 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { piHome, resolvePiSessionsDir } from "@t3tools/provider-pi/server/usage";
 import * as ServerSettings from "../serverSettings.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import { parseGitfileTarget } from "./worktreeContainer.ts";
 import {
   createTranscriptJsonReader,
   createTranscriptJsonSelector,
@@ -325,14 +327,16 @@ function isTextContentBlock(block: typeof TranscriptContentBlock.Type): boolean 
   return block.type === "text" || block.type === "input_text" || block.type === "output_text";
 }
 
+const trimBlankLines = (text: string) => text.replace(/^\s*\n/, "").trimEnd();
+
 function extractText(
   content: string | ReadonlyArray<typeof TranscriptContentBlock.Type> | undefined,
 ): string {
-  if (typeof content === "string") return content.trim();
+  if (typeof content === "string") return trimBlankLines(content);
   if (content === undefined) return "";
   return content
     .filter(isTextContentBlock)
-    .map((block) => block.text?.trim() ?? "")
+    .map((block) => trimBlankLines(block.text ?? ""))
     .filter((text) => text.length > 0)
     .join("\n");
 }
@@ -643,7 +647,7 @@ function parseAgentSessionRecords(
         const turnId = codexTurnId(record.payload.internal_chat_message_metadata_passthrough);
         const text = extractText(record.payload.content);
         if (turnId !== null && text.length > 0) {
-          responseUsersInTurn.push({ index: recordIndex, turnId, text });
+          responseUsersInTurn.push({ index: recordIndex, turnId, text: text.trim() });
         }
       }
     }
@@ -1153,8 +1157,8 @@ export const make = Effect.gen(function* () {
     const pointerTexts = yield* readGitFiles(pointers.map(({ gitPath }) => gitPath));
     const linkedWorktrees: Array<{ directory: string; gitDir: string }> = [];
     for (const { directory, gitPath } of pointers) {
-      const target = /^gitdir:\s*(.+)$/m.exec(pointerTexts.get(gitPath) ?? "")?.[1]?.trim();
-      if (target === undefined || target.length === 0) {
+      const target = parseGitfileTarget(pointerTexts.get(gitPath) ?? "");
+      if (target === undefined) {
         identities.set(directory, { _tag: "NotGit" });
         continue;
       }
@@ -1553,14 +1557,14 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const file = yield* fileSystem.open(indexPath, { flag: "r" });
         const size = Number((yield* file.stat).size);
-        const start = Math.max(0, size - MAX_CODEX_SESSION_INDEX_BYTES);
+        const start = Math.max(0, size - MAX_CODEX_SESSION_INDEX_BYTES - 1);
         yield* file.seek(BigInt(start), "start");
         const bytes = yield* file.readAlloc(size - start);
         const contents = Option.match(bytes, {
           onNone: () => "",
           onSome: (value) => new TextDecoder().decode(value),
         });
-        // A tail read can start mid-record.
+        // A tail read starts one byte early so a preceding newline keeps the first complete record.
         return parseCodexThreadNames(
           start > 0 ? contents.slice(contents.indexOf("\n") + 1) : contents,
         );
@@ -2238,7 +2242,7 @@ export const make = Effect.gen(function* () {
         const head = (yield* readGitFiles([headPath])).get(headPath) ?? "";
         worktree = {
           path: resolved,
-          branch: /^ref: refs\/heads\/(.+)$/.exec(head.trim())?.[1] ?? null,
+          branch: /^ref: refs\/heads\/(.+)$/.exec(trimAsciiWhitespace(head))?.[1] ?? null,
         };
       }
       worktreesByDirectory.set(resolved, worktree);

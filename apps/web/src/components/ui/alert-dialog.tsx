@@ -116,7 +116,7 @@ function AlertDialogFooter({
   return (
     <div
       className={cn(
-        "flex flex-col-reverse gap-2 px-5 pb-4 sm:flex-row sm:justify-end sm:rounded-b-[calc(var(--radius-pane)-1px)]",
+        "flex flex-col-reverse gap-2 px-5 pb-4 sm:flex-row sm:flex-wrap sm:justify-end sm:rounded-b-[calc(var(--radius-pane)-1px)]",
         className,
       )}
       data-slot="alert-dialog-footer"

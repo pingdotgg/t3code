@@ -1595,6 +1595,7 @@ describe("DesktopWindow", () => {
 
           assert.deepEqual(webPreferences.additionalArguments, expected);
           assert.isTrue(webPreferences.contextIsolation);
+          assert.equal(webPreferences.zoomMode, "isolated");
           assert.equal(
             webPreferences.preload,
             "/repo/apps/desktop/dist-electron/preview-pick-preload.cjs",

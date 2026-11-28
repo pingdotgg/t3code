@@ -1554,7 +1554,10 @@ function conversationProviderThread(
   );
 }
 
-/** Wakes and fresh starts act on the active session; a message continues the conversation. */
+/**
+ * Wakes and fresh starts act on the active session; a message continues the conversation. A
+ * delegated task's completion goes back to the session its dispatching run ran on.
+ */
 function dispatchProviderThread(
   projection: Pick<
     OrchestrationV2ThreadProjection,
@@ -1563,12 +1566,22 @@ function dispatchProviderThread(
   message: Pick<OrchestrationV2ConversationMessage, "notification" | "delegatedCompletion">,
   freshContext: boolean,
 ): OrchestrationV2ProviderThread | undefined {
-  return freshContext ||
-    message.notification !== undefined ||
-    message.delegatedCompletion !== undefined
-    ? projection.providerThreads.find(
-        (candidate) => candidate.id === projection.thread.activeProviderThreadId,
-      )
+  if (freshContext || message.notification !== undefined) {
+    return projection.providerThreads.find(
+      (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+    );
+  }
+  const parentRunId = message.delegatedCompletion?.parentRunId;
+  const parentProviderThreadId =
+    parentRunId === undefined
+      ? undefined
+      : projection.runs.find((run) => run.id === parentRunId)?.providerThreadId;
+  const parentProviderThread = projection.providerThreads.find(
+    (candidate) => candidate.id === parentProviderThreadId,
+  );
+  return parentProviderThread !== undefined &&
+    !providerThreadPredatesBoundary(parentProviderThread, contextBoundaryOrdinal(projection))
+    ? parentProviderThread
     : conversationProviderThread(projection);
 }
 
@@ -9757,7 +9770,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
     // A side chat's "Context from" divider already marks its copied context.
     const activeHandoff =
-      (sideChatFork ? null : portableForkHandoff) ?? mergeBackHandoff ?? providerSwitchHandoff;
+      (sideChatFork ? null : portableForkHandoff) ??
+      providerSwitchHandoff ??
+      mergeBackHandoff ??
+      legacyImportRecoveryHandoff;
     const handoffSourceRuns =
       portableForkHandoff !== null
         ? sourceRun === null
@@ -9798,7 +9814,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ? "Fork context"
                 : providerSwitchHandoff !== null
                   ? "Provider handoff"
-                  : "Merge-back context",
+                  : mergeBackHandoff !== null
+                    ? "Merge-back context"
+                    : "Imported context",
             startedAt: now,
             completedAt: now,
             updatedAt: now,

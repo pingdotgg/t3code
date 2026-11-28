@@ -41,7 +41,7 @@ import {
   withLegacyUltracodeEffort,
 } from "@t3tools/shared/model";
 import { unsentManualContinuationSource } from "@t3tools/shared/orchestrationV2ManualContinuation";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import * as DateTime from "effect/DateTime";
 
 import {
@@ -62,6 +62,23 @@ const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "wait
 const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);
 // Preparing runs show their workspace setup instead.
 const PROVIDER_STARTING_RUN_STATUSES = new Set(["starting", "running"]);
+const LIVE_PROVIDER_SESSION_STATUSES = new Set(["ready", "running", "waiting"]);
+
+/** The startup a send to this instance waits on, or null when its session is live and idle. */
+export function pendingProviderStartup(
+  projection: ThreadStructure | null,
+  instanceId: ProviderInstanceId,
+): { readonly phase: string | undefined } | null {
+  const session = projection?.providerSessions.findLast(
+    (candidate) => candidate.providerInstanceId === instanceId,
+  );
+  const phase = projection === null ? undefined : startupPhaseFor(projection, session);
+  return phase !== undefined || sessionNeedsLaunch(session) ? { phase } : null;
+}
+
+function sessionNeedsLaunch(session: Pick<OrchestrationV2ProviderSession, "status"> | undefined) {
+  return session === undefined || !LIVE_PROVIDER_SESSION_STATUSES.has(session.status);
+}
 
 const EMPTY_EXTENSION_STATUSES: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]> =
   [];
@@ -216,11 +233,12 @@ function summarizeThreadRun(
       projection.messages.findLast(
         (message) => message.runId === run.id && message.role === "assistant",
       )?.id ?? null,
-    // A run counts as running before its provider opens; until a turn appears,
-    // the provider can still be launching for minutes. Some providers keep
-    // preparing after their turn opens and report that step until the first output.
+    // A run counts as running before its provider opens, which can take minutes. A live
+    // session reaches its turn at once unless it reports a slow step, and some providers
+    // keep reporting that step after their turn opens, until the first output.
     ...(turnStatus === undefined
-      ? PROVIDER_STARTING_RUN_STATUSES.has(run.status)
+      ? PROVIDER_STARTING_RUN_STATUSES.has(run.status) &&
+        (phase !== undefined || sessionNeedsLaunch(session))
         ? providerStarting(run, session, phase, providers)
         : {}
       : turnStatus === "pending" || turnStatus === "running"
@@ -417,7 +435,10 @@ export function formatProviderSubagentStatus(
       ? Number.NaN
       : Date.parse(status.completedAt);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return label;
-  const elapsed = formatDuration(Math.max(1_000, Math.floor((end - start) / 1_000) * 1_000));
+  const elapsed = formatDuration(
+    Math.max(1_000, Math.floor((end - start) / 1_000) * 1_000),
+    resolve,
+  );
   return live
     ? resolve(msg("{label} {elapsed}", { label, elapsed }))
     : resolve(msg("{label} in {elapsed}", { label, elapsed }));
@@ -907,7 +928,7 @@ export function presentProviderGoal(
     );
   }
   if (goal.timeUsedSeconds !== undefined && goal.timeUsedSeconds >= 60) {
-    usage.push(formatDuration(goal.timeUsedSeconds * 1_000));
+    usage.push(formatDuration(goal.timeUsedSeconds * 1_000, resolve));
   }
   if (goal.checks !== undefined && goal.checks > 0) {
     usage.push(

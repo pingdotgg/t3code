@@ -2,7 +2,7 @@ import type { EnvironmentSpeechModel, SpeechBenchmarkTier } from "@t3tools/contr
 import { T, useLocale, Var } from "gt-react";
 
 import { Text } from "../ui/text";
-import { languageLabel } from "./SpeechLanguageSelect";
+import { compareLanguageLabels, languageLabel } from "./SpeechLanguageSelect";
 
 const commonLanguages = [
   "en",
@@ -45,7 +45,7 @@ export function orderSpeechLanguages(
   return languages.toSorted(
     (left, right) =>
       (rank.get(left) ?? order.length) - (rank.get(right) ?? order.length) ||
-      languageLabel(left, locale).localeCompare(languageLabel(right, locale)),
+      compareLanguageLabels(left, right, locale),
   );
 }
 

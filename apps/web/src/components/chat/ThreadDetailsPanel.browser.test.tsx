@@ -247,6 +247,7 @@ function Panel({
           sources: [],
           contextWindow: null,
         }}
+        taskList={null}
       />
     </ChatCanvasContext>
   );

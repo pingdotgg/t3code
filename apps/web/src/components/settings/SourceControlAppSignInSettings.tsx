@@ -14,11 +14,12 @@ import { useState, type ReactNode } from "react";
 
 import { T3AppIcon } from "~/components/T3AppIcon";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { useEnvironmentSettings } from "../../hooks/useSettings";
+import { useClientSettings, useEnvironmentSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { formatShortTimestamp } from "../../timestampFormat";
 import { Button, InlineButton } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { StatusDot } from "../ui/status-dot";
@@ -34,9 +35,6 @@ const failureMessage = (cause: Cause.Cause<unknown>) => {
   const error = Cause.squash(cause);
   return error instanceof Error ? (thrownErrorMessage(error, m) ?? error.message) : String(error);
 };
-
-const expiryTime = (expiresAt: number) =>
-  new Date(expiresAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 
 function ExternalLink(props: { readonly href: string; readonly children: ReactNode }) {
   return (
@@ -99,6 +97,9 @@ export function SourceControlAppSignInSettings({
   readonly onChanged: () => void;
 }) {
   const gt = useGT();
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  const expiryTime = (expiresAt: number) =>
+    formatShortTimestamp(new Date(expiresAt).toISOString(), timestampFormat);
   const host = appSignIn.hosts[0] ?? "";
   const { signIns, tokens } = useEnvironmentSettings(environmentId, (settings) =>
     readHostCredentialSettings(settings, definition.kind),

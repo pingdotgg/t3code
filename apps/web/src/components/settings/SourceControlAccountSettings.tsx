@@ -6,7 +6,7 @@ import { T, useGT, Var } from "gt-react";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { groupHostAccounts, nextHostAccountChoices } from "./SourceControlAccountSettings.logic";
@@ -24,9 +24,10 @@ function RedactedLogin(props: {
   readonly account: string;
   readonly revealed: boolean;
   readonly label?: string;
+  readonly onToggle?: () => void;
 }) {
   const gt = useGT();
-  return props.revealed ? (
+  const content = props.revealed ? (
     <span className="min-w-0 truncate font-mono text-caption">{props.account}</span>
   ) : (
     <span className="min-w-0 truncate font-mono text-caption">
@@ -35,6 +36,23 @@ function RedactedLogin(props: {
       </span>
       <span className="sr-only">{props.label ?? gt("Hidden account")}</span>
     </span>
+  );
+  return props.onToggle ? (
+    <InlineButton
+      tone="ghost"
+      className="min-w-0 [--inline-button-text-align:left]"
+      aria-label={
+        props.revealed
+          ? gt("Toggle source control account visibility: {account}", { account: props.account })
+          : gt("Toggle source control account visibility")
+      }
+      aria-pressed={props.revealed}
+      onClick={props.onToggle}
+    >
+      {content}
+    </InlineButton>
+  ) : (
+    content
   );
 }
 
@@ -139,7 +157,11 @@ export function SourceControlAccountSettings({
                     <span>
                       <T>Signed in as</T>
                     </span>
-                    <RedactedLogin revealed={revealed} account={group.selectable[0]} />
+                    <RedactedLogin
+                      revealed={revealed}
+                      account={group.selectable[0]}
+                      onToggle={() => setRevealed((current) => !current)}
+                    />
                   </p>
                 ) : null}
               </div>
@@ -250,14 +272,22 @@ export function SourceControlAccountSettings({
               >
                 {entry.error ? (
                   <T>
-                    <RedactedLogin revealed={revealed} account={entry.account} />{" "}
+                    <RedactedLogin
+                      revealed={revealed}
+                      account={entry.account}
+                      onToggle={() => setRevealed((current) => !current)}
+                    />{" "}
                     <span>
                       can&apos;t be used: <Var>{entry.error}</Var>
                     </span>
                   </T>
                 ) : (
                   <T>
-                    <RedactedLogin revealed={revealed} account={entry.account} />{" "}
+                    <RedactedLogin
+                      revealed={revealed}
+                      account={entry.account}
+                      onToggle={() => setRevealed((current) => !current)}
+                    />{" "}
                     <span>
                       can&apos;t be used: <Var>{cliName}</Var> reports this login as invalid.
                     </span>

@@ -148,6 +148,7 @@ import { ITEM_ROW_CLASSNAME } from "./itemRows";
 import {
   CloudLinkRow,
   CloudRemoteEnvironmentRows,
+  LocalEnvironmentMcpUrlRow,
   SavedBackendListRow,
 } from "./SavedEnvironmentRows";
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
@@ -1413,6 +1414,9 @@ function ConnectionsSettingsContent({
                       }
                 }
               />
+            ) : null}
+            {isPrimaryAccess && accessEnvironment ? (
+              <LocalEnvironmentMcpUrlRow entry={accessEnvironment.entry} />
             ) : null}
             {accessServerConfig?.environment.capabilities.previewTunnelSetting ? (
               <SettingsRow
