@@ -1,4 +1,4 @@
-import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
+import { EnvironmentId, type ProjectEntry, type ProjectReadFileResult } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -68,7 +68,7 @@ vi.mock(import("~/state/projects"), async (original) => {
         const byteLength = previewSizes.get(input.relativePath);
         return Atom.make(
           byteLength === undefined
-            ? AsyncResult.failure(Cause.die("File size unavailable"))
+            ? AsyncResult.failure<ProjectReadFileResult>(Cause.die("File size unavailable"))
             : AsyncResult.success({
                 relativePath: input.relativePath,
                 contents: "",
