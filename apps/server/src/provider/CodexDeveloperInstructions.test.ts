@@ -50,14 +50,16 @@ describe("Codex orchestration context", () => {
       .map(([, entry]) => entry.value)
       .join("\n");
 
-    NodeAssert.ok(orchestration.includes("native tool"));
+    NodeAssert.ok(orchestration.includes("use your native tool when the child uses your provider"));
     NodeAssert.ok(orchestration.includes("`run_in_background:false`"));
-    NodeAssert.ok(orchestration.includes("a native type on one"));
+    NodeAssert.ok(orchestration.includes("A native type on another provider's model"));
     NodeAssert.ok(
       orchestration.includes("Background agent: `delegate_task`, never a background `Agent`."),
     );
-    NodeAssert.ok(orchestration.includes("new review rounds"));
-    NodeAssert.ok(orchestration.includes("never `t3_thread_send`"));
+    NodeAssert.ok(
+      orchestration.includes("Every new delegate review or re-check is a new `delegate_task`"),
+    );
+    NodeAssert.ok(orchestration.includes("never a `t3_thread_send`"));
     NodeAssert.ok(!orchestration.includes("inheritedOptions"));
     NodeAssert.ok(!orchestration.includes("Prefer native"));
     // The ACP terminal fallback is ACP-only; Codex agents never need it.
@@ -65,18 +67,23 @@ describe("Codex orchestration context", () => {
   });
 
   it("gates linked-environment and browser guidance on availability", () => {
-    const off = buildCodexAdditionalContext(
-      { model: "gpt-6.1-sol" },
-      { browser: false, device: false, linkedEnvironments: false },
-    ).t3_code_orchestration_01!.value;
+    const orchestration = (linkedEnvironments: boolean, browser: boolean) =>
+      Object.entries(
+        buildCodexAdditionalContext(
+          { model: "gpt-6.1-sol" },
+          { browser, device: false, linkedEnvironments },
+        ),
+      )
+        .filter(([key]) => key.startsWith("t3_code_orchestration_"))
+        .map(([, entry]) => entry.value)
+        .join("\n");
+
+    const off = orchestration(false, false);
     NodeAssert.ok(!off.includes("`preview_*`"));
     NodeAssert.ok(!off.includes("`t3_environment_link`"));
     NodeAssert.ok(off.includes("Settings → Labs → Linked environments"));
 
-    const on = buildCodexAdditionalContext(
-      { model: "gpt-6.1-sol" },
-      { browser: true, device: false, linkedEnvironments: true },
-    ).t3_code_orchestration_01!.value;
+    const on = orchestration(true, true);
     NodeAssert.ok(on.includes("`preview_*`"));
     NodeAssert.ok(on.includes("`t3_environment_link`"));
     NodeAssert.ok(!on.includes("Settings → Labs → Linked environments"));

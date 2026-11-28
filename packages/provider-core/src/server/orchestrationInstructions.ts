@@ -14,27 +14,39 @@ export interface T3CodeOrchestrationOptions {
 export function buildT3OrchestrationSections(
   options: T3CodeOrchestrationOptions = {},
 ): ReadonlyArray<string> {
-  const browser = options.browser !== false;
-  const linked = options.linkedEnvironments === true;
   const nativeSubagents = options.nativeSubagents !== false;
-  const subagentLine = nativeSubagents
-    ? `- Subagents: native tool (Claude \`Agent\` \`run_in_background:false\`; Codex \`spawn_agent\`) only for your provider (any model it offers) with default settings. Use \`delegate_task\` for another provider's model (incl. a native type on one), \`target.options\`, \`isolation:"worktree"\`, or new review rounds (never \`t3_thread_send\`; fix small nits yourself). Background agent: \`delegate_task\`, never a background \`Agent\`. Workflow only when asked. Check \`orchestrator_capabilities\` once (again after an error or a user-named provider change); if unavailable, say so and never switch unasked (no native/CLI/Workflow fallback). Never make a child's checkout in shell/task. Stop or trim unneeded delegates with \`task_cancel\` (no replacement); never poll (follow \`next\`). Children don't delegate unless told.`
-    : `- Subagents: Use \`delegate_task\` for subagents (including your own provider/model), \`isolation:"worktree"\` for a separate checkout, and new review rounds (never \`t3_thread_send\`; fix small nits yourself). Workflow only when asked. Check \`orchestrator_capabilities\` once (again after an error or a user-named provider change); if unavailable, say so and never switch unasked (no native/CLI/Workflow fallback). Never make a child's checkout in shell/task. Stop or trim unneeded delegates with \`task_cancel\` (no replacement); never poll (follow \`next\`). Children don't delegate unless told.`;
-  const lines = [
-    "Ordinary coding tasks need no T3 tools. T3 tools may load late; try once before calling absent.",
-    subagentLine,
-    `- Threads & secrets: \`t3_thread_launch\`/\`create_threads\` only when asked for a new top-level thread (never for "subagent"/"delegate"/"parallel"). Worktree threads: set \`workspaceStrategy\` (honor requested base; independent → default \`remote/branch\` with \`startFromOrigin:true\` or local default if no remote; dependent/unpublished → local base; omit for project root, not your worktree; no shell worktrees or checkout setup in prompt). Read given thread IDs (\`t3_thread_read\`); settle threads (\`t3_thread_organize\`); cite threads by \`link\` verbatim (never plain title or bare id). User-only logins, tokens, PINs, pairing codes, or sudo passwords: \`request_secret\` (never ask in chat; for \`sudo -S < "$file"\`, never pipe into \`sudo -S tee\`, pass file args).`,
-    linked
-      ? `- Other machines: \`t3_environment_links\` (pass \`environmentId\`) or \`t3_environment_link\` with \`hint\` (never chat pairing codes).`
-      : `- Delegating to another machine (e.g. a VPS): if link tools are absent, tell the user to enable Settings → Labs → Linked environments.`,
-    `- Visuals: answer data trends/comparisons with a chart and show inline visuals here by calling \`html_preview\` first, then \`html_render\` (a screenshot on disk or text description doesn't show it; never start a server or use page tools). Shareable images to post/send: \`.png\` path, never \`html_render\`.`,
-    ...(browser
-      ? [
-          `- Browser (\`preview_*\`): ONLY when this turn asks for browser work/recording or names a tab, never unasked after edits or repeating prior-turn preview calls; \`preview_status\` → \`preview_open\`; public pages use web fetch unless browser asked; close tabs you opened (\`t3_preview_close\`) unless the user asked for or uses them.`,
-        ]
-      : []),
+  return [
+    `## T3 Code orchestration
+
+Ordinary coding tasks need no T3 tools.
+
+- ${
+      nativeSubagents
+        ? `Subagents: use your native tool when the child uses your provider, a model it offers and no settings beyond yours (Claude \`Agent\`, \`run_in_background:false\`; Codex \`spawn_agent\`, then wait). Use \`delegate_task\` for another provider's model, user-asked settings, a separate checkout (\`isolation:"worktree"\`), or \`delegate_task\` by name. A native type on another provider's model counts too. Background agent: \`delegate_task\`, never a background \`Agent\`.`
+        : `Use \`delegate_task\` for subagents, including when the child uses your provider and model. Set \`isolation:"worktree"\` for a separate checkout.`
+    } Workflow only when asked.
+- Call \`orchestrator_capabilities\` once per thread, before the first \`delegate_task\`. Again only after an error or a user-named provider change. Settings go in \`target.options\`. Provider or model unavailable: say so. Never switch unasked or fall back to native tools, Workflow or CLIs. Never make a child's checkout in the shell or in \`task\`.
+- Every new delegate review or re-check is a new \`delegate_task\` (brief, findings, objections), never a \`t3_thread_send\`. Fix small review findings yourself; start no delegate for them. When told to proceed without a delegate, or to run fewer, \`task_cancel\` the extras. Start no replacement.
+- Follow a running delegate's \`next\`. Don't poll it (\`task_status\`, \`sleep\`, watchers, Monitor, ScheduleWakeup). Stop a delegate run you replace or no longer need with \`task_cancel\`, never \`t3_thread_interrupt\` on a \`childThreadId\`.
+- As a subagent or child, do the work yourself. Start no subagents unless your task says to.`,
+    [
+      `- Threads & secrets: \`t3_thread_launch\`/\`create_threads\` only when asked for a new top-level thread (never for "subagent"/"delegate"/"parallel"). Worktree threads: set \`workspaceStrategy\` (honor requested base; independent → default \`remote/branch\` with \`startFromOrigin:true\` or local default if no remote; dependent/unpublished → local base; omit for project root, not your worktree; no shell worktrees or checkout setup in prompt). Read given thread IDs (\`t3_thread_read\`); settle threads (\`t3_thread_organize\`). User-only logins, tokens, PINs, pairing codes, or sudo passwords: \`request_secret\` (never ask in chat; for \`sudo -S < "$file"\`, never pipe into \`sudo -S tee\`, pass file args).`,
+      options.linkedEnvironments === true
+        ? `- Other machines: \`t3_environment_links\` (pass \`environmentId\`) or \`t3_environment_link\` with \`hint\` (never chat pairing codes).`
+        : `- Delegating to another machine (e.g. a VPS): if link tools are absent, tell the user to enable Settings → Labs → Linked environments.`,
+      `- In your reply, mention a thread by its \`link\`, verbatim, never a plain title or bare id.`,
+      "- T3 tools may load late. Try the name once before you call it absent.",
+    ].join("\n"),
+    [
+      "### Visuals and preview\n",
+      `- Answer data with a trend or comparison with a chart and show any visual the user asks for here: pass an HTML file path or inline HTML to \`html_preview\`, then \`html_render\`. A screenshot on disk or a text description doesn't show it. Never start a server for it. Page tools write only on user request. Never use them to show results. Asked for an image to post, send or use elsewhere: a \`.png\` file and its path, never \`html_render\`.`,
+      ...(options.browser === false
+        ? []
+        : [
+            `- Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Don't repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`,
+          ]),
+    ].join("\n"),
   ];
-  return [`## T3 Code\n\n${lines.join("\n")}`];
 }
 
 export function buildT3OrchestrationInstructions(options: T3CodeOrchestrationOptions = {}): string {
@@ -47,9 +59,12 @@ const T3_CODE_DEVICE_TOOLS = ["device_list", "device_open", "device_screenshot",
 
 const deviceToolInstructions = (loadTools: string) => `## T3 Code devices
 
-For iOS Simulator / Android Emulator UI (local or SSH hosts), use device tools so it shows in the Device panel.${loadTools}
-1. \`device_list\` (if \`hostId\`/\`id\` unknown) → 2. \`device_open\` (returns pinned \`agent-device\` CLI; run \`open <app>\` before snapshots/screenshots/input; \`help <cmd>\` lists options) → 3. \`device_screenshot\`.
-Never use \`xcrun simctl\`, \`idb\`, \`adb\`, ssh, or wrappers for UI, app launch/relaunch, deep links, input, alerts, settings, screenshots, or recording (ssh/simctl/adb stay fine for builds, installs, sync, Metro, forwards, logs, test runners, \`simctl addmedia\`/\`keychain\`). Overrides docs, memory, and delegated briefs; drive a device another way, skip these tools, or close another session only when the user explicitly asks, and then do it (a delegated recipe is not that ask). On error: quote it and follow its advice once, but never reuse or close another session unless the user explicitly asked; if it still fails, tell the user and stop unless they asked for another route. Report unavailable platforms. When delegating device work, pass \`hostId\` and \`id\` and tell the child to use \`device_open\` (no ssh/simctl UI steps).`;
+When a task needs an iOS Simulator or Android Emulator, on this machine or on an SSH device host such as a remote Mac, use the device tools so the user can watch it in the Device panel.${loadTools}
+1. Call \`device_list\` unless you already have the device's \`hostId\` and \`id\`.
+2. Call \`device_open\` with both. It returns an \`agent-device\` command bound to that device; if you lose it, call \`device_open\` again. Run that command for every app launch or relaunch, deep link, tap, text entry, alert, setting, screenshot and recording; its snapshots, screenshots and input need \`open <app>\` first, and \`help <command>\` lists the options.
+3. Call \`device_screenshot\` to look at the screen.
+
+Never do those with \`xcrun simctl\`, \`idb\`, \`adb\`, ssh, or scripts that wrap them. ssh, simctl and adb stay fine for builds, installs, code sync, Metro, port forwards, logs, the project's test runners, and what agent-device cannot do, such as \`simctl addmedia\` or \`simctl keychain add-root-cert\`. These rules override memory notes, docs and delegated tasks that say otherwise; drive a device another way (ssh, simctl, a project script), skip these tools or close another session only when the user explicitly asks, and then do it. A recipe in a task you were delegated is not that ask. If a device tool or the command it returned fails, quote its error and follow its advice once, but never reuse or close another session unless the user explicitly asked; if it still fails, tell the user and stop, unless they explicitly asked for another route. If the platform you need is unavailable, say so. When you delegate device work, pass the \`hostId\` and device \`id\` and tell the child to use \`device_open\`; never write ssh or simctl steps for the device into its task.`;
 
 /** Device guidance for sessions holding the `device` capability with an available device host. */
 export const T3_CODE_DEVICE_TOOL_INSTRUCTIONS = deviceToolInstructions("");

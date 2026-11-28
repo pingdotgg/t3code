@@ -13,13 +13,11 @@ export function materializeReplayTranscriptRuntimeInstructions(
         ? "Grok"
         : runtime.driver === "kiro"
           ? "Kiro"
-          : runtime.driver === "muse"
-            ? "Muse Code"
-            : runtime.driver === "acpRegistry"
-              ? "acpRegistry"
-              : runtime.driver === "fx"
-                ? "fx"
-                : undefined;
+          : runtime.driver === "acpRegistry"
+            ? "acpRegistry"
+            : runtime.driver === "fx"
+              ? "fx"
+              : undefined;
   if (harness === undefined) return transcript;
   const instructions = buildRuntimeInstructions({ harness, model: runtime.model });
   // The notes name the model, so each prompt expects the ones for its session's current model.
@@ -241,41 +239,6 @@ export function materializeReplayTranscriptRuntimeInstructions(
         return entry;
       }
       if (
-        runtime.driver === "muse" &&
-        "method" in frame &&
-        frame.method === "turn/start" &&
-        "params" in frame &&
-        isRecord(frame.params) &&
-        Array.isArray(frame.params.input)
-      ) {
-        const inputParts: ReadonlyArray<unknown> = frame.params.input;
-        const firstText = promptPartText(inputParts[0]);
-        if (firstText?.startsWith("<runtime_info>") === true) {
-          const modelMatch = firstText.match(
-            /, as (.+?)(?: with ([^\s\n]+) reasoning effort)?\.(?:\s|<\/runtime_info>)/,
-          );
-          const expectedMuse = buildRuntimeInstructions({
-            harness,
-            model: modelMatch?.[1] ?? runtime.model,
-            ...(modelMatch?.[2] === undefined ? {} : { reasoningEffort: modelMatch[2] }),
-            pullRequestLinking: firstText.includes("<pull_request_linking>"),
-          });
-          if (firstText !== expectedMuse) {
-            return {
-              ...entry,
-              frame: {
-                ...frame,
-                params: {
-                  ...frame.params,
-                  input: [{ type: "text", text: expectedMuse }, ...inputParts.slice(1)],
-                },
-              },
-            };
-          }
-        }
-        return entry;
-      }
-      if (
         "method" in frame &&
         (frame.method === "session/close" || frame.method === "initialize")
       ) {
@@ -353,18 +316,6 @@ export function materializeReplayTranscriptRuntimeInstructions(
           compact: false,
           compactionsAtSend: compactionCounts.get(promptSessionId) ?? 0,
         };
-        if (recordedNotes !== undefined && recordedNotes !== expected) {
-          return {
-            ...entry,
-            frame: {
-              ...frame,
-              params: {
-                ...frame.params,
-                prompt: [...prompt.slice(0, -1), { type: "text", text: expected }],
-              },
-            },
-          };
-        }
         if (!resend) return entry;
         return {
           ...entry,

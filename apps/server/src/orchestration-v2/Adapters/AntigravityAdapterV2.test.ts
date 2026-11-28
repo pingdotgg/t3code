@@ -3772,7 +3772,7 @@ describe("AntigravityAdapterV2 session system prompt", () => {
           .find((request) => request.method === "session/new");
         const append = JSON.stringify(sessionNew?.params?._meta ?? null);
         // Identity stays per turn either way.
-        assert.include(sent, "T3 Code via Antigravity, as gemini-test-low");
+        assert.include(sent, "through the Antigravity harness, as gemini-test-low");
         assert.notInclude(append, "systemPrompt");
         assert.include(sent, "<pull_request_linking>");
       }).pipe(Effect.provide(layerSession)),

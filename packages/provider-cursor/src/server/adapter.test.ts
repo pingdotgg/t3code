@@ -1157,7 +1157,7 @@ describe("CursorAdapterV2", () => {
         ).length;
         const sent = sentMessages.at(-1)!;
         return {
-          orchestration: sent.includes("## T3 Code\n"),
+          orchestration: sent.includes("## T3 Code orchestration"),
           devices: sent.includes("## T3 Code devices"),
           runtime: sent.includes("<runtime_info>"),
         };

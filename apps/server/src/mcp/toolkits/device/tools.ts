@@ -50,7 +50,7 @@ const DeviceListTool = Tool.make("device_list", {
 
 const DeviceOpenTool = Tool.make("device_open", {
   description:
-    "Open a simulator/emulator for this thread (`deviceId` + `hostId` from `device_list`). Boots if needed, shows in Device panel, and returns pinned `agent-device` CLI. Run `open <app>` before snapshots/screenshots/input; never reuse or close another session.",
+    "Open a simulator or emulator for this thread. Pass `deviceId` and `hostId` from `device_list`. Boots it if needed and shows it in the user's Device panel. Returns the `agent-device` CLI call pinned to that device. Drive the device with that CLI.",
   parameters: DeviceToolOpenInput,
   success: DeviceToolOpenResult,
   failure: DeviceToolFailure,

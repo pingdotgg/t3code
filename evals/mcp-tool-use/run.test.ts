@@ -1765,7 +1765,10 @@ it.effect("fails preview calls with T3's errors when browser access is off or a 
         is_error: true,
         content: off,
       });
-    assert.notInclude(t3SystemAppend("claude-sonnet-5-5", true, false), "Browser (`preview_*`)");
+    assert.notInclude(
+      t3SystemAppend("claude-sonnet-5-5", true, false),
+      "Never use `preview_*` unasked",
+    );
     const unsupported = "br-guard-preview-open-unsupported";
     assert.deepInclude(yield* answer(unsupported, "preview_open"), {
       is_error: true,

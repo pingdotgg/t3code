@@ -92,7 +92,7 @@ describe("T3 device instructions", () => {
   it("open the app before the returned command's snapshots, screenshots and input", () => {
     assert.include(
       T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
-      "run `open <app>` before snapshots/screenshots/input",
+      "its snapshots, screenshots and input need `open <app>` first,",
     );
   });
 
