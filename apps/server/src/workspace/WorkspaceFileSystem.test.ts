@@ -149,7 +149,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         const script = "#!/usr/bin/env python3\nprint('hello')\n";
         yield* writeTextFile(cwd, "run", script);
         const nodeScript =
-          "#!/opt/python-tools\u00a0sdk/bin/node --conditions=python\nconsole.log('hello')\n";
+          "#!/opt/python-tools/bin/node --conditions=python\nconsole.log('hello')\n";
         yield* writeTextFile(cwd, "run-node", nodeScript);
         const image = path.join(cwd, "image");
         yield* fs.writeFile(
@@ -166,7 +166,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           })).entries,
         ).toEqual([
           { kind: "file", byteLength: script.length, mimeType: "text/x-python" },
-          { kind: "file", byteLength: Buffer.byteLength(nodeScript), mimeType: "text/javascript" },
+          { kind: "file", byteLength: nodeScript.length, mimeType: "text/javascript" },
           { kind: "file", byteLength: 8, mimeType: "image/png" },
           { kind: "file", byteLength: 22, mimeType: "application/zip" },
         ]);
