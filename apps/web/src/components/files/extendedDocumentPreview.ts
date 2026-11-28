@@ -76,13 +76,14 @@ function odfListStart(node: XmlNode | undefined): number | undefined {
 }
 // Writer hides text whose character style sets text:display="none"; a style without it inherits from its
 // parent style, and a span whose styles set nothing inherits from the enclosing span.
+// ODF 1.3 Part 3 §19.510: parent-style-name names a common style, never an automatic one.
 function odfSpanHidden(styles: Map<string, XmlNode>, name = ""): boolean | undefined {
-  for (const seen = new Set<string>(); name && !seen.has(name);) {
-    seen.add(name);
-    const style = styles.get(`span\n${name}`);
-    const display = style && find(style, "style:text-properties")[0]?.attrs["text:display"]?.trim();
+  let style = styles.get(`auto\n${name}`) ?? styles.get(`span\n${name}`);
+  for (const seen = new Set<XmlNode>(); style && !seen.has(style);) {
+    seen.add(style);
+    const display = find(style, "style:text-properties")[0]?.attrs["text:display"]?.trim();
     if (display) return display === "none";
-    name = style?.attrs["style:parent-style-name"] ?? "";
+    style = styles.get(`span\n${style.attrs["style:parent-style-name"] ?? ""}`);
   }
   return undefined;
 }
@@ -342,11 +343,13 @@ export async function openDocument(
     ))
       if (style.attrs["style:name"]) listStyles.set(style.attrs["style:name"], style);
     if (kind === "odt")
-      for (const style of [...named, root].flatMap((part) =>
-        find(part, "style:style", "office:body"),
-      ))
-        if (style.attrs["style:family"] === "text" && style.attrs["style:name"])
-          listStyles.set(`span\n${style.attrs["style:name"]}`, style);
+      for (const [prefix, part] of [
+        ...named.map((part) => ["span", part] as const),
+        ["auto", root] as const,
+      ])
+        for (const style of find(part, "style:style", "office:body"))
+          if (style.attrs["style:family"] === "text" && style.attrs["style:name"])
+            listStyles.set(`${prefix}\n${style.attrs["style:name"]}`, style);
   }
   const rendered = [];
   for (const page of pages) {
