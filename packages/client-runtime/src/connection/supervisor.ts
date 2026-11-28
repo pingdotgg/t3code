@@ -638,6 +638,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
+  // A suspension the app already undid can still be queued ahead of its activation.
+  const suspensionStillApplies = Ref.get(intent).pipe(Effect.map((current) => current.suspended));
+
   const waitForEstablishmentInterrupt = Effect.fnUntraced(function* (ignoreOffline: boolean) {
     // A primary attempt keeps running through an offline report, so the
     // network returning restarts it in case it stalled meanwhile.
@@ -677,7 +680,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             yield* logManagedRelayAccountChange;
             return false;
           }
-          if (next.reason === "application-suspended") {
+          if (next.reason === "application-suspended" && (yield* suspensionStillApplies)) {
             return false;
           }
           break;
@@ -694,7 +697,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   ) {
     if (
       next._tag === "DisconnectRequested" ||
-      (next._tag === "Wakeup" && next.reason === "application-suspended")
+      (next._tag === "Wakeup" &&
+        next.reason === "application-suspended" &&
+        (yield* suspensionStillApplies))
     ) {
       return "end" as const;
     }

@@ -1913,6 +1913,43 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
+  it.effect("a suspension already undone does not end the resumed attempt", () =>
+    Effect.gen(function* () {
+      const releaseStarted = yield* Deferred.make<void>();
+      const releaseGate = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        release: (attempt) =>
+          attempt === 1
+            ? Deferred.succeed(releaseStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseGate)),
+              )
+            : Effect.void,
+        // The resumed attempt only takes signals, so they arrive in queue order.
+        ready: (attempt) => (attempt === 2 ? Effect.never : Effect.void),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("application-suspended");
+      yield* Deferred.await(releaseStarted);
+      yield* harness.setNetworkStatus("offline");
+      yield* harness.wake("application-active-probe");
+      yield* harness.wake("application-suspended");
+      yield* harness.wake("application-active-probe");
+      // Restarts a live attempt, so it reaches a fresh one only if the stale suspension did not.
+      yield* harness.wake("application-active-long");
+      yield* Deferred.succeed(releaseGate, undefined);
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(yield* Ref.get(harness.sessionCount)).toBe(3);
+    }),
+  );
+
   it.effect("abandons connection setup on suspension and reconnects on resume", () =>
     Effect.gen(function* () {
       const setupStarted = yield* Deferred.make<void>();
