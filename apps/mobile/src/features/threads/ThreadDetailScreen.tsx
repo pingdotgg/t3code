@@ -223,6 +223,8 @@ import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-scroll-position";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
+import { useEnvironmentShellReadiness } from "../../state/shell";
+import { useSettledThreadView } from "./useSettledThreadView";
 import type { OrchestrationV2ProviderSession } from "@t3tools/contracts";
 import { voiceInputBlocksSubmission } from "@t3tools/client-runtime/voice-input";
 
@@ -1248,14 +1250,18 @@ function ThreadDetailBody(
     }
   };
   const showContent = props.showContent ?? true;
-  // Showing the thread counts as viewing it, before its live shell arrives too.
-  useAtomMount(
-    threadVisitTracker(
-      showContent && !props.draftMode
-        ? { environmentId: props.environmentId, threadId: props.selectedThread.id }
-        : null,
-    ),
+  // Showing the thread counts as viewing it; after a resume or sync, only once it settles.
+  const shellSynchronizing =
+    useEnvironmentShellReadiness(props.environmentId).status === "synchronizing";
+  const covered = !useIsFocused();
+  const viewedThread = useSettledThreadView(
+    showContent && !props.draftMode
+      ? { environmentId: props.environmentId, threadId: props.selectedThread.id }
+      : null,
+    shellSynchronizing,
+    covered,
   );
+  useAtomMount(threadVisitTracker(viewedThread));
   const layoutVariant = props.layoutVariant ?? "compact";
   const isSplitLayout = layoutVariant !== "compact";
   const contentMaxWidth =
