@@ -93,6 +93,8 @@ export class CheckpointStore extends Context.Service<
       input: Omit<RestoreCheckpointInput, "fallbackToHead">,
     ) => Effect.Effect<boolean, CheckpointStoreError>;
 
+    readonly copyCheckpointRef: VcsCheckpointOps["copyCheckpointRef"];
+
     readonly restoreCheckpoint: (
       input: RestoreCheckpointInput,
     ) => Effect.Effect<boolean, CheckpointStoreError>;
@@ -160,6 +162,13 @@ export const make = Effect.gen(function* () {
     return yield* checkpoints.hasCheckpointRef(input);
   });
 
+  const copyCheckpointRef: CheckpointStore["Service"]["copyCheckpointRef"] = Effect.fn(
+    "CheckpointStore.copyCheckpointRef",
+  )(function* (input) {
+    const checkpoints = yield* resolveCheckpoints(input.cwd);
+    return yield* checkpoints.copyCheckpointRef(input);
+  });
+
   const restoreCheckpoint: CheckpointStore["Service"]["restoreCheckpoint"] = Effect.fn(
     "restoreCheckpoint",
   )(function* (input) {
@@ -194,6 +203,7 @@ export const make = Effect.gen(function* () {
     resolveCleanHead,
     captureHeadCheckpoint,
     hasCheckpointRef,
+    copyCheckpointRef,
     restoreCheckpoint,
     diffCheckpoints,
     listAuthoredPaths,

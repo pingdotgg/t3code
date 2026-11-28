@@ -20,7 +20,7 @@ import * as Effect from "../Effect.ts"
 import * as Exit from "../Exit.ts"
 import * as Fiber from "../Fiber.ts"
 import type { LazyArg } from "../Function.ts"
-import { constant, constTrue, constVoid, dual, pipe } from "../Function.ts"
+import { constant, constTrue, constVoid, dual } from "../Function.ts"
 import type * as Inspectable from "../Inspectable.ts"
 import { PipeInspectableProto } from "../internal/core.ts"
 import { getStackTraceLimit } from "../internal/stackTraceLimit.ts"
@@ -924,12 +924,14 @@ function makeStream<A, E>(
   }
   services = Context.add(services, AtomRegistry, ctx.registry)
 
+  let emitted = false
   const run = Effect.scopedWith((scope) =>
     Effect.flatMap(Channel.toPullScoped(stream.channel, scope), (pull) =>
       Effect.whileLoop({
         while: constTrue,
         body: () => pull,
         step(arr) {
+          emitted = true
           ctx.setSelf(AsyncResult.success(Arr.lastNonEmpty(arr), {
             waiting: true
           }))
@@ -937,24 +939,16 @@ function makeStream<A, E>(
       }))
   ).pipe(
     Effect.catchCause((cause) => {
+      const current = ctx.self<AsyncResult.AsyncResult<A, E | Cause.NoSuchElementError>>()
       if (Pull.isDoneCause(cause)) {
-        pipe(
-          ctx.self<AsyncResult.AsyncResult<A, E | Cause.NoSuchElementError>>(),
-          Option.flatMap(AsyncResult.value),
-          Option.match({
-            onNone: () =>
-              ctx.setSelf(
-                AsyncResult.failWithPrevious(new Cause.NoSuchElementError(), {
-                  previous: ctx.self<AsyncResult.AsyncResult<A, E | Cause.NoSuchElementError>>()
-                })
-              ),
-            onSome: (a) => ctx.setSelf(AsyncResult.success(a))
-          })
+        const value = emitted ? Option.flatMap(current, AsyncResult.value) : Option.none()
+        ctx.setSelf(
+          Option.isSome(value)
+            ? AsyncResult.success(value.value)
+            : AsyncResult.failWithPrevious(new Cause.NoSuchElementError(), { previous: current })
         )
       } else {
-        ctx.setSelf(AsyncResult.failureWithPrevious(cause as Cause.Cause<E>, {
-          previous: ctx.self<AsyncResult.AsyncResult<A, E | Cause.NoSuchElementError>>()
-        }))
+        ctx.setSelf(AsyncResult.failureWithPrevious(cause as Cause.Cause<E>, { previous: current }))
       }
       return Effect.void
     })
@@ -1052,9 +1046,9 @@ const makeSubRef = (
   function write(ctx: WriteContext<SubscriptionRef.SubscriptionRef<any>>, value: any) {
     const ref = ctx.get(refAtom)
     if (SubscriptionRef.isSubscriptionRef(ref)) {
-      Effect.runSync(SubscriptionRef.set(ref, value))
+      Effect.runFork(SubscriptionRef.set(ref, value))
     } else if (AsyncResult.isSuccess(ref)) {
-      Effect.runSync(SubscriptionRef.set(ref.value, value))
+      Effect.runFork(SubscriptionRef.set(ref.value, value))
     }
   }
   return writable((get) => {

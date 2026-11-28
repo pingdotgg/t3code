@@ -235,9 +235,16 @@ function withStopNotice(
 
 type MonitorNotice = Pick<OrchestrationV2ConversationMessage, "runId" | "notification">;
 
-/** Runs that only acknowledge a monitor update are never a task's work. */
-export function monitorUpdateRunIds(messages: ReadonlyArray<MonitorNotice>) {
-  return new Set(
+/**
+ * Monitor-update runs that are never a task's work: queued ones, which can wait on a usage limit
+ * without a hold, and completed ones, which only acknowledged the update. One executing, or one
+ * that ended without completing, may have stopped or lost the work the task waits on.
+ */
+export function monitorUpdateRunIds(
+  messages: ReadonlyArray<MonitorNotice>,
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status">>,
+) {
+  const updateRunIds = new Set(
     messages
       .filter(
         (message) =>
@@ -245,6 +252,13 @@ export function monitorUpdateRunIds(messages: ReadonlyArray<MonitorNotice>) {
           message.notification.outcome === "updated",
       )
       .map((message) => message.runId),
+  );
+  return new Set(
+    runs.flatMap((run) =>
+      (run.status === "completed" || run.status === "queued") && updateRunIds.has(run.id)
+        ? [run.id]
+        : [],
+    ),
   );
 }
 
@@ -260,7 +274,7 @@ export function delegatedTaskReportRuns(
   run: OrchestrationV2Run,
 ): ReadonlyArray<OrchestrationV2Run> {
   if (run.status !== "completed") return [];
-  const monitorRuns = monitorUpdateRunIds(projection.messages);
+  const monitorRuns = monitorUpdateRunIds(projection.messages, projection.runs);
   const earlier = projection.runs
     .filter(
       (candidate) =>
@@ -392,21 +406,34 @@ export function subagentHoldsCompletion(
   );
 }
 
-export function delegatedTaskProgress(projection: {
-  readonly runs: OrchestrationV2ThreadProjection["runs"];
-  readonly messages: ReadonlyArray<
-    Pick<OrchestrationV2ConversationMessage, "runId" | "notification" | "createdBy">
-  >;
-  readonly subagents: ReadonlyArray<
-    Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">
-  >;
-  readonly providerThreads: ReadonlyArray<
-    Pick<OrchestrationV2ThreadProjection["providerThreads"][number], "pendingBackgroundTasks">
-  >;
-}) {
+/**
+ * `unsettled`: the task has no result and no cancel, so a Monitor-woken run that completed
+ * continued its wait and is its work, not an acknowledgement after its report. A cancel keeps
+ * the run it stopped as the result.
+ */
+export function delegatedTaskProgress(
+  projection: {
+    readonly runs: OrchestrationV2ThreadProjection["runs"];
+    readonly messages: ReadonlyArray<
+      Pick<OrchestrationV2ConversationMessage, "runId" | "notification" | "createdBy">
+    >;
+    readonly subagents: ReadonlyArray<
+      Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">
+    >;
+    readonly providerThreads: ReadonlyArray<
+      Pick<OrchestrationV2ThreadProjection["providerThreads"][number], "pendingBackgroundTasks">
+    >;
+  },
+  options?: { readonly unsettled?: boolean },
+) {
   const terminal = (status: string) =>
     ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(status);
-  const monitorRuns = monitorUpdateRunIds(projection.messages);
+  const monitorRuns = monitorUpdateRunIds(
+    projection.messages,
+    options?.unsettled === true
+      ? projection.runs.filter((run) => run.status === "queued")
+      : projection.runs,
+  );
   const workRuns = projection.runs.filter(
     (run) => !monitorRuns.has(run.id) && run.status !== "rolled_back",
   );

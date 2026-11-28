@@ -1166,6 +1166,55 @@ describe("DesktopBrowserHost", () => {
     }),
   );
 
+  // regression: #44003 agent typing into a cross-site iframe field was refused while the preview was unfocused
+  it.effect("types into the cross-site frame holding an unfocused guest's focus", () =>
+    Effect.gen(function* () {
+      const host = yield* makeDrawnHost;
+      // The page's focus is an iframe whose document it cannot read; that frame focuses a field.
+      const debuggee = makeDebuggee({
+        answer: (method, sessionId) => {
+          if (method === "Runtime.evaluate") {
+            return sessionId === undefined
+              ? { result: { type: "object", value: false, objectId: "FOCUSED-IFRAME" } }
+              : { result: { type: "undefined" } };
+          }
+          if (method === "DOM.describeNode") return { node: { frameId: "FRAME" } };
+          if (method === "Runtime.releaseObject") return {};
+          return undefined;
+        },
+      });
+      host.attach(key, debuggee.tab);
+      const errors: Array<string> = [];
+      yield* host.events.pipe(
+        Stream.map((line) => decodeEvent(new TextDecoder().decode(line))),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            if (event.type !== "cdp") return;
+            const { error } = decodeCdpError(event.message);
+            if (error) errors.push(error.message);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+      debuggee.emit("Target.attachedToTarget", {
+        sessionId: "FRAME-SESSION",
+        targetInfo: { targetId: "FRAME", type: "iframe" },
+      });
+
+      yield* command(host, 1, "Input.insertText");
+      yield* settle;
+      debuggee.release();
+      yield* settle;
+
+      expect(errors).toEqual([]);
+      expect(debuggee.methods).toContain("Input.insertText");
+      expect(debuggee.sessionIds[debuggee.methods.indexOf("Input.insertText")]).toBe(
+        "FRAME-SESSION",
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("fails mouse input whose frame detaches before taking it, then moves on", () =>
     Effect.gen(function* () {
       const host = yield* makeDrawnHost;

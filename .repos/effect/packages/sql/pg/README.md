@@ -105,7 +105,8 @@ that cannot be text fails with `PgTypes.CodecError`:
 The error names the column, its type OID, and its table OID and attribute
 number when the column comes from a table. It fails only the query that read
 the row: the rest of the result is discarded and the connection stays usable.
-Register a codec for these types, or cast the column to `text` in the query.
+Register a codec for these types, cast the column to `text` in the query, or
+read it with [`queryTextValues`](#values-as-text).
 
 A binary layout with no zero bytes at all, such as `ltree`, still decodes as
 garbled text without any error.
@@ -114,6 +115,12 @@ Anonymous records (`ROW(...)`, `(a, b)`) are built in: a record decodes as an
 array of its field values, and each field uses the same codecs as a column.
 Named composite types (`CREATE TYPE ... AS (...)`) have their own OID and take
 the fallback above.
+
+Built-in ranges (`int4range`, `int8range`, `numrange`, `daterange`, `tsrange`,
+`tstzrange`), their multiranges, and arrays of both decode to
+`PgTypes.Range<A>` (finite bounds use the subtype codec) and
+`ReadonlyArray<PgTypes.Range<A>>`. User-defined ranges (`CREATE TYPE ... AS
+RANGE`) have their own OID and take the fallback above.
 
 Register a codec for a scalar user-defined type with
 `PgTypes.register(oid, codec)`; registered codecs take precedence over the
@@ -154,3 +161,22 @@ const PostgresLive = PgClient.layer({
 
 OIDs of user-defined types are assigned per database, so look them up in
 `pg_type` at startup rather than hard-coding them.
+
+## Values as text
+
+Read raw PostgreSQL text values without running result codecs (including custom
+`types`) with `queryTextValues`:
+
+```ts
+import { PgClient } from "@effect/sql-pg"
+import { Effect } from "effect"
+
+const program = Effect.gen(function*() {
+  const sql = yield* PgClient.PgClient
+  const result = yield* sql.queryTextValues("SELECT now() AS at, 'infinity'::timestamptz AS until")
+  // result.fields: [{ name: "at", dataTypeId: 1184 }, { name: "until", dataTypeId: 1184 }]
+  // result.values: [["2026-11-24 22:31:05.123456+00", "infinity"]]
+})
+```
+
+Inside `withTransaction` it runs on the transaction's connection.
