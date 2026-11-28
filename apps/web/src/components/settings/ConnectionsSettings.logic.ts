@@ -135,7 +135,7 @@ export function resolveLocalVersionStatusLabel(
 
 export type QrEndpointOption = {
   readonly id: string;
-  /** Stable per endpoint type, not unique; used only to match the saved default. */
+  /** Unique for VPN addresses, shared by type otherwise; used only to match the saved default. */
   readonly preferenceKey: string;
   readonly qrShareable: boolean;
 };
@@ -401,6 +401,9 @@ export function endpointDefaultPreferenceKey(endpoint: AdvertisedEndpoint): stri
   }
   if (endpoint.id.startsWith("tailscale-ip:")) {
     return "tailscale:ip:http";
+  }
+  if (endpoint.id.startsWith("vpn-ip:")) {
+    return endpoint.id;
   }
   if (isTailscaleHttpsEndpoint(endpoint)) {
     return "tailscale:magicdns:https";

@@ -1158,10 +1158,56 @@ export const make = Effect.gen(function* () {
     const headPath = yield* workflow.headPath(cwd);
     if (headPath === null) return;
     const headDirectory = path.dirname(headPath);
+    const isDir = (dir: string) =>
+      fs.stat(dir).pipe(
+        Effect.map((info) => info.type === "Directory"),
+        Effect.orElseSucceed(() => false),
+      );
+    const reftableDirs: Array<string> = [];
+    const headReftable = path.resolve(headDirectory, "reftable");
+    if (yield* isDir(headReftable)) {
+      reftableDirs.push(headReftable);
+      const common = yield* fs.readFileString(path.join(headDirectory, "commondir")).pipe(
+        Effect.map((v) => (v.trim() ? path.resolve(headDirectory, v.trim(), "reftable") : null)),
+        Effect.orElseSucceed(() => null),
+      );
+      if (common && common !== headReftable && (yield* isDir(common))) reftableDirs.push(common);
+    }
+    const readyDirs = new Set<string>();
+    const markReady = (dir: string) => {
+      readyDirs.add(dir);
+      if (readyDirs.size >= 1 + reftableDirs.length) Deferred.doneUnsafe(ready, Exit.void);
+    };
+    const watchReftable = (dir: string) =>
+      fs.watch(dir, { onReady: () => markReady(dir) }).pipe(
+        Stream.takeUntilEffect((e) =>
+          e._tag === "Remove"
+            ? fs.exists(dir).pipe(Effect.map((ok) => !ok))
+            : Effect.succeed(false),
+        ),
+        Stream.filter((e) => path.basename(e.path) === "tables.list" && e._tag !== "Remove"),
+        Stream.catchIf(
+          (e) => e.reason._tag === "NotFound",
+          () => Stream.empty,
+        ),
+        Stream.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Stream.failCause(cause)
+            : Stream.drain(
+                Stream.fromEffect(
+                  Effect.logWarning("VCS reftable watch failed", {
+                    cwdLength: cwd.length,
+                    ...remoteRefreshFailureDiagnostics(cause),
+                  }),
+                ),
+              ),
+        ),
+        Stream.ensuring(Effect.sync(() => markReady(dir))),
+      );
     // Git replaces HEAD by renaming HEAD.lock, which a watch on the file itself would lose.
     yield* fs
       .watch(headDirectory, {
-        onReady: () => Deferred.doneUnsafe(ready, Exit.void),
+        onReady: () => markReady(headDirectory),
       })
       .pipe(
         // On Windows a watch outlives its deleted directory and reports it ~150k times a second.
@@ -1178,6 +1224,12 @@ export const make = Effect.gen(function* () {
             name === "HEAD" || name === "index" || (name === "HEAD.lock" && event._tag === "Remove")
           );
         }),
+        // Reftable repos keep a static HEAD placeholder and replace tables.list (and commondir's in worktrees).
+        (headEvents) =>
+          reftableDirs.reduce(
+            (merged, dir) => Stream.merge(merged, watchReftable(dir), { haltStrategy: "left" }),
+            headEvents,
+          ),
         // On arrival: the cache keeps the old branch until reads below land, and they can retry.
         Stream.tap(() =>
           Effect.sync(() => {

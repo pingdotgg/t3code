@@ -277,6 +277,52 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("finds a project plugin from a worktree whose name ends in Unicode whitespace", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" }),
+      );
+      const configDir = path.join(tempDir, "claude-home");
+      const workspace = path.join(tempDir, "workspace");
+      const projectInstall = path.join(configDir, "plugins", "project");
+      yield* fs.makeDirectory(path.join(workspace, ".git"), { recursive: true });
+      yield* writeSkill(path.join(projectInstall, "skills"), "review", "# Review");
+      yield* fs.writeFileString(
+        path.join(configDir, "plugins", "installed_plugins.json"),
+        JSON.stringify({
+          plugins: {
+            "plugin@shop": [
+              { scope: "project", projectPath: workspace, installPath: projectInstall },
+            ],
+          },
+        }),
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        '{"enabledPlugins":{"plugin@shop":true}}',
+      );
+      // Git keeps Unicode whitespace such as U+3000 at the end of a worktree's name.
+      const worktree = path.join(tempDir, "feature\u3000");
+      const worktreeGitDirectory = path.join(workspace, ".git", "worktrees", "feature\u3000");
+      yield* fs.makeDirectory(worktree);
+      yield* fs.makeDirectory(worktreeGitDirectory, { recursive: true });
+      yield* fs.writeFileString(path.join(worktree, ".git"), `gitdir: ${worktreeGitDirectory}\n`);
+      yield* fs.writeFileString(path.join(worktreeGitDirectory, "commondir"), "../..\n");
+      yield* fs.writeFileString(
+        path.join(worktreeGitDirectory, "gitdir"),
+        `${path.join(worktree, ".git")}\n`,
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, worktree);
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.scope, skill.path]),
+        [["plugin:review", "project", path.join(projectInstall, "skills", "review", "SKILL.md")]],
+      );
+    }),
+  );
+
   it.effect("resolves each install record's project repository once per discovery", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -515,80 +515,156 @@ const SETEXT_UNDERLINE_PATTERN = /^(?:=+|-+) *$/;
 const PARAGRAPH_INTERRUPTION_PATTERN =
   /^(?:>|`{3,}(?![^`]*`)|~{3,}|(?:[-+*]|\d{1,9}[.)])(?: |$)|#{1,6}(?: |$)|([-*_]) *(?:\1 *){2,}$)/;
 
+const FOOTNOTE_DEFINITION_PATTERN = /^\[\^(?:\\[\\[\]]|\\(?![\\[\]])|[^ \t\r\n\\[\]]){1,999}\]: */;
+const TABLE_DELIMITER_PATTERN = /^\|? *:?-+:? *(?:\| *:?-+:? *)*\|? *$/;
+
 const BLOCKQUOTE = 0;
+// A recovered list block continues within the original code block's four-column prefix.
+const RECOVERED_LIST_CODE = -4;
+
+function tableColumnCount(row: string): number {
+  const trimmed = row.trimEnd();
+  let columns = 1;
+  for (const match of trimmed.matchAll(/\\[\\|]|\|/g)) {
+    if (match[0] === "|" && match.index > 0 && match.index < trimmed.length - 1) columns += 1;
+  }
+  return columns;
+}
+
+function isTableDelimiter(header: string, line: string): boolean {
+  return (
+    header.trimEnd() !== "|" &&
+    /[|:]/.test(line) &&
+    TABLE_DELIMITER_PATTERN.test(line) &&
+    tableColumnCount(line) === tableColumnCount(header)
+  );
+}
+
+function expandMarkdownLine(line: string): string {
+  const source = line.endsWith("\r") ? line.slice(0, -1) : line;
+  if (!source.includes("\t")) return source;
+  let column = 0;
+  return source.replace(/\t|[^\t]+/g, (part) => {
+    const expanded = part === "\t" ? " ".repeat(4 - (column % 4)) : part;
+    column += expanded.length;
+    return expanded;
+  });
+}
+
+function markdownIndent(source: string, position: number): number {
+  let indent = 0;
+  while (source[position + indent] === " ") indent += 1;
+  return indent;
+}
+
+function blockquoteContentStart(source: string, marker: number): number {
+  return marker + (source[marker + 1] === " " ? 2 : 1);
+}
+
+function matchMarkdownContainers(
+  source: string,
+  containers: readonly number[],
+  blankEndsItemAt = -1,
+) {
+  let position = 0;
+  let matched = 0;
+  for (const container of containers) {
+    const indent = markdownIndent(source, position);
+    const first = source[position + indent];
+    if (container === BLOCKQUOTE) {
+      if (indent > 3 || first !== ">") break;
+      position = blockquoteContentStart(source, position + indent);
+    } else if (first === undefined) {
+      if (matched === blankEndsItemAt) break;
+    } else if (indent >= Math.abs(container)) {
+      position += Math.abs(container);
+    } else {
+      break;
+    }
+    matched += 1;
+  }
+  return { position, matched };
+}
+
+// List recovery prefixes the first line as prose. A table delimiter or a setext underline
+// can still turn that first block into a table or heading, which the renderer leaves literal.
+function recoveredListStartsWithParagraph(
+  lines: readonly string[],
+  index: number,
+  header: string,
+  containers: readonly number[],
+): boolean {
+  for (let next = index + 1; next < lines.length; next += 1) {
+    const source = expandMarkdownLine(lines[next]!);
+    const { position, matched } = matchMarkdownContainers(source, containers);
+    if (matched < containers.length) break;
+    const indent = markdownIndent(source, position);
+    const content = source.slice(position + indent);
+    if (!content || indent < 4) break;
+    if (indent >= 8) continue;
+    if (SETEXT_UNDERLINE_PATTERN.test(content)) return false;
+    if (PARAGRAPH_INTERRUPTION_PATTERN.test(content) || FOOTNOTE_DEFINITION_PATTERN.test(content)) {
+      break;
+    }
+    if (next === index + 1 && isTableDelimiter(`x ${header}`, content)) return false;
+  }
+  return true;
+}
+
+// Normalize lone CR without changing offsets or splitting CRLF into two line endings.
+function normalizeLoneCarriageReturns(text: string): string {
+  return text.replace(/\r(?!\n)/g, "\n");
+}
 
 export function extractInlineCodeSpans(text: string): string[] {
   if (!text.includes("`")) return [];
   const spans: string[] = [];
-  visitMarkdownLines(text, (line, _start, fenced) => {
-    if (!fenced) collectLineCodeSpans(line, spans);
+  visitMarkdownLines(normalizeLoneCarriageReturns(text), (line, _start, code) => {
+    if (!code) collectLineCodeSpans(line, spans);
   });
   return spans;
 }
 
 /**
- * Visits text lines and fenced code lines. Blockquotes and list items are tracked line by line as
+ * Visits text and code lines. Blockquotes and list items are tracked line by line as
  * CommonMark nests them, because a fence closes only at its own container's indentation and ends
  * with that container. A full parse would be exact but costs about 100x this scan, which runs on
  * every streamed chunk.
  */
 function visitMarkdownLines(
   text: string,
-  visit: (line: string, start: number, fenced: boolean) => void,
+  visit: (line: string, start: number, code: boolean) => void,
 ) {
-  // Open containers, outermost first: BLOCKQUOTE, or a list item's content indentation.
+  // Open containers, outermost first: blockquotes, indented content, and recovered list code.
   const containers: number[] = [];
   let fence: { marker: string; indented: boolean } | null = null;
   // Whether the previous line left a paragraph open, and whether indented code is still open:
   // micromark lets neither be interrupted by an empty list item or one not numbered 1.
   let paragraph = false;
   let indentedCode = false;
+  // A table has a header candidate until its delimiter row opens the body.
+  let table: { depth: number; header?: string } | undefined;
   // Depth of an item that has only its marker so far; a blank line next ends it.
   let emptyItemDepth = 0;
   let lineStart = 0;
-  for (const line of text.split("\n")) {
+  const lines = text.split("\n");
+  for (const [index, line] of lines.entries()) {
+    const previousTable = table;
+    table = undefined;
     const start = lineStart;
     lineStart += line.length + 1;
-    let source = line.endsWith("\r") ? line.slice(0, -1) : line;
-    if (source.includes("\t")) {
-      let column = 0;
-      source = source.replace(/\t|[^\t]+/g, (part) => {
-        const expanded = part === "\t" ? " ".repeat(4 - (column % 4)) : part;
-        column += expanded.length;
-        return expanded;
-      });
-    }
-    let position = 0;
+    const source = expandMarkdownLine(line);
+    const containerCount = containers.length;
+    const prefix = matchMarkdownContainers(source, containers, emptyItemDepth - 1);
+    const { matched } = prefix;
+    let { position } = prefix;
+    emptyItemDepth = 0;
     let indent = 0;
     let content = "";
     const readIndent = () => {
-      indent = 0;
-      while (source[position + indent] === " ") indent += 1;
+      indent = markdownIndent(source, position);
       content = source.slice(position + indent);
     };
-    const enterBlockquote = () => {
-      position += indent + 1;
-      if (source[position] === " ") position += 1;
-    };
-
-    const blankEndsItemAt = emptyItemDepth - 1;
-    emptyItemDepth = 0;
-    const containerCount = containers.length;
-    let matched = 0;
-    for (; matched < containers.length; matched += 1) {
-      const container = containers[matched]!;
-      readIndent();
-      if (container === BLOCKQUOTE) {
-        if (indent > 3 || content[0] !== ">") break;
-        enterBlockquote();
-      } else if (content === "") {
-        if (matched === blankEndsItemAt) break;
-      } else if (indent >= container) {
-        position += container;
-      } else {
-        break;
-      }
-    }
     readIndent();
 
     if (fence) {
@@ -617,7 +693,10 @@ function visitMarkdownLines(
       if (
         paragraph &&
         content !== "" &&
-        (indent >= 4 || !PARAGRAPH_INTERRUPTION_PATTERN.test(content))
+        containers.lastIndexOf(RECOVERED_LIST_CODE) < matched &&
+        (indent >= 4 ||
+          (!PARAGRAPH_INTERRUPTION_PATTERN.test(content) &&
+            !FOOTNOTE_DEFINITION_PATTERN.test(content)))
       ) {
         visit(line, start, false);
         continue;
@@ -638,13 +717,12 @@ function visitMarkdownLines(
       const opener = FENCE_OPENER_PATTERN.exec(content)?.[1];
       if (indent >= 4) {
         if (!paragraph && !closedContainer) indentedCode = true;
-        // Indented code is not skipped, but a fence shown inside it still hides its lines. Inside
-        // a paragraph an indented line is text, where only a backtick run opens code (a span).
+        // Inside a paragraph an indented line is text, where only a backtick run opens code (a span).
         if (opener && (!paragraph || opener[0] === "`")) {
           fence = { marker: opener, indented: true };
           visit(line, start, true);
         } else {
-          visit(line, start, false);
+          visit(line, start, !paragraph);
         }
         break;
       }
@@ -656,7 +734,7 @@ function visitMarkdownLines(
       }
       if (content[0] === ">") {
         containers.push(BLOCKQUOTE);
-        enterBlockquote();
+        position = blockquoteContentStart(source, position + indent);
         paragraph = false;
         readIndent();
         continue;
@@ -664,6 +742,14 @@ function visitMarkdownLines(
       if (THEMATIC_BREAK_PATTERN.test(content)) {
         paragraph = false;
         break;
+      }
+      const footnote = FOOTNOTE_DEFINITION_PATTERN.exec(content);
+      if (footnote) {
+        containers.push(4);
+        position += indent + footnote[0].length;
+        paragraph = false;
+        readIndent();
+        continue;
       }
       const item = LIST_MARKER_PATTERN.exec(content);
       const emptyItem = item?.[0].length === content.length;
@@ -679,13 +765,36 @@ function visitMarkdownLines(
         position += indent + width;
         paragraph = false;
         readIndent();
+        // The renderer recovers same-line indented list code with whitespace left in its value.
+        if (
+          !emptyItem &&
+          padding > 5 &&
+          recoveredListStartsWithParagraph(lines, index, content, containers)
+        ) {
+          containers.push(RECOVERED_LIST_CODE);
+          visit(line, start, false);
+          paragraph = true;
+          break;
+        }
         continue;
       }
       visit(line, start, false);
-      paragraph = !(
+      if (
         ATX_HEADING_PATTERN.test(content) ||
         (paragraph && SETEXT_UNDERLINE_PATTERN.test(content))
-      );
+      ) {
+        paragraph = false;
+      } else if (
+        previousTable?.depth === containers.length &&
+        !closedContainer &&
+        (previousTable.header === undefined || isTableDelimiter(previousTable.header, content))
+      ) {
+        table = { depth: containers.length };
+        paragraph = false;
+      } else {
+        table = { depth: containers.length, header: content };
+        paragraph = true;
+      }
       break;
     }
   }
@@ -774,13 +883,13 @@ export function markdownLinkDestinationScanner(markdown: string) {
   };
 }
 
-// Code is literal: fenced lines become spaces, keeping every offset.
-function blankFencedCode(text: string): string {
-  if (!text.includes("```") && !text.includes("~~~")) return text;
+// Code block lines become spaces, keeping every offset.
+function blankCodeBlocks(text: string): string {
+  if (!/ {4}|\t|```|~~~/.test(text)) return text;
   let blanked = "";
   let copied = 0;
-  visitMarkdownLines(text, (line, start, fenced) => {
-    if (!fenced) return;
+  visitMarkdownLines(text, (line, start, code) => {
+    if (!code) return;
     blanked += text.slice(copied, start) + line.replace(/[^\r]/g, " ");
     copied = start + line.length;
   });
@@ -790,7 +899,7 @@ function blankFencedCode(text: string): string {
 // Labels may nest balanced brackets (`[the [docs] guide](...)`), and the composer escapes them
 // (`[\[id\].tsx](...)`), so `\[` and `\]` never count. A blank line ends the paragraph and its labels.
 export function extractMarkdownLinkHrefs(text: string): string[] {
-  const markdown = blankFencedCode(text);
+  const markdown = blankCodeBlocks(normalizeLoneCarriageReturns(text));
   const hrefs: string[] = [];
   const scanDestination = markdownLinkDestinationScanner(markdown);
   const paragraphEnd = markdownRunEndFinder(markdown, /\n[ \t\r]*\n/g);

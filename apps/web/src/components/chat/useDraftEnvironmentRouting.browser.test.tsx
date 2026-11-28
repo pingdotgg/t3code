@@ -611,6 +611,30 @@ it.each([
   expect(draft?.modelSelectionExplicit === true).toBe(explicit);
 });
 
+it("keeps the shown model when the draft is moved by hand to the machine it is already on", async () => {
+  const { a, draftId, input, store } = fanoutSetup();
+  const claude = ProviderInstanceId.make("claudeAgent");
+  const codex = ProviderInstanceId.make("codex");
+  store.setDraftThreadContext(draftId, {
+    environmentSelection: "auto",
+    loadBalancedEnvironmentId: a,
+  });
+  resources.pickedEnvironmentId = a;
+  // The last model used in this browser was Codex; this draft shows Claude, carried from a thread.
+  store.setStickyModelSelection(createModelSelection(codex, "gpt-6.2-sol"));
+  store.setModelSelection(draftId, createModelSelection(claude, "claude-haiku-5-5"));
+  await using screen = await render(
+    <Harness input={{ ...input, draftThread: store.getDraftSession(draftId) }} />,
+  );
+  await screen.getByRole("button", { name: `Switch to ${a}` }).click();
+  // Send is disabled while the switch is in flight.
+  await expect.element(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+  expect(store.getDraftSession(draftId)?.environmentSelection).toBe("manual");
+  const draft = store.getComposerDraft(draftId);
+  expect(draft?.activeProvider).toBe(claude);
+  expect(draft?.modelSelectionByProvider[claude]?.model).toBe("claude-haiku-5-5");
+});
+
 it("takes the destination's default workspace when the draft switches machine by hand", async () => {
   const { b, draftId, input, store } = fanoutSetup();
   resources.projects = resources.projects.map((project) =>

@@ -951,6 +951,32 @@ describe("large text preview recovery", () => {
     }
   });
 
+  it("labels rows and columns with their sheet positions when some are hidden", async () => {
+    await using screen = await render(
+      <div style={{ display: "flex", height: 400, width: 600 }}>
+        <VirtualTablePreview
+          name="staff.ods"
+          count={2}
+          columns={2}
+          rowIndexes={[0, 4]}
+          columnIndexes={[0, 2]}
+          getRows={() => [
+            ["Name", "Team"],
+            ["Cy", "East"],
+          ]}
+        />
+      </div>,
+    );
+    await vi.waitFor(() => {
+      const text = (role: string) =>
+        Array.from(screen.container.querySelectorAll(`[role="${role}"]`), (node) =>
+          node.textContent?.trim(),
+        );
+      expect(text("columnheader")).toEqual(["A", "C"]);
+      expect(text("rowheader")).toEqual(["1", "5"]);
+    });
+  });
+
   it("fills the horizontal viewport using measured column widths", async () => {
     const header = Array.from({ length: 20 }, (_, i) => "C" + i);
     await using screen = await render(

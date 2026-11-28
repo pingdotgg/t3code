@@ -325,6 +325,7 @@ export function WorkflowsPage() {
             className="min-h-0 w-full shrink-0 md:w-1/2 md:max-w-2xl md:border-s md:border-divider"
           >
             <WorkflowPane
+              electron={isElectron}
               environmentId={environmentId}
               runId={search.run ?? null}
               state={pane}
