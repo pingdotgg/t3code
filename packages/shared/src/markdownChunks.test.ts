@@ -333,6 +333,69 @@ describe("splitMarkdown", () => {
     expect(result.chunks.map((chunk) => chunk.text)).toEqual([intro, appendix]);
   });
 
+  it("collects definitions immediately after equals-sign Setext headings", () => {
+    const text = `Read [guide]. ${"filler ".repeat(600)}\n\nNotes\n===\n[guide]: https://example.com/guide\n`;
+    const result = splitMarkdown(text);
+
+    expect(result.chunks.length).toBeGreaterThan(1);
+    expect(result.definitions).toBe("[guide]: https://example.com/guide");
+  });
+
+  it("resumes Markdown after a standalone HTML block following a long Setext heading", () => {
+    const intro = ["x".repeat(9000), "===", "<span>", "```", ""].join("\n");
+    const appendix = "# Appendix\n[guide]: /guide";
+    const result = splitMarkdown(`${intro}\n${appendix}`);
+
+    expect(result.chunks.map((chunk) => chunk.text)).toEqual([intro, appendix]);
+    expect(result.definitions).toBe("[guide]: /guide");
+  });
+
+  it("collects definitions after Setext underlines only when an eligible paragraph is open", () => {
+    const cases = [
+      "Notes\n=\n[s1]: /single-eq",
+      "Line 1\nLine 2\n   ===   \n[s2]: /multiline-eq",
+      "Subheading\n--\n[s3]: /double-dash",
+      "===\n===\n[s4]: /eq-text-heading",
+      "Heading\n--- | ---\n===\n[s5]: /mismatched-table-header",
+      "a \\| b\n--- | ---\n===\n[s6]: /escaped-pipe-table-header",
+      "- item\n\n Notes\n===\n[s7]: /under-indented-after-list-blank",
+      "> # Child\nNotes\n===\n[s8]: /after-quoted-heading",
+      "- item\n\n  ```\n  x\n  ```\nNotes\n===\n[s9]: /unindented-after-list-fence",
+      "-\n\n  Notes\n===\n[s10]: /after-empty-list-item-blank",
+      "> text\n> ===\nNotes\n===\n[s11]: /after-same-depth-quoted-setext",
+      "Notes\n===\n===\n[n1]: /second-eq-is-paragraph",
+      "Notes\n    ===\n[n2]: /indented-underline",
+      "> quote\n===\n[n3]: /in-blockquote",
+      "- item\n===\n[n4]: /in-list",
+      "- item\n\n  sub\n===\n[n5]: /in-loose-list",
+      "    code\n===\n[n6]: /after-indented-code",
+      "| a |\n| - |\n===\n[n7]: /in-table",
+      "a | b\n--- | ---\n===\n[n11]: /in-two-col-table",
+      "a|\u00a0\n-|-\n===\n[n12]: /in-nbsp-table",
+      "<!-- comment -->\n===\n[n8]: /after-html-comment",
+      "$$x$$\n===\n[n14]: /after-single-line-display-math",
+      "- item\n  # Child\n  continuation\n===\n[n9]: /after-list-heading",
+      "- item\n\n  ```\n  x\n  ```\n  continuation\n===\n[n10]: /after-list-fence",
+      "> text\n>> ===\nNotes\n===\n[n13]: /in-nested-quote-setext-text",
+    ].join("\n\n");
+
+    expect(splitMarkdown(cases).definitions).toBe(
+      [
+        "[s1]: /single-eq",
+        "[s2]: /multiline-eq",
+        "[s3]: /double-dash",
+        "[s4]: /eq-text-heading",
+        "[s5]: /mismatched-table-header",
+        "[s6]: /escaped-pipe-table-header",
+        "[s7]: /under-indented-after-list-blank",
+        "[s8]: /after-quoted-heading",
+        "[s9]: /unindented-after-list-fence",
+        "[s10]: /after-empty-list-item-blank",
+        "[s11]: /after-same-depth-quoted-setext",
+      ].join("\n"),
+    );
+  });
+
   it.each([
     ["an ordered item whose content starts farther right", "10. Item\n\n", ""],
     ["an item padded to the next tab stop", "-\tItem\n\n", ""],
