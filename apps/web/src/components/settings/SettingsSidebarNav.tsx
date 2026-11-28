@@ -7,6 +7,7 @@ import {
   type ComponentType,
   type KeyboardEvent,
 } from "react";
+import { flushSync } from "react-dom";
 import {
   ArchiveIcon,
   FlaskConicalIcon,
@@ -38,6 +39,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { T, useGT, useMessages } from "gt-react";
 
 import { cn } from "../../lib/utils";
+import { AppRouteModalClose } from "../AppRouteModal";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import {
@@ -134,7 +136,16 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   return <Icon className="size-4 h-5 shrink-0 text-(--sidebar-icon-color)" />;
 }
 
-export function SettingsSidebarNav({ pathname }: { pathname: string }) {
+/** Below md the nav is a full-width section list that replaces the page while `mobileOpen`. */
+export function SettingsSidebarNav({
+  pathname,
+  mobileOpen,
+  onMobileOpenChange,
+}: {
+  pathname: string;
+  mobileOpen: boolean;
+  onMobileOpenChange: (open: boolean) => void;
+}) {
   const gt = useGT();
   const m = useMessages();
   const navArea = workspaceAreaProps("settings-nav", 0, gt("Settings sections"));
@@ -144,8 +155,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
-  // Below md the nav is an icon rail; searching expands it over the page.
-  const [compactSearchOpen, setCompactSearchOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const searchableItems = useAvailableSettingsSearchItems();
   const navGroups = settingsNavGroups(useHasSecretProvidersEnvironment());
@@ -190,20 +199,21 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       }
 
       event.preventDefault();
-      setCompactSearchOpen(true);
-      searchInputRef.current?.focus();
-      searchInputRef.current?.select();
+      onMobileOpenChange(true);
+      const focusSearch = () => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      };
+      focusSearch();
+      // Below md the input is hidden until the section list renders.
+      if (document.activeElement !== searchInputRef.current) requestAnimationFrame(focusSearch);
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the search input DOM node after the compact search opens
-  useEffect(() => {
-    if (compactSearchOpen) searchInputRef.current?.focus();
-  }, [compactSearchOpen]);
+  }, [onMobileOpenChange]);
 
   const handleSectionClick = (to: SettingsPath) => {
+    onMobileOpenChange(false);
     void navigate({
       to,
       hash: "",
@@ -218,13 +228,15 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   };
   const handleSearchResultClick = (item: SettingsSearchItem) => {
     clearSearch();
-    setCompactSearchOpen(false);
     const targetId = item.targetId ?? item.id;
     revealSettingsSearchTarget(targetId);
     if (pathname === item.to && currentHash.replace(/^#/, "") === targetId) {
+      // Below md the page is hidden behind the section list; show it before scrolling.
+      flushSync(() => onMobileOpenChange(false));
       scrollToSettingsTarget(targetId);
       return;
     }
+    onMobileOpenChange(false);
     void navigate({
       to: item.to,
       hash: targetId,
@@ -271,20 +283,20 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       {...navArea}
       role="navigation"
       className={cn(
-        "flex w-60 shrink-0 flex-col border-e bg-sidebar text-sidebar-foreground max-md:w-14",
-        compactSearchOpen &&
-          "max-md:absolute max-md:inset-y-0 max-md:start-0 max-md:z-10 max-md:w-full",
+        "flex w-60 shrink-0 flex-col border-e bg-sidebar text-sidebar-foreground max-md:min-w-0 max-md:flex-1 max-md:border-e-0",
+        !mobileOpen && "max-md:hidden",
       )}
     >
+      <div className="flex h-12 shrink-0 items-center justify-between border-b ps-4 pe-2 md:hidden">
+        <h2 className="text-sm font-medium">
+          <T>Settings</T>
+        </h2>
+        <AppRouteModalClose />
+      </div>
       <SidebarContent className="overflow-x-hidden">
         <SidebarGroup>
           <div className="flex flex-col gap-2">
-            <div
-              className={cn(
-                "flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-                !compactSearchOpen && "max-md:hidden",
-              )}
-            >
+            <div className="flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground max-md:h-10 max-md:bg-sidebar-row-hover">
               <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
               {/* Native search inputs clear on Escape even during IME composition. */}
               <SidebarInput
@@ -297,10 +309,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   setActiveResultIndex(0);
                 }}
                 onKeyDown={handleSearchKeyDown}
-                onFocus={() => setCompactSearchOpen(true)}
-                onBlur={() => {
-                  if (!isSearching) setCompactSearchOpen(false);
-                }}
                 placeholder={gt("Search")}
                 aria-label={gt("Search settings")}
                 role="combobox"
@@ -329,7 +337,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   <XIcon className="size-3" />
                 </Button>
               ) : (
-                <Kbd>/</Kbd>
+                <Kbd className="max-md:hidden">/</Kbd>
               )}
             </div>
             {isSearching && results.length === 0 ? (
@@ -379,29 +387,14 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
               </SidebarMenu>
             ) : (
               <div className="flex flex-col gap-4">
-                {compactSearchOpen ? null : (
-                  <SidebarMenu className="md:hidden">
-                    <SidebarMenuItem>
-                      <SidebarMenuButton
-                        aria-label={gt("Search settings")}
-                        onClick={() => setCompactSearchOpen(true)}
-                      >
-                        <SearchIcon />
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  </SidebarMenu>
-                )}
                 <div onKeyDown={handleSettingsSectionKeyDown} className="flex flex-col gap-4">
                   {navGroups.map((group, index) => (
-                    <div
-                      key={group.heading}
-                      className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
-                    >
+                    <div key={group.heading} className="flex flex-col gap-1">
                       <h3
                         id={`settings-nav-group-${index}`}
                         className={cn(
                           "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
-                          group.headingHidden ? "sr-only" : !compactSearchOpen && "max-md:sr-only",
+                          group.headingHidden && "sr-only",
                         )}
                       >
                         {m(group.heading)}
@@ -423,14 +416,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                                   onClick={() => handleSectionClick(to)}
                                 >
                                   <Icon />
-                                  <span
-                                    className={cn(
-                                      "truncate",
-                                      !compactSearchOpen && "max-md:sr-only",
-                                    )}
-                                  >
-                                    {m(SETTINGS_NAV_LABELS[to])}
-                                  </span>
+                                  <span className="truncate">{m(SETTINGS_NAV_LABELS[to])}</span>
                                 </SidebarMenuButton>
                               </SidebarMenuItem>
                             );
@@ -445,7 +431,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           </div>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="max-md:hidden">
+      <SidebarFooter>
         <Suspense fallback={null}>
           <T3ConnectSidebarSignIn />
         </Suspense>

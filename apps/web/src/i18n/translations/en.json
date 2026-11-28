@@ -3085,6 +3085,7 @@
   "c83f08486162e679": "{title} requires a supporting environment. Connect or update an environment to continue.",
   "93723f58bafe1568": "{title} is not available for the selected target. Choose its owning scope to continue.",
   "22a6870eaaa85f1f": "Settings content",
+  "56f0e287ba1daf3f": "All settings",
   "dc06ede61ff5d1cc": "Restore device defaults",
   "c4b395da633cf4d3": [
     "Reconnect ",
@@ -10540,6 +10541,7 @@
   "858561b97fdd72f2": "Search settings",
   "fed2d32de2b0c566": "Clear settings search",
   "833639e235c97484": "Settings search results",
+  "8a135e63b19b5636": "Settings",
   "be82bbfef472ab44": "No settings found",
   "4e811ba442250819": "Add Simlock host",
   "0c9fe2452393d9d1": "Edit Simlock host",

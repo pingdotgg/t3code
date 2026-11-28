@@ -1,8 +1,9 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
+import { cn } from "../lib/utils";
 import { Outlet, createFileRoute, redirect, useLocation, useRouter } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
-import { RotateCcwIcon } from "lucide-react";
+import { ChevronLeftIcon, RotateCcwIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
 
@@ -155,13 +156,45 @@ function SettingsContentLayout() {
       ? environment?.environmentId
       : JSON.stringify(search);
   const [restoreSignal, setRestoreSignal] = useState(0);
+  // Phones open on the section list, as a plain "/settings" visit has no page in mind. A
+  // manual toggle holds only for the history entry it was made on; navigation resets it.
+  const locationKey = useLocation({
+    select: (location) => location.state.__TSR_key ?? location.href,
+  });
+  const showSectionsOnArrival = useLocation({
+    select: (location) => location.state.settingsShowSections === true,
+  });
+  const [mobileNavOverride, setMobileNavOverride] = useState<{
+    key: string;
+    open: boolean;
+  } | null>(null);
+  const mobileNavOpen =
+    mobileNavOverride?.key === locationKey ? mobileNavOverride.open : showSectionsOnArrival;
+  const setMobileNavOpen = (open: boolean) => setMobileNavOverride({ key: locationKey, open });
 
   return (
     <AppRouteModal label={gt("Settings")}>
       <div className="relative flex min-h-0 flex-1">
-        <SettingsSidebarNav pathname={navPathname} />
-        <div {...contentArea} className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <header className="flex h-12 shrink-0 items-center gap-3 border-b ps-5 pe-2">
+        <SettingsSidebarNav
+          pathname={navPathname}
+          mobileOpen={mobileNavOpen}
+          onMobileOpenChange={setMobileNavOpen}
+        />
+        <div
+          {...contentArea}
+          className={cn("flex min-h-0 min-w-0 flex-1 flex-col", mobileNavOpen && "max-md:hidden")}
+        >
+          <header className="flex h-12 shrink-0 items-center gap-3 border-b ps-5 pe-2 max-md:gap-1 max-md:ps-2">
+            <div className="md:hidden">
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={gt("All settings")}
+                onClick={() => setMobileNavOpen(true)}
+              >
+                <ChevronLeftIcon />
+              </Button>
+            </div>
             <SettingsBreadcrumb pathname={pathname} />
             <div className="ms-auto flex shrink-0 items-center gap-1">
               {pathname === "/settings/general" ? (
@@ -219,7 +252,11 @@ export const Route = createFileRoute("/_chat/settings")({
   search: { middlewares: [retainSettingsScope] },
   beforeLoad: async ({ location }) => {
     if (location.pathname === "/settings") {
-      throw redirect({ to: "/settings/general", replace: true });
+      throw redirect({
+        to: "/settings/general",
+        replace: true,
+        state: (previous) => ({ ...previous, settingsShowSections: true }),
+      });
     }
     const moved = movedSettingsPath(location.pathname, location.hash);
     if (moved) throw redirect({ to: moved, search: true, hash: true, replace: true });
