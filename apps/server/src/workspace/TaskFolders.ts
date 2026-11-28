@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's symlink has no type argument, and Windows needs a junction to link without elevation.
+import * as NodeFSP from "node:fs/promises";
+
 import {
   GitCommandError,
   isRuntimeModeAbove,
@@ -36,7 +39,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import type * as PlatformError from "effect/PlatformError";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -724,6 +727,55 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * Windows refuses symlinks without elevation or Developer Mode, so a folder gets a junction
+   * there, and a file a hard link or, on another volume, a copy.
+   */
+  const linkEntry = Effect.fnUntraced(function* (entry: string, link: string) {
+    if (!onWindows) return yield* fileSystem.symlink(entry, link);
+    const info = yield* fileSystem.stat(entry).pipe(Effect.option);
+    if (Option.exists(info, (value) => value.type === "Directory")) {
+      return yield* Effect.tryPromise({
+        try: () => NodeFSP.symlink(entry, link, "junction"),
+        catch: (cause) =>
+          PlatformError.systemError({
+            _tag: "Unknown",
+            module: "FileSystem",
+            method: "symlink",
+            pathOrDescriptor: link,
+            cause,
+          }),
+      });
+    }
+    yield* fileSystem
+      .symlink(entry, link)
+      .pipe(
+        Effect.catchReason("PlatformError", "PermissionDenied", () =>
+          fileSystem.link(entry, link).pipe(Effect.catch(() => fileSystem.copyFile(entry, link))),
+        ),
+      );
+  });
+
+  /** Whether `target` is a file `linkEntry` hard-linked or copied from `source`, unchanged. */
+  const isFileStandIn = Effect.fnUntraced(
+    function* (source: string, target: string) {
+      if (!onWindows) return false;
+      const from = yield* fileSystem.stat(source);
+      const to = yield* fileSystem.stat(target);
+      if (from.type !== "File" || to.type !== "File") return false;
+      const sameFile =
+        from.dev === to.dev &&
+        Option.isSome(from.ino) &&
+        Option.isSome(to.ino) &&
+        from.ino.value === to.ino.value;
+      if (sameFile) return true;
+      if (from.size !== to.size) return false;
+      const original = yield* fileSystem.readFile(source);
+      return Buffer.from(original).equals(yield* fileSystem.readFile(target));
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
+  /**
    * Stands in for a folder that is not a repository: every entry links to the original, so
    * nothing is copied, except the folders that lead to a tracked repository, which are real so a
    * worktree can sit in them.
@@ -744,7 +796,7 @@ const make = Effect.gen(function* () {
         if (trackedRepositories.some((repository) => isWithinRoot(path, repository, entry))) {
           yield* linkFolder(entry, link, trackedRepositories);
         } else {
-          yield* fileSystem.symlink(entry, link);
+          yield* linkEntry(entry, link);
         }
       }
     },
@@ -778,10 +830,14 @@ const make = Effect.gen(function* () {
 
   /** Unlinks links and removes the folders that leaves empty; files and checkouts stay. */
   const removeLinks: (
+    source: string,
     target: string,
   ) => Effect.Effect<boolean, PlatformError.PlatformError | RemoveEmptyDirectoryError> =
-    Effect.fnUntraced(function* (target) {
-      if (Option.isSome(yield* fileSystem.readLink(target).pipe(Effect.option))) {
+    Effect.fnUntraced(function* (source, target) {
+      if (
+        Option.isSome(yield* fileSystem.readLink(target).pipe(Effect.option)) ||
+        (yield* isFileStandIn(source, target))
+      ) {
         yield* fileSystem.remove(target);
         return true;
       }
@@ -790,23 +846,29 @@ const make = Effect.gen(function* () {
       if (yield* isRepository(target)) return false;
       let empty = true;
       for (const name of yield* fileSystem.readDirectory(target)) {
-        if (!(yield* removeLinks(path.join(target, name)))) empty = false;
+        if (!(yield* removeLinks(path.join(source, name), path.join(target, name)))) empty = false;
       }
       return empty && (yield* removeEmptyDirectory(target));
     });
 
   /** Whether `removeLinks` would leave nothing: only links and folders of links are inside. */
-  const holdsOnlyLinks: (target: string) => Effect.Effect<boolean, PlatformError.PlatformError> =
-    Effect.fnUntraced(function* (target) {
+  const holdsOnlyLinks: (
+    source: string,
+    target: string,
+  ) => Effect.Effect<boolean, PlatformError.PlatformError> = Effect.fnUntraced(
+    function* (source, target) {
       if (Option.isSome(yield* fileSystem.readLink(target).pipe(Effect.option))) return true;
+      if (yield* isFileStandIn(source, target)) return true;
       if (!(yield* exists(target))) return true;
       if ((yield* fileSystem.stat(target)).type !== "Directory") return false;
       if (yield* isRepository(target)) return false;
       for (const name of yield* fileSystem.readDirectory(target)) {
-        if (!(yield* holdsOnlyLinks(path.join(target, name)))) return false;
+        if (!(yield* holdsOnlyLinks(path.join(source, name), path.join(target, name))))
+          return false;
       }
       return true;
-    });
+    },
+  );
 
   const allocateRoot = Effect.fn("TaskFolders.allocateRoot")(function* (
     taskPlan: TaskFolderPlan,
@@ -1004,9 +1066,9 @@ const make = Effect.gen(function* () {
       }
     } else if (!projectHoldsKept) {
       // A folder that stays keeps its links: restoring relinks only a folder that is gone.
-      projectGone = yield* holdsOnlyLinks(projectPath).pipe(
+      projectGone = yield* holdsOnlyLinks(taskFolder.projectRoot, projectPath).pipe(
         Effect.flatMap((onlyLinks) =>
-          onlyLinks ? removeLinks(projectPath) : Effect.succeed(false),
+          onlyLinks ? removeLinks(taskFolder.projectRoot, projectPath) : Effect.succeed(false),
         ),
         Effect.orElseSucceed(() => false),
       );
@@ -1021,7 +1083,9 @@ const make = Effect.gen(function* () {
       else kept.push({ path: projectPath, reason: "has files that exist only in this folder" });
     }
     if (kept.length === 0) {
-      let rootGone = yield* removeLinks(taskFolder.root).pipe(Effect.orElseSucceed(() => false));
+      let rootGone = yield* removeLinks(taskFolder.anchor, taskFolder.root).pipe(
+        Effect.orElseSucceed(() => false),
+      );
       if (!rootGone && input.force && input.inspect === undefined) {
         rootGone = yield* fileSystem.remove(taskFolder.root, { recursive: true, force: true }).pipe(
           Effect.as(true),
@@ -1469,7 +1533,7 @@ const make = Effect.gen(function* () {
           ? // Git may or may not have left an empty folder where the link was.
             removeEmptyDirectory(worktreePath).pipe(
               Effect.ignore,
-              Effect.andThen(fileSystem.symlink(repositoryPath, worktreePath)),
+              Effect.andThen(linkEntry(repositoryPath, worktreePath)),
               Effect.ignoreCause({ log: true }),
             )
           : Effect.void;
