@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - the test builds a real linked worktree with plain git.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -7,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import {
+  claudeLocalSettingsDirectory,
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
   makeClaudeEnvironment,
@@ -15,6 +18,36 @@ import {
 } from "./ClaudeHome.ts";
 
 it.layer(NodeServices.layer)("ClaudeHome", (it) => {
+  it.effect(
+    "finds the main checkout from a linked worktree whose name holds a line separator",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repo = yield* fileSystem.realPath(
+          yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-local-" }),
+        );
+        const worktree = path.join(repo, ".claude", "worktrees", "feature\u2028tools");
+        const git = (...args: string[]) =>
+          NodeChildProcess.execFileSync("git", ["-C", repo, ...args], { stdio: "ignore" });
+        git("init", "-q");
+        git(
+          "-c",
+          "user.name=t",
+          "-c",
+          "user.email=t@t",
+          "commit",
+          "-q",
+          "--allow-empty",
+          "-m",
+          "i",
+        );
+        git("worktree", "add", "-q", "--detach", worktree);
+
+        expect(yield* claudeLocalSettingsDirectory(worktree)).toBe(repo);
+      }),
+  );
+
   describe("Claude home resolution", () => {
     it.effect("resolves configured Claude HOME and stamps continuation/cache keys with it", () =>
       Effect.gen(function* () {
