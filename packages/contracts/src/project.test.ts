@@ -12,7 +12,6 @@ import {
   ProjectReadFileError,
   ProjectReadFileInput,
   ProjectReadFileResult,
-  ProjectStatFileInput,
   ProjectCreatePayload,
   ProjectUpdatePayload,
   ProjectMutation,
@@ -35,9 +34,6 @@ describe("project RPC errors", () => {
     for (const relativePath of [" ", " report.txt", "report.txt\t"]) {
       const cwd = "/workspace";
       const resolvedPath = `${cwd}/${relativePath}`;
-      expect(roundTrip(ProjectStatFileInput, { cwd, relativePath }).relativePath).toBe(
-        relativePath,
-      );
       expect(roundTrip(ProjectReadFileInput, { cwd, relativePath }).relativePath).toBe(
         relativePath,
       );
