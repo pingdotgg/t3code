@@ -359,8 +359,12 @@ function withoutMarkup(body: string): string {
   };
   for (const line of body.split("\n")) {
     if (fence !== undefined) {
-      const closer = line.trim();
-      if (closer.length >= fence.length && closer.replaceAll(fence.charAt(0), "") === "") {
+      const closer = /^ {0,3}(`{3,}|~{3,})[ \t]*\r?$/.exec(line)?.[1];
+      if (
+        closer !== undefined &&
+        closer.charAt(0) === fence.charAt(0) &&
+        closer.length >= fence.length
+      ) {
         fence = undefined;
       }
       code(line);

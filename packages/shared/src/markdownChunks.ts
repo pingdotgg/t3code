@@ -786,7 +786,9 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     capturedFootnoteKeys.size > 0
   ) {
     let anyRef = false;
-    const chunkRefs: string[][] = chunkLineRanges.map(([start, end]) => {
+    const chunkRefs: string[][] = chunkLineRanges.map(([start, end], index) => {
+      // Oversized chunks display as source, so their references have no anchors.
+      if (chunks[index]!.text.length > LARGE_MARKDOWN_CHUNK_MAX_CHARS) return [];
       const refs: string[] = [];
       let block: string[] = [];
       const flushBlock = () => {

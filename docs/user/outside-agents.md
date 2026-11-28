@@ -8,7 +8,7 @@ Open the command palette (`Cmd/Ctrl+K`) and run **Use T3 Code in another app (MC
 
 - Cloud assistants (like ChatGPT or Claude) require **T3 Connect** enabled on the environment.
 - To also reach other machines through the same connection, enable **Settings → Labs → Linked environments** and [link them](./remote-access.md#link-another-environment).
-- To copy the raw MCP endpoint (`https://<environment-address>/mcp`), open an environment's menu in **Settings → Environments → Copy MCP URL**. OAuth requires `https://` or `localhost` (plain `http://` LAN/Tailscale addresses cannot complete OAuth).
+- To copy the raw MCP endpoint (`https://<environment-address>/mcp`) of the machine you are on, use **MCP URL** in **Settings → Sharing & access**: it is the T3 Connect address when the tunnel is on, otherwise a `localhost` or `https://` address. For a saved remote environment, open its menu in **Settings → Environments → Copy MCP URL**. OAuth requires `https://` or `localhost` (plain `http://` LAN/Tailscale addresses cannot complete OAuth).
 
 ### CLI clients and ChatGPT
 

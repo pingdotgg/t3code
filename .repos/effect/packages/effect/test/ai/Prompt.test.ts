@@ -426,14 +426,7 @@ describe("Prompt", () => {
           params: {},
           providerExecuted: false
         }),
-        // Tool call B arrives second
-        Response.makePart("tool-call", {
-          id: "call-B",
-          name: "tool_b",
-          params: {},
-          providerExecuted: false
-        }),
-        // But tool B's result arrives before tool A's result
+        // Tool B's result arrives before tool call B and tool A's result
         Response.makePart("tool-result", {
           id: "call-B",
           name: "tool_b",
@@ -441,6 +434,13 @@ describe("Prompt", () => {
           result: "result-B",
           encodedResult: "result-B",
           preliminary: false,
+          providerExecuted: false
+        }),
+        // Tool call B arrives after its result
+        Response.makePart("tool-call", {
+          id: "call-B",
+          name: "tool_b",
+          params: {},
           providerExecuted: false
         }),
         Response.makePart("tool-result", {

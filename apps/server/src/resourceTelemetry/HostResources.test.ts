@@ -1,24 +1,48 @@
-import { assert, describe, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { afterEach, assert, describe, expect, it } from "@effect/vitest";
 import type * as NodeOS from "node:os";
+import * as AgentScope from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
+import * as Config from "../config.ts";
 import * as HostResources from "./HostResources.ts";
+import * as NativeTelemetryClient from "./NativeTelemetryClient.ts";
 
 // An 8-CPU host; every cpus() call advances each CPU by 100 ms at `host.busy` utilization.
-const host = vi.hoisted(() => ({ busy: 0, reads: 0 }));
+const host = vi.hoisted(() => ({
+  busy: 0,
+  reads: 0,
+  load: 0,
+  disk: { bavail: 512 * 1024 * 1024, blocks: 1024 * 1024 * 1024, bsize: 512 },
+  worktreesDisk: null as { bavail: number; blocks: number; bsize: number } | null,
+  hangStatfs: false,
+  statfsCalls: 0,
+}));
+vi.mock("node:fs/promises", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  statfs: (path: string) => {
+    host.statfsCalls++;
+    if (host.hangStatfs) return new Promise(() => {});
+    const disk = path.endsWith("/worktrees") && host.worktreesDisk ? host.worktreesDisk : host.disk;
+    return Promise.resolve({ ...disk });
+  },
+}));
 vi.mock("node:os", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeOS>();
   return {
     ...actual,
     totalmem: () => 4 * 1024 ** 3,
+    loadavg: () => [host.load, host.load, host.load],
+    availableParallelism: () => 8,
     cpus: () => {
       const elapsed = 100 * host.reads++;
       const times = {
@@ -35,7 +59,20 @@ vi.mock("node:os", async (importOriginal) => {
 const setup = (busy = 0) => {
   host.busy = busy;
   host.reads = 0;
+  host.load = 0;
+  host.disk = { bavail: 512 * 1024 * 1024, blocks: 1024 * 1024 * 1024, bsize: 512 };
+  host.worktreesDisk = null;
+  host.hangStatfs = false;
+  host.statfsCalls = 0;
 };
+
+afterEach(() => {
+  host.hangStatfs = false;
+});
+
+const layerConfig = Config.layerTest(process.cwd(), { prefix: "host-resources-" }).pipe(
+  Layer.provide(NodeServices.layer),
+);
 
 const GiB = 1024 ** 3;
 const MiB = 1024 ** 2;
@@ -75,6 +112,8 @@ const linuxHost = (files: Record<string, ReadonlyArray<string>>) => {
           },
         }),
         Layer.succeed(HostProcess.Platform, "linux"),
+        NativeTelemetryClient.layerTest(),
+        layerConfig,
         Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make(() => Effect.die("HostResources spawned on linux")),
@@ -221,6 +260,335 @@ describe("HostResources.layer", () => {
           [`${cgroup}/cpu.max`]: ["200000 100000\n"],
           [`${cgroup}/cpu.stat`]: [""],
         }),
+      ),
+    ),
+  );
+});
+
+const quiet: HostResources.PressureSample = {
+  memorySome: 0,
+  memoryFull: 0,
+  agentsMemoryFull: 0,
+  darwinMemoryLevel: null,
+  cpuSome: 0,
+  ioFull: 0,
+  loadPerCpu: null,
+  diskFreeBytes: 500 * GiB,
+  diskTotalBytes: 1000 * GiB,
+};
+const unread: HostResources.PressureSample = {
+  memorySome: null,
+  memoryFull: null,
+  agentsMemoryFull: null,
+  darwinMemoryLevel: null,
+  cpuSome: null,
+  ioFull: null,
+  loadPerCpu: null,
+  diskFreeBytes: null,
+  diskTotalBytes: null,
+};
+const levels = (overrides: Partial<HostResources.PressureLevels>) => ({
+  ...HostResources.CALM,
+  ...overrides,
+});
+
+describe("pressure levels", () => {
+  it("reads PSI averages", () => {
+    const text =
+      "some avg10=12.50 avg60=3.10 avg300=0.80 total=1\nfull avg10=4.00 avg60=1.00 avg300=0.10 total=1\n";
+    expect(HostResources.psiAverage(text, "some", "avg10")).toBe(12.5);
+    expect(HostResources.psiAverage(text, "full", "avg60")).toBe(1);
+    expect(HostResources.psiAverage("", "full", "avg10")).toBeNull();
+  });
+
+  it("keeps small agents listed while rounding large ones coarsely", () => {
+    expect(HostResources.roundCoarsely(27_648_000)).toBe(28 * MiB);
+    expect(HostResources.roundCoarsely(3_200 * MiB + 1)).toBe(3_328 * MiB);
+    expect(HostResources.roundCoarsely(0)).toBe(0);
+  });
+
+  it("ranks agents by exact size, so close ones cannot push out the largest", () => {
+    // All four round to 3,328 MiB; the largest comes last.
+    const agents = [3_201, 3_202, 3_203, 3_204].map((size) => ({
+      threadId: null,
+      agent: `agent-${size}`,
+      memoryBytes: size * MiB,
+      cpuCores: 5_000 - size,
+    }));
+    expect(HostResources.heaviestAgents(agents, "memory").map((agent) => agent.agent)).toEqual([
+      "agent-3204",
+      "agent-3203",
+      "agent-3202",
+    ]);
+    expect(HostResources.heaviestAgents(agents, "cpu").map((agent) => agent.agent)).toEqual([
+      "agent-3201",
+      "agent-3202",
+      "agent-3203",
+    ]);
+  });
+
+  it.each([
+    { name: "a quiet host", previous: {}, sample: quiet, expected: {} },
+    {
+      name: "throttled agents, as in the 4 h freeze",
+      previous: {},
+      sample: { ...quiet, memorySome: 30, memoryFull: 3, agentsMemoryFull: 85 },
+      expected: { memory: "severe" },
+    },
+    {
+      name: "brief memory stalls",
+      previous: {},
+      sample: { ...quiet, memorySome: 12 },
+      expected: { memory: "elevated" },
+    },
+    {
+      name: "severe memory pressure easing but not gone",
+      previous: { memory: "severe" },
+      sample: { ...quiet, memoryFull: 5 },
+      expected: { memory: "severe" },
+    },
+    {
+      name: "severe memory pressure easing to stalls",
+      previous: { memory: "severe" },
+      sample: { ...quiet, memoryFull: 1 },
+      expected: { memory: "elevated" },
+    },
+    {
+      name: "elevated memory pressure fading below its entry threshold",
+      previous: { memory: "elevated" },
+      sample: { ...quiet, memorySome: 5 },
+      expected: { memory: "elevated" },
+    },
+    {
+      name: "elevated memory pressure gone",
+      previous: { memory: "elevated" },
+      sample: { ...quiet, memorySome: 1 },
+      expected: {},
+    },
+    {
+      name: "macOS critical memory pressure",
+      previous: {},
+      sample: { ...unread, darwinMemoryLevel: 4 },
+      expected: { memory: "severe" },
+    },
+    {
+      name: "a busy CPU whose work rarely waits",
+      previous: {},
+      sample: { ...quiet, cpuSome: 10 },
+      expected: {},
+    },
+    {
+      name: "work waiting for a CPU most of the last minute",
+      previous: {},
+      sample: { ...quiet, cpuSome: 70 },
+      expected: { cpu: "severe" },
+    },
+    {
+      name: "a load average three times the CPUs, without PSI",
+      previous: {},
+      sample: { ...unread, loadPerCpu: 3.2 },
+      expected: { cpu: "severe" },
+    },
+    {
+      name: "storage stalling every task",
+      previous: {},
+      sample: { ...quiet, ioFull: 12 },
+      expected: { io: "elevated" },
+    },
+    {
+      name: "a disk under 20 GiB free",
+      previous: {},
+      sample: { ...quiet, diskFreeBytes: 15 * GiB },
+      expected: { disk: "elevated" },
+    },
+    {
+      name: "a disk under 5 GiB free",
+      previous: {},
+      sample: { ...quiet, diskFreeBytes: 4 * GiB },
+      expected: { disk: "severe" },
+    },
+    {
+      name: "a nearly full disk just back above its threshold",
+      previous: { disk: "severe" },
+      sample: { ...quiet, diskFreeBytes: 6 * GiB },
+      expected: { disk: "severe" },
+    },
+    {
+      name: "a small disk judged by its share free",
+      previous: {},
+      sample: { ...quiet, diskFreeBytes: 12 * GiB, diskTotalBytes: 100 * GiB },
+      expected: { disk: "elevated" },
+    },
+    {
+      name: "a sample where nothing could be read",
+      previous: { memory: "severe", cpu: "elevated", io: "elevated", disk: "severe" },
+      sample: unread,
+      expected: { memory: "severe", cpu: "elevated", io: "elevated", disk: "severe" },
+    },
+  ] as const)("reads $name", ({ previous, sample, expected }) => {
+    expect(HostResources.nextPressureLevels(levels(previous), sample)).toEqual(levels(expected));
+  });
+});
+
+describe("HostResources pressure on Linux", () => {
+  const scope = "/agents/owned/t3code-claude-0123abcd.scope";
+  const pressured = (overrides: Record<string, ReadonlyArray<string>>) =>
+    linuxHost({
+      "/proc/pressure/memory": ["some avg10=0.00 avg60=0.00\nfull avg10=0.00 avg60=0.00\n"],
+      "/proc/pressure/cpu": ["some avg10=90.00 avg60=75.00\nfull avg10=0.00 avg60=0.00\n"],
+      "/proc/pressure/io": ["some avg10=0.00 avg60=0.00\nfull avg10=0.00 avg60=0.00\n"],
+      "/sys/fs/cgroup/agents/memory.pressure": ["some avg10=0.00\nfull avg10=0.00\n"],
+      [`/sys/fs/cgroup${scope}/memory.current`]: [`${900 * MiB}\n`],
+      [`/sys/fs/cgroup${scope}/cpu.stat`]: ["usage_usec 0\n", "usage_usec 15000000\n"],
+      ...overrides,
+    }).pipe(
+      Layer.provide(
+        Layer.succeed(AgentScope.AgentScope, {
+          ...AgentScope.AgentScope.defaultValue(),
+          controlGroups: Effect.succeed({
+            slice: "/agents",
+            scopes: [{ path: scope, threadId: "thread-1", agent: "claude" }],
+          }),
+        }),
+      ),
+    );
+
+  it.effect("names the agents using the most CPU while work waits for one", () =>
+    Effect.gen(function* () {
+      setup();
+      const hostResources = yield* HostResources.HostResources;
+      const samples = yield* Stream.take(hostResources.pressure, 2).pipe(
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* TestClock.adjust("5 seconds");
+      const [first, second] = yield* Fiber.join(samples);
+      expect(first).toMatchObject({ cpu: "severe", memory: "none", disk: "none" });
+      // One reading cannot tell CPU use; the next one, 15 s of CPU in 5 s, can.
+      expect(first?.heaviestAgents).toEqual([]);
+      expect(second?.heaviestAgents).toEqual([
+        { threadId: "thread-1", agent: "claude", memoryBytes: 960 * MiB, cpuCores: 3 },
+      ]);
+    }).pipe(Effect.provide(pressured({}))),
+  );
+
+  it.effect("reports a nearly full disk with its free space", () =>
+    Effect.gen(function* () {
+      setup();
+      host.disk = { bavail: 3 * 1024 * 1024 * 2, blocks: 1024 * 1024 * 1024, bsize: 512 };
+      const pressure = yield* (yield* HostResources.HostResources).readPressure;
+      expect(pressure).toMatchObject({ disk: "severe", diskFreeBytes: 3 * GiB });
+    }).pipe(
+      Effect.provide(
+        pressured({
+          "/proc/pressure/cpu": ["some avg10=0.00 avg60=0.00\nfull avg10=0.00 avg60=0.00\n"],
+        }),
+      ),
+    ),
+  );
+
+  it.effect("warns about a small volume that is nearly full beside a large roomy one", () =>
+    Effect.gen(function* () {
+      setup();
+      // 1 GiB of 10 GiB is only elevated; 2 GiB of 1 TiB is severe.
+      host.disk = { bavail: 2 * 1024 * 1024, blocks: 20 * 1024 * 1024, bsize: 512 };
+      host.worktreesDisk = { bavail: 4 * 1024 * 1024, blocks: 2048 * 1024 * 1024, bsize: 512 };
+      const pressure = yield* (yield* HostResources.HostResources).readPressure;
+      expect(pressure).toMatchObject({ disk: "severe", diskFreeBytes: 2 * GiB });
+    }).pipe(
+      Effect.provide(
+        pressured({
+          "/proc/pressure/cpu": ["some avg10=0.00 avg60=0.00\nfull avg10=0.00 avg60=0.00\n"],
+        }),
+      ),
+    ),
+  );
+
+  it.effect("keeps one statfs in flight per directory while a mount hangs", () =>
+    Effect.gen(function* () {
+      setup();
+      host.hangStatfs = true;
+      const hostResources = yield* HostResources.HostResources;
+      for (let sample = 0; sample < 3; sample++) {
+        const fiber = yield* Effect.forkChild(hostResources.readPressure);
+        yield* TestClock.adjust("1 second");
+        yield* Fiber.join(fiber);
+      }
+      // The data and worktree directories, once each.
+      expect(host.statfsCalls).toBe(2);
+    }).pipe(
+      Effect.provide(
+        pressured({
+          "/proc/pressure/cpu": ["some avg10=0.00 avg60=0.00\nfull avg10=0.00 avg60=0.00\n"],
+        }),
+      ),
+    ),
+  );
+
+  it.effect("keeps agent-slice memory pressure while host memory PSI is unreadable", () =>
+    Effect.gen(function* () {
+      setup();
+      const hostResources = yield* HostResources.HostResources;
+      let pressure = yield* hostResources.readPressure;
+      for (let sample = 0; sample < 7; sample++) pressure = yield* hostResources.readPressure;
+      expect(pressure.memory).toBe("severe");
+    }).pipe(
+      Effect.provide(
+        pressured({
+          "/proc/pressure/memory": [""],
+          "/proc/pressure/cpu": ["some avg10=0.00 avg60=0.00\nfull avg10=0.00 avg60=0.00\n"],
+          "/sys/fs/cgroup/agents/memory.pressure": ["some avg10=90.00\nfull avg10=85.00\n"],
+        }),
+      ),
+    ),
+  );
+});
+
+const answersOnce = (level: number) => {
+  let answered = false;
+  return Effect.sync(() => {
+    if (answered) return null;
+    answered = true;
+    return level;
+  });
+};
+
+describe("HostResources memory pressure on macOS", () => {
+  it.effect("reads the level from the running sidecar instead of spawning sysctl", () =>
+    Effect.gen(function* () {
+      setup();
+      const hostResources = yield* HostResources.HostResources;
+      const [first] = yield* Stream.take(hostResources.pressure, 1).pipe(Stream.runCollect);
+      expect(first?.memory).toBe("severe");
+      const later = yield* Stream.take(hostResources.pressure, 2).pipe(
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      // The sidecar stops answering: the warning must not outlive the pressure.
+      yield* TestClock.adjust("30 seconds");
+      expect((yield* Fiber.join(later)).map((pressure) => pressure.memory)).toEqual([
+        "severe",
+        "none",
+      ]);
+    }).pipe(
+      Effect.provide(
+        HostResources.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              NativeTelemetryClient.layerTest({
+                memoryPressureLevel: answersOnce(4),
+              }),
+              Layer.succeed(HostProcess.Platform, "darwin"),
+              FileSystem.layerNoop({}),
+              layerConfig,
+              // Under pressure a new process may never start, so sampling must not spawn one.
+              Layer.succeed(
+                ChildProcessSpawner.ChildProcessSpawner,
+                ChildProcessSpawner.make(() => Effect.die("sampling spawned a process")),
+              ),
+            ),
+          ),
+        ),
       ),
     ),
   );

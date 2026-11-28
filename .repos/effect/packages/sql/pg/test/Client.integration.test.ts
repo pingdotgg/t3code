@@ -1,4 +1,4 @@
-import { PgClient } from "@effect/sql-pg"
+import { PgClient, type PgConnection, PgTypes } from "@effect/sql-pg"
 import { assert, expect, it } from "@effect/vitest"
 import {
   Cause,
@@ -312,6 +312,58 @@ it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("PgClient", (it) =>
                ARRAY[ROW(1, 'a'), ROW(2, 'b')] AS records
       `
       assert.deepStrictEqual(rows, [{ record: [1, "a", null, [true, [1, 2]]], records: [[1, "a"], [2, "b"]] }])
+    }))
+
+  it.effect("reads and binds built-in ranges and multiranges", () =>
+    Effect.gen(function*() {
+      const sql = yield* PgClient.PgClient
+      const tsLower = new Date("2026-01-01T00:00:00.000Z")
+      const tsUpper = new Date("2026-01-02T12:30:00.000Z")
+      const boundDateRange: PgTypes.Range<string> = {
+        lower: "2026-01-01",
+        upper: null,
+        lowerInclusive: true,
+        upperInclusive: false,
+        empty: false
+      }
+      const boundMultirange: ReadonlyArray<PgTypes.Range<number>> = [
+        { lower: 1, upper: 5, lowerInclusive: true, upperInclusive: false, empty: false },
+        { lower: 10, upper: 21, lowerInclusive: true, upperInclusive: false, empty: false }
+      ]
+      const rows = yield* sql`
+        SELECT daterange(${"2026-01-01"}::date, null) AS r,
+               int4range(1, 5, '[]') AS int4_r,
+               int8range(10::int8, 20::int8, '(]') AS int8_r,
+               numrange(1.5, 2.5, '()') AS num_r,
+               tsrange('2026-01-01 00:00:00'::timestamp, '2026-01-02 12:30:00'::timestamp, '[)') AS ts_r,
+               tstzrange('2026-01-01T00:00:00Z'::timestamptz, '2026-01-02T12:30:00Z'::timestamptz, '(]') AS tstz_r,
+               'empty'::int4range AS empty_r,
+               int4multirange(int4range(1, 5), int4range(10, 20, '[]')) AS mr,
+               ARRAY[int4range(1, 5), NULL] AS range_arr,
+               ARRAY[int4multirange(int4range(1, 5)), NULL] AS mr_arr,
+               ${PgTypes.daterange(boundDateRange)} AS param_r,
+               ${PgTypes.int4multirange(boundMultirange)} AS param_mr
+      `
+      assert.deepStrictEqual(rows, [{
+        r: boundDateRange,
+        int4_r: { lower: 1, upper: 6, lowerInclusive: true, upperInclusive: false, empty: false },
+        int8_r: { lower: 11n, upper: 21n, lowerInclusive: true, upperInclusive: false, empty: false },
+        num_r: { lower: "1.5", upper: "2.5", lowerInclusive: false, upperInclusive: false, empty: false },
+        ts_r: { lower: tsLower, upper: tsUpper, lowerInclusive: true, upperInclusive: false, empty: false },
+        tstz_r: { lower: tsLower, upper: tsUpper, lowerInclusive: false, upperInclusive: true, empty: false },
+        empty_r: { lower: null, upper: null, lowerInclusive: false, upperInclusive: false, empty: true },
+        mr: boundMultirange,
+        range_arr: [
+          { lower: 1, upper: 5, lowerInclusive: true, upperInclusive: false, empty: false },
+          null
+        ],
+        mr_arr: [
+          [{ lower: 1, upper: 5, lowerInclusive: true, upperInclusive: false, empty: false }],
+          null
+        ],
+        param_r: boundDateRange,
+        param_mr: boundMultirange
+      }])
     }))
 
   it.effect("reads bytea as Uint8Array", () =>
@@ -676,6 +728,23 @@ it.layer(PgContainer.layerClientWithTransforms, { timeout: "30 seconds" })("PgCl
       const [query, params] = sql`INSERT INTO people ${sql.insert({ first_name: "Tim", age: 10 })}`.compile()
       expect(query).toEqual(`INSERT INTO people ("first_name","age") VALUES ($1,$2)`)
       expect(params).toEqual(["Tim", 10])
+    }))
+
+  it.effect("queryTextValues uses the active transaction and preserves column names", () =>
+    Effect.gen(function*() {
+      const sql = yield* PgClient.PgClient
+      yield* sql`CREATE TABLE query_text (recorded_at timestamptz)`
+      let inside: PgConnection.TextResult | undefined
+      const rollback = yield* Effect.flip(sql.withTransaction(Effect.gen(function*() {
+        yield* sql`INSERT INTO query_text VALUES ('infinity')`
+        inside = yield* sql.queryTextValues("SELECT recorded_at FROM query_text")
+        return yield* Effect.fail("rollback" as const)
+      })))
+      assert.strictEqual(rollback, "rollback")
+      const outside = yield* sql.queryTextValues("SELECT recorded_at FROM query_text")
+      assert.deepStrictEqual(inside?.fields, [{ name: "recorded_at", dataTypeId: PgTypes.OID.timestamptz }])
+      assert.deepStrictEqual(inside?.values, [["infinity"]])
+      assert.deepStrictEqual(outside.values, [])
     }))
 
   it.effect("rejects multi-statement queries", () =>

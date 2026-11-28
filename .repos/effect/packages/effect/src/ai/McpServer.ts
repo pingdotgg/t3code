@@ -97,6 +97,7 @@ import type {
   ServerCapabilities
 } from "./McpSchema.ts"
 import * as AiPrompt from "./Prompt.ts"
+import * as Skill from "./Skill.ts"
 import * as Tool from "./Tool.ts"
 import * as Toolkit from "./Toolkit.ts"
 
@@ -3955,6 +3956,16 @@ export interface SkillOptions {
   readonly annotations?: Context.Context<never> | undefined
 }
 
+/**
+ * Options for registering a {@link Skill.Skill} with {@link registerSkill} or
+ * {@link skill}: {@link SkillOptions} without `files`, which come from the skill.
+ *
+ * @stability unstable
+ * @category models
+ * @since 4.1.6
+ */
+export type SkillRegistration = Omit<SkillOptions, "files">
+
 const skillFileEncoder = new TextEncoder()
 
 // Bytes are copied so that later changes by the caller cannot alter what is
@@ -3968,6 +3979,9 @@ const toSkillSourceFile = (path: string, file: SkillFile): McpSkills.SourceFile 
     mimeType
   }
 }
+
+const toSkillOptions = (skillOrOptions: Skill.Skill | SkillOptions, registration?: SkillRegistration): SkillOptions =>
+  skillOrOptions instanceof Skill.Skill ? { ...registration!, files: Skill.toFiles(skillOrOptions) } : skillOrOptions
 
 /**
  * Registers an Agent Skill under the MCP Skills extension (SEP-2640).
@@ -3996,8 +4010,14 @@ const toSkillSourceFile = (path: string, file: SkillFile): McpSkills.SourceFile 
  * @category handlers
  * @since 4.1.1
  */
-export const registerSkill: (options: SkillOptions) => Effect.Effect<void, Cause.IllegalArgumentError, McpServer> =
-  Effect.fnUntraced(function*(options: SkillOptions) {
+export const registerSkill: {
+  (skill: Skill.Skill, options: SkillRegistration): Effect.Effect<void, Cause.IllegalArgumentError, McpServer>
+  (options: SkillOptions): Effect.Effect<void, Cause.IllegalArgumentError, McpServer>
+} = (skillOrOptions: Skill.Skill | SkillOptions, registration?: SkillRegistration) =>
+  registerSkillFiles(toSkillOptions(skillOrOptions, registration))
+
+const registerSkillFiles: (options: SkillOptions) => Effect.Effect<void, Cause.IllegalArgumentError, McpServer> = Effect
+  .fnUntraced(function*(options: SkillOptions) {
     const files = Object.entries(options.files).map(([path, file]) => toSkillSourceFile(path, file))
     const skill = yield* McpSkills.makeStaticSkill({ uri: options.uri, files }).pipe(
       Effect.provide(Digest.layerWebCrypto)
@@ -4075,8 +4095,11 @@ export const registerSkill: (options: SkillOptions) => Effect.Effect<void, Cause
  * @category layers
  * @since 4.1.1
  */
-export const skill = (options: SkillOptions): Layer.Layer<never, Cause.IllegalArgumentError, McpServer> =>
-  Layer.effectDiscard(registerSkill(options))
+export const skill: {
+  (skill: Skill.Skill, options: SkillRegistration): Layer.Layer<never, Cause.IllegalArgumentError, McpServer>
+  (options: SkillOptions): Layer.Layer<never, Cause.IllegalArgumentError, McpServer>
+} = (skillOrOptions: Skill.Skill | SkillOptions, registration?: SkillRegistration) =>
+  Layer.effectDiscard(registerSkillFiles(toSkillOptions(skillOrOptions, registration)))
 
 /**
  * Registers an MCP prompt from an Effect program.

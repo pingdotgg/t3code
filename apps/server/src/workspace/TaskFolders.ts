@@ -504,8 +504,11 @@ const make = Effect.gen(function* () {
     const pointer = yield* fileSystem
       .readFileString(path.join(folder, ".git"))
       .pipe(Effect.orElseSucceed(() => ""));
-    const gitDir = /^gitdir:\s*(.+?)\s*$/m.exec(pointer)?.[1];
-    return gitDir === undefined ? null : path.resolve(folder, gitDir);
+    const prefix = "gitdir: ";
+    const gitDir = pointer.startsWith(prefix)
+      ? pointer.slice(prefix.length).replace(/[\r\n]+$/u, "")
+      : "";
+    return gitDir === "" ? null : path.resolve(folder, gitDir);
   });
   // A repository that is itself a linked worktree registers worktrees under the Git dir it shares.
   const commonGitDir = Effect.fnUntraced(function* (repositoryPath: string) {

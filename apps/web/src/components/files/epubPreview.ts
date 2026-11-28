@@ -17,7 +17,7 @@ import type { EpubLocation, EpubNarrationCue, EpubPage } from "./officePreviewPr
 import { isPreviewError, PreviewError } from "./previewFailure";
 
 const htmlTags = new Set(
-  "a abbr address article aside audio b bdi bdo big blockquote canvas caption cite code col colgroup dd del details dfn div dl dt em figcaption figure footer h1 h2 h3 h4 h5 h6 header hgroup i ins kbd li main mark nav ol p pre q rp rt ruby s samp section small span strong sub summary sup table tbody td tfoot th thead time tr u ul var video".split(
+  "a abbr acronym address article aside audio b bdi bdo big blockquote canvas caption center cite code col colgroup dd del details dfn div dl dt em figcaption figure footer h1 h2 h3 h4 h5 h6 header hgroup i ins kbd li main mark nav ol p pre q rp rt ruby s samp section small span strike strong sub summary sup table tbody td tfoot th thead time tr tt u ul var video".split(
     " ",
   ),
 );
@@ -31,7 +31,8 @@ const staticControls = new Set(["button", "input", "select", "textarea"]);
 const svgTags = new Set(
   (
     "svg g a defs desc title path rect circle ellipse line polyline polygon text tspan image use symbol switch textPath clipPath mask pattern marker linearGradient radialGradient stop " +
-    "filter feGaussianBlur feColorMatrix feSpecularLighting feDistantLight feComposite feOffset feComponentTransfer feFuncA feFlood feBlend feMerge feMergeNode feDropShadow"
+    "filter feGaussianBlur feColorMatrix feSpecularLighting feDiffuseLighting feDistantLight fePointLight feSpotLight feComposite feOffset feComponentTransfer feFuncA feFuncR feFuncG feFuncB feFlood feBlend feMerge feMergeNode feDropShadow " +
+    "feMorphology feTurbulence feDisplacementMap feConvolveMatrix feTile"
   ).split(" "),
 );
 const mathTags = new Set(
@@ -115,7 +116,9 @@ const svgAttrs = (
   "clip-rule clipPathUnits mask maskUnits maskContentUnits patternUnits patternContentUnits patternTransform startOffset " +
   "marker-start marker-mid marker-end markerWidth markerHeight markerUnits refX refY orient " +
   "filter filterUnits primitiveUnits stdDeviation in in2 result type values color-interpolation-filters flood-color flood-opacity mode " +
-  "kernelUnitLength surfaceScale specularExponent specularConstant lighting-color azimuth elevation operator slope intercept"
+  "kernelUnitLength surfaceScale specularExponent specularConstant lighting-color azimuth elevation operator slope intercept tableValues amplitude exponent " +
+  "diffuseConstant z pointsAtX pointsAtY pointsAtZ limitingConeAngle k1 k2 k3 k4 " +
+  "radius baseFrequency numOctaves seed stitchTiles scale xChannelSelector yChannelSelector order kernelMatrix divisor bias targetX targetY edgeMode preserveAlpha"
 ).split(" ");
 const mathAttrs = (
   "display displaystyle mathvariant mathsize mathcolor mathbackground accent accentunder columnalign " +
@@ -602,8 +605,14 @@ export async function openEpub(archive: JSZip) {
       const bytes = await entry.async("uint8array");
       if (bytes.length > 1024 * 1024) return "";
       const type = media.get(target);
+      const ext = extension(target);
       let content;
-      if (type === "application/ttml+xml" || extension(target) === "ttml") {
+      if (
+        type === "application/ttml+xml" ||
+        type === "application/ttaf+xml" ||
+        ext === "ttml" ||
+        ext === "dfxp"
+      ) {
         try {
           content = ttmlCaptions(parseXml(officeXmlDecoder(bytes).decode(bytes)));
         } catch (cause) {

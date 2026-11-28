@@ -16,6 +16,7 @@ import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -128,6 +129,9 @@ export class ProviderRegistry extends Context.Service<
      * minutes. When it changed, recheck latest CLI versions and probe providers.
      */
     readonly refreshModelCatalog: Effect.Effect<void>;
+
+    /** Refresh usage limits without login-shell PATH, maintenance, or full health probes. */
+    readonly refreshUsageLimits: (instanceId?: ProviderInstanceId) => Effect.Effect<void>;
 
     readonly getProviderMaintenanceCapabilitiesForInstance: (
       instanceId: ProviderInstanceId,
@@ -1431,6 +1435,93 @@ export const layer = Layer.effect(
       }
     });
 
+    const refreshOneUsage = Effect.fn("refreshOneUsage")(function* (instance: ProviderInstance) {
+      if (!instance.enabled || !instance.snapshot.refreshUsage) return;
+      const providerSource = buildSnapshotSource(instance);
+      const result = yield* instance.snapshot.refreshUsage.pipe(
+        Effect.andThen(providerSource.getSnapshot),
+        Effect.exit,
+      );
+      if (!(yield* isCurrentInstance(instance))) return;
+      if (Exit.isFailure(result)) {
+        if (Cause.hasInterruptsOnly(result.cause)) return yield* Effect.interrupt;
+        yield* Effect.logWarning("provider usage limits refresh failed", result.cause).pipe(
+          Effect.annotateLogs({
+            instanceId: instance.instanceId,
+            failure: Cause.hasDies(result.cause) ? "defect" : "error",
+          }),
+        );
+        return;
+      }
+      yield* correlateSnapshotWithSource(providerSource, result.value).pipe(
+        Effect.flatMap(syncProvider),
+      );
+    });
+
+    const refreshUsageLimitsInFlightRef = yield* Ref.make<Option.Option<Deferred.Deferred<void>>>(
+      Option.none(),
+    );
+
+    const runAllUsageLimits = syncLiveSourcesAndContinue.pipe(
+      Effect.andThen(Ref.get(liveSubsRef)),
+      Effect.flatMap((instances) =>
+        Effect.forEach(instances.values(), (instance) => refreshOneUsage(instance), {
+          concurrency: "unbounded",
+          discard: true,
+        }),
+      ),
+    );
+
+    // Claim and fork together: an interrupt between them would leave a completion nobody settles.
+    const claimUsageLimitsRefresh = Effect.uninterruptibleMask((restore) =>
+      Ref.modify(
+        refreshUsageLimitsInFlightRef,
+        (
+          inFlight,
+        ): readonly [
+          { readonly owner: boolean; readonly completion: Deferred.Deferred<void> },
+          Option.Option<Deferred.Deferred<void>>,
+        ] => {
+          if (Option.isSome(inFlight)) {
+            return [{ owner: false, completion: inFlight.value }, inFlight];
+          }
+          const completion = Deferred.makeUnsafe<void>();
+          return [{ owner: true, completion }, Option.some(completion)];
+        },
+      ).pipe(
+        Effect.tap((claimed) =>
+          claimed.owner
+            ? restore(runAllUsageLimits).pipe(
+                Effect.onExit((exit) =>
+                  Ref.set(refreshUsageLimitsInFlightRef, Option.none()).pipe(
+                    Effect.andThen(Deferred.done(claimed.completion, exit)),
+                  ),
+                ),
+                Effect.forkDetach,
+              )
+            : Effect.void,
+        ),
+      ),
+    );
+
+    const refreshAllUsageLimits = Effect.fn("refreshAllUsageLimits")(function* () {
+      const claimed = yield* claimUsageLimitsRefresh;
+      yield* Deferred.await(claimed.completion);
+    });
+
+    const refreshUsageLimits = Effect.fn("ProviderRegistry.refreshUsageLimits")(function* (
+      instanceId?: ProviderInstanceId,
+    ) {
+      if (instanceId === undefined) {
+        yield* refreshAllUsageLimits();
+        return;
+      }
+      yield* syncLiveSourcesAndContinue;
+      const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
+      if (!instance) return;
+      yield* refreshOneUsage(instance);
+    });
+
     return {
       getProviders: Ref.get(providersRef),
       refresh: (provider?: ProviderDriverKind) =>
@@ -1453,6 +1544,11 @@ export const layer = Layer.effect(
         Effect.catchCause(recoverRefreshFailure),
         Effect.asVoid,
       ),
+      refreshUsageLimits: (instanceId?: ProviderInstanceId) =>
+        refreshUsageLimits(instanceId).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          Effect.asVoid,
+        ),
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {

@@ -106,8 +106,8 @@ export function resolveProjectPathForDispatch(value: string, cwd?: string | null
   }
 
   const nextSegments = [...absoluteBase.segments];
-  for (const segment of trimmedValue.split(/[\\/]+/)) {
-    if (segment.length === 0 || segment === ".") continue;
+  for (const segment of splitPathSegments(trimmedValue, absoluteBase.separator)) {
+    if (segment === ".") continue;
     if (segment === "..") {
       nextSegments.pop();
       continue;
