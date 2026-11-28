@@ -80,6 +80,7 @@ export function useComposerMenuItems({
   selectedProviderSkills,
   selectedProviderSlashCommands,
   showSkillsInSlashMenu,
+  expandsSlashCommandsMidPrompt,
   workspaceSkillsScanning,
   questionAttachmentTarget,
   modelMentions,
@@ -100,6 +101,7 @@ export function useComposerMenuItems({
   readonly selectedProviderSkills: ServerProvider["skills"];
   readonly selectedProviderSlashCommands: ServerProvider["slashCommands"];
   readonly showSkillsInSlashMenu: boolean;
+  readonly expandsSlashCommandsMidPrompt: boolean;
   readonly workspaceSkillsScanning: boolean;
   readonly questionAttachmentTarget: DraftId | null;
   readonly modelMentions: {
@@ -328,6 +330,7 @@ export function useComposerMenuItems({
       const slashCommandItems = slashCommandItemsForPromptPosition(
         [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],
         composerTrigger.rangeStart === 0,
+        expandsSlashCommandsMidPrompt,
       );
       return searchSlashCommandItems(slashCommandItems, query);
     }

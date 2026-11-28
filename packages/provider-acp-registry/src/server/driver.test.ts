@@ -211,6 +211,42 @@ describe("acpRegistrySnapshotReadiness", () => {
     });
   });
 
+  it("keeps a provider's commands suggested past the message start only where it reads them", () => {
+    const probe = acpRegistryProbeResult(identity.instanceId, {
+      sessionId: "test-session",
+      initializeResult: {
+        protocolVersion: 1,
+        agentInfo: { name: "Mistral Vibe", version: "3.1.4" },
+      },
+      sessionSetupResult: {},
+      modelConfigId: undefined,
+    });
+    const snapshotFor = (settings: AcpRegistrySettings) =>
+      buildCheckedAcpRegistrySnapshot({
+        ...identity,
+        settings,
+        checkedAt: "2026-11-28T10:00:00.000Z",
+        inspection: {
+          status: "ready",
+          agentId: settings.agentId || "local",
+          version: "3.1.4",
+          distribution: settings.source === "local" ? "local" : "npx",
+        },
+        probe: { probe, slashCommands: [{ name: "goal" }], skills: [] },
+      });
+
+    expect(
+      snapshotFor(decodeSettings({ agentId: "mistral-vibe" })).expandsSlashCommandsMidPrompt,
+    ).toBe(true);
+    expect(
+      snapshotFor(decodeSettings({ source: "local", commandPath: "C:\\tools\\vibe-acp.exe" }))
+        .expandsSlashCommandsMidPrompt,
+    ).toBe(true);
+    expect(
+      snapshotFor(decodeSettings({ agentId: "claude-acp" })).expandsSlashCommandsMidPrompt,
+    ).toBeUndefined();
+  });
+
   it("keeps authentication unknown when an agent permits a discovery session before sign-in", () => {
     const snapshot = buildCheckedAcpRegistrySnapshot({
       ...identity,

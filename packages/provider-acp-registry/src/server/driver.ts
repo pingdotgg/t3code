@@ -262,6 +262,19 @@ function acpRegistrySnapshotReadiness(
   }
 }
 
+/**
+ * Vibe reads `/name` anywhere in a message, unlike the agents that accept a command only as the
+ * first token. Its entries stay in the composer's suggestion list past the message start.
+ */
+function providerExpandsSlashCommandsMidPrompt(settings: AcpRegistrySettings): boolean {
+  const executable = settings.commandPath.split(/[\\/]/).pop() ?? "";
+  return (
+    settings.agentId === "mistral-vibe" ||
+    (settings.source === "local" &&
+      /^(?:mistral-)?vibe(?:-acp)?(?:\.exe|\.cmd)?$/i.test(executable))
+  );
+}
+
 interface SnapshotIdentity {
   readonly instanceId: ProviderInstance["instanceId"];
   readonly displayName: string | undefined;
@@ -295,6 +308,9 @@ function baseSnapshot(
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
     ...(iconUrl ? { iconUrl } : {}),
     continuation: { groupKey: input.continuationKey },
+    ...(providerExpandsSlashCommandsMidPrompt(input.settings)
+      ? { expandsSlashCommandsMidPrompt: true }
+      : {}),
     enabled: input.settings.enabled,
     installed: input.installed,
     version: input.version,

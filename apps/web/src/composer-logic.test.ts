@@ -1,6 +1,12 @@
 import { threadPullRequestKeyOf } from "@t3tools/client-runtime/thread-pull-requests";
 import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
-import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  ProviderDriverKind,
+  ThreadId,
+  type AssistantCitation,
+} from "@t3tools/contracts";
 import {
   collectAssistantCitations,
   expandAssistantCitationsForProvider,
@@ -26,6 +32,7 @@ import {
   replaceTextRange,
 } from "./composer-logic";
 import { slashCommandItemsForPromptPosition } from "./components/chat/composerSlashCommandSearch";
+import type { ComposerCommandItem } from "./components/chat/ComposerCommandMenu";
 import { carryDisplacedCustomAnswerIntoPrompt } from "./pendingUserInput";
 import { formatTerminalContextReference } from "./lib/terminalContext";
 
@@ -622,6 +629,43 @@ describe("side chat slash commands", () => {
     }));
     expect(slashCommandItemsForPromptPosition(items, false).map((item) => item.id)).toEqual([
       "slash:model",
+    ]);
+  });
+});
+
+describe("provider slash commands", () => {
+  type SlashItem = Extract<
+    ComposerCommandItem,
+    { type: "slash-command" | "provider-slash-command" | "skill" }
+  >;
+  const items: ReadonlyArray<SlashItem> = [
+    {
+      id: "slash:model",
+      type: "slash-command",
+      command: "model",
+      label: "/model",
+      description: "",
+    },
+    {
+      id: "provider-slash-command:acpRegistry:goal",
+      type: "provider-slash-command",
+      provider: ProviderDriverKind.make("acpRegistry"),
+      command: { name: "goal" },
+      label: "/goal",
+      description: "",
+    },
+  ];
+
+  it("are dropped after the start of a message when the provider reads them only there", () => {
+    expect(slashCommandItemsForPromptPosition(items, false).map((item) => item.id)).toEqual([
+      "slash:model",
+    ]);
+  });
+
+  it("stay offered after the start when the provider reads them anywhere", () => {
+    expect(slashCommandItemsForPromptPosition(items, false, true).map((item) => item.id)).toEqual([
+      "slash:model",
+      "provider-slash-command:acpRegistry:goal",
     ]);
   });
 });
