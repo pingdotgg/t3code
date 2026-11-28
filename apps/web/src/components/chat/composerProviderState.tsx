@@ -3,17 +3,21 @@ import {
   type ModelSelection,
   type ProviderDriverKind,
   type ProviderInstanceId,
+  type ProviderOptionDescriptor,
   type ProviderOptionSelection,
   type ScopedThreadRef,
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
+  createModelSelection,
+  draftModelPickMatchesThread,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
   resolveSelectableModel,
   withImplicitFastModeDefault,
+  withLegacyUltracodeEffort,
 } from "@t3tools/shared/model";
 
 import type { DraftId } from "../../composerDraftStore";
@@ -196,4 +200,31 @@ export function resolveComposerTraitsInput(
   const persistence = threadRef ? { threadRef } : draftId ? { draftId } : null;
   if (!persistence) return null;
   return { ...rest, ...persistence, modelOptions: selections };
+}
+
+/**
+ * The last turn's selection while the composer would send something else: another model or
+ * effort makes the provider rebuild its prompt cache, so the composer offers a way back. It
+ * abstains unless picking it would make the composer send exactly that selection again.
+ */
+export function resolveComposerModelResetTarget(input: {
+  readonly routeKind: "server" | "draft";
+  readonly multipleModels: boolean;
+  readonly catalogPending: boolean;
+  readonly selected: ModelSelection;
+  readonly lastTurn: ModelSelection | null;
+  readonly lastTurnDescriptors: ReadonlyArray<ProviderOptionDescriptor> | undefined;
+  readonly sendForPick: (pick: ModelSelection) => ModelSelection | null;
+}): ModelSelection | null {
+  if (input.routeKind !== "server" || input.multipleModels || input.catalogPending) return null;
+  if (!input.lastTurn) return null;
+  // Compare in the form the composer sends, so a legacy stored option cannot look changed.
+  const target = createModelSelection(
+    input.lastTurn.instanceId,
+    input.lastTurn.model,
+    withLegacyUltracodeEffort(input.lastTurnDescriptors, input.lastTurn.options),
+  );
+  if (draftModelPickMatchesThread(input.selected, target)) return null;
+  const sent = input.sendForPick(target);
+  return sent && draftModelPickMatchesThread(sent, target) ? target : null;
 }

@@ -240,6 +240,18 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     if (options?.focusComposer !== false) scheduleComposerFocus();
   };
   const onProviderModelSelectStable = useStableCallback(onProviderModelSelect);
+  const onModelSelectionReset = (modelSelection: ModelSelection) => {
+    if (!activeThread) return;
+    cancelHeldComposerSend(composerTargetKey(composerDraftTarget));
+    setComposerDraftModelSelection(composerDraftTarget, modelSelection, {
+      explicit: true,
+      replaceOptions: true,
+    });
+    setStickyComposerModelSelection(modelSelection);
+    if (!isLocalDraftThread) applyThreadModelPick(composerDraftTarget);
+    scheduleComposerFocus();
+  };
+  const onModelSelectionResetStable = useStableCallback(onModelSelectionReset);
   const onEnvModeChange = (mode: DraftThreadEnvMode) => {
     if (multipleModelSelections !== null) return;
     cancelHeldComposerSend(composerTargetKey(composerDraftTarget));
@@ -287,6 +299,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     getModelDisabledReason,
     handleRuntimeModeChangeStable,
     onEnvModeChangeStable,
+    onModelSelectionResetStable,
     onProviderModelSelectStable,
     onStartFromOriginChange,
     openProviderSetupStable,

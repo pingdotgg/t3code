@@ -3,6 +3,7 @@ import {
   latestRootProviderFailure,
   latestRootProviderFailureItem,
   latestUnheldRun,
+  runRanAfter,
   threadErrorSummary,
   usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -120,7 +121,7 @@ export function deriveProviderExtensionStatuses(
 }
 
 function latestMatchingRun(
-  projection: ThreadStructure,
+  projection: Pick<ThreadStructure, "runs">,
   predicate: (run: OrchestrationV2ThreadProjection["runs"][number]) => boolean,
 ): OrchestrationV2ThreadProjection["runs"][number] | null {
   return projection.runs.reduce<OrchestrationV2ThreadProjection["runs"][number] | null>(
@@ -313,6 +314,62 @@ export function deriveProviderSubagentStatus(
     completedAt: node.completedAt === null ? null : DateTime.formatIso(node.completedAt),
   };
 }
+
+/**
+ * The selection the provider's prompt cache was built for, or null when that is uncertain. Only
+ * the common case qualifies: the last run to finish ran in the conversation the next send
+ * continues, and its latest attempt reported model tokens on the model it was asked for.
+ */
+export function deriveLastProviderTurnModelSelection(
+  projection: Pick<ThreadStructure, "thread" | "runs" | "attempts" | "providerTurns">,
+): ModelSelection | null {
+  // A queued run, held or not, runs before the next send and on its own selection.
+  if (projection.runs.some((run) => ACTIVE_BASELINE_RUN_STATUSES.has(run.status))) return null;
+  let run: (typeof projection.runs)[number] | null = null;
+  for (const candidate of projection.runs) {
+    if (candidate.status === "queued" || candidate.status === "rolled_back") continue;
+    if (candidate.status === "cancelled" && candidate.startedAt === null) continue;
+    if (run === null || runRanAfter(candidate, run)) run = candidate;
+  }
+  // A fresh-context run may be a schedule's side conversation that ordinary sends skip.
+  if (!run || run.freshContext === true) return null;
+  if (run.providerThreadId !== projection.thread.activeProviderThreadId) return null;
+  const runId = run.id;
+  const latestAttempt = projection.attempts.reduce<(typeof projection.attempts)[number] | null>(
+    (latest, attempt) =>
+      attempt.runId === runId && (latest === null || attempt.attemptOrdinal > latest.attemptOrdinal)
+        ? attempt
+        : latest,
+    null,
+  );
+  const turns = projection.providerTurns.filter(
+    (turn) => latestAttempt !== null && turn.runAttemptId === latestAttempt.id,
+  );
+  // Local commands and synthetic turns report no model tokens, so they never qualify.
+  const modelWorked = turns.some((turn) => {
+    const usage = turn.turnTokenUsage;
+    return (
+      usage !== undefined &&
+      usage.localCommand !== true &&
+      (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) > 0
+    );
+  });
+  const selectedModel = run.modelSelection.model;
+  const rerouted = turns.some(
+    (turn) =>
+      (turn.model !== undefined && turn.model !== selectedModel) ||
+      turn.turnTokenUsage?.models?.some((model) => model !== selectedModel) === true,
+  );
+  return modelWorked && !rerouted ? run.modelSelection : null;
+}
+
+const ACTIVE_BASELINE_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "queued",
+  "preparing",
+  "starting",
+  "running",
+  "waiting",
+]);
 
 export function deriveReportedModelSelection(projection: ThreadStructure): ModelSelection | null {
   const providerThread = projection.providerThreads.find(

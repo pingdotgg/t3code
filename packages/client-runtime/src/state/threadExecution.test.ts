@@ -26,6 +26,7 @@ import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 import {
   canResumeThread,
   deriveReportedModelSelection,
+  deriveLastProviderTurnModelSelection,
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
   deriveProviderExtensionStatuses,
@@ -840,6 +841,178 @@ describe("provider-reported model selection", () => {
         ...projection,
         providerThreads: [
           { ...providerThread, providerInstanceId: ProviderInstanceId.make("other") },
+        ],
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("deriveLastProviderTurnModelSelection", () => {
+  const instanceId = v2Projection.thread.modelSelection.instanceId;
+  const selectionA = createModelSelection(instanceId, "model-a");
+  const selectionB = createModelSelection(instanceId, "model-b");
+  const conversation = ProviderThreadId.make("conversation");
+  type Turn = {
+    readonly status?: "completed" | "failed" | "interrupted";
+    readonly tokens?: number;
+    readonly localCommand?: boolean;
+    readonly model?: string;
+  };
+  const entry = (
+    id: string,
+    ordinal: number,
+    modelSelection: typeof selectionA,
+    turn: Turn | null,
+    overrides: Record<string, unknown> = {},
+  ) => {
+    const attemptId = RunAttemptId.make(`attempt-${id}`);
+    return {
+      run: {
+        ...run(id, ordinal, "completed"),
+        modelSelection,
+        providerThreadId: conversation,
+        completedAt: DateTime.makeUnsafe(`2026-07-28T10:0${ordinal}:00.000Z`),
+        ...overrides,
+      },
+      attempts: [{ id: attemptId, runId: RunId.make(id), attemptOrdinal: 1 }],
+      providerTurns:
+        turn === null
+          ? []
+          : [
+              {
+                runAttemptId: attemptId,
+                status: turn.status ?? "completed",
+                startedAt: now,
+                ...(turn.model ? { model: turn.model } : {}),
+                turnTokenUsage: {
+                  usageScope: "main_agent",
+                  hasSubagents: false,
+                  usageStatus: turn.tokens ? "complete" : "unavailable",
+                  ...(turn.tokens ? { inputTokens: turn.tokens, outputTokens: 0 } : {}),
+                  ...(turn.localCommand ? { localCommand: true } : {}),
+                },
+              },
+            ],
+    };
+  };
+  const baseline = (...entries: ReadonlyArray<ReturnType<typeof entry>>) =>
+    deriveLastProviderTurnModelSelection({
+      thread: { ...v2Projection.thread, activeProviderThreadId: conversation },
+      runs: entries.map((item) => item.run),
+      attempts: entries.flatMap((item) => item.attempts),
+      providerTurns: entries.flatMap((item) => item.providerTurns),
+    } as unknown as typeof v2Projection);
+  const a = entry("a", 1, selectionA, { tokens: 900 });
+
+  it("takes the last run that finished model work in the active conversation", () => {
+    for (const { label, b, expected } of [
+      { label: "ran", b: entry("b", 2, selectionB, { tokens: 900 }), expected: selectionB },
+      {
+        label: "interrupted after model work",
+        b: entry(
+          "b",
+          2,
+          selectionB,
+          { status: "interrupted", tokens: 50 },
+          {
+            status: "interrupted",
+          },
+        ),
+        expected: selectionB,
+      },
+      {
+        label: "provider reported the requested model",
+        b: entry("b", 2, selectionB, { tokens: 900, model: "model-b" }),
+        expected: selectionB,
+      },
+    ]) {
+      expect(baseline(a, b), label).toBe(expected);
+    }
+  });
+
+  it("abstains when the last run's model work or destination is uncertain", () => {
+    for (const { label, b } of [
+      { label: "no provider turn", b: entry("b", 2, selectionB, null, { status: "failed" }) },
+      {
+        label: "rejected without tokens",
+        b: entry("b", 2, selectionB, { status: "failed" }, { status: "failed" }),
+      },
+      { label: "local command", b: entry("b", 2, selectionB, { localCommand: true, tokens: 5 }) },
+      { label: "synthetic turn such as Codex /goal", b: entry("b", 2, selectionB, {}) },
+      {
+        label: "provider rerouted to another model",
+        b: entry("b", 2, selectionB, { tokens: 900, model: "model-c" }),
+      },
+      {
+        label: "provider usage reports another model",
+        b: {
+          ...entry("b", 2, selectionB, { tokens: 900 }),
+          providerTurns: entry("b", 2, selectionB, { tokens: 900 }).providerTurns.map((turn) => ({
+            ...turn,
+            turnTokenUsage: { ...turn.turnTokenUsage, models: ["model-c"] },
+          })),
+        },
+      },
+      {
+        label: "a held message waits in the queue",
+        b: entry("b", 2, selectionB, null, {
+          status: "queued",
+          queueHeld: true,
+          completedAt: null,
+        }),
+      },
+      {
+        label: "still running",
+        b: entry("b", 2, selectionB, null, { status: "running", completedAt: null }),
+      },
+      {
+        label: "fresh-context run, such as a schedule's side conversation",
+        b: entry("b", 2, selectionB, { tokens: 900 }, { freshContext: true }),
+      },
+      {
+        label: "another conversation, such as a fresh-session schedule",
+        b: entry(
+          "b",
+          2,
+          selectionB,
+          { tokens: 900 },
+          {
+            providerThreadId: ProviderThreadId.make("fresh"),
+          },
+        ),
+      },
+    ]) {
+      expect(baseline(a, b), label).toBeNull();
+    }
+    expect(baseline()).toBeNull();
+  });
+
+  it("skips rewound runs and follows execution order, not queue order", () => {
+    expect(baseline(a, entry("b", 2, selectionB, { tokens: 900 }, { status: "rolled_back" }))).toBe(
+      selectionA,
+    );
+    // b was queued later but moved ahead, so a finished last.
+    const movedAhead = entry(
+      "b",
+      3,
+      selectionB,
+      { tokens: 900 },
+      {
+        completedAt: DateTime.makeUnsafe("2026-07-28T09:00:00.000Z"),
+      },
+    );
+    expect(baseline(a, movedAhead)).toBe(selectionA);
+  });
+
+  it("abstains when a steer restarted the run and the new attempt did no model work", () => {
+    const restarted = entry("b", 2, selectionB, { tokens: 900 });
+    const restartId = RunAttemptId.make("attempt-b-restart");
+    expect(
+      baseline(a, {
+        ...restarted,
+        attempts: [
+          ...restarted.attempts,
+          { id: restartId, runId: RunId.make("b"), attemptOrdinal: 2 },
         ],
       }),
     ).toBeNull();

@@ -238,7 +238,11 @@ import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
-import { getComposerPromptInjectionState, getComposerReasoningStep } from "./composerProviderState";
+import {
+  getComposerPromptInjectionState,
+  getComposerReasoningStep,
+  resolveComposerModelResetTarget,
+} from "./composerProviderState";
 import { readPromptUltrathink } from "./TraitsPicker";
 import { useApplyThreadModelPick } from "./useApplyThreadModelPick";
 import {
@@ -308,7 +312,7 @@ import {
   runtimeModeLimitsTarget,
   useProviderRuntimeModeLimits,
 } from "../../state/runtimeModeLimits";
-import { useComposerProviderModel } from "./useComposerProviderModel";
+import { resolveComposerSendForPick, useComposerProviderModel } from "./useComposerProviderModel";
 import { useComposerImageGroups } from "./useComposerImageGroups";
 import { useComposerStash } from "./useComposerStash";
 import { useComposerContextImport } from "./useComposerContextImport";
@@ -455,6 +459,8 @@ export interface ChatComposerProps {
   providerCatalogKnown: boolean;
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
+  /** What the thread's last executed turn ran on; the composer offers to go back to it. */
+  lastTurnModelSelection: ModelSelection | null;
   reportedModelSelection?: ModelSelection | null;
   activeProjectId: ProjectId | null;
   projectName?: string | undefined;
@@ -531,6 +537,7 @@ export interface ChatComposerProps {
     model: string,
     options?: { focusComposer?: boolean },
   ) => void;
+  onModelSelectionReset: (modelSelection: ModelSelection) => void;
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
@@ -589,6 +596,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     providerCatalogKnown,
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
+    lastTurnModelSelection,
     reportedModelSelection,
     activeProjectId,
     projectName,
@@ -623,6 +631,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPreviousActivePendingUserInputQuestion,
     onChangeActivePendingUserInputCustomAnswer,
     onProviderModelSelect,
+    onModelSelectionReset,
     onOpenProviderSetup,
     getModelDisabledReason,
     handleRuntimeModeChange,
@@ -987,18 +996,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     supportsAttachmentUploads,
   ]);
 
-  const {
-    providerInstanceEntries,
-    selectedProviderEntry,
-    lockedContinuationGroupKey,
-    unavailableProviderInstanceId,
-    selectedInstanceId,
-    selectedProvider,
-    selectedProviderModels,
-    composerModelOptions,
-    selectedModel,
-    composerProviderState,
-  } = useComposerProviderModel({
+  const composerProviderModelInput = {
     providerStatuses,
     settings,
     activeProjectId,
@@ -1015,7 +1013,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     lockedProvider,
     lockedInstanceId:
       activeThread?.runtime?.providerInstanceId ?? activeThreadModelSelection?.instanceId,
-  });
+  };
+  const {
+    providerInstanceEntries,
+    selectedProviderEntry,
+    lockedContinuationGroupKey,
+    unavailableProviderInstanceId,
+    selectedInstanceId,
+    selectedProvider,
+    selectedProviderModels,
+    composerModelOptions,
+    selectedModel,
+    composerProviderState,
+  } = useComposerProviderModel(composerProviderModelInput);
   const noProviderAvailable =
     selectedProviderEntry === undefined && multipleModelSelections === null;
   const providerCatalogPending = noProviderAvailable && !providerCatalogKnown;
@@ -1094,6 +1104,37 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedModel,
     selectedModelOptionsForDispatch,
   );
+  const modelResetTarget = resolveComposerModelResetTarget({
+    routeKind,
+    multipleModels: multipleModelSelections !== null,
+    catalogPending: providerCatalogPending,
+    selected: selectedModelSelection,
+    lastTurn: lastTurnModelSelection,
+    lastTurnDescriptors: providerInstanceEntries
+      .find((entry) => entry.instanceId === lastTurnModelSelection?.instanceId)
+      ?.models.find((candidate) => candidate.slug === lastTurnModelSelection?.model)?.capabilities
+      ?.optionDescriptors,
+    sendForPick: (pick) => {
+      if (getModelDisabledReason(pick.instanceId, pick.model) !== null) return null;
+      // The picker can keep a retired model as the current one; a reset needs it in the catalog.
+      const pickEntry = providerInstanceEntries.find(
+        (entry) => entry.instanceId === pick.instanceId,
+      );
+      const listed =
+        pickEntry !== undefined &&
+        getAppModelOptionsForInstance(settings, pickEntry, null).some(
+          (option) => option.slug === pick.model && option.isUnavailable !== true,
+        );
+      if (!listed) return null;
+      const sent = resolveComposerSendForPick(composerProviderModelInput, pick);
+      const sentEntry = providerInstanceEntries.find(
+        (entry) => entry.instanceId === sent?.instanceId,
+      );
+      return sent && getAntigravitySendBlockReason(sentEntry?.snapshot, sent.model, m) === null
+        ? sent
+        : null;
+    },
+  });
   const selectedModelForPicker = selectedModel;
   const modelOptionsByInstance = new Map<ProviderInstanceId, ReadonlyArray<AppModelOption>>();
   for (const entry of providerInstanceEntries) {
@@ -2777,6 +2818,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onMultipleModelSelectionsChange={handleMultipleModelSelectionsChangeStable}
         selectedModelSelection={selectedModelSelection}
         onProviderModelSelect={onProviderModelSelect}
+        // No cache to keep: a fresh session or a compaction comes first, or a queued edit owns the pick.
+        modelResetTarget={
+          freshSessionArmed ||
+          isEditingQueuedMessage ||
+          (props.resumeCompactionTokens !== null && !props.keepFullHistory)
+            ? null
+            : modelResetTarget
+        }
+        onModelSelectionReset={onModelSelectionReset}
         activeThreadModelSelection={activeThreadModelSelection}
         selectedModelForPickerWithCustomFallback={selectedModelForPickerWithCustomFallback}
         lockedProvider={lockedProvider}

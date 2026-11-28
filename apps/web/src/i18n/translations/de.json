@@ -10527,6 +10527,9 @@
     }
   ],
   "a8c2b705bbb43a80": "Keine Treffer gefunden.",
+  "384d0c30da9f9f2b": "Zurück zu {model} · {effort}",
+  "e898114f94a79aee": "Zurück zu {model}",
+  "fcef94b45227b775": "Die letzte Runde lief damit, daher gilt ihr Prompt-Cache weiterhin.",
   "425f7ce2f24cb248": "Einstellungsbereiche",
   "ee3e8bd8b7918aec": "Suchen",
   "858561b97fdd72f2": "Einstellungen durchsuchen",

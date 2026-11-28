@@ -10524,6 +10524,9 @@
     }
   ],
   "a8c2b705bbb43a80": "No se encontraron coincidencias.",
+  "384d0c30da9f9f2b": "Volver a {model} · {effort}",
+  "e898114f94a79aee": "Volver a {model}",
+  "fcef94b45227b775": "El último turno se ejecutó con él, así que su caché de prompts sigue valiendo.",
   "425f7ce2f24cb248": "Secciones de ajustes",
   "ee3e8bd8b7918aec": "Buscar",
   "858561b97fdd72f2": "Buscar ajustes",

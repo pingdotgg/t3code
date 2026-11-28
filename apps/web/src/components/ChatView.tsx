@@ -1,5 +1,6 @@
 import { m } from "../i18n/messages";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { toServerClock } from "@t3tools/client-runtime/clock";
 import { useGT, useMessages } from "gt-react";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import {
@@ -97,6 +98,7 @@ import {
   deriveProviderExtensionStatuses,
   deriveReportedModelSelection,
   deriveResumableRunId,
+  deriveLastProviderTurnModelSelection,
   formatModelSelectionEffort,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
@@ -245,6 +247,7 @@ import {
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { useDeadlinePassed } from "../hooks/useDeadline";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useWorktreeRepositoryChoices } from "../hooks/useWorktreeRepositoryChoices";
@@ -903,6 +906,21 @@ export default function ChatView(props: ChatViewProps) {
     sideThreadKind !== null && sideThreadComposer(sideThreadKind) === "read-only";
   const supportsProviderSwitchingViaHandoff = threadSupportsProviderHandoff(serverProjection);
   const activeLatestRun = isServerThread ? serverLatestRun : (activeThread?.latestRun ?? null);
+  const lastTurnModelSelection =
+    serverProjection === null ? null : deriveLastProviderTurnModelSelection(serverProjection);
+  // Only a provider-reported expiry or TTL can say the cache is gone; without one it may hold.
+  const promptCacheExpiresAt = (() => {
+    const usage = activeThreadLiveTokenUsage;
+    if (!usage) return null;
+    if (usage.promptCacheExpiresAt) return Date.parse(usage.promptCacheExpiresAt);
+    return usage.promptCacheTtlMs ? Date.parse(usage.updatedAt) + usage.promptCacheTtlMs : null;
+  })();
+  // The host stamped the expiry, and the timer runs on this clock.
+  const promptCacheExpired = useDeadlinePassed(
+    promptCacheExpiresAt === null || !serverThread
+      ? null
+      : promptCacheExpiresAt - toServerClock(serverThread.environmentId, 0),
+  );
   const activeActivityRun = isServerThread ? serverActivityRun : (activeThread?.latestRun ?? null);
   const activeRuntime = isServerThread ? serverRuntime : (activeThread?.runtime ?? null);
   const hasHeldQueuedRuns =
@@ -3111,6 +3129,7 @@ export default function ChatView(props: ChatViewProps) {
     getModelDisabledReason,
     handleRuntimeModeChangeStable,
     onEnvModeChangeStable,
+    onModelSelectionResetStable,
     onProviderModelSelectStable,
     onStartFromOriginChange,
     openProviderSetupStable,
@@ -3977,6 +3996,9 @@ export default function ChatView(props: ChatViewProps) {
                                   activeProjectDefaultModelSelection
                                 }
                                 activeThreadModelSelection={activeThread?.modelSelection}
+                                lastTurnModelSelection={
+                                  promptCacheExpired ? null : lastTurnModelSelection
+                                }
                                 activeProjectId={activeProject?.id ?? null}
                                 projectName={activeProject?.title}
                                 compactThreadUnavailable={compactThreadUnavailable}
@@ -4026,6 +4048,7 @@ export default function ChatView(props: ChatViewProps) {
                                   onChangeActivePendingUserInputCustomAnswer
                                 }
                                 onProviderModelSelect={onProviderModelSelectStable}
+                                onModelSelectionReset={onModelSelectionResetStable}
                                 onOpenProviderSetup={openProviderSetupStable}
                                 getModelDisabledReason={getModelDisabledReason}
                                 handleRuntimeModeChange={handleRuntimeModeChangeStable}

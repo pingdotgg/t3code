@@ -10526,6 +10526,9 @@
     }
   ],
   "a8c2b705bbb43a80": "Aucun résultat trouvé.",
+  "384d0c30da9f9f2b": "Revenir à {model} · {effort}",
+  "e898114f94a79aee": "Revenir à {model}",
+  "fcef94b45227b775": "Le dernier tour l’a utilisé, donc son cache de prompt s’applique encore.",
   "425f7ce2f24cb248": "Sections des paramètres",
   "ee3e8bd8b7918aec": "Rechercher",
   "858561b97fdd72f2": "Rechercher dans les paramètres",

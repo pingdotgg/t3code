@@ -10535,6 +10535,9 @@
     }
   ],
   "a8c2b705bbb43a80": "No matches found.",
+  "384d0c30da9f9f2b": "Back to {model} · {effort}",
+  "e898114f94a79aee": "Back to {model}",
+  "fcef94b45227b775": "The last turn ran on it, so its prompt cache still applies.",
   "425f7ce2f24cb248": "Settings sections",
   "ee3e8bd8b7918aec": "Search",
   "858561b97fdd72f2": "Search settings",

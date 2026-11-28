@@ -10526,6 +10526,9 @@
     }
   ],
   "a8c2b705bbb43a80": "Nenhum resultado encontrado.",
+  "384d0c30da9f9f2b": "Voltar para {model} · {effort}",
+  "e898114f94a79aee": "Voltar para {model}",
+  "fcef94b45227b775": "O último turno rodou nele, então o cache do prompt ainda vale.",
   "425f7ce2f24cb248": "Seções de configurações",
   "ee3e8bd8b7918aec": "Pesquisar",
   "858561b97fdd72f2": "Buscar configurações",
