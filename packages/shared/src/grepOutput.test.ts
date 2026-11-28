@@ -56,6 +56,32 @@ describe("parseGrepOutput", () => {
       { fileName: "docs/Release notes.md ", line: 2, preview: "match" },
       { fileName: "docs/Release notes.md", line: 6, preview: "another match" },
     ]);
+    expect(
+      parseGrepOutput(
+        "README.md\n1:needle first\n\ndocs/Release notes:12:draft.md\n2:needle second\n",
+        ".",
+      ),
+    ).toEqual([
+      { fileName: "README.md", line: 1, preview: "needle first" },
+      { fileName: "docs/Release notes:12:draft.md", line: 2, preview: "needle second" },
+    ]);
+    expect(
+      parseGrepOutput("README.md\n1:needle first\n\n2026:12:draft.md\n2:at 10:30:00 needle", "."),
+    ).toEqual([
+      { fileName: "README.md", line: 1, preview: "needle first" },
+      { fileName: "2026:12:draft.md", line: 2, preview: "at 10:30:00 needle" },
+    ]);
+    expect(parseGrepOutput("(notes:12:draft.md)\n2:needle", ".")).toEqual([
+      { fileName: "(notes:12:draft.md)", line: 2, preview: "needle" },
+    ]);
+    expect(parseGrepOutput(" notes.md\n2:needle", ".")).toEqual([
+      { fileName: " notes.md", line: 2, preview: "needle" },
+    ]);
+    expect(parseGrepOutput("a.ts:1:first\na.ts:2:second\n2026:notes.md:3:third", ".")).toEqual([
+      { fileName: "a.ts", line: 1, preview: "first" },
+      { fileName: "a.ts", line: 2, preview: "second" },
+      { fileName: "2026:notes.md", line: 3, preview: "third" },
+    ]);
   });
 
   it("reads Gemini's File and L-numbered form", () => {
@@ -83,6 +109,11 @@ describe("parseGrepOutput", () => {
     ["no matches", "No files found"],
     ["ripgrep context lines", "a.ts\n1-before\n2:needle"],
     ["a line zero", "a.ts:0:needle"],
+    ["grouped text starts with digits and a colon", "docs/notes:12:draft.md\n2:10:needle"],
+    ["grouped text contains a timestamp", "docs/notes:12:draft.md\n2:at 10:30:00 needle"],
+    ["the second inline filename is all digits", "a.ts:1:first\n2026:3:second"],
+    ["the second inline filename has a numeric prefix", "a.ts:1:first\n2026:notes.md:3:second"],
+    ["two inline rows with a leading-space filename", " notes.md:1:first\n2026:3:second"],
   ])("leaves %s raw", (_name, output) => {
     expect(parseGrepOutput(output, "/repo")).toBeUndefined();
   });

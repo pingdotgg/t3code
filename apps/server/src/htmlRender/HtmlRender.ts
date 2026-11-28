@@ -107,9 +107,9 @@ const CSS_SOURCE =
   /<!--[\s\S]*?(?:-->|$)|<style\b[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|\sstyle\s*=\s*(?:"([^"]*)(?:"|$)|'([^']*)(?:'|$)|([^\s>]+))/gi;
 // vb and vmax follow the frame height too; vmin stays, as the frame width caps it.
 // The lookbehind skips base64 runs, such as an inlined image that happens to contain "1vh",
-// and identifiers such as the class `.h-100vmax`, while a negative `-50vh` still counts.
+// and identifiers such as `.h-100vmax` or `.h\+100vh`, while signed and scientific-notation lengths still count.
 const VIEWPORT_HEIGHT_UNIT =
-  /(?<![\w.+/]|[\w-]-)(?:\d+(?:\.\d+)?|\.\d+)[sld]?v(?:h|b|max)(?![\w-])/i;
+  /(?<![\w.+/\\-])[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?[sld]?v(?:h|b|max)(?![\w-])/i;
 
 const rejectViewportHeight = (html: string) => {
   for (const [, sheet, doubleQuoted, singleQuoted, unquoted] of html.matchAll(CSS_SOURCE)) {
