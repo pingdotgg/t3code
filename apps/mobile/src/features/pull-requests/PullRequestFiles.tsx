@@ -31,6 +31,7 @@ import {
 } from "./usePullRequestDiff";
 import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
+import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { requestPullRequestFileJump } from "./pullRequestFileJump";
 import { fileDirectory, groupByDirectory } from "./pullRequestFileSections";
 import type { MessageResolver } from "../../i18n/messages";
@@ -52,7 +53,13 @@ function useChangedFiles(params: PullRequestDiffParams) {
   ).changeRequest;
   const diff = usePullRequestDiff(params, terminology);
   const viewed = usePullRequestFilesViewed(params, pr);
-  const filter = usePullRequestFileFilter(diff.parsed);
+  const reviewDraft = usePullRequestReviewDraft(params);
+  const filter = usePullRequestFileFilter(
+    diff.parsed,
+    viewed,
+    undefined,
+    reviewDraft.draft.comments.map((comment) => comment.path),
+  );
   const parsed = filter.parsed;
   return {
     diff,
@@ -78,7 +85,7 @@ function describeFiles(
 ) {
   const count = parsed.fileCount;
   return [
-    filter.hiddenCount
+    filter.hiddenCount || filter.hiddenViewedCount
       ? resolve(
           msg("{count, plural, one {{count} visible file} other {{count} visible files}}", {
             count,
@@ -89,13 +96,20 @@ function describeFiles(
             count,
           }),
         ),
-    viewed.supported
-      ? resolve(
-          msg("{count, plural, one {{count} viewed} other {{count} viewed}}", {
-            count: parsed.files.filter((file) => viewed.isViewed(file.path)).length,
-          }),
-        )
-      : null,
+    !viewed.supported
+      ? null
+      : filter.hideViewedFiles
+        ? resolve(
+            msg(
+              "{count, plural, one {{count} viewed file hidden} other {{count} viewed files hidden}}",
+              { count: filter.hiddenViewedCount },
+            ),
+          )
+        : resolve(
+            msg("{count, plural, one {{count} viewed} other {{count} viewed}}", {
+              count: filter.viewedCount,
+            }),
+          ),
     filter.hideTestFiles
       ? resolve(
           msg("{count, plural, one {{count} test file hidden} other {{count} test files hidden}}", {
@@ -199,14 +213,26 @@ function FileFilterMenu({ filter }: { readonly filter: ChangedFiles["filter"] })
           image: "line.3.horizontal.decrease",
           state: filter.hideTestFiles ? "on" : "off",
         },
+        ...(filter.canHideViewedFiles
+          ? [
+              {
+                id: "hide-viewed",
+                title: gt("Hide viewed files"),
+                image: "eye.slash",
+                state: filter.hideViewedFiles ? ("on" as const) : ("off" as const),
+              },
+            ]
+          : []),
       ]}
-      onPressAction={filter.toggle}
+      onPressAction={({ nativeEvent }) =>
+        nativeEvent.event === "hide-viewed" ? filter.toggleViewedFiles() : filter.toggle()
+      }
     >
       <View pointerEvents="none">
         <IconButton
           icon="line.3.horizontal.decrease"
           accessibilityLabel={gt("Filter review files")}
-          selected={filter.hideTestFiles}
+          selected={filter.hideTestFiles || filter.hideViewedFiles}
         />
       </View>
     </Menu>
@@ -216,6 +242,22 @@ function FileFilterMenu({ filter }: { readonly filter: ChangedFiles["filter"] })
 function NoVisibleFiles({ files }: { readonly files: ChangedFiles }) {
   const { diff, filter, parsed } = files;
   const gt = useGT();
+  if (parsed.kind === "files" && parsed.files.length === 0 && filter.hiddenViewedCount > 0) {
+    return (
+      <EmptyState
+        title={diff.nextCursor ? gt("No unviewed files loaded yet") : gt("All files are hidden")}
+        detail={gt("Viewed files are hidden from this review.")}
+        action={
+          <Button
+            label={gt("Show viewed files")}
+            tone="contrast"
+            onPress={filter.showViewedFiles}
+          />
+        }
+        variant="plain"
+      />
+    );
+  }
   if (parsed.kind === "files") {
     return parsed.files.length === 0 && filter.hiddenCount > 0 ? (
       <EmptyState
@@ -441,6 +483,17 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
                 selected: filter.hideTestFiles,
                 onPress: filter.toggle,
               },
+              ...(filter.canHideViewedFiles
+                ? [
+                    {
+                      id: "hide-viewed",
+                      title: gt("Hide viewed files"),
+                      icon: "eye.slash",
+                      selected: filter.hideViewedFiles,
+                      onPress: filter.toggleViewedFiles,
+                    },
+                  ]
+                : []),
             ],
           },
         ]}

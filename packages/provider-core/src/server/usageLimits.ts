@@ -3,6 +3,8 @@ import type {
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 
 const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
   session: 0,
@@ -129,3 +131,16 @@ export function resolveUsageLimitsAfterProbe(input: {
   }
   return probed;
 }
+
+/** What a provider reports when its limits need the user's usage access first. */
+export const needsUsageAccessLimits: Effect.Effect<ServerProviderUsageLimits> = Effect.map(
+  DateTime.now,
+  (now) => ({ checkedAt: DateTime.formatIso(now), windows: [], needsUsageAccess: true }),
+);
+
+/** Runs a limits read that opens the provider's own sign-in files only once the user allows usage access. */
+export const withUsageAccess = <E, R>(
+  usageAccess: Effect.Effect<boolean>,
+  read: Effect.Effect<ServerProviderUsageLimits, E, R>,
+): Effect.Effect<ServerProviderUsageLimits, E, R> =>
+  Effect.flatMap(usageAccess, (allowed) => (allowed ? read : needsUsageAccessLimits));

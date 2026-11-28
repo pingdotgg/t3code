@@ -1,6 +1,7 @@
 import type { ThreadId } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
 import { isNetworkPath } from "@t3tools/shared/path";
 import {
   clampHtmlRenderHeight,
@@ -101,20 +102,58 @@ export class HtmlRenderViewportHeightError extends Schema.TaggedError<HtmlRender
   }
 }
 
-// Check only stylesheets and style attributes, even inside scripts; skip comments whole.
-// Consume unclosed comments, tags, or quotes through EOF to keep both patterns linear.
-const CSS_SOURCE =
-  /<!--[\s\S]*?(?:-->|$)|<style\b[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|\sstyle\s*=\s*(?:"([^"]*)(?:"|$)|'([^']*)(?:'|$)|([^\s>]+))/gi;
+// Check stylesheets, style attributes, and scripts (which may write either); skip comments whole.
+// Consume unclosed comments, tags, or quotes through EOF to keep every pattern linear.
+const HTML_CSS_SOURCE =
+  /<!--[\s\S]*?(?:-->|$)|<script(?=[\s/>])((?:=\s*(?:"[^"]*(?:"|$)|'[^']*(?:'|$)|[^\s>]*)|[^>])*)(?:>|$)([\s\S]*?)(?:<\/script\s*>|$)|<style(?=[\s/>])[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|<[a-z]((?:=\s*(?:"[^"]*(?:"|$)|'[^']*(?:'|$)|[^\s>]*)|[^>])*)/gi;
+// Inside a tag, skip other attributes' quoted values, such as a title that mentions style=.
+// A quote opens a value only right after `=`; an unquoted value such as `it's` or `a="b` runs to a space.
+const TAG_STYLE =
+  /\sstyle\s*=\s*(?:"([^"]*)(?:"|$)|'([^']*)(?:'|$)|([^\s>]+))|=\s*(?:"[^"]*(?:"|$)|'[^']*(?:'|$)|[^\s>]*)/gi;
+// A script is not markup, so take any style block or attribute it spells out.
+const SCRIPT_STYLE =
+  /<!--[\s\S]*?(?:-->|$)|<style(?=[\s/>])[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|\sstyle\s*=\s*(?:"([^"]*)(?:"|$)|'([^']*)(?:'|$)|([^\s>]+))/gi;
 // vb and vmax follow the frame height too; vmin stays, as the frame width caps it.
 // The lookbehind skips base64 runs, such as an inlined image that happens to contain "1vh",
 // and identifiers such as `.h-100vmax` or `.h\+100vh`, while signed and scientific-notation lengths still count.
 const VIEWPORT_HEIGHT_UNIT =
   /(?<![\w.+/\\-])[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?[sld]?v(?:h|b|max)(?![\w-])/i;
+// In CSS, skip comments and strings so generated text like `content:"100vh"` passes.
+// Escapes and unquoted url() bodies go first: there a quote or `/*` is plain text.
+// An unclosed string ends at a newline, as CSS ends it there.
+const CSS_VIEWPORT_HEIGHT_UNIT = new RegExp(
+  String.raw`\\[\s\S]|url\((?!\s*["'])[^)]*\)?|\/\*[\s\S]*?(?:\*\/|$)|"(?:\\(?:\r\n|[\s\S])|[^"\\\r\n\f])*"?|'(?:\\(?:\r\n|[\s\S])|[^'\\\r\n\f])*'?|(${VIEWPORT_HEIGHT_UNIT.source})`,
+  "gi",
+);
+
+const findInCss = (css: string) => {
+  for (const [, found] of css.matchAll(CSS_VIEWPORT_HEIGHT_UNIT)) {
+    if (found !== undefined) return found;
+  }
+  return undefined;
+};
+
+// Generated text (`content`) only lives in stylesheets. Attribute values hold HTML character
+// references and scripts hold their own quotes, so neither is parsed as CSS strings.
+const findViewportHeight = (source: string, pattern: RegExp) => {
+  for (const [, ...captures] of source.matchAll(pattern)) {
+    for (const css of captures) {
+      const found = css === undefined ? undefined : VIEWPORT_HEIGHT_UNIT.exec(css)?.[0];
+      if (found !== undefined) return found;
+    }
+  }
+  return undefined;
+};
 
 const rejectViewportHeight = (html: string) => {
-  for (const [, sheet, doubleQuoted, singleQuoted, unquoted] of html.matchAll(CSS_SOURCE)) {
-    const css = sheet ?? doubleQuoted ?? singleQuoted ?? unquoted ?? "";
-    const found = VIEWPORT_HEIGHT_UNIT.exec(css)?.[0];
+  for (const [, scriptTag, script, sheet, tag] of html.matchAll(HTML_CSS_SOURCE)) {
+    const found =
+      script !== undefined
+        ? (findViewportHeight(scriptTag ?? "", TAG_STYLE) ??
+          findViewportHeight(script, SCRIPT_STYLE))
+        : tag !== undefined
+          ? findViewportHeight(tag, TAG_STYLE)
+          : findInCss(sheet ?? "");
     if (found !== undefined) return Effect.fail(new HtmlRenderViewportHeightError({ found }));
   }
   return Effect.void;
@@ -196,8 +235,8 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
 const IMAGE_EXTENSIONS = Object.keys(IMAGE_MIME_TYPES).join("|");
 const ABSOLUTE_PATH = String.raw`(?:/(?!/)|[a-z]:[\\/])`;
 const LOCAL_IMAGE_PATTERN = new RegExp(
-  String.raw`(["'\x60])(${ABSOLUTE_PATH}(?:(?!\1)[^\r\n]){0,2048}?\.(?:${IMAGE_EXTENSIONS}))\1` +
-    String.raw`|url\(\s*(${ABSOLUTE_PATH}[^\s"'\x60()]{0,2048}?\.(?:${IMAGE_EXTENSIONS}))\s*\)`,
+  String.raw`(["'\x60])(${ABSOLUTE_PATH}(?:(?!\1)[^\r\n]){0,2048}?\.(?:${IMAGE_EXTENSIONS}))(?:(?<=\.svg)#(?:(?!\1)[^\r\n]){0,2048})?\1` +
+    String.raw`|url\(\s*(${ABSOLUTE_PATH}[^\s"'\x60()]{0,2048}?\.(?:${IMAGE_EXTENSIONS}))(?:(?<=\.svg)#[^\s"'\x60()]{0,2048})?\s*\)`,
   "gid",
 );
 const HTML_TAG_END = String.raw`(?:[^"'<>]|"[^"]*(?:"|$)|'[^']*(?:'|$))*(?:>|$)`;
@@ -224,6 +263,15 @@ const findLocalImages = (html: string) =>
 // Inside a JS string literal a Windows path's backslashes are escaped.
 const filePathFor = (reference: string) =>
   /^[a-z]:/i.test(reference) ? reference.replaceAll("\\\\", "\\") : reference;
+
+// Try the literal path first so raw filesystem strings keep working, then percent-decode URL paths.
+const filePathCandidatesFor = (reference: string) => {
+  const literal = filePathFor(reference);
+  const decoded = safeDecodeURIComponent(literal);
+  return decoded !== literal && !decoded.includes("\0") && !isNetworkPath(decoded)
+    ? [literal, decoded]
+    : [literal];
+};
 
 const dataUriPrefix = (path: string) =>
   `data:${IMAGE_MIME_TYPES[path.slice(path.lastIndexOf(".") + 1).toLowerCase()] ?? "application/octet-stream"};base64,`;
@@ -290,13 +338,15 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
   const files = yield* Effect.forEach(
     [...new Set(references.map((reference) => reference.path))],
     (path) =>
-      fileSystem.stat(filePathFor(path)).pipe(
-        Effect.map((info) => ({
-          path,
-          size: info.type === "File" ? Number(info.size) : undefined,
-        })),
-        Effect.orElseSucceed(() => ({ path, size: undefined })),
-      ),
+      Effect.gen(function* () {
+        for (const candidate of filePathCandidatesFor(path)) {
+          const info = yield* fileSystem.stat(candidate).pipe(Effect.option);
+          if (Option.isSome(info) && info.value.type === "File") {
+            return { path, filePath: candidate, size: Number(info.value.size) };
+          }
+        }
+        return { path, filePath: undefined, size: undefined };
+      }),
     { concurrency: 8 },
   );
   const oversized = files.find((file) => file.size !== undefined && file.size > MAX_IMAGE_BYTES);
@@ -325,8 +375,9 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (h
     files.filter((file) => file.size !== undefined),
     (file) =>
       Effect.gen(function* () {
+        if (file.filePath === undefined) return [];
         const read = yield* fileSystem
-          .stream(filePathFor(file.path), { bytesToRead: MAX_IMAGE_BYTES + 1 })
+          .stream(file.filePath, { bytesToRead: MAX_IMAGE_BYTES + 1 })
           .pipe(Stream.mkUint8Array, Effect.option);
         if (Option.isNone(read) || !isImageBytes(read.value)) return [];
         const bytes = read.value;

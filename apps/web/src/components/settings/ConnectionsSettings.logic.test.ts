@@ -10,6 +10,7 @@ import {
   selectQrEndpointOption,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
+import { formatDesktopSshTarget } from "./EnvironmentRow";
 
 describe("togglePairingScopeSelection", () => {
   it.each([
@@ -51,6 +52,22 @@ describe("parseManualDesktopSshTarget", () => {
     expect(() => parseManualDesktopSshTarget({ host: "devbox", username: "", port })).toThrow(
       "SSH port must be between 1 and 65535.",
     );
+  });
+});
+
+describe("formatDesktopSshTarget", () => {
+  const target = { alias: "devbox", username: "root", hostname: "::1", port: 2222 };
+
+  it("brackets an IPv6 host when a port is shown", () => {
+    expect(formatDesktopSshTarget(target)).toBe("root@[::1]:2222");
+    expect(
+      parseManualDesktopSshTarget({ host: formatDesktopSshTarget(target), username: "", port: "" }),
+    ).toMatchObject({ username: "root", hostname: "::1", port: 2222 });
+  });
+
+  it("leaves IPv6 without a port and named hosts unchanged", () => {
+    expect(formatDesktopSshTarget({ ...target, username: null, port: null })).toBe("::1");
+    expect(formatDesktopSshTarget({ ...target, hostname: "devbox" })).toBe("root@devbox:2222");
   });
 });
 

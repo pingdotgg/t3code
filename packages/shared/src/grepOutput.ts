@@ -1,3 +1,5 @@
+import { splitsSurrogatePair } from "./assistantCitations.ts";
+
 export interface GrepOutputResult {
   readonly fileName: string;
   readonly line?: number;
@@ -100,7 +102,11 @@ export function parseGrepOutput(
   if (matches.length === 0 || matches.some((match) => match.line < 1 || !match.fileName.trim())) {
     return undefined;
   }
-  const note = notes.join("\n").slice(0, NOTE_MAX_CHARS);
+  const joinedNotes = notes.join("\n");
+  const note = joinedNotes.slice(
+    0,
+    splitsSurrogatePair(joinedNotes, NOTE_MAX_CHARS) ? NOTE_MAX_CHARS - 1 : NOTE_MAX_CHARS,
+  );
   let budget = PREVIEW_BUDGET_CHARS - note.length;
   const results: GrepOutputResult[] = matches.map((match) => {
     const fits = match.text.length <= budget;

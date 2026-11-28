@@ -418,6 +418,23 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
+    it.effect("keeps apostrophes inside double-quoted route metadata hrefs", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(
+          cwd,
+          "src/routes/__root.tsx",
+          `const links = [{ rel: "icon", href: "/brand/chef's-hat.svg#mark" }];`,
+        );
+        yield* writeTextFile(cwd, "public/brand/chef's-hat.svg", "<svg>brand</svg>");
+
+        expect(yield* resolver.resolvePath(cwd)).toBe(
+          (yield* Path.Path).join(cwd, "public", "brand", "chef's-hat.svg"),
+        );
+      }),
+    );
+
     // regression: #5538 favicon resolution pinned the event loop
     it.effect("skips icon metadata without an href and keeps scanning", () =>
       Effect.gen(function* () {
