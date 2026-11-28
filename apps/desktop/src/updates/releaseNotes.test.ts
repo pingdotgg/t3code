@@ -299,4 +299,16 @@ describe("normalizeDesktopUpdateReleaseNotes", () => {
       omittedReleaseCount: 0,
     });
   });
+
+  it("does not split a surrogate pair when truncating a long item", () => {
+    const result = normalizeDesktopUpdateReleaseNotes(
+      `- ${"a".repeat(215)} 🚀 trailing text`,
+      "1.2.3",
+      "latest",
+    );
+
+    const item = result.releaseNotes[0]?.items[0];
+    expect(item).toBe(`${"a".repeat(215)}...`);
+    expect(item?.isWellFormed()).toBe(true);
+  });
 });

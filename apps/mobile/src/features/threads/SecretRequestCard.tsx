@@ -16,10 +16,11 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type {
-  EnvironmentId,
-  OrchestrationV2ProjectedTurnItem,
-  SecretProviderId,
+import {
+  AuthProvidersManageScope,
+  type EnvironmentId,
+  type OrchestrationV2ProjectedTurnItem,
+  type SecretProviderId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useGT, useMessages } from "gt-react-native";
@@ -31,6 +32,7 @@ import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/
 import { SecretTextInput } from "../../components/ui/SecretTextInput";
 import type { SecretTextInputHandle } from "../../components/ui/SecretTextInput.types";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { Button } from "../../components/ui/Button";
@@ -91,10 +93,13 @@ function PendingSecretRequestForm(props: {
   const inputs = secretRequestInputs(item, m);
   const multiple = item.fields !== undefined;
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
+  // The server accepts a reference answer only with this scope; without it the card is typed.
+  const canUseReferences = useEnvironmentScope(props.environmentId, AuthProvidersManageScope);
   // A reference answers one value, so a card with fields is always typed.
-  const sources = multiple
-    ? NO_SOURCES
-    : secretRequestSources(config, config?.settings.secretProviders ?? {}, m);
+  const sources =
+    multiple || !canUseReferences
+      ? NO_SOURCES
+      : secretRequestSources(config, config?.settings.secretProviders ?? {}, m);
   const [sourceId, setSourceId] = useState<SecretProviderId | null>(null);
   const source = sources.find((candidate) => candidate.id === sourceId) ?? null;
   const [values, setValues] = useState<Readonly<Record<string, string>>>({});

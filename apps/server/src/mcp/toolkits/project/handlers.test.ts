@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - a directory junction needs no privilege on Windows.
+import * as NodeFSP from "node:fs/promises";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { expect, it } from "@effect/vitest";
 import {
@@ -212,6 +214,7 @@ it.effect(
           readonly title: string;
           readonly generateTitle?: boolean;
           readonly message?: string;
+          readonly outputSchema?: { readonly type: "object" };
           readonly runtimeMode?: RuntimeMode;
           readonly targeted?: false;
           readonly overrideModel?: ModelSelection;
@@ -272,6 +275,20 @@ it.effect(
         });
         expect(idleTitled.result).toMatchObject({ code: "invalid_request" });
         expect(idleTitled.launched).toHaveLength(0);
+      }
+
+      // Clients that fill every optional field send a blank `message`: the thread starts idle.
+      for (const message of ["", " \n "]) {
+        const idle = yield* launchWith("full-access", "full-access", { title: "Fix", message });
+        expect(idle.launched).toHaveLength(1);
+        expect(idle.launched[0]?.initialMessage).toBeUndefined();
+        const schemaWithoutAsk = yield* launchWith("full-access", "full-access", {
+          title: "Fix",
+          message,
+          outputSchema: { type: "object" },
+        });
+        expect(schemaWithoutAsk.result).toMatchObject({ code: "invalid_request" });
+        expect(schemaWithoutAsk.launched).toHaveLength(0);
       }
 
       const aboveCeiling = yield* launchWith("auto-accept-edits", "full-access", {
@@ -469,6 +486,176 @@ it.effect("a launch with a model its provider does not advertise creates no thre
   }),
 );
 
+it.effect(
+  "a launch rejects options its model does not declare and normalizes legacy ultracode effort",
+  () =>
+    Effect.gen(function* () {
+      const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const providers: ServerProvider[] = [
+        {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: true,
+          installed: true,
+          status: "ready",
+          version: null,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-01-01T00:00:00Z",
+          models: [
+            {
+              slug: "claude-opus-5-5",
+              name: "Claude Opus 5.5",
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "effort",
+                    role: "reasoning",
+                    label: "Effort",
+                    type: "select",
+                    options: [
+                      { id: "high", label: "High" },
+                      { id: "xhigh", label: "Extra High" },
+                    ],
+                  },
+                  { id: "ultracode", label: "Ultracode", type: "boolean" },
+                ],
+              },
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        },
+      ];
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "auto",
+        launched,
+        providers,
+      });
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      const launchWith = (options: NonNullable<ModelSelection["options"]>) =>
+        toolkit
+          .handle("t3_thread_launch", {
+            title: "Options check",
+            projectId,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-opus-5-5",
+              options,
+            },
+          })
+          .pipe(
+            Stream.unwrap,
+            Stream.runCollect,
+            Effect.map((result) => result.at(-1)?.result),
+            Effect.provide(dependencies),
+          );
+
+      expect(yield* launchWith([{ id: "thought_level", value: "high" }])).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("Unknown option thought_level"),
+      });
+      expect(launched).toHaveLength(0);
+
+      yield* launchWith([{ id: "effort", value: "ultracode" }]);
+      expect(launched.map((launch) => launch.modelSelection.options)).toEqual([
+        [
+          { id: "effort", value: "xhigh" },
+          { id: "ultracode", value: true },
+        ],
+      ]);
+    }),
+);
+
+it.effect("only a full-access client may pick the agent's own mode at launch", () =>
+  Effect.gen(function* () {
+    const agent = ProviderInstanceId.make("acp-agent");
+    const launchAs = (runtimeModeCeiling: "approval-required" | "full-access") =>
+      Effect.gen(function* () {
+        const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+        const { projectId, dependencies } = clientLaunchHarness({
+          runtimeModeCeiling,
+          launched,
+          providers: [
+            {
+              instanceId: agent,
+              driver: ProviderDriverKind.make("acpRegistry"),
+              enabled: true,
+              installed: true,
+              status: "ready",
+              version: null,
+              auth: { status: "authenticated" },
+              checkedAt: "2026-01-01T00:00:00Z",
+              models: [
+                {
+                  slug: "default",
+                  name: "Default",
+                  isCustom: false,
+                  capabilities: {
+                    optionDescriptors: [
+                      {
+                        id: "_t3/session-mode",
+                        label: "Mode",
+                        type: "select",
+                        options: [
+                          { id: "default", label: "Default" },
+                          { id: "yolo", label: "YOLO" },
+                        ],
+                        currentValue: "default",
+                      },
+                    ],
+                  },
+                },
+              ],
+              slashCommands: [],
+              skills: [],
+            },
+          ],
+        });
+        const toolkit = yield* ProjectToolkit.pipe(
+          Effect.provide(
+            McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+              Layer.provide(dependencies),
+            ),
+          ),
+        );
+        const result = yield* toolkit
+          .handle("t3_thread_launch", {
+            projectId,
+            title: "Fix",
+            message: "Fix the bug",
+            modelSelection: {
+              instanceId: agent,
+              model: "default",
+              options: [{ id: "_t3/session-mode", value: "yolo" }],
+            },
+          })
+          .pipe(
+            Stream.unwrap,
+            Stream.runCollect,
+            Effect.map((collected) => collected.at(-1)?.result),
+            Effect.provide(dependencies),
+          );
+        return { result, launched };
+      });
+
+    const supervised = yield* launchAs("approval-required");
+    expect(supervised.result).toMatchObject({ code: "runtime_mode_escalation_denied" });
+    expect(supervised.launched).toHaveLength(0);
+
+    const fullAccess = yield* launchAs("full-access");
+    expect(fullAccess.launched.map((launch) => launch.modelSelection.options)).toEqual([
+      [{ id: "_t3/session-mode", value: "yolo" }],
+    ]);
+  }),
+);
+
 it.effect("a launch retried with the same clientRequestId replays the first one", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
@@ -567,10 +754,14 @@ it.effect("a launch binds only an existing checkout that is one of the project's
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-worktree-" });
+    // Git registers resolved paths, and a launch keeps the registered one.
+    const root = yield* fileSystem.realPath(
+      yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-worktree-" }),
+    );
     const repo = path.join(root, "repo");
     const worktree = path.join(root, "feature");
     const outside = path.join(root, "outside");
+    const alias = path.join(root, "alias");
     yield* fileSystem.makeDirectory(repo);
     yield* fileSystem.makeDirectory(outside);
 
@@ -615,9 +806,13 @@ it.effect("a launch binds only an existing checkout that is one of the project's
         code: "invalid_request",
       });
     }
+    // The thread keeps the registered worktree path when launched through a link to it.
+    yield* Effect.promise(() => NodeFSP.symlink(worktree, alias, "junction"));
+    expect((yield* launchInto(alias)).at(-1)?.result).toMatchObject({ projectId });
     expect(launched.map((launch) => launch.workspaceStrategy)).toEqual([
       { type: "existing_worktree", worktreePath: worktree },
       { type: "existing_worktree", worktreePath: repo },
+      { type: "existing_worktree", worktreePath: worktree },
     ]);
 
     yield* fileSystem.remove(worktree, { recursive: true });
@@ -1017,11 +1212,25 @@ it.effect("a client launches with the fallback for an exhausted default", () =>
 it.effect("creating a project through MCP refuses a model default instead of dropping it", () =>
   Effect.gen(function* () {
     const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
+    const named: Array<{ readonly scripts?: readonly unknown[] }> = [];
     const dependencies = Layer.merge(
       harness.dependencies,
-      Layer.mock(Project.ProjectService)({
-        create: () => Effect.die("the project was created without its model default"),
-      }),
+      Layer.mergeAll(
+        Layer.mock(Project.ProjectService)({
+          create: () => Effect.die("the project was created without its model default"),
+          getById: (id) => Effect.succeedSome({ ...deletedProject(id), deletedAt: null }),
+        }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          createNamedProject: (input) =>
+            Effect.sync(() => named.push(input)).pipe(
+              Effect.as({
+                projectId: harness.projectId,
+                workspaceRoot: "/projects/client-target",
+              }),
+            ),
+        }),
+      ),
     );
     const toolkit = yield* ProjectToolkit.pipe(
       Effect.provide(
@@ -1029,18 +1238,38 @@ it.effect("creating a project through MCP refuses a model default instead of dro
       ),
     );
 
-    const refused = yield* toolkit
-      .handle("t3_project_create", {
-        title: "client-target",
-        workspaceRoot: "/projects/client-target",
-        defaultModelSelection: harness.modelSelection,
-      })
+    for (const workspaceRoot of ["/projects/client-target", undefined]) {
+      const refused = yield* toolkit
+        .handle("t3_project_create", {
+          title: "client-target",
+          ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+          defaultModelSelection: harness.modelSelection,
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+      expect(refused.at(-1)?.result).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("t3_project_update"),
+      });
+    }
+
+    const accepted = yield* toolkit
+      .handle("t3_project_create", { title: "client-target", defaultModelSelection: null })
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
-    expect(refused.at(-1)?.result).toMatchObject({
-      code: "invalid_request",
-      message: expect.stringContaining("t3_project_update"),
+    expect(accepted.at(-1)?.result).toMatchObject({
+      id: harness.projectId,
+      defaultModelSelection: null,
     });
+
+    // An empty scripts list is an override (no scripts), not a request for the defaults.
+    for (const empty of [{ scripts: [] }, { trackedFolders: [] }]) {
+      const created = yield* toolkit
+        .handle("t3_project_create", { title: "client-target", ...empty })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      expect(created.at(-1)?.result).toMatchObject({ id: harness.projectId });
+    }
+    expect(named.slice(-2).map((input) => input.scripts)).toEqual([[], undefined]);
   }),
 );
 

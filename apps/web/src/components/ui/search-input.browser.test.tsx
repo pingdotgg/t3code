@@ -1,9 +1,9 @@
 import { expect, it } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import { Combobox, ComboboxSearchInput } from "./combobox";
-import { MenuSearchInput } from "./menu";
+import { Menu, MenuItem, MenuPopup, MenuSearchInput, MenuTrigger } from "./menu";
 
 it.each(["combobox", "menu"] as const)(
   "focuses the %s search when clicking anywhere in its row",
@@ -35,3 +35,22 @@ it.each(["combobox", "menu"] as const)(
     await expect.element(field).toHaveValue("project");
   },
 );
+
+it("moves focus from MenuSearchInput to the last item on ArrowUp", async () => {
+  await using _screen = await render(
+    <Menu defaultOpen>
+      <MenuTrigger>Filter</MenuTrigger>
+      <MenuPopup>
+        <MenuSearchInput aria-label="Search options" />
+        <MenuItem>Alpha</MenuItem>
+        <MenuItem>Gamma</MenuItem>
+      </MenuPopup>
+    </Menu>,
+    { router: false /* menu keyboard navigation does not involve routing */ },
+  );
+
+  await userEvent.click(page.getByRole("textbox", { name: "Search options" }));
+  await userEvent.keyboard("{ArrowUp}");
+
+  await expect.element(page.getByRole("menuitem", { name: "Gamma" })).toHaveFocus();
+});

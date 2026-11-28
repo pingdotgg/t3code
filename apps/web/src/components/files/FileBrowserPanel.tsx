@@ -1,11 +1,12 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import { m } from "~/i18n/messages";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
-import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
+import type { ContextMenuSource, EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
@@ -18,7 +19,6 @@ import { type Ref, useEffect, useEffectEvent, useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
 import { toastManager } from "~/components/ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -38,6 +38,7 @@ import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import {
   areAllDirectoriesExpanded,
   coalesceReentrantCalls,
+  onlyChildren,
   readExpandedDirectories,
   setAllDirectoriesExpanded,
   writeExpandedDirectories,
@@ -45,9 +46,11 @@ import {
 import { buildFileTreePathUpdates, shouldRebuildFileTree } from "./fileTreePathReconciliation";
 import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
+import { useFileDownload } from "./useFileDownload";
 import { useProjectPathSearch } from "~/state/queries";
 import { isMacPlatform } from "~/lib/utils";
 import { type PreviewAction, subscribePreviewAction } from "../preview/previewActionBus";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -71,22 +74,20 @@ function treePath(entry: ProjectEntry): string {
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
   const gt = useGT();
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            aria-label={gt("Refresh workspace files")}
-            onClick={props.onRefresh}
-          />
-        }
-      >
-        <RefreshIcon refreshing={props.isPending} />
-      </TooltipTrigger>
-      <TooltipPopup>{props.isPending ? gt("Refreshing…") : gt("Refresh files")}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={gt("Refresh workspace files")}
+          onClick={props.onRefresh}
+        />
+      }
+      label={props.isPending ? gt("Refreshing…") : gt("Refresh files")}
+    >
+      <RefreshIcon refreshing={props.isPending} />
+    </SharedTooltipTrigger>
   );
 }
 
@@ -104,9 +105,11 @@ function FileSearchField({
   const gt = useGT();
   return (
     <InputGroup variant="ghost" className="h-7 min-w-0 flex-1">
+      {/* Native search inputs clear on Escape even during IME composition. */}
       <InputGroupInput
         ref={ref}
-        type="search"
+        type="text"
+        role="searchbox"
         name={props.name}
         size="sm"
         value={props.value}
@@ -116,7 +119,14 @@ function FileSearchField({
         spellCheck={false}
         onChange={(event) => props.onValueChange(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key !== "Escape") return;
+          if (event.key !== "Escape" || event.nativeEvent.isComposing || event.keyCode === 229)
+            return;
+          if (props.value || event.repeat) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (props.value) props.onClose();
+            return;
+          }
           props.onClose();
           event.currentTarget.blur();
         }}
@@ -155,6 +165,9 @@ function buildTreeEntries(
   return { entries, entryKinds, treePaths, directoryPaths, expandableDirectoryPaths };
 }
 
+// A symlink to its own parent lists itself as an only child without end.
+const MAX_FOLDERS_OPENED_WITH_PARENT = 16;
+
 export default function FileBrowserPanel({
   environmentId,
   cwd,
@@ -174,10 +187,12 @@ export default function FileBrowserPanel({
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   const fileContextMenu = useFileContextMenu(environmentId);
+  const downloadFile = useFileDownload(environmentId);
   const {
     entries: directoryEntries,
     load,
     refresh,
+    revalidate,
     ready,
     error,
     isPending,
@@ -203,7 +218,12 @@ export default function FileBrowserPanel({
   const followedRevealRef = useRef<string | null>(null);
 
   // Shadow-DOM row rects are unreliable; capture the composed contextmenu event's viewport position.
-  const contextMenuPointerRef = useRef<{ x: number; y: number; at: number } | null>(null);
+  const contextMenuPointerRef = useRef<{
+    x: number;
+    y: number;
+    at: number;
+    source: ContextMenuSource;
+  } | null>(null);
 
   const showEntryContextMenu = useStableCallback(
     (item: TreeContextMenuItem, context: TreeContextMenuOpenContext) => {
@@ -220,7 +240,12 @@ export default function FileBrowserPanel({
       const position = pointerIsFresh
         ? { x: pointer.x, y: pointer.y }
         : { x: anchorRect.left, y: anchorRect.bottom };
-      const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
+      const fileTarget = {
+        environmentId,
+        filePath: relativePath,
+        workspaceRoot: cwd,
+        isDirectory: item.kind === "directory",
+      };
       const fileMenuItems = fileContextMenu.buildItems(fileTarget);
       // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
       context.close({ restoreFocus: !pointerIsFresh });
@@ -228,10 +253,15 @@ export default function FileBrowserPanel({
         const clicked = await api.contextMenu.show(
           [
             ...fileMenuItems,
+            ...(downloadFile && item.kind !== "directory"
+              ? [{ id: "download", label: gt("Download", { $context: "verb, saves a file" }) }]
+              : []),
+            { id: "copy-path", label: gt("Copy path") },
             { id: "copy-mention", label: gt("Copy mention") },
             { id: "add-to-chat", label: gt("Add to chat") },
           ],
           position,
+          pointerIsFresh ? pointer.source : undefined,
         );
         if (clicked === null) return;
         // Open-with submenu ids are absent from the top-level item list.
@@ -241,13 +271,18 @@ export default function FileBrowserPanel({
           await fileContextMenu.activate(clicked as FileContextMenuAction, fileTarget);
           return;
         }
-        if (clicked === "copy-mention") {
+        if (clicked === "download") {
+          downloadFile?.(cwd, relativePath);
+          return;
+        }
+        if (clicked === "copy-path" || clicked === "copy-mention") {
+          const copyingPath = clicked === "copy-path";
           try {
-            await writeTextToClipboard(mention);
+            await writeTextToClipboard(copyingPath ? joinHostPath(cwd, relativePath) : mention);
           } catch (error) {
             toastManager.add({
               type: "error",
-              title: gt("Failed to copy mention"),
+              title: copyingPath ? gt("Failed to copy path") : gt("Failed to copy mention"),
               description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
             });
           }
@@ -279,6 +314,7 @@ export default function FileBrowserPanel({
   );
 
   const loadingDirectoriesRef = useRef(loadingDirectories);
+  const revalidateDirectory = useStableCallback(revalidate);
   const dragMention = createFileTreeDragMentionController(
     hostFolder ? { mentionPath: (path: string) => joinHostPath(cwd, path) } : {},
   );
@@ -311,12 +347,15 @@ export default function FileBrowserPanel({
       }
     },
     paths: [],
-    renderRowDecoration: ({ item, row }) =>
-      row.kind === "directory" &&
-      row.isExpanded &&
-      loadingDirectoriesRef.current.has(item.path.replace(/\/$/, ""))
+    renderRowDecoration: ({ item, row }) => {
+      const path = item.path.replace(/\/$/, "");
+      const open = row.kind === "directory" && row.isExpanded;
+      // Pierre calls this for the rows it renders, which is the only sign of what is on screen.
+      revalidateDirectory(open ? path : path.slice(0, Math.max(0, path.lastIndexOf("/"))));
+      return open && loadingDirectoriesRef.current.has(path)
         ? { icon: "t3-tree-icon-loading", title: gt("Loading…") }
-        : null,
+        : null;
+    },
     search: false,
     onSearchChange: (value) => setQuery(value ?? ""),
     unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
@@ -364,29 +403,63 @@ export default function FileBrowserPanel({
   const expansionRoot = `${environmentId}:${cwd}`;
   // Folders expanded when the panel last unmounted; each reopens once lazy loading lists it.
   const [pendingExpandedPaths] = useState(() => new Set(readExpandedDirectories(expansionRoot)));
+  // Folders just opened and not listed yet, with how many only-child folders may open below each.
+  // Pierre merges such a chain into one row that takes its open state from the last folder.
+  const openingPathsRef = useRef(new Map<string, number>());
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the Pierre tree model to load directories as they are expanded
   useEffect(() => {
     const currentPaths = new Set(directoryPaths);
     for (const path of expandedPathsRef.current) {
       if (!currentPaths.has(path)) expandedPathsRef.current.delete(path);
     }
+    for (const path of openingPathsRef.current.keys()) {
+      if (!currentPaths.has(path)) openingPathsRef.current.delete(path);
+    }
+    let childrenByParent: ReadonlyMap<string, ProjectEntry | null> | null = null;
+    const openOnlyChild = (path: string) => {
+      const remaining = openingPathsRef.current.get(path);
+      if (remaining === undefined) return;
+      if (childrenByParent === null) childrenByParent = onlyChildren(directoryEntries);
+      const child = childrenByParent.get(path.replace(/\/$/, ""));
+      if (child === undefined) return;
+      // Like expand all, leave an ignored folder such as `node_modules` to open by hand.
+      const opensChild =
+        child?.kind === "directory" &&
+        (!child.ignored ||
+          directoryEntries.some((entry) => entry.ignored && treePath(entry) === path));
+      if (!opensChild || remaining === 0) {
+        openingPathsRef.current.delete(path);
+        return;
+      }
+      const childItem = model.getItem(treePath(child));
+      // The listing reaches the tree after this effect, which notifies again.
+      if (!childItem || !("expand" in childItem)) return;
+      openingPathsRef.current.delete(path);
+      if (childItem.isExpanded()) return;
+      openingPathsRef.current.set(treePath(child), remaining - 1);
+      childItem.expand();
+    };
     // Restoring calls item.expand(), which notifies subscribers synchronously.
     const loadExpanded = coalesceReentrantCalls(() => {
       if (model.isSearchOpen()) return;
       let changed = false;
       for (const path of directoryPaths) {
         const item = model.getItem(path);
-        if (item?.isDirectory() && pendingExpandedPaths.delete(path) && "expand" in item) {
-          item.expand();
-        }
+        const restored = item?.isDirectory() && pendingExpandedPaths.delete(path);
+        if (restored && item && "expand" in item) item.expand();
         if (item?.isDirectory() && "isExpanded" in item && item.isExpanded()) {
           if (!expandedPathsRef.current.has(path)) {
             expandedPathsRef.current.add(path);
             changed = true;
+            if (!restored && !openingPathsRef.current.has(path)) {
+              openingPathsRef.current.set(path, MAX_FOLDERS_OPENED_WITH_PARENT);
+            }
             void load(path.replace(/\/$/, ""));
           }
+          openOnlyChild(path);
         } else {
           if (item?.isDirectory() && expandedPathsRef.current.has(path)) setExpandAll(false);
+          openingPathsRef.current.delete(path);
           if (expandedPathsRef.current.delete(path)) changed = true;
         }
       }
@@ -399,7 +472,7 @@ export default function FileBrowserPanel({
     });
     loadExpanded();
     return model.subscribe(loadExpanded);
-  }, [directoryPaths, expansionRoot, load, model, pendingExpandedPaths]);
+  }, [directoryEntries, directoryPaths, expansionRoot, load, model, pendingExpandedPaths]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes ignored-file status into the imperative Pierre tree model
   useEffect(() => {
     model.setGitStatus(
@@ -431,15 +504,20 @@ export default function FileBrowserPanel({
     }
     search.setValue(value);
   };
-  const handleRefresh = () => {
+  const refreshDirectories = () => {
     refresh();
+    // Renders the rows again, so each one on screen revalidates the folders it comes from.
+    model.setComposition(model.getComposition());
+  };
+  const handleRefresh = () => {
+    refreshDirectories();
     if (query.trim()) pathSearch.refresh();
     onRefreshSelectedFile?.();
   };
   useWorkspaceMutationRefresh({
     mutationId: workspaceMutationId,
     refresh: () => {
-      refresh();
+      refreshDirectories();
       if (query.trim()) pathSearch.refresh();
     },
     resourceKey: `files:${environmentId}:${cwd}`,
@@ -551,7 +629,12 @@ export default function FileBrowserPanel({
       data-file-browser-panel={`${environmentId}:${cwd}`}
       // Capture runs before the tree's shadow-internal row handler opens the menu.
       onContextMenuCapture={(event) => {
-        contextMenuPointerRef.current = { x: event.clientX, y: event.clientY, at: event.timeStamp };
+        contextMenuPointerRef.current = {
+          x: event.clientX,
+          y: event.clientY,
+          at: event.timeStamp,
+          source: contextMenuSourceOf(event),
+        };
       }}
       // Capture dragstart before the tree selects the row so selection sees the drag flag.
       onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
@@ -582,34 +665,32 @@ export default function FileBrowserPanel({
           onClose={closeSearch}
         />
         {directoryPaths.length > 0 && !hostFolder ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label={
-                    expandAll || allDirectoriesExpanded
-                      ? gt("Collapse all folders")
-                      : gt("Expand all folders")
-                  }
-                  onClick={toggleAllDirectories}
-                />
-              }
-            >
-              {allDirectoriesExpanded ? (
-                <ChevronsDownUpIcon className="size-3.5" />
-              ) : (
-                <ChevronsUpDownIcon className="size-3.5" />
-              )}
-            </TooltipTrigger>
-            <TooltipPopup>
-              {expandAll || allDirectoriesExpanded
+          <SharedTooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label={
+                  expandAll || allDirectoriesExpanded
+                    ? gt("Collapse all folders")
+                    : gt("Expand all folders")
+                }
+                onClick={toggleAllDirectories}
+              />
+            }
+            label={
+              expandAll || allDirectoriesExpanded
                 ? gt("Collapse all folders")
-                : gt("Expand all folders")}
-            </TooltipPopup>
-          </Tooltip>
+                : gt("Expand all folders")
+            }
+          >
+            {allDirectoriesExpanded ? (
+              <ChevronsDownUpIcon className="size-3.5" />
+            ) : (
+              <ChevronsUpDownIcon className="size-3.5" />
+            )}
+          </SharedTooltipTrigger>
         ) : null}
       </div>
       {error || pathSearch.error ? (

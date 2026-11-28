@@ -1,5 +1,9 @@
 function formatScaled(value: number): string {
-  return value.toFixed(value >= 100 ? 0 : value >= 10 ? 1 : 2);
+  const twoDecimals = value.toFixed(2);
+  if (Number(twoDecimals) < 10) return twoDecimals;
+  const oneDecimal = value.toFixed(1);
+  if (Number(oneDecimal) < 100) return oneDecimal;
+  return value.toFixed(0);
 }
 
 export function formatBytes(value: number): string {

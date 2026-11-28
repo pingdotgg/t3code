@@ -21,6 +21,9 @@ class GoogleVoiceTranscriberTest {
       "en-US-u-mu-celsius" to "en-US",
       "en-GB-u-fw-mon-mu-celsius" to "en-GB",
       "ar-EG-u-nu-latn" to "ar-EG",
+      "zh-CN" to "cmn-Hans-CN",
+      "zh-Hans-CN" to "cmn-Hans-CN",
+      "zh-Hans-CN-u-fw-mon" to "cmn-Hans-CN",
       "zh-Hant-TW" to "zh-Hant-TW"
     )) {
       assertEquals(expected, speechLocale(Locale.forLanguageTag(system)).toLanguageTag())

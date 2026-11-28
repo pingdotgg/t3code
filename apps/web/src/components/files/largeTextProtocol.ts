@@ -14,7 +14,14 @@ export type TextPreviewRequest =
   | { type: "page"; index: number }
   | { type: "copy" };
 export type TextPreviewResult =
-  | { type: "meta"; count: number; columns: number; complete: boolean; sizeBytes?: number }
+  | {
+      type: "meta";
+      count: number;
+      columns: number;
+      columnsTruncated: boolean;
+      complete: boolean;
+      sizeBytes?: number;
+    }
   | { type: "page"; index: number; rows: string[][] }
   | { type: "copy"; text: string }
   | ({ type: "error"; operation: TextPreviewRequest["type"] } & PreviewFailure);

@@ -11,6 +11,7 @@ import type { ColorValue, PressableProps } from "react-native";
 import { withUniwind } from "uniwind";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import { withMenuActionIconColors } from "../../lib/menu-action-colors";
+import { perfProbe } from "../../features/development/perf-probe-hooks";
 import type { MenuProps } from "./Menu.types";
 
 const ThemedMenuView = withUniwind(
@@ -99,6 +100,13 @@ export function Menu(props: MenuProps) {
       }
     };
   }
+  const { onPressAction } = props;
+  const probe = perfProbe;
+  if (probe && onPressAction)
+    menuProps.onPressAction = (event) => {
+      probe.menuAction();
+      onPressAction(event);
+    };
   return (
     <ThemedMenuView
       {...menuProps}

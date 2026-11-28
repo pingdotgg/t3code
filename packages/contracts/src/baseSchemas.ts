@@ -28,6 +28,39 @@ const isNonBlank = Schema.makeFilter((value: string) => value.trim().length > 0,
 });
 export const TrimmedNonEmptyString = TrimmedString.check(isNonBlank);
 
+// Git forbids ASCII space and control characters in ref names but allows Unicode whitespace such
+// as U+00A0 and U+3000, which `String.prototype.trim` would strip from a name's edges.
+export function trimAsciiWhitespace(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && isAsciiWhitespace(value.charCodeAt(start))) start++;
+  while (end > start && isAsciiWhitespace(value.charCodeAt(end - 1))) end--;
+  return end - start === value.length ? value : value.slice(start, end);
+}
+
+function isAsciiWhitespace(code: number): boolean {
+  return code === 0x20 || (code >= 0x09 && code <= 0x0d);
+}
+
+const isNonBlankGitRefName = Schema.makeFilter(
+  (value: string) => trimAsciiWhitespace(value).length > 0,
+  {
+    expected: "a non-blank string",
+    toJsonSchema: () => [{ minLength: 1 }, true],
+    arbitraryConstraint: { minLength: 1 },
+  },
+);
+/** A branch, ref or remote name. Unlike `TrimmedNonEmptyString`, it keeps Unicode whitespace. */
+export const GitRefName = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.String,
+    SchemaTransformation.transformEffect({
+      decode: (value) => Effect.succeed(trimAsciiWhitespace(value)),
+      encode: (value) => Effect.succeed(trimAsciiWhitespace(value)),
+    }),
+  ),
+).check(isNonBlankGitRefName);
+
 export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 export const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 export const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
