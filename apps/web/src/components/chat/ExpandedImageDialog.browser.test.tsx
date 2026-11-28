@@ -222,6 +222,8 @@ describe("ExpandedImageDialog", () => {
     await expect.element(image).toBeVisible();
     const rects = () =>
       [image, caption].map((locator) => locator.element().getBoundingClientRect().toJSON());
+    // The redesign's dialog scales in; measure once it has settled.
+    await Promise.all(document.getAnimations().map((animation) => animation.finished));
     const before = rects();
 
     await userEvent.click(screen.getByRole("button", { name: "Draw on image" }));
@@ -230,7 +232,8 @@ describe("ExpandedImageDialog", () => {
     await expect
       .element(screen.getByRole("button", { name: "Draw on image" }))
       .toHaveAttribute("aria-pressed", "true");
-    await expect.element(screen.getByRole("button", { name: "Next media" })).toBeEnabled();
+    // The redesign moves between media with its thumbnail strip.
+    await expect.element(screen.getByRole("option", { name: "other.png (2/2)" })).toBeEnabled();
 
     // The close button cancels the drawing and keeps the preview open.
     await userEvent.click(screen.getByRole("button", { name: "Cancel drawing" }));

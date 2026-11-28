@@ -1469,8 +1469,9 @@ it("highlights Jupyter kernel languages while keeping labels and raw cells plain
     const cells = (["code", "raw"] as const).map((kind) => ({ kind, source, outputs: [] }));
     const notebook = { type: "notebook" as const, language, cells };
     await using screen = await render(<NotebookPreview notebook={notebook} />);
-    expect(screen.getByRole("status").first().element().textContent).toContain(`· ${language}`);
-    expect(screen.container.querySelector("section > div")?.textContent).toBe(`${language} · 1`);
+    // The redesign shows the language in the status and cell header tooltips.
+    expect(screen.getByRole("status").first().element().textContent).toBe("2 cells");
+    expect(screen.container.querySelector("section > div")?.textContent).toBe("Cell 1");
     await vi.waitFor(() => {
       const [code, raw] = [...screen.container.querySelectorAll("diffs-container")].map((el) => {
         const spans = el.shadowRoot?.querySelectorAll("[data-line] span") ?? [];

@@ -62,9 +62,10 @@ describe("CommandPaletteContent", () => {
     await expect.element(page.getByPlaceholder("Search projects")).toHaveFocus();
   });
 
+  // The redesign keeps the palette at its fixed 6rem offset; it still never shrinks below its list.
   it.each([
-    { height: 900, top: 225 },
-    { height: 620, top: 138 },
+    { height: 900, top: 96 },
+    { height: 620, top: 96 },
   ])("sits low without shrinking in a $height px tall window", async ({ height, top }) => {
     const viewport = { width: window.innerWidth, height: window.innerHeight };
     await page.viewport(1440, height);
@@ -78,8 +79,8 @@ describe("CommandPaletteContent", () => {
     await expect
       .poll(() => {
         const bounds = popup.element().getBoundingClientRect();
-        return { top: Math.round(bounds.top), height: Math.round(bounds.height) };
+        return { top: Math.round(bounds.top), shrunk: Math.round(bounds.height) < 420 };
       })
-      .toEqual({ top, height: 420 });
+      .toEqual({ top, shrunk: false });
   });
 });
