@@ -561,31 +561,34 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
       }),
   );
 
-  it.effect.each(["audio/wav", "audio/wav;codecs=1", "Audio/WAV \t; codecs=1"])(
-    "sends supported audio files as native audio content (%s)",
-    (mimeType) =>
-      Effect.gen(function* () {
-        const fixture = yield* makeAttachmentFixture();
-        const audioAttachment = {
-          ...textAttachment,
-          id: "recording-1",
-          name: "recording.wav",
-          mimeType,
-        } satisfies ChatAttachment;
-        const bytes = Buffer.from("RIFF....WAVEfmt ", "latin1");
-        yield* fixture.write(audioAttachment, bytes);
-        const prompt = yield* buildAntigravityPrompt({
-          input: "Transcribe this.",
-          attachments: [audioAttachment],
-          resolveAttachmentPath: fixture.resolve,
-          promptCapabilities: { image: true, audio: true, embeddedContext: true },
-        });
+  it.effect.each([
+    "audio/wav",
+    "audio/wav;codecs=1",
+    "Audio/WAV \t; codecs=1",
+    "application/octet-stream",
+  ])("sends supported audio files as native audio content (%s)", (mimeType) =>
+    Effect.gen(function* () {
+      const fixture = yield* makeAttachmentFixture();
+      const audioAttachment = {
+        ...textAttachment,
+        id: "recording-1",
+        name: "recording.wav",
+        mimeType,
+      } satisfies ChatAttachment;
+      const bytes = Buffer.from("RIFF....WAVEfmt ", "latin1");
+      yield* fixture.write(audioAttachment, bytes);
+      const prompt = yield* buildAntigravityPrompt({
+        input: "Transcribe this.",
+        attachments: [audioAttachment],
+        resolveAttachmentPath: fixture.resolve,
+        promptCapabilities: { image: true, audio: true, embeddedContext: true },
+      });
 
-        expect(prompt).toEqual([
-          { type: "text", text: "Transcribe this." },
-          { type: "audio", data: bytes.toString("base64"), mimeType: "audio/wav" },
-        ]);
-      }),
+      expect(prompt).toEqual([
+        { type: "text", text: "Transcribe this." },
+        { type: "audio", data: bytes.toString("base64"), mimeType: "audio/wav" },
+      ]);
+    }),
   );
 
   it.effect.each([{ image: true }])(

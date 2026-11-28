@@ -6,6 +6,7 @@ import {
   type ProviderSendTurnInput,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import { audioMimeTypeFromExtension } from "@t3tools/shared/mediaPreview";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -447,7 +448,12 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
       "source" in attachment &&
       attachment.source?._tag === "pasted-text";
     // The text already carries the path; keep folded pastes lazy so agents can search without embedding the whole file.
-    const mimeType = attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+    const declaredMimeType = attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+    const extension = path.extname(attachment.name).toLowerCase();
+    const mimeType =
+      attachment.type === "file" && declaredMimeType === "application/octet-stream"
+        ? (audioMimeTypeFromExtension(extension) ?? declaredMimeType)
+        : declaredMimeType;
     const image = attachment.type === "image" && IMAGE_MIME_TYPES.has(mimeType);
     const audio = attachment.type === "file" && AUDIO_MIME_TYPES.has(mimeType);
     const pdf = attachment.type === "file" && mimeType === "application/pdf";
@@ -455,7 +461,7 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
       attachment.type === "file" &&
       (mimeType.startsWith("text/") ||
         TEXT_MIME_TYPES.has(mimeType) ||
-        TEXT_FILE_EXTENSIONS.has(path.extname(attachment.name).toLowerCase()));
+        TEXT_FILE_EXTENSIONS.has(extension));
     const isPathOnly =
       (attachment.type === "image" && (!image || input.promptCapabilities?.image !== true)) ||
       (attachment.type === "file" &&
