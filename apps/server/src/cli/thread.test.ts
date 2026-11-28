@@ -30,6 +30,7 @@ import {
   latestRunError,
   launchModelSelection,
   readLatestMessages,
+  ThreadToolFailedError,
   readOutputSchema,
   resolveProject,
   threadCommand,
@@ -339,7 +340,12 @@ it.effect("--wait follows the sent run to its continuation's terminal status", (
 /** The reads that ask whether a run after `runId` holds a message someone sent. */
 const laterRunReads = (
   laterRun: RunId,
-  items: ReadonlyArray<{ readonly runId: RunId; readonly type: string }>,
+  items: ReadonlyArray<{
+    readonly runId: RunId;
+    readonly type: string;
+    readonly position?: number;
+  }>,
+  earlierPosition: number | null = null,
 ) => [
   {
     recentRuns: [
@@ -347,7 +353,7 @@ const laterRunReads = (
       { runId: laterRun, ordinal: 2 },
     ],
   },
-  { thread: {}, items, nextPosition: null, hasMore: false },
+  { thread: {}, items, nextPosition: null, hasMore: false, earlierPosition },
 ];
 
 it.effect("--wait lasts until background work the agent waits on wakes it and that run ends", () =>
@@ -401,7 +407,7 @@ it.effect(
             { runId: wakeRun, ordinal: 2, status },
           ],
         },
-        { thread: {}, items: [], nextPosition: null, hasMore: false },
+        { thread: {}, items: [], nextPosition: null, hasMore: false, earlierPosition: null },
       ];
       const { tools } = scriptedTools({
         t3_thread_wait: [
@@ -448,7 +454,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const sentRun = RunId.make("run-2");
-      const { tools } = scriptedTools({
+      const { tools, calls } = scriptedTools({
         t3_thread_wait: [
           { threadId, runId, status: "completed", timedOut: false },
           {
@@ -460,7 +466,12 @@ it.effect(
             output: { head: "abc" },
           },
         ],
-        t3_thread_read: laterRunReads(sentRun, [{ runId: sentRun, type: "user_message" }]),
+        // Older pages remain, but the newest already holds the sent message.
+        t3_thread_read: laterRunReads(
+          sentRun,
+          [{ runId: sentRun, type: "user_message", position: 9 }],
+          5,
+        ),
       });
 
       assert.deepStrictEqual(yield* waitForRun(tools, threadId, runId, true), {
@@ -469,6 +480,12 @@ it.effect(
         status: "completed",
         output: { head: "abc" },
       });
+      assert.deepStrictEqual(
+        calls
+          .filter((entry) => entry.tool === "t3_thread_read")
+          .map((entry) => (entry.args as { readonly beforePosition?: number }).beforePosition),
+        [undefined, Number.MAX_SAFE_INTEGER],
+      );
     }),
 );
 
@@ -563,16 +580,48 @@ it.effect("--output-schema reads a ~/ path from the home directory", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-/** Serves t3_thread_read pages the way the server does: positions count every item, and a cursorless read is the newest page. */
-const timelineTools = (types: ReadonlyArray<string>) => {
+/**
+ * Serves t3_thread_read pages the way the server does: positions count every
+ * item, and a cursorless read is the newest page. A legacy server's strict
+ * schema refuses `beforePosition`.
+ */
+const timelineTools = (types: ReadonlyArray<string>, server: "current" | "legacy" = "current") => {
   const items = types.map((type, position) => ({ position, itemId: `item-${position}`, type }));
+  const isMatch = (item: (typeof items)[number]) =>
+    ["user_message", "assistant_message", "proposed_plan"].includes(item.type);
   const served: Array<number> = [];
   const call = ((_tool: string, input: unknown) => {
-    const args = input as { readonly afterPosition?: number; readonly limit: number };
-    const isMessage = (item: (typeof items)[number]) =>
-      ["user_message", "assistant_message", "proposed_plan"].includes(item.type);
+    const args = input as {
+      readonly afterPosition?: number;
+      readonly beforePosition?: number;
+      readonly limit: number;
+    };
+    if (args.beforePosition !== undefined) {
+      if (server === "legacy") {
+        return Effect.fail(
+          new ThreadToolFailedError({
+            tool: "t3_thread_read",
+            detail: 'The server refused the arguments: Unknown argument "beforePosition".',
+          }),
+        );
+      }
+      const newestFirst: typeof items = [];
+      const end = Math.min(args.beforePosition, items.length);
+      for (let position = end - 1; position >= 0 && newestFirst.length <= args.limit; position--) {
+        if (isMatch(items[position]!)) newestFirst.push(items[position]!);
+      }
+      const page = newestFirst.slice(0, args.limit).reverse();
+      served.push(page.length);
+      return Effect.succeed({
+        thread: { itemCount: items.length },
+        items: page,
+        nextPosition: page.at(-1)?.position ?? null,
+        hasMore: false,
+        earlierPosition: newestFirst.length > page.length ? page[0]!.position : null,
+      });
+    }
     if (args.afterPosition === undefined) {
-      const page = items.filter(isMessage).slice(-args.limit);
+      const page = items.filter(isMatch).slice(-args.limit);
       served.push(page.length);
       return Effect.succeed({
         thread: { itemCount: items.length },
@@ -585,7 +634,7 @@ const timelineTools = (types: ReadonlyArray<string>) => {
     const matching: typeof items = [];
     for (let position = args.afterPosition + 1; position < items.length; position++) {
       const item = items[position]!;
-      if (isMessage(item)) {
+      if (isMatch(item)) {
         matching.push(item);
         if (matching.length > args.limit) break;
       }
@@ -608,6 +657,7 @@ const timelineTools = (types: ReadonlyArray<string>) => {
 };
 
 const tail = (tools: number) => [...Array<string>(tools).fill("tool_call"), "assistant_message"];
+const SERVERS = ["current", "legacy"] as const;
 
 it.effect("show retains pull request metadata when reading a later message window", () =>
   Effect.gen(function* () {
@@ -643,55 +693,90 @@ it.effect("show retains pull request metadata when reading a later message windo
   }),
 );
 
-it.effect("show reads the end of a long thread, not its whole history", () =>
+it.effect.each(SERVERS)(
+  "show reads the end of a long thread, not its whole history (%s)",
+  (server) =>
+    Effect.gen(function* () {
+      const { tools, served, latest } = timelineTools(
+        [
+          ...Array.from({ length: 1000 }, (_, index) =>
+            index % 2 === 0 ? "user_message" : "assistant_message",
+          ),
+          ...Array.from({ length: 10 }, () => tail(30)).flat(),
+          "proposed_plan",
+        ],
+        server,
+      );
+
+      const { messages } = yield* readLatestMessages(tools, threadId, 10);
+
+      assert.deepStrictEqual(
+        messages.map((item) => item.itemId),
+        latest(10),
+      );
+      assert.isBelow(
+        served.reduce((sum, count) => sum + count, 0),
+        100,
+      );
+      // Each call builds the whole thread's index on the server, so calls are the cost.
+      if (server === "current") assert.lengthOf(served, 2);
+    }),
+);
+
+it.effect.each(SERVERS)(
+  "show widens back to the first item when the thread has fewer messages (%s)",
+  (server) =>
+    Effect.gen(function* () {
+      const { tools, latest } = timelineTools(
+        ["user_message", ...Array.from({ length: 4 }, () => tail(150)).flat()],
+        server,
+      );
+
+      const { messages } = yield* readLatestMessages(tools, threadId, 10);
+
+      assert.deepStrictEqual(
+        messages.map((item) => item.itemId),
+        latest(10),
+      );
+      assert.lengthOf(messages, 5);
+    }),
+);
+
+it.effect.each(SERVERS)(
+  "show returns a --messages count larger than one call can spread (%s)",
+  (server) =>
+    Effect.gen(function* () {
+      const { tools, latest } = timelineTools(
+        Array<string>(200_000).fill("assistant_message"),
+        server,
+      );
+
+      const { messages } = yield* readLatestMessages(tools, threadId, 200_000);
+
+      assert.deepStrictEqual(
+        messages.map((item) => item.itemId),
+        latest(200_000),
+      );
+    }),
+);
+
+it.effect("show stops when a server's earlierPosition does not move back", () =>
   Effect.gen(function* () {
-    const { tools, served, latest } = timelineTools([
-      ...Array.from({ length: 1000 }, (_, index) =>
-        index % 2 === 0 ? "user_message" : "assistant_message",
-      ),
-      ...Array.from({ length: 10 }, () => tail(30)).flat(),
-      "proposed_plan",
-    ]);
+    const page = {
+      thread: { itemCount: 10 },
+      items: [{ position: 5, itemId: "item-5", type: "assistant_message" }],
+      nextPosition: 5,
+      hasMore: false,
+      earlierPosition: 5,
+    };
+    const { tools, calls } = scriptedTools({ t3_thread_read: [page, page] });
 
     const { messages } = yield* readLatestMessages(tools, threadId, 10);
 
+    assert.lengthOf(calls, 2);
     assert.deepStrictEqual(
       messages.map((item) => item.itemId),
-      latest(10),
-    );
-    assert.isBelow(
-      served.reduce((sum, count) => sum + count, 0),
-      100,
-    );
-  }),
-);
-
-it.effect("show widens back to the first item when the thread has fewer messages", () =>
-  Effect.gen(function* () {
-    const { tools, latest } = timelineTools([
-      "user_message",
-      ...Array.from({ length: 4 }, () => tail(150)).flat(),
-    ]);
-
-    const { messages } = yield* readLatestMessages(tools, threadId, 10);
-
-    assert.deepStrictEqual(
-      messages.map((item) => item.itemId),
-      latest(10),
-    );
-    assert.lengthOf(messages, 5);
-  }),
-);
-
-it.effect("show returns a --messages count larger than one call can spread", () =>
-  Effect.gen(function* () {
-    const { tools, latest } = timelineTools(Array<string>(200_000).fill("assistant_message"));
-
-    const { messages } = yield* readLatestMessages(tools, threadId, 200_000);
-
-    assert.deepStrictEqual(
-      messages.map((item) => item.itemId),
-      latest(200_000),
+      ["item-5"],
     );
   }),
 );
@@ -742,22 +827,38 @@ it.effect("show gives the latest run's last error only when that run did not com
       items: [
         { itemId: "item-0", runId: RunId.make("run-0"), type: "error", text: "earlier run" },
         { itemId: "item-1", runId, type: "error", text: "first try" },
-        { itemId: "item-2", runId, type: "error", text: "Usage limit reached" },
+        {
+          itemId: "item-2",
+          runId,
+          type: "error",
+          text: "U",
+          textTruncated: true,
+          nextTextOffset: 1,
+        },
       ],
       nextPosition: null,
       hasMore: false,
+      earlierPosition: null,
     };
-    const { tools, calls } = scriptedTools({ t3_thread_read: [page] });
+    const rest = {
+      thread: {},
+      items: [{ itemId: "item-2", runId, type: "error", text: "sage limit reached" }],
+      nextPosition: null,
+      hasMore: false,
+    };
+    const { tools, calls } = scriptedTools({ t3_thread_read: [page, rest] });
 
     assert.strictEqual(
       yield* latestRunError(tools, { threadId, status: "failed", latestRunId: runId }),
       "Usage limit reached",
     );
-    assert.deepInclude(calls[0]?.args, { view: "activity" });
+    // Searching with full text would fit one long item per read under the server's budget.
+    assert.deepInclude(calls[0]?.args, { view: "activity", maxCharsPerItem: 1 });
+    assert.deepInclude(calls[1]?.args, { itemId: "item-2", textOffset: 1 });
     for (const status of ["completed", "running", "queued", "idle"] as const) {
       assert.isNull(yield* latestRunError(tools, { threadId, status, latestRunId: runId }), status);
     }
-    assert.lengthOf(calls, 1);
+    assert.lengthOf(calls, 2);
   }),
 );
 

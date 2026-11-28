@@ -54,6 +54,8 @@ const TERMINAL_RUN_STATUSES = new Set<OrchestratorMcpThreadRun["status"]>([
 ]);
 const READ_PAGE_LIMIT = 100;
 const READ_ITEM_MAX_CHARS = 20_000;
+/** A `beforePosition` past every item, so the read starts at the newest. */
+const NEWEST_POSITION = Number.MAX_SAFE_INTEGER;
 const TITLE_MAX_CHARS = 80;
 
 export class ThreadServerNotRunningError extends Schema.TaggedError<ThreadServerNotRunningError>()(
@@ -510,11 +512,61 @@ const readTimeline = Effect.fn("cli.thread.readTimeline")(function* (
 });
 
 /**
- * The latest `count` user and assistant messages, oldest first. Positions
- * count every timeline item, so the read starts near the end and widens
- * backward only while tool and plan items leave too few messages.
+ * Pages back from the newest item until `done` accepts a page, newest page
+ * first. Undefined when the server predates `beforePosition`: its strict
+ * schema refuses the field, and a forward-only one answers without `earlierPosition`.
  */
-export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(function* (
+const readBackward = Effect.fn("cli.thread.readBackward")(function* (
+  tools: ThreadTools,
+  threadId: ThreadId,
+  view: "messages" | "activity",
+  nextLimit: () => number,
+  done: (page: ReadonlyArray<OrchestratorMcpThreadTimelineItem>) => boolean,
+  maxCharsPerItem = READ_ITEM_MAX_CHARS,
+) {
+  const read = (beforePosition: number) =>
+    tools.call(
+      "t3_thread_read",
+      {
+        threadId,
+        view,
+        limit: nextLimit(),
+        maxCharsPerItem,
+        runLimit: 1,
+        beforePosition,
+      },
+      OrchestratorMcpThreadReadResult,
+    );
+  const newest = yield* read(NEWEST_POSITION).pipe(
+    Effect.catchTags({ ThreadToolFailedError: () => Effect.succeed(null) }),
+  );
+  if (newest === null || newest.earlierPosition === undefined) return undefined;
+  // Only the newest page carries pull request previews; later pages omit them.
+  let thread = newest.thread;
+  const pages = [newest.items];
+  let earlier = done(newest.items) ? null : newest.earlierPosition;
+  while (earlier !== null) {
+    const before = earlier;
+    const page = yield* read(before);
+    thread = Object.assign({}, thread, page.thread);
+    // A server that repeats a page, or a cursor that does not move back, would read forever.
+    const items = page.items.filter((item) => item.position < before);
+    pages.push(items);
+    const next = page.earlierPosition ?? null;
+    earlier = done(items) || next === null || next >= before ? null : next;
+  }
+  return { thread, pages };
+});
+
+const isConversationMessage = (item: OrchestratorMcpThreadTimelineItem) =>
+  item.type === "user_message" || item.type === "assistant_message";
+
+/**
+ * `readLatestMessages` for servers without `beforePosition`. Positions count
+ * every timeline item, so the read starts near the end and widens backward
+ * only while tool and plan items leave too few messages.
+ */
+const readLatestMessagesForward = Effect.fn("cli.thread.readLatestMessagesForward")(function* (
   tools: ThreadTools,
   threadId: ThreadId,
   count: number,
@@ -551,9 +603,7 @@ export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(fun
       );
       window.push(
         ...page.items.filter(
-          (item) =>
-            (item.type === "user_message" || item.type === "assistant_message") &&
-            (end === undefined || item.position < end),
+          (item) => isConversationMessage(item) && (end === undefined || item.position < end),
         ),
       );
       afterPosition = page.nextPosition ?? Number.POSITIVE_INFINITY;
@@ -566,6 +616,27 @@ export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(fun
     span *= 2;
   } while (messages.length < count && start > 0);
   return { thread, messages: messages.slice(Math.max(0, messages.length - count)) };
+});
+
+/** The latest `count` user and assistant messages, oldest first. */
+export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(function* (
+  tools: ThreadTools,
+  threadId: ThreadId,
+  count: number,
+) {
+  let found = 0;
+  const read = yield* readBackward(
+    tools,
+    threadId,
+    "messages",
+    // Items can be long, so a page asks only for the messages still missing.
+    () => Math.min(READ_PAGE_LIMIT, Math.max(1, count - found)),
+    (page) => (found += page.filter(isConversationMessage).length) >= count,
+  );
+  if (read === undefined) return yield* readLatestMessagesForward(tools, threadId, count);
+  // A --messages count can be too many items to spread as arguments.
+  const messages = read.pages.toReversed().flat().filter(isConversationMessage);
+  return { thread: read.thread, messages: messages.slice(Math.max(0, messages.length - count)) };
 });
 
 /** Item text past the read's per-item cap. */
@@ -603,12 +674,21 @@ const runResultText = Effect.fn("cli.thread.runResultText")(function* (
   runId: RunId,
   type: "assistant_message" | "error",
 ) {
-  const { items } = yield* readTimeline(
+  const view = type === "assistant_message" ? "messages" : "activity";
+  const matches = (candidate: OrchestratorMcpThreadTimelineItem) =>
+    candidate.runId === runId && candidate.type === type;
+  // The server returns only what fits its response budget, so a search that reads full text
+  // gets one long item per page; readFullText fetches the found item's text instead.
+  const read = yield* readBackward(
     tools,
     threadId,
-    type === "assistant_message" ? "messages" : "activity",
+    view,
+    () => READ_PAGE_LIMIT,
+    (page) => page.some(matches),
+    1,
   );
-  const item = items.findLast((candidate) => candidate.runId === runId && candidate.type === type);
+  const pages = read?.pages ?? [(yield* readTimeline(tools, threadId, view)).items];
+  const item = pages.map((page) => page.findLast(matches)).find((match) => match !== undefined);
   return item === undefined ? null : yield* readFullText(tools, threadId, item);
 });
 
@@ -668,11 +748,28 @@ const runsAfter = Effect.fn("cli.thread.runsAfter")(function* (
   if (own === undefined) return { later: [], sent: true };
   const later = recentRuns.filter((run) => run.ordinal > own.ordinal);
   if (later.length === 0) return { later, sent: false };
-  const { items } = yield* readTimeline(tools, threadId, "messages");
-  const sent = items.some(
-    (item) => item.type === "user_message" && later.some((run) => run.runId === item.runId),
+  const isSent = (item: OrchestratorMcpThreadTimelineItem) =>
+    item.type === "user_message" && later.some((run) => run.runId === item.runId);
+  // Runs take sent messages in order, so a later run's message comes after any
+  // message this run or an earlier one took.
+  const notLater = new Set(
+    recentRuns.filter((run) => run.ordinal <= own.ordinal).map((run) => run.runId),
   );
-  return { later, sent };
+  const read = yield* readBackward(
+    tools,
+    threadId,
+    "messages",
+    () => READ_PAGE_LIMIT,
+    (page) =>
+      page.some(
+        (item) =>
+          isSent(item) ||
+          (item.type === "user_message" && item.runId != null && notLater.has(item.runId)),
+      ),
+    1,
+  );
+  const pages = read?.pages ?? [(yield* readTimeline(tools, threadId, "messages")).items];
+  return { later, sent: pages.some((page) => page.some(isSent)) };
 });
 
 /**
