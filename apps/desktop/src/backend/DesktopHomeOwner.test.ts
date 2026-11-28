@@ -1,7 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off - Spawns a real process that holds the ownership lock.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeSqlite from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -117,6 +120,80 @@ describe("DesktopHomeOwner.awaitHomeOwnershipRelease", () => {
         assert.isFalse(yield* Fiber.join(owned));
         held.close();
       }),
+    ),
+  );
+});
+
+describe("DesktopHomeOwner.reclaimHomeFromSshServer", () => {
+  it.live("stops only a same-or-older server launched over SSH and holds the launch lock", () =>
+    withTempHome((userdata) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const home = userdata.slice(0, -"/userdata".length);
+        const owner = yield* Effect.acquireRelease(
+          Effect.promise(async () => {
+            const child = NodeChildProcess.spawn(
+              process.execPath,
+              [
+                "-e",
+                `const db = new (require("node:sqlite").DatabaseSync)(${JSON.stringify(`${userdata}/server-owner.sqlite`)}); db.exec("BEGIN EXCLUSIVE"); console.log("held"); setInterval(() => {}, 1000);`,
+                "serve",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "3999",
+              ],
+              { stdio: ["ignore", "pipe", "inherit"] },
+            );
+            await new Promise((resolve) => child.stdout.once("data", resolve));
+            return child;
+          }),
+          (child) => Effect.sync(() => child.kill("SIGKILL")),
+        );
+        const writeRuntime = (serverVersion: string) =>
+          fs.writeFileString(
+            `${userdata}/server-runtime.json`,
+            JSON.stringify({ version: 1, pid: owner.pid, port: 3999, serverVersion }),
+          );
+        yield* writeRuntime("0.0.0");
+        assert.isFalse(yield* DesktopHomeOwner.reclaimHomeFromSshServer());
+
+        yield* fs.makeDirectory(`${home}/ssh-launch/key`, { recursive: true });
+        yield* fs.writeFileString(`${home}/ssh-launch/key/managed`, "managed\n");
+        yield* fs.writeFileString(`${home}/ssh-launch/key/pid`, `${owner.pid}\n`);
+        yield* writeRuntime("0.0.1");
+        assert.isFalse(yield* DesktopHomeOwner.reclaimHomeFromSshServer());
+        assert.isNull(owner.exitCode ?? owner.signalCode);
+
+        yield* writeRuntime("0.0.0");
+        const launchLock = `${home}/ssh-launch/.launch.lock`;
+        const lockRemoved = yield* Deferred.make<void>();
+        const reclaimed = yield* DesktopHomeOwner.reclaimHomeFromSshServer().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            remove: (path, options) =>
+              fs
+                .remove(path, options)
+                .pipe(
+                  Effect.tap(() =>
+                    path === launchLock ? Deferred.succeed(lockRemoved, undefined) : Effect.void,
+                  ),
+                ),
+          }),
+        );
+        assert.isTrue(reclaimed);
+        if (owner.signalCode === null) {
+          yield* Effect.promise(() => new Promise((resolve) => owner.once("exit", resolve)));
+        }
+        assert.strictEqual(owner.signalCode, "SIGTERM");
+        assert.strictEqual(yield* fs.readFileString(launchLock), `${process.pid}\n`);
+
+        const backend = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
+        backend.exec("BEGIN EXCLUSIVE;");
+        yield* Deferred.await(lockRemoved);
+        assert.isFalse(yield* fs.exists(launchLock));
+        backend.close();
+      }).pipe(Effect.scoped),
     ),
   );
 });

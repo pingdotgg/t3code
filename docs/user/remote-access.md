@@ -47,6 +47,7 @@ In the desktop app, open **Settings → Environments → Add environment → SSH
 - Provider CLIs must be on a non-interactive login shell's `PATH` (check with `ssh user@example.com 'sh -lc "command -v claude codex"'`).
 - For 2FA/Duo hosts on macOS/Linux, enable SSH `ControlMaster` in `~/.ssh/config` and open a terminal SSH session first.
 - Revoke unused SSH sessions in **Settings → Sharing & access** or `t3 auth session revoke <id>`.
+- If you open the T3 Code app on the host itself while a server started over SSH uses the host's default T3 home, the app stops that server and uses the home, and the SSH environment reconnects to the app's server. This interrupts work running on that server. A server from a newer T3 Code version is left running, and the app explains how to stop it.
 
 ## Browser on a remote environment
 
