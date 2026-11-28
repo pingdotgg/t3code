@@ -2047,6 +2047,7 @@ export function threadShellFromProjection(
     goal: activeProviderGoalForShell(
       projection.providerThreads,
       projection.thread.activeProviderThreadId,
+      latestUserAuthoredMessageAt,
     ),
     itemCount: activeLocalTurnItems(projection).length,
     visibleItemCount: projection.visibleTurnItems.length,
@@ -2096,8 +2097,20 @@ function providerInstanceHistoryForShell(input: {
 function activeProviderGoalForShell(
   providerThreads: ReadonlyArray<OrchestrationV2ThreadProjection["providerThreads"][number]>,
   activeProviderThreadId: OrchestrationV2ThreadProjection["thread"]["activeProviderThreadId"],
+  latestUserAuthoredMessageAt: DateTime.Utc | null,
 ): OrchestrationV2ThreadShell["goal"] {
-  return providerThreads.find((thread) => thread.id === activeProviderThreadId)?.goal ?? null;
+  const providerThread = providerThreads.find((thread) => thread.id === activeProviderThreadId);
+  if (
+    providerThread?.goal?.status === "complete" &&
+    latestUserAuthoredMessageAt !== null &&
+    DateTime.isGreaterThan(
+      latestUserAuthoredMessageAt,
+      providerThread.goalCompletedAt ?? providerThread.updatedAt,
+    )
+  ) {
+    return null;
+  }
+  return providerThread?.goal ?? null;
 }
 
 function isSilentRunForShell(
@@ -2966,15 +2979,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
                   `
                 : [];
               const existing = existingRows[0];
-              const payloadJson = yield* encodeProviderThreadPayload(
-                attributePendingBackgroundTasks(
+              const payloadJson = yield* encodeProviderThreadPayload({
+                ...attributePendingBackgroundTasks(
                   event.payload,
                   existing === undefined
                     ? undefined
                     : yield* decodeProviderThreadPayload(existing.payload_json),
                   event.runId,
                 ),
-              );
+                goalCompletedAt:
+                  event.payload.goal?.status === "complete" ? event.occurredAt : undefined,
+              });
               const payload = parseEncodedPayload(payloadJson);
               yield* sql`
               INSERT INTO orchestration_v2_projection_provider_threads (
@@ -3017,7 +3032,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
                 first_run_ordinal = excluded.first_run_ordinal,
                 last_run_ordinal = excluded.last_run_ordinal,
                 updated_at = excluded.updated_at,
-                payload_json = excluded.payload_json
+                payload_json = CASE
+                  WHEN json_extract(excluded.payload_json, '$.goal.status') = 'complete'
+                    AND json_extract(orchestration_v2_projection_provider_threads.payload_json, '$.goal.status') = 'complete'
+                    AND json_extract(orchestration_v2_projection_provider_threads.payload_json, '$.goal.objective') = json_extract(excluded.payload_json, '$.goal.objective')
+                  THEN json_set(excluded.payload_json, '$.goalCompletedAt', COALESCE(
+                    json_extract(orchestration_v2_projection_provider_threads.payload_json, '$.goalCompletedAt'),
+                    json_extract(orchestration_v2_projection_provider_threads.payload_json, '$.updatedAt')
+                  ))
+                  ELSE excluded.payload_json
+                END
             `;
               if (
                 event.payload.appThreadId !== null &&
@@ -9478,6 +9502,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
           goal: activeProviderGoalForShell(
             providerThreadsByThreadId.get(thread.id) ?? [],
             thread.activeProviderThreadId,
+            latestUserAuthoredMessageAt,
           ),
           itemCount: shellItemCountsByThreadId.get(thread.id)?.itemCount ?? 0,
           runlessItemCount: shellItemCountsByThreadId.get(thread.id)?.runlessItemCount ?? 0,
