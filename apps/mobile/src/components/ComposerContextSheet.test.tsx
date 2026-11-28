@@ -66,39 +66,46 @@ vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ navigate: v
 
 import { ComposerContextSheet } from "./ComposerContextSheet";
 
-it("does not present an image again when the sheet re-renders after its viewer closed", async () => {
+const imageRecord = (id: string): ComposerContextRecord => ({
+  version: 1,
+  kind: "image",
+  contextId: ComposerContextId.make(id),
+  label: `${id}.png`,
+  attachmentId: id,
+  name: `${id}.png`,
+  mimeType: "image/png",
+  sizeBytes: 3,
+});
+
+it("presents a chip's image once across re-renders and a newly selected chip's image", async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  const record: ComposerContextRecord = {
-    version: 1,
-    kind: "image",
-    contextId: ComposerContextId.make("context-image"),
-    label: "IMG_9097.png",
-    attachmentId: "uploaded-image",
-    name: "IMG_9097.png",
-    mimeType: "image/png",
-    sizeBytes: 3,
-  };
+  const first = imageRecord("first");
+  const second = imageRecord("second");
   const root = createRoot(document.createElement("div"));
   await using _root = { [Symbol.asyncDispose]: () => act(async () => root.unmount()) };
   // A draft update, such as an upload landing, hands the open sheet new props.
-  const render = () =>
+  const render = (record: ComposerContextRecord) =>
     act(async () =>
       root.render(
         <ComposerContextSheet
           label={record.label}
           record={record}
-          records={[record]}
+          records={[first, second]}
           attachments={[]}
           environmentId={EnvironmentId.make("environment")}
           onClose={() => {}}
         />,
       ),
     );
-  await render();
+  await render(first);
   expect(harness.presentations).toBe(1);
 
   // The native viewer has closed, but its close has not reached the sheet yet.
   harness.finished = true;
-  await render();
+  await render(first);
   expect(harness.presentations).toBe(1);
+
+  // Tapping another chip before that close lands replaces the selection without unmounting.
+  await render(second);
+  expect(harness.presentations).toBe(2);
 });
