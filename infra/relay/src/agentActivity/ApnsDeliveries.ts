@@ -50,6 +50,7 @@ import {
   alertForAttentionTransition,
   alertForNewlyTerminal,
   alertForTerminalAggregate,
+  islandSummaryChanged,
   rowPhasesChanged,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
@@ -433,6 +434,7 @@ export type SendLiveActivityDeliveryInput =
       readonly kind: "live_activity_update";
       readonly aggregate: RelayAgentActivityAggregateState;
       readonly alert?: ApnsLiveActivityAlert | null;
+      readonly urgent?: boolean;
     })
   | (SendLiveActivityDeliveryInputBase & {
       readonly kind: "live_activity_end";
@@ -461,6 +463,7 @@ function makeLiveActivityDeliveryRequest(
           event: deliveryEvent(input.kind),
           state: input.aggregate,
           alert: input.alert ?? null,
+          urgent: input.urgent ?? false,
         }),
       };
     case "live_activity_end":
@@ -688,9 +691,13 @@ const make = Effect.gen(function* () {
       return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
     }
     deliveryTarget = currentTarget;
+    const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
+    const urgent =
+      input.kind === "live_activity_update" &&
+      aggregate !== null &&
+      islandSummaryChanged(previousAggregate, aggregate);
     if (alert) {
       const preferences = parsePreferences(currentTarget.preferences_json);
-      const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
       alert =
         !preferences?.notificationsEnabled || !aggregate
           ? null
@@ -736,7 +743,7 @@ const make = Effect.gen(function* () {
     }
     const { epochSeconds, iso, request } = makeLiveActivityDeliveryRequest(
       apns,
-      { ...input, aggregate, alert } as SendLiveActivityDeliveryInput,
+      { ...input, aggregate, alert, urgent } as SendLiveActivityDeliveryInput,
       now,
     );
     const result = yield* apns

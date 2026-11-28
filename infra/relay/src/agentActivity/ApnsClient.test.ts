@@ -55,6 +55,28 @@ describe("ApnsClient", () => {
     ],
   };
 
+  it.effect(
+    "sends an urgent silent update at high priority and a routine one at low priority",
+    () =>
+      Effect.gen(function* () {
+        const apns = yield* ApnsClient.ApnsClient;
+        const base = {
+          event: "update" as const,
+          token: "token",
+          state,
+          nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
+          nowIso: DateTime.formatIso(now),
+        };
+
+        const urgent = apns.makeLiveActivityRequest({ ...base, urgent: true });
+        const routine = apns.makeLiveActivityRequest(base);
+
+        expect(urgent.priority).toBe("10");
+        expect(urgent.payload).not.toHaveProperty("aps.alert");
+        expect(routine.priority).toBe("5");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("builds a high-priority alerting update payload when an alert is attached", () =>
     Effect.gen(function* () {
       const apns = yield* ApnsClient.ApnsClient;
