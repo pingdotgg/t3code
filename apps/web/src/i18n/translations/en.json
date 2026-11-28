@@ -5159,7 +5159,6 @@
   "29b99b6828ed8295": "New session",
   "590d8098ea856f13": "Context handoff failed: {providers}",
   "cbc65cfe1b9a0e91": "Context handoff: {providers}",
-  "42606de8b5a5e786": "Context handoff pending",
   "4d765811334b8edf": "Context handoff",
   "0832a03c4dc5eac4": "Created thread",
   "4d9569bd7cc6b2e7": "Couldn’t list microphones. The system default still works.",

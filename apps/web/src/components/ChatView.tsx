@@ -117,7 +117,6 @@ import {
   threadSupportsProviderHandoff,
 } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
-import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
   codexFeedbackMessage,
   deriveWorkspaceMutationId,
@@ -3704,10 +3703,6 @@ export default function ChatView(props: ChatViewProps) {
   // Built outside the condition, where the compiler memoizes it.
   const timelineFooterContent = (
     <TimelineFooter
-      environmentId={environmentId}
-      projection={serverProjection}
-      handoffSelection={usablePendingHandoffSelection}
-      providerEnvironmentId={activeThread.environmentId}
       statusLine={threadStatusLine}
       guestThreadRef={pendingGuestMessageCount > 0 && isServerThread ? activeThreadRef : null}
       onImageExpand={onExpandTimelineImageStable}
@@ -3715,11 +3710,7 @@ export default function ChatView(props: ChatViewProps) {
     />
   );
   const timelineFooter =
-    pendingHandoff === null &&
-    !hasThreadNow &&
-    threadStatusLine === null &&
-    pendingGuestMessageCount === 0 &&
-    !hasQueuedTurns
+    !hasThreadNow && threadStatusLine === null && pendingGuestMessageCount === 0 && !hasQueuedTurns
       ? null
       : timelineFooterContent;
 
@@ -4497,34 +4488,14 @@ function preventMiddleClickPasteOutsideEditable(event: ReactMouseEvent) {
   event.preventDefault();
 }
 
-// A new footer element re-renders the whole timeline. Reading the providers and resolving
-// the handoff here keeps the element memoized; the compiler leaves it unmemoized when it
-// depends on either from the chat view.
 function TimelineFooter(props: {
-  readonly environmentId: EnvironmentId;
-  readonly projection: Parameters<typeof resolvePendingHandoff>[0];
-  readonly handoffSelection: Parameters<typeof resolvePendingHandoff>[1];
-  readonly providerEnvironmentId: EnvironmentId;
   readonly statusLine: ReactNode;
   readonly guestThreadRef: ScopedThreadRef | null;
   readonly onImageExpand: ComponentProps<typeof GuestPendingMessages>["onImageExpand"];
   readonly onFileOpen: ComponentProps<typeof GuestPendingMessages>["onFileOpen"];
 }) {
-  const providersByEnvironment = useEnvironmentProviders();
-  const providers = providersByEnvironment.get(props.providerEnvironmentId) ?? EMPTY_PROVIDERS;
-  const pendingHandoff = resolvePendingHandoff(props.projection, props.handoffSelection, providers);
   return (
     <>
-      {pendingHandoff === null ? null : (
-        <div className="chat-content-lane">
-          <HandoffRow
-            environmentId={props.environmentId}
-            endpoints={pendingHandoff}
-            providers={providers}
-            pending
-          />
-        </div>
-      )}
       {props.statusLine}
       {props.guestThreadRef === null ? null : (
         <GuestPendingMessages
