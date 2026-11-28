@@ -1,9 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Server-owned private pipe/Unix socket, never a public listener.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
-import * as NodeCrypto from "node:crypto";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
@@ -16,11 +13,10 @@ import * as Schema from "effect/Schema";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
 import * as Protocol from "./CodexManagedTokenProtocol.ts";
+import { acquirePrivateIpcEndpoint } from "./privateIpcEndpoint.ts";
 
 const MAX_CONNECTIONS = 32;
 const MAX_JOBS = 16;
-// Stay below macOS's 104-byte and Linux's 108-byte sockaddr_un limits, including NUL.
-const UNIX_SOCKET_PATH_BYTES = 100;
 const encodeResponse = Schema.encodeSync(Schema.fromJsonString(Protocol.Response));
 class BrokerStartError extends Schema.TaggedError<BrokerStartError>()(
   "ManagedTokenBrokerStartError",
@@ -46,59 +42,8 @@ const acquireListener = Effect.gen(function* () {
   const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const environmentId = yield* identity.getEnvironmentId;
   const platform = yield* HostProcess.Platform;
-  const uid = yield* HostProcess.UserId;
-  const owned = yield* Effect.acquireRelease(
-    io(async () => {
-      if (platform === "win32")
-        return { endpoint: `\\\\.\\pipe\\t3-token-${NodeCrypto.randomUUID()}` };
-      if (uid === undefined) throw new Error("Missing IPC owner");
-      const acquireDirectory = async (candidate: string) => {
-        const parent = await NodeFSP.realpath(candidate);
-        const stat = await NodeFSP.lstat(parent);
-        if (
-          !stat.isDirectory() ||
-          stat.isSymbolicLink() ||
-          !(
-            (stat.uid === uid && (stat.mode & 0o022) === 0) ||
-            (stat.uid === 0 && ((stat.mode & 0o022) === 0 || (stat.mode & 0o1000) !== 0))
-          )
-        )
-          throw new Error("Untrusted IPC parent");
-        const directory = await NodeFSP.mkdtemp(NodePath.join(parent, "t3-token-"));
-        try {
-          await NodeFSP.chmod(directory, 0o700);
-          const created = await NodeFSP.lstat(directory);
-          if (
-            !created.isDirectory() ||
-            created.isSymbolicLink() ||
-            created.uid !== uid ||
-            (created.mode & 0o777) !== 0o700
-          )
-            throw new Error("Unprotected IPC directory");
-          const endpoint = NodePath.join(directory, "s");
-          if (Buffer.byteLength(endpoint) > UNIX_SOCKET_PATH_BYTES)
-            throw new Error("IPC path too long");
-          return { endpoint, directory, created };
-        } catch (error) {
-          await NodeFSP.rmdir(directory);
-          throw error;
-        }
-      };
-      return acquireDirectory(NodeOS.tmpdir()).catch(() => acquireDirectory("/tmp"));
-    }),
-    (owned) =>
-      Effect.promise(async () => {
-        if (!("directory" in owned)) return;
-        // Never recursively remove a replaced directory or another process's files.
-        const current = await NodeFSP.lstat(owned.directory).catch(() => undefined);
-        if (
-          current &&
-          current.dev === owned.created.dev &&
-          current.ino === owned.created.ino &&
-          !current.isSymbolicLink()
-        )
-          await NodeFSP.rmdir(owned.directory).catch(() => undefined);
-      }),
+  const endpoint = yield* acquirePrivateIpcEndpoint("t3-token").pipe(
+    Effect.mapError((cause) => new BrokerStartError({ cause })),
   );
   const jobs = yield* FiberSet.make<void>();
   const runJob =
@@ -198,14 +143,14 @@ const acquireListener = Effect.gen(function* () {
     const onError = (cause: Error) => resume(Effect.fail(new BrokerStartError({ cause })));
     server.once("error", onError);
     try {
-      server.listen(owned.endpoint, () => resume(Effect.void));
+      server.listen(endpoint, () => resume(Effect.void));
     } catch (cause) {
       resume(Effect.fail(new BrokerStartError({ cause })));
     }
     return Effect.sync(() => server.off("error", onError));
   });
-  if (platform !== "win32") yield* io(() => NodeFSP.chmod(owned.endpoint, 0o600));
-  return { endpoint: owned.endpoint, awaitIdle: FiberSet.awaitEmpty(jobs) };
+  if (platform !== "win32") yield* io(() => NodeFSP.chmod(endpoint, 0o600));
+  return { endpoint, awaitIdle: FiberSet.awaitEmpty(jobs) };
 });
 const make = Effect.gen(function* () {
   const scope = yield* Scope.fork(yield* Effect.scope);
