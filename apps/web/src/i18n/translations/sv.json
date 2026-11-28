@@ -5393,6 +5393,10 @@
   "4b4ef3f2e2ed2c56": "Starta {name}",
   "08098a6fb84e8a34": "Öppna",
   "c71a5080b2026870": "Starta",
+  "cfae7ef07c37220e": "en annan tråd",
+  "23d5d026ee80963b": "Ta över från {title}",
+  "01e8d054b2d2f232": "Tar över…",
+  "746c576ea195806b": "Ta över",
   "a34247bae083cebf": "Stäng enhetsfel",
   "191353bd8f033118": "Listorna för {first} och {second} på {host} kan vara ofullständiga.",
   "b17bcd4cbf80442e": "Listan för {platform} på {host} kan vara ofullständig.",
@@ -5411,6 +5415,33 @@
   ],
   "e902f208c4e6146f": "Inga virtuella Android-enheter hittades. Skapa en i Android Studios Device Manager och uppdatera sedan.",
   "d9a71f3db685cb0e": "Uppdatera enheter",
+  "ce2da8d9521a3ef4": [
+    "Upptagen i ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", som körs."
+  ],
+  "5fae5a165e609f5a": [
+    "Upptagen i ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", som inte körs."
+  ],
+  "9c4958e3e914e8e8": [
+    "Upptagen i ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
   "4ad8ced64defdf73": "Interaktiv enhet i 3D. Dra på skärmen för att interagera. Dra utanför den eller svep med två fingrar för att vrida.",
   "84e4baf07ad8883d": "Aktivera den här miljön för att öppna simulatorer och emulatorer, oavsett om de körs här eller på en fjärrvärd för enheter.",
   "771365c337509a82": "Låt nya agentsessioner i den här miljön starta och styra lokala och fjärranslutna enheter, med nödvändiga verktyg konfigurerade automatiskt.",

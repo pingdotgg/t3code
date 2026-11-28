@@ -5394,6 +5394,10 @@
   "4b4ef3f2e2ed2c56": "Uruchom {name}",
   "08098a6fb84e8a34": "Otwórz",
   "c71a5080b2026870": "Uruchom",
+  "cfae7ef07c37220e": "inny wątek",
+  "23d5d026ee80963b": "Przejmij od: {title}",
+  "01e8d054b2d2f232": "Przejmowanie…",
+  "746c576ea195806b": "Przejmij",
   "a34247bae083cebf": "Odrzuć błąd urządzenia",
   "191353bd8f033118": "Listy {first} i {second} na hoście {host} mogą być niekompletne.",
   "b17bcd4cbf80442e": "Lista {platform} na hoście {host} może być niekompletna.",
@@ -5412,6 +5416,33 @@
   ],
   "e902f208c4e6146f": "Nie znaleziono wirtualnych urządzeń Android. Utwórz je w Menedżerze urządzeń Android Studio, a następnie odśwież.",
   "d9a71f3db685cb0e": "Odśwież urządzenia",
+  "ce2da8d9521a3ef4": [
+    "Zajęte przez: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", wątek działa."
+  ],
+  "5fae5a165e609f5a": [
+    "Zajęte przez: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", wątek nie działa."
+  ],
+  "9c4958e3e914e8e8": [
+    "Zajęte przez: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
   "4ad8ced64defdf73": "Interaktywne urządzenie 3D. Przeciągnij ekran, aby wejść w interakcję. Przeciągnij poza nim lub przesuń dwoma palcami, aby obrócić.",
   "84e4baf07ad8883d": "Włącz w tym środowisku otwieranie symulatorów i emulatorów, niezależnie od tego, czy działają tutaj, czy na zdalnym hoście urządzeń.",
   "771365c337509a82": "Zezwól nowym sesjom agenta w tym środowisku na uruchamianie i sterowanie urządzeniami lokalnymi i zdalnymi, z automatyczną konfiguracją wymaganych narzędzi.",

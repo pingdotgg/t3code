@@ -5392,6 +5392,10 @@
   "4b4ef3f2e2ed2c56": "Iniciar {name}",
   "08098a6fb84e8a34": "Abrir",
   "c71a5080b2026870": "Iniciar",
+  "cfae7ef07c37220e": "otro hilo",
+  "23d5d026ee80963b": "Tomar control de {title}",
+  "01e8d054b2d2f232": "Tomando control…",
+  "746c576ea195806b": "Tomar control",
   "a34247bae083cebf": "Descartar el error del dispositivo",
   "191353bd8f033118": "Puede que las listas de {first} y {second} en {host} estén incompletas.",
   "b17bcd4cbf80442e": "Puede que la lista de {platform} en {host} esté incompleta.",
@@ -5410,6 +5414,33 @@
   ],
   "e902f208c4e6146f": "No se encontraron dispositivos virtuales de Android. Crea uno en el Device Manager de Android Studio y actualiza.",
   "d9a71f3db685cb0e": "Actualizar dispositivos",
+  "ce2da8d9521a3ef4": [
+    "En uso en ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", que está en ejecución."
+  ],
+  "5fae5a165e609f5a": [
+    "En uso en ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", que no está en ejecución."
+  ],
+  "9c4958e3e914e8e8": [
+    "En uso en ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
   "4ad8ced64defdf73": "Dispositivo 3D interactivo. Arrastra la pantalla para interactuar. Arrastra fuera de ella o desliza con dos dedos para girarlo.",
   "84e4baf07ad8883d": "Activa este entorno para abrir simuladores y emuladores, tanto si se ejecutan aquí como en un host de dispositivos remoto.",
   "771365c337509a82": "Permite que las sesiones de agente nuevas de este entorno inicien y controlen dispositivos locales y remotos, con las herramientas necesarias configuradas automáticamente.",

@@ -1,15 +1,24 @@
 import { SheetCloseButton } from "../../components/ui/SheetHeader";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   deviceToolVersionLabels,
   deviceToolUpdateOwnership,
   deviceToolUpdatePolicy,
+  otherThreadDeviceSessions,
 } from "@t3tools/client-runtime/state/device";
-import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  StackActions,
+  useIsFocused,
+  useNavigation,
+  type StaticScreenProps,
+} from "@react-navigation/native";
+import { EnvironmentId, ThreadId, type DeviceSession } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { msg, T, useGT } from "gt-react-native";
+import { msg, T, useGT, Var } from "gt-react-native";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import * as Haptics from "expo-haptics";
 import { Accelerometer } from "expo-sensors";
@@ -36,6 +45,7 @@ import { deriveBottomControlInsets } from "../../lib/reserved-regions";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { uuidv4 } from "../../lib/uuid";
 import { deviceEnvironment, useDeviceHubAccess } from "../../state/device";
+import { useThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -90,6 +100,7 @@ export function DevicePreviewScreen({
   readonly initialDeviceKey?: string;
 }) {
   const embedded = onMaximize !== undefined;
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   // In a pane the stream sits below the pane's bar, which content otherwise slides under.
   const barOverlap = useBarOverlap();
@@ -106,10 +117,14 @@ export function DevicePreviewScreen({
   const [controlsVisible, setControlsVisible] = useState(true);
   const retryHost = useAtomCommand(deviceEnvironment.list);
   const shutdown = useAtomCommand(deviceEnvironment.shutdown, { reportFailure: false });
+  const close = useAtomCommand(deviceEnvironment.close, { reportFailure: false });
   const streamRef = useRef<DeviceStreamRef>(null);
   const state = useEnvironmentQuery(deviceEnvironment.state({ environmentId, input: {} }));
   const previews = threadDevicePreviews(state.data, threadId);
   const preview = selectedThreadDevicePreview(previews, selectedKey);
+  const holders = preview
+    ? otherThreadDeviceSessions(state.data?.sessions ?? [], preview.session)
+    : [];
   const onInputConnected = async (connected: boolean) => {
     setInputConnected(connected);
     if (!connected) setControlsVisible(true);
@@ -150,6 +165,32 @@ export function DevicePreviewScreen({
       Dialog.alert(m(msg("Could not shut down device")), String(Cause.squash(result.cause)));
     }
   };
+
+  const takeOver = async (holder: DeviceSession) => {
+    const result = await close({
+      environmentId,
+      input: { threadId: holder.threadId, hostId: holder.hostId, deviceId: holder.deviceId },
+    });
+    if (result._tag === "Failure") {
+      Dialog.alert(gt("Could not take over device"), String(Cause.squash(result.cause)));
+    }
+  };
+  const holderBanners = holders.map((holder) => (
+    <DeviceHolderBanner
+      key={holder.threadId}
+      environmentId={environmentId}
+      holder={holder}
+      onOpenThread={() =>
+        navigation.dispatch(
+          (embedded ? StackActions.push : StackActions.replace)("Thread", {
+            environmentId,
+            threadId: holder.threadId,
+          }),
+        )
+      }
+      onTakeOver={() => takeOver(holder)}
+    />
+  ));
 
   const controls: AppBarMenuItem[] = [
     ...(state.data?.hosts
@@ -284,6 +325,9 @@ export function DevicePreviewScreen({
             ]}
           />
           <View style={{ height: barOverlap }} />
+          {holderBanners.length > 0 ? (
+            <View className="gap-2 px-3 pb-2">{holderBanners}</View>
+          ) : null}
         </>
       ) : null}
       {preview && focused && foreground ? (
@@ -351,6 +395,7 @@ export function DevicePreviewScreen({
               />
               <DeviceOptionsMenu items={menuItems} />
             </GlassSurface>
+            {holderBanners.length > 0 ? <View className="mt-2 gap-2">{holderBanners}</View> : null}
           </View>
         </Animated.View>
       ) : (
@@ -373,6 +418,70 @@ export function DevicePreviewScreen({
         </View>
       )}
     </View>
+  );
+}
+
+function DeviceHolderBanner(props: {
+  readonly environmentId: EnvironmentId;
+  readonly holder: DeviceSession;
+  readonly onOpenThread: () => void;
+  readonly onTakeOver: () => Promise<void>;
+}) {
+  const gt = useGT();
+  const shell = useThreadShell(scopeThreadRef(props.environmentId, props.holder.threadId));
+  const running =
+    threadRuntimeIsActive(shell?.runtime) ||
+    backgroundWorkHoldsCompletion(shell?.pendingBackgroundTasks ?? []);
+  const [takingOver, setTakingOver] = useState(false);
+  const title = shell?.title.trim() || gt("another thread");
+  return (
+    <GlassSurface className="flex-row items-center gap-3 px-3 py-2">
+      <Pressable
+        accessibilityRole="link"
+        accessibilityLabel={gt("Open thread {title}", { title })}
+        className="min-w-0 flex-1"
+        onPress={props.onOpenThread}
+      >
+        <AppText numberOfLines={2} className="text-sm text-foreground-muted">
+          {running ? (
+            <T>
+              Busy in{" "}
+              <AppText className="font-t3-medium text-sm text-foreground">
+                <Var>{title}</Var>
+              </AppText>
+              , which is running.
+            </T>
+          ) : shell ? (
+            <T>
+              Busy in{" "}
+              <AppText className="font-t3-medium text-sm text-foreground">
+                <Var>{title}</Var>
+              </AppText>
+              , which isn't running.
+            </T>
+          ) : (
+            <T>
+              Busy in{" "}
+              <AppText className="font-t3-medium text-sm text-foreground">
+                <Var>{title}</Var>
+              </AppText>
+              .
+            </T>
+          )}
+        </AppText>
+      </Pressable>
+      <Button
+        label={gt("Take over")}
+        accessibilityLabel={gt("Take over from {title}", { title })}
+        tone="primary"
+        size="compact"
+        loading={takingOver}
+        onPress={() => {
+          setTakingOver(true);
+          void props.onTakeOver().finally(() => setTakingOver(false));
+        }}
+      />
+    </GlassSurface>
   );
 }
 

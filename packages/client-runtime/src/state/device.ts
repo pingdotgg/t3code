@@ -1,4 +1,4 @@
-import { type DeviceToolVersions, WS_METHODS } from "@t3tools/contracts";
+import { type DeviceSession, type DeviceToolVersions, WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -150,6 +150,24 @@ export function deviceToolUpdatePolicy(
         ),
       );
 }
+
+/**
+ * Other threads with the same device open. Any of them may hold the agent-device
+ * claim that refuses this thread's agent with DEVICE_IN_USE; closing their session
+ * releases it. Android serials repeat across hosts, so the host is part of the match.
+ */
+export function otherThreadDeviceSessions(
+  sessions: ReadonlyArray<DeviceSession>,
+  session: Pick<DeviceSession, "threadId" | "hostId" | "deviceId">,
+) {
+  return sessions.filter(
+    (other) =>
+      other.threadId !== session.threadId &&
+      other.hostId === session.hostId &&
+      other.deviceId === session.deviceId,
+  );
+}
+
 export const deviceToolUpdateOwnership = msg(
   "This environment's T3 server chooses device tool versions for itself and its SSH hosts. Update that server to receive newer tool versions; updating only your browser or mobile app does not update a remote server.",
 );
