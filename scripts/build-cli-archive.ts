@@ -28,6 +28,7 @@ import {
   STAGE_INSTALL_ARGS,
 } from "./build-desktop-artifact.ts";
 import { assertLinuxArm64PageCompatibility } from "./lib/linux-arm64-sea.ts";
+import { trimElfNotesForUek } from "./lib/linux-sea-notes.ts";
 import { selectCliRuntimeExternalDependencies } from "./lib/cli-external-packages.ts";
 import { signWithJsign } from "./lib/windows-jsign.ts";
 import { windowsSystemTar } from "./lib/windows-tar.ts";
@@ -69,6 +70,15 @@ export class CliArchiveLinuxArm64PageError extends Schema.TaggedError<CliArchive
 ) {
   override get message(): string {
     return `${this.executablePath} is not page-compatible with Linux arm64.`;
+  }
+}
+
+export class CliArchiveLinuxNoteError extends Schema.TaggedError<CliArchiveLinuxNoteError>()(
+  "CliArchiveLinuxNoteError",
+  { executablePath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `${this.executablePath} has an ELF note segment that Oracle UEK kernels cannot load.`;
   }
 }
 
@@ -322,6 +332,23 @@ const bundleLinuxLibatomic = Effect.fn("bundleLinuxLibatomic")(function* (input:
     "patchelf --set-rpath",
   );
   yield* Effect.log(`[cli-archive] Bundled ${source} as lib/libatomic.so.1.`);
+});
+
+/** Oracle UEK kernels refuse to exec the SEA's ~22 MiB note segment; see lib/linux-sea-notes.ts. */
+const trimLinuxSeaNotes = Effect.fn("trimLinuxSeaNotes")(function* (executablePath: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const bytes = yield* fs.readFile(executablePath);
+  const trimmed = yield* Effect.try({
+    try: () => trimElfNotesForUek(bytes),
+    catch: (cause) => new CliArchiveLinuxNoteError({ executablePath, cause }),
+  });
+  if (trimmed.length === 0) return;
+  yield* fs.writeFile(executablePath, bytes);
+  for (const note of trimmed) {
+    yield* Effect.log(
+      `[cli-archive] Trimmed PT_NOTE ${String(note.index)} from ${String(note.fileSize)} to ${String(note.trimmedFileSize)} file bytes so Oracle UEK kernels can exec t3.`,
+    );
+  }
 });
 
 const MacSigningConfig = Config.all({
@@ -647,6 +674,8 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   const executablePath = path.join(contentDir, executableName);
   if (input.platform === "linux") {
     yield* bundleLinuxLibatomic({ repoRoot, contentDir, executablePath });
+    // After patchelf, which can rewrite the program headers.
+    yield* trimLinuxSeaNotes(executablePath);
   }
   // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
   if (input.platform === "linux" && input.arch === "arm64") {
