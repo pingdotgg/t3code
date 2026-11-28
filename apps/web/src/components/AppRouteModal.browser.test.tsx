@@ -1,6 +1,8 @@
 import { redirect, useLocation } from "@tanstack/react-router";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { cdp, page, userEvent } from "vite-plus/test/browser";
+
+import "~/index.css";
 
 import { act, render } from "../../test/render";
 import { useCommitOnBlur } from "../hooks/useCommitOnBlur";
@@ -136,5 +138,40 @@ describe("AppRouteModal", () => {
 
     await userEvent.keyboard("{Escape}");
     await expect.element(usage).not.toBeInTheDocument();
+  });
+
+  // regression: #45028. A press that starts on the backdrop and is released inside the window
+  // gets its click dispatched on the viewport, their nearest common ancestor.
+  it("stays open when a press on the backdrop is released inside the window", async () => {
+    await page.viewport(1280, 800);
+    await using _screen = await render(
+      <AppRouteModal label="Settings">
+        <CommitOnBlurField onCommit={() => undefined} />
+      </AppRouteModal>,
+      { router: "/settings/general" },
+    );
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    await expect.element(settings).toHaveFocus();
+    const field = page
+      .getByRole("textbox", { name: "Instructions" })
+      .element()
+      .getBoundingClientRect();
+    const popup = settings.element().getBoundingClientRect();
+    const frame = window.frameElement?.getBoundingClientRect() ?? { left: 0, top: 0 };
+    const mouse = (type: string, x: number, y: number) =>
+      cdp().send("Input.dispatchMouseEvent", {
+        type,
+        x: frame.left + x,
+        y: frame.top + y,
+        button: "left",
+        buttons: type === "mouseReleased" ? 0 : 1,
+        clickCount: 1,
+      });
+
+    await mouse("mousePressed", popup.left / 2, popup.top + popup.height / 2);
+    await mouse("mouseMoved", field.left + 4, field.top + field.height / 2);
+    await mouse("mouseReleased", field.left + 4, field.top + field.height / 2);
+
+    await expect.element(settings).toHaveAttribute("data-open");
   });
 });
