@@ -1,4 +1,5 @@
 /* oxlint-disable react/no-array-index-key -- Notebook cells and outputs retain their saved source order. */
+import { EXTENSION_TO_FILE_FORMAT } from "@pierre/diffs";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { T, useGT, useMessages } from "gt-react";
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -20,6 +21,20 @@ const cellsOf = (root: HTMLElement) => root.querySelectorAll(":scope > div > sec
 
 // Saved notebooks must not load URLs or turn authored links into app actions.
 const NOTEBOOK_MARKDOWN: MarkdownExtensions = { inert: true };
+
+const FORMAT_TO_EXTENSION = new Map<string, string>();
+for (const [extension, format] of Object.entries(EXTENSION_TO_FILE_FORMAT)) {
+  if (format && !FORMAT_TO_EXTENSION.has(format)) FORMAT_TO_EXTENSION.set(format, extension);
+}
+
+function notebookCellFileName(kind: "code" | "raw", language: string) {
+  if (kind !== "code") return "cell.txt";
+  const normalized = language.toLowerCase();
+  if (/^c\+\+\d*$/.test(normalized)) return "cell.cpp";
+  if (normalized === "c#") return "cell.cs";
+  if (normalized === "f#") return "cell.fs";
+  return `cell.${FORMAT_TO_EXTENSION.get(normalized) ?? normalized}`;
+}
 
 function NotebookSource(props: { readonly name: string; readonly text: string }) {
   const [height, setHeight] = useState(Math.min(360, props.text.split("\n").length * 20 + 16));
@@ -158,7 +173,7 @@ export default function NotebookPreview(props: {
                 />
               ) : cell.source.trim() ? (
                 <NotebookSource
-                  name={`cell.${cell.kind === "code" ? (({ python: "py", javascript: "js", typescript: "ts", julia: "jl" } as Record<string, string>)[props.notebook.language] ?? props.notebook.language) : "txt"}`}
+                  name={notebookCellFileName(cell.kind, props.notebook.language)}
                   text={cell.source}
                 />
               ) : null}
