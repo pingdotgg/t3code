@@ -550,6 +550,33 @@ export function visibleBody(body: string): string | null {
   return body.replace(/<!--[\s\S]*?-->/gu, "").trim().length === 0 ? null : body.trim();
 }
 
+/** Quotes `selection` when the reader picked part of the comment, else the whole body. */
+export function pullRequestQuoteReply(comment: PullRequestComment, selection?: string): string {
+  // Selected text is what the reader saw, so it is escaped to render literally. Blockquotes
+  // drop leading spaces, so its indentation becomes non-breaking spaces.
+  const selected = selection
+    ?.replace(/^\s*\n|\s+$/gu, "")
+    .replace(/[\\`*_[\]{}()#+.!|~<>&-]/gu, "\\$&")
+    .replace(/^[ \t]+/gmu, (indent) => indent.replace(/\t/gu, "    ").replace(/ /gu, "\u00a0"));
+  const body =
+    selected ||
+    comment.body
+      .replace(
+        /(\\[\s\S]|```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)|<!--[\s\S]*?-->/gu,
+        (_, kept?: string) => kept ?? "",
+      )
+      .trim();
+  const quote = body
+    .split(/\r?\n/u)
+    .map((line) => (line.trim().length === 0 ? ">" : `> ${line}`))
+    .join("\n");
+  // A bot's bare login is not its handle: `@github-actions` resolves to nobody and
+  // `@coderabbitai` names an organization, so bots get no mention.
+  const author = comment.author;
+  const mention = author && !author.isBot && !author.login.endsWith("[bot]") ? author.login : null;
+  return `${quote}\n\n${mention ? `@${mention} ` : ""}`;
+}
+
 function commentTimelineEvent(comment: PullRequestComment): PullRequestTimelineEvent {
   return {
     comment,

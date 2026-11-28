@@ -146,6 +146,7 @@ import { WorkerPoolManager } from "@pierre/diffs/worker";
 import { createWorkspaceFocusController, workspaceAreaProps } from "~/lib/workspaceFocus";
 import { render, stubGlobal } from "../../../test/render";
 import PullRequestCodeTab from "./PullRequestCodeTab";
+import { usePullRequestReviewStore } from "./pullRequestReviewStore";
 
 const detail: PullRequestDetailView = {
   provider: SourceControlProviderKind.make("github"),
@@ -210,6 +211,7 @@ function setup({ paged }: { paged: boolean }) {
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
   mocks.viewedListeners.clear();
+  usePullRequestReviewStore.setState({ replies: {} });
 }
 
 const tab = (
