@@ -1,4 +1,9 @@
 import { CollapsibleUserMessageBody } from "./CollapsibleUserMessageBody";
+import {
+  DISCLOSURE_DETAIL_DELAY_MS,
+  DISCLOSURE_DETAIL_FADE_MS,
+  useDisclosureMotion,
+} from "./useDisclosureMotion";
 import { msg, T, useGT, useLocale, useMessages } from "gt-react-native";
 import { m } from "../../i18n/messages";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
@@ -3073,8 +3078,6 @@ type DisclosureLayout = {
   list: LegendListRef;
   playing: boolean;
 };
-const DISCLOSURE_DETAIL_DELAY_MS = 135;
-const DISCLOSURE_DETAIL_FADE_MS = 70;
 const unsubscribeNothing = () => {};
 
 function feedContentEnd(state: ReturnType<LegendListRef["getState"]>): number | undefined {
@@ -3202,11 +3205,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const viewportWidth =
     settledPaneWidth !== null ? Math.round(settledPaneWidth) : measuredViewportWidth;
   const [viewportHeight, setViewportHeight] = useState(() => initialSplitViewport?.height ?? 0);
-  const [disclosureLayout, setDisclosureLayout] = useState<DisclosureLayout | null>(null);
-  const disclosureMotionRef = useRef<DisclosureLayout | null>(null);
-  const disclosureMotionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const disclosureSettleFrameRef = useRef<number | null>(null);
-  const disclosureSettleSecondFrameRef = useRef<number | null>(null);
+  const working = props.activeWorkStartedAt !== null || props.runlessWorkActive === true;
+  const disclosure = useDisclosureMotion<DisclosureLayout>(working);
+  const disclosureLayout = disclosure.layout;
   const reduceMotion = useReduceMotionEnabled();
   const [interactionState, setInteractionState] = useState<{
     readonly copiedRowId: string | null;
@@ -4018,57 +4019,25 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
   }
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears copy feedback and disclosure animation timers and frames on unmount
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears copy feedback on unmount
   useEffect(
     () => () => {
       if (copyFeedbackTimeoutRef.current) clearTimeout(copyFeedbackTimeoutRef.current);
-      if (disclosureMotionTimer.current !== null) clearTimeout(disclosureMotionTimer.current);
-      if (disclosureSettleFrameRef.current !== null) {
-        cancelAnimationFrame(disclosureSettleFrameRef.current);
-      }
-      if (disclosureSettleSecondFrameRef.current !== null) {
-        cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
-      }
     },
     [],
   );
 
-  const settleDisclosureAfterLayout = () => {
-    if (disclosureSettleFrameRef.current !== null) {
-      cancelAnimationFrame(disclosureSettleFrameRef.current);
-    }
-    if (disclosureSettleSecondFrameRef.current !== null) {
-      cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
-    }
-    disclosureSettleFrameRef.current = requestAnimationFrame(() => {
-      disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
-        const motion = disclosureMotionRef.current;
-        if (motion && !motion.playing) {
-          const playing = { ...motion, playing: true };
-          disclosureMotionRef.current = playing;
-          setDisclosureLayout(playing);
-          disclosureMotionTimer.current = setTimeout(
-            () => {
-              disclosureMotionRef.current = null;
-              setDisclosureLayout(null);
-              disclosureMotionTimer.current = null;
-            },
-            DISCLOSURE_DETAIL_DELAY_MS + DISCLOSURE_DETAIL_FADE_MS + 16,
-          );
-        }
-        disclosureSettleFrameRef.current = null;
-        disclosureSettleSecondFrameRef.current = null;
-      });
-    });
-  };
-
   const preserveDisclosurePosition = (anchorKey: string | null) => {
     const list = listRef.current;
-    const working = props.activeWorkStartedAt !== null || props.runlessWorkActive === true;
     // An anchor ends end-follow until the reader scrolls, so a streaming turn keeps the live end.
     if (anchorKey !== null && list && !(working && list.getState().isFollowingEnd)) {
       list.cancelScroll();
       list.anchorVisibleContent({ key: anchorKey });
+    }
+    // A working turn keeps adding and resizing rows, and held rows would cover or blank them.
+    if (working) {
+      disclosure.play();
+      return;
     }
     if (list && anchorKey && !reduceMotion) {
       const state = list.getState();
@@ -4081,7 +4050,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           const item = groupedFeed[i];
           if (!item) continue;
           const displayed =
-            disclosureMotionRef.current &&
+            disclosure.isMoving() &&
             state.elementAtIndex(i)?.firstElementChild?.getBoundingClientRect().top;
           positions.set(
             item.id,
@@ -4090,24 +4059,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               : state.positionAtIndex(i) - anchor,
           );
         }
-        const motion = {
+        disclosure.hold({
           positions,
           anchorIndex,
           anchorToEnd: (feedContentEnd(state) ?? anchor) - anchor,
           list,
           playing: false,
-        };
-        if (disclosureMotionTimer.current !== null) clearTimeout(disclosureMotionTimer.current);
-        disclosureMotionRef.current = motion;
-        setDisclosureLayout(motion);
-        settleDisclosureAfterLayout();
+        });
       }
-    }
-  };
-
-  const handleItemSizeChanged = () => {
-    if (disclosureMotionRef.current && !disclosureMotionRef.current.playing) {
-      settleDisclosureAfterLayout();
     }
   };
 
@@ -4438,7 +4397,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               landingFallback.current = setTimeout(() => setLandedListKey(feedThreadKey), 1000);
             }}
             onLayout={handleMetricsChange}
-            onItemSizeChanged={handleItemSizeChanged}
+            onItemSizeChanged={disclosure.onItemSizeChanged}
             onScroll={handleScroll}
             scrollEventThrottle={16}
             ListHeaderComponent={
