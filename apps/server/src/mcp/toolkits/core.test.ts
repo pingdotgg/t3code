@@ -1,5 +1,10 @@
 import * as AssetSigner from "../../assets/AssetSigner.ts";
+import { resolveAttachmentPathById } from "../../attachmentStore.ts";
+import * as HtmlRender from "../../htmlRender/HtmlRender.ts";
 import * as DocumentText from "../../provider/DocumentText.ts";
+import * as McpToolAccess from "../McpToolAccess.ts";
+import * as HtmlHandlers from "./html/handlers.ts";
+import { HtmlPreviewToolkit } from "./html/tools.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -28,9 +33,12 @@ import * as DateTime from "effect/DateTime";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { McpAttachmentInput } from "./attachment/input.ts";
 import { McpSchema, McpServer } from "effect/ai";
 import { FetchHttpClient } from "effect/http";
@@ -384,18 +392,58 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
           Effect.map((result) => (result.isError ? JSON.stringify(result.content) : undefined)),
         );
     const fullAccess = { ...scope, thread: { ...scope.thread!, threadId: fullAccessThreadId } };
+    const cappedFullAccess = { ...fullAccess, runtimeModeCeiling: "approval-required" as const };
     for (const name of ["html_preview", "html_render"]) {
       expect(yield* byPath(name, scope), name).toContain("only full-access threads");
+      expect(yield* byPath(name, cappedFullAccess), name).toContain("only full-access threads");
       expect(yield* byPath(name, fullAccess), name).toContain("not a readable HTML document");
     }
+    // Inlining a local image is a file read too, so it follows the same rule.
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = yield* ServerConfig.ServerConfig;
+    const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-mcp-html-img-" });
+    const image = path.join(directory, "secret.svg");
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"><text>SECRET</text></svg>';
+    yield* fileSystem.writeFileString(image, svg);
+    const callRenderImage = (caller: McpInvocationContext.McpInvocationScope) =>
+      server
+        .callTool({
+          name: "html_render",
+          arguments: { html: `<img src="${image}">`, title: "Image", height: 240 },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, caller),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+    for (const caller of [scope, cappedFullAccess]) {
+      const denied = yield* callRenderImage(caller);
+      expect(denied.isError).toBe(true);
+      expect(JSON.stringify(denied.content)).toContain("capability_denied");
+      expect(JSON.stringify(denied.content)).toContain(image);
+    }
+    const allowed = yield* callRenderImage(fullAccess);
+    expect(allowed.isError).toBeFalsy();
+    const attachmentId = htmlRenderFromToolItem({
+      toolName: "t3-code.html_render",
+      output: allowed.structuredContent,
+    })?.attachmentId;
+    const stored =
+      attachmentId &&
+      resolveAttachmentPathById({ attachmentsDir: config.attachmentsDir, attachmentId });
+    const storedHtml = yield* fileSystem.readFileString(stored || "/t3-missing-attachment");
+    const dataUri = `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
+    expect(storedHtml).toContain(dataUri);
   }).pipe(
     Effect.provide(
       McpHttpServer.layerHtmlToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(McpProviderSessions.layer),
         Layer.provide(PreviewBrowser.layer),
-        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-html-render-" })),
-        Layer.provide(
+        Layer.provideMerge(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-html-render-" }),
+        ),
+        Layer.provideMerge(
           DocumentText.layer.pipe(
             Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
@@ -418,6 +466,70 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
       ),
     ),
   ),
+);
+
+it.effect("passes allowLocalImages to html_preview based on runtimeMode and ceiling", () =>
+  Effect.gen(function* () {
+    const seen: Array<boolean | undefined> = [];
+    const previewFor = (caller: McpInvocationContext.McpInvocationScope) =>
+      Effect.gen(function* () {
+        const toolkit = yield* HtmlPreviewToolkit;
+        return yield* toolkit.handle("html_preview", { html: '<img src="/tmp/secret.svg">' }).pipe(
+          Stream.unwrap,
+          Stream.runCollect,
+          Effect.map((parts) => parts.at(-1)?.result),
+        );
+      }).pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(HtmlHandlers.layerPreview).pipe(
+            Layer.provideMerge(
+              Layer.mergeAll(
+                Layer.succeed(McpInvocationContext.McpInvocationContext, caller),
+                Layer.succeed(
+                  HtmlRender.HtmlRender,
+                  HtmlRender.HtmlRender.of({
+                    prepare: () => Effect.die("unused"),
+                    publish: () => Effect.die("unused"),
+                    preview: (input) => {
+                      seen.push(input.allowLocalImages);
+                      return Effect.succeed({
+                        png: "AA==",
+                        width: 728,
+                        contentHeight: 100,
+                        capturedHeight: 100,
+                        consoleMessages: [],
+                        ...(input.allowLocalImages ? {} : { missingImages: ["/tmp/secret.svg"] }),
+                      });
+                    },
+                  }),
+                ),
+                Layer.mock(ThreadManagement.ThreadManagementService)({
+                  getThreadShell: (id) =>
+                    Effect.succeed({
+                      id,
+                      deletedAt: null,
+                      archivedAt: null,
+                      activeRunId: RunId.make("mcp-core-run"),
+                      providerInstanceId: ProviderInstanceId.make("codex"),
+                      runtimeMode: id === fullAccessThreadId ? "full-access" : "approval-required",
+                      interactionMode: "default",
+                    } as OrchestrationV2ThreadShell),
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+    const fullAccess = { ...scope, thread: { ...scope.thread!, threadId: fullAccessThreadId } };
+    const cappedFullAccess = { ...fullAccess, runtimeModeCeiling: "approval-required" as const };
+    const supervisedRes = yield* previewFor(scope);
+    const cappedRes = yield* previewFor(cappedFullAccess);
+    const fullRes = yield* previewFor(fullAccess);
+    expect(seen).toEqual([false, false, true]);
+    expect(supervisedRes).toMatchObject({ missingImages: ["/tmp/secret.svg"] });
+    expect(cappedRes).toMatchObject({ missingImages: ["/tmp/secret.svg"] });
+    expect(fullRes).not.toHaveProperty("missingImages");
+  }),
 );
 
 it.effect("captures send_to_user results for providers that drop MCP outputs", () =>

@@ -213,6 +213,68 @@ describe("HtmlRender", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect(
+    "refuses internal server paths, symlinks to them, and non-image size probes when inlining local images",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const config = yield* ServerConfig.ServerConfig;
+        const htmlRender = yield* HtmlRender.HtmlRender;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-guard-" });
+        const internalSvg = path.join(config.secretsDir, "secret.svg");
+        yield* fileSystem.makeDirectory(config.secretsDir, { recursive: true });
+        yield* fileSystem.writeFileString(internalSvg, "<svg><text>INTERNAL</text></svg>");
+        const hugeNonImage = path.join(directory, "not-an-image.png");
+        yield* fileSystem.writeFileString(hugeNonImage, "NOT_A_PNG");
+        yield* fileSystem.truncate(hugeNonImage, 11 * 1024 * 1024);
+
+        const paths = [internalSvg, hugeNonImage];
+        if (symlinksSupported) {
+          const symlinkToInternal = path.join(directory, "linked-secret.svg");
+          yield* fileSystem.symlink(internalSvg, symlinkToInternal);
+          paths.push(symlinkToInternal);
+        }
+
+        const error = yield* htmlRender
+          .prepare(paths.map((p) => `<img src="${p}">`).join(""))
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(HtmlRender.HtmlRenderImagesNotFoundError);
+        expect(error._tag === "HtmlRenderImagesNotFoundError" && error.paths).toEqual(paths);
+
+        const hugePng = path.join(directory, "huge.png");
+        yield* fileSystem.writeFile(hugePng, PNG_BYTES);
+        yield* fileSystem.truncate(hugePng, 10 * 1024 * 1024 + 1);
+        const tooLarge = yield* htmlRender.prepare(`<img src="${hugePng}">`).pipe(Effect.flip);
+        expect(tooLarge).toBeInstanceOf(HtmlRender.HtmlRenderImageTooLargeError);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("rejects local image paths in prepare when allowLocalImages is false", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-disallow-" });
+      const svg = path.join(directory, "secret.svg");
+      yield* fileSystem.writeFileString(svg, "<svg><text>SECRET</text></svg>");
+
+      const error = yield* htmlRender
+        .prepare(`<img src="${svg}"><img src="${svg}">`, { allowLocalImages: false })
+        .pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(HtmlRender.HtmlRenderLocalImagesDisallowedError);
+      expect(error._tag === "HtmlRenderLocalImagesDisallowedError" && error.paths).toEqual([svg]);
+
+      const clean = yield* htmlRender.prepare(
+        '<img src="https://example.com/a.png"><svg><text>OK</text></svg>',
+        { allowLocalImages: false },
+      );
+      expect(clean).toContain('<img src="https://example.com/a.png">');
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("publishes the prepared page as an html thread attachment", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -682,5 +744,63 @@ fs.createReadStream(null, { fd: 3 }).on("end", quit).on("data", (chunk) => {
       expect(requests).toEqual([]);
       expect(datagrams).toEqual([]);
     }),
+  );
+
+  it.live(
+    "reports missingImages in preview when allowLocalImages is false or guards reject files",
+    (ctx) =>
+      Effect.gen(function* () {
+        const executable = (yield* HostProcess.Environment)[TEST_BROWSER_ENV];
+        if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
+        yield* Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const config = yield* ServerConfig.ServerConfig;
+          const htmlRender = yield* HtmlRender.HtmlRender;
+          const directory = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-html-preview-guard-",
+          });
+          const validSvg = path.join(directory, "ok.svg");
+          yield* fileSystem.writeFileString(
+            validSvg,
+            '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="green"/></svg>',
+          );
+          const internalSvg = path.join(config.secretsDir, "secret.svg");
+          yield* fileSystem.makeDirectory(config.secretsDir, { recursive: true });
+          yield* fileSystem.writeFileString(
+            internalSvg,
+            '<svg xmlns="http://www.w3.org/2000/svg"/>',
+          );
+          const hugeNonImage = path.join(directory, "not-an-image.png");
+          yield* fileSystem.writeFileString(hugeNonImage, "NOT_A_PNG");
+          yield* fileSystem.truncate(hugeNonImage, 11 * 1024 * 1024);
+
+          const probeHtml = (src: string) =>
+            `<img id="i" src="${src}"><script>addEventListener("load", () => { const i = document.getElementById("i"); console.log("loaded:", i.complete && i.naturalWidth > 0); });</script>`;
+
+          const restricted = yield* htmlRender.preview({
+            html: probeHtml(validSvg),
+            allowLocalImages: false,
+          });
+          expect(restricted.missingImages).toEqual([validSvg]);
+          expect(restricted.consoleMessages).toContainEqual({
+            level: "log",
+            text: "loaded: false",
+          });
+
+          const allowed = yield* htmlRender.preview({
+            html: probeHtml(validSvg),
+            allowLocalImages: true,
+          });
+          expect(allowed.missingImages).toBeUndefined();
+          expect(allowed.consoleMessages).toContainEqual({ level: "log", text: "loaded: true" });
+
+          const guarded = yield* htmlRender.preview({
+            html: `<img src="${internalSvg}"><img src="${hugeNonImage}">`,
+            allowLocalImages: true,
+          });
+          expect(guarded.missingImages).toEqual([internalSvg, hugeNonImage]);
+        }).pipe(Effect.scoped, Effect.provide(layerHtmlRender(executable)));
+      }),
   );
 });
