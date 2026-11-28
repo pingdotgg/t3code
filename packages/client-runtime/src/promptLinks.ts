@@ -88,9 +88,9 @@ export function pickPromptLinkPullRequestThread(
 const PROVIDER_ALIASES: Record<string, string> = { claude: "claudeagent" };
 
 /**
- * `exact` is false when the instance exists but the model does not, so its default model
- * stands in. Null when no usable instance of that provider exists; the user's default
- * applies then.
+ * Ready instances are searched before warning ones for the requested model. `exact` is
+ * false when none offers it, so the first instance's default model stands in. Null when no
+ * usable instance of that provider exists; the user's default applies then.
  */
 export function resolvePromptLinkModelSelection(
   providers: ReadonlyArray<
