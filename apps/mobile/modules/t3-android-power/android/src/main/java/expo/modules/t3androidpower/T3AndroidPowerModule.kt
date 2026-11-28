@@ -34,7 +34,7 @@ class T3AndroidPowerModule : Module() {
       val context = appContext.reactContext ?: return@OnCreate
       val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-          sendEvent(POWER_SAVE_MODE_CHANGE, mapOf("enabled" to isPowerSaveMode(context)))
+          sendEvent(POWER_SAVE_MODE_CHANGE, mapOf<String, Any?>())
         }
       }
       ContextCompat.registerReceiver(

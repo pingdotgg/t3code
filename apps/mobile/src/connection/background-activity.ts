@@ -27,7 +27,6 @@ import {
   onRetainedMobileBackgroundScopesChange,
   retainedMobileBackgroundScopes,
 } from "./background-activity-scopes";
-import { reportedLowPowerMode } from "./background-activity-power";
 
 const REPORT_INTERVAL_MS = 25_000;
 // Shorter than the interval, so a report that never settles cannot hold up the next one.
@@ -43,6 +42,15 @@ function normalizeAppState(
 }
 
 // Control Center, alerts, and the app switcher leave the app on screen as `inactive`.
+/** Omitted unless Battery Saver is on in Labs, so hosts keep treating the phone as unknown. */
+function reportedLowPowerMode(
+  batterySaverEnabled: boolean,
+  powerSaveMode: boolean | null,
+): Pick<ClientActivityReportInput, "lowPowerMode"> {
+  if (!batterySaverEnabled) return {};
+  return { lowPowerMode: powerSaveMode === null ? "unknown" : powerSaveMode ? "true" : "false" };
+}
+
 function isForeground(state: string | null | undefined): boolean {
   return state === "active" || state === "inactive";
 }

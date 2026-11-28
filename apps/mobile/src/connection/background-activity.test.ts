@@ -45,7 +45,7 @@ const power = vi.hoisted(() => {
     enabled: boolean;
     powerSaveMode: boolean | null;
     onSettingChange: (() => void) | undefined;
-    onPowerSaveChange: ((enabled: boolean) => void) | undefined;
+    onPowerSaveChange: (() => void) | undefined;
   } = {
     enabled: false,
     powerSaveMode: null,
@@ -65,7 +65,7 @@ vi.mock("../lib/androidBatterySaver", () => ({
 
 vi.mock("../native/androidPower", () => ({
   readAndroidPowerSaveMode: () => power.powerSaveMode,
-  subscribeAndroidPowerSaveMode: (listener: (enabled: boolean) => void) => {
+  subscribeAndroidPowerSaveMode: (listener: () => void) => {
     power.onPowerSaveChange = listener;
     return () => (power.onPowerSaveChange = undefined);
   },
@@ -80,7 +80,6 @@ vi.mock("expo-secure-store", () => ({
 import * as MobileSecureStorage from "../persistence/mobile-secure-storage";
 import * as MobileStorage from "../persistence/mobile-storage";
 import { layerReporter } from "./background-activity";
-import { reportedLowPowerMode } from "./background-activity-power";
 import {
   onRetainedMobileBackgroundScopesChange,
   observeMobileBackgroundActivitySubscription,
@@ -130,19 +129,6 @@ function changeAppState(next: string) {
 }
 
 describe("mobile background activity", () => {
-  it.each([
-    { enabled: false, powerSaveMode: true, expected: {} },
-    { enabled: true, powerSaveMode: true, expected: { lowPowerMode: "true" } },
-    { enabled: true, powerSaveMode: false, expected: { lowPowerMode: "false" } },
-    // An older dev client without the native module.
-    { enabled: true, powerSaveMode: null, expected: { lowPowerMode: "unknown" } },
-  ] as const)(
-    "reports Battery Saver $powerSaveMode only while the Labs setting is $enabled",
-    ({ enabled, powerSaveMode, expected }) => {
-      expect(reportedLowPowerMode(enabled, powerSaveMode)).toEqual(expected);
-    },
-  );
-
   it.effect("retains VCS demand only while the mobile subscription is active", () =>
     Effect.gen(function* () {
       const environmentId = EnvironmentId.make("mobile-environment");
@@ -284,10 +270,17 @@ describe("mobile background activity", () => {
       changeAppState("background");
       yield* TestClock.adjust("1 second");
       power.powerSaveMode = true;
-      power.onPowerSaveChange?.(true);
+      power.onPowerSaveChange?.();
       yield* TestClock.adjust("1 second");
       expect(reporter.calls()).toBe(4);
       expect(reports.at(-1)).toMatchObject({ appState: "background", lowPowerMode: "true" });
+
+      // An older dev client without the native module.
+      power.powerSaveMode = null;
+      power.onPowerSaveChange?.();
+      yield* TestClock.adjust("1 second");
+      expect(reporter.calls()).toBe(5);
+      expect(reports.at(-1)).toMatchObject({ lowPowerMode: "unknown" });
     }),
   );
 });

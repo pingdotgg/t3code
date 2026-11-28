@@ -3,7 +3,7 @@ import { Platform } from "react-native";
 
 interface AndroidPowerEvents {
   readonly onBackgroundIdle: Record<string, never>;
-  readonly onPowerSaveModeChange: { readonly enabled: boolean };
+  readonly onPowerSaveModeChange: Record<string, never>;
 }
 
 interface AndroidPowerModule {
@@ -35,9 +35,7 @@ export function readAndroidPowerSaveMode(): boolean | null {
   }
 }
 
-export function subscribeAndroidPowerSaveMode(listener: (enabled: boolean) => void): () => void {
-  const subscription = native?.addListener("onPowerSaveModeChange", ({ enabled }) =>
-    listener(enabled),
-  );
+export function subscribeAndroidPowerSaveMode(listener: () => void): () => void {
+  const subscription = native?.addListener("onPowerSaveModeChange", listener);
   return () => subscription?.remove();
 }
