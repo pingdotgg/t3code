@@ -58,6 +58,7 @@ import { ensureLocalApi } from "../../localApi";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { cn } from "../../lib/utils";
 import { resolveAppModelSelectionState } from "../../modelSelection";
+import { resolveProviderInstanceAccentColor } from "../../providerInstances";
 import {
   useEnvironments,
   usePrimaryEnvironmentId,
@@ -819,6 +820,18 @@ export function EnvironmentProviderSettings({
     rows.find((row) => row.instanceId === selectedInstanceId) ??
     (targetInstanceMissing ? null : (rows[0] ?? null));
 
+  const accentRows = rows.map((row) => ({
+    ...row,
+    enabled: resolveProviderInstanceEnabled(row.explicitInstance ?? { driver: row.driver }),
+  }));
+  const accentSiblings = [...accentRows, ...serverProviders];
+  const autoAccentColors = new Map(
+    accentRows.map((row) => [
+      row.instanceId,
+      resolveProviderInstanceAccentColor(row, accentSiblings),
+    ]),
+  );
+
   const persistInstance = async (
     instanceId: ProviderInstanceId,
     next: ProviderInstanceConfig,
@@ -999,6 +1012,7 @@ export function EnvironmentProviderSettings({
         readOnly={readOnly}
         canWriteSettings={canWriteSettings}
         liveProvider={serverProviders.find((candidate) => candidate.instanceId === row.instanceId)}
+        autoAccentColor={autoAccentColors.get(row.instanceId)}
         isUpdateDispatching={updatingProviderInstanceIds.has(row.instanceId)}
         showProjectOverride={showProjectOverride}
         projectOverrideValue={
@@ -1302,6 +1316,7 @@ function ProviderInstanceRow({
   readOnly,
   canWriteSettings,
   liveProvider,
+  autoAccentColor,
   isUpdateDispatching,
   showProjectOverride,
   projectOverrideValue,
@@ -1322,6 +1337,7 @@ function ProviderInstanceRow({
   readonly readOnly: boolean;
   readonly canWriteSettings: boolean;
   readonly liveProvider: ServerProvider | undefined;
+  readonly autoAccentColor: string | undefined;
   readonly isUpdateDispatching: boolean;
   readonly showProjectOverride: boolean;
   readonly projectOverrideValue: boolean | undefined;
@@ -1385,6 +1401,7 @@ function ProviderInstanceRow({
       instance={instance}
       driverOption={driverOption}
       liveProvider={liveProvider}
+      autoAccentColor={autoAccentColor}
       mode={mode}
       selected={selected}
       onSelect={mode === "list" ? () => actions.selectInstance(instanceId) : undefined}

@@ -1,15 +1,17 @@
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   normalizeProviderAccentColor,
   providerAccentForegroundColor,
   providerInstanceInitials,
+  resolveProviderInstanceAccentColor,
   shouldShowInstanceBadge,
 } from "./providerInstanceDisplay.ts";
 
 const codex = ProviderDriverKind.make("codex");
 const acpRegistry = ProviderDriverKind.make("acpRegistry");
+const claude = ProviderDriverKind.make("claudeAgent");
 
 describe("providerInstanceInitials", () => {
   it("treats punctuation and camel-case humps as word breaks but keeps apostrophes between letters", () => {
@@ -96,5 +98,55 @@ describe("shouldShowInstanceBadge", () => {
     expect(shouldShowInstanceBadge(disabled, [enabled, disabled])).toBe(true);
     expect(shouldShowInstanceBadge(disabled, [disabled, { ...disabled }])).toBe(true);
     expect(shouldShowInstanceBadge(disabled, [disabled])).toBe(false);
+  });
+});
+
+describe("resolveProviderInstanceAccentColor", () => {
+  const instance = (id: string, driver = codex, enabled = true) => ({
+    instanceId: ProviderInstanceId.make(id),
+    driver,
+    enabled,
+  });
+  const defaultCodex = instance("codex");
+  const personal = instance("codex_personal");
+
+  it("colors a custom instance stably only while an enabled sibling shares its driver", () => {
+    const color = resolveProviderInstanceAccentColor(personal, [defaultCodex, personal]);
+    expect(color).toMatch(/^#[0-9a-f]{6}$/);
+    expect(resolveProviderInstanceAccentColor(personal, [personal, defaultCodex])).toBe(color);
+    expect(resolveProviderInstanceAccentColor(personal, [personal])).toBeUndefined();
+    expect(
+      resolveProviderInstanceAccentColor(personal, [personal, instance("claudeAgent", claude)]),
+    ).toBeUndefined();
+    expect(
+      resolveProviderInstanceAccentColor(personal, [personal, instance("codex", codex, false)]),
+    ).toBeUndefined();
+  });
+
+  it("leaves the default instance and registry agents to their own icons", () => {
+    expect(
+      resolveProviderInstanceAccentColor(defaultCodex, [defaultCodex, personal]),
+    ).toBeUndefined();
+    const vibe = instance("mistral_vibe", acpRegistry);
+    expect(
+      resolveProviderInstanceAccentColor(vibe, [vibe, instance("devin", acpRegistry)]),
+    ).toBeUndefined();
+  });
+
+  it("prefers a valid explicit color and falls back to automatic when it is cleared or invalid", () => {
+    const siblings = [defaultCodex, personal];
+    const automatic = resolveProviderInstanceAccentColor(personal, siblings);
+    expect(
+      resolveProviderInstanceAccentColor({ ...personal, accentColor: "#ff8800" }, siblings),
+    ).toBe("#ff8800");
+    expect(
+      resolveProviderInstanceAccentColor({ ...defaultCodex, accentColor: "#112233" }, siblings),
+    ).toBe("#112233");
+    expect(resolveProviderInstanceAccentColor({ ...personal, accentColor: "" }, siblings)).toBe(
+      automatic,
+    );
+    expect(
+      resolveProviderInstanceAccentColor({ ...personal, accentColor: "orange" }, siblings),
+    ).toBe(automatic);
   });
 });

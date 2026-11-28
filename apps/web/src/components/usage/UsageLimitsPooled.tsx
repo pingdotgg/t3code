@@ -30,6 +30,7 @@ import {
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { resolveProviderInstanceAccentColor } from "../../providerInstances";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { providerClients } from "../settings/providerDriverMeta";
@@ -76,6 +77,9 @@ function AccountChip({ email }: { readonly email: string }) {
   );
 }
 
+// Automatic colors mark account badges only; limit bars keep explicit colors.
+const AutoAccentColorsContext = createContext<ReadonlyMap<string, string>>(new Map());
+
 function AccountAvatar({
   account,
   className,
@@ -83,6 +87,7 @@ function AccountAvatar({
   readonly account: LimitAccount;
   readonly className?: string;
 }) {
+  const accentColor = account.accentColor ?? use(AutoAccentColorsContext).get(account.key);
   if (account.redeem) {
     return (
       <ProviderInstanceIcon
@@ -92,8 +97,8 @@ function AccountAvatar({
           providerClients.get(account.driver)?.label ??
           String(account.driver)
         }
-        accentColor={account.accentColor}
-        showBadge={Boolean(account.displayName)}
+        accentColor={accentColor}
+        showBadge={Boolean(account.displayName || accentColor)}
         indicatorBackground="var(--popover)"
         className={cn("size-5", className)}
         iconClassName="size-4 text-foreground/80"
@@ -691,6 +696,15 @@ export function UsageLimitsPooled({
   const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
   const segmentPopoverActions = useRef<PopoverPrimitive.Root.Actions | null>(null);
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
+  const autoAccentColors = new Map(
+    [...presentations].flatMap(([environmentId, { serverConfig }]) => {
+      const providers = serverConfig?.providers ?? [];
+      return providers.flatMap((provider) => {
+        const color = resolveProviderInstanceAccentColor(provider, providers);
+        return color ? [[`${environmentId}:${provider.instanceId}`, color] as const] : [];
+      });
+    }),
+  );
   const quotaSources = collectHttpQuotaSources(presentations);
   const notices = collectLimitNotices(presentations, m);
   const externalLinks = collectExternalUsageLinks(presentations, m);
@@ -711,19 +725,21 @@ export function UsageLimitsPooled({
           </Fragment>
         ))}
       </SegmentPopoverContext>
-      <Popover handle={segmentPopover} actionsRef={segmentPopoverActions}>
-        {({ payload }) =>
-          payload ? (
-            <ActiveSegmentPopover
-              handle={segmentPopover}
-              actions={segmentPopoverActions}
-              payload={payload}
-              pools={pools}
-              now={now}
-            />
-          ) : null
-        }
-      </Popover>
+      <AutoAccentColorsContext value={autoAccentColors}>
+        <Popover handle={segmentPopover} actionsRef={segmentPopoverActions}>
+          {({ payload }) =>
+            payload ? (
+              <ActiveSegmentPopover
+                handle={segmentPopover}
+                actions={segmentPopoverActions}
+                payload={payload}
+                pools={pools}
+                now={now}
+              />
+            ) : null
+          }
+        </Popover>
+      </AutoAccentColorsContext>
       {quotaSources.map((source) => (
         <section key={source.key} className="space-y-3 rounded-xl border p-4">
           <h2 className="text-sm font-medium">{source.label}</h2>

@@ -169,6 +169,87 @@ describe("createThreadRowProviderInstanceResolver", () => {
       registry.dispose();
     }
   });
+
+  it("drops the automatic color while the thread's project disables the default sibling", () => {
+    const environmentId = EnvironmentId.make("environment-a");
+    const work = makeThread(environmentId, "codex_work");
+    const otherProjectWork = { ...work, projectId: ProjectId.make("project-2") };
+    const config = makeConfig([
+      { instanceId: "codex", driver: "codex" },
+      { instanceId: "codex_work", driver: "codex" },
+    ]);
+    const withDefaultOverride = (enabled: boolean | undefined): ServerConfig => ({
+      ...config,
+      settings: {
+        ...config.settings,
+        projectSettingsOverrides:
+          enabled === undefined
+            ? {}
+            : {
+                [work.projectId]: {
+                  providerInstances: { [ProviderInstanceId.make("codex")]: { enabled } },
+                },
+              },
+      },
+    });
+    const configs = Atom.make<ReadonlyMap<EnvironmentId, ServerConfig>>(
+      new Map([[environmentId, withDefaultOverride(true)]]),
+    );
+    const environments = createThreadListEnvironmentsAtom(configs, Atom.make([environmentId]));
+    const registry = AtomRegistry.make();
+    registry.mount(environments);
+    const resolve = (thread: EnvironmentThreadShell) => {
+      const { providersByEnvironmentId, projectOverridesByEnvironmentId } =
+        registry.get(environments);
+      return createThreadRowProviderInstanceResolver(
+        providersByEnvironmentId,
+        projectOverridesByEnvironmentId,
+      )(thread);
+    };
+    try {
+      const automatic = resolve(work)?.accentColor;
+      expect(automatic).toMatch(/^#[0-9a-f]{6}$/);
+      expect(resolve(work)?.showBadge).toBe(true);
+
+      registry.set(configs, new Map([[environmentId, withDefaultOverride(false)]]));
+      expect(resolve(work)).toMatchObject({ accentColor: undefined, showBadge: false });
+      expect(resolve(otherProjectWork)).toMatchObject({ accentColor: automatic, showBadge: true });
+
+      registry.set(configs, new Map([[environmentId, withDefaultOverride(true)]]));
+      expect(resolve(work)).toMatchObject({ accentColor: automatic, showBadge: true });
+    } finally {
+      registry.dispose();
+    }
+  });
+
+  it("leaves an enabled ACP registry session to its own icon", () => {
+    const environmentId = EnvironmentId.make("environment-a");
+    const thread = {
+      ...makeThread(environmentId, "codex"),
+      runtime: {
+        status: "running" as const,
+        activeRunId: null,
+        providerInstanceId: ProviderInstanceId.make("mistral_vibe"),
+        providerName: "Mistral Vibe",
+        lastError: null,
+        updatedAt: "2026-06-01T00:01:00.000Z",
+      },
+    };
+    const resolve = createThreadRowProviderInstanceResolver(
+      new Map([
+        [
+          environmentId,
+          makeConfig([
+            { instanceId: "codex", driver: "codex" },
+            { instanceId: "mistral_vibe", driver: "acpRegistry", displayName: "Mistral Vibe" },
+            { instanceId: "devin", driver: "acpRegistry", displayName: "Devin" },
+          ]).providers,
+        ],
+      ]),
+    );
+
+    expect(resolve(thread)).toMatchObject({ driverKind: "acpRegistry", accentColor: undefined });
+  });
 });
 
 describe("thread list reorder availability", () => {

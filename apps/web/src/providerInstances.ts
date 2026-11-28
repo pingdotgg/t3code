@@ -14,11 +14,16 @@ import {
 } from "@t3tools/contracts";
 import {
   normalizeProviderAccentColor,
+  resolveProviderInstanceAccentColor,
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
 
-export { normalizeProviderAccentColor, shouldShowInstanceBadge };
+export {
+  normalizeProviderAccentColor,
+  resolveProviderInstanceAccentColor,
+  shouldShowInstanceBadge,
+};
 
 /** Placeholder for untargetable drafts. Never persist or dispatch it; disable send until replaced. */
 export const NO_PROVIDER_MODEL_SELECTION: ModelSelection = {
@@ -97,7 +102,7 @@ export function deriveProviderInstanceEntries(
       instanceId,
       driverKind,
       displayName: resolveProviderInstanceDisplayName(snapshot),
-      accentColor: normalizeProviderAccentColor(snapshot.accentColor),
+      accentColor: resolveProviderInstanceAccentColor(snapshot, providers),
       ...(driverKind === "acpRegistry" && snapshot.iconUrl
         ? { acpRegistryIconUrl: snapshot.iconUrl }
         : {}),
@@ -149,10 +154,22 @@ export function applyProviderInstanceSettings(
   settings: Pick<ServerSettings, "providerInstances" | "projectSettingsOverrides">,
   projectId: ProjectId | null,
 ): ReadonlyArray<ProviderInstanceEntry> {
-  return entries.map((entry) => {
-    const enabled = resolveProjectProviderInstanceEnabled(settings, projectId, entry.instanceId);
+  const siblings = entries.map((entry) => ({
+    instanceId: entry.instanceId,
+    driver: entry.driverKind,
+    enabled: resolveProjectProviderInstanceEnabled(settings, projectId, entry.instanceId),
+  }));
+  return entries.map((entry, index) => {
+    const { enabled } = siblings[index]!;
+    // Automatic colors depend on which siblings are enabled, so resolve them after overrides.
+    const accentColor = resolveProviderInstanceAccentColor(
+      { ...siblings[index]!, accentColor: entry.snapshot.accentColor },
+      siblings,
+    );
     return applyProviderInstanceBranding(
-      enabled === entry.enabled ? entry : { ...entry, enabled },
+      enabled === entry.enabled && accentColor === entry.accentColor
+        ? entry
+        : { ...entry, enabled, accentColor },
       settings,
     );
   });

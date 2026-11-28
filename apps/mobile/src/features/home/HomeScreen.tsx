@@ -402,6 +402,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const {
     providersByEnvironmentId,
+    projectOverridesByEnvironmentId,
     machineByEnvironmentId,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
@@ -412,7 +413,10 @@ export function HomeScreen(props: HomeScreenProps) {
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
   } = listEnvironments;
-  const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
+  const resolveProviderInstance = useThreadRowProviderInstanceResolver(
+    providersByEnvironmentId,
+    projectOverridesByEnvironmentId,
+  );
   const pendingOrder = usePendingThreadOrder();
   const {
     layout: threadListV2Layout,

@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { CHATGPT_USAGE_URL } from "@t3tools/shared/usageLimits";
 import { describe, expect, it } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 
@@ -101,5 +102,55 @@ describe("UsageLimitsPooled next refill", () => {
       <UsageLimitsPooled presentations={presentations} now={Date.parse("2026-10-25T18:00:00Z")} />,
     );
     await expect.element(screen.getByText(/^↻ \+\d+%$/)).not.toBeInTheDocument();
+  });
+});
+
+describe("UsageLimitsPooled account badges", () => {
+  it("keeps a custom instance's automatic color when another instance pools into it", async () => {
+    function account(instanceId: string, displayName: string, email: string): ServerProvider {
+      return {
+        ...managedChatGpt(instanceId, displayName),
+        auth: { status: "authenticated", email },
+        usageLimits: {
+          checkedAt,
+          windows: [{ id: "weekly", label: "Weekly", kind: "weekly", usedPercent: 40 }],
+        },
+      };
+    }
+    const work = account("codex_work", "Work", "work@example.com");
+    const presentationsFor = (providers: ServerProvider[]) =>
+      new Map([
+        [
+          EnvironmentId.make("desk"),
+          { entry: { target: { label: "Desk" } }, serverConfig: { providers } },
+        ],
+      ]);
+    const badgeColor = async () => {
+      await screen.getByRole("button", { name: /^Work:/ }).click();
+      const icon = document.querySelector(
+        '[data-slot="popover-popup"] [data-provider-accent-color]',
+      );
+      const color = icon?.getAttribute("data-provider-accent-color");
+      await userEvent.keyboard("{Escape}");
+      return color;
+    };
+
+    await using screen = await render(
+      <UsageLimitsPooled
+        presentations={presentationsFor([work, account("codex_home", "Home", "home@example.com")])}
+        now={Date.parse(checkedAt)}
+      />,
+    );
+    const automatic = await badgeColor();
+    expect(automatic).toMatch(/^#[0-9a-f]{6}$/);
+
+    await screen.rerender(
+      <UsageLimitsPooled
+        presentations={presentationsFor([work, account("codex_home", "Home", "work@example.com")])}
+        now={Date.parse(checkedAt)}
+      />,
+    );
+    await expect.element(screen.getByRole("button", { name: /^Home:/ })).not.toBeInTheDocument();
+    expect(await badgeColor()).toBe(automatic);
   });
 });

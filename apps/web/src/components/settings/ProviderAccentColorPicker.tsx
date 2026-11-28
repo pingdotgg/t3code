@@ -108,6 +108,7 @@ function ProviderCustomColorPanel(props: {
 function ProviderCustomColorPicker(props: {
   readonly displayName: string;
   readonly value: string | undefined;
+  readonly placeholderColor: string | undefined;
   readonly onPreview: (value: string) => void;
   readonly onCommit: (value: string) => void;
   readonly onClear: () => void;
@@ -115,6 +116,7 @@ function ProviderCustomColorPicker(props: {
 }) {
   const gt = useGT();
   const normalized = normalizeProviderAccentColor(props.value);
+  const shownColor = normalized ?? props.placeholderColor;
   return (
     <Popover
       onOpenChange={(open) => {
@@ -127,14 +129,14 @@ function ProviderCustomColorPicker(props: {
             type="button"
             size="icon-sm"
             variant="ghost-muted"
-            style={normalized ? { backgroundColor: normalized } : undefined}
+            style={shownColor ? { backgroundColor: shownColor } : undefined}
             aria-label={
-              normalized
+              shownColor
                 ? gt("Change accent color for {provider}", { provider: props.displayName })
                 : gt("Add accent color for {provider}", { provider: props.displayName })
             }
           >
-            {normalized ? (
+            {shownColor ? (
               <span className="sr-only">
                 <T>Change accent color</T>
               </span>
@@ -146,7 +148,7 @@ function ProviderCustomColorPicker(props: {
       />
       <PopoverPopup side="bottom" align="start" sideOffset={6} padding="none">
         <ProviderCustomColorPanel
-          value={normalized ?? FALLBACK_ACCENT_COLOR}
+          value={shownColor ?? FALLBACK_ACCENT_COLOR}
           onPreview={props.onPreview}
           onCommit={props.onCommit}
           showAddButton={!normalized}
@@ -163,7 +165,7 @@ function ProviderCustomColorPicker(props: {
                   onClick={props.onClear}
                 >
                   <XIcon className="size-3.5" aria-hidden />
-                  <T>Clear color</T>
+                  {props.placeholderColor ? <T>Use automatic color</T> : <T>Clear color</T>}
                 </Button>
               }
             />
@@ -177,11 +179,12 @@ function ProviderCustomColorPicker(props: {
 export function ProviderAccentColorPicker(props: {
   readonly displayName: string;
   readonly value: string | undefined;
+  readonly placeholderColor?: string | undefined;
   readonly onCommit: (value: string) => void;
   readonly description?: string;
   readonly layout?: "stacked" | "inline";
 }) {
-  const { description, displayName, layout = "stacked", onCommit } = props;
+  const { description, displayName, layout = "stacked", onCommit, placeholderColor } = props;
   const value = props.value ?? "";
   // The draft shows a dragged or just-committed color only while `value` is
   // still the one it was picked against, so the persisted value (or any outside
@@ -206,6 +209,7 @@ export function ProviderAccentColorPicker(props: {
     <ProviderCustomColorPicker
       displayName={displayName}
       value={normalizeProviderAccentColor(shownValue)}
+      placeholderColor={placeholderColor}
       onPreview={(color) =>
         setDraft({
           color: normalizeProviderAccentColor(color) ?? "",

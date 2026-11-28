@@ -220,6 +220,40 @@ describe("applyProviderInstanceSettings", () => {
     expect(codex?.enabled).toBe(true);
     expect(grok?.enabled).toBe(false);
   });
+
+  it("drops an automatic color when the project disables every sibling", () => {
+    const codex = ProviderDriverKind.make("codex");
+    const projectId = ProjectId.make("project-a");
+    const entries = applyProviderInstanceSettings(
+      deriveProviderInstanceEntries([
+        provider({ provider: codex, instanceId: "codex" }),
+        provider({ provider: codex, instanceId: "codex_work" }),
+        provider({ provider: codex, instanceId: "codex_pinned", accentColor: "#112233" }),
+      ]),
+      {
+        providerInstances: {
+          [ProviderInstanceId.make("codex")]: { driver: codex, enabled: true },
+          [ProviderInstanceId.make("codex_work")]: { driver: codex, enabled: true },
+          [ProviderInstanceId.make("codex_pinned")]: { driver: codex, enabled: true },
+        },
+        projectSettingsOverrides: {
+          [projectId]: {
+            providerInstances: {
+              [ProviderInstanceId.make("codex")]: { enabled: false },
+              [ProviderInstanceId.make("codex_pinned")]: { enabled: false },
+            },
+          },
+        },
+      },
+      projectId,
+    );
+    const work = entries.find((entry) => entry.instanceId === "codex_work");
+    const pinned = entries.find((entry) => entry.instanceId === "codex_pinned");
+
+    expect(work?.accentColor).toBeUndefined();
+    expect(work && shouldShowInstanceBadge(work, entries)).toBe(false);
+    expect(pinned?.accentColor).toBe("#112233");
+  });
 });
 
 describe("deriveProviderEntriesByEnvironment", () => {
