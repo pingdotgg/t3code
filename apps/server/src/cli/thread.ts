@@ -434,11 +434,14 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
     checkoutTarget = path.join(gitDirectory, path.relative(existing, target));
     const canonical = containingRoots(checkoutTarget, requestedPath)[0];
     if (canonical !== undefined) {
-      // A registration whose own root is absent only matches by spelling; keep it when closer.
-      const depth = (root: string, candidate: string) =>
-        path.relative(root, candidate).split(path.sep).length;
+      // A registration whose own root is absent only matches by spelling; keep it unless the
+      // canonical match is closer.
+      const depth = (root: string, candidate: string) => {
+        const relative = path.relative(root, candidate);
+        return relative === "" ? 0 : relative.split(path.sep).length;
+      };
       return containingMatch !== undefined &&
-        depth(containingMatch.root, target) < depth(canonical.root, checkoutTarget)
+        depth(containingMatch.root, target) <= depth(canonical.root, checkoutTarget)
         ? containingMatch.project
         : canonical.project;
     }

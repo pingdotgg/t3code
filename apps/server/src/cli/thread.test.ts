@@ -183,6 +183,11 @@ it.effect(
           title: "Absent",
           workspaceRoot: path.join(aliasRoot, "absent"),
         },
+        {
+          id: ProjectId.make("physical-absent-project"),
+          title: "Physical absent",
+          workspaceRoot: path.join(workspaceRoot, "absent"),
+        },
         { id: ProjectId.make("~/literal-id"), title: "Exact id", workspaceRoot: cwd },
       ];
       yield* persistServerRuntimeState({
@@ -219,6 +224,8 @@ it.effect(
         [path.join(aliasRoot, "nested", "not-created", "plan.ts"), "nested-project"],
         [path.join(aliasRoot, "not-created", "plan.ts"), "alias-project"],
         [path.join(aliasRoot, "absent", "plan.ts"), "absent-project"],
+        [path.join(aliasRoot, "absent"), "absent-project"],
+        [path.join(workspaceRoot, "absent", "plan.ts"), "physical-absent-project"],
         [".", "current-project"],
         ["~/My Project", "intended-project"],
         ["~", "home-project"],
