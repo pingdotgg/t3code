@@ -3,8 +3,10 @@ import { Select as SelectPrimitive } from "@base-ui/react/select";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
+import { useLayoutEffect, useState } from "react";
 import type * as React from "react";
 
+import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 
 const Select = SelectPrimitive.Root;
@@ -95,6 +97,20 @@ function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
   );
 }
 
+// Base UI shows the scroll arrows at 1px of overflow, which fractional row heights at page zoom
+// produce with nothing to scroll; the arrow's fade then covers and swallows clicks on the last row.
+function useScrollsPastRounding(element: HTMLElement | null) {
+  const [scrolls, setScrolls] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the list's DOM overflow
+  useLayoutEffect(() => {
+    if (!element) return;
+    const measure = () => setScrolls(element.scrollHeight - element.clientHeight > 1);
+    measure();
+    return observeResize(element, measure);
+  }, [element]);
+  return scrolls;
+}
+
 function SelectPopup({
   className,
   children,
@@ -115,6 +131,8 @@ function SelectPopup({
   matchTriggerWidth?: boolean;
   anchor?: SelectPrimitive.Positioner.Props["anchor"];
 }) {
+  const [listElement, setListElement] = useState<HTMLDivElement | null>(null);
+  const listScrolls = useScrollsPastRounding(listElement);
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Positioner
@@ -134,7 +152,10 @@ function SelectPopup({
           {...props}
         >
           <SelectPrimitive.ScrollUpArrow
-            className="top-0 z-50 flex h-6 w-full cursor-default items-center justify-center before:pointer-events-none before:absolute before:inset-x-px before:top-px before:h-[200%] before:rounded-t-[calc(var(--radius-lg)-1px)] before:bg-linear-to-b before:from-50% before:from-popover"
+            className={cn(
+              "top-0 z-50 flex h-6 w-full cursor-default items-center justify-center before:pointer-events-none before:absolute before:inset-x-px before:top-px before:h-[200%] before:rounded-t-[calc(var(--radius-lg)-1px)] before:bg-linear-to-b before:from-50% before:from-popover",
+              !listScrolls && "hidden",
+            )}
             data-slot="select-scroll-up-arrow"
           >
             <ChevronUpIcon className="relative size-4.5 sm:size-4" />
@@ -148,12 +169,16 @@ function SelectPopup({
             <SelectPrimitive.List
               className={cn("max-h-(--available-height) overflow-y-auto p-1", className)}
               data-slot="select-list"
+              ref={setListElement}
             >
               {children}
             </SelectPrimitive.List>
           </div>
           <SelectPrimitive.ScrollDownArrow
-            className="bottom-0 z-50 flex h-6 w-full cursor-default items-center justify-center before:pointer-events-none before:absolute before:inset-x-px before:bottom-px before:h-[200%] before:rounded-b-[calc(var(--radius-lg)-1px)] before:bg-linear-to-t before:from-50% before:from-popover"
+            className={cn(
+              "bottom-0 z-50 flex h-6 w-full cursor-default items-center justify-center before:pointer-events-none before:absolute before:inset-x-px before:bottom-px before:h-[200%] before:rounded-b-[calc(var(--radius-lg)-1px)] before:bg-linear-to-t before:from-50% before:from-popover",
+              !listScrolls && "hidden",
+            )}
             data-slot="select-scroll-down-arrow"
           >
             <ChevronDownIcon className="relative size-4.5 sm:size-4" />
