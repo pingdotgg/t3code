@@ -1813,7 +1813,7 @@ describe("question answer paths", () => {
           ext: "xlsx",
           parts: {
             "xl/workbook.xml":
-              '<workbook><sheets><sheet name="Inventory" r:id="a"/><sheet name="Budget" r:id="b"/></sheets></workbook>',
+              '<workbook><sheets><sheet name="Inventory _x005F_x0041_" r:id="a"/><sheet name="Budget_x0020_2026" r:id="b"/></sheets></workbook>',
             "xl/_rels/workbook.xml.rels":
               '<Relationships><Relationship Id="a" Target="worksheets/second.xml"/><Relationship Id="b" Target="worksheets/first.xml"/><Relationship Id="strings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="../catalog/items.xml"/><Relationship Id="styles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="../Formatting/Cells.xml"/></Relationships>',
             "catalog/items.xml": "<sst><si><t>Lantern</t></si></sst>",
@@ -1825,9 +1825,9 @@ describe("question answer paths", () => {
               '<worksheet><sheetData><row><c t="inlineStr"><is><t>Ferry</t></is></c><c><v>628</v></c><c s="1"><v>45292</v></c><c s="2"><v>0.25</v></c><c s="3"><v>45293</v></c></row></sheetData></worksheet>',
           },
           expected: [
-            "## Sheet: Inventory",
+            "## Sheet: Inventory _x0041_",
             "Lantern\t\t37",
-            "## Sheet: Budget",
+            "## Sheet: Budget 2026",
             "Ferry\t628",
             "45292 [Excel numFmtId=14; date system 1900]",
             "0.25 [Excel numFmtId=9; date system 1900]",
