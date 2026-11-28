@@ -6445,6 +6445,61 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  // regression: #24131 Claude Code arms artifact auto-replies and `ultracode` only for human-origin turns
+  it.effect("marks only messages a user typed as human-origin prompts", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({});
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("human-origin"),
+        text: "Watch https://claude.ai/artifact/example",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn(input);
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+        nativeTurnId: `turn:${input.attemptId}`,
+      });
+      const steer = (
+        id: string,
+        createdBy: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["createdBy"],
+        creationSource: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["creationSource"],
+      ) =>
+        harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: input.runId,
+          providerThread: harness.providerThread,
+          providerTurnId,
+          message: {
+            createdBy,
+            creationSource,
+            messageId: MessageId.make(id),
+            text: id,
+            attachments: [],
+          },
+        });
+      yield* steer("mobile-steer", "user", "mobile");
+      yield* steer("agent-send", "agent", "mcp");
+
+      assert.deepEqual(
+        harness.offeredMessages.map((message) => message.origin),
+        [{ kind: "human" }, { kind: "human" }, undefined],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   // regression: #29750 Claude sets a goal only from a prompt that opens with /goal
   it("keeps a /goal that mentions a skill as one native goal command", () => {
     const message = ClaudeAdapterV2.makeClaudeUserMessage({
@@ -13736,6 +13791,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 type: "user",
                 message: { role: "user", content: prompt },
                 parent_tool_use_id: null,
+                origin: { kind: "human" },
               },
             },
           },
