@@ -215,6 +215,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         if (event.key !== "Escape") return false;
         const selection = useThreadSelectionStore.getState();
         if (selection.selectedThreadKeys.size === 0) return false;
+        if (event.isComposing || event.keyCode === 229) return;
         event.preventDefault();
         selection.clearSelection();
       },
