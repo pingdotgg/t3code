@@ -16,6 +16,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { type AcpError, AcpRequestError } from "effect-acp/errors";
 import type * as AcpSchema from "effect-acp/compat";
 import { expect } from "vite-plus/test";
@@ -64,6 +65,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
     readonly startupSkills?: boolean;
     readonly initialModel?: string;
     readonly rejectThinkingUpdate?: boolean;
+    readonly releaseRuntime?: Effect.Effect<void>;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -133,6 +135,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
         Effect.gen(function* () {
           state.nativeFilesAtClose.push(yield* fs.exists(`${sessionBase}.db`).pipe(Effect.orDie));
           state.closed.push(cwd);
+          if (options.releaseRuntime) yield* options.releaseRuntime;
         }),
       );
       let sessionUpdate: Parameters<TextRuntime["handleSessionUpdate"]>[0] = () => Effect.void;
@@ -669,6 +672,23 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         expect(fixture.state.cancellations).toBe(1);
         yield* fixture.assertCleaned;
       }),
+  );
+
+  it.effect("keeps a completed title when releasing the runtime outlasts the timeout", () =>
+    Effect.gen(function* () {
+      const releasing = yield* Deferred.make<void>();
+      const fixture = yield* makeFixture({
+        releaseRuntime: Deferred.succeed(releasing, undefined).pipe(
+          Effect.andThen(Effect.sleep("181 seconds")),
+        ),
+      });
+      const child = yield* fixture.textGeneration
+        .generateThreadTitle(fixture.titleInput)
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(releasing);
+      yield* TestClock.adjust("181 seconds");
+      expect(yield* Fiber.join(child)).toEqual({ title: "Repair login" });
+    }),
   );
 
   it.effect("refuses unsafe native session IDs without deleting other files", () =>
