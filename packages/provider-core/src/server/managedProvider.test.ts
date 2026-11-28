@@ -498,6 +498,46 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
   );
 
+  it.effect("retries a failed first check after 30 seconds when the provider asks for it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const failedSnapshot: ServerProvider = {
+          ...refreshedSnapshot,
+          status: "error",
+          auth: { status: "unknown" },
+          message: "Cursor SDK catalog request failed.",
+        };
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.map((count) => (count <= 2 ? failedSnapshot : refreshedSnapshot)),
+          ),
+          refreshInterval: "5 minutes",
+          retryCheckSoon: (snapshot) => snapshot.status === "error",
+        });
+        yield* provider.streamChanges.pipe(Stream.take(1), Stream.runDrain);
+        assert.strictEqual((yield* provider.getSnapshot).status, "error");
+        yield* Effect.yieldNow;
+
+        yield* TestClock.adjust("30 seconds");
+        assert.strictEqual(yield* Ref.get(checkCalls), 2);
+        assert.strictEqual((yield* provider.getSnapshot).status, "error");
+
+        yield* TestClock.adjust("30 seconds");
+        assert.strictEqual(yield* Ref.get(checkCalls), 3);
+        assert.strictEqual((yield* provider.getSnapshot).status, "ready");
+
+        yield* TestClock.adjust("1 minute");
+        assert.strictEqual(yield* Ref.get(checkCalls), 3);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
+  );
+
   it.effect("reruns the provider check when streamed settings change", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -166,6 +166,9 @@ export const CursorDriver: ProviderDriver<
 
     let catalogModels: ReadonlyArray<ServerProviderModel> = [];
     let catalogSdkModels: ReadonlyArray<SDKModel> = [];
+    // The status check needs api.cursor.com, so a failure Cursor did not reject (a network outage
+    // or timeout) is retried soon instead of showing Cursor unavailable for a full interval.
+    let catalogRejected = false;
     const orchestrationAdapter = yield* makeCursorAdapterV2({
       instanceId,
       environment: processEnv,
@@ -261,7 +264,14 @@ export const CursorDriver: ProviderDriver<
           CursorSdkCatalog.CursorSdkCatalog.of({
             // Untraced: CursorSdkCatalog.read already spans this call.
             read: Effect.fnUntraced(function* (apiKey) {
-              const snapshot = yield* catalog.read(apiKey);
+              catalogRejected = false;
+              const snapshot = yield* catalog.read(apiKey).pipe(
+                Effect.tapError((error) =>
+                  Effect.sync(() => {
+                    catalogRejected = error.authenticationFailure || error.planRequired;
+                  }),
+                ),
+              );
               if (snapshot.models.length > 0) catalogSdkModels = snapshot.models;
               return snapshot;
             }),
@@ -293,6 +303,11 @@ export const CursorDriver: ProviderDriver<
         buildInitialCursorProviderSnapshot(settings.provider).pipe(Effect.map(stampSnapshot)),
       checkProvider,
       checkUsageLimits,
+      retryCheckSoon: (provider) =>
+        provider.enabled &&
+        provider.status === "error" &&
+        provider.auth.status !== "unauthenticated" &&
+        !catalogRejected,
     }).pipe(
       Effect.mapError(
         (cause) =>
