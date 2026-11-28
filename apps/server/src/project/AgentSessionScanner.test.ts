@@ -1245,28 +1245,22 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const branch = "feat\u00a0";
         const worktree = path.join(repo, ".claude", "worktrees", "feature");
         yield* Effect.sync(() => {
-          NodeChildProcess.execFileSync("git", ["init", repo]);
-          NodeChildProcess.execFileSync("git", [
-            "-C",
-            repo,
+          const git = (...args: string[]) =>
+            NodeChildProcess.execFileSync("git", ["-C", repo, ...args], { stdio: "ignore" });
+          git("init");
+          git(
             "-c",
             "user.name=Test",
             "-c",
             "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
             "commit",
             "--allow-empty",
             "-m",
             "Initial commit",
-          ]);
-          NodeChildProcess.execFileSync("git", [
-            "-C",
-            repo,
-            "worktree",
-            "add",
-            "-b",
-            branch,
-            worktree,
-          ]);
+          );
+          git("worktree", "add", "-b", branch, worktree);
         });
 
         for (const [index, [cwd, sessionId]] of [
