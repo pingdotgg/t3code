@@ -31,7 +31,11 @@ import type {
   ServerProviderModel,
   ServerProviderSkill,
 } from "@t3tools/contracts";
-import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
+import {
+  PREFERRED_DEFAULT_CODEX_MODELS,
+  RuntimeMode,
+  ServerSettingsError,
+} from "@t3tools/contracts";
 
 import {
   codexModelFamily,
@@ -170,6 +174,26 @@ export interface CodexAppServerProviderSnapshot {
   readonly daybreakEnabled?: boolean | undefined;
   readonly cyberAccessProgramsUnavailable?: boolean | undefined;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode> | undefined;
+}
+
+const CODEX_RUNTIME_MODE_SANDBOX_MODES = {
+  "approval-required": "read-only",
+  "auto-accept-edits": "workspace-write",
+  auto: "workspace-write",
+  "full-access": "danger-full-access",
+} as const satisfies Record<RuntimeMode, CodexSchema.V2ConfigRequirementsReadResponse__SandboxMode>;
+
+/** The modes whose sandbox Codex's managed requirements (requirements.toml or MDM) allow. */
+export function codexSupportedRuntimeModes(
+  response: CodexSchema.V2ConfigRequirementsReadResponse | undefined,
+): ReadonlyArray<RuntimeMode> | undefined {
+  const allowed = response?.requirements?.allowedSandboxModes;
+  if (!allowed) return undefined;
+  const modes = RuntimeMode.literals.filter((mode) =>
+    allowed.includes(CODEX_RUNTIME_MODE_SANDBOX_MODES[mode]),
+  );
+  return modes.length === 0 ? undefined : modes;
 }
 
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
@@ -772,7 +796,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   // Optional discovery must finish before the outer timeout can discard the account result.
   const deadlineMs = spawnedAtMs + input.probeTimeoutMs - CODEX_DISCOVERY_MARGIN_MS;
-  const [skillsResponse, models, { config, nativeUsage, rateLimits }] = yield* Effect.all(
+  const discovery = yield* Effect.all(
     [
       withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
       accountResponse.account?.type === "chatgpt"
@@ -808,9 +832,19 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
           );
         }),
       ),
+      withCodexDiscoveryDeadline(
+        client.request("configRequirements/read", undefined),
+        deadlineMs,
+        CODEX_CONFIG_PROBE_TIMEOUT_MS,
+      ).pipe(
+        Effect.catch(() =>
+          Effect.logDebug("Codex config requirements read failed.").pipe(Effect.as(undefined)),
+        ),
+      ),
     ],
     { concurrency: "unbounded" },
   );
+  const [skillsResponse, models, { config, nativeUsage, rateLimits }, requirements] = discovery;
 
   const cyberAccess = Option.getOrUndefined(decodeCodexCyberAccessConfig(config));
   return {
@@ -827,6 +861,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       accountResponse.account?.type === "apiKey" &&
       (config === undefined || cyberAccess?.features?.api_key_cyber_access_programs === false),
     skills: skillsResponse ? parseCodexSkillsListResponse(skillsResponse, input.cwd) : [],
+    supportedRuntimeModes: codexSupportedRuntimeModes(requirements),
   } satisfies CodexAppServerProviderSnapshot;
 });
 
@@ -1300,7 +1335,9 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
           });
 
   return buildServerProvider({
-    presentation: CODEX_PRESENTATION,
+    presentation: snapshot.supportedRuntimeModes
+      ? { ...CODEX_PRESENTATION, supportedRuntimeModes: snapshot.supportedRuntimeModes }
+      : CODEX_PRESENTATION,
     enabled: codexSettings.enabled,
     checkedAt,
     models: pipe(
