@@ -1963,6 +1963,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
           );
 
+  // Accepting a wake reads its message, the parent run and that run's tasks, not the whole thread.
+  const readNotificationProjection = Effect.fn("Orchestrator.readNotificationProjection")(
+    function* (threadId: ThreadId, messageId: OrchestrationV2ConversationMessage["id"]) {
+      const { thread, messages } = yield* projectionStore.getThreadRecords(threadId, ["messages"], {
+        messageIds: [messageId],
+        messageRoles: ["user"],
+      });
+      const parentRunId = messages[0]?.delegatedCompletion?.parentRunId;
+      if (parentRunId === undefined) return { thread, messages, runs: [], subagents: [] };
+      const { runs, subagents } = yield* projectionStore.getThreadRecords(
+        threadId,
+        ["runs", "subagents"],
+        { runIds: [parentRunId], subagentRunIds: [parentRunId] },
+      );
+      const parentRun = runs[0];
+      if (parentRun === undefined || !(yield* awaitsCheckpointCapture(parentRun))) {
+        return { thread, messages, runs, subagents };
+      }
+      // Rare: a parent still capturing its checkpoint is held as holdRunAwaitingCapture does,
+      // which needs every run to tell whether it is the latest started one.
+      const allRuns = (yield* projectionStore.getThreadRecords(threadId, ["runs"])).runs;
+      const held =
+        latestStartedRun(allRuns)?.id === parentRun.id
+          ? { ...parentRun, status: "waiting" as const, completedAt: null }
+          : parentRun;
+      return { thread, messages, runs: [held], subagents };
+    },
+    (effect, threadId) =>
+      effect.pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
+  );
+
   const readHandoffItems = (threadId: ThreadId, runIds?: ReadonlyArray<RunId | null>) =>
     projectionStore
       .getThreadRecords(
@@ -16121,7 +16152,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: Extract<OrchestrationV2Command, { type: "notification.delivery.accept" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
-    const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+    const projection = yield* readNotificationProjection(command.threadId, command.messageId);
     const now = yield* DateTime.now;
     const parentRunId = yield* acceptDelegatedCompletionDelivery({
       command,
