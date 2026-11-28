@@ -81,6 +81,11 @@ describe("createGitDiffFileContentsLoader", () => {
       oldLines: originalLines,
       newLines: changedLines.map((line, index) => (index === 30 ? "edited since" : line)),
     },
+    {
+      name: "changed a line outside the patch's hunks",
+      oldLines: originalLines,
+      newLines: changedLines.map((line, index) => (index === 0 ? "edited since" : line)),
+    },
   ])("rejects contents that $name", async ({ oldLines, newLines }) => {
     const loader = loaderReturning(toContents(oldLines), toContents(newLines));
 
