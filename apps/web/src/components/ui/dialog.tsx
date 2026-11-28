@@ -115,7 +115,6 @@ function DialogPopup({
   bottomStickOnMobile = true,
   variant = "default",
   mediaControlsPlacement = "outside",
-  solidBackdrop = false,
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
@@ -123,8 +122,6 @@ function DialogPopup({
   bottomStickOnMobile?: boolean;
   variant?: "default" | "media";
   mediaControlsPlacement?: "inside" | "outside";
-  /** Hides the page entirely, for media editing where anything behind would compete. */
-  solidBackdrop?: boolean;
 }) {
   const gt = useGT();
   const { popupRef, initialFocus } = useDialogActionInitialFocus();
@@ -162,10 +159,7 @@ function DialogPopup({
   return (
     <DialogPortal>
       {/* Media opens from inside other overlays (a composer chip, a popover), so it sits above them. */}
-      <DialogBackdrop
-        className={cn(variant === "media" && "z-[60]", solidBackdrop && "bg-black")}
-        variant={variant}
-      />
+      <DialogBackdrop className={variant === "media" ? "z-[60]" : undefined} variant={variant} />
       <DialogViewport
         className={cn(
           bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12",
