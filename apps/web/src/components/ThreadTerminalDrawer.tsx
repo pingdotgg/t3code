@@ -2158,7 +2158,7 @@ export default function ThreadTerminalDrawer({
                                   if (
                                     mode === "pane" &&
                                     layoutTabId !== null &&
-                                    handlePaneTabClick(event, layoutTabId, { active: true })
+                                    handlePaneTabClick(event, layoutTabId, { active: isActive })
                                   ) {
                                     return;
                                   }

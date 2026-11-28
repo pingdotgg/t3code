@@ -1223,6 +1223,9 @@ it("Cmd+W closes the selected right-panel tabs together", async () => {
     router: false,
   });
   await expect.element(page.getByTestId("composer-editor")).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: new RegExp(`^Thread actions for `) }))
+    .toHaveAttribute("aria-pressed", "true");
   await act(() => {
     const panels = useRightPanelStore.getState();
     panels.open(threadRef, "diff");

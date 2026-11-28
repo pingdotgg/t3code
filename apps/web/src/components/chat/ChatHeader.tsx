@@ -407,6 +407,7 @@ export const ChatHeader = memo(function ChatHeader({
                       data-layout-pane-tab={layoutTabId ?? undefined}
                       data-selected-tab={layoutTabSelected ? "" : undefined}
                       type="button"
+                      aria-pressed={true}
                       aria-label={gt("Thread actions for {title}", { title: activeThreadTitle })}
                       aria-haspopup="menu"
                       onClick={(event) => {
