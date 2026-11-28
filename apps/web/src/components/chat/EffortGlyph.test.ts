@@ -53,6 +53,14 @@ describe("resolveEffortGlyph", () => {
     });
   });
 
+  it("rises with effort when an agent lists its levels high to low, ending at off", () => {
+    const descending = descriptor(["xhigh", "high", "low", "none"]);
+    expect(resolveEffortGlyph(descending, "xhigh")).toMatchObject({ count: 3, filled: 3 });
+    expect(resolveEffortGlyph(descending, "high")).toMatchObject({ count: 3, filled: 2 });
+    expect(resolveEffortGlyph(descending, "low")).toMatchObject({ count: 3, filled: 1 });
+    expect(resolveEffortGlyph(descending, "none")).toMatchObject({ count: 3, filled: 0 });
+  });
+
   it("falls back to the word when the value is unknown or the scale is too short or long", () => {
     expect(resolveEffortGlyph(claude, "unknown")).toBeNull();
     expect(resolveEffortGlyph(descriptor(["high"]), "high")).toBeNull();

@@ -6,6 +6,7 @@ import {
 } from "@t3tools/shared/pullRequestAnchor";
 import { stripInlineContextReferences } from "~/lib/composerContextReferences";
 import type { Nodes } from "hast";
+import { GITHUB_ALERT_MARKER } from "@t3tools/shared/markdownGithubAlerts";
 
 import { markdownHtmlComments, markdownTree } from "~/markdown/wordsHast";
 import {
@@ -204,9 +205,9 @@ export function pullRequestPanelContext(
   },
 ): "page" | "thread" {
   if (thread.projectId !== surface.projectId) return "page";
+  const repository = surface.repository.toLowerCase();
   const links = visibleThreadPullRequests(thread.pullRequests ?? []);
   if (links.length > 0) {
-    const repository = surface.repository.toLowerCase();
     const target =
       surface.host === undefined
         ? null
@@ -221,7 +222,7 @@ export function pullRequestPanelContext(
   }
   const legacy = thread.linkedPullRequest ?? thread.branchPullRequest ?? null;
   return legacy !== null &&
-    legacy.repository === surface.repository &&
+    legacy.repository.toLowerCase() === repository &&
     legacy.number === surface.number
     ? "thread"
     : "page";
@@ -735,15 +736,26 @@ function markdownExcerpt(body: string): string | null {
   const visit = (node: Nodes) => {
     if (node.type === "text") words.push(node.value);
     if (node.type === "element" && node.tagName === "pre") return;
+    // Footnote markers and the footnote list are not part of the comment's prose.
+    if (
+      node.type === "element" &&
+      (node.properties.dataFootnotes !== undefined || node.properties.dataFootnoteRef !== undefined)
+    )
+      return;
+    if (node.type === "element" && node.tagName === "blockquote") {
+      const paragraph = node.children.find((child) => child.type === "element");
+      const first = paragraph?.tagName === "p" ? paragraph.children[0] : undefined;
+      if (first?.type === "text") {
+        const marker = GITHUB_ALERT_MARKER.exec(first.value);
+        if (marker && (/[\r\n]$/.test(marker[0]) || paragraph?.children.length === 1)) {
+          first.value = first.value.slice(marker[0].length);
+        }
+      }
+    }
     if ("children" in node) for (const child of node.children) visit(child);
   };
   visit(markdownTree(body, { skipHtml: true }));
-  // GitHub's alert marker (`> [!NOTE]`) parses as text but reads as markup.
-  const text = words
-    .join(" ")
-    .replace(/\[!(?:note|tip|important|warning|caution)\]/giu, "")
-    .replace(/\s+/gu, " ")
-    .trim();
+  const text = words.join(" ").replace(/\s+/gu, " ").trim();
   if (text === "") return null;
   if (text.length <= LINK_EXCERPT_LENGTH) return text;
   let end = LINK_EXCERPT_LENGTH - 1;
@@ -758,8 +770,8 @@ export function pullRequestLinkSubject(
   url: string,
   activity: Pick<PullRequestActivity, "comments" | "reviewThreads" | "commits">,
 ): PullRequestLinkSubject | null {
-  const oid = pullRequestLinkCommit(url)?.toLowerCase();
-  if (oid !== undefined) {
+  const oid = pullRequestLinkCommit(url);
+  if (oid !== null) {
     const commit = activity.commits.find((candidate) => candidate.oid.toLowerCase() === oid);
     return commit === undefined ? null : { kind: "commit", commit };
   }
@@ -930,7 +942,7 @@ function bounded(value: string): string {
   if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
     end -= 1;
   }
-  return `${trimmed.slice(0, end)}...`;
+  return `${trimmed.slice(0, end).trimEnd()}...`;
 }
 
 function boundedField(value: string): string {
@@ -1065,8 +1077,7 @@ export function buildFixFindingsHandoff(input: {
   readonly inThisThread?: boolean;
 }): FixFindingsHandoff {
   const threads = input.reviewThreads.filter(
-    (thread) =>
-      !thread.isResolved && thread.comments.some((comment) => comment.body.trim().length > 0),
+    (thread) => !thread.isResolved && reviewThreadText(thread) !== "",
   );
   const attached = new Set(
     input.reviewThreads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
@@ -1078,7 +1089,7 @@ export function buildFixFindingsHandoff(input: {
         !attached.has(comment.id),
     )
     .flatMap((comment) => {
-      const body = visibleBody(comment.body);
+      const body = readableBody(comment.body);
       if (body === null) return [];
       const where = comment.path === null ? "" : ` on \`${boundedField(comment.path)}\``;
       return [`${boundedField(comment.author?.login ?? "ghost")}${where}: ${boundedField(body)}`];
@@ -1186,7 +1197,7 @@ export function buildFixFindingHandoff(input: {
   }
   if (input.finding.kind === "comment") {
     const comment = input.finding.comment;
-    const body = visibleBody(comment.body) ?? "";
+    const body = readableBody(comment.body) ?? "";
     const where = comment.path === null ? "" : ` on \`${boundedField(comment.path)}\``;
     return {
       prompt: [
@@ -1573,7 +1584,7 @@ export function readableFailure(failure: unknown, hint: string): string {
   let end = FAILURE_DETAIL_MAX_LENGTH - 1;
   const last = detail.charCodeAt(end - 1);
   if (last >= 0xd800 && last <= 0xdbff) end -= 1;
-  return `${detail.slice(0, end)}…`;
+  return `${detail.slice(0, end).trimEnd()}…`;
 }
 
 const isGitCommandError = Schema.is(GitCommandError);

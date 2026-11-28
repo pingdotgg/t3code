@@ -384,7 +384,7 @@ export function WorkflowTimeline(props: {
   };
   // The page has no ticking clock, so a step under way shows no time.
   const timeOf = (beat: WorkflowBeat) =>
-    beat.status === "running" ? null : workflowStepTime(beat.endMs - beat.startMs);
+    beat.status === "running" ? null : workflowStepTime(beat.endMs - beat.startMs, m);
   const enters = (startMs: number) =>
     startMs > props.openedAtMs ? FadeIn.duration(180) : undefined;
 
@@ -446,7 +446,7 @@ export function WorkflowTimeline(props: {
             }
             aside={null}
             verb={null}
-            time={workflowStepTime(Math.max(0, row.endMs - row.startMs))}
+            time={workflowStepTime(Math.max(0, row.endMs - row.startMs), m)}
             onPress={() => props.onOpenStep(names[0] ?? "")}
           />
         ),
@@ -486,7 +486,7 @@ export function WorkflowTimeline(props: {
               name={gt("{count} in parallel", { count: row.beats.length })}
               aside={null}
               verb={working ? gt("{count} running", { count: running }) : null}
-              time={running > 0 ? null : workflowStepTime(endMs - startMs)}
+              time={running > 0 ? null : workflowStepTime(endMs - startMs, m)}
             />
             <BranchOut palette={palette} />
             <View>

@@ -104,7 +104,11 @@ const LocalServerRoutes = HttpRouter.serve(HttpRouter.addAll([
       return HttpServerResponse.jsonUnsafe({ ...todo, id: 201 })
     })
   ),
-  HttpRouter.route("GET", "/text", Effect.succeed(HttpServerResponse.text("test"))),
+  HttpRouter.route(
+    "GET",
+    "/text",
+    (request) => Effect.succeed(HttpServerResponse.text("test", { headers: { "x-url": request.url } }))
+  ),
   HttpRouter.route(
     "QUERY",
     "/search",
@@ -217,6 +221,7 @@ const LocalServerRoutes = HttpRouter.serve(HttpRouter.addAll([
         assert.strictEqual(url.pathname, "/text")
         assert.strictEqual(url.search, "?existing=1&value=a%23b")
         assert.strictEqual(url.hash, "")
+        assert.strictEqual(response.headers["x-url"], "/text?existing=1&value=a%23b")
         expect(yield* response.text).toBe("test")
       }).pipe(Effect.provide(localServerTestLayer)))
 

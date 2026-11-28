@@ -32,7 +32,7 @@ import { Split, Stack, type SplitHostCommands } from "react-native-screens";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { NATIVE_INSPECTOR_MIN_MAIN_WIDTH, nativeSidebarColumnWidth } from "../../lib/layout";
+import { INSPECTOR_MIN_MAIN_WIDTH, nativeSidebarColumnWidth } from "../../lib/layout";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { WorkspaceTabsProvider, useWorkspaceTabs } from "./workspace/WorkspaceTabsContext";
 import { WorkspaceNativeTabs } from "./workspace/WorkspaceNativeTabs.ios";
@@ -386,7 +386,7 @@ function WorkspaceColumns(
         maximumPrimaryColumnWidth:
           layout.variant === "medium" ? primaryColumnWidth : Math.max(380, primaryColumnWidth),
         preferredPrimaryColumnWidthOrFraction: primaryColumnWidth,
-        minimumSecondaryColumnWidth: NATIVE_INSPECTOR_MIN_MAIN_WIDTH,
+        minimumSecondaryColumnWidth: INSPECTOR_MIN_MAIN_WIDTH,
         // UIKit can retain its automatic width despite a new preference; constrain both edges.
         minimumInspectorColumnWidth: inspectorWidth,
         maximumInspectorColumnWidth: inspectorWidth,
@@ -517,7 +517,8 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
     navigation: props.descriptors[visibleRoute.key]!.navigation,
     // Identify the real visible route under the stable envelope key, or useIsFocused closes media viewers.
     route: visibleRoute,
-    options: { headerShown: false },
+    // iOS takes the status bar style from this envelope screen, not from the screens inside the tabs.
+    options: { headerShown: false, statusBarStyle: primaryDescriptor.options.statusBarStyle },
     render: () => (
       <WorkspaceNativeTabs
         tabsInSidebarColumn={props.nativeColumns && !workspacePage && deviceType === "pad"}

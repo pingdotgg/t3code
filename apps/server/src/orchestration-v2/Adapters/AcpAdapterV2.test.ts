@@ -2326,6 +2326,7 @@ describe("AcpAdapterV2", () => {
         { label: "Blue", description: "Blue", value: "blue" },
       ],
       allowCustomAnswer: true,
+      required: false,
     },
   ];
 
@@ -2338,6 +2339,8 @@ describe("AcpAdapterV2", () => {
         answers: { q0: "Please wait" },
         content: { q0__other: "Please wait" },
       },
+      // regression: #43335 a choice the schema leaves optional could not be skipped
+      { scenario: "OMP skipped optional choice", answers: {}, content: {} },
     ].map((fixture) => ({
       ...fixture,
       settings: OMP_SETTINGS,
@@ -2366,6 +2369,7 @@ describe("AcpAdapterV2", () => {
             { label: "Approve", value: "Approve", description: "Commit the verified fix." },
             { label: "Hold", value: "Hold", description: "Hold" },
           ],
+          required: false,
         },
       ],
       result: { action: "accept", content: fixture.content },
@@ -2455,6 +2459,22 @@ describe("AcpAdapterV2", () => {
       questions: openCodeQuestions,
       answers: { q0: "blue" },
       result: { action: "accept", content: { q0: "blue" } },
+    },
+    {
+      scenario: "OpenCode skipped optional choice",
+      settings: OPENCODE_SETTINGS,
+      schema: openCodeSchema,
+      questions: openCodeQuestions,
+      answers: {},
+      result: { action: "accept", content: {} },
+    },
+    {
+      scenario: "OpenCode required choice left unanswered is cancelled",
+      settings: OPENCODE_SETTINGS,
+      schema: { ...openCodeSchema, required: ["q0"] },
+      questions: openCodeQuestions.map(({ required: _, ...question }) => question),
+      answers: {},
+      result: { action: "cancel" },
     },
     {
       scenario: "Devin allowOther choice accepts a typed answer",
@@ -3879,6 +3899,253 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.each([
+    {
+      label: "a brand-new interleaved tool call arrives mid-inline-code token",
+      steps: [
+        answer(undefined, "Check permissions (bootstrap `umask 027` app `0750` & keyring `0"),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "interleaved-cmd-1",
+          title: "ls -la ./config",
+          kind: "execute",
+          status: "in_progress",
+          rawInput: { command: "ls -la ./config" },
+        },
+        answer(undefined, "640`, OpenSSH `01-` ordering + `sshd -T`)."),
+      ],
+      expectedAssistants: [
+        "Check permissions (bootstrap `umask 027` app `0750` & keyring `0640`, OpenSSH `01-` ordering + `sshd -T`).",
+      ],
+    },
+    {
+      label: "an already-tracked background tool reports progress and completion mid-answer",
+      steps: [
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "bg-1",
+          title: "sleep 3 && echo done",
+          kind: "execute",
+          status: "in_progress",
+          rawInput: { command: "sleep 3 && echo done" },
+        },
+        answer(undefined, "First sentence done."),
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "bg-1",
+          status: "in_progress",
+          rawOutput: { stdout: "." },
+        },
+        answer(undefined, " Second sentence "),
+        {
+          sessionUpdate: "tool_call_content_chunk",
+          toolCallId: "bg-1",
+          content: { type: "content", content: { type: "text", text: "more" } },
+        },
+        answer(undefined, "continues cleanly."),
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "bg-1",
+          status: "completed",
+          rawOutput: { stdout: "done" },
+        },
+        answer(undefined, " Final tail."),
+      ],
+      expectedAssistants: ["First sentence done. Second sentence continues cleanly. Final tail."],
+    },
+    {
+      label: "a preamble with trailing whitespace precedes a sequential tool call and reply",
+      steps: [
+        answer(undefined, "Let me check the config file. "),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "seq-ws",
+          title: "Read config.json",
+          kind: "read",
+          status: "in_progress",
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "seq-ws",
+          status: "completed",
+        },
+        answer(undefined, "Found the issue."),
+      ],
+      expectedAssistants: ["Let me check the config file. ", "Found the issue."],
+    },
+    {
+      label: "a preamble containing an unpaired ** precedes a sequential tool call and reply",
+      steps: [
+        answer(undefined, "I'll search **/*.ts for usages."),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "seq-glob",
+          title: "Read **/*.ts",
+          kind: "read",
+          status: "in_progress",
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "seq-glob",
+          status: "completed",
+        },
+        answer(undefined, "Found 3 usages."),
+      ],
+      expectedAssistants: ["I'll search **/*.ts for usages.", "Found 3 usages."],
+    },
+    {
+      label: "a clean preamble precedes a sequential tool call and follow-up reply",
+      steps: [
+        answer(undefined, "Let me check the config file."),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "seq-1",
+          title: "Read config.json",
+          kind: "read",
+          status: "in_progress",
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "seq-1",
+          status: "completed",
+        },
+        answer(undefined, "The config looks good."),
+      ],
+      expectedAssistants: ["Let me check the config file.", "The config looks good."],
+    },
+    {
+      label: "a terse preamble without punctuation precedes a tool call and fresh reply",
+      steps: [
+        answer(undefined, "Checking"),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "seq-2",
+          title: "Read config.json",
+          kind: "read",
+          status: "in_progress",
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "seq-2",
+          status: "completed",
+        },
+        answer(undefined, "Found the issue."),
+      ],
+      expectedAssistants: ["Checking", "Found the issue."],
+    },
+    {
+      label: "a terse unnamed preamble precedes a tool call and an identified reply",
+      steps: [
+        answer(undefined, "Checking"),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "seq-3",
+          title: "Read config.json",
+          kind: "read",
+          status: "in_progress",
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "seq-3",
+          status: "completed",
+        },
+        answer("reply-1", "Found the issue."),
+      ],
+      expectedAssistants: ["Checking", "Found the issue."],
+    },
+    {
+      label: "a terse preamble precedes a tool call and a lowercase reply",
+      steps: [
+        answer(undefined, "Checking"),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "seq-lower",
+          title: "Read config.json",
+          kind: "read",
+          status: "in_progress",
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "seq-lower",
+          status: "completed",
+        },
+        answer(undefined, "found the issue."),
+      ],
+      expectedAssistants: ["Checking", "found the issue."],
+    },
+    {
+      label: "a preamble without punctuation precedes a tool call and a digit-led reply",
+      steps: [
+        answer(undefined, "Running the tests"),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "seq-digit",
+          title: "Read config.json",
+          kind: "read",
+          status: "in_progress",
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "seq-digit",
+          status: "completed",
+        },
+        answer(undefined, "2 tests failed."),
+      ],
+      expectedAssistants: ["Running the tests", "2 tests failed."],
+    },
+    {
+      label: "a preamble without punctuation precedes a still-running tool and a reply",
+      steps: [
+        answer(undefined, "Let me start the dev server with `vp run dev`"),
+        {
+          sessionUpdate: "tool_call",
+          toolCallId: "seq-running",
+          title: "vp run dev",
+          kind: "execute",
+          status: "in_progress",
+          rawInput: { command: "vp run dev" },
+        },
+        answer(undefined, "The server is starting in the background."),
+      ],
+      expectedAssistants: [
+        "Let me start the dev server with `vp run dev`",
+        "The server is starting in the background.",
+      ],
+    },
+  ] satisfies ReadonlyArray<{
+    readonly label: string;
+    readonly steps: ReadonlyArray<ScriptedTextStep>;
+    readonly expectedAssistants: ReadonlyArray<string>;
+  }>)("preserves unnamed ACP assistant streams when $label", ({ steps, expectedAssistants }) =>
+    Effect.gen(function* () {
+      const events = yield* runScriptedTextTurn(steps);
+      const latestById = new Map<string, OrchestrationV2TurnItem>();
+      for (const event of events) {
+        if (event.type !== "turn_item.updated") continue;
+        latestById.set(String(event.turnItem.id), event.turnItem);
+      }
+      const ordered = [...latestById.values()].toSorted((a, b) => a.ordinal - b.ordinal);
+      const assistants = ordered.flatMap((item) =>
+        item.type === "assistant_message" ? [item] : [],
+      );
+      assert.deepEqual(
+        assistants.map((item) => item.text),
+        expectedAssistants,
+      );
+      for (const item of assistants) {
+        assert.equal(item.status, "completed");
+      }
+      if (expectedAssistants.length === 2) {
+        const tool = ordered.find(
+          (item) => item.type === "dynamic_tool" || item.type === "command_execution",
+        );
+        assert.isDefined(tool);
+        assert.isBelow(assistants[0]!.ordinal, tool!.ordinal);
+        assert.isBelow(tool!.ordinal, assistants[1]!.ordinal);
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live("replaces and removes identified ACP plans across turns", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("acp-cross-turn-plans");
@@ -5157,12 +5424,20 @@ describe("AcpAdapterV2", () => {
       yield* runtime.startTurn(
         makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
       );
-      const items = Array.from(
+      const events = Array.from(
         yield* runtime.events.pipe(
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
         ),
-      ).flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []));
+      );
+      const items = events.flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem] : [],
+      );
+      const terminal = events.at(-1);
+      assert.isTrue(
+        terminal?.type === "turn.terminal" && terminal.status === "completed",
+        "an error notice does not fail the turn",
+      );
 
       const initialize = Array.from(yield* Queue.takeAll(protocolEvents)).find(
         (event) => event.direction === "outgoing" && rawProtocolMethod(event) === "initialize",
@@ -5179,8 +5454,16 @@ describe("AcpAdapterV2", () => {
       const title =
         "skill discovery warning: candidate was skipped because its metadata is invalid";
       assert.deepEqual(
-        items.flatMap((item) => (item.type === "system_notice" ? [item.message] : [])),
-        [title],
+        items.flatMap((item) =>
+          item.type === "system_notice" ? [{ message: item.message, level: item.level }] : [],
+        ),
+        [
+          { message: title, level: "info" },
+          { message: "warning notice", level: "warning" },
+          { message: "error notice", level: "error" },
+          { message: "_mock.custom notice", level: "info" },
+        ],
+        "ACP notice severities map to system notice levels",
       );
       const replies = new Map(
         items.flatMap((item) => (item.type === "assistant_message" ? [[item.id, item.text]] : [])),
@@ -6145,6 +6428,18 @@ describe("AcpAdapterV2", () => {
           cause: "test",
         }),
       );
+      // Clients see the next send launch an agent before the server opens its turn.
+      const gone = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "provider_session.updated"),
+        Stream.take(1),
+        Stream.runCollect,
+      );
+      assert.deepEqual(
+        Array.from(gone, (event) =>
+          event.type === "provider_session.updated" ? event.providerSession.startupPhase : null,
+        ),
+        ["launch"],
+      );
 
       yield* runtime.startTurn(
         makeTurnInput({
@@ -6175,6 +6470,57 @@ describe("AcpAdapterV2", () => {
         ).slice(0, 3),
         ["resume", null, "turn running"],
       );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("clears the launch step once a replacement session replaces a terminated agent", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      const runtimeInputs: AcpAdapterV2RuntimeInput[] = [];
+      const baseMakeRuntime = makeMockRuntime({ childProcessSpawner, mockAgentPath });
+      const instanceId = ProviderInstanceId.make("acp-test-replacement-clears-launch");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: (runtimeInput) =>
+            Effect.sync(() => {
+              runtimeInputs.push(runtimeInput);
+            }).pipe(Effect.andThen(baseMakeRuntime(runtimeInput))),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-replacement-clears-launch");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-replacement-clears-launch"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const original = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+      yield* runtimeInputs[0]!.onTermination!(
+        new EffectAcpErrors.AcpTransportError({ detail: "Injected termination", cause: "test" }),
+      );
+      assert.equal(runtime.providerSession.startupPhase, "launch");
+
+      yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+        existingProviderThread: { ...original, nativeThreadRef: null },
+        forceNewNativeThread: true,
+      });
+      // The replacement agent is running, so the next send does not show it starting.
+      assert.isUndefined(runtime.providerSession.startupPhase);
     }).pipe(Effect.provide(layerTest)),
   );
 

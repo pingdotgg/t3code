@@ -9,6 +9,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -40,7 +41,7 @@ const adapter = {
 const layerDatabase = SqlitePersistence.layerMemory;
 const layerOrchestrator = Layer.mergeAll(
   layerDatabase,
-  ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+  ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest), Layer.provide(layerDatabase)),
   ProviderReplayHarness.layerWithRegistry(
     { name: "mcp-mode-race" },
     ProviderAdapterRegistry.layerFromAdapters([adapter]),

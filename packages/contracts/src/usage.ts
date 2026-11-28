@@ -6,6 +6,7 @@ import {
   ProjectId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 /** Bump for incompatible UsageSummary changes; skipped unknown array variants need no bump. */
 export const USAGE_CONTRACT_VERSION = 6 as const;
@@ -172,6 +173,16 @@ export const UsageSummaryInput = Schema.Struct({
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 
+/** An enabled provider whose usage files T3 has not been allowed to read yet. Nothing was read. */
+export const UsageAccessRequest = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  driver: ProviderDriverKind,
+  provider: UsageProviderKind,
+  /** Folders a grant would let T3 read; empty when finding them would itself read the provider. */
+  paths: Schema.Array(TrimmedNonEmptyString),
+});
+export type UsageAccessRequest = typeof UsageAccessRequest.Type;
+
 export const UsageSummary = Schema.Struct({
   contractVersion: Schema.Number,
   readAt: Schema.String,
@@ -187,6 +198,8 @@ export const UsageSummary = Schema.Struct({
   /** Absent when the server predates projects or could not read them; totals are unaffected. */
   projectTotals: Schema.optional(ForwardCompatibleArray(UsageProjectTotals)),
   projects: Schema.optional(ForwardCompatibleArray(UsageProject)),
+  /** Absent from servers that read every provider without asking. */
+  accessRequests: Schema.optional(ForwardCompatibleArray(UsageAccessRequest)),
 });
 export type UsageSummary = typeof UsageSummary.Type;
 
