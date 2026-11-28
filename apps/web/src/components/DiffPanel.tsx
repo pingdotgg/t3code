@@ -320,14 +320,14 @@ export default function DiffPanel({
   const tracksFolders = (activeProject?.trackedFolders?.length ?? 0) > 0;
   // Unchanged repositories are listed too: work done outside a turn only shows in these scopes.
   const gitRepositories = useThreadGitRepositories({
-    threadRef: routeThreadRef,
-    isServerThread: true,
+    threadRef: panelThreadRef,
+    isServerThread: routeThreadRef !== null,
     projectId: activeProjectId,
     worktreePath: activeThread?.worktreePath ?? null,
     threadCwd: activeCwd ?? null,
     enabled: visible && tracksFolders,
   });
-  const chosenGitRepositoryPath = useThreadGitRepositoryPath(routeThreadRef);
+  const chosenGitRepositoryPath = useThreadGitRepositoryPath(panelThreadRef);
   const gitRepository = resolveThreadGitRepository({
     repositories: gitRepositories,
     chosenPath: chosenGitRepositoryPath,
@@ -981,8 +981,8 @@ export default function DiffPanel({
   };
   const selectGitRepository = (value: string) => {
     const nextPath = value === THREAD_FOLDER ? null : value;
-    if (!routeThreadRef || nextPath === (gitRepository?.repositoryPath ?? null)) return;
-    chooseThreadGitRepository(routeThreadRef, nextPath);
+    if (!panelThreadRef || nextPath === (gitRepository?.repositoryPath ?? null)) return;
+    chooseThreadGitRepository(panelThreadRef, nextPath);
   };
   const selectedTurnValue = selectedTurn ? `turn:${selectedTurn.runId}` : "";
   const selectedCommitValue = selectedCommitSha !== null ? `commit:${selectedCommitSha}` : "";
@@ -1223,7 +1223,7 @@ export default function DiffPanel({
               render={<Button size="xs" variant="ghost-muted" />}
               // The path tells same-named repositories apart, so the comparison gives way first. A
               // narrower row caps it so it still fits; only a phone-width row truncates it further.
-              className="max-w-48 shrink-0 @max-[18rem]/diff-refs:max-w-28 @max-[14rem]/diff-refs:min-w-14 @max-[14rem]/diff-refs:shrink"
+              className="max-w-48 shrink-0 @max-[18rem]/diff-refs:max-w-32 @max-[14rem]/diff-refs:min-w-14 @max-[14rem]/diff-refs:shrink"
               aria-label={gt("Repository: {name}", { name: gitRepositoryLabel })}
             >
               <span className="truncate">{gitRepositoryLabel}</span>

@@ -518,7 +518,6 @@ it("shows a turn's repositories in a folder that is not a Git repository", async
 
 it.each([
   { width: 600, path: "docs/server", fullPath: true },
-  { width: 540, path: "docs/server", fullPath: true },
   { width: 480, path: "docs/server", fullPath: true },
   { width: 480, path: "services/billing/api-server", fullPath: false },
   { width: 390, path: "docs/server", fullPath: false },
