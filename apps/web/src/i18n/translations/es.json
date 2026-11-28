@@ -2709,6 +2709,7 @@
   "77c351e5a0a29bb8": "No se puede inicializar libghostty-vt",
   "27955c5552a789d2": "{message}. Cierra y vuelve a abrir la terminal para reintentarlo.",
   "310d656152b20e71": "Individual",
+  "49acecee9cdf2a4c": "Mixto",
   "1ae13c99cdda574f": "Apiladas",
   "b9509e8462b3be86": "En paralelo",
   "f59d335f54f40e27": "Cerrar {terminal} ({shortcut})",

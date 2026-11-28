@@ -2713,6 +2713,7 @@
   "77c351e5a0a29bb8": "无法初始化 libghostty-vt",
   "27955c5552a789d2": "{message}。请关闭后重新打开终端以重试。",
   "310d656152b20e71": "单栏",
+  "49acecee9cdf2a4c": "混合",
   "1ae13c99cdda574f": "上下排列",
   "b9509e8462b3be86": "并排",
   "f59d335f54f40e27": "关闭 {terminal} ({shortcut})",
