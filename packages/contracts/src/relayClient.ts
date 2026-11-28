@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { NonNegativeInt } from "./baseSchemas.ts";
 
 export const RelayClientStatusSchema = Schema.Union([
   Schema.Struct({
@@ -35,6 +36,8 @@ export const RelayClientInstallProgressEventSchema = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("progress"),
     stage: RelayClientInstallProgressStageSchema,
+    downloadedBytes: Schema.optional(NonNegativeInt),
+    totalBytes: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
     type: Schema.Literal("complete"),

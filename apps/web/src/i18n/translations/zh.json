@@ -5268,6 +5268,8 @@
   "afdd35f49f2ab0a7": "T3 Code 需要中继客户端，才能通过 T3 Connect 访问此环境。",
   "2767fee9bffb00ac": "第 {step}/{total} 步",
   "752bb0ea8b33e33e": "中继客户端安装进度",
+  "f6eb1ac0cea7f4d7": "已下载 {downloaded} MB",
+  "9a3e0462ed1b6fd9": "已下载 {downloaded} MB，共 {total} MB",
   "2eadb8e0944eeee6": "安装中继客户端期间，请保持 T3 Code 打开。",
   "0932e0330e2f409d": "托管中继客户端",
   "3683040758069062": [

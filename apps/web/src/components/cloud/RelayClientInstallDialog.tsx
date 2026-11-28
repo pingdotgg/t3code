@@ -1,5 +1,5 @@
 import { DownloadIcon } from "lucide-react";
-import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 import { useSyncExternalStore } from "react";
 import type { RelayClientInstallProgressStage } from "@t3tools/contracts";
 
@@ -33,6 +33,12 @@ const installSteps: ReadonlyArray<{
   { stage: "activating", label: msg("Activating installation") },
 ];
 
+const formatMegabytes = (bytes: number, locale: string) =>
+  (bytes / 1024 / 1024).toLocaleString(locale, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+
 export function RelayClientInstallDialog() {
   const state = useSyncExternalStore(
     subscribeRelayClientInstallDialog,
@@ -40,10 +46,12 @@ export function RelayClientInstallDialog() {
     readRelayClientInstallDialogState,
   );
   const gt = useGT();
+  const locale = useLocale();
   const m = useMessages();
   const view = state.status === "closing" ? state.view : state;
   const isConfirming = view.status === "confirming";
   const isInstalling = view.status === "installing";
+  const isDownloading = isInstalling && view.stage === "downloading";
   const activeStepIndex = isInstalling
     ? installSteps.findIndex(({ stage }) => stage === view.stage)
     : -1;
@@ -100,7 +108,20 @@ export function RelayClientInstallDialog() {
                 value={activeStepIndex + 1}
               />
               <p className="text-xs leading-relaxed text-muted-foreground">
-                <T>Keep T3 Code open while the relay client is installed.</T>
+                {isDownloading && view.downloadedBytes !== undefined ? (
+                  view.totalBytes === undefined ? (
+                    gt("{downloaded} MB downloaded", {
+                      downloaded: formatMegabytes(view.downloadedBytes, locale),
+                    })
+                  ) : (
+                    gt("{downloaded} MB of {total} MB downloaded", {
+                      downloaded: formatMegabytes(view.downloadedBytes, locale),
+                      total: formatMegabytes(view.totalBytes, locale),
+                    })
+                  )
+                ) : (
+                  <T>Keep T3 Code open while the relay client is installed.</T>
+                )}
               </p>
             </div>
           ) : (

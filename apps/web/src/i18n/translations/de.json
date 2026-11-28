@@ -5264,6 +5264,8 @@
   "afdd35f49f2ab0a7": "T3 Code braucht den Relay-Client, um diese Umgebung über T3 Connect verfügbar zu machen.",
   "2767fee9bffb00ac": "{step} von {total}",
   "752bb0ea8b33e33e": "Installationsfortschritt des Relay-Clients",
+  "f6eb1ac0cea7f4d7": "{downloaded} MB heruntergeladen",
+  "9a3e0462ed1b6fd9": "{downloaded} MB von {total} MB heruntergeladen",
   "2eadb8e0944eeee6": "Lass T3 Code geöffnet, während der Relay-Client installiert wird.",
   "0932e0330e2f409d": "Verwalteter Relay-Client",
   "3683040758069062": [

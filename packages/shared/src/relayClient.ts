@@ -19,11 +19,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse, Headers } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { isWindowsRenameLock } from "./atomicWrite.ts";
 import * as HostProcess from "./HostProcess.ts";
@@ -143,6 +144,12 @@ const INSTALL_LOCK_LEGACY_STALE_MS = 30 * 60 * 1_000;
 const VERSION_PROBE_TIMEOUT = "10 seconds";
 // Antivirus scans can hold the first launch of a freshly downloaded binary for 20-30 s.
 const INSTALL_VALIDATION_TIMEOUT = "2 minutes";
+const DOWNLOAD_PROGRESS_INTERVAL_BYTES = 1024 * 1024;
+
+type RelayClientDownloadProgress = {
+  readonly downloadedBytes: number;
+  readonly totalBytes?: number;
+};
 
 const ACTIVATE_RETRY_COUNT = 40;
 const ACTIVATE_RETRY_DELAY = "250 millis";
@@ -480,7 +487,10 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
 
   const downloadAsset = Effect.fn("cloudflared.downloadAsset")(function* (
     asset: CloudflaredReleaseAsset,
-    report: (stage: RelayClientInstallProgressStage) => Effect.Effect<void>,
+    report: (
+      stage: RelayClientInstallProgressStage,
+      progress?: RelayClientDownloadProgress,
+    ) => Effect.Effect<void>,
   ) {
     yield* report("downloading");
     const response = yield* httpClient.execute(HttpClientRequest.get(asset.url)).pipe(
@@ -495,19 +505,53 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
           }),
       ),
     );
-    const bytes = new Uint8Array(
-      yield* response.arrayBuffer.pipe(
-        Effect.timeout(CLOUDFLARED_DOWNLOAD_TIMEOUT),
-        Effect.mapError(
-          (cause) =>
-            new RelayClientInstallError({
-              reason: "download_failed",
-              message: "Could not read the downloaded relay client binary.",
-              cause,
-            }),
-        ),
+    const contentLength = Option.getOrUndefined(Headers.get(response.headers, "content-length"));
+    const parsedContentLength = contentLength === undefined ? undefined : Number(contentLength);
+    const totalBytes =
+      parsedContentLength !== undefined &&
+      Number.isSafeInteger(parsedContentLength) &&
+      parsedContentLength > 0
+        ? parsedContentLength
+        : undefined;
+    let downloadedBytes = 0;
+    let lastReportedBytes = 0;
+    const chunks = yield* response.stream.pipe(
+      Stream.tap((chunk) =>
+        Effect.suspend(() => {
+          downloadedBytes += chunk.byteLength;
+          if (downloadedBytes - lastReportedBytes < DOWNLOAD_PROGRESS_INTERVAL_BYTES) {
+            return Effect.void;
+          }
+          lastReportedBytes = downloadedBytes;
+          return report("downloading", {
+            downloadedBytes,
+            ...(totalBytes === undefined ? {} : { totalBytes }),
+          });
+        }),
+      ),
+      Stream.runCollect,
+      Effect.timeout(CLOUDFLARED_DOWNLOAD_TIMEOUT),
+      Effect.mapError(
+        (cause) =>
+          new RelayClientInstallError({
+            reason: "download_failed",
+            message: "Could not read the downloaded relay client binary.",
+            cause,
+          }),
       ),
     );
+    if (downloadedBytes !== lastReportedBytes) {
+      yield* report("downloading", {
+        downloadedBytes,
+        ...(totalBytes === undefined ? {} : { totalBytes }),
+      });
+    }
+    const bytes = new Uint8Array(downloadedBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
     yield* report("verifying");
     const checksum = yield* digest.digest(Digest.sha256, bytes).pipe(
       Effect.mapError(
@@ -600,7 +644,10 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   });
 
   const installUnlocked = Effect.fn("cloudflared.installUnlocked")(function* (
-    report: (stage: RelayClientInstallProgressStage) => Effect.Effect<void>,
+    report: (
+      stage: RelayClientInstallProgressStage,
+      progress?: RelayClientDownloadProgress,
+    ) => Effect.Effect<void>,
   ) {
     yield* report("checking");
     const config = yield* loadCloudflaredConfig;
@@ -717,12 +764,9 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   });
   const installWithProgress: RelayClientShape["installWithProgress"] = (report) =>
     installSemaphore.withPermit(
-      installUnlocked((stage) =>
-        report({
-          type: "progress",
-          stage,
-        }),
-      ).pipe(Effect.scoped),
+      installUnlocked((stage, progress) => report({ type: "progress", stage, ...progress })).pipe(
+        Effect.scoped,
+      ),
     );
   const install = installWithProgress(() => Effect.void);
 
