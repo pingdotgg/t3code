@@ -5725,5 +5725,6 @@
   "e4e91d155cb6a9b4": "Barra lateral sem graça (agrupar por projeto)",
   "3a678332fc7142f7": "Agrupa as threads da barra lateral em pastas de projeto. As threads fixadas ficam no topo, e Adiadas e Concluídas ficam abaixo das pastas.",
   "ac1e5c94d1ad3c6a": "Linhas de pasta em duas linhas",
-  "f079556d67367fe7": "Mostra as threads das pastas em duas linhas: o título e, abaixo, o branch, o pull request e o agente."
+  "f079556d67367fe7": "Mostra as threads das pastas em duas linhas: o título e, abaixo, o branch, o pull request e o agente.",
+  "2a3a1fa965c0e9b5": "A barra lateral sem graça do Labs não tem a seção Trabalhando."
 }

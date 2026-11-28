@@ -657,6 +657,12 @@ function groupActiveThreadRows(
       return [];
     }
     const expanded = !collapsed.has(scope.key);
+    const visibleRows = expanded
+      ? folderRows
+      : folderRows.filter(
+          ({ item: { thread } }) =>
+            scopedThreadKey(thread.environmentId, thread.id) === folders.selectedThreadKey,
+        );
     return [
       {
         type: "v2-project-folder",
@@ -664,19 +670,14 @@ function groupActiveThreadRows(
         projectKey: scope.key,
         project: scope.representative,
         title: scope.title,
-        count: folderRows.length,
+        // Collapsed, a folder counts the threads it hides, not the open one it keeps.
+        count: expanded ? folderRows.length : folderRows.length - visibleRows.length,
         expanded,
       },
-      ...folderRows
-        .filter(
-          ({ item: { thread } }) =>
-            expanded ||
-            scopedThreadKey(thread.environmentId, thread.id) === folders.selectedThreadKey,
-        )
-        .map((row): ThreadListV2ThreadListItem => ({
-          ...row,
-          folderRow: folders.multiline ? "two-line" : "single-line",
-        })),
+      ...visibleRows.map((row): ThreadListV2ThreadListItem => ({
+        ...row,
+        folderRow: folders.multiline ? "two-line" : "single-line",
+      })),
     ];
   });
   return [...pinned, ...grouped, ...ungrouped];
@@ -837,6 +838,8 @@ export function buildThreadListV2Items(input: {
   readonly settledLimit?: number;
   readonly now: string;
   readonly workingShelfEnabled?: boolean;
+  /** Project folders list active threads by the user's latest message, as desktop does. */
+  readonly sortActiveBySend?: boolean;
   readonly workingShelfExpanded?: boolean;
   readonly isWorking?: (thread: EnvironmentThreadShell) => boolean;
   readonly inboxReturnAt?: (thread: EnvironmentThreadShell) => number | undefined;
@@ -972,9 +975,11 @@ export function buildThreadListV2Items(input: {
     };
   }
 
-  const orderedActive = workingShelfEnabled
-    ? sortInboxThreadsByReturn(active, input.inboxReturnAt)
-    : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
+  const orderedActive = input.sortActiveBySend
+    ? sortWorkingThreadsBySend(active)
+    : workingShelfEnabled
+      ? sortInboxThreadsByReturn(active, input.inboxReturnAt)
+      : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
   const orderedWorking = sortWorkingThreadsBySend(working);
   const orderedSnoozed = [...snoozed].sort(
     (left, right) =>

@@ -390,7 +390,7 @@ export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledS
   return <ThreadListV2ShelfHeader {...props} kind="settled" />;
 });
 
-export function ThreadListV2ProjectFolder(props: {
+export const ThreadListV2ProjectFolder = memo(function ThreadListV2ProjectFolder(props: {
   readonly item: ThreadListV2ProjectFolderListItem;
   readonly pane: "screen" | "sidebar";
   readonly onToggle: (projectKey: string) => void;
@@ -436,7 +436,7 @@ export function ThreadListV2ProjectFolder(props: {
       />
     </Pressable>
   );
-}
+});
 
 export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(props: {
   readonly pane?: "screen" | "sidebar";

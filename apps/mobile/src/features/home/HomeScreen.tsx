@@ -597,7 +597,7 @@ export function HomeScreen(props: HomeScreenProps) {
         reorderSupported={
           item.item.pinned
             ? pinReorderEnvironmentIds.has(thread.environmentId)
-            : item.folderRow === undefined &&
+            : projectFolderPreferences === null &&
               !workingShelfEnabled &&
               activeReorderEnvironmentIds.has(thread.environmentId)
         }

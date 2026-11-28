@@ -5733,5 +5733,6 @@
   "e4e91d155cb6a9b4": "Boring sidebar (group by project)",
   "3a678332fc7142f7": "Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders.",
   "ac1e5c94d1ad3c6a": "Two-line folder rows",
-  "f079556d67367fe7": "Show folder threads on two lines: the title, then the branch, pull request, and agent."
+  "f079556d67367fe7": "Show folder threads on two lines: the title, then the branch, pull request, and agent.",
+  "2a3a1fa965c0e9b5": "The boring sidebar in Labs has no Working section."
 }

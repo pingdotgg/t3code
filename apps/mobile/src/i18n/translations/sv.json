@@ -5731,5 +5731,6 @@
   "e4e91d155cb6a9b4": "Enkelt sidofält (gruppera per projekt)",
   "3a678332fc7142f7": "Gruppera trådar i sidofältet i projektmappar. Fästa trådar ligger överst, och Snoozade och Klara ligger under mapparna.",
   "ac1e5c94d1ad3c6a": "Mapprader på två rader",
-  "f079556d67367fe7": "Visa trådar i mappar på två rader: titeln, sedan gren, pull request och agent."
+  "f079556d67367fe7": "Visa trådar i mappar på två rader: titeln, sedan gren, pull request och agent.",
+  "2a3a1fa965c0e9b5": "Det enkla sidofältet i Labs har inget avsnitt Arbetar."
 }

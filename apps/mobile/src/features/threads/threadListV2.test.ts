@@ -867,14 +867,16 @@ describe("buildThreadListV2ListItems", () => {
     const layout = buildThreadListV2Items({
       threads: [
         thread("pinned", { pinnedAt: NOW }),
-        thread("selected"),
-        thread("other"),
+        thread("selected", { activeOrderKey: "a0" }),
+        // Sent to last, so it leads its folder despite the manual order.
+        thread("other", { activeOrderKey: "a1", latestUserAuthoredMessageAt: NOW }),
         thread("snoozed", { snoozedUntil: "2026-06-03T09:00:00.000Z" }),
         thread("settled", { settledOverride: "settled", settledAt: NOW }),
       ],
       environmentId: null,
       searchQuery: "",
       now: NOW,
+      sortActiveBySend: true,
     });
     const project = {
       environmentId,
@@ -922,7 +924,7 @@ describe("buildThreadListV2ListItems", () => {
     ]);
     expect(collapsed[1]).toMatchObject({
       expanded: false,
-      count: 2,
+      count: 1,
       project: { projectIcon: project.projectIcon },
     });
     expect(collapsed[2]).toMatchObject({ folderRow: "two-line" });
@@ -933,8 +935,8 @@ describe("buildThreadListV2ListItems", () => {
     });
     expect(expanded[1]).toMatchObject({ expanded: true, count: 2 });
     expect(expanded.slice(2, 4)).toMatchObject([
-      { folderRow: "single-line" },
-      { folderRow: "single-line" },
+      { folderRow: "single-line", item: { thread: { id: "other" } } },
+      { folderRow: "single-line", item: { thread: { id: "selected" } } },
     ]);
 
     const updated = buildThreadListV2ListItems({

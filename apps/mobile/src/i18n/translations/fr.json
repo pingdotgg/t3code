@@ -5725,5 +5725,6 @@
   "e4e91d155cb6a9b4": "Barre latérale classique (regrouper par projet)",
   "3a678332fc7142f7": "Regroupe les fils de la barre latérale dans des dossiers de projet. Les fils épinglés restent en haut, les fils reportés et clos restent sous les dossiers.",
   "ac1e5c94d1ad3c6a": "Lignes de dossier sur deux lignes",
-  "f079556d67367fe7": "Affiche les fils des dossiers sur deux lignes : le titre, puis la branche, la pull request et l’agent."
+  "f079556d67367fe7": "Affiche les fils des dossiers sur deux lignes : le titre, puis la branche, la pull request et l’agent.",
+  "2a3a1fa965c0e9b5": "La barre latérale classique des Labs n’a pas de section En cours."
 }

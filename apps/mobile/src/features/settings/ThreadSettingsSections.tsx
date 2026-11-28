@@ -247,12 +247,12 @@ export function WorkingSectionSettings() {
   const gt = useGT();
   const savePreferences = useAtomCommand(saveMobilePreferences);
   const preferences = useAtomValue(mobilePreferencesAtom);
+  const boringSidebarEnabled =
+    AsyncResult.isSuccess(preferences) && preferences.value.boringSidebarEnabled === true;
   const workingShelfEnabled =
-    AsyncResult.isSuccess(preferences) && preferences.value.workingShelfEnabled !== false;
-
-  if (AsyncResult.isSuccess(preferences) && preferences.value.boringSidebarEnabled === true) {
-    return null;
-  }
+    !boringSidebarEnabled &&
+    AsyncResult.isSuccess(preferences) &&
+    preferences.value.workingShelfEnabled !== false;
 
   return (
     <View className="gap-3">
@@ -261,6 +261,7 @@ export function WorkingSectionSettings() {
           icon="bolt.circle"
           label={gt("Working section")}
           value={workingShelfEnabled}
+          disabled={boringSidebarEnabled}
           onValueChange={(value) => {
             void savePreferences({ workingShelfEnabled: value });
           }}
@@ -273,6 +274,11 @@ export function WorkingSectionSettings() {
           be moved.
         </T>
       </Text>
+      {boringSidebarEnabled ? (
+        <Text className="px-2 text-sm text-foreground-muted">
+          <T>The boring sidebar in Labs has no Working section.</T>
+        </Text>
+      ) : null}
     </View>
   );
 }

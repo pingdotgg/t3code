@@ -5731,5 +5731,6 @@
   "e4e91d155cb6a9b4": "Schlichte Seitenleiste (nach Projekt gruppieren)",
   "3a678332fc7142f7": "Threads in der Seitenleiste in Projektordnern gruppieren. Angeheftete Threads bleiben oben, Zurückgestellte und Erledigte bleiben unter den Ordnern.",
   "ac1e5c94d1ad3c6a": "Zweizeilige Ordnerzeilen",
-  "f079556d67367fe7": "Ordner-Threads zweizeilig anzeigen: den Titel, darunter Branch, Pull Request und Agent."
+  "f079556d67367fe7": "Ordner-Threads zweizeilig anzeigen: den Titel, darunter Branch, Pull Request und Agent.",
+  "2a3a1fa965c0e9b5": "Die schlichte Seitenleiste in Labs hat keinen Bereich „In Arbeit“."
 }

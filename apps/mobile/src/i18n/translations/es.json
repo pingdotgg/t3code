@@ -5725,5 +5725,6 @@
   "e4e91d155cb6a9b4": "Barra lateral simple (agrupar por proyecto)",
   "3a678332fc7142f7": "Agrupa los hilos de la barra lateral en carpetas de proyecto. Los hilos fijados quedan arriba, y Pospuestos y Resueltos quedan debajo de las carpetas.",
   "ac1e5c94d1ad3c6a": "Filas de carpeta en dos líneas",
-  "f079556d67367fe7": "Muestra los hilos de las carpetas en dos líneas: el título y, debajo, la rama, la pull request y el agente."
+  "f079556d67367fe7": "Muestra los hilos de las carpetas en dos líneas: el título y, debajo, la rama, la pull request y el agente.",
+  "2a3a1fa965c0e9b5": "La barra lateral simple de Experimentos no tiene sección En curso."
 }
