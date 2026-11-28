@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -26,8 +27,8 @@ import {
   agentDeviceStateDir,
 } from "./DeviceToolchain.ts";
 
-const processOutput = (code: number, stdout = "", stderr = "", timedOut = false) => ({
-  code: ChildProcessSpawner.ExitCode(code),
+const processOutput = (code: number | null, stdout = "", stderr = "", timedOut = false) => ({
+  code: code === null ? null : ChildProcessSpawner.ExitCode(code),
   stdout,
   stderr,
   timedOut,
@@ -601,6 +602,9 @@ const diagnose = (
   platform: NodeJS.Platform = "darwin",
 ) =>
   LocalDeviceHost.__testing.platformReason("android").pipe(
+    Effect.provideService(ProcessRunner.ProcessRunner, {
+      run: () => Effect.die("Android SDK availability must not start processes"),
+    }),
     Effect.provideService(HostProcess.Environment, environment),
     Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(
@@ -830,13 +834,96 @@ it.effect.each([
   }),
 );
 
-it.effect("keeps local Android and iOS available without ffmpeg", () =>
+it.effect.each([
+  {
+    name: "full Xcode and no ffmpeg",
+    xcrun: true,
+    probe: "ok",
+    selection: "override",
+    available: true,
+  },
+  {
+    name: "Command Line Tools only",
+    xcrun: true,
+    probe: "missing",
+    selection: "override",
+    available: false,
+  },
+  {
+    name: "a failed simulator probe",
+    xcrun: true,
+    probe: "failed",
+    selection: "override",
+    available: false,
+  },
+  {
+    name: "a timed out simulator probe",
+    xcrun: true,
+    probe: "timeout",
+    selection: "override",
+    available: false,
+  },
+  {
+    name: "no Xcode command line tools",
+    xcrun: false,
+    probe: "missing",
+    selection: "override",
+    available: false,
+  },
+  {
+    name: "a selected developer directory",
+    xcrun: true,
+    probe: "ok",
+    selection: "selected",
+    available: true,
+  },
+  {
+    name: "an empty developer directory override",
+    xcrun: true,
+    probe: "ok",
+    selection: "empty-override",
+    available: true,
+  },
+  {
+    name: "a missing selected directory",
+    xcrun: true,
+    probe: "ok",
+    selection: "missing",
+    available: false,
+  },
+  {
+    name: "a failed directory selection",
+    xcrun: true,
+    probe: "ok",
+    selection: "failed",
+    available: false,
+  },
+  {
+    name: "a timed out directory selection",
+    xcrun: true,
+    probe: "ok",
+    selection: "timeout",
+    available: false,
+  },
+  {
+    name: "a missing override directory",
+    xcrun: true,
+    probe: "ok",
+    selection: "override-missing",
+    available: false,
+  },
+])("reports local simulator availability with $name", ({ xcrun, probe, selection, available }) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-ffmpeg-" });
+    const developerDirectory = `${baseDir}/selected-xcode`;
+    if (selection !== "missing" && selection !== "override-missing")
+      yield* fs.makeDirectory(developerDirectory);
     yield* fs.makeDirectory(`${baseDir}/bin`);
-    yield* fs.writeFileString(`${baseDir}/bin/xcrun`, "#!/bin/sh\nexit 0\n");
-    yield* fs.chmod(`${baseDir}/bin/xcrun`, 0o755);
+    if (xcrun) {
+      yield* fs.writeFileString(`${baseDir}/bin/xcrun`, "#!/bin/sh\nexit 0\n");
+      yield* fs.chmod(`${baseDir}/bin/xcrun`, 0o755);
+    }
     for (const [directory, tool] of [
       ["platform-tools", "adb"],
       ["emulator", "emulator"],
@@ -845,12 +932,18 @@ it.effect("keeps local Android and iOS available without ffmpeg", () =>
       yield* fs.makeDirectory(`${baseDir}/sdk/${directory}`, { recursive: true });
       yield* fs.writeFileString(`${baseDir}/sdk/${directory}/${tool}`, "");
     }
+    const developerOverride = selection.startsWith("override")
+      ? developerDirectory
+      : selection === "empty-override"
+        ? ""
+        : undefined;
     const onTestHost = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
         Effect.provideService(HostProcess.Environment, {
           HOME: baseDir,
           PATH: `${baseDir}/bin`,
           ANDROID_HOME: `${baseDir}/sdk`,
+          DEVELOPER_DIR: developerOverride,
         }),
         Effect.provideService(HostProcess.Platform, "darwin"),
       );
@@ -862,21 +955,66 @@ it.effect("keeps local Android and iOS available without ffmpeg", () =>
         HttpClient.make(() => Effect.die(new Error("Readiness must not make network requests"))),
       ),
       Effect.provideService(ProcessRunner.ProcessRunner, {
-        run: () => Effect.die("Platform availability must not probe emulator video"),
+        run: (input) => {
+          if (input.command === "xcode-select") {
+            expect(selection.startsWith("override")).toBe(false);
+            expect(input.args).toEqual(["--print-path"]);
+            expect(input.timeout).toEqual(Duration.seconds(5));
+            expect(input.maxOutputBytes).toBe(64 * 1024);
+            expect(input.timeoutBehavior).toBe("timedOutResult");
+            return Effect.succeed(
+              processOutput(
+                selection === "timeout" ? null : selection === "failed" ? 2 : 0,
+                developerDirectory,
+                "",
+                selection === "timeout",
+              ),
+            );
+          }
+          expect(input.command).toBe("xcrun");
+          expect(["missing", "failed", "timeout", "override-missing"]).not.toContain(selection);
+          expect(input.args).toEqual(["simctl", "help"]);
+          expect(input.timeout).toEqual(Duration.seconds(5));
+          expect(input.env?.DEVELOPER_DIR).toBe(developerOverride);
+          expect(input.maxOutputBytes).toBe(64 * 1024);
+          expect(input.timeoutBehavior).toBe("timedOutResult");
+          return probe === "failed"
+            ? Effect.fail(
+                new ProcessRunner.ProcessSpawnError({
+                  command: "xcrun",
+                  argumentCount: 2,
+                  cause: new Error("Synthetic unavailable developer directory"),
+                }),
+              )
+            : Effect.succeed(
+                processOutput(
+                  probe === "timeout" ? null : probe === "ok" ? 0 : 72,
+                  "",
+                  "",
+                  probe === "timeout",
+                ),
+              );
+        },
       }),
     );
+    const ios = available
+      ? { platform: "ios", available: true }
+      : {
+          platform: "ios",
+          available: false,
+          reason: xcrun
+            ? "iOS Simulators need a working simctl from a full Xcode installation. Select Xcode in Settings > Locations > Command Line Tools, or update DEVELOPER_DIR if set."
+            : "Xcode command line tools were not found.",
+        };
     expect((yield* onTestHost(host.summary)).platforms).toEqual([
-      { platform: "ios", available: true },
+      ios,
       { platform: "android", available: true },
     ]);
     expect(yield* onTestHost(host.platformAvailability("android"))).toEqual({
       platform: "android",
       available: true,
     });
-    expect(yield* onTestHost(host.platformAvailability("ios"))).toEqual({
-      platform: "ios",
-      available: true,
-    });
+    expect(yield* onTestHost(host.platformAvailability("ios"))).toEqual(ios);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

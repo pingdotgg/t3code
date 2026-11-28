@@ -110,12 +110,60 @@ interface RunningHost {
 
 const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
   platform: DevicePlatform,
-): Effect.fn.Return<string | null, never, FileSystem.FileSystem | Path.Path> {
+): Effect.fn.Return<
+  string | null,
+  never,
+  FileSystem.FileSystem | Path.Path | ProcessRunner.ProcessRunner
+> {
   const hostPlatform = yield* HostProcess.Platform;
   if (platform === "ios") {
     if (hostPlatform !== "darwin") return "iOS Simulators need macOS with Xcode.";
     if (!(yield* isCommandAvailable("xcrun"))) return "Xcode command line tools were not found.";
-    return null;
+    const runner = yield* ProcessRunner.ProcessRunner;
+    const env = yield* HostProcess.Environment;
+    const probeOptions = {
+      env,
+      timeout: Duration.seconds(5),
+      timeoutBehavior: "timedOutResult",
+      maxOutputBytes: 64 * 1024,
+    } as const;
+    const reason =
+      "iOS Simulators need a working simctl from a full Xcode installation. Select Xcode in Settings > Locations > Command Line Tools, or update DEVELOPER_DIR if set.";
+    const directory =
+      env.DEVELOPER_DIR ||
+      (yield* runner
+        .run({
+          command: "xcode-select",
+          args: ["--print-path"],
+          ...probeOptions,
+        })
+        .pipe(
+          Effect.map((result) =>
+            result.code === 0 && !result.timedOut ? result.stdout.trim() : null,
+          ),
+          Effect.orElseSucceed(() => null),
+        ));
+    const fs = yield* FileSystem.FileSystem;
+    // An unconfigured xcrun stub can open the developer-tools installer.
+    if (
+      !directory ||
+      !(yield* fs.stat(directory).pipe(
+        Effect.map((info) => info.type === "Directory"),
+        Effect.orElseSucceed(() => false),
+      ))
+    )
+      return reason;
+    const available = yield* runner
+      .run({
+        command: "xcrun",
+        args: ["simctl", "help"],
+        ...probeOptions,
+      })
+      .pipe(
+        Effect.map((result) => result.code === 0 && !result.timedOut),
+        Effect.orElseSucceed(() => false),
+      );
+    return available ? null : reason;
   }
   const sdk = yield* androidSdk;
   if (!sdk.root)
@@ -281,6 +329,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     const reason = yield* platformReason(platform).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
     );
     return reason === null ? { platform, available: true } : { platform, available: false, reason };
   });
