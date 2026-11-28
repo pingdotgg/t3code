@@ -258,11 +258,14 @@ export function WorkflowRunsView({
             workflowRunAsksKind(snapshot.workflows, node, kind) || node.run.runId === openRunId,
         );
   // With no run named, the one shown is one the list has: with a kind picked, one that asks it.
+  const fallback = all.find((node) => node.run.runId === defaultWorkflowRunId(groups)) ?? null;
   const shown =
     selectedRunId !== null
       ? selected
       : kind === EVERY_KIND
-        ? (all.find((node) => node.run.runId === defaultWorkflowRunId(groups)) ?? null)
+        ? fallback !== null && listed.some((node) => node.run.runId === listedFor(fallback))
+          ? fallback
+          : (listed[0] ?? null)
         : askingKind(listed, kind);
   const pickKind = (next: string) => {
     setPickedKind(next);

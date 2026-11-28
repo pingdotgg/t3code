@@ -71,6 +71,26 @@ const mergeTaggedObjects = (branches: ReadonlyArray<Json>): JsonObject | undefin
   return { type: "object", properties, required: [tag, ...requiredByAll] };
 };
 
+const isObjectMap = (branch: Json): branch is JsonObject =>
+  Predicate.isObject(branch) &&
+  branch.type === "object" &&
+  (branch.properties === undefined ||
+    (Predicate.isObject(branch.properties) && Object.keys(branch.properties).length === 0));
+
+const isArrayOfObjects = (branch: Json) =>
+  Predicate.isObject(branch) &&
+  branch.type === "array" &&
+  Predicate.isObject(branch.items) &&
+  branch.items.type === "object";
+
+/** Cursor's CallDynamicTool strips or corrupts a nested array-or-object union. Advertise the object map. */
+const preferObjectMapOverItemArray = (branches: ReadonlyArray<Json>): JsonObject | undefined => {
+  if (branches.length !== 2) return undefined;
+  const objectMap = branches.find(isObjectMap);
+  const itemArray = branches.find(isArrayOfObjects);
+  return objectMap && itemArray ? objectMap : undefined;
+};
+
 const compact = (schema: Json, optional: boolean): Json => {
   if (Array.isArray(schema)) return schema.map((item) => compact(item, false));
   if (!Predicate.isObject(schema)) return schema;
@@ -95,7 +115,10 @@ const compact = (schema: Json, optional: boolean): Json => {
       .flatMap((branch) => (isBareAnyOf(branch) ? branch.anyOf : [branch]))
       .filter((branch) => !(optional && isNullSchema(branch)) && !isJsonStringSchema(branch));
     const { anyOf: _anyOf, ...rest } = result;
-    const only = branches.length === 1 ? branches[0] : mergeTaggedObjects(branches);
+    const only =
+      branches.length === 1
+        ? branches[0]
+        : (mergeTaggedObjects(branches) ?? preferObjectMapOverItemArray(branches));
     result = Predicate.isObject(only) ? { ...only, ...rest } : { ...rest, anyOf: branches };
   }
   return result;
@@ -105,7 +128,7 @@ const compact = (schema: Json, optional: boolean): Json => {
  * The input schema T3 advertises for a tool. Drops JSON noise that every thread pays for:
  * `additionalProperties: true`, safe-integer bounds, nested `anyOf`, JSON-string fallbacks, and
  * the `null` branch of optional properties. A tagged union of objects becomes one object.
- * Decoding still uses the full schema, so each tag's own required fields still apply.
+ * An array-or-object map union advertises only the object map. Decoding still uses the full schema.
  */
 export const advertisedJsonSchema = (tool: Tool.Any) =>
   compact(Tool.getJsonSchema(tool), false) as ReturnType<typeof Tool.getJsonSchema>;

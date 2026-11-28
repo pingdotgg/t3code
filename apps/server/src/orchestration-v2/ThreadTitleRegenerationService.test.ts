@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -940,6 +941,79 @@ describe("ThreadTitleRegenerationService", () => {
           status: "failed",
           message: "model unavailable",
         });
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("does not retry an initial title after the provider refuses with 403", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        generateTitle: () =>
+          Effect.fail(
+            new TextGenerationError({
+              operation: "generateThreadTitle",
+              detail:
+                "Codex CLI command failed: OpenAI Codex\nERROR: Reconnecting... 5/5\nERROR: unexpected status 403 Forbidden: model: gpt-6-luna\n",
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:title:forbidden:create",
+          thread: "thread:title:forbidden",
+        });
+        yield* dispatchUserMessage({
+          command: "command:title:forbidden:message",
+          threadId,
+          text: "Fix the flaky login test",
+        });
+        const requestId = yield* armRegeneration({ command: "command:title:forbidden", threadId });
+        const messageId = MessageId.make("command:title:forbidden:message:message");
+
+        const fiber = yield* Effect.forkChild(
+          service.execute({ threadId, requestId, kind: { type: "initial", messageId } }),
+        );
+        yield* TestClock.adjust("1 minute");
+        yield* Fiber.join(fiber);
+
+        assert.equal(harness.generateThreadTitle.mock.calls.length, 1);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("retries an initial title after a transient failure", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        generateTitle: () =>
+          Effect.fail(
+            new TextGenerationError({
+              operation: "generateThreadTitle",
+              detail: "Codex CLI request timed out.",
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:title:timeout:create",
+          thread: "thread:title:timeout",
+        });
+        yield* dispatchUserMessage({
+          command: "command:title:timeout:message",
+          threadId,
+          text: "Fix the flaky login test",
+        });
+        const requestId = yield* armRegeneration({ command: "command:title:timeout", threadId });
+        const messageId = MessageId.make("command:title:timeout:message:message");
+
+        const fiber = yield* Effect.forkChild(
+          service.execute({ threadId, requestId, kind: { type: "initial", messageId } }),
+        );
+        yield* TestClock.adjust("1 minute");
+        yield* Fiber.join(fiber);
+
+        assert.equal(harness.generateThreadTitle.mock.calls.length, 3);
       }).pipe(Effect.provide(harness.layer));
     }),
   );

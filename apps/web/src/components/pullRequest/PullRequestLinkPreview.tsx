@@ -124,6 +124,7 @@ export function PullRequestLinkPreview({
       : card?.author?.name && card.author.name !== card.author.login
         ? `${card.author.name} (@${card.author.login})`
         : (card?.author?.login ?? null);
+  const createdAt = preview === null ? null : <RelativeTime timestamp={preview.createdAt} />;
 
   return (
     <PreviewCard open={open} onOpenChange={setOpen} actionsRef={previewActionsRef}>
@@ -171,11 +172,13 @@ export function PullRequestLinkPreview({
                   <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                     <PullRequestActorAvatar actor={card.author} className="size-4" />
                     <span className="min-w-0 truncate">{authorLabel}</span>
-                    {preview === null ? null : (
+                    {createdAt === null ? null : (
                       <>
                         <span aria-hidden>·</span>
                         <span className="shrink-0">
-                          opened <RelativeTime timestamp={preview.createdAt} />
+                          <T>
+                            opened <Var>{createdAt}</Var>
+                          </T>
                         </span>
                       </>
                     )}

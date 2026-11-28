@@ -2,6 +2,7 @@ import type { Element, Root } from "hast";
 import { toHtml } from "hast-util-to-html";
 import { describe, expect, it } from "vite-plus/test";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import { extractMarkdownLinkHrefs, isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 
 import {
@@ -199,6 +200,23 @@ describe("wordsHast", () => {
     expect(wordsHtml(markdown)).toBe(html);
   });
 
+  it("uses document reference definitions in recovered items and search text", () => {
+    const markdown = "-       Read [the guide][guide].\n\n[guide]: https://example.com/guide";
+    const normal = markdown.replace("-       ", "- ");
+    expect(wordsHtml(markdown)).toBe(wordsHtml(normal));
+    expect(wordsHtml(markdown)).toContain('<a href="https://example.com/guide">the guide</a>');
+    const segments = (text: string) =>
+      searchableMessageSegments({ role: "assistant", text, streaming: false });
+    expect(segments(markdown)).toEqual(segments(normal));
+    expect(segments(markdown)?.join("")).toBe("Read the guide.");
+  });
+
+  it("keeps a recovered item's own reference definition ahead of the document's", () => {
+    const markdown =
+      "-       Read [the guide][guide].\n\n        [guide]: https://example.com/local\n\n[guide]: https://example.com/document";
+    expect(wordsHtml(markdown)).toContain('<a href="https://example.com/local">the guide</a>');
+  });
+
   it("breaks soft lines as remark-breaks did", () => {
     const markdown = "one\ntwo **three\nfour**\n\n- item\n  next\n  - sub\n\n```\nkept\nlines\n```";
     expect(wordsHtml(markdown, { breaks: true })).toBe(
@@ -318,6 +336,12 @@ describe("wordsHast", () => {
     );
     expect(wordsHtml("x".repeat(30), options)).toBe("x".repeat(24));
     expect(wordsHtml("<!-- only -->", options)).toBe("Thinking");
+    expect(
+      wordsHtml("Checked the cache first[^1] and it was stale.\n\n[^1]: Redis TTL is 60s.", {
+        ...options,
+        extensions: { preview: { ...preview, maxLength: 120 } },
+      }),
+    ).toBe("Checked the cache first and it was stale.");
   });
 
   it("makes a saved file's Markdown inert", () => {
@@ -535,5 +559,57 @@ describe("wordsHast", () => {
     expect(anchor.tagName).toBe("a");
     expect(anchor.children).toEqual([{ type: "text", value: basename }]);
     expect(isMarkdownFileLinkLabel(basename, String(anchor.properties.href))).toBe(true);
+  });
+
+  it("supports chunked footnote modes (omit, omit-seeded, only)", () => {
+    const chunk0 = toHtml(
+      wordsHast("[^a]: .\n[^b]: .\n\nFirst[^a].", {
+        ...ASSISTANT,
+        extensions: { footnotes: "omit" },
+      }),
+    );
+    expect(chunk0).toContain('href="#user-content-fn-1"');
+    expect(chunk0).toContain('id="user-content-user-content-fnref-1"');
+    expect(chunk0).not.toContain("data-footnotes");
+
+    const chunk1 = toHtml(
+      wordsHast("[^a]: .\n[^b]: .\n\n[^a]\n\nSecond[^b] and repeat[^a].", {
+        ...ASSISTANT,
+        extensions: { footnotes: "omit-seeded" },
+      }),
+    );
+    expect(chunk1).toContain('href="#user-content-fn-2"');
+    expect(chunk1).toContain('id="user-content-user-content-fnref-2"');
+    expect(chunk1).toContain('href="#user-content-fn-1"');
+    expect(chunk1).toContain('id="user-content-user-content-fnref-1-2"');
+    expect(chunk1).not.toContain("data-footnotes");
+    expect(chunk1.match(/<p /g)).toHaveLength(1);
+
+    const section = toHtml(
+      wordsHast(
+        "[^a] [^b] [^a]\n\n[^a]: First note with [^c].\n\n[^b]: Second note.\n\n[^c]: Nested note.",
+        {
+          ...ASSISTANT,
+          extensions: { footnotes: "only" },
+        },
+      ),
+    );
+    expect(section).toMatch(/^<section data-footnotes=""/);
+    expect(section).toContain("First note with");
+    expect(section).toContain("Second note.");
+    expect(section).toContain("Nested note.");
+    expect(section).toContain('href="#user-content-fnref-1-2"');
+    expect(section).toContain('id="user-content-user-content-fn-3"');
+
+    // Only drops a synthetic footnote-only seed paragraph, never an earlier non-seed paragraph.
+    const preserved = toHtml(
+      wordsHast("[^a]: .\n\n[ ]: pending\n\n[^a]\n\nBody[^a].", {
+        ...ASSISTANT,
+        extensions: { footnotes: "omit-seeded" },
+      }),
+    );
+    expect(preserved).toContain("[ ]: pending");
+    expect(preserved).toContain('id="user-content-user-content-fnref-1-2"');
+    expect(preserved).not.toContain('id="user-content-user-content-fnref-1"');
   });
 });
