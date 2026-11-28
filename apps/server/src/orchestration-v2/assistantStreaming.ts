@@ -3,7 +3,9 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 
 // List fences can open at any indentation; closers may be at most three spaces deeper.
 // A backtick fence's info string cannot contain a backtick, so "```npm test``` runs" is inline code.
-const MARKDOWN_FENCE_PATTERN = /^( *)(`{3,}(?![^`\r\n]*`)|~{3,})/;
+const MARKDOWN_FENCE_PATTERN = /^([ \t]*)(`{3,}(?![^`\r\n]*`)|~{3,})/;
+const LIST_MARKER_PATTERN = /(?:[-*+]|\d{1,9}[.)])/y;
+const FENCE_MARKER_PATTERN = /(?:`{3,}(?![^`\r\n]*`)|~{3,})/y;
 // CommonMark blank lines contain only spaces and tabs.
 const BLANK_LINE_PATTERN = /^[ \t]*$/;
 // Require trailing space so partial list markers cannot match during streaming.
@@ -19,7 +21,11 @@ interface AssistantTextScan {
   readonly text: string;
   // Start of the partial line; every line before it has been scanned.
   readonly lineStart: number;
-  readonly openFence: { readonly marker: string; readonly indent: number } | null;
+  readonly openFence: {
+    readonly marker: string;
+    readonly indent: number;
+    readonly minIndent: number;
+  } | null;
   readonly boundary: number;
   readonly titleAwaitingContent: boolean;
 }
@@ -41,6 +47,53 @@ function trimLineEnd(text: string, start: number, end: number): string {
   return text.slice(start, end);
 }
 
+function leadingIndent(line: string): number {
+  let col = 0;
+  for (let i = 0; i < line.length; i++) {
+    const char = line.charCodeAt(i);
+    if (char === 32) col++;
+    else if (char === 9) col += 4 - (col % 4);
+    else break;
+  }
+  return col;
+}
+
+function matchListItemFence(line: string): { marker: string; indent: number } | null {
+  let i = 0;
+  let col = 0;
+  while (i < line.length) {
+    const char = line.charCodeAt(i);
+    if (char === 32) col++;
+    else if (char === 9) col += 4 - (col % 4);
+    else break;
+    i++;
+  }
+  let matched = false;
+  for (;;) {
+    LIST_MARKER_PATTERN.lastIndex = i;
+    const markerMatch = LIST_MARKER_PATTERN.exec(line);
+    if (!markerMatch) break;
+    i += markerMatch[0].length;
+    col += markerMatch[0].length;
+    const afterMarkerCol = col;
+    while (i < line.length) {
+      const char = line.charCodeAt(i);
+      if (char === 32) col++;
+      else if (char === 9) col += 4 - (col % 4);
+      else break;
+      i++;
+    }
+    const gap = col - afterMarkerCol;
+    if (gap === 0 || gap > 4) return null;
+    matched = true;
+  }
+  if (!matched) return null;
+  FENCE_MARKER_PATTERN.lastIndex = i;
+  const fenceMatch = FENCE_MARKER_PATTERN.exec(line);
+  if (!fenceMatch) return null;
+  return { marker: fenceMatch[0], indent: col };
+}
+
 /** Scans the terminated lines of `text`, resuming after `previous` when `text` extends it. */
 function advanceScan(previous: AssistantTextScan, text: string): AssistantTextScan {
   const resumed = text.startsWith(previous.text);
@@ -51,6 +104,14 @@ function advanceScan(previous: AssistantTextScan, text: string): AssistantTextSc
     if (newline === -1) break;
     const line = trimLineEnd(text, lineStart, newline);
     if (
+      openFence !== null &&
+      openFence.minIndent > 0 &&
+      line.length > 0 &&
+      leadingIndent(line) < openFence.minIndent
+    ) {
+      openFence = null;
+    }
+    if (
       openFence === null &&
       lineStart > 0 &&
       !titleAwaitingContent &&
@@ -59,22 +120,31 @@ function advanceScan(previous: AssistantTextScan, text: string): AssistantTextSc
       boundary = lineStart;
     }
     const fenceMatch = MARKDOWN_FENCE_PATTERN.exec(line);
+    const listFenceMatch = openFence === null && !fenceMatch ? matchListItemFence(line) : null;
     if (fenceMatch) {
-      const indent = fenceMatch[1]!.length;
+      const prefix = fenceMatch[1]!;
+      const indent = leadingIndent(prefix);
       const marker = fenceMatch[2]!;
       if (openFence === null) {
-        openFence = { marker, indent };
+        openFence = { marker, indent, minIndent: 0 };
         titleAwaitingContent = false;
       } else if (
         marker[0] === openFence.marker[0] &&
         marker.length >= openFence.marker.length &&
         indent <= openFence.indent + 3 &&
-        line.length === indent + marker.length
+        line.length === prefix.length + marker.length
       ) {
         // CommonMark: a closing fence carries no info string.
         openFence = null;
         boundary = newline + 1;
       }
+    } else if (listFenceMatch) {
+      openFence = {
+        marker: listFenceMatch.marker,
+        indent: listFenceMatch.indent,
+        minIndent: listFenceMatch.indent,
+      };
+      titleAwaitingContent = false;
     } else if (openFence === null && BLANK_LINE_PATTERN.test(line) && lineStart > 0) {
       if (!titleAwaitingContent) {
         boundary = newline + 1;
