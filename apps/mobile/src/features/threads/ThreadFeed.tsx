@@ -1529,6 +1529,7 @@ function AssistantMarkdownBlocks(props: {
           skills={props.skills}
           models={props.models}
           textStyle={props.markdownStyles.nativeTextStyle}
+          singleTilde={false}
           onCiteText={
             props.onCiteText
               ? (text) =>

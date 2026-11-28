@@ -106,3 +106,12 @@ it("uses the web math representation around a selected passage", () => {
   );
   expect(display?.selector.prefix).toBe("Before \\[ x \\] ");
 });
+
+it("finds quotes that keep a reply's single tildes", () => {
+  const [match] = collectMobileAssistantTextSelectors(
+    "Around 10~20ms and 80~90%.",
+    "0:0",
+    "10~20ms",
+  );
+  expect(match?.selector.start).toBe("Around ".length);
+});

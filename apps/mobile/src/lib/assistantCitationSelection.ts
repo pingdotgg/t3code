@@ -52,7 +52,7 @@ function citationText(markdown: string): string {
     cursor = formula.end;
   }
   prose += markdown.slice(cursor);
-  return renderedText(parseMarkdownDocument(prose), (value) =>
+  return renderedText(parseMarkdownDocument(prose, false), (value) =>
     value.replace(new RegExp(`${marker}(\\d+)\ue001`, "g"), (_, index: string) => {
       const formula = formulas[Number(index)]!;
       const tex = formula.tex.trim();

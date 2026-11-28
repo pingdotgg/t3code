@@ -606,8 +606,9 @@ export function markdownForNativeParsing(markdown: string, singleTilde = false):
   );
 }
 
-export function parseMarkdownDocument(markdown: string): Root {
-  return parser.parse(normalizedMarkdown(markdown));
+export function parseMarkdownDocument(markdown: string, singleTilde = true): Root {
+  const normalized = normalizedMarkdown(markdown);
+  return parser.parse(singleTilde ? normalized : markdownWithLiteralSingleTildes(normalized));
 }
 
 export function markdownForNativeRendering(
