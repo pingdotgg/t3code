@@ -568,3 +568,35 @@ it("opens a file from a tool call's diff by the path its agent recorded", async 
     ).toMatchObject({ activeSurfaceId: "file:src/a.ts" }),
   );
 });
+
+it("steps to the older and newer commit from the header", async () => {
+  using context = setup(null);
+  const commits = ["c3", "c2", "c1"].map((sha) => ({
+    sha: sha.padEnd(40, "0"),
+    subject: `Commit ${sha}`,
+    committedAt: "2026-10-30T00:00:00Z",
+  }));
+  state.commits = Atom.make(AsyncResult.success({ commits, truncated: false }));
+  useDiffPanelStore.getState().selectCommit(context.threadRef, commits[1]!.sha);
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+    </RegistryContext.Provider>,
+  );
+  const key = scopedThreadKey(context.threadRef);
+  const selectedSha = () => {
+    const selection = useDiffPanelStore.getState().byThreadKey[key];
+    return selection?.kind === "commit" ? selection.sha : null;
+  };
+  const older = screen.getByRole("button", { name: "Previous commit" });
+  const newer = screen.getByRole("button", { name: "Next commit" });
+
+  await userEvent.click(older);
+  await vi.waitFor(() => expect(selectedSha()).toBe(commits[2]!.sha));
+  await expect.element(older).toBeDisabled();
+
+  await userEvent.click(newer);
+  await userEvent.click(newer);
+  await vi.waitFor(() => expect(selectedSha()).toBe(commits[0]!.sha));
+  await expect.element(newer).toBeDisabled();
+});

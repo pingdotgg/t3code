@@ -1308,7 +1308,10 @@ export default function DiffPanel({
           </DropdownMenu>
         )}
         {headerCommitSha !== null ? (
-          <ButtonGroup aria-label={gt("Commit")} className="shrink-0">
+          <ButtonGroup
+            aria-label={gt("Commit", { $context: "noun, a git commit" })}
+            className="shrink-0"
+          >
             <Button
               size="icon-xs"
               variant="ghost"
