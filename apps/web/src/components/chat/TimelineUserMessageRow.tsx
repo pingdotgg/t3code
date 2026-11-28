@@ -16,7 +16,8 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
 import { useQuietThreadShell } from "../../state/entities";
-import { useEnvironment } from "../../state/environments";
+import { useEnvironment, useEnvironmentMachines } from "../../state/environments";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
@@ -33,6 +34,7 @@ import {
 } from "../../types";
 import ChatMarkdown from "../ChatMarkdown";
 import {
+  ArrowRightIcon,
   CalendarClockIcon,
   ChevronDownIcon,
   DownloadIcon,
@@ -293,7 +295,10 @@ function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "messag
       }
     />
   ) : isThreadMoveMessage(row.message) ? (
-    <ThreadMovedRow environmentId={row.message.linkedSender?.environmentId ?? null} />
+    <ThreadMovedRow
+      fromEnvironmentId={row.message.linkedSender?.environmentId ?? null}
+      toEnvironmentId={ctx.activeThreadEnvironmentId}
+    />
   ) : resolveUserMessagePresentation(row.message).attribution === "automation" ? (
     <AutomationMessageRow row={row} />
   ) : (
@@ -301,17 +306,44 @@ function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "messag
   );
 }
 
-/** Where a thread that moved from another machine picks up; what is above it happened there. */
-function ThreadMovedRow({ environmentId }: { readonly environmentId: EnvironmentId | null }) {
+/**
+ * Where a thread that moved from another machine picks up; what is above it happened there.
+ * Drawn as a context handoff is, with the two machines in place of the two models.
+ */
+function ThreadMovedRow(props: {
+  readonly fromEnvironmentId: EnvironmentId | null;
+  readonly toEnvironmentId: EnvironmentId;
+}) {
   const gt = useGT();
-  const machine = useEnvironment(environmentId)?.label;
+  const machines = useEnvironmentMachines();
+  const from = useEnvironment(props.fromEnvironmentId);
+  const to = useEnvironment(props.toEnvironmentId);
+  const endpoint = (environment: NonNullable<typeof from>) => (
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      <EnvironmentMachineIcon
+        kind={machines.get(environment.environmentId) ?? "server"}
+        className="size-3 shrink-0"
+      />
+      <span className="truncate font-medium">{environment.label}</span>
+    </span>
+  );
+  const arrives = to !== null && to.environmentId !== from?.environmentId ? to : null;
   return (
     <TimelineSystemDivider
       icon={MonitorUpIcon}
-      label={
-        machine === undefined
-          ? gt("Moved here from another machine")
-          : gt("Moved here from {machine}", { machine })
+      // A read-only view has no environment of its own to name as the destination.
+      label={from !== null && arrives === null ? gt("Thread moved from") : gt("Thread moved")}
+      showDetailSeparator={false}
+      detail={
+        <span className="inline-flex min-w-0 flex-wrap items-center justify-center gap-1.5">
+          {from === null ? gt("from another machine") : endpoint(from)}
+          {arrives !== null ? (
+            <>
+              <ArrowRightIcon aria-hidden="true" className="size-3 shrink-0" />
+              {endpoint(arrives)}
+            </>
+          ) : null}
+        </span>
       }
     />
   );

@@ -2304,7 +2304,8 @@ function renderFeedEntry(
     if (isUser && isThreadMoveMessage(message)) {
       return (
         <ThreadMovedDivider
-          environmentId={message.linkedSender?.environmentId}
+          fromEnvironmentId={message.linkedSender?.environmentId}
+          toEnvironmentId={props.environmentId}
           iconColor={iconSubtleColor}
         />
       );

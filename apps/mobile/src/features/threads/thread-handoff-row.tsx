@@ -12,6 +12,7 @@ import {
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
+import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   ModelSelection,
@@ -28,6 +29,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { environmentThreadDetails } from "../../state/threads";
+import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { useEnvironments } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { ThreadContextDivider } from "./thread-context-divider";
@@ -53,25 +55,59 @@ function handoffEndpointsAtom(
   });
 }
 
-/** Where a thread that moved from another machine picks up; what is above it happened there. */
+/**
+ * Where a thread that moved from another machine picks up; what is above it happened there.
+ * Drawn as a context handoff is, with the two machines in place of the two models.
+ */
 export function ThreadMovedDivider(props: {
-  environmentId: EnvironmentId | undefined;
+  fromEnvironmentId: EnvironmentId | undefined;
+  toEnvironmentId: EnvironmentId;
   iconColor: ColorValue;
 }) {
   const gt = useGT();
-  const machine = useEnvironments().environments.find(
-    (environment) => environment.environmentId === props.environmentId,
-  )?.label;
+  const { environments } = useEnvironments();
+  const find = (id: EnvironmentId | undefined) =>
+    environments.find((environment) => environment.environmentId === id);
+  const from = find(props.fromEnvironmentId);
+  const to = find(props.toEnvironmentId);
+  const endpoint = (environment: NonNullable<typeof from>) => (
+    <View className="max-w-full flex-row items-center gap-1.5">
+      <EnvironmentMachineSymbol
+        kind={resolveEnvironmentMachineKind(environment.serverConfig)}
+        size={12}
+        tintColorClassName="accent-foreground-muted"
+      />
+      <Text numberOfLines={1} className="shrink font-t3-medium text-xs text-foreground-muted">
+        {environment.label}
+      </Text>
+    </View>
+  );
+  const arrives = to !== undefined && to.environmentId !== from?.environmentId ? to : null;
   return (
-    <ThreadContextDivider
-      icon="arrow.up.right"
-      iconColor={props.iconColor}
-      label={
-        machine === undefined
-          ? gt("Moved here from another machine")
-          : gt("Moved here from {machine}", { machine })
-      }
-    />
+    // Imported messages above have no footer row, so the divider brings its own space.
+    <View className="mt-3">
+      <ThreadContextDivider
+        icon="arrow.up.right"
+        iconColor={props.iconColor}
+        label={
+          from !== undefined && arrives === null ? gt("Thread moved from") : gt("Thread moved")
+        }
+      >
+        <View className="flex-row flex-wrap items-center justify-center gap-1.5">
+          {from === undefined ? (
+            <Text className="text-xs text-foreground-muted">{gt("from another machine")}</Text>
+          ) : (
+            endpoint(from)
+          )}
+          {arrives !== null ? (
+            <>
+              <SymbolView name="arrow.right" size={12} tintColor={props.iconColor} />
+              {endpoint(arrives)}
+            </>
+          ) : null}
+        </View>
+      </ThreadContextDivider>
+    </View>
   );
 }
 
