@@ -13154,15 +13154,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const resultResetAt =
               resultFailure?.class === "usage_limit" ? resultFailure.resetAt : null;
             // An untyped rejection without a reset is the gateway's own 429; its text names the reset.
+            const isGatewayEcho = (type: string, time: string | null | undefined) =>
+              type === "unknown" && time === null && resultResetAt != null;
             const resetTimes = Array.from(context.rateLimitResetTimes)
-              .filter(
-                ([type, time]) => !(type === "unknown" && time === null && resultResetAt != null),
-              )
+              .filter(([type, time]) => !isGatewayEcho(type, time))
               .map(([, time]) => time);
             const assistantLimit = context.latestAssistantRateLimit;
             if (
               assistantLimit?.type != null &&
-              !context.rateLimitResetTimes.has(assistantLimit.type)
+              !isGatewayEcho(assistantLimit.type, assistantLimit.resetAt) &&
+              (!context.rateLimitResetTimes.has(assistantLimit.type) ||
+                isGatewayEcho(
+                  assistantLimit.type,
+                  context.rateLimitResetTimes.get(assistantLimit.type),
+                ))
             ) {
               resetTimes.push(assistantLimit.resetAt);
             }
