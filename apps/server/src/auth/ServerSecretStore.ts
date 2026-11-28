@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- non-durable creates bypass the fs thread pool.
+import * as NodeFS from "node:fs";
+
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -155,7 +158,15 @@ export class ServerSecretStore extends Context.Service<
     readonly directory?: string;
     readonly get: (name: string) => Effect.Effect<Option.Option<Uint8Array>, SecretStoreError>;
     readonly set: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
-    readonly create: (name: string, value: Uint8Array) => Effect.Effect<void, SecretStoreError>;
+    /**
+     * Fails with AlreadyExists when the secret exists. `durable: false` skips the fsync and
+     * the fs thread pool, for records that only have to outlive the process.
+     */
+    readonly create: (
+      name: string,
+      value: Uint8Array,
+      options?: { readonly durable: false },
+    ) => Effect.Effect<void, SecretStoreError>;
     readonly getOrCreateRandom: (
       name: string,
       bytes: number,
@@ -253,8 +264,42 @@ export const make = Effect.gen(function* () {
 
   // `link` publishes the fully written temp file under the final name, or fails with
   // AlreadyExists, so a concurrent reader never observes a partially written secret.
-  const create: ServerSecretStore["Service"]["create"] = (name, value) =>
-    resolveSecretPath(name).pipe(Effect.flatMap((secretPath) => createAt(name, secretPath, value)));
+  const create: ServerSecretStore["Service"]["create"] = (name, value, options) =>
+    resolveSecretPath(name).pipe(
+      Effect.flatMap((secretPath) =>
+        options?.durable === false
+          ? createUnsyncedAt(name, secretPath, value)
+          : createAt(name, secretPath, value),
+      ),
+    );
+
+  // Synchronous on purpose: the open, write and close finish in well under a millisecond, where
+  // queueing behind other work in the 4-worker fs thread pool can take seconds on a busy host.
+  const createUnsyncedAt = (name: string, secretPath: string, value: Uint8Array) =>
+    Effect.try({
+      try: () => {
+        const fd = NodeFS.openSync(secretPath, "wx", 0o600);
+        try {
+          NodeFS.writeSync(fd, value);
+        } finally {
+          NodeFS.closeSync(fd);
+        }
+      },
+      catch: (cause) =>
+        new SecretStorePersistError({
+          resource: `secret ${name}`,
+          cause: PlatformError.systemError({
+            _tag:
+              Predicate.hasProperty(cause, "code") && cause.code === "EEXIST"
+                ? "AlreadyExists"
+                : "Unknown",
+            module: "FileSystem",
+            method: "open",
+            pathOrDescriptor: secretPath,
+            cause,
+          }),
+        }),
+    });
 
   const createAt = (name: string, secretPath: string, value: Uint8Array) =>
     crypto.uuidV4().pipe(

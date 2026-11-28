@@ -112,6 +112,9 @@ export const checkRequestDpopProof = Effect.fn("dpop.checkRequestDpopProof")(fun
               `consumedAt=${DateTime.formatIso(now)}`,
             ].join("\n"),
           ),
+          // A marker must exist before the request is answered, but losing the last few to a
+          // power failure is acceptable; waiting on an fsync per request is not.
+          { durable: false },
         )
         .pipe(
           Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
