@@ -9,7 +9,10 @@ const CLIENT_FILE_MAX_BYTES = 8 * 1024 * 1024;
 
 function isInsideRoot(path: Path.Path, root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
 }
 
 /** Resolve all symlinks, including the final component, before checking workspace containment. */
@@ -17,14 +20,22 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
   function* (input: {
     readonly fileSystem: FileSystem.FileSystem;
     readonly path: Path.Path;
+    readonly cwd?: string | null;
     readonly allowedRoots: ReadonlyArray<string>;
     readonly requestPath: string;
   }) {
     const { path } = input;
-    const resolved = path.resolve(input.requestPath);
     const outside = EffectAcpErrors.AcpRequestError.invalidParams(
       `Path '${input.requestPath}' is outside the session workspace.`,
     );
+    let resolved: string;
+    if (path.isAbsolute(input.requestPath)) {
+      resolved = path.resolve(input.requestPath);
+    } else if (input.cwd !== null && input.cwd !== undefined) {
+      resolved = path.resolve(input.cwd, input.requestPath);
+    } else {
+      return yield* outside;
+    }
     // Canonicalize the deepest existing ancestor, so a link above missing directories cannot escape.
     let candidate = resolved;
     const missingSuffix: Array<string> = [];
@@ -60,6 +71,7 @@ export const readAntigravityClientTextFile = Effect.fn("AntigravityClientFiles.r
   function* (input: {
     readonly fileSystem: FileSystem.FileSystem;
     readonly path: Path.Path;
+    readonly cwd?: string | null;
     readonly allowedRoots: ReadonlyArray<string>;
     readonly request: EffectAcpSchema.ReadTextFileRequest;
   }): Effect.fn.Return<EffectAcpSchema.ReadTextFileResponse, EffectAcpErrors.AcpError> {

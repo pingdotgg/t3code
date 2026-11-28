@@ -54,7 +54,7 @@ export async function readEncryptedZip(
       if (
         total > limits.totalLimit ||
         entry.uncompressedSize > limits.entryLimit ||
-        (name.endsWith(".xml") && entry.uncompressedSize > limits.xmlLimit)
+        (name.toLowerCase().endsWith(".xml") && entry.uncompressedSize > limits.xmlLimit)
       )
         throw new ZipError({ code: "archive-expanded-too-large" });
       const content = entry.directory

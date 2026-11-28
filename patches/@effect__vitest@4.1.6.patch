@@ -59,7 +59,7 @@ index b97edbe..7dfd64a 100644
  // Primitives
  // ----------------------------
 diff --git a/package.json b/package.json
-index 068e75e..d14a80e 100644
+index 8f6391d..f6b794d 100644
 --- a/package.json
 +++ b/package.json
 @@ -37,7 +37,6 @@
@@ -67,7 +67,7 @@ index 068e75e..d14a80e 100644
    },
    "peerDependencies": {
 -    "vitest": ">=5.0.0 <6.0.0",
-     "effect": "^4.1.5"
+     "effect": "^4.1.6"
    },
    "devDependencies": {
 diff --git a/src/index.ts b/src/index.ts

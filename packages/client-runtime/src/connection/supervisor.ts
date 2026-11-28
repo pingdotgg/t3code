@@ -65,6 +65,9 @@ const LONG_RESUME_PROBE_TIMEOUT = "1500 millis";
 const SILENT_SOCKET_CHECK_AFTER = "500 millis";
 const SILENT_SOCKET_RECHECK_EVERY = "1 second";
 const FRAME_CHECK_EVERY = "100 millis";
+// A request no frame has followed for this long checks the socket, which the
+// ping timeout would otherwise leave stalled for 15 seconds or more.
+const UNANSWERED_REQUEST_CHECK_EVERY = "1 second";
 // Off the LAN one lost packet can stall a live socket for a second, so a remote
 // socket must stay silent this long, except after a long resume. It must end
 // before QUICK_CONNECTION_PROBE_TIMEOUT so a resume replaces a silent socket
@@ -92,6 +95,10 @@ type SupervisorSignal =
   | { readonly _tag: "NetworkChanged"; readonly network: NetworkStatus }
   | { readonly _tag: "Wakeup"; readonly reason: ConnectionWakeups.ConnectionWakeup }
   | { readonly _tag: "BetterRouteAvailable"; readonly routeId: string };
+
+// What a connected lease reacts to: a queued signal, or its own check finding
+// a request that the socket never answered.
+type ConnectedLeaseSignal = SupervisorSignal | { readonly _tag: "RequestUnanswered" };
 
 interface PendingRetryTrace {
   readonly previousAttempt: Tracer.Span;
@@ -675,7 +682,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     lease.prepared.target._tag === "RelayConnectionTarget";
 
   const connectedLeaseEnd = Effect.fnUntraced(function* (
-    next: SupervisorSignal,
+    next: ConnectedLeaseSignal,
     lease: ConnectionDriver.EnvironmentConnectionLease,
   ) {
     if (next._tag === "DisconnectRequested") {
@@ -704,14 +711,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }),
     );
 
-  const isLongResume = (signal: SupervisorSignal) =>
+  const isLongResume = (signal: ConnectedLeaseSignal) =>
     signal._tag === "Wakeup" && signal.reason === "application-active-long";
 
   const answersQuickly = (routeKind: ConnectionRouteKind | undefined) =>
     routeKind === "loopback" || routeKind === "lan";
 
   const probeTimeoutFor = (
-    next: SupervisorSignal,
+    next: ConnectedLeaseSignal,
     routeKind: ConnectionRouteKind | undefined,
   ): Duration.Input | undefined => {
     switch (next._tag) {
@@ -738,6 +745,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         return answersQuickly(routeKind)
           ? QUICK_CONNECTION_PROBE_TIMEOUT
           : CONNECTION_PROBE_TIMEOUT;
+      case "RequestUnanswered":
+        return CONNECTION_PROBE_TIMEOUT;
       case "ConnectRequested":
       case "DisconnectRequested":
       case "BetterRouteAvailable":
@@ -745,7 +754,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
   };
 
-  const isForegroundProbe = (next: SupervisorSignal) =>
+  const isForegroundProbe = (next: ConnectedLeaseSignal) =>
     next._tag === "Wakeup" && next.reason === "application-active";
 
   // Ends "silent" when the host answers a fresh request while the socket
@@ -812,8 +821,21 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       Effect.forkScoped,
     );
     const routeKind = yield* leaseRouteKind(lease);
+    // Ends once a request sent before one check still has no frame after the
+    // next, so an idle socket is never checked.
+    const requestUnanswered = Effect.gen(function* () {
+      let awaitingAtFrames: number | undefined;
+      for (;;) {
+        yield* Effect.sleep(UNANSWERED_REQUEST_CHECK_EVERY);
+        const frames = yield* lease.session.inboundFrames;
+        if (awaitingAtFrames === frames) {
+          return { _tag: "RequestUnanswered" } as const;
+        }
+        awaitingAtFrames = (yield* lease.session.awaitingReply) ? frames : undefined;
+      }
+    });
     for (;;) {
-      const next = yield* takeSignal;
+      const next: ConnectedLeaseSignal = yield* Effect.raceFirst(takeSignal, requestUnanswered);
       const end = yield* connectedLeaseEnd(next, lease);
       if (end !== undefined) {
         return end === "reset";
@@ -845,7 +867,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       });
       // The web and desktop foreground probe allows a busy host 15 seconds,
       // and a busy host can answer a fresh request before a queued probe.
-      const armSilentSocketCheck = Effect.fnUntraced(function* (signal: SupervisorSignal) {
+      const armSilentSocketCheck = Effect.fnUntraced(function* (signal: ConnectedLeaseSignal) {
         if (isForegroundProbe(signal)) return;
         if (silentSocket !== undefined) {
           recheck = true;

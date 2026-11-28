@@ -590,7 +590,12 @@ function recordedLayoutShortcutKey(
 ): string {
   const physicalKey = shortcutKeyFromEvent(event, platform);
   const layoutKey = event.key.toLowerCase();
-  if (event.altKey || layoutKey.length !== 1) return physicalKey;
+  if (layoutKey.length !== 1 || (event.altKey && isMacPlatform(platform))) return physicalKey;
+  // A non-Latin letter (Cyrillic, Greek, ...) stops matching once the user switches to a Latin layout.
+  if (/^\p{L}$/u.test(layoutKey) && !/\p{Script=Latin}/u.test(layoutKey)) {
+    return /^Key[A-Z]$/.test(event.code) ? event.code.slice(3).toLowerCase() : physicalKey;
+  }
+  if (event.altKey) return physicalKey;
   // Normalize only US shifted glyphs at their US position. Other layouts can
   // produce the same glyph without Shift or at a different position.
   const unshiftedKey = event.shiftKey ? US_SHIFTED_TO_UNSHIFTED_KEYS.get(layoutKey) : undefined;

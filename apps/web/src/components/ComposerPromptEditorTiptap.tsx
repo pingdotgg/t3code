@@ -77,7 +77,7 @@ import {
   collapseShownMarkdownSource,
   ComposerMarkdownSourceExtension,
 } from "~/composer-markdown-source";
-import { MARKDOWN_SOURCE_MARK } from "~/composer-rich-text";
+import { inlineMarkdownUnitMarks, MARKDOWN_SOURCE_MARK } from "~/composer-rich-text";
 import {
   collectComposerPromptInlineTokens,
   selectionTouchesMentionBoundary,
@@ -783,6 +783,34 @@ const headingInputRule = new InputRule({
 
 function isInCodeBlock(view: EditorView): boolean {
   return view.state.selection.$from.parent.type.spec.code === true;
+}
+
+/** Pasted links stay literal in code, including inline code shown as its Markdown source. */
+function isInCode(view: EditorView): boolean {
+  if (isInCodeBlock(view)) return true;
+  const {
+    selection: { $from },
+    schema,
+  } = view.state;
+  if (schema.marks.code?.isInSet($from.marks())) return true;
+  const sourceType = schema.marks[MARKDOWN_SOURCE_MARK];
+  if (!sourceType) return false;
+  const regions: { from: number; to: number }[] = [];
+  $from.parent.forEach((child, offset) => {
+    if (!sourceType.isInSet(child.marks)) return;
+    const last = regions.at(-1);
+    if (last?.to === offset) last.to += child.nodeSize;
+    else regions.push({ from: offset, to: offset + child.nodeSize });
+  });
+  const caret = $from.parentOffset;
+  const region = regions.find(({ from, to }) => from <= caret && caret <= to);
+  if (!region) return false;
+  // Shown source keeps its delimiters as text, so parse it to see whether the caret sits in a code span.
+  const units = inlineMarkdownUnitMarks(
+    $from.parent.textBetween(region.from, region.to, undefined, "￼"),
+  );
+  const at = caret - region.from;
+  return Boolean(units[at - 1]?.includes("code") || units[at]?.includes("code"));
 }
 
 const ChipSelectionPluginKey = new PluginKey<DecorationSet>("composer-chip-range-selection");
@@ -1571,7 +1599,7 @@ function ComposerPromptEditorTiptapInner(
           return handled;
         },
         handleTextInput: (view, from, to, text) => {
-          if (literalText || view.composing || text.length !== 1) return false;
+          if (!richText || view.composing || text.length !== 1) return false;
           const closer = SURROUND_CLOSE[text];
           const { selection } = view.state;
           // Compose preedit updates replace a range even without a user selection.
@@ -1620,8 +1648,7 @@ function ComposerPromptEditorTiptapInner(
           const captured = capturedPastes.current.get(event);
           capturedPastes.current.delete(event);
           const paste =
-            captured ??
-            readPastedComposerClipboard(clipboardData, literalText || isInCodeBlock(view));
+            captured ?? readPastedComposerClipboard(clipboardData, literalText || isInCode(view));
           if (!captured && clipboardData.files.length > 0 && !paste.context?.records.length)
             return false;
           if (!insertClipboardText(view, paste)) return false;
@@ -1657,7 +1684,7 @@ function ComposerPromptEditorTiptapInner(
           view.focus();
           return insertClipboardText(
             view,
-            readPastedComposerClipboard(data, literalText || isInCodeBlock(view)),
+            readPastedComposerClipboard(data, literalText || isInCode(view)),
           );
         },
       },
@@ -1687,7 +1714,7 @@ function ComposerPromptEditorTiptapInner(
     onPaste(event, (plainTextOnly) => {
       const paste = readPastedComposerClipboard(
         event.clipboardData,
-        plainTextOnly || literalText || (editor !== null && isInCodeBlock(editor.view)),
+        plainTextOnly || literalText || (editor !== null && isInCode(editor.view)),
       );
       capturedPastes.current.set(event.nativeEvent, paste);
       return paste;

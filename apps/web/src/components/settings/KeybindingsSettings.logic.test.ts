@@ -325,6 +325,57 @@ describe("KeybindingsSettings.logic", () => {
     ).toBe("mod+m");
   });
 
+  it("records the physical letter for Cyrillic and Greek layouts, so it works after switching back", () => {
+    const record = (key: string, code: string) =>
+      keybindingFromKeyboardEvent(
+        { key, code, metaKey: false, ctrlKey: true, altKey: false, shiftKey: false },
+        "Linux x86_64",
+        { layoutCharacter: true },
+      );
+    expect(record("л", "KeyK")).toBe("mod+k");
+    expect(record("Л", "KeyK")).toBe("mod+k");
+    expect(record("ν", "KeyN")).toBe("mod+n");
+    expect(record("ö", "Semicolon")).toBe("mod+ö");
+    const shortcut = parseKeybindingShortcut(record("л", "KeyK")!)!;
+    const russianCtrlK = {
+      key: "л",
+      code: "KeyK",
+      metaKey: false,
+      ctrlKey: true,
+      altKey: false,
+      shiftKey: false,
+    };
+    expect(
+      resolveShortcutCommand(russianCtrlK, [{ command: "chat.new", shortcut }], {
+        platform: "Linux x86_64",
+      }),
+    ).toBe("chat.new");
+  });
+
+  it("records the physical letter for non-Latin Alt shortcuts on Linux and Windows", () => {
+    const record = (platform: string) =>
+      keybindingFromKeyboardEvent(
+        { key: "и", code: "KeyB", metaKey: false, ctrlKey: true, altKey: true, shiftKey: false },
+        platform,
+        { layoutCharacter: true },
+      );
+    expect(record("Win32")).toBe("mod+alt+b");
+    const recorded = record("Linux x86_64");
+    expect(recorded).toBe("mod+alt+b");
+    assert(recorded);
+    const shortcut = parseKeybindingShortcut(recorded);
+    assert(shortcut);
+    for (const key of ["b", "и"]) {
+      expect(
+        resolveShortcutCommand(
+          { key, code: "KeyB", metaKey: false, ctrlKey: true, altKey: true, shiftKey: false },
+          [{ command: "chat.new", shortcut }],
+          { platform: "Linux x86_64" },
+        ),
+      ).toBe("chat.new");
+    }
+  });
+
   it("keeps a literal plus key as its own part", () => {
     expect(shortcutToKeybindingParts(parseKeybindingShortcut("mod++")!)).toEqual(["mod", "+"]);
     expect(shortcutToKeybindingParts(parseKeybindingShortcut("mod+shift++")!)).toEqual([

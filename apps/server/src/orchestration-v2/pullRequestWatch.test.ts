@@ -1096,8 +1096,8 @@ Review triggered.
     ],
     [
       "code spans and fences",
-      "Replace `<div>` with ``<span>``:\n~~~html\n<p>Done</p>\n~~~\r\nor\r\n```html\r\n<b>Done</b>\r\n```",
-      "Replace `<div>` with ``<span>``: ~~~html <p>Done</p> ~~~ or ```html <b>Done</b> ```",
+      "Replace `<div>` with ``<span>``:\n~~~html\n<p>Done</p>\n~~~\r\nor\r\n```html\r\n<b>Done</b>\r\n    ```\r\n<div>KEEP</div>\r\n   ```\r\n<i>after</i>",
+      "Replace `<div>` with ``<span>``: ~~~html <p>Done</p> ~~~ or ```html <b>Done</b> ``` <div>KEEP</div> ``` after",
     ],
     [
       "indented code",

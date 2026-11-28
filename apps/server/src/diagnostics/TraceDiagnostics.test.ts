@@ -64,7 +64,7 @@ describe("TraceDiagnostics", () => {
   it("includes browser failures and interruptions in diagnostics", () => {
     const diagnostics = aggregateLines(
       [
-        { status: { code: "2", message: "Browser request failed" }, attributes: {} },
+        { status: { code: "2", message: "Interrupted" }, attributes: {} },
         { status: { code: "0" }, attributes: { "effect.fiber.interrupted": true } },
         { status: { code: "1", message: "Interrupted" }, attributes: {} },
         { status: { code: "1" }, attributes: {} },
@@ -86,8 +86,8 @@ describe("TraceDiagnostics", () => {
     assert.equal(diagnostics.failureCount, 1);
     assert.equal(diagnostics.interruptionCount, 2);
     assert.equal(diagnostics.topSpansByCount[0]?.failureCount, 1);
-    assert.equal(diagnostics.commonFailures[0]?.cause, "Browser request failed");
-    assert.equal(diagnostics.latestFailures[0]?.cause, "Browser request failed");
+    assert.equal(diagnostics.commonFailures[0]?.cause, "Interrupted");
+    assert.equal(diagnostics.latestFailures[0]?.cause, "Interrupted");
   });
 
   it.effect("aggregates failures, slow spans, log levels, and parse errors", () =>

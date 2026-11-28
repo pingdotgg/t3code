@@ -12,7 +12,7 @@ export const THREAD_LINK_PROTOCOL = "t3-thread";
 const V1_PREFIX = `${THREAD_LINK_PROTOCOL}://v1/`;
 const V2_PREFIX = `${THREAD_LINK_PROTOCOL}://v2/`;
 const HOSTED_PREFIX = `${DEFAULT_HOSTED_APP_URL}/threads/`;
-const HOSTED_SEGMENT = "[A-Za-z0-9_%-]+";
+const HOSTED_SEGMENT = "[A-Za-z0-9_%-]+(?:\\.+[A-Za-z0-9_%-]+)*";
 const HOSTED_LINK = `${HOSTED_PREFIX.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${HOSTED_SEGMENT}/${HOSTED_SEGMENT}`;
 const THREAD_HREF = String.raw`t3-thread:\/\/v[12]\/`;
 // Unescaped brackets end a label, so consecutive unclosed brackets cannot restart a long scan.
@@ -50,11 +50,11 @@ const SETEXT_UNDERLINE = /^(?:-+|=+)[ \t]*\r?$/;
 const ESCAPED_CHARACTER = String.raw`\\[!-/:-@[-\`{-~]`;
 const LINK_PATTERNS = [
   // A labeled link's destination may be angle-bracketed, as CommonMark allows: [label](<href>).
-  String.raw`\[(?<label>${LABEL})\]\((?:<(?<angleHref>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>|(?<href>${THREAD_HREF}[^\s>)]+|${HOSTED_LINK}))\)`,
+  String.raw`\[(?<label>${LABEL})\]\((?:<(?<angleHref>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>\)|(?<href>${HOSTED_LINK})\)|(?<customHref>${THREAD_HREF}))`,
   String.raw`\[${LABEL}\]\((?:<[^<>\n]*>|[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\)`,
   String.raw`<(?<autolink>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>`,
   // After a URL character the hosted link is part of a longer URL, such as a redirect target.
-  String.raw`(?<![A-Za-z0-9%/?#=&@+-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
+  String.raw`(?<![A-Za-z0-9%/?#=&@+-])(?<bare>${HOSTED_LINK})(?!\.*[\w%/?#-])`,
 ].join("|");
 const THREAD_LINK = new RegExp(`${ESCAPED_CHARACTER}|${LINK_PATTERNS}`, "gm");
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
@@ -159,6 +159,7 @@ const decodeEnvironmentId = Schema.decodeUnknownOption(EnvironmentId);
 export interface ThreadLink {
   readonly environmentId: EnvironmentId | null;
   readonly threadId: ThreadId;
+  readonly hosted?: boolean;
 }
 
 // Escapes even URL-safe punctuation, so a sentence's closing period never reads as part of an id.
@@ -182,7 +183,9 @@ function parseHostedThreadLink(href: string): ThreadLink | null {
   try {
     const environmentId = Option.getOrNull(decodeEnvironmentId(decodeURIComponent(match[1]!)));
     const threadId = Option.getOrNull(decodeThreadId(decodeURIComponent(match[2]!)));
-    return environmentId === null || threadId === null ? null : { environmentId, threadId };
+    return environmentId === null || threadId === null
+      ? null
+      : { environmentId, threadId, hosted: true };
   } catch {
     return null;
   }
@@ -216,14 +219,15 @@ function percentDecodedThreadLinkId(threadId: ThreadId): ThreadId | null {
   }
 }
 
-/** The threads a link can name, in its own environment or else the message's: as written, then decoded. */
+/** The threads a link can name, in its own environment or else the message's: as written, then decoded for custom-scheme links. */
 export function threadLinkCandidates(
   link: ThreadLink,
   messageEnvironmentId: EnvironmentId,
 ): ReadonlyArray<ScopedThreadRef> {
   const environmentId = link.environmentId ?? messageEnvironmentId;
-  const decodedId = percentDecodedThreadLinkId(link.threadId);
   const written = { environmentId, threadId: link.threadId };
+  if (link.hosted) return [written];
+  const decodedId = percentDecodedThreadLinkId(link.threadId);
   return decodedId === null ? [written] : [written, { environmentId, threadId: decodedId }];
 }
 
@@ -246,10 +250,18 @@ export function guessThreadLinkRef(
   return null;
 }
 
-function threadLinkHref(link: ThreadLink): string {
-  return link.environmentId === null
-    ? `${V1_PREFIX}${link.threadId}`
-    : `${V2_PREFIX}${link.environmentId}/${link.threadId}`;
+// A Markdown destination cannot hold these verbatim. v2 ids are written unescaped, so those links
+// become hosted links, which escape; v1 ids may be escaped because their readers also try decoding.
+const UNSAFE_HREF = /[\s<>\\\p{Cc}]/u;
+
+function threadLinkHref({ environmentId, threadId }: ThreadLink): string {
+  if (environmentId === null) {
+    return V1_PREFIX + (UNSAFE_HREF.test(threadId) ? encodeURIComponent(threadId) : threadId);
+  }
+  // A v2 link splits at its first slash, so an environment id holding one cannot be written there.
+  return environmentId.includes("/") || UNSAFE_HREF.test(environmentId + threadId)
+    ? hostedThreadLink({ environmentId, threadId })
+    : `${V2_PREFIX}${environmentId}/${threadId}`;
 }
 
 const linkLabel = (label: string | undefined) =>
@@ -298,20 +310,26 @@ export function threadLinkRefs(
 
 // GFM like the chat renderer, so footnotes and other GFM containers hold prose, not code.
 const markdownParser = unified().use(remarkParse).use(remarkGfm);
+const INDENTED_CODE_LINE = /^[ \t>*+\-\d.)]*(?: {4}|\t)/m;
 const FENCE_LIKE_LINE = /^[ \t>*+\-\d.)]*(?:`{3}|~{3})/m;
+const LIST_ITEM_LINE = /^[ \t>]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|\r?$)/m;
 
-function parsedCodeRanges(markdown: string) {
-  // Parse only when a fence-looking line could be indented code in its container.
-  const candidates = new RegExp(FENCE_LIKE_LINE, "gm");
-  let candidate = candidates.exec(markdown);
-  while (candidate && !/ {4}|\t/.test(candidate[0])) candidate = candidates.exec(markdown);
-  if (!candidate) return undefined;
+function parsedSkippedRanges(markdown: string) {
+  // Parse only when an indented line could be code, when a list could end an unclosed fence,
+  // or when a footnote or link reference definition may appear.
+  if (
+    !markdown.includes("]:") &&
+    !INDENTED_CODE_LINE.test(markdown) &&
+    !(LIST_ITEM_LINE.test(markdown) && FENCE_LIKE_LINE.test(markdown))
+  ) {
+    return undefined;
+  }
 
   const ranges: Array<{ start: number; end: number }> = [];
   const pending: Nodes[] = [markdownParser.parse(markdown)];
   while (pending.length > 0) {
     const node = pending.pop()!;
-    if (node.type === "code" || node.type === "inlineCode") {
+    if (node.type === "code" || node.type === "inlineCode" || node.type === "definition") {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
       if (start !== undefined && end !== undefined) ranges.push({ start, end });
@@ -324,6 +342,22 @@ function parsedCodeRanges(markdown: string) {
   return ranges;
 }
 
+function readDestination(markdown: string, match: RegExpExecArray) {
+  const start = match.index + match[0].length - match.groups!.customHref!.length;
+  for (let i = start, depth = 0; i < markdown.length; i++) {
+    const ch = markdown[i]!;
+    if (ch === "\\" && /[!-/:-@[-`{-~]/.test(markdown[i + 1] ?? "")) i++;
+    else if (ch === "(") depth++;
+    else if (ch === ")" && depth-- === 0)
+      return { href: markdown.slice(start, i).replace(/\\([!-/:-@[-`{-~])/g, "$1"), end: i + 1 };
+    else if (/[\s\p{Cc}]/u.test(ch)) {
+      const skip = depth === 0 ? /^[ \t]+(?:"[^"\n]*"|'[^'\n]*')\)/.exec(markdown.slice(i)) : null;
+      return { href: undefined, end: skip ? i + skip[0].length : match.index + 1 };
+    }
+  }
+  return { href: undefined, end: match.index + 1 };
+}
+
 /** Rewrites each link outside code `replace` answers for. `label` is a Markdown link's own text. */
 export function replaceThreadLinks(
   markdown: string,
@@ -334,19 +368,19 @@ export function replaceThreadLinks(
   if (markdown.startsWith("\uFEFF"))
     return `\uFEFF${replaceThreadLinks(markdown.slice(1), replace)}`;
   // Hermes' matchAll yields matches without `groups`; exec keeps them.
-  const codeRanges = parsedCodeRanges(markdown);
-  const pattern = new RegExp(codeRanges ? THREAD_LINK : THREAD_LINK_OUTSIDE_CODE);
-  const source = codeRanges ? markdown : threadLinkSource(markdown);
+  const skippedRanges = parsedSkippedRanges(markdown);
+  const pattern = new RegExp(skippedRanges ? THREAD_LINK : THREAD_LINK_OUTSIDE_CODE);
+  const source = skippedRanges ? markdown : threadLinkSource(markdown);
   let result = "";
   let cursor = 0;
   let lines: ReturnType<typeof codeSpanLines> | undefined;
   let lineIndex = 0;
   let rangeIndex = 0;
   for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
-    while (codeRanges?.[rangeIndex] && codeRanges[rangeIndex]!.end <= match.index) {
+    while (skippedRanges?.[rangeIndex] && skippedRanges[rangeIndex]!.end <= match.index) {
       rangeIndex++;
     }
-    const range = codeRanges?.[rangeIndex];
+    const range = skippedRanges?.[rangeIndex];
     if (range && range.start <= match.index) {
       pattern.lastIndex = range.end;
       continue;
@@ -360,8 +394,10 @@ export function replaceThreadLinks(
       if (spanEnd !== -1) pattern.lastIndex = spanEnd;
       continue;
     }
-    const href =
+    let href =
       match.groups?.angleHref ?? match.groups?.href ?? match.groups?.autolink ?? match.groups?.bare;
+    if (match.groups?.customHref)
+      ({ href, end: pattern.lastIndex } = readDestination(markdown, match));
     const link = href === undefined ? null : parseThreadLinkHref(href);
     const label = match.groups?.label;
     const rewritten =
@@ -370,7 +406,7 @@ export function replaceThreadLinks(
         : replace(link, label && markdown.slice(match.index + 1, match.index + 1 + label.length));
     if (rewritten === undefined) continue;
     result += markdown.slice(cursor, match.index) + rewritten;
-    cursor = match.index + match[0].length;
+    cursor = pattern.lastIndex;
   }
   return cursor === 0 ? markdown : result + markdown.slice(cursor);
 }

@@ -49,7 +49,7 @@ export function textDirection(text: string): TextDirection | undefined {
 }
 
 const MARKDOWN_CODE_OR_URL =
-  /(`{3,}|~{3,})[\s\S]*?(?:\1|$)|(`{1,2})(?!`)[\s\S]*?(?<!`)\2(?!`)|https?:\/\/\S+/g;
+  /(`{3,}|~{3,})[\s\S]*?(?:\1|$)|(`{1,2})(?!`)[\s\S]*?(?<!`)\2(?!`)|<https?:\/\/[^\s<>]+>|https?:\/\/\S+/gi;
 
 export function markdownProseDirection(markdown: string): TextDirection | undefined {
   return textDirection(markdown.replace(MARKDOWN_CODE_OR_URL, " "));

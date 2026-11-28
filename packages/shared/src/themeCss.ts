@@ -13,14 +13,13 @@ const CSS_TOKENS = new RegExp(String.raw`\/\*[\s\S]*?\*\/|${URL_OR_STRING}`, "gi
 
 /**
  * The code with its strings and comments removed, keeping `url(` where a quoted url() can load a
- * file. A declaration value keeps a comment or quoted url() that holds an escape. In a stylesheet
- * an unquoted url() is judged by its address too.
+ * file. A declaration value keeps a comment that holds an escape. In a stylesheet an unquoted url()
+ * is judged by its address too.
  */
 function withoutStrings(code: string, stylesheet: boolean): string {
   return code.replace(CSS_TOKENS, (token, address?: string, urlString?: string) => {
     const url = stylesheet ? (address ?? urlString) : urlString;
     if (url !== undefined) {
-      if (!stylesheet && url.includes("\\")) return token;
       return /^[ \t\n\f\r]*["']?(?:data:|#)/i.test(url) ? "" : "url(";
     }
     if (token.startsWith("/*")) {
@@ -38,7 +37,7 @@ function fetchesOutsideStrings(code: string): boolean {
 /**
  * Whether one declaration value can load a remote file. Clients drop those declarations.
  * Values with var() can keep escapes that spell `var` or `url`. Refuse escapes that survive
- * removing plain strings, including escapes in URL addresses.
+ * removing plain strings and local quoted url() values.
  */
 export function themeCssValueFetches(value: string): boolean {
   const code = withoutStrings(value, false);

@@ -65,16 +65,16 @@ Add `"$schema": "https://t3.codes/schema/t3.json"` for editor autocomplete and v
 
 Import `t3.json` scripts or define local actions in **Settings → Projects → Actions** (run them from the thread details panel, command palette, or [keybindings](./keybindings.md) via `script.<id>.run`).
 
-| Field                 | Description                                                                                                                               |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                | Display name in the actions menu.                                                                                                         |
-| `command`             | Shell command run in a T3 terminal at the project root.                                                                                   |
-| `icon`                | `"play"` (default), `"test"`, `"lint"`, `"configure"`, `"build"`, or `"debug"`.                                                           |
-| `runOnWorktreeCreate` | Runs automatically when a new worktree is created. Skipped for agent-initiated worktrees below **Full access**.                           |
-| `async`               | For `runOnWorktreeCreate` only: `true` (default) starts the agent immediately; `false` waits for the script to finish first.              |
-| `stopOnSettle`        | Stops this action's terminal and child processes when its thread settles.                                                                 |
-| `runOnSettle`         | Runs in the thread's worktree whenever the thread settles (skipped in main checkouts). Terminal closes on success, stays open on failure. |
-| `previewUrl`          | Opens this URL in the in-app browser when the script runs (desktop only).                                                                 |
-| `autoOpenPreview`     | Automatically opens the browser panel at `previewUrl` on script start.                                                                    |
+| Field                 | Description                                                                                                                                                                                   |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                | Display name in the actions menu.                                                                                                                                                             |
+| `command`             | Shell command run in a T3 terminal at the project root.                                                                                                                                       |
+| `icon`                | `"play"` (default), `"test"`, `"lint"`, `"configure"`, `"build"`, or `"debug"`.                                                                                                               |
+| `runOnWorktreeCreate` | Runs automatically when a new worktree is created. Skipped for agent-initiated worktrees below **Full access**.                                                                               |
+| `async`               | For `runOnWorktreeCreate` only: `true` (default) starts the agent immediately; `false` waits for the script to finish first.                                                                  |
+| `stopOnSettle`        | Stops this action's terminal and child processes when its thread settles.                                                                                                                     |
+| `runOnSettle`         | Runs in the thread's worktree whenever the thread settles (skipped in main checkouts). Settle scripts run one at a time across the server. Terminal closes on success, stays open on failure. |
+| `previewUrl`          | Opens this URL in the in-app browser when the script runs (desktop only).                                                                                                                     |
+| `autoOpenPreview`     | Automatically opens the browser panel at `previewUrl` on script start.                                                                                                                        |
 
 > Note: In multi-repo projects, only the project folder's `t3.json` is read—nested repo `t3.json` files are ignored.

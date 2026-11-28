@@ -83,7 +83,7 @@ export function makeTraceSpanSummary(window?: { nowMs: number; duration: Duratio
     if (
       span.exit?._tag === "Interrupted" ||
       span.attributes?.["effect.fiber.interrupted"] === true ||
-      span.status?.message === "Interrupted"
+      (span.status?.code === "1" && span.status.message === "Interrupted")
     ) {
       stats.interrupted += 1;
     }

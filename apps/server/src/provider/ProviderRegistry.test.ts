@@ -55,7 +55,7 @@ import {
   type CodexAppServerProviderSnapshot,
 } from "./CodexProvider.ts";
 import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
-import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { checkClaudeProviderStatus, probeClaudeWorkspaceSnapshot } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -2522,6 +2522,7 @@ it.layer(
               slashCommands: [],
               skills: [],
             } as const satisfies ServerProvider;
+            const snapshotRef = yield* Ref.make<ServerProvider>(provider);
             const invalidations = yield* Ref.make(0);
             const probes = yield* Ref.make(0);
             const maintenanceReads = yield* Ref.make<ReadonlyArray<boolean | "afterUpdate">>([]);
@@ -2544,8 +2545,14 @@ it.layer(
                       }),
                     ),
                   ),
-                getSnapshot: Effect.succeed(provider),
-                refresh: Ref.update(probes, (count) => count + 1).pipe(Effect.as(provider)),
+                getSnapshot: Ref.get(snapshotRef),
+                refresh: Ref.update(probes, (count) => count + 1).pipe(
+                  Effect.andThen(Ref.get(snapshotRef)),
+                ),
+                refreshUsage: Ref.update(snapshotRef, (current) => ({
+                  ...current,
+                  usageLimits: { checkedAt: "2026-06-10T00:05:00.000Z", windows: [] },
+                })),
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
               },
@@ -2655,6 +2662,17 @@ it.layer(
           assert.strictEqual(yield* Ref.get(second.probes), probesBefore + 1);
           // A changed manifest also rechecks latest CLI versions.
           assert.strictEqual(yield* readCachedVersion("codex_second-package", "3.0.0"), "3.0.0");
+
+          // A limits refresh updates limits directly and skips full probes and maintenance checks.
+          const probesBeforeLimits = yield* Ref.get(first.probes);
+          yield* first.takeMaintenanceReads;
+          yield* registry.refreshUsageLimits();
+          assert.strictEqual(yield* Ref.get(first.probes), probesBeforeLimits);
+          assert.deepStrictEqual(yield* first.takeMaintenanceReads, []);
+          const refreshedFirst = (yield* registry.getProviders).find(
+            (entry) => entry.instanceId === first.instance.instanceId,
+          );
+          assert.strictEqual(refreshedFirst?.usageLimits?.checkedAt, "2026-06-10T00:05:00.000Z");
 
           yield* first.takeMaintenanceReads;
           yield* Ref.set(updateEvents, []);
@@ -4939,6 +4957,44 @@ it.layer(
         );
         assert.isNull(status.version, "mise's own version is not Claude's");
       }),
+    );
+
+    it.effect("leaves skills unscanned until a project's composer asks for them", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const homePath = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-home-" });
+        yield* fs.makeDirectory(path.join(homePath, "skills", "review"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(homePath, "skills", "review", "SKILL.md"),
+          "---\nname: review\ndescription: Review a change\n---\n",
+        );
+        const settings = { ...defaultClaudeSettings, homePath };
+
+        const status = yield* checkClaudeProviderStatus(settings, claudeCapabilities(), {
+          ANTHROPIC_BASE_URL: "",
+        });
+        assert.deepStrictEqual(status.skills, []);
+
+        const workspace = yield* probeClaudeWorkspaceSnapshot(
+          settings,
+          status as ServerProvider,
+          path.join(homePath, "missing-project"),
+          { ANTHROPIC_BASE_URL: "" },
+        );
+        assert.deepStrictEqual(
+          workspace.skills.map((skill) => skill.name),
+          ["review"],
+        );
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
     );
 
     it.effect("reports a logged-out CLI as unauthenticated", () =>

@@ -1,4 +1,4 @@
-import { type ComponentProps, type ReactNode, useRef } from "react";
+import { type ComponentProps, type ReactNode } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { cn } from "../../lib/cn";
 import { SymbolView } from "./AppSymbol";
@@ -13,31 +13,12 @@ export function ControlPill(props: {
   readonly label?: string;
   readonly accessibilityLabel?: string;
   readonly onPress?: () => void;
-  readonly activateOnPressIn?: boolean;
   readonly variant?: "circle" | "pill" | "primary" | "danger";
   readonly disabled?: boolean;
   readonly className?: string;
 }) {
   const variant = props.variant ?? "circle";
   const { smallIconSize } = useAndroidControlSizing();
-  const activatedOnPressInRef = useRef(false);
-
-  const handlePressIn = () => {
-    activatedOnPressInRef.current = true;
-    props.onPress?.();
-  };
-  const handlePressOut = () => {
-    // Defer reset: Pressability calls onPressOut before onPress for the same gesture.
-    setTimeout(() => {
-      activatedOnPressInRef.current = false;
-    }, 0);
-  };
-  const handlePress = () => {
-    if (activatedOnPressInRef.current) {
-      return;
-    }
-    props.onPress?.();
-  };
 
   const iconTintClassName =
     variant === "primary"
@@ -84,7 +65,6 @@ export function ControlPill(props: {
     !props.icon &&
     !props.iconNode &&
     !props.className &&
-    !props.activateOnPressIn &&
     (!props.accessibilityLabel || props.accessibilityLabel === props.label)
   ) {
     return (
@@ -103,8 +83,7 @@ export function ControlPill(props: {
     props.icon &&
     !props.iconNode &&
     !props.label &&
-    !props.className &&
-    !props.activateOnPressIn
+    !props.className
   ) {
     return (
       <IconButton
@@ -121,9 +100,7 @@ export function ControlPill(props: {
     <Pressable
       accessibilityLabel={props.accessibilityLabel ?? props.label}
       accessibilityRole="button"
-      onPress={props.activateOnPressIn ? handlePress : props.onPress}
-      onPressIn={props.activateOnPressIn ? handlePressIn : undefined}
-      onPressOut={props.activateOnPressIn ? handlePressOut : undefined}
+      onPress={props.onPress}
       disabled={props.disabled}
       className={containerClassName}
     >
