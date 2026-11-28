@@ -190,7 +190,7 @@ export type PullRequestThreadComment = typeof PullRequestThreadComment.Type;
 
 export const PullRequestReviewThread = Schema.Struct({
   id: TrimmedNonEmptyString,
-  path: TrimmedNonEmptyString,
+  path: Schema.NonEmptyString,
   line: Schema.NullOr(PositiveInt),
   side: PullRequestDiffSide,
   isResolved: Schema.Boolean,
@@ -907,9 +907,9 @@ export const PullRequestReviewPosition = Schema.Union([
 export type PullRequestReviewPosition = typeof PullRequestReviewPosition.Type;
 
 export const PullRequestReviewCommentDraft = Schema.Struct({
-  path: TrimmedNonEmptyString,
+  path: Schema.NonEmptyString,
   /** GitLab needs both names for renamed-file comments; hosts using one path ignore this. */
-  oldPath: Schema.optional(TrimmedNonEmptyString),
+  oldPath: Schema.optional(Schema.NonEmptyString),
   position: PullRequestReviewPosition,
   /**
    * The first line of a comment on a range, which ends at `position`. Sent only to a host whose

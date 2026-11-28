@@ -1,4 +1,7 @@
-import { trimOptionalString as trimmed } from "@t3tools/source-control-core/server/pullRequestUtils";
+import {
+  nonEmptyOptionalString,
+  trimOptionalString as trimmed,
+} from "@t3tools/source-control-core/server/pullRequestUtils";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
@@ -1434,7 +1437,7 @@ type ReviewThreadsPullRequest = NonNullable<
 function toReviewThreadEntries(threads: ReviewThreadPage, viewer: string | null) {
   const threadNodes = nodesOf(threads);
   const entries = threadNodes.flatMap((thread): ReadonlyArray<GitHubReviewThreadEntry> => {
-    const path = trimmed(thread.path);
+    const path = nonEmptyOptionalString(thread.path);
     const id = trimmed(thread.id);
     const loaded = nodesOf(thread.comments);
     // Hidden comments are left out, as in `toComments`; a thread with none left is dropped.

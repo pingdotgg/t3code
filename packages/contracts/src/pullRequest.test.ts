@@ -6,10 +6,13 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "@effect/vitest";
 
+import { ProjectId } from "./baseSchemas.ts";
 import {
   type PullRequestDetail,
   PullRequestListResult,
   PullRequestOperationError,
+  PullRequestReviewThread,
+  PullRequestSubmitReviewInput,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
 import { WS_METHODS, WsRpcGroup } from "./rpc.ts";
@@ -159,6 +162,41 @@ describe("resolvePullRequestAuthorFilter", () => {
   it("passes any other login through trimmed", () => {
     expect(resolvePullRequestAuthorFilter(" ana ", "bilal")).toBe("ana");
     expect(resolvePullRequestAuthorFilter("meredith", "bilal")).toBe("meredith");
+  });
+});
+
+const decodeReviewThread = Schema.decodeSync(PullRequestReviewThread);
+
+describe("PullRequestSubmitReviewInput", () => {
+  const codec = Schema.toCodecJson(PullRequestSubmitReviewInput);
+  const withPaths = (path: string, oldPath: string) => ({
+    projectId: ProjectId.make("project-1"),
+    repository: "pingdotgg/t3code",
+    number: 1,
+    verdict: "comment" as const,
+    body: "",
+    comments: [{ path, oldPath, position: { kind: "added" as const, newLine: 1 }, body: "x" }],
+  });
+
+  it("keeps whitespace in inline comment paths, since filenames may contain it", () => {
+    for (const input of [withPaths(" note.txt", "old.txt "), withPaths(" ", "  ")]) {
+      expect(Schema.decodeSync(codec)(Schema.encodeSync(codec)(input))).toStrictEqual(input);
+    }
+    expect(() => Schema.decodeSync(codec)(withPaths("", "old.txt"))).toThrow();
+    expect(() => Schema.decodeSync(codec)(withPaths("note.txt", ""))).toThrow();
+  });
+
+  it("keeps whitespace in a review thread's path so it stays on its diff file", () => {
+    const thread = decodeReviewThread({
+      id: "thread-1",
+      path: " note.txt",
+      line: 3,
+      side: "right",
+      isResolved: false,
+      isOutdated: false,
+      comments: [],
+    });
+    expect(thread.path).toBe(" note.txt");
   });
 });
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   decodeAwardEmojiJson,
+  decodeDiscussionsJson,
   decodeRepositoryBlobsJson,
   decodeCommitsJson,
   decodeGraphqlListSupportJson,
@@ -600,6 +601,34 @@ describe("decodeMergeRequestDiffsJson", () => {
         "",
       ].join("\n"),
     );
+  });
+
+  it("keeps whitespace in a diff thread's file path so it matches the diff", () => {
+    const { threads } = expectSuccess(
+      decodeDiscussionsJson(
+        JSON.stringify([
+          {
+            id: "spaced",
+            notes: [
+              {
+                id: 1,
+                body: "Check filename spacing.",
+                created_at: "2026-07-01T00:00:00Z",
+                position: {
+                  position_type: "text",
+                  new_path: " note.txt",
+                  old_path: " note.txt",
+                  new_line: 3,
+                  old_line: null,
+                },
+              },
+            ],
+          },
+        ]),
+      ),
+    );
+
+    expect(threads).toMatchObject([{ path: " note.txt", line: 3, side: "right" }]);
   });
 
   it("preserves spaces and literal backslashes in both rename paths", () => {

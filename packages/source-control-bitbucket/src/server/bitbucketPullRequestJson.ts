@@ -1,4 +1,5 @@
 import {
+  nonEmptyOptionalString,
   trimOptionalString as trimmed,
   toIsoUtc,
 } from "@t3tools/source-control-core/server/pullRequestUtils";
@@ -377,7 +378,7 @@ export function buildReviewThreads(
   for (const comment of comments) {
     const root = rootOf(comment);
     const inline = root.inline;
-    const path = trimmed(inline?.path);
+    const path = nonEmptyOptionalString(inline?.path);
     if (path === null) continue;
     if (root.id === comment.id) {
       const side = inline?.to === null || inline?.to === undefined ? "left" : "right";

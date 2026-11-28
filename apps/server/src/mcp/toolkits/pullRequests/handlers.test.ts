@@ -2111,6 +2111,38 @@ describe("source control tools", () => {
     }),
   );
 
+  it.effect("keeps whitespace in a review comment's file path", () =>
+    Effect.gen(function* () {
+      const reviews: Array<PullRequestSubmitReviewInput> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          diff: () =>
+            Effect.succeed({
+              patch:
+                "diff --git a/ note.txt b/ note.txt\n--- a/ note.txt\n+++ b/ note.txt\n@@ -1,1 +1,1 @@\n-old\n+new\n",
+              truncated: false,
+              nextCursor: null,
+            }),
+          submitReview: (input) => Effect.sync(() => void reviews.push(input)),
+        },
+      });
+      yield* harness.call("pull_request_review", {
+        verdict: "comment",
+        comments: [{ path: " note.txt", line: 1, body: "Spaced name." }],
+      });
+      expect(reviews).toMatchObject([{ comments: [{ path: " note.txt" }] }]);
+      const error = yield* harness
+        .call("pull_request_review", {
+          verdict: "comment",
+          comments: [{ path: "", line: 1, body: "No file." }],
+        })
+        .pipe(Effect.flip);
+      expect(error.message).toContain("is not in this PR's diff");
+      expect(reviews).toHaveLength(1);
+    }),
+  );
+
   it.effect("places review comments by the diff page that shows their line", () =>
     Effect.gen(function* () {
       const reviews: Array<PullRequestSubmitReviewInput> = [];

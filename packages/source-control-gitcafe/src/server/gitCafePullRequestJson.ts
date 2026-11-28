@@ -222,7 +222,7 @@ export type GitCafeStack = typeof GitCafeStack.Type;
 export const GitCafeStackEnvelope = Schema.Struct({ stack: Schema.NullOr(GitCafeStack) });
 
 const GitCafeDiffFile = Schema.Struct({
-  path: TrimmedNonEmptyString,
+  path: Schema.NonEmptyString,
   oldPath: Schema.optional(Schema.NullOr(Schema.String)),
   status: Schema.optional(
     Schema.Literals([

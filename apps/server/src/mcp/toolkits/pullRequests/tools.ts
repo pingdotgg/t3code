@@ -754,7 +754,7 @@ const RespondToPullRequestTool = Tool.make("pull_request_respond", {
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWithoutForge);
 
 export const ReviewLineComment = Schema.Struct({
-  path: TrimmedNonEmptyString,
+  path: Schema.String,
   line: PositiveInt,
   startLine: Schema.optional(PositiveInt),
   side: Schema.optional(
