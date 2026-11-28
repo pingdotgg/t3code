@@ -10,6 +10,8 @@ import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { OtlpSerialization, OtlpTracer } from "effect/observability";
 
+import { layerManualRedirects } from "./httpRedirects.ts";
+
 export interface RelayClientTracingConfig {
   readonly tracesUrl: string;
   readonly tracesDataset: string;
@@ -194,6 +196,7 @@ export function layer(
     Layer.provide(OtlpSerialization.layerJson),
     // An operator's OTEL_RESOURCE_ATTRIBUTES describe their machines for their own receiver.
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord({}))),
+    Layer.provide(layerManualRedirects),
     options?.isEnabled ? Layer.provide(layerSendWhile(options.isEnabled)) : identity,
   );
 

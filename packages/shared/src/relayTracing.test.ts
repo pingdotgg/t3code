@@ -131,6 +131,7 @@ it.effect.each([true, false])("filters relay exports at flush (%s)", (enabledAtF
       Effect.sync(() => {
         expect(fetchFn).toHaveBeenCalledTimes(Number(enabledAtFlush));
         if (!enabledAtFlush) return;
+        expect(fetchFn.mock.calls[0]?.[1]?.redirect).toBe("manual");
         const sent = new TextDecoder().decode(fetchFn.mock.calls[0]?.[1]?.body as Uint8Array);
         expect(sent).toContain("/api/threads");
         expect(sent).not.toMatch(

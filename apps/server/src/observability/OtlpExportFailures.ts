@@ -1,4 +1,5 @@
 import type { OtlpSignal } from "@t3tools/contracts";
+import { withManualRedirects } from "@t3tools/shared/httpRedirects";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -35,7 +36,7 @@ export const layer = (signal: OtlpSignal) =>
         };
       return Context.make(
         HttpClient.HttpClient,
-        client.pipe(
+        withManualRedirects(client).pipe(
           HttpClient.tap((response) =>
             response.status >= 200 && response.status < 300
               ? Effect.void

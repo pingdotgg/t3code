@@ -18,6 +18,15 @@ import { OtlpResource, OtlpTracer, OtlpSerialization } from "effect/observabilit
 
 import { makeAsyncRotatingFileSink } from "./logging.ts";
 
+export function redactEndpointUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    return parsed.origin === "null" ? "<invalid-url>" : parsed.origin;
+  } catch {
+    return "<invalid-url>";
+  }
+}
+
 export const OtlpProtocol = Schema.Literals(["http/json", "http/protobuf"]);
 export type OtlpProtocol = typeof OtlpProtocol.Type;
 export const layerOtlpSerialization = (protocol: OtlpProtocol) =>

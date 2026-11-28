@@ -11,12 +11,26 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as NetAddress from "effect/net/NetAddress";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Tracer from "effect/Tracer";
-import { HttpClient, HttpClientRequest, HttpRouter, HttpServerResponse } from "effect/http";
+import {
+  FetchHttpClient,
+  HttpBody,
+  HttpClient,
+  HttpClientRequest,
+  HttpRouter,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/http";
+import { OtlpSerialization } from "effect/observability";
 import { openMediaFile } from "./assets/MediaFile.ts";
+import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 
 import {
   injectMcpAppCsp,
@@ -1047,4 +1061,125 @@ describe("downloadContentDisposition", () => {
       `attachment; filename="bad_name.pdf"; filename*=UTF-8''bad%EF%BF%BDname.pdf`,
     );
   });
+});
+
+const exportThroughOtlpProxy = Effect.fn("HttpTest.exportThroughOtlpProxy")(function* (
+  otlpTracesUrl: string,
+) {
+  const logs: Array<string> = [];
+  const captureLogger = Logger.make((options) => {
+    logs.push(JSON.stringify(options.message));
+  });
+  const baseConfig = yield* ServerConfig.ServerConfig;
+  const config = ServerConfig.make({
+    ...baseConfig,
+    otlpTracesUrl,
+    otlpTracesExport: { ...baseConfig.otlpTracesExport, headers: { "x-api-key": "header-secret" } },
+  });
+  const authLayer = Layer.succeed(
+    EnvironmentAuth.EnvironmentAuth,
+    EnvironmentAuth.EnvironmentAuth.of({
+      authenticateHttpRequest: () =>
+        Effect.succeed({
+          sessionId: "sess-1",
+          method: "bearer-session-token",
+          clientType: "web",
+          role: "owner",
+          scopes: ["orchestration:operate"],
+        } as unknown as EnvironmentAuth.AuthenticatedSession),
+    } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
+  );
+  const services = yield* Layer.build(
+    HttpRouter.serve(ServerHttp.layerOtlpTracesProxyRoute, {
+      disableListenLog: true,
+      disableLogger: true,
+    }).pipe(
+      Layer.provideMerge(ServerConfig.layer(config)),
+      Layer.provideMerge(authLayer),
+      Layer.provideMerge(
+        Layer.succeed(
+          BrowserTraceCollector.BrowserTraceCollector,
+          BrowserTraceCollector.BrowserTraceCollector.of({ record: () => Effect.void }),
+        ),
+      ),
+      Layer.provideMerge(OtlpSerialization.layerJson),
+      Layer.provideMerge(FetchHttpClient.layer),
+      Layer.provideMerge(Layer.fresh(NodeHttpServer.layerTest)),
+    ),
+  ).pipe(Effect.provide(Logger.layer([captureLogger], { mergeWithExisting: false })));
+  const proxyAddress = Context.get(services, HttpServer.HttpServer).address;
+  if (!NetAddress.isInetAddress(proxyAddress)) {
+    return yield* Effect.die(new Error("Expected a TCP address"));
+  }
+  const response = yield* HttpClient.post(
+    `http://127.0.0.1:${proxyAddress.port}/api/observability/v1/traces`,
+    { body: HttpBody.text(JSON.stringify({ resourceSpans: [] }), "application/json") },
+  ).pipe(Effect.provide(FetchHttpClient.layer));
+  return { status: response.status, logs: logs.join("\n") };
+});
+
+describe("OTLP traces proxy", () => {
+  it.effect("does not follow receiver redirects or log URL credentials", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const collectorRequests: Array<{ url: string; apiKey: string | undefined }> = [];
+        const collector = yield* HttpServer.HttpServer;
+        yield* collector.serve(
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            yield* request.text;
+            collectorRequests.push({ url: request.url, apiKey: request.headers["x-api-key"] });
+            return request.url.startsWith("/v1/traces")
+              ? HttpServerResponse.redirect("/stolen", { status: 307 })
+              : HttpServerResponse.empty({ status: 200 });
+          }),
+        );
+        if (!NetAddress.isInetAddress(collector.address)) {
+          return yield* Effect.die(new Error("Expected a TCP address"));
+        }
+        const collectorOrigin = `http://127.0.0.1:${collector.address.port}`;
+
+        const { status, logs } = yield* exportThroughOtlpProxy(
+          `${collectorOrigin}/v1/traces?api_key=query-secret`,
+        );
+
+        expect(status).toBe(502);
+        expect(collectorRequests).toEqual([
+          { url: "/v1/traces?api_key=query-secret", apiKey: "header-secret" },
+        ]);
+        expect(logs).toContain(`"otlpTracesUrl":"${collectorOrigin}"`);
+        expect(logs).not.toContain("/v1/traces");
+        expect(logs).not.toContain("query-secret");
+        expect(logs).not.toContain("header-secret");
+      }),
+    ).pipe(
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-otlp-proxy-" }).pipe(
+          Layer.provideMerge(NodeHttpServer.layerTest),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("logs only the endpoint origin on OTLP proxy failure", () =>
+    Effect.gen(function* () {
+      const { status, logs } = yield* exportThroughOtlpProxy(
+        "http://collector-user:secret-pass@127.0.0.1:1/ingest/path-secret/v1/traces",
+      );
+
+      expect(status).toBe(502);
+      expect(logs).toContain('"otlpTracesUrl":"http://127.0.0.1:1"');
+      expect(logs).not.toContain("path-secret");
+      expect(logs).not.toContain("collector-user");
+      expect(logs).not.toContain("secret-pass");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-otlp-proxy-log-" }).pipe(
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
+  );
 });
