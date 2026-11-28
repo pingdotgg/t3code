@@ -894,6 +894,9 @@ describe("RelayClient", () => {
               const newer = managedPathFor(baseDir, "2026.1.0");
               const pinned = managedPathFor(baseDir, RelayClient.CLOUDFLARED_VERSION);
               const newerServer = managedPathFor(baseDir, "2099.1.0");
+              const olderBackupFile = `${baseDir}/tools/cloudflared/backup-of-2025.8.0.txt`;
+              const newerBackupFile = `${baseDir}/tools/cloudflared/backup-of-2026.10.2.txt`;
+              const nonDirectoryVersion = `${baseDir}/tools/cloudflared/2026.10.3`;
               versions[newerServer] = "2099.1.0";
               yield* writeExecutable(newerServer);
               versions[pathBinary] = "2026.10.3";
@@ -902,6 +905,9 @@ describe("RelayClient", () => {
               yield* writeExecutable(pathBinary);
               yield* writeExecutable(older);
               yield* writeExecutable(newer);
+              yield* fileSystem.writeFileString(olderBackupFile, "keep-older");
+              yield* fileSystem.writeFileString(newerBackupFile, "keep-newer");
+              yield* fileSystem.writeFileString(nonDirectoryVersion, "not-a-release-dir");
               const manager = yield* RelayClient.makeCloudflaredRelayClient({ baseDir });
               const resolveWith = manager.resolve.pipe(
                 Effect.provideService(
@@ -923,7 +929,14 @@ describe("RelayClient", () => {
               yield* manager.pruneManagedVersions;
               expect(
                 (yield* fileSystem.readDirectory(`${baseDir}/tools/cloudflared`)).sort(),
-              ).toEqual(["2026.1.0", RelayClient.CLOUDFLARED_VERSION, "2099.1.0"]);
+              ).toEqual([
+                "2026.1.0",
+                "2026.10.3",
+                RelayClient.CLOUDFLARED_VERSION,
+                "2099.1.0",
+                "backup-of-2025.8.0.txt",
+                "backup-of-2026.10.2.txt",
+              ]);
 
               yield* fileSystem.remove(pinned);
               expect(yield* resolveWith).toMatchObject({ source: "managed", version: "2026.10.3" });
