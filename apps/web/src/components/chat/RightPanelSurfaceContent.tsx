@@ -293,12 +293,20 @@ export function RightPanelSurfaceContent(props: {
             revealLine={surface.kind === "file" ? (surface.revealLine ?? null) : null}
             revealRequestId={surface.kind === "file" ? surface.revealRequestId : 0}
             onOpenFile={files.onOpenFile}
-            {...(surface.kind === "file" && surface.renderMarkdown
+            {...(surface.kind === "file" && surface.renderMarkdown !== undefined
               ? {
-                  dismissMarkdownPreview: () =>
-                    useRightPanelStore
-                      .getState()
-                      .clearFileMarkdownPreview(threadRef, surface.id, surface.revealRequestId),
+                  markdownPreview: {
+                    rendered: surface.renderMarkdown,
+                    setRendered: (rendered: boolean) =>
+                      useRightPanelStore
+                        .getState()
+                        .setFileMarkdownPreview(
+                          threadRef,
+                          surface.id,
+                          surface.revealRequestId,
+                          rendered,
+                        ),
+                  },
                 }
               : {})}
             onNavigateFolder={(relativePath, folderTrail, keepSource) =>

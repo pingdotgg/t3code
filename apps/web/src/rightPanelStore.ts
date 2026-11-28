@@ -69,7 +69,7 @@ export type RightPanelSurface =
       relativePath: string;
       revealLine: number | null;
       revealRequestId: number;
-      renderMarkdown?: true;
+      renderMarkdown?: boolean;
       attachment?: ChatFileAttachment;
       /** Deepest workspace path retained for navigating back down after moving up. */
       folderTrail?: string;
@@ -205,7 +205,12 @@ interface RightPanelStoreState {
     line?: number,
     renderMarkdown?: boolean,
   ) => void;
-  clearFileMarkdownPreview: (ref: ScopedThreadRef, surfaceId: string, requestId: number) => void;
+  setFileMarkdownPreview: (
+    ref: ScopedThreadRef,
+    surfaceId: string,
+    requestId: number,
+    rendered: boolean,
+  ) => void;
   /** Moves in place; "" opens the root explorer. folderTrail keeps the return path; keepSource opens beside the source. */
   navigateFolder: (
     ref: ScopedThreadRef,
@@ -419,7 +424,7 @@ export function pullRequestSurface(target: {
 
 /** A pending link or preview belongs to the click that made it, not to a reload or a reopen. */
 const withoutReveal = (surface: RightPanelSurface): RightPanelSurface => {
-  if (surface.kind === "file" && surface.renderMarkdown) {
+  if (surface.kind === "file" && surface.renderMarkdown !== undefined) {
     const { renderMarkdown: _preview, ...rest } = surface;
     return rest;
   }
@@ -1057,15 +1062,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             };
           }),
         ),
-      clearFileMarkdownPreview: (ref, surfaceId, requestId) =>
+      setFileMarkdownPreview: (ref, surfaceId, requestId, rendered) =>
         set((state) =>
           automaticUpdate(state, scopedThreadKey(ref), (current) => ({
             ...current,
             surfaces: current.surfaces.map((surface) =>
               surface.kind === "file" &&
               surface.id === surfaceId &&
-              surface.revealRequestId === requestId
-                ? withoutReveal(surface)
+              surface.revealRequestId === requestId &&
+              surface.renderMarkdown !== undefined
+                ? { ...surface, renderMarkdown: rendered }
                 : surface,
             ),
           })),
