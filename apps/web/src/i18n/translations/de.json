@@ -3804,6 +3804,7 @@
   "6c71d251d9917587": "Als Markdown kopieren",
   "d510b122f84051a0": "Als CSV kopieren",
   "66c4ee40252d9dec": "Als HTML kopieren",
+  "e2e660429c930759": "Für Chat-Apps kopieren",
   "7b8a7cd89a22d822": "Als PNG kopieren",
   "2912e4ac3697686b": "Thread auf {label} lesen",
   "ced684880c2e1961": "{server} erlauben, {tool} auszuführen?",
@@ -13056,5 +13057,6 @@
   "5807c08e225c6b3d": "Herunterladen",
   "0d50b5bfe7151ece": "Datei konnte nicht heruntergeladen werden",
   "eb1fd384ad5919dd": "Interne Notiz",
-  "b45f0b467e9406d0": "Dem Kunden antworten"
+  "b45f0b467e9406d0": "Dem Kunden antworten",
+  "d454bfdeea6f1129": "Vorschau öffnen"
 }

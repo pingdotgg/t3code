@@ -3803,6 +3803,7 @@
   "6c71d251d9917587": "Copier en Markdown",
   "d510b122f84051a0": "Copier en CSV",
   "66c4ee40252d9dec": "Copier au format HTML",
+  "e2e660429c930759": "Copier pour les applications de chat",
   "7b8a7cd89a22d822": "Copier en PNG",
   "2912e4ac3697686b": "Lire le fil sur {label}",
   "ced684880c2e1961": "Autoriser {server} à exécuter {tool} ?",
@@ -13056,5 +13057,6 @@
   "5807c08e225c6b3d": "Télécharger",
   "0d50b5bfe7151ece": "Impossible de télécharger le fichier",
   "eb1fd384ad5919dd": "Note interne",
-  "b45f0b467e9406d0": "Répondre au client"
+  "b45f0b467e9406d0": "Répondre au client",
+  "d454bfdeea6f1129": "Ouvrir l’aperçu"
 }
