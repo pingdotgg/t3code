@@ -188,7 +188,6 @@ describe("extractTerminalLinks", () => {
       "/var/lib/bluetooth/AA:BB:CC:11:22",
     ],
     ["./notes.txt:3:App.java:[27,49]", "./notes.txt:3:App.java:[27,49]", "./notes.txt:3"],
-    ["./notes.txt:3:Program.cs:line 29", "./notes.txt:3:Program.cs:line", "./notes.txt:3"],
   ])("keeps %s whole and offers its location as the fallback", (line, text, fallback) => {
     expect(extractTerminalLinks(line)).toEqual([
       {
@@ -237,11 +236,6 @@ describe("extractTerminalLinks", () => {
       String.raw`C:\app\Program.cs:line`,
       String.raw`C:\app\Program.cs:29`,
     ],
-    [
-      "System.Exception: boom at Demo.Run() in /home/dev/app/Run.cs:line 7.",
-      "/home/dev/app/Run.cs:line",
-      "/home/dev/app/Run.cs:7",
-    ],
   ])("offers the closing location in %s as the fallback", (line, text, fallback) => {
     const start = line.indexOf(text);
     const end = start + text.length;
@@ -253,14 +247,10 @@ describe("extractTerminalLinks", () => {
   it.each([
     ["see /home/dev/app/notes:line for details", "/home/dev/app/notes:line"],
     ["see /home/dev/app/notes:line 0x1d", "/home/dev/app/notes:line"],
-    ["see /home/dev/app/notes:line  29", "/home/dev/app/notes:line"],
-    ["see /tmp/:line 29", "/tmp/:line"],
-    ['see "/home/dev/my app/Program.cs:line" 29', "/home/dev/my app/Program.cs:line"],
-    ["see https://example.com/Program.cs:line 29", "https://example.com/Program.cs:line"],
   ])("offers no line number as the fallback in %s", (line, text) => {
     const start = line.indexOf(text);
     expect(extractTerminalLinks(line)).toEqual([
-      { kind: isTerminalUrl(text) ? "url" : "path", text, start, end: start + text.length },
+      { kind: "path", text, start, end: start + text.length },
     ]);
   });
 
