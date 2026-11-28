@@ -228,6 +228,8 @@ export function mergePathEntries(
 // An empty POSIX PATH entry searches each child's own cwd (a workspace, the state dir), so
 // a PATH handed to children names the directory it meant: the one the process started in.
 export function anchorCurrentDirectoryEntry(pathValue: string, cwd: string): string {
+  // POSIX PATH cannot encode a colon in an entry; retain cwd lookup rather than add directories.
+  if (cwd.includes(POSIX_PATH_DELIMITER)) return pathValue;
   return pathValue
     .split(POSIX_PATH_DELIMITER)
     .map((entry) => (entry === "" ? cwd : entry))
