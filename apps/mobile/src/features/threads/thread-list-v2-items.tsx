@@ -1632,35 +1632,21 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         {providerInstance ? (
           <View className="flex-row items-center">
             {providerStack.slice(0, -1).map((provider) => (
-              <View
-                key={provider.instanceId}
-                // A disc in the row's surface color hides the part of the logo beneath it.
-                className="-my-px -mr-[5px] -ml-px rounded-full p-px"
-                style={{ backgroundColor: rowAppearance.providerIconSurfaceColor }}
-              >
-                <View className="opacity-30">
-                  <ProviderIcon provider={provider.driver} iconUrl={provider.iconUrl} size={12} />
-                </View>
+              // Clipped, not covered: the next logo starts 8px in, and a clip holds on any row
+              // background, including the hover one.
+              <View key={provider.instanceId} className="mr-px w-[7px] overflow-hidden opacity-30">
+                <ProviderIcon provider={provider.driver} iconUrl={provider.iconUrl} size={12} />
               </View>
             ))}
-            <View
-              className={cn(providerStack.length > 1 && "-m-px rounded-full p-px")}
-              style={
-                providerStack.length > 1
-                  ? { backgroundColor: rowAppearance.providerIconSurfaceColor }
-                  : undefined
-              }
-            >
-              <ProviderInstanceIcon
-                iconUrl={providerIconUrl}
-                provider={providerInstance.driverKind}
-                size={14}
-                displayName={providerInstance.displayName}
-                accentColor={providerInstance.accentColor}
-                showBadge={providerInstance.showBadge}
-                surfaceColor={rowAppearance.providerIconSurfaceColor}
-              />
-            </View>
+            <ProviderInstanceIcon
+              iconUrl={providerIconUrl}
+              provider={providerInstance.driverKind}
+              size={14}
+              displayName={providerInstance.displayName}
+              accentColor={providerInstance.accentColor}
+              showBadge={providerInstance.showBadge}
+              surfaceColor={rowAppearance.providerIconSurfaceColor}
+            />
             {providerNameLabel ? (
               <Text
                 className={cn(

@@ -269,8 +269,9 @@ function SidebarProviderStack(props: {
         return (
           <ProviderInstanceIcon
             key={instanceId}
-            // The next icon overlaps this one; the mask cuts that icon's footprint out of it.
-            className="-mr-1 [mask-image:radial-gradient(circle_at_14.5px_50%,transparent_7.5px,black_8px)]"
+            // The next icon overlaps this one. The mask cuts a circle around that icon's whole box
+            // out of it, in rem so the cut follows the interface font size.
+            className="-mr-1 [mask-image:radial-gradient(circle_at_0.90625rem_50%,transparent_0.5625rem,black_0.59375rem)]"
             driverKind={entry.driverKind}
             displayName={entry.displayName}
             acpRegistryAgentId={entry.acpRegistryAgentId}
