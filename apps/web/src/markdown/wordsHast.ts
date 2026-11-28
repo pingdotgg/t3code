@@ -885,13 +885,14 @@ function breakLines(paragraph: Element, breaks: boolean) {
  * The wrapper copying reads (markdown-clipboard's MATH_SELECTOR): the formula's TeX, as the source
  * Words drew it from, so copying any part of a formula copies the whole of it.
  */
-// A formula wider than its block scrolls, with room for the glyphs that reach past its box; in a
-// table it keeps its width and the table scrolls.
+// A formula wider than its block scrolls, and glyphs that reach past its box keep room inside the
+// scroll container: 2px for display math, 0.3em for inline, where a fallback font overhangs ~0.17em.
+// The inline margin takes back the room beyond the 2px that always separated formulas from text, so
+// the advance stays as it was. In a table it keeps its width and the table scrolls.
 const MATH_SCROLL = [
   "max-w-full",
   "overflow-x-auto",
   "overflow-y-hidden",
-  "px-0.5",
   "py-0.75",
   "in-[.chat-markdown-table-container]:max-w-none",
   "in-[.chat-markdown-table-container]:overflow-visible",
@@ -905,12 +906,18 @@ function mathWrapper(svg: Element): Element {
     tagName: "span",
     properties: display
       ? {
-          className: ["chat-markdown-math-display", "block", ...MATH_SCROLL],
+          className: ["chat-markdown-math-display", "block", ...MATH_SCROLL, "px-0.5"],
           dataMarkdownMath: "display",
           dataMarkdownCopy: `\\[\n${tex}\n\\]\n\n`,
         }
       : {
-          className: ["inline-block", "align-middle", ...MATH_SCROLL],
+          className: [
+            "inline-block",
+            "align-middle",
+            ...MATH_SCROLL,
+            "px-[0.3em]",
+            "mx-[calc(0.125rem-0.3em)]",
+          ],
           dataMarkdownMath: "inline",
           dataMarkdownCopy: `\\(${tex}\\)`,
         },
