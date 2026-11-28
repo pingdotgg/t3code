@@ -158,7 +158,7 @@ export function workspaceRelativeFilePath(
   const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
   if (pathForCompare.replace(/\/+$/, "") === rootForCompare) return ".";
   if (!pathForCompare.startsWith(`${rootForCompare}/`)) return null;
-  const relativePath = normalizedPath.slice(normalizedRoot.length + 1);
+  const relativePath = normalizedPath.slice(normalizedRoot.length + 1).replace(/^\/+/, "");
   // `/repo/../x` starts with the root but escapes it; the server rejects that as a workspace path.
   let depth = 0;
   for (const segment of relativePath.split("/")) {
