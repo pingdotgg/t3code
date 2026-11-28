@@ -15,6 +15,7 @@ import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import type { McpToolExposureMode } from "@t3tools/provider-core/server/mcpSession";
 import { formatThreadLink, hostedThreadLink } from "@t3tools/shared/threadLinks";
 
 const ALL_MCP_CAPABILITIES = [
@@ -126,10 +127,12 @@ export const withRuntimeModeCeiling = (
   scope: McpInvocationScope,
   ceiling: RuntimeMode | undefined,
 ): McpInvocationScope => {
-  if (ceiling === undefined || scope.client === undefined) return scope;
+  if (ceiling === undefined) return scope;
+  if (scope.client === undefined) return { ...scope, runtimeModeCeiling: ceiling };
   const asked = scope.client.narrowedTo;
   return {
     ...scope,
+    runtimeModeCeiling: ceiling,
     client: {
       ...scope.client,
       narrowedTo: {
@@ -155,6 +158,8 @@ export interface McpInvocationScope {
   readonly linkedEnvironments?: boolean;
   /** The Agent feedback mode here; `/mcp` reads it per request. Unset is off. */
   readonly agentFeedback?: AgentFeedbackMode;
+  /** The broadest runtime mode an administrator lets a thread run in here. Unset is full access. */
+  readonly runtimeModeCeiling?: RuntimeMode | undefined;
   /** True while Labs → Workflows is on here; `/mcp` reads it per request. Unset is off. */
   readonly workflows?: boolean;
   /**
@@ -164,6 +169,8 @@ export interface McpInvocationScope {
   readonly origin?: string | undefined;
   /** False when the calling thread's project is on no forge T3 reads; `/mcp` reads it per request. */
   readonly forge?: boolean;
+  /** Set from `t3-tool-exposure` when an ACP client defers optional T3 MCP tools. */
+  readonly toolExposure?: McpToolExposureMode | undefined;
 }
 
 /**

@@ -52,6 +52,11 @@ A provider turn ending and follow-up work settling (checkpoints, diffs, PR sync)
 milestones. Late finalization must not keep the client showing provider work as active or extend
 recorded provider duration.
 
+A run is `completed` when its provider turn ends; the turn-end checkpoint is captured afterwards as
+an outbox effect on the thread's effect lane. Until that capture commits, readers treat the missing
+checkpoint as pending, and command decisions still see the run as `waiting`, so steers, queued
+turns, rollback and restore line up behind the capture.
+
 Checkpoints use hidden Git refs so workspace snapshots never add commits to the user's branch.
 Reverting a checkpoint must coordinate workspace state with the provider conversation: if the
 provider cannot roll back its conversation, reject the revert before touching the filesystem.

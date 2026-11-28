@@ -4,7 +4,7 @@ import { contextMenuSourceOf } from "../../contextMenuSource";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { composerFileLinksToPlainText } from "@t3tools/shared/composerInlineTokens";
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { SquarePenIcon, XIcon } from "lucide-react";
 import {
   memo,
@@ -15,11 +15,11 @@ import {
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useShallow } from "zustand/react/shallow";
+import { terminalContextDisplayLabels } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
 import { useTerminalLabelsByThreadKey } from "~/state/terminalSessions";
 import { resolveSidebarRowAccessibility } from "../Sidebar.logic";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   composerDraftHasUserContent,
   DraftId,
@@ -33,6 +33,7 @@ import {
   JUMP_HINT_SLOT_CLASS_NAME,
   JumpHintBadge,
 } from "./SidebarThreadRow";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const EMPTY_COMPOSER_PARTS = {
   prompt: "",
@@ -84,10 +85,18 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   const { draftId, onContextMenu, onDiscard, onNavigate } = props;
   const composer = props.composer ?? EMPTY_COMPOSER_PARTS;
   const gt = useGT();
+  const resolve = useMessages();
+  const terminalLabels = terminalContextDisplayLabels(composer.terminalContexts, resolve);
   const promptPreview =
     assistantCitationsToPlainText(
       composerFileLinksToPlainText(
-        replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label),
+        replaceComposerContextReferences(
+          composer.prompt,
+          (occurrence) =>
+            (occurrence.kind === "terminal"
+              ? terminalLabels.get(occurrence.contextId)
+              : undefined) ?? occurrence.label,
+        ),
       ),
     )
       .trim()
@@ -170,23 +179,23 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
                 props.jumpLabel && JUMP_HINT_SLOT_CLASS_NAME,
               )}
             >
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label={gt("Discard draft")}
-                      onClick={handleDiscard}
-                      className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
-                    >
-                      <XIcon className="size-3" />
-                    </button>
-                  }
-                />
-                <TooltipPopup side="top">
-                  <T>Discard draft</T>
-                </TooltipPopup>
-              </Tooltip>
+              <SharedTooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={gt("Discard draft")}
+                    onClick={handleDiscard}
+                    className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
+                  >
+                    <XIcon className="size-3" />
+                  </button>
+                }
+                label={
+                  <>
+                    <T>Discard draft</T>
+                  </>
+                }
+              />
               {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
             </span>
           </div>

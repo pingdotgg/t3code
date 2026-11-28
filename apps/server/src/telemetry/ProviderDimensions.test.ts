@@ -1,7 +1,12 @@
 import { ProviderInstanceId, ThreadId, type ServerProvider } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 
-import { type AgentThread, agentToolProperties, handoffSettings } from "./ProviderDimensions.ts";
+import {
+  type AgentThread,
+  agentToolProperties,
+  handoffSettings,
+  toolOutcome,
+} from "./ProviderDimensions.ts";
 
 const provider = (
   instanceId: string,
@@ -11,6 +16,7 @@ const provider = (
   ({
     instanceId: ProviderInstanceId.make(instanceId),
     driver,
+    auth: { status: "authenticated" },
     models,
   }) as unknown as ServerProvider;
 
@@ -37,7 +43,7 @@ const thread = (
   ...overrides,
 });
 
-it("reports every model name but never instance names", () => {
+it("reports custom models as custom:<driver> and never instance names", () => {
   expect(
     agentToolProperties({
       tool: "t3_thread_send",
@@ -54,13 +60,13 @@ it("reports every model name but never instance names", () => {
   ).toEqual([
     {
       callerProvider: "claudeAgent",
-      callerModel: "my-private-finetune",
+      callerModel: "custom:claudeAgent",
       targetProvider: "opencode",
-      targetModel: "ollama/acme-internal",
+      targetModel: "custom:opencode",
     },
     {
       callerProvider: "claudeAgent",
-      callerModel: "my-private-finetune",
+      callerModel: "custom:claudeAgent",
       targetProvider: "unknown",
       targetModel: undefined,
     },
@@ -88,4 +94,21 @@ it("records the binding the saved scheduled task resolved to, and none for failu
       { _tag: "OrchestratorMcpFailure", code: "invalid_request", message: "Different project." },
     ),
   ).toEqual({});
+});
+
+it("reports only identifier-shaped failure codes and known delivery values", () => {
+  expect(toolOutcome({ isError: true, structuredContent: { code: "thread_not_found" } })).toEqual({
+    outcome: "error",
+    errorCode: "thread_not_found",
+  });
+  expect(
+    toolOutcome({
+      isError: true,
+      structuredContent: { code: "ENOENT: no such file '/Users/julius/secret'" },
+    }),
+  ).toEqual({ outcome: "error", errorCode: "unknown" });
+  expect(handoffSettings("t3_thread_send", {}, { delivery: "queued" })).toEqual({
+    delivery: "queued",
+  });
+  expect(handoffSettings("t3_thread_send", {}, { delivery: "/Users/julius" })).toEqual({});
 });

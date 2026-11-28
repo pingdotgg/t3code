@@ -42,10 +42,11 @@ const providers = [
     ({
       instanceId: ProviderInstanceId.make(driver),
       driver,
+      auth: { status: "authenticated" },
       models: models.map((model) => ({ ...model, isCustom: false })),
     }) as unknown as ServerProvider,
 );
-const label = (model: string) => modelLabel(providers, model);
+const label = (driver: string, model: string) => modelLabel(providers, driver, model);
 
 const at = (ms: number) => DateTime.makeUnsafe(ms);
 const complete = (input: number, output: number, extra: Partial<TurnTokenUsage> = {}) =>
@@ -304,7 +305,7 @@ describe("provider usage reporting", () => {
     });
   });
 
-  it("reports every model name and closed efforts only", () => {
+  it("reports catalog models by slug, custom models by driver, and closed efforts only", () => {
     const routed = (model: string, variant: string) =>
       providerTurnProperties(
         {
@@ -327,20 +328,18 @@ describe("provider usage reporting", () => {
     });
     const local = routed("ollama/acme-internal", "secret-variant");
     expect(local).toMatchObject({
-      model: "ollama/acme-internal",
-      observedModel: "ollama/acme-internal",
+      model: "custom:opencode",
+      observedModel: "custom:opencode",
     });
     expect(local).not.toHaveProperty("effort");
   });
 
-  it("maps provider catalog aliases to their slug and file paths to their file name", () => {
-    expect(label("gemini-4-hydrogen")).toBe("gemini-4-hydrogen");
-    expect(label("antigravity-default")).toBe("gemini-4-neon");
-    expect(label("/Users/jane/models/qwen-coder.gguf")).toBe("qwen-coder.gguf");
-    expect(label("~/models/qwen-coder.gguf")).toBe("qwen-coder.gguf");
-    expect(label("C:\\Users\\jane\\qwen-coder.gguf")).toBe("qwen-coder.gguf");
-    expect(label("../jane/qwen-coder.gguf")).toBe("qwen-coder.gguf");
-    expect(label("pi-local")).toBe("llama.gguf");
+  it("maps vendor catalog aliases to their slug and user-configured models to their driver", () => {
+    expect(label("antigravity", "gemini-4-hydrogen")).toBe("gemini-4-hydrogen");
+    expect(label("antigravity", "antigravity-default")).toBe("gemini-4-neon");
+    expect(label("antigravity", "gemini-4-neon-low")).toBe("gemini-4-neon");
+    expect(label("pi", "pi-local")).toBe("custom:pi");
+    expect(label("pi", "/Users/jane/models/qwen-coder.gguf")).toBe("custom:pi");
   });
 
   it("reports closed service tiers from a tier option or a fast mode toggle", () => {

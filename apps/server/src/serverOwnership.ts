@@ -88,7 +88,7 @@ const legacyOwnerIsLive = Effect.fn("legacyOwnerIsLive")(function* (
   const runner = yield* ProcessRunner.ProcessRunner;
   const result = yield* runner
     .run({
-      ...legacyOwnerStartTimeCommand(state.pid, platform),
+      ...legacyOwnerStartTimeCommand(state.pid, platform, yield* HostProcess.Environment),
       timeout: Duration.seconds(2),
       maxOutputBytes: 16_384,
     })

@@ -7,7 +7,8 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -16,7 +17,6 @@ import { waitForProject } from "~/state/entities";
 import { projectEnvironment } from "~/state/projects";
 import { sourceControlEnvironment } from "~/state/sourceControl";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { useNewThreadHandler } from "./useHandleNewThread";
 import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
 
 function errorMessage(error: unknown): string {
@@ -30,7 +30,6 @@ export function useNewProject() {
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
     reportFailure: false,
   });
-  const handleNewThread = useNewThreadHandler();
 
   const publishNewRepository = async (input: {
     readonly environmentId: EnvironmentId;
@@ -73,11 +72,14 @@ export function useNewProject() {
     void suggestAppAccessForRemote(input.environmentId, result.value.remoteUrl);
   };
 
-  return async (input: {
-    readonly environmentId: EnvironmentId;
-    readonly name: string;
-    readonly publishTo: NewProjectPublishTarget | null;
-  }): Promise<boolean> => {
+  return async (
+    input: {
+      readonly environmentId: EnvironmentId;
+      readonly name: string;
+      readonly publishTo: NewProjectPublishTarget | null;
+    },
+    openProject: (projectRef: ScopedProjectRef, project: EnvironmentProject) => Promise<void>,
+  ): Promise<boolean> => {
     const result = await createNew({
       environmentId: input.environmentId,
       input: { name: input.name },
@@ -141,7 +143,7 @@ export function useNewProject() {
       return null;
     });
     if (project === null) return true;
-    await handleNewThread(projectRef).catch((error: unknown) => {
+    await openProject(projectRef, project).catch((error: unknown) => {
       toastManager.add(
         stackedThreadToast({
           type: "error",

@@ -25,6 +25,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type { MuseSettings } from "../settings.ts";
+import { imageMimeTypeFromBytes } from "@t3tools/shared/image";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
@@ -429,6 +430,22 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           // lastError is the thread banner, so it gets the failure item's bounded, redacted text.
           lastError:
             lastError === null ? null : makeProviderFailure({ message: lastError }).message,
+          updatedAt: yield* DateTime.now,
+        };
+        yield* emit({
+          type: "provider_session.updated",
+          driver: MUSE_PROVIDER,
+          providerSession: session,
+        });
+      });
+      const reportStartupPhase = Effect.fn("MuseAdapterV2.reportStartupPhase")(function* (
+        phase: string | undefined,
+      ) {
+        if (session.startupPhase === phase) return;
+        const { startupPhase: _reported, ...current } = session;
+        session = {
+          ...current,
+          ...(phase === undefined ? {} : { startupPhase: phase }),
           updatedAt: yield* DateTime.now,
         };
         yield* emit({
@@ -1952,6 +1969,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             : undefined;
           const startModel = yield* resolveModel(args.modelSelection);
           const permissionProfile = musePermissionProfile(args.runtimePolicy.runtimeMode);
+          if (requestedId) yield* reportStartupPhase("resume");
           const result = yield* request(
             requestedId ? "session/resume" : "session/start",
             requestedId
@@ -1973,6 +1991,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               return Effect.fail(error);
             }),
             Effect.flatMap((value) => decode(MuseSessionResult, value)),
+            Effect.ensuring(Effect.suspend(() => reportStartupPhase(undefined))),
           );
           if (result.session.sessionId !== nativeSessionId)
             return yield* protocolError("Muse returned a different session identity");
@@ -2052,7 +2071,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             parts.push({
               type: "image",
               base64Data: Buffer.from(bytes).toString("base64"),
-              mediaType: attachment.mimeType,
+              mediaType: imageMimeTypeFromBytes(bytes) ?? attachment.mimeType,
             });
           }
         if (!parts.length) return yield* protocolError("Muse needs text or an image");

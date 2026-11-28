@@ -11,8 +11,10 @@ import {
   WORKTREE_SETUP_STAGE_ORDER,
   WORKTREE_SETUP_TAIL_LINE_MAX_LENGTH,
 } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -59,6 +61,10 @@ export class WorktreeSetupTracker extends Context.Service<
     /** Call just before dispatch so late cancellation cannot roll back a started agent's thread. */
     readonly markUncancellable: (threadId: ThreadId) => Effect.Effect<void>;
     readonly cancel: (threadId: ThreadId) => Effect.Effect<boolean>;
+    /** Holds a newly allocated workspace through blocking preparation and any rollback. */
+    readonly holdWorkspace: (threadId: ThreadId) => Effect.Effect<Effect.Effect<void>>;
+    readonly workspaceIsHeld: (threadId: ThreadId) => Effect.Effect<boolean>;
+    readonly awaitWorkspaceRelease: (threadId: ThreadId) => Effect.Effect<void>;
     readonly get: (threadId: ThreadId) => Effect.Effect<WorktreeSetupSnapshot | null>;
     readonly stream: (threadId: ThreadId) => Stream.Stream<WorktreeSetupSnapshot | null>;
   }
@@ -67,7 +73,9 @@ export class WorktreeSetupTracker extends Context.Service<
 const TAIL_LINE_LIMIT = 4;
 
 function clampText(text: string, maxLength: number): string {
-  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}\u2026`;
+  if (text.length <= maxLength) return text;
+  const end = splitsSurrogatePair(text, maxLength - 1) ? maxLength - 2 : maxLength - 1;
+  return `${text.slice(0, end)}\u2026`;
 }
 
 const clampDetail = (detail: string | null): string | null =>
@@ -95,6 +103,10 @@ function emptyStage(id: WorktreeSetupStageId): WorktreeSetupStage {
 
 export const make = Effect.gen(function* () {
   const setups = yield* Ref.make(new Map<ThreadId, TrackedSetup>());
+  const workspaceHolds = new Map<
+    ThreadId,
+    { count: number; readonly released: Deferred.Deferred<void> }
+  >();
   const changes = yield* PubSub.unbounded<{
     readonly threadId: ThreadId;
     readonly snapshot: WorktreeSetupSnapshot | null;
@@ -295,6 +307,33 @@ export const make = Effect.gen(function* () {
   const get: WorktreeSetupTracker["Service"]["get"] = (threadId) =>
     Ref.get(setups).pipe(Effect.map((current) => current.get(threadId)?.snapshot ?? null));
 
+  const holdWorkspace = (threadId: ThreadId) =>
+    Effect.sync(() => {
+      const hold = workspaceHolds.get(threadId) ?? {
+        count: 0,
+        released: Deferred.makeUnsafe<void>(),
+      };
+      hold.count += 1;
+      workspaceHolds.set(threadId, hold);
+      let released = false;
+      return Effect.sync(() => {
+        if (released) return;
+        released = true;
+        hold.count -= 1;
+        if (hold.count > 0) return;
+        workspaceHolds.delete(threadId);
+        Deferred.doneUnsafe(hold.released, Effect.void);
+      });
+    });
+
+  const workspaceIsHeld = (threadId: ThreadId) => Effect.sync(() => workspaceHolds.has(threadId));
+
+  const awaitWorkspaceRelease = (threadId: ThreadId) =>
+    Effect.suspend(() => {
+      const hold = workspaceHolds.get(threadId);
+      return hold === undefined ? Effect.void : Deferred.await(hold.released);
+    });
+
   // One-slot sliding mailboxes bound slow WebSockets to the newest setup snapshot.
   const stream: WorktreeSetupTracker["Service"]["stream"] = (threadId) =>
     Stream.callback<WorktreeSetupSnapshot | null>(
@@ -329,6 +368,9 @@ export const make = Effect.gen(function* () {
     finish,
     markUncancellable,
     cancel,
+    holdWorkspace,
+    workspaceIsHeld,
+    awaitWorkspaceRelease,
     get,
     stream,
   });

@@ -1,4 +1,5 @@
 import {
+  IssueTrackerConnectionError,
   MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES,
   WS_METHODS,
   issueTrackerBindingScopes,
@@ -9,6 +10,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -82,6 +84,14 @@ export function issueTrackerDetailText(detail: string, resolve: MFunctionType = 
   return knownTrackerSentence(detail, SERVER_TRACKER_DETAILS, resolve);
 }
 
+const isConnectionError = Schema.is(IssueTrackerConnectionError);
+
+/** Why connecting failed, in the tracker's own words rather than the error's "<kind> connection failed:" prefix. */
+export function issueTrackerConnectFailure(error: unknown): string | null {
+  if (isConnectionError(error)) return error.detail;
+  return error instanceof Error ? error.message : null;
+}
+
 /** Every project's binding, whichever account it was made with. */
 export function issueTrackerBindings(
   list: IssueTrackerConnectionList | null | undefined,
@@ -106,12 +116,21 @@ export function issueTrackerSummary(
   bindings: IssueTrackerConnectionList["bindings"],
   resolve: MFunctionType = mFallback,
 ): string {
-  if (!tracker.connected)
+  if (!tracker.connected) {
+    // Mid-sentence case, keeping an acronym: "personal API key", "API token".
+    const credential = tracker.credential.label
+      .split(" ")
+      .map((word) => (word === word.toUpperCase() ? word : word.toLowerCase()))
+      .join(" ");
     return knownTrackerSentence(
-      `Not connected. Add a ${tracker.credential.label.toLowerCase()} to list its issues.`,
-      [msg("Not connected. Add a personal api key to list its issues.")],
+      `Not connected. Add your ${credential} to list its issues.`,
+      [
+        msg("Not connected. Add your personal API key to list its issues."),
+        msg("Not connected. Add your API token to list its issues."),
+      ],
       resolve,
     );
+  }
   if (tracker.account === null)
     return tracker.detail ?? resolve(msg("The saved credential was rejected."));
   const linked = Object.values(bindings).filter((binding) =>
@@ -119,10 +138,14 @@ export function issueTrackerSummary(
   ).length;
   return linked === 0
     ? knownTrackerSentence(
-        `Connected as ${tracker.account} · no projects linked yet. Pick a ${tracker.scopeNoun} for a project to list its issues.`,
+        `Connected as ${tracker.account} · no projects linked yet. Link one to a ${tracker.displayName} ${tracker.scopeNoun} to list its issues.`,
         [
           msg(
-            "Connected as {account} · no projects linked yet. Pick a team for a project to list its issues.",
+            "Connected as {account} · no projects linked yet. Link one to a Linear team to list its issues.",
+            { account: tracker.account },
+          ),
+          msg(
+            "Connected as {account} · no projects linked yet. Link one to a Jira project to list its issues.",
             { account: tracker.account },
           ),
         ],

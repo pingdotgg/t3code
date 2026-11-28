@@ -98,7 +98,9 @@ it.effect("returns 503 immediately when authenticated requests fill all read per
       yield* Deferred.await(entered);
       const response = yield* request();
       expect(response.status).toBe(503);
-      expect(yield* Effect.promise(() => response.text())).toBe("Service unavailable");
+      expect(yield* Effect.promise(() => response.text())).toBe(
+        "Service unavailable (concurrency_limit)",
+      );
       expect(logs).toContainEqual(["Cache request failed", { reason: "concurrency_limit" }]);
       expect(get).toHaveBeenCalledTimes(4);
       yield* Effect.forEach(pending, Fiber.interrupt);

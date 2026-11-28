@@ -795,7 +795,11 @@ describe("environment query lifecycle", () => {
         cwd: "/tmp/project",
         restartIfNotRunning: true,
       };
-      const sent = { ...input, maxHistoryBytes: DEFAULT_MAX_TERMINAL_BUFFER_BYTES };
+      const sent = {
+        ...input,
+        maxHistoryBytes: DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+        supportsSnapshotSequenceState: true,
+      };
       const atoms = createTerminalEnvironmentAtoms(harness.runtime);
       const registry = AtomRegistry.make();
       const atom = atoms.attach({ environmentId: QUERY_ENVIRONMENT.environmentId, input });

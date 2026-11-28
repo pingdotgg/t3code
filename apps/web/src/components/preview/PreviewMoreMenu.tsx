@@ -18,7 +18,7 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "~/components/ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 const COLOR_SCHEME_OPTIONS: ReadonlyArray<{
   value: DesktopPreviewColorScheme;
@@ -58,27 +58,22 @@ interface Props {
 const MenuTriggerButton = () => {
   const gt = useGT();
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <MenuTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                type="button"
-                aria-label={gt("Preview menu")}
-              />
-            }
-          />
-        }
-      >
-        <MoreVertical />
-      </TooltipTrigger>
-      <TooltipPopup>
-        <T context="more actions menu">More</T>
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <MenuTrigger
+          render={
+            <Button variant="ghost" size="icon-xs" type="button" aria-label={gt("Preview menu")} />
+          }
+        />
+      }
+      label={
+        <>
+          <T context="more actions menu">More</T>
+        </>
+      }
+    >
+      <MoreVertical />
+    </SharedTooltipTrigger>
   );
 };
 

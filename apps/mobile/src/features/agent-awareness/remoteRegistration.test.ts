@@ -239,6 +239,7 @@ const layerPersistenceTest = Layer.merge(
         try: () => loadOrCreateAgentAwarenessDeviceId(),
         catch: storageFailure,
       }),
+      loadOrCreateAnalyticsDeviceId: Effect.succeed("analytics-device-1"),
       loadAgentAwarenessDeviceId: Effect.tryPromise({
         try: () => loadAgentAwarenessDeviceId(),
         catch: storageFailure,
@@ -274,6 +275,28 @@ const layerRelayTest = ManagedRelayLayer.layer("https://relay.example.test").pip
   Layer.provide(Layer.mergeAll(FetchHttpClient.layer, Dpop.layer)),
   Layer.merge(layerPersistenceTest),
 );
+
+// A relay that issues a DPoP token and accepts every registration.
+const stubRelayFetch = () => {
+  const fetchMock = vi.fn((request: RequestInfo | URL) => {
+    const url = request instanceof Request ? request.url : String(request);
+    return Promise.resolve(
+      Response.json(
+        url.endsWith("/v1/client/dpop-token")
+          ? {
+              access_token: "relay-dpop-token",
+              issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+              token_type: "DPoP",
+              expires_in: 300,
+              scope: "mobile:registration",
+            }
+          : { ok: true },
+      ),
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+};
 
 const runBackgroundOperations = Effect.fn("TestRemoteRegistration.runBackgroundOperations")(
   function* () {
@@ -573,23 +596,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
   });
 
   it.effect("registers the APNs device when cloud auth becomes available", () => {
-    const fetchMock = vi.fn((request: RequestInfo | URL) => {
-      const url = request instanceof Request ? request.url : String(request);
-      return Promise.resolve(
-        Response.json(
-          url.endsWith("/v1/client/dpop-token")
-            ? {
-                access_token: "relay-dpop-token",
-                issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-                token_type: "DPoP",
-                expires_in: 300,
-                scope: "mobile:registration",
-              }
-            : { ok: true },
-        ),
-      );
-    });
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = stubRelayFetch();
     Constants.expoConfig!.extra = {
       relay: {
         url: "https://relay.example.test/",
@@ -633,6 +640,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
   });
 
   it.effect("keeps a registered status when a later refresh fails", () => {
+    stubRelayFetch();
     Constants.expoConfig!.extra = {
       relay: {
         url: "https://relay.example.test/",
@@ -669,6 +677,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
   });
 
   it.effect("does not re-register the same account when nothing has changed", () => {
+    stubRelayFetch();
     Constants.expoConfig!.extra = {
       relay: {
         url: "https://relay.example.test/",

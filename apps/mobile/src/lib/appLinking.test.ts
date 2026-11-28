@@ -91,6 +91,16 @@ describe("draft deep links", () => {
     });
   });
 
+  it.each(["/new/draft", "/new/draft/branch"])("drops the checkout a %s link names", (path) => {
+    const project = { environmentId: "env-1", projectId: "project-1" };
+    const linked = { ...project, branch: "other", worktreePath: "/elsewhere" };
+    const name = path === "/new/draft" ? "Thread" : "NewTaskBranch";
+    expect(restoreDraftLinkState({ routes: [{ name, params: linked }] }, path)?.routes[0]).toEqual({
+      name: "Thread",
+      params: { draft: project },
+    });
+  });
+
   it("leaves live-thread and project-selection links unchanged", () => {
     const state = { routes: [{ name: "Thread", params: { threadId: "thread-1" } }] };
     expect(restoreDraftLinkState(state, "/threads/env-1/thread-1")).toBe(state);

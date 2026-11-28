@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Array as Arr, ConfigProvider, Context, Effect, Layer, Metric, Ref } from "effect"
 import { HttpClient, type HttpClientError, HttpClientResponse } from "effect/http"
-import { Otlp, OtlpSerialization } from "effect/observability"
+import { Otlp, OtlpExporter, OtlpSerialization } from "effect/observability"
 import { TestClock } from "effect/testing"
 
 describe("Otlp.layerFromConfig", () => {
@@ -72,6 +72,52 @@ describe("Otlp.layerFromConfig", () => {
         OTEL_METRIC_EXPORT_INTERVAL: "1000"
       }))
     ))
+
+  it.effect("applies OTEL queue size limits and onDrop from environment config", () => {
+    let dropped = 0
+    return Effect.gen(function*() {
+      yield* Effect.log("log-1")
+      yield* Effect.log("log-2")
+      yield* Effect.log("log-3")
+      yield* Effect.void.pipe(Effect.withSpan("span-1"))
+      yield* Effect.void.pipe(Effect.withSpan("span-2"))
+      yield* Effect.void.pipe(Effect.withSpan("span-3"))
+      assert.strictEqual(dropped, 2)
+
+      yield* (yield* OtlpExporter.Flusher).flush
+      const requests = yield* MockHttpClient.requests
+      const logRequest = findRequest(requests, "http://collector.example/v1/logs")
+      const traceRequest = findRequest(requests, "http://collector.example/v1/traces")
+      assert.isDefined(logRequest)
+      assert.isDefined(traceRequest)
+      assert.strictEqual(
+        (logRequest!.body as { resourceLogs: Array<{ scopeLogs: Array<{ logRecords: Array<unknown> }> }> })
+          .resourceLogs[0].scopeLogs[0].logRecords.length,
+        2
+      )
+      assert.strictEqual(
+        (traceRequest!.body as { resourceSpans: Array<{ scopeSpans: Array<{ spans: Array<unknown> }> }> })
+          .resourceSpans[0].scopeSpans[0].spans.length,
+        2
+      )
+    }).pipe(
+      Effect.provide(testLayer({
+        OTEL_SERVICE_NAME: "otel-config-test",
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.example",
+        OTEL_LOGS_EXPORTER: "otlp",
+        OTEL_METRICS_EXPORTER: "none",
+        OTEL_TRACES_EXPORTER: "otlp",
+        OTEL_BLRP_SCHEDULE_DELAY: "3600000",
+        OTEL_BLRP_MAX_EXPORT_BATCH_SIZE: "10",
+        OTEL_BLRP_MAX_QUEUE_SIZE: "2",
+        OTEL_BSP_SCHEDULE_DELAY: "3600000",
+        OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "10",
+        OTEL_BSP_MAX_QUEUE_SIZE: "2"
+      }, (count) => {
+        dropped += count
+      }))
+    )
+  })
 })
 
 interface CapturedRequest {
@@ -103,8 +149,8 @@ class MockHttpClient extends Context.Service<MockHttpClient, {
   )
 }
 
-const testLayer = (env: Record<string, string>) =>
-  Otlp.layerFromConfig({ loggerMergeWithExisting: false }).pipe(
+const testLayer = (env: Record<string, string>, onDrop?: (count: number) => void) =>
+  Otlp.layerFromConfig({ loggerMergeWithExisting: false, onDrop }).pipe(
     Layer.provide(OtlpSerialization.layerJson),
     Layer.provideMerge(HttpClientLayer),
     Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromEnv({ env })))

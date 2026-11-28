@@ -24,6 +24,9 @@ export class Deadline {
     void this.cancelled.catch(() => {});
     if (signal?.aborted) this.onAbort();
   }
+  get abortSignal(): AbortSignal {
+    return this.controller.signal;
+  }
   check(): void {
     if (this.controller.signal.aborted) throw new HttpError(503, 'deadline');
   }

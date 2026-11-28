@@ -17,6 +17,12 @@ describe("resolveModifiedTerminalInput", () => {
     ).toEqual({ kind: "write", data: `${ESC}[1;5${arrow}` });
   });
 
+  it("sends NUL for ctrl+space like a desktop terminal", () => {
+    expect(
+      resolveModifiedTerminalInput({ data: " ", modifier: "ctrl", hostPlatform: "linux" }),
+    ).toEqual({ kind: "write", data: byte(0x00) });
+  });
+
   it.each(["A", "B", "C", "D"])("encodes meta+arrow %s with the cursor modifier", (arrow) => {
     expect(
       resolveModifiedTerminalInput({

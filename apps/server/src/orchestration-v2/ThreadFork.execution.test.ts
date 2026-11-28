@@ -60,7 +60,7 @@ const forkCases = (
     { runEffectWorker: false },
   );
 
-  return { driver, status, instanceId, modelSelection, layer };
+  return { driver, status, instanceId, modelSelection, adapter, layer };
 });
 
 it.effect("a persisted fork leaves PR watching with its parent until explicitly opted in", () =>
@@ -562,7 +562,7 @@ it.effect.each([
               contextHandoffId: null,
             },
           },
-          // Each message alone exceeds the default 16k handoff budget, so a
+          // Each message alone exceeds the default 64k-byte handoff budget, so a
           // portable handoff omits both whole items.
           {
             id: EventId.make("fork-compact-user-item"),
@@ -579,7 +579,7 @@ it.effect.each([
               creationSource: "web",
               inputIntent: "turn_start",
               messageId: userMessageId,
-              text: "u".repeat(17_000),
+              text: "u".repeat(65_000),
               attachments: [],
             },
           },
@@ -595,7 +595,7 @@ it.effect.each([
               ordinal: 2,
               type: "assistant_message",
               messageId: MessageId.make("fork-compact-assistant-message"),
-              text: "a".repeat(17_000),
+              text: "a".repeat(65_000),
               streaming: false,
             },
           },
@@ -1753,6 +1753,89 @@ it.effect("merge-back rejects a second fork's context until the first is consume
     const intoDeleted = yield* mergeNestedInto("merge-back-guard-into-deleted");
     assert.equal(intoDeleted._tag, "OrchestratorDispatchError");
   }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
+
+it.effect("prefers the provider-switch handoff item when a dispatch also consumes merge-back", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const parentId = ThreadId.make("merge-back-switch-parent");
+    const parentRunId = RunId.make("merge-back-switch-parent-run");
+    const forkId = ThreadId.make("merge-back-switch-fork");
+    const forkRunId = RunId.make("merge-back-switch-fork-run");
+    yield* createParent(parentId);
+    yield* writeParentRun({
+      threadId: parentId,
+      runId: parentRunId,
+      ordinal: 1,
+      status: "completed",
+      text: "Parent work",
+      stable: true,
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("merge-back-switch-fork"),
+      sourceThreadId: parentId,
+      targetThreadId: forkId,
+      sourcePoint: { type: "run", runId: parentRunId },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* writeParentRun({
+      threadId: forkId,
+      runId: forkRunId,
+      ordinal: 1,
+      status: "completed",
+      text: "Fork work",
+      stable: true,
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.merge_back",
+      commandId: CommandId.make("merge-back-switch-merge"),
+      sourceThreadId: forkId,
+      targetThreadId: parentId,
+      sourcePoint: { type: "run", runId: forkRunId },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("merge-back-switch-dispatch"),
+      threadId: parentId,
+      messageId: MessageId.make("merge-back-switch-dispatch"),
+      text: "Continue on Claude",
+      attachments: [],
+      modelSelection: forkCases[1]!.modelSelection,
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+
+    const parent = yield* orchestrator.getThreadProjection(parentId);
+    const switchedRun = parent.runs.find((run) => run.ordinal === 2);
+    assert.isDefined(switchedRun);
+    assert.isNotNull(switchedRun.contextHandoffId);
+    assert.sameMembers(
+      parent.contextHandoffs
+        .filter((handoff) => handoff.targetRunId === switchedRun.id)
+        .map((handoff) => handoff.strategy),
+      ["full_thread_summary", "fork_delta_summary"],
+    );
+    const handoffItem = parent.turnItems
+      .filter((item) => item.type === "handoff")
+      .find((item) => item.runId === switchedRun.id);
+    assert.isDefined(handoffItem);
+    assert.equal(handoffItem.contextHandoffId, switchedRun.contextHandoffId);
+    assert.equal(handoffItem.strategy, "full_thread_summary");
+    assert.equal(handoffItem.title, "Provider handoff");
+  }).pipe(
+    Effect.provide(
+      ProviderReplayHarness.layerWithRegistry(
+        { name: "merge-back-switch" },
+        ProviderAdapterRegistry.layerFromAdapters(forkCases.map((entry) => entry.adapter)),
+        { runEffectWorker: false },
+      ),
+    ),
+  ),
 );
 
 const runForkWithFailingNativeSource = (forkFailures: number) => {

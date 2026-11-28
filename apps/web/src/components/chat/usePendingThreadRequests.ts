@@ -420,10 +420,13 @@ export function usePendingThreadRequests(input: {
       });
       for (const { question, target, draft } of questionDrafts) {
         if ((useQuestionAttachmentPreparation.getState().counts[target] ?? 0) > 0) return;
-        providerAnswers[question.id] = projectPendingUserInputAnswer(
-          answers[question.id],
-          answerContextRecords(draft, threadDraft),
-        );
+        // A skipped optional question has no entry and must not gain an undefined one.
+        if (Object.hasOwn(answers, question.id)) {
+          providerAnswers[question.id] = projectPendingUserInputAnswer(
+            answers[question.id],
+            answerContextRecords(draft, threadDraft),
+          );
+        }
         const attachments = draft ? [...draft.images, ...draft.files] : [];
         if (attachments.length === 0) continue;
         await refreshExpiredAttachmentUploads({

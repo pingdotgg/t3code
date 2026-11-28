@@ -3,6 +3,7 @@ import { OrchestrationV2AppThreadJson, ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -55,9 +56,10 @@ const thread = (id: string) => ({
 const layer = it.layer(
   ProjectionReplay.layer.pipe(
     Layer.provideMerge(
-      Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
-        Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
-      ),
+      Layer.mergeAll(
+        EventStore.layer,
+        ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layerDigest)),
+      ).pipe(Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" }))),
     ),
   ),
 );

@@ -70,6 +70,37 @@ export function t3ToolResultIndicatesFailure(output: unknown): boolean {
   return readResult(output).failed;
 }
 
+// A row's static past-tense verb ("Opened a pull request") is wrong when the call reports another outcome.
+export function t3ToolOutcomeLabel(
+  action: T3McpToolSummaryAction,
+  call: T3ToolSummaryCall,
+  resolve: MFunctionType = mFallback,
+): string | undefined {
+  if (
+    action !== "create-pr" &&
+    action !== "merge-pr" &&
+    action !== "write-pr-guides" &&
+    action !== "ci-rerun"
+  ) {
+    return undefined;
+  }
+  const output = readResult(call.output).data;
+  const contradicted =
+    action === "create-pr"
+      ? output?.created === false
+      : action === "merge-pr"
+        ? output?.state === undefined
+          ? readInput(call.input)?.auto === true
+          : output.state !== "merged"
+        : action === "write-pr-guides"
+          ? Array.isArray(output?.guides) &&
+            output.guides.some((guide) => asRecord(guide)?.outcome === "failed")
+          : Array.isArray(output?.checks) &&
+            (output.checks.length === 0 ||
+              output.checks.some((check) => asRecord(check)?.rerun !== true));
+  return contradicted ? summarizeT3ToolCalls(action, [call], resolve).label : undefined;
+}
+
 function countEntities(ids: ReadonlyArray<string | undefined>): number {
   return (
     new Set(ids.filter((value) => value !== undefined)).size +

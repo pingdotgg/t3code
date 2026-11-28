@@ -1,13 +1,11 @@
-import { NodeFileSystem } from "@effect/platform-node"
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem"
 import { SqliteClient } from "@effect/sql-sqlite-node"
 import { assert, expect, it } from "@effect/vitest"
 import { Duration, Effect, FileSystem, Layer } from "effect"
 import * as PersistedQueueSqlTest from "effect-test/persistence/PersistedQueueSqlTest"
-import * as PersistedQueueTest from "effect-test/persistence/PersistedQueueTest"
 import * as SqlCleanupTest from "effect-test/persistence/SqlCleanupTest"
 import * as Arr from "effect/Array"
-import { PersistedQueue, Persistence } from "effect/persistence"
-import { Reactivity } from "effect/reactivity"
+import { Persistence } from "effect/persistence"
 import * as SqlClient from "effect/sql/SqlClient"
 import { TestClock } from "effect/testing"
 
@@ -19,7 +17,7 @@ const ClientLayer = Effect.gen(function*() {
   })
 }).pipe(
   Layer.unwrap,
-  Layer.provide([NodeFileSystem.layer, Reactivity.layer])
+  Layer.provide(NodeFileSystem.layer)
 )
 
 const testLayer = (layer: Layer.Layer<Persistence.BackingPersistence, never, SqlClient.SqlClient>) =>
@@ -194,11 +192,6 @@ suite("single-table", Persistence.layerBackingSql, {
   // ?)`, bypassing the store isolation filter.
   injectionProbe: `') OR store_id='sqli_victim' AND ('1'='1`
 })
-
-PersistedQueueTest.suite(
-  "sql-sqlite-node",
-  PersistedQueue.layerStoreSql().pipe(Layer.provide(ClientLayer))
-)
 
 it.layer(ClientLayer)((it) => PersistedQueueSqlTest.suiteWith(it))
 

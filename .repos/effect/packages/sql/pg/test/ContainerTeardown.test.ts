@@ -9,12 +9,11 @@ import { pgWaitStrategy, releasePgContainer } from "./utils.ts"
 // Less than the existing 30s integration hook limit, including all retry attempts.
 const cleanupBudget = "25 seconds"
 const testTimeout = 28_000
-// Bounds each wait attempt; the fake daemon answers a healthy wait well within it.
-const releaseOptions = { waitTimeout: "1 second" } as const
+const releaseOptions = { removeTimeout: "1 second" } as const
 
 describe("PostgreSQL container lifecycle", () => {
   const requests = new Map<string, Array<string>>()
-  const interruptedResponses = new Map<string, number>()
+  let interrupted = 0
   const unexpected: Array<string> = []
   let infoRequests = 0
   const server = Http.createServer((request, response) => {
@@ -28,7 +27,7 @@ describe("PostgreSQL container lifecycle", () => {
       response.end(JSON.stringify({ ServerVersion: "27.0.0", OperatingSystem: "Docker", OSType: "linux" }))
       return
     }
-    const match = /^\/containers\/([^/]+)(\/wait|\/json|\/exec)?$/.exec(url.pathname)
+    const match = /^\/containers\/([^/]+)(\/json|\/exec)?$/.exec(url.pathname)
     if (match === null || !requests.has(match[1])) {
       unexpected.push(request.method + " " + request.url)
       response.writeHead(404).end(JSON.stringify({ message: "Unexpected request" }))
@@ -44,28 +43,28 @@ describe("PostgreSQL container lifecycle", () => {
     } else if (request.method === "POST" && match[2] === "/exec") {
       // An exec that never completes, as observed under Deno in CI.
       steps.push("exec")
-    } else if (request.method === "POST" && match[2] === "/wait") {
-      steps.push("wait")
-      assert.strictEqual(url.searchParams.get("condition"), "not-running")
-      const attempt = steps.filter((step) => step === "wait").length
-      // A wait response that never arrives, as observed under Bun in CI.
-      if (id === "wait-hangs") return void response.flushHeaders()
-      if (id === "always-interrupted" || attempt === 1) {
-        // Docker flushes the wait headers before writing its JSON body. Close
-        // after a partial body, deterministically exercising docker-modem's
-        // aborted-response path, not a probabilistic keep-alive reuse race.
-        response.flushHeaders()
-        response.write("{\"StatusCode\":", () => {
-          interruptedResponses.set(id, (interruptedResponses.get(id) ?? 0) + 1)
-          response.socket!.end()
-        })
-      } else {
-        response.end(JSON.stringify({ StatusCode: 137 }))
-      }
     } else if (request.method === "DELETE" && match[2] === undefined) {
       steps.push("remove")
+      assert.strictEqual(url.searchParams.get("force"), "true")
       assert.strictEqual(url.searchParams.get("v"), "true")
-      response.writeHead(204).end()
+      if (id === "retry-succeeds") {
+        if (steps.length === 1) {
+          // Close mid-body to deterministically trigger docker-modem's aborted-response path.
+          response.flushHeaders()
+          response.write("{\"message\":", () => {
+            interrupted++
+            response.socket!.end()
+          })
+        } else {
+          response.writeHead(404).end(JSON.stringify({ message: `No such container: ${id}` }))
+        }
+      } else if (id === "remove-fails") {
+        if (steps.length === 1) return void response.flushHeaders()
+        response.writeHead(500).end(JSON.stringify({ message: "daemon error" }))
+      } else {
+        unexpected.push(request.method + " " + request.url)
+        response.writeHead(404).end(JSON.stringify({ message: "Unexpected request" }))
+      }
     } else {
       unexpected.push(request.method + " " + request.url)
       response.writeHead(404).end(JSON.stringify({ message: "Unexpected request" }))
@@ -112,66 +111,37 @@ describe("PostgreSQL container lifecycle", () => {
     }), testTimeout)
 
   const container = (id: string) => {
-    const steps: Array<string> = []
-    requests.set(id, steps)
-    return {
-      getId: () => id,
-      stop: async (options: { remove: boolean }) => {
-        assert.deepStrictEqual(options, { remove: false })
-        steps.push("stop")
-      }
-    }
+    requests.set(id, [])
+    return id
   }
 
-  it.live("retries an interrupted wait response before removing the container", () =>
+  it.live("retries an interrupted remove and treats 404 as success", () =>
     Effect.gen(function*() {
       const result = yield* releasePgContainer(container("retry-succeeds"), releaseOptions).pipe(
         Effect.exit,
         Effect.timeoutOption(cleanupBudget)
       )
-      assert.strictEqual(interruptedResponses.get("retry-succeeds"), 1, "daemon did not interrupt the first wait")
+      assert.strictEqual(interrupted, 1, "daemon did not interrupt the first remove")
       assert.isTrue(Option.isSome(result), "teardown exceeded the cleanup budget")
       if (Option.isNone(result)) return
       assert.isTrue(Exit.isSuccess(result.value), "teardown failed instead of retrying")
-      assert.deepStrictEqual(requests.get("retry-succeeds"), ["stop", "wait", "wait", "remove"])
+      assert.deepStrictEqual(requests.get("retry-succeeds"), ["remove", "remove"])
       assert.deepStrictEqual(unexpected, [])
     }), testTimeout)
 
-  it.live(
-    "surfaces repeated interrupted waits within the cleanup budget without removing",
-    () =>
-      Effect.gen(function*() {
-        const result = yield* releasePgContainer(container("always-interrupted"), releaseOptions).pipe(
-          Effect.exit,
-          Effect.timeoutOption(cleanupBudget)
-        )
-        assert.isAtLeast(interruptedResponses.get("always-interrupted")!, 1, "daemon did not interrupt a wait")
-        assert.isTrue(Option.isSome(result), "teardown hung instead of reporting exhausted retries")
-        if (Option.isNone(result)) return
-        assert.isTrue(Exit.isFailure(result.value), "cleanup failure was suppressed")
-        if (Exit.isSuccess(result.value)) return
-        assert.isFalse(Cause.hasInterruptsOnly(result.value.cause), "failure must be visible, not just interruption")
-        const steps = requests.get("always-interrupted")!
-        assert.strictEqual(steps[0], "stop")
-        assert.isAtLeast(interruptedResponses.get("always-interrupted")!, 2)
-        assert.isAtMost(interruptedResponses.get("always-interrupted")!, 3)
-        assert.isFalse(steps.includes("remove"), "remove ran without a successful wait")
-        assert.deepStrictEqual(unexpected, [])
-      }),
-    testTimeout
-  )
-
-  // `it.layer` provides TestClock to fixture layers, so their finalizers
-  // run with it during afterAll.
-  it.effect("bounds a hung wait under the test services used by it.layer", () =>
+  // it.layer runs fixture finalizers under TestClock.
+  it.effect("bounds a hung remove and surfaces non-404 failures under TestClock", () =>
     Effect.gen(function*() {
       const fiber = yield* Effect.forkChild(
-        releasePgContainer(container("wait-hangs"), releaseOptions).pipe(Effect.exit)
+        releasePgContainer(container("remove-fails"), releaseOptions).pipe(Effect.exit)
       )
       const result = yield* Fiber.join(fiber).pipe(Effect.timeoutOption(cleanupBudget), TestClock.withLive)
       assert.isTrue(Option.isSome(result), "teardown hung instead of reporting exhausted retries")
       if (Option.isNone(result)) return yield* Fiber.interrupt(fiber)
       assert.isTrue(Exit.isFailure(result.value), "cleanup failure was suppressed")
-      assert.isFalse(requests.get("wait-hangs")!.includes("remove"), "remove ran without a successful wait")
+      if (Exit.isSuccess(result.value)) return
+      assert.isFalse(Cause.hasInterruptsOnly(result.value.cause), "failure must be visible, not just interruption")
+      assert.deepStrictEqual(requests.get("remove-fails"), ["remove", "remove", "remove"])
+      assert.deepStrictEqual(unexpected, [])
     }), testTimeout)
 })
