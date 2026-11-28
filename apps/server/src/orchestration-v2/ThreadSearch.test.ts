@@ -1386,6 +1386,53 @@ it.layer(layerTest)("ThreadSearch.searchThreadsWithOlderSettledRows", (it) => {
       );
     }),
   );
+
+  it.effect("keeps the selected project's message hits behind other projects' stronger ones", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:oriole");
+      const busyProject = ProjectId.make("project:oriole-busy");
+      yield* createProject(project);
+      yield* createProject(busyProject);
+      const target = ThreadId.make("thread:oriole-target");
+      yield* Effect.forEach(
+        [
+          thread(target, project, { title: "Neutral" }),
+          message(target, "oriole-target", "assistant", "we agreed on the oriole handoff", {
+            minute: 1,
+          }),
+          ...Array.from({ length: 55 }, (_, index) => {
+            const busy = ThreadId.make(`thread:oriole-busy-${index}`);
+            return [
+              thread(busy, busyProject),
+              message(busy, `oriole-busy-${index}`, "user", "oriole handoff", { minute: 5 }),
+            ];
+          }).flat(),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const result = yield* ThreadSearch.searchThreadsWithOlderSettledRows({
+        request: {
+          query: "oriole handoff",
+          olderSettledBefore: DateTime.formatIso(at(0)),
+          projectIds: [project],
+        },
+        search: search.search,
+        searchOlderSettled: search.searchOlderSettled,
+        sql,
+        readThreads: (threadIds) =>
+          projections.readShellSnapshot({ location: "active", threadIds }),
+        latestSequence: Effect.succeed(7),
+      });
+      assert.include(
+        result.matches.map((match) => match.threadId),
+        target,
+      );
+    }),
+  );
 });
 
 it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
