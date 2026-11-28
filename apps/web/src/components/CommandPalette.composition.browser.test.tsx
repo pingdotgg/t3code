@@ -352,6 +352,20 @@ it("keeps the view the user went back to when a folder add finishes late", async
   expect(page.getByText("Git URL", { exact: true }).element()).toBeVisible();
 });
 
+it.each(["/", "/?panel=files"])(
+  "opens the added folder after navigation to the same page (%s)",
+  async (to) => {
+    setup();
+    await using screen = await render(<CommandPalette>{null}</CommandPalette>);
+    const finish = await startLateProjectAdd("Local folder", "/workspace/next");
+
+    await act(() => screen.router!.navigate({ to }));
+    await finish();
+
+    expect(scopes.openDraft).toHaveBeenCalledOnce();
+  },
+);
+
 it("keeps a reopened palette open after a late folder pick", async () => {
   setup();
   const picked = Promise.withResolvers<string>();
