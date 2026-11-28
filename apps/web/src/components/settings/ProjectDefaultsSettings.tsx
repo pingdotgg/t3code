@@ -25,7 +25,7 @@ import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDeta
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
-import { Switch } from "../ui/switch";
+import { ScopedSwitch } from "./ScopedSwitch";
 import { resolveDefaultModelSettingsPresentation } from "./ProjectDefaultsSettings.logic";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { useSearchableSetting } from "./settingsSearch";
@@ -466,10 +466,10 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               ) : null
             }
             control={
-              <Switch
+              <ScopedSwitch
                 aria-label={gt("Default automatic pull")}
-                mixed={mixedAutoPull}
-                checked={mixedAutoPull ? false : settings.defaultAutoPull}
+                settingKeys={["defaultAutoPull"]}
+                checked={settings.defaultAutoPull}
                 onCheckedChange={(enabled) => updateSettings({ defaultAutoPull: enabled })}
               />
             }
@@ -492,10 +492,10 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               ) : null
             }
             control={
-              <Switch
+              <ScopedSwitch
                 aria-label={gt("Remove agent credits when merging")}
-                mixed={mixedAgentCredits}
-                checked={mixedAgentCredits ? false : settings.removeAgentCreditsOnMerge}
+                settingKeys={["removeAgentCreditsOnMerge"]}
+                checked={settings.removeAgentCreditsOnMerge}
                 onCheckedChange={(enabled) =>
                   updateSettings({ removeAgentCreditsOnMerge: enabled })
                 }
