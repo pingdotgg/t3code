@@ -14,7 +14,9 @@ import { videoMimeType } from "@t3tools/shared/video";
 import { Pressable, View } from "react-native";
 import { Image } from "expo-image";
 import { AppText } from "../../components/ui/AppText";
-import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import { pullRequestMediaResource } from "@t3tools/client-runtime/pull-request-markdown";
+import { refreshAssetUrl, useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import type { MarkdownImageSourceResolver } from "../../native/SelectableMarkdownText.types";
 import { assetImageCacheKey } from "../../lib/assetImageSource";
 import { tryOpenWebLink } from "../../lib/openExternalUrl";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
@@ -45,6 +47,21 @@ export function usePullRequestMediaUrl(url: string) {
     unavailable: resource !== null && asset._tag === "Failure",
     source,
     resolvePlaybackUri: resource ? async () => (await refresh()) ?? null : undefined,
+  };
+}
+
+/** For images the native renderer draws itself, such as one wrapped in a link. */
+export function usePullRequestImageSource(
+  resolveUrl: (href: string) => string,
+): MarkdownImageSourceResolver {
+  const context = useContext(PullRequestMediaContext);
+  return async (image) => {
+    const url = resolveUrl(image.href);
+    const resource = context && pullRequestMediaResource(url, context.cwd, context.repository);
+    if (!resource) return { uri: url };
+    const uri = await refreshAssetUrl(context.environmentId, resource);
+    if (uri === null) throw new Error("Pull request image is unavailable");
+    return { uri };
   };
 }
 
