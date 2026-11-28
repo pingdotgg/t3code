@@ -397,6 +397,50 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("launches an agent that owns descendant process groups in its agent scope", () =>
+    Effect.gen(function* () {
+      const wrapped: Array<string> = [];
+      const spawned: Array<string> = [];
+      const lease: AcpSessionRuntime.AcpLinuxCgroupLease = {
+        contains: () => false,
+        exists: () => false,
+        path: "/sys/fs/cgroup/t3code.service/t3-acp-test",
+        relativePath: "/t3code.service/t3-acp-test",
+        kill: () => undefined,
+        populated: () => false,
+        remove: () => undefined,
+      };
+      yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        ownDescendantProcessGroups: true,
+        processGroupPlatform: "linux",
+        linuxCgroupController: { create: () => lease },
+      }).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            spawned.push(command._tag === "StandardCommand" ? command.command : command._tag);
+            return Effect.die("stop after recording the launch");
+          }),
+        ),
+        Effect.provideService(AgentScope, {
+          ...AgentScope.defaultValue(),
+          wrap: ({ command, args }) => {
+            wrapped.push(command);
+            return Effect.succeed({
+              command: "systemd-run",
+              args: ["--scope", "--", command, ...args],
+              unit: "t3code-acp-test.scope",
+            });
+          },
+        }),
+        Effect.exit,
+      );
+      expect(wrapped).toEqual([mockAgentCommand]);
+      expect(spawned).toEqual(["systemd-run"]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("retires a native runtime when its prompt caller is interrupted", () =>
     Effect.gen(function* () {
       const dispatched = yield* Deferred.make<void>();
