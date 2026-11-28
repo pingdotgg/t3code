@@ -580,12 +580,16 @@ jobs:
             Start-Sleep -Seconds 10
           }
 
+      # The token makes the action look the artifact up through the REST API
+      # the wait above polls. Without it the runner's artifact service is used,
+      # which can lag that API by seconds and report the artifact missing.
       - name: Download Linux CLI archive for WSL
         if: inputs.platform == 'win'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: cli-linux-${{ inputs.arch }}
           path: wsl-runtime
+          github-token: ${{ github.token }}
 
       - name: Build desktop artifact
         shell: bash
