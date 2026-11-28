@@ -297,6 +297,15 @@ describe("extractMarkdownLinkHrefs", () => {
   });
 
   it.each([
+    ["\t[a](src/a.ts)\r\n\r\n    [b](src/b.ts)\r\n[c](src/c.ts)", ["src/c.ts"]],
+    ["- Item\n\n      [a](src/a.ts)\n\n  [b](src/b.ts)", ["src/b.ts"]],
+    [">     [a](src/a.ts)\n>\n> [b](src/b.ts)", ["src/b.ts"]],
+    ["Paragraph\n    [a](src/a.ts)\n\n    [b](src/b.ts)", ["src/a.ts"]],
+  ])("excludes indented code destinations in %j", (markdown, hrefs) => {
+    expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
+  });
+
+  it.each([
     [
       String.raw`[one](<./a/doc\> final.ts>) [two](<./b/doc\> final.ts>)`,
       [String.raw`./a/doc\> final.ts`, String.raw`./b/doc\> final.ts`],

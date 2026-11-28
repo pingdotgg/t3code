@@ -520,21 +520,21 @@ const BLOCKQUOTE = 0;
 export function extractInlineCodeSpans(text: string): string[] {
   if (!text.includes("`")) return [];
   const spans: string[] = [];
-  visitMarkdownLines(text, (line, _start, fenced) => {
-    if (!fenced) collectLineCodeSpans(line, spans);
+  visitMarkdownLines(text, (line, _start, kind) => {
+    if (kind !== "fenced") collectLineCodeSpans(line, spans);
   });
   return spans;
 }
 
 /**
- * Visits text lines and fenced code lines. Blockquotes and list items are tracked line by line as
+ * Visits text and code lines. Blockquotes and list items are tracked line by line as
  * CommonMark nests them, because a fence closes only at its own container's indentation and ends
  * with that container. A full parse would be exact but costs about 100x this scan, which runs on
  * every streamed chunk.
  */
 function visitMarkdownLines(
   text: string,
-  visit: (line: string, start: number, fenced: boolean) => void,
+  visit: (line: string, start: number, kind: "text" | "fenced" | "indented") => void,
 ) {
   // Open containers, outermost first: BLOCKQUOTE, or a list item's content indentation.
   const containers: number[] = [];
@@ -596,7 +596,7 @@ function visitMarkdownLines(
         if (content === "") continue;
         // A fence written inside indented code ends with that code.
         if (!fence.indented || indent >= 4) {
-          visit(line, start, true);
+          visit(line, start, "fenced");
           const closer = FENCE_CLOSER_PATTERN.exec(content)?.[1];
           if (
             closer?.startsWith(fence.marker[0]!) &&
@@ -619,7 +619,7 @@ function visitMarkdownLines(
         content !== "" &&
         (indent >= 4 || !PARAGRAPH_INTERRUPTION_PATTERN.test(content))
       ) {
-        visit(line, start, false);
+        visit(line, start, "text");
         continue;
       }
       containers.length = matched;
@@ -638,20 +638,20 @@ function visitMarkdownLines(
       const opener = FENCE_OPENER_PATTERN.exec(content)?.[1];
       if (indent >= 4) {
         if (!paragraph && !closedContainer) indentedCode = true;
-        // Indented code is not skipped, but a fence shown inside it still hides its lines. Inside
-        // a paragraph an indented line is text, where only a backtick run opens code (a span).
+        // A fence shown inside indented code still hides its lines from the inline span scan.
+        // Inside a paragraph an indented line is text, where only backticks can open a code span.
         if (opener && (!paragraph || opener[0] === "`")) {
           fence = { marker: opener, indented: true };
-          visit(line, start, true);
+          visit(line, start, "fenced");
         } else {
-          visit(line, start, false);
+          visit(line, start, paragraph ? "text" : "indented");
         }
         break;
       }
       indentedCode = false;
       if (opener) {
         fence = { marker: opener, indented: false };
-        visit(line, start, true);
+        visit(line, start, "fenced");
         break;
       }
       if (content[0] === ">") {
@@ -681,7 +681,7 @@ function visitMarkdownLines(
         readIndent();
         continue;
       }
-      visit(line, start, false);
+      visit(line, start, "text");
       paragraph = !(
         ATX_HEADING_PATTERN.test(content) ||
         (paragraph && SETEXT_UNDERLINE_PATTERN.test(content))
@@ -774,13 +774,13 @@ export function markdownLinkDestinationScanner(markdown: string) {
   };
 }
 
-// Code is literal: fenced lines become spaces, keeping every offset.
-function blankFencedCode(text: string): string {
-  if (!text.includes("```") && !text.includes("~~~")) return text;
+// Code block lines become spaces, keeping every offset.
+function blankCodeBlocks(text: string): string {
+  if (!/ {4}|\t|```|~~~/.test(text)) return text;
   let blanked = "";
   let copied = 0;
-  visitMarkdownLines(text, (line, start, fenced) => {
-    if (!fenced) return;
+  visitMarkdownLines(text, (line, start, kind) => {
+    if (kind === "text") return;
     blanked += text.slice(copied, start) + line.replace(/[^\r]/g, " ");
     copied = start + line.length;
   });
@@ -790,7 +790,7 @@ function blankFencedCode(text: string): string {
 // Labels may nest balanced brackets (`[the [docs] guide](...)`), and the composer escapes them
 // (`[\[id\].tsx](...)`), so `\[` and `\]` never count. A blank line ends the paragraph and its labels.
 export function extractMarkdownLinkHrefs(text: string): string[] {
-  const markdown = blankFencedCode(text);
+  const markdown = blankCodeBlocks(text);
   const hrefs: string[] = [];
   const scanDestination = markdownLinkDestinationScanner(markdown);
   const paragraphEnd = markdownRunEndFinder(markdown, /\n[ \t\r]*\n/g);
