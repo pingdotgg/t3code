@@ -344,6 +344,13 @@ export function ProposedPlanTimelineRow({
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
         findActive={ctx.findActive}
+        citationSource={{
+          messageId: MessageId.make(row.id),
+          ...(ctx.threadRef ? { threadRef: ctx.threadRef } : {}),
+          itemKey: row.id,
+          request: ctx.citationRequest,
+          listRef: ctx.listRef,
+        }}
       />
     </div>
   );

@@ -705,7 +705,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
             (entry.kind === "message" &&
               entry.message.role === "assistant" &&
               entry.message.id === citationRequest.citation.messageId) ||
-            (entry.kind === "sent-message" && entry.id === citationRequest.citation.messageId),
+            ((entry.kind === "sent-message" || entry.kind === "proposed-plan") &&
+              entry.id === citationRequest.citation.messageId),
         )
       : undefined;
   if (citationRequest && citedEntry) {

@@ -1,6 +1,7 @@
 import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "@t3tools/shared/proposedPlanText";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { memo, useState, useId } from "react";
+import { memo, useState, useId, type ComponentProps } from "react";
+import { AssistantCitationSource } from "./AssistantCitationSource";
 import { findRevealRef } from "./markdownFindContext";
 import {
   isAtomCommandInterrupted,
@@ -46,6 +47,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd,
   workspaceRoot,
   findActive = false,
+  citationSource,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
@@ -53,10 +55,20 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd: string | undefined;
   workspaceRoot: string | undefined;
   findActive?: boolean;
+  citationSource?: Omit<ComponentProps<typeof AssistantCitationSource>, "children">;
 }) {
   const gt = useGT();
   const messages = useMessages();
   const [expanded, setExpanded] = useState(false);
+  const expandKey =
+    citationSource?.request?.citation.messageId === citationSource?.messageId
+      ? (citationSource?.request?.key ?? null)
+      : null;
+  const [lastExpandKey, setLastExpandKey] = useState<string | null>(null);
+  if (expandKey !== lastExpandKey) {
+    setLastExpandKey(expandKey);
+    if (expandKey !== null) setExpanded(true);
+  }
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [lastSavePath, setLastSavePath] = useState("");
@@ -214,6 +226,17 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               isStreaming={false}
               headingLevelOffset={3}
             />
+          ) : citationSource ? (
+            <AssistantCitationSource {...citationSource}>
+              <ChatMarkdown
+                text={displayedPlanMarkdown}
+                cwd={cwd}
+                environmentId={environmentId}
+                threadRef={threadRef}
+                isStreaming={false}
+                headingLevelOffset={3}
+              />
+            </AssistantCitationSource>
           ) : (
             <ChatMarkdown
               text={displayedPlanMarkdown}
