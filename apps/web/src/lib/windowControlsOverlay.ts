@@ -53,12 +53,30 @@ export function syncDocumentWindowControlsOverlayClass(): () => void {
   }
 
   const overlay = getWindowControlsOverlay();
+  // Windows also empties the overlay while minimized; dropping the class then shifts the layout
+  // on restore. Fullscreen empties it for real, so only fullscreen may drop it there.
+  const keepsClassUnlessFullscreen = isElectron && isWindowsPlatform(navigator.platform);
   const update = () => {
-    document.documentElement.classList.toggle(WCO_CLASS_NAME, overlay !== null && overlay.visible);
+    const visible = overlay !== null && overlay.visible;
+    if (
+      !visible &&
+      keepsClassUnlessFullscreen &&
+      !window.desktopBridge?.getWindowFullscreenState()
+    ) {
+      return;
+    }
+    document.documentElement.classList.toggle(WCO_CLASS_NAME, visible);
   };
 
   update();
-  return onWindowControlsOverlayGeometryChange(update);
+  const stopGeometry = onWindowControlsOverlayGeometryChange(update);
+  if (!keepsClassUnlessFullscreen) return stopGeometry;
+  // The overlay can hide before the window reports fullscreen; the fullscreen resize settles it.
+  window.addEventListener("resize", update);
+  return () => {
+    stopGeometry();
+    window.removeEventListener("resize", update);
+  };
 }
 
 function subscribeTitlebarArea(listener: () => void): () => void {
