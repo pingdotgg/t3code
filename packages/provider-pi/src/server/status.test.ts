@@ -4,6 +4,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as PlatformError from "effect/PlatformError";
 import * as TestClock from "effect/testing/TestClock";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -192,6 +193,28 @@ describe("PiProvider", () => {
       assert.equal(snapshot.status, "error");
       assert.equal(snapshot.version, "0.84.2");
       assert.include(snapshot.message ?? "", "Pi 0.84.2 does not work");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("points a missing default `pi` at the Binary path setting", () =>
+    Effect.gen(function* () {
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.fail(
+          PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            pathOrDescriptor: "pi",
+          }),
+        ),
+      );
+      const snapshot = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      assert.equal(snapshot.status, "error");
+      assert.equal(snapshot.installed, false);
+      assert.include(snapshot.message ?? "", "Binary path");
+      assert.include(snapshot.message ?? "", "PI_CODING_AGENT_DIR");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
