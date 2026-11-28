@@ -199,7 +199,7 @@ export function PullRequestThreadDialog({
   const errorMessage =
     validationMessage ??
     (checkoutError?.target === checkoutTarget ? checkoutError.message : null) ??
-    (resolvedPullRequest === null ? pullRequestResolution.error : null);
+    (!isResolving && resolvedPullRequest === null ? pullRequestResolution.error : null);
 
   return (
     <Dialog
