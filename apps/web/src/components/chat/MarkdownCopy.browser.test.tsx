@@ -154,6 +154,50 @@ describe("copying a table as HTML", () => {
   });
 });
 
+describe("copying a table for chat apps", () => {
+  it("writes aligned columns in a code fence, with a pre block for rich targets", async () => {
+    await using screen = await render(
+      <MarkdownTable>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th style={{ textAlign: "right" }}>Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Ada &amp; co</td>
+            <td style={{ textAlign: "right" }}>1,200</td>
+          </tr>
+        </tbody>
+      </MarkdownTable>,
+      // The table renders no links and reads no route.
+      { router: false },
+    );
+    const items: ClipboardItem[] = [];
+    const write = vi.spyOn(navigator.clipboard, "write").mockImplementation(async (data) => {
+      items.push(...data);
+    });
+
+    try {
+      await userEvent.click(screen.getByRole("button", { name: "Copy table" }));
+      await userEvent.click(page.getByRole("menuitem", { name: "Copy for chat apps" }));
+      await expect.element(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
+
+      const [item] = items;
+      expect(item?.types).toEqual(["text/plain", "text/html"]);
+      expect(await (await item!.getType("text/plain")).text()).toBe(
+        "```\nName      Amount\n--------  ------\nAda & co   1,200\n```",
+      );
+      expect(await (await item!.getType("text/html")).text()).toBe(
+        '<meta charset="utf-8"><pre>Name      Amount\n--------  ------\nAda &amp; co   1,200</pre>',
+      );
+    } finally {
+      write.mockRestore();
+    }
+  });
+});
+
 describe("copying a table as PNG", () => {
   it("writes the drawn table as one image/png clipboard item", async () => {
     await using screen = await render(
