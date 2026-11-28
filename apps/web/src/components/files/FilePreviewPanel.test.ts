@@ -180,7 +180,7 @@ describe("document preview contents", () => {
     [
       "nested table cells",
       String.raw`{\rtf1\ansi\trowd\cellx3000\pard\intbl\itap2 Inner A\nestcell\pard\intbl\itap2 Inner B\nestcell{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}\pard\intbl\itap1\cell\row}`,
-      "Inner A\tInner B\t\t",
+      "Inner A\tInner B\t",
     ],
   ])("keeps the text of %s", (_name, source, expected) => {
     const result = openRtf(bytes(source));
@@ -218,6 +218,42 @@ describe("document preview contents", () => {
       expect(result.pages[0]!.html).toBe("<p data-rtf-whitespace>Hello</p>");
     },
   );
+
+  it("keeps successive rows of a nested RTF table on separate lines", () => {
+    const source = String.raw`{\rtf1\ansi
+\pard Before table\par
+\trowd\cellx3000
+\pard\intbl\itap2 Item\nestcell\pard\intbl\itap2 Quantity\nestcell
+{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}{\nonesttables\par}
+\pard\intbl\itap2 Bolts\nestcell\pard\intbl\itap2 Four\nestcell
+{\*\nesttableprops\trowd\cellx1500\cellx3000\nestrow}{\nonesttables\par}
+\pard\intbl\itap1\cell\row
+\pard After table\par
+}`;
+    const result = openRtf(bytes(source));
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      "<p data-rtf-whitespace>Before table<br>Item\tQuantity\t<br>Bolts\tFour\t<br>After table<br></p>",
+    );
+  });
+
+  it.each([
+    ["a child destination", String.raw`A{\*\nesttableprops{\*\vendor\nestrow}\nestrow}B`, "A<br>B"],
+    [
+      "a compatibility paragraph",
+      String.raw`{\intbl\itap2 A\nestcell}{\*\nesttableprops\nestrow}{\nonesttables\par}{\intbl\itap2 B\nestcell}{\*\nesttableprops\nestrow}`,
+      "A\t<br>B\t<br>",
+    ],
+    [
+      "an ungrouped row marker",
+      String.raw`\intbl A\nestcell\nestrow B\nestcell\nestrow`,
+      "A\t<br>B\t<br>",
+    ],
+  ])("keeps nested row boundaries with %s", (_name, source, expected) => {
+    const result = openRtf(bytes(String.raw`{\rtf1\ansi ` + source + "}"));
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(`<p data-rtf-whitespace>${expected}</p>`);
+  });
 
   it("reads EPUB chapters independently of the total rendered size", async () => {
     const archive = new JSZip()
