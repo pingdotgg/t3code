@@ -1798,6 +1798,72 @@ function selectAutoApprovedPermissionOption(
   );
 }
 
+const ACP_FENCE_OPEN_RE = /^[ ]{0,3}(`{3,}|~{3,})(.*)$/;
+const ACP_FENCE_CLOSE_RE = /^[ ]{0,3}(`{3,}|~{3,})[ \t]*$/;
+
+/**
+ * Returns true when unnamed streaming ACP text ends inside an unclosed code fence or inline code
+ * span, where splitting the message before a new tool call would break the Markdown.
+ */
+export function acpUnnamedTextEndsInsideCode(text: string): boolean {
+  let fenceChar: "`" | "~" | null = null;
+  let fenceLength = 0;
+  let inlineCodeTicks = 0;
+
+  for (const line of text.split(/\r?\n/)) {
+    if (fenceChar !== null) {
+      const closeMatch = ACP_FENCE_CLOSE_RE.exec(line);
+      if (
+        closeMatch !== null &&
+        closeMatch[1]![0] === fenceChar &&
+        closeMatch[1]!.length >= fenceLength
+      ) {
+        fenceChar = null;
+        fenceLength = 0;
+        inlineCodeTicks = 0;
+      }
+      continue;
+    }
+
+    const openMatch = ACP_FENCE_OPEN_RE.exec(line);
+    if (openMatch !== null) {
+      const marker = openMatch[1]!;
+      const info = openMatch[2] ?? "";
+      if (marker[0] === "~" || !info.includes("`")) {
+        fenceChar = marker[0] as "`" | "~";
+        fenceLength = marker.length;
+        inlineCodeTicks = 0;
+        continue;
+      }
+    }
+
+    if (line.trim().length === 0) {
+      inlineCodeTicks = 0;
+      continue;
+    }
+
+    for (let index = 0; index < line.length;) {
+      const ch = line[index]!;
+      if (inlineCodeTicks === 0 && ch === "\\") {
+        index += 2;
+        continue;
+      }
+      if (ch !== "`") {
+        index += 1;
+        continue;
+      }
+      let end = index + 1;
+      while (end < line.length && line[end] === "`") end += 1;
+      const runLength = end - index;
+      if (inlineCodeTicks === 0) inlineCodeTicks = runLength;
+      else if (runLength === inlineCodeTicks) inlineCodeTicks = 0;
+      index = end;
+    }
+  }
+
+  return fenceChar !== null || inlineCodeTicks > 0;
+}
+
 interface ActiveTextSegment {
   readonly nativeItemId: string;
   readonly startedAt: DateTime.Utc;
@@ -4007,6 +4073,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
         });
 
+        const closeTextStreamsForNewTool = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
+          for (const kind of ["assistant", "reasoning"] as const) {
+            const segment = textStreamFor(context, kind).current;
+            if (
+              segment?.sourceMessageId == null &&
+              !acpUnnamedTextEndsInsideCode(segment?.text ?? "")
+            ) {
+              yield* closeTextStream(context, kind);
+            }
+          }
+          yield* closeTextStream(context, "user");
+        });
+
         const openTextSegment = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           kind: "user" | "assistant" | "reasoning",
@@ -5564,11 +5643,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           projectedStatus?: ProjectedToolStatus,
           rawPayload?: unknown,
         ) {
-          if (context.assistant.current?.sourceMessageId == null)
-            yield* closeTextStream(context, "assistant");
-          if (context.reasoning.current?.sourceMessageId == null)
-            yield* closeTextStream(context, "reasoning");
-          yield* closeTextStream(context, "user");
           const previous = context.tools.get(incoming.toolCallId);
           const merged = mergeToolCallState(previous, incoming);
           const normalized = flavor.normalizeToolCall?.(merged) ?? merged;
@@ -5730,12 +5804,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const subagentUpdate = hydratedRegisteredMonitor
             ? undefined
             : extractSubagentUpdate(toolCall);
+          const existingSubagent =
+            subagentUpdate === undefined
+              ? undefined
+              : (context.subagents.get(subagentUpdate.nativeTaskId) ??
+                (subagentUpdate.childSessionId !== null
+                  ? context.subagentsBySessionId.get(subagentUpdate.childSessionId)
+                  : undefined));
           const isExistingSubagentUpdate =
             subagentUpdate !== undefined &&
             subagentUpdate.suppressNormalTool !== false &&
-            (context.subagents.has(subagentUpdate.nativeTaskId) ||
-              (subagentUpdate.childSessionId !== null &&
-                context.subagentsBySessionId.has(subagentUpdate.childSessionId)));
+            existingSubagent !== undefined;
           // A brand-new tool call turns any earlier assistant text into pre-tool commentary.
           if (
             previous === undefined &&
@@ -5745,6 +5824,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             context.closingAssistant = null;
           }
           if (subagentUpdate !== undefined) {
+            if (
+              existingSubagent === undefined &&
+              !(subagentUpdate.prompt === "" && subagentUpdate.title === null) &&
+              subagentUpdate.suppressNormalTool !== false
+            ) {
+              yield* closeTextStreamsForNewTool(context);
+            }
             yield* emitSubagent(
               context,
               stoppedStatus === "interrupted" && subagentUpdate.status === "failed"
@@ -5778,6 +5864,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             toolStatus(toolCall.status);
           const now = yield* DateTime.now;
           const nativeItemId = `${context.nativeThreadId}:tool:${toolCall.toolCallId}`;
+          if (!context.itemOrdinals.has(nativeItemId)) {
+            yield* closeTextStreamsForNewTool(context);
+          }
           const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
           const nodeId = providerNodeId(nativeItemId);
           const turnItemId = providerTurnItemId(nativeItemId);
