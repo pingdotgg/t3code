@@ -310,23 +310,19 @@ export function threadLinkRefs(
 
 // GFM like the chat renderer, so footnotes and other GFM containers hold prose, not code.
 const markdownParser = unified().use(remarkParse).use(remarkGfm);
-const FENCE_LIKE_LINE =
-  /^(?:[ \t>*+\-\d.)]*(?<footnote>\[\^(?:\\[^\r\n]|[^\\\]\r\n])+\]:))*[ \t>*+\-\d.)]*(?:`{3}|~{3})/m;
+const INDENTED_CODE_LINE = /^[ \t>*+\-\d.)]*(?: {4}|\t)/m;
+const FENCE_LIKE_LINE = /^[ \t>*+\-\d.)]*(?:`{3}|~{3})/m;
 const LIST_ITEM_LINE = /^[ \t>]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|\r?$)/m;
 
 function parsedSkippedRanges(markdown: string) {
-  // Parse only when a fence-looking line could be indented code in its container, when a
-  // list or footnote could end a fence that has no closing marker, or when a link reference
-  // definition may hold a bare or angle-bracketed destination.
-  if (!markdown.includes("]:")) {
-    const candidates = new RegExp(FENCE_LIKE_LINE, "gm");
-    let candidate = candidates.exec(markdown);
-    if (!LIST_ITEM_LINE.test(markdown)) {
-      while (candidate && !candidate.groups?.footnote && !/ {4}|\t/.test(candidate[0])) {
-        candidate = candidates.exec(markdown);
-      }
-    }
-    if (!candidate) return undefined;
+  // Parse only when an indented line could be code, when a list could end an unclosed fence,
+  // or when a footnote or link reference definition may appear.
+  if (
+    !markdown.includes("]:") &&
+    !INDENTED_CODE_LINE.test(markdown) &&
+    !(LIST_ITEM_LINE.test(markdown) && FENCE_LIKE_LINE.test(markdown))
+  ) {
+    return undefined;
   }
 
   const ranges: Array<{ start: number; end: number }> = [];
