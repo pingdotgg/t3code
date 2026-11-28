@@ -12,6 +12,7 @@ import { lazy, Suspense, useState, type MouseEvent } from "react";
 
 import { contextMenuSourceOf } from "../../contextMenuSource";
 import { type FileContextMenuAction, useFileContextMenu } from "../../fileContextMenu";
+import { isElectron } from "../../env";
 import { openThreadToTheSide } from "../../layout/layoutDrag";
 import { selectFocusedPane } from "../../layout/layoutModel";
 import { useLayoutStore } from "../../layout/layoutStore";
