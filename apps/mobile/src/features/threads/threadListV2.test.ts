@@ -1,5 +1,8 @@
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
+import {
+  createInboxReturnTracker,
+  WORKING_EXIT_GRACE_MS,
+} from "@t3tools/client-runtime/state/thread-inbox";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -1881,10 +1884,10 @@ describe("Working section beta", () => {
       tracker.observe([inactive]);
       expect(render().workingCount).toBe(1);
       expect(render().items[0]?.thread.runtime).toBeNull();
-      vi.advanceTimersByTime(2_000);
+      vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
       expect(render().workingCount).toBe(0);
       expect(ids(render())).toEqual(["grace"]);
-      expect(tracker.returnedAt(inactive)).toBe(Date.parse(NOW) + 2_000);
+      expect(tracker.returnedAt(inactive)).toBe(Date.parse(NOW) + WORKING_EXIT_GRACE_MS);
     } finally {
       tracker.observe(null);
       vi.useRealTimers();

@@ -6,6 +6,7 @@ import {
   isThreadWorking,
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
+  WORKING_EXIT_GRACE_MS,
 } from "./threadInbox.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -50,7 +51,7 @@ describe("createInboxReturnTracker", () => {
     expect(first.returnedAt(thread("b", false))).toBeUndefined();
 
     const held = tracker.observe([thread("a", false), thread("b", false)]);
-    vi.advanceTimersByTime(2_000);
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
     const second = tracker.observe([thread("a", false), thread("b", false)]);
     expect(second.returnedAt(thread("a", false))).toBeDefined();
     expect(second.returnedAt(thread("b", false))).toBeUndefined();
@@ -68,13 +69,13 @@ describe("createInboxReturnTracker", () => {
     tracker.observe([thread("a", false)]);
     expect(isThreadWorking(thread("a", false))).toBe(false);
     expect(tracker.isWorking(thread("a", false))).toBe(true);
-    vi.advanceTimersByTime(1_999);
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS - 1);
     tracker.observe([thread("a", false)]);
     expect(tracker.isWorking(thread("a", false))).toBe(true);
     expect(tracker.returnedAt(thread("a", false))).toBeUndefined();
     vi.advanceTimersByTime(1);
     expect(tracker.isWorking(thread("a", false))).toBe(false);
-    expect(tracker.returnedAt(thread("a", false))).toBe(12_000);
+    expect(tracker.returnedAt(thread("a", false))).toBe(10_000 + WORKING_EXIT_GRACE_MS);
     expect(notify).toHaveBeenCalledTimes(1);
     unsubscribe();
   });
@@ -136,15 +137,17 @@ describe("createInboxReturnTracker", () => {
     tracker.observe([thread("a", true)]);
     expect(tracker.isWorking(thread("a", true))).toBe(true);
     tracker.observe([thread("a", false)]);
-    vi.advanceTimersByTime(1_500);
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS - 1);
     tracker.observe([thread("a", true)]);
     vi.advanceTimersByTime(1_000);
     expect(tracker.returnedAt(thread("a", true))).toBeUndefined();
     tracker.observe([thread("a", false)]);
-    vi.advanceTimersByTime(1_999);
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS - 1);
     expect(tracker.isWorking(thread("a", false))).toBe(true);
     vi.advanceTimersByTime(1);
-    expect(tracker.returnedAt(thread("a", false))).toBe(14_500);
+    expect(tracker.returnedAt(thread("a", false))).toBe(
+      10_000 + WORKING_EXIT_GRACE_MS - 1 + 1_000 + WORKING_EXIT_GRACE_MS,
+    );
   });
 
   it.each([
@@ -212,11 +215,11 @@ describe("createInboxReturnTracker", () => {
     tracker.observe([finished]);
     expect(tracker.isWorking(finished)).toBe(true);
     expect(tracker.returnedAt(finished)).toBeUndefined();
-    vi.advanceTimersByTime(1_999);
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS - 1);
     expect(tracker.isWorking(finished)).toBe(true);
     vi.advanceTimersByTime(1);
     expect(tracker.isWorking(finished)).toBe(false);
-    expect(tracker.returnedAt(finished)).toBe(12_000);
+    expect(tracker.returnedAt(finished)).toBe(10_000 + WORKING_EXIT_GRACE_MS);
   });
 
   it("does not grant grace to a future snooze after background completion", () => {
@@ -240,8 +243,8 @@ describe("createInboxReturnTracker", () => {
     tracker.observe([a, thread("b", true)]);
     vi.advanceTimersByTime(500);
     tracker.observe([a, b]);
-    vi.advanceTimersByTime(1_500);
-    expect(tracker.returnedAt(a)).toBe(12_000);
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS - 500);
+    expect(tracker.returnedAt(a)).toBe(10_000 + WORKING_EXIT_GRACE_MS);
     expect(tracker.returnedAt(b)).toBeUndefined();
     vi.advanceTimersByTime(500);
     expect(sortInboxThreadsByReturn([a, b], tracker.returnedAt).map((entry) => entry.id)).toEqual([
@@ -261,7 +264,7 @@ describe("createInboxReturnTracker", () => {
     tracker.observe([thread("a", true)]);
     tracker.observe([thread("a", false)]);
     tracker.observe(null);
-    vi.advanceTimersByTime(2_000);
+    vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS);
     expect(notify).not.toHaveBeenCalled();
     expect(tracker.returnedAt(thread("a", false))).toBeUndefined();
   });

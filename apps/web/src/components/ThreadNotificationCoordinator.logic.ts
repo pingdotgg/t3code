@@ -1,3 +1,4 @@
+import { WORKING_EXIT_GRACE_MS } from "@t3tools/client-runtime/state/thread-inbox";
 import {
   effectiveSnoozed,
   type ThreadSnoozeShell,
@@ -41,18 +42,22 @@ export function createThreadNotificationGate<Key>(
 ) {
   // The newest completion already notified, or deliberately skipped.
   const handled = new Map<Key, number>();
-  // Wake completions waiting out the grace, by completion time; no timer while paused.
+  // Completions waiting out their grace, by completion time; no timer while paused.
   const releases = new Map<
     Key,
-    { readonly at: number; readonly timer: ReturnType<typeof setTimeout> | undefined }
+    {
+      readonly at: number;
+      readonly graceMs: number;
+      readonly timer: ReturnType<typeof setTimeout> | undefined;
+    }
   >();
-  const release = (key: Key, at: number) => {
+  const release = (key: Key, at: number, graceMs: number) => {
     const timer = setTimeout(() => {
       releases.delete(key);
       handled.set(key, at);
       notify(key, "completion");
-    }, RELEASED_COMPLETION_GRACE_MS);
-    releases.set(key, { at, timer });
+    }, graceMs);
+    releases.set(key, { at, graceMs, timer });
   };
   const skip = (key: Key, at: number | null) => {
     if (at !== null && at > (handled.get(key) ?? -Infinity)) handled.set(key, at);
@@ -86,16 +91,18 @@ export function createThreadNotificationGate<Key>(
       next: ThreadNotificationObservation,
       options: { readonly archived: boolean; readonly quiet: boolean; readonly snoozed: boolean },
     ): void {
-      // The grace survives updates that keep the wake's completion; anything else cancels it.
+      // The grace survives updates that keep the same completion; anything else cancels it.
       const pending = releases.get(key);
       const silenced = options.archived || options.quiet || options.snoozed;
       if (pending?.at === next.completedAt && !silenced) {
-        if (pending.timer === undefined) release(key, pending.at);
+        if (pending.timer === undefined) release(key, pending.at, pending.graceMs);
         return;
       }
       cancel(key);
       // The first sighting, archived or snoozed threads, and stopped or silent runs never notify completion.
       if (!prior || silenced) skip(key, next.completedAt);
+      // A request that arrives inside the grace is the news; its run does not announce later.
+      if (pending && next.attention !== null) skip(key, pending.at);
       const fresh = attend(key, prior, next);
       if (!prior || options.archived) return;
       if (fresh) {
@@ -104,18 +111,15 @@ export function createThreadNotificationGate<Key>(
       }
       const at = next.completedAt;
       if (!next.settled || at === null || at <= (handled.get(key) ?? -Infinity)) return;
-      if (next.backgroundWake) {
-        release(key, at);
-        return;
-      }
-      handled.set(key, at);
-      notify(key, "completion");
+      // Completion waits out the Working shelf's exit grace so both land together, and a
+      // run that continues or asks inside it never announces.
+      release(key, at, next.backgroundWake ? RELEASED_COMPLETION_GRACE_MS : WORKING_EXIT_GRACE_MS);
     },
     /** Stops grace timers while the snapshot is stale; the next observation restarts or drops them. */
     pause(): void {
-      for (const [key, { at, timer }] of releases) {
+      for (const [key, { at, graceMs, timer }] of releases) {
         clearTimeout(timer);
-        releases.set(key, { at, timer: undefined });
+        releases.set(key, { at, graceMs, timer: undefined });
       }
     },
     /** Forgets threads that left the snapshot. */
