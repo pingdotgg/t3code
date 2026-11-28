@@ -54,6 +54,8 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { useDeviceState } from "~/state/device";
 
 import { DeviceStreamView } from "../device/DeviceStreamView";
+import { iphoneScreenCornerRatio } from "@t3tools/client-runtime/device/shape-profile";
+import { iphoneFrameCorners } from "../device/deviceFrameLayout";
 import type { DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
 import { Atom } from "effect/reactivity";
 import { deviceScreenKey, deviceStreamScreenAtom } from "../device/deviceStreamSession";
@@ -390,8 +392,12 @@ function DeviceMiniPlayer({
   );
   const host = deviceState.hosts.find((entry) => entry.id === source.hostId);
   const hostLabel = host?.label ?? gt("Device host");
-  const cornerRadius = (player: PreviewMiniPlayerSize) =>
-    resolveDeviceMiniPlayerCornerRadius(source.platform, player);
+  const deviceName = device?.name ?? source.name;
+  const cornerRatio = source.platform === "ios" ? iphoneScreenCornerRatio(deviceName) : undefined;
+  const frameCorners = (player: PreviewMiniPlayerSize) =>
+    cornerRatio === undefined
+      ? { borderRadius: resolveDeviceMiniPlayerCornerRadius(source.platform, player) }
+      : iphoneFrameCorners(player, cornerRatio);
 
   const openInPanel = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
@@ -410,11 +416,12 @@ function DeviceMiniPlayer({
       sourceSize={sourceSize}
       label={gt("Floating device preview")}
       onOpenInPanel={openInPanel}
-      cornerRadius={cornerRadius}
+      frameCorners={frameCorners}
+      controlsOutsideScreen={cornerRatio !== undefined}
     >
       {() => (
         <div
-          className="pointer-events-auto absolute inset-0 overflow-hidden rounded-[inherit]"
+          className="pointer-events-auto absolute inset-0 overflow-hidden rounded-[inherit] [corner-shape:inherit]"
           style={{ zIndex: PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX }}
         >
           <DeviceStreamView
@@ -422,7 +429,7 @@ function DeviceMiniPlayer({
             platform={source.platform}
             deviceId={source.deviceId}
             hostId={source.hostId}
-            deviceName={device?.name ?? source.name}
+            deviceName={deviceName}
             deviceDescription={`${hostLabel} · ${device?.version ?? source.platform}`}
             visible
             viewId={viewId}
@@ -443,7 +450,8 @@ function MiniPlayerShell({
   onOpenInPanel,
   pillActions,
   recording = false,
-  cornerRadius = frameCornerRadius,
+  frameCorners = () => ({ borderRadius: frameCornerRadius() }),
+  controlsOutsideScreen = false,
   children,
 }: {
   readonly threadRef: ScopedThreadRef;
@@ -453,7 +461,11 @@ function MiniPlayerShell({
   readonly onOpenInPanel: () => void;
   readonly pillActions?: ReactNode;
   readonly recording?: boolean;
-  readonly cornerRadius?: (frame: PreviewMiniPlayerSize) => number;
+  readonly frameCorners?: (frame: PreviewMiniPlayerSize) => {
+    readonly borderRadius: number;
+    readonly cornerShape?: string | undefined;
+  };
+  readonly controlsOutsideScreen?: boolean;
   readonly children: (frame: PreviewMiniPlayerFrame) => ReactNode;
 }) {
   const gt = useGT();
@@ -479,8 +491,10 @@ function MiniPlayerShell({
   const heldSourceKey = streamedSourceKey(threadRef, sourceKey);
   const frame = canvas?.previewKey === sourceKey ? canvas.layout.frame : null;
 
-  const radius = frame ? cornerRadius(frame) : PREVIEW_MINI_PLAYER_CORNER_RADIUS;
-  const pillInset = Math.max(8, Math.round(radius * 0.55));
+  const corners = frame ? frameCorners(frame) : { borderRadius: PREVIEW_MINI_PLAYER_CORNER_RADIUS };
+  const pillInset = controlsOutsideScreen
+    ? -4
+    : Math.max(8, Math.round(corners.borderRadius * 0.55));
 
   const close = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
@@ -603,7 +617,7 @@ function MiniPlayerShell({
             top: frame.y,
             width: frame.width,
             height: frame.height,
-            borderRadius: radius,
+            ...corners,
           }}
         >
           <div
@@ -633,11 +647,18 @@ function MiniPlayerShell({
                   "block size-2 rounded-full shadow-sm ring-1 ring-background/70",
                   recording
                     ? "bg-destructive motion-safe:animate-status-pulse"
-                    : "bg-foreground/25",
+                    : controlsOutsideScreen
+                      ? "bg-foreground/55"
+                      : "bg-foreground/25",
                 )}
               />
             </div>
-            <div className="pointer-events-none absolute right-0 top-0 flex h-8 cursor-grab items-center gap-0.5 rounded-lg border border-border/80 bg-popover/92 p-0.5 opacity-0 shadow-lg/20 backdrop-blur-xl transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-data-pill-open:pointer-events-auto group-data-pill-open:opacity-100 active:cursor-grabbing pointer-coarse:right-2.5 pointer-coarse:top-2.5">
+            <div
+              className={cn(
+                "pointer-events-none absolute right-0 top-0 flex h-8 cursor-grab items-center gap-0.5 rounded-lg border border-border/80 bg-popover/92 p-0.5 opacity-0 shadow-lg/20 backdrop-blur-xl transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-data-pill-open:pointer-events-auto group-data-pill-open:opacity-100 active:cursor-grabbing pointer-coarse:right-2.5 pointer-coarse:top-2.5",
+                controlsOutsideScreen && frame.y >= 32 && "-translate-y-7",
+              )}
+            >
               {recording ? (
                 <span aria-hidden className="flex size-6 shrink-0 items-center justify-center">
                   <span className="size-2 rounded-full bg-destructive motion-safe:animate-status-pulse" />
@@ -683,15 +704,19 @@ function MiniPlayerShell({
             </div>
           </div>
 
-          <div className="absolute inset-0 z-[47] rounded-[inherit] bg-muted shadow-2xl/35" />
+          <div className="absolute inset-0 z-[47] rounded-[inherit] bg-muted shadow-2xl/35 [corner-shape:inherit]" />
           {children(frame)}
-          <div className="pointer-events-none absolute inset-0 z-[49] rounded-[inherit] ring-1 ring-inset ring-border/80" />
+          <div className="pointer-events-none absolute inset-0 z-[49] rounded-[inherit] ring-1 ring-inset ring-border/80 [corner-shape:inherit]" />
           {RESIZE_HANDLES.map(({ direction, className }) => (
             <div
               key={direction}
               role="presentation"
               data-preview-mini-player-resize={direction}
-              className={cn("pointer-events-auto absolute z-[49] touch-none", className)}
+              className={cn(
+                "pointer-events-auto absolute touch-none",
+                controlsOutsideScreen ? "z-[48]" : "z-[49]",
+                className,
+              )}
               onPointerDown={(event) => beginGesture(event, direction)}
               onPointerMove={handlePointerMove}
               onPointerUp={endGesture}

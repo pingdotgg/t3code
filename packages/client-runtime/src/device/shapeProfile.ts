@@ -5,6 +5,7 @@ export interface DeviceShapeProfile {
   readonly bezel: number;
   readonly bodyRadius: number;
   readonly screenRadius: number;
+  readonly screenCornerRatio?: number;
   readonly depth: number;
   readonly backColor: number;
   readonly buttons: ReadonlyArray<{
@@ -103,6 +104,22 @@ const ANDROID_TABLET_SHAPE: DeviceShapeProfile = {
   backColor: 0x697b80,
 };
 
+/** Continuous corner extent divided by the short screen edge, from Xcode framebuffer masks. */
+export function iphoneScreenCornerRatio(name: string): number | undefined {
+  if (!/\biphone\b/i.test(name) || /\biphone duo\b/i.test(name)) return undefined;
+  if (/\biphone (?:se\b|[4-8](?:s|c)?\b)/i.test(name)) return 0;
+  if (/\biphone (?:xs max|11 pro max)\b/i.test(name)) return 0.133;
+  if (/\biphone (?:x\w*|11)\b/i.test(name)) return 0.14;
+  if (/\biphone 1[23] mini\b/i.test(name)) return 0.169;
+  if (/\biphone (?:1[23] pro max|14 plus)\b/i.test(name)) return 0.176;
+  if (/\biphone 1[678] pro max\b/i.test(name)) return 0.194;
+  if (/\biphone (?:air|16 pro|17|18 pro)\b/i.test(name)) return 0.211;
+  if (/\biphone (?:14 pro|15|16)\b/i.test(name)) {
+    return /\b(?:max|plus)\b/i.test(name) ? 0.174 : 0.19;
+  }
+  return 0.173;
+}
+
 export function resolveDeviceShape(options: {
   platform: DevicePlatform;
   name?: string;
@@ -112,6 +129,8 @@ export function resolveDeviceShape(options: {
   const namedTablet = /\b(ipad|tablet)\b/i.test(name);
   const namedPhone = /\b(iphone|phone)\b/i.test(name);
   const tablet = namedTablet || (!namedPhone && options.portraitAspect >= 0.6);
+  const screenCornerRatio = options.platform === "ios" ? iphoneScreenCornerRatio(name) : undefined;
+  if (screenCornerRatio !== undefined) return { ...IOS_PHONE_SHAPE, screenCornerRatio };
   return options.platform === "ios"
     ? tablet
       ? IOS_TABLET_SHAPE
