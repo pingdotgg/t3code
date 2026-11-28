@@ -27,7 +27,11 @@ import * as IdleCompactionService from "./IdleCompactionService.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
-import { idleCompactionWindow, type IdleCompactionRecords } from "./IdleCompaction.ts";
+import {
+  idleCompactionWindow,
+  returnCompactionIsMoot,
+  type IdleCompactionRecords,
+} from "./IdleCompaction.ts";
 
 const NOW_MS = Date.parse("2026-10-19T12:00:00.000Z");
 const MINUTE_MS = 60_000;
@@ -221,6 +225,86 @@ describe("idleCompactionWindow", () => {
       },
     ];
     expect(idleCompactionWindow(delegating, NOW_MS)?.runId).toBe(runId);
+  });
+});
+
+describe("returnCompactionIsMoot", () => {
+  it.each<{
+    readonly name: string;
+    readonly cacheExpiresInMs?: number;
+    readonly usageAgeMs?: number;
+    readonly compaction?: "completed" | "failed";
+    readonly moot: boolean;
+  }>([
+    {
+      name: "keeps a compaction once the cache expired",
+      cacheExpiresInMs: -MINUTE_MS,
+      moot: false,
+    },
+    { name: "drops a compaction while the cache is warm", cacheExpiresInMs: MINUTE_MS, moot: true },
+    {
+      name: "drops a compaction after a recent turn with no expiry",
+      usageAgeMs: MINUTE_MS,
+      moot: true,
+    },
+    {
+      name: "keeps a compaction after an old turn with no expiry",
+      usageAgeMs: 71 * MINUTE_MS,
+      moot: false,
+    },
+    {
+      name: "drops a compaction right after another",
+      cacheExpiresInMs: -MINUTE_MS,
+      compaction: "completed",
+      moot: true,
+    },
+    {
+      name: "keeps a compaction after one that failed",
+      cacheExpiresInMs: -MINUTE_MS,
+      compaction: "failed",
+      moot: false,
+    },
+  ])("$name", ({ cacheExpiresInMs, usageAgeMs, compaction, moot }) => {
+    const thread = records(cacheExpiresInMs === undefined ? {} : { cacheExpiresInMs });
+    if (usageAgeMs !== undefined) {
+      thread.providerTurns = thread.providerTurns.map((turn) => ({
+        ...turn,
+        tokenUsage: { ...turn.tokenUsage!, updatedAt: DateTime.formatIso(at(-usageAgeMs)) },
+      }));
+    }
+    if (compaction !== undefined) {
+      thread.messages = [{ ...thread.messages[0]!, text: "/compact" }];
+      thread.turnItems = [
+        {
+          id: TurnItemId.make("compaction-item"),
+          threadId,
+          runId,
+          nodeId: NodeId.make("root-node"),
+          providerThreadId,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: compaction,
+          title: null,
+          startedAt: at(-MINUTE_MS),
+          completedAt: at(),
+          updatedAt: at(),
+          type: "compaction",
+          driver: ProviderDriverKind.make("claudeAgent"),
+        },
+      ];
+    }
+    expect(returnCompactionIsMoot(thread, NOW_MS)).toBe(moot);
+  });
+
+  it("reads the cache of the conversation the thread continues", () => {
+    const switched = records({ cacheExpiresInMs: MINUTE_MS });
+    switched.thread = {
+      ...switched.thread,
+      activeProviderThreadId: ProviderThreadId.make("next-provider-thread"),
+    };
+    expect(returnCompactionIsMoot(switched, NOW_MS)).toBe(false);
   });
 });
 

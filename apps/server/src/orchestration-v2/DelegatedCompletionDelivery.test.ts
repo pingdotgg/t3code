@@ -765,22 +765,39 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
   );
 
   it.effect.each([
-    { name: "no result is waiting", delivery: "none", compacts: true },
-    { name: "a result is waiting to be sent", delivery: "pending", compacts: false },
-    { name: "a result was just sent", delivery: "sent", compacts: false },
-  ] as const)("compacts before the cache expires only when $name", ({ delivery, compacts }) =>
+    { name: "no result is waiting", delivery: "none", mode: "beforeCacheExpires", compacts: true },
+    {
+      name: "a result is waiting to be sent",
+      delivery: "pending",
+      mode: "beforeCacheExpires",
+      compacts: false,
+    },
+    {
+      name: "a result was just sent",
+      delivery: "sent",
+      mode: "beforeCacheExpires",
+      compacts: false,
+    },
+    // A client decides on return from its own copy, which can miss the result.
+    {
+      name: "a result is waiting to be sent",
+      delivery: "pending",
+      mode: "onReturn",
+      compacts: false,
+    },
+  ] as const)("compacts ($mode) only when $name", ({ delivery, mode, compacts }) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const now = yield* DateTime.now;
-      const threadId = ThreadId.make(`thread:idle-compaction-delivery-${delivery}`);
-      const runId = RunId.make(`run:idle-compaction-delivery-${delivery}`);
-      const taskId = NodeId.make(`node:idle-compaction-delivery-${delivery}-task`);
+      const threadId = ThreadId.make(`thread:idle-compaction-delivery-${mode}-${delivery}`);
+      const runId = RunId.make(`run:idle-compaction-delivery-${mode}-${delivery}`);
+      const taskId = NodeId.make(`node:idle-compaction-delivery-${mode}-${delivery}-task`);
 
       yield* seedParentWithTerminalTask({
         threadId,
-        projectId: ProjectId.make(`project:idle-compaction-delivery-${delivery}`),
+        projectId: ProjectId.make(`project:idle-compaction-delivery-${mode}-${delivery}`),
         runId,
-        rootNodeId: NodeId.make(`node:idle-compaction-delivery-${delivery}-root`),
+        rootNodeId: NodeId.make(`node:idle-compaction-delivery-${mode}-${delivery}-root`),
         taskId,
         deliveryState: delivery === "none" ? "delivered" : "claimed",
         completionWake: "always",
@@ -791,7 +808,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       if (delivery === "sent") {
         yield* orchestrator.dispatch({
           type: "message.dispatch",
-          commandId: CommandId.make(`command:idle-compaction-delivery-${delivery}`),
+          commandId: CommandId.make(`command:idle-compaction-delivery-${mode}-${delivery}`),
           threadId,
           messageId: MessageId.make(`message:delegated-delivery:${threadId}`),
           text: `Delegated task ${taskId} reached a terminal state.`,
@@ -813,7 +830,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         attachments: [],
         createdBy: "agent",
         creationSource: "server",
-        idleCompaction: "beforeCacheExpires",
+        idleCompaction: mode,
         dispatchMode: { type: "start_immediately" },
       });
 
