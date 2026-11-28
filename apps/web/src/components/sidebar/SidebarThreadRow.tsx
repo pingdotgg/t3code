@@ -1193,14 +1193,32 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       : gt("{count, plural, one {{count} linked issue} other {{count} linked issues}}", {
           count: issueCount,
         });
+  const opensIssueList = issueCount > 1;
   const issueBadge = firstIssue ? (
     <ThreadLinkBadge
+      key={opensIssueList ? "list" : "link"}
       control={
         <InlineButton
+          render={
+            opensIssueList ? undefined : (
+              <a href={firstIssue.url} target="_blank" rel="noopener noreferrer" />
+            )
+          }
           aria-label={issueLabel}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation();
+            if (
+              !opensIssueList &&
+              (event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey ||
+                event.button === 1)
+            ) {
+              return;
+            }
+            event.preventDefault();
             openLinkedItems();
           }}
         />

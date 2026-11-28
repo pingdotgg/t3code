@@ -1,5 +1,9 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopeProjectRef,
+  scopedThreadKey,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
   IssueTrackerKind,
@@ -261,10 +265,12 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
     // AppRoot brings its own router.
     router: false,
   });
-  const badge = page.getByRole("button", {
+  const badge = page.getByRole("link", {
     name: `Issue ${issue.displayKey}: ${issue.title}, Open`,
   });
   await expect.element(badge).toBeVisible();
+  expect(badge.element()).toHaveAttribute("href", issue.url);
+  expect(badge.element()).toHaveAttribute("target", "_blank");
   expect(badge.element().querySelector("span")).toHaveClass(/text-emerald-600/);
   expect(badge.element()).toHaveTextContent("123");
   expect(badge.element()).not.toHaveTextContent("#");
@@ -281,6 +287,36 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
   await vi.waitFor(() =>
     expect(groupedBadge.element().querySelector("span")).toHaveClass(/text-emerald-600/),
   );
+  // Modified clicks on the single-issue badge fall through to the anchor so the browser opens it
+  // instead of navigating or opening the in-app panel.
+  for (const modifier of [{ metaKey: true }, { ctrlKey: true }] as const) {
+    let sawUnpreventedClick = false;
+    // Register on the React root after mount so this runs after React's delegated click handler
+    // even when the handler calls stopPropagation(), preventing Chromium from opening a real tab.
+    const preventExternalNavigation = (event: MouseEvent) => {
+      if (event.target !== badge.element()) return;
+      sawUnpreventedClick = !event.defaultPrevented;
+      event.preventDefault();
+    };
+    _app.container.addEventListener("click", preventExternalNavigation);
+    try {
+      const modifiedClick = new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        ...modifier,
+      });
+      await act(() => badge.element().dispatchEvent(modifiedClick));
+    } finally {
+      _app.container.removeEventListener("click", preventExternalNavigation);
+    }
+    expect(sawUnpreventedClick).toBe(true);
+    expect(router.history.location.pathname).toBe(`/${ENVIRONMENT_ID}/${first.id}`);
+    expect(
+      useRightPanelStore.getState().byThreadKey[
+        scopedThreadKey(scopeThreadRef(ENVIRONMENT_ID, linked.id))
+      ],
+    ).toBeUndefined();
+  }
   await userEvent.hover(badge);
   const issueName = `Issue ${issue.displayKey}: ${liveTitle}`;
   const previewLink = page.getByRole("link", { name: issueName });
