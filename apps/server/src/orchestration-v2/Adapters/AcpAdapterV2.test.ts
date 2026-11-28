@@ -7581,6 +7581,127 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  // The agent answers session/cancel with "cancelled" and never sends terminal/kill or terminal/release.
+  it.live("Stop kills the command a turn runs in a client terminal", () =>
+    Effect.gen(function* () {
+      type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let handler: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
+      let createTerminal: Parameters<Runtime["handleCreateTerminal"]>[0] | undefined;
+      let readTerminalOutput: Parameters<Runtime["handleTerminalOutput"]>[0] | undefined;
+      let terminalId: string | undefined;
+      const cancelled = yield* Deferred.make<void>();
+      const instanceId = ProviderInstanceId.make("devin-stop-terminal");
+      const adapter = yield* makeAcpRegistryAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        settings: DEVIN_SETTINGS,
+        environment: {},
+        makeRuntime: makeMockRuntime({
+          childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+          mockAgentPath: yield* bundledMockAgentPath,
+          wrapRuntime: (runtime) => ({
+            ...runtime,
+            handleSessionUpdate: (next) =>
+              Effect.sync(() => {
+                handler = next;
+              }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+            handleCreateTerminal: (next) =>
+              Effect.sync(() => {
+                createTerminal = next;
+              }).pipe(Effect.andThen(runtime.handleCreateTerminal(next))),
+            handleTerminalOutput: (next) =>
+              Effect.sync(() => {
+                readTerminalOutput = next;
+              }).pipe(Effect.andThen(runtime.handleTerminalOutput(next))),
+            prompt: () =>
+              Effect.gen(function* () {
+                ({ terminalId } = yield* createTerminal!(
+                  { sessionId: "mock-session-1", command: "sleep 30" },
+                  { requestId: "exec-1-terminal", method: "terminal/create" },
+                ));
+                yield* handler!({
+                  sessionId: "mock-session-1",
+                  update: {
+                    sessionUpdate: "tool_call",
+                    toolCallId: "exec-1",
+                    title: "exec",
+                    kind: "execute",
+                    status: "in_progress",
+                    content: [{ type: "terminal", terminalId }],
+                  },
+                });
+                yield* Deferred.await(cancelled);
+                return { stopReason: "cancelled" as const };
+              }),
+            cancel: Deferred.succeed(cancelled, undefined).pipe(Effect.asVoid),
+          }),
+        }),
+      }).pipe(
+        Effect.provide(
+          Layer.mock(AcpRegistryCatalog)({ resolve: () => Effect.die("runtime is injected") }),
+        ),
+      );
+      const threadId = ThreadId.make("devin-stop-terminal");
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("devin-stop-terminal-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const running = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === "exec-1",
+          ),
+          Stream.runHead,
+        ),
+      );
+      if (running.type !== "turn_item.updated" || running.turnItem.providerTurnId === null) {
+        return yield* Effect.die("Expected the running command item of the turn");
+      }
+
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: running.turnItem.providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      const { exitStatus } = yield* readTerminalOutput!(
+        { sessionId: "mock-session-1", terminalId: terminalId! },
+        { requestId: "exec-1-output", method: "terminal/output" },
+      );
+      // Killed: a signal on POSIX, a non-zero exit code from taskkill on Windows.
+      assert.notEqual(exitStatus, undefined);
+      assert.notEqual(exitStatus?.exitCode, 0);
+      const lateCreate = yield* createTerminal!(
+        { sessionId: "mock-session-1", command: "sleep 30" },
+        { requestId: "exec-2-terminal", method: "terminal/create" },
+      ).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(lateCreate));
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.each([
     {
       label: "grants an ID-only execute approval its tracked command",

@@ -4,6 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -22,6 +23,8 @@ const MAX_RETAINED_OUTPUT_BYTES = 16 * 1024 * 1024;
 const DEFAULT_OUTPUT_BYTE_LIMIT = 4 * 1024 * 1024;
 const MAX_OUTPUT_BYTE_LIMIT = 8 * 1024 * 1024;
 const OUTPUT_DRAIN_GRACE = "1 second";
+// After a kill, the exit fiber may still drain output for up to OUTPUT_DRAIN_GRACE.
+const KILL_EXIT_CONFIRM_GRACE = "2 seconds";
 
 const terminalRequestError = (message: string, cause?: unknown) =>
   EffectAcpErrors.AcpRequestError.internalError(
@@ -100,8 +103,10 @@ interface ManagedAcpTerminal {
 }
 
 export interface AcpClientTerminals {
+  /** `admit` runs under the creation permit, so a check it makes holds against `killSession`. */
   readonly create: (
     request: EffectAcpSchema.CreateTerminalRequest,
+    admit?: Effect.Effect<void, EffectAcpErrors.AcpRequestError>,
   ) => Effect.Effect<EffectAcpSchema.CreateTerminalResponse, EffectAcpErrors.AcpRequestError>;
   readonly output: (
     request: EffectAcpSchema.TerminalOutputRequest,
@@ -121,6 +126,8 @@ export interface AcpClientTerminals {
     terminalId: string,
   ) => AcpTerminalOutputSnapshot | undefined;
   readonly readCommandLine: (terminalId: string) => string | undefined;
+  /** Kills a session's running commands and waits for their exit; the agent can still read them. */
+  readonly killSession: (sessionId: string) => Effect.Effect<void>;
   readonly disposeAll: Effect.Effect<void>;
 }
 
@@ -226,10 +233,11 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
     return Effect.succeed(terminal);
   };
 
-  const create: AcpClientTerminals["create"] = (request) =>
+  const create: AcpClientTerminals["create"] = (request, admit = Effect.void) =>
     creationPermit.withPermit(
       Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
+          yield* admit;
           const liveCount = Array.from(terminals.values()).filter(
             (terminal) => !terminal.released && terminal.exitStatus === undefined,
           ).length;
@@ -411,6 +419,42 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
   const readCommandLine: AcpClientTerminals["readCommandLine"] = (terminalId) =>
     terminals.get(terminalId)?.commandLine;
 
+  // Taking the creation permit lets an in-flight terminal/create register before the sweep.
+  // A kill can fail (EPERM after a command elevates), so the exit wait is bounded.
+  const killSession: AcpClientTerminals["killSession"] = (sessionId) =>
+    creationPermit
+      .withPermit(
+        Effect.sync(() =>
+          Array.from(terminals.values()).filter(
+            (terminal) =>
+              terminal.sessionId === sessionId &&
+              !terminal.released &&
+              terminal.exitStatus === undefined,
+          ),
+        ),
+      )
+      .pipe(
+        Effect.flatMap((live) =>
+          Effect.forEach(
+            live,
+            (terminal) =>
+              Effect.uninterruptible(terminal.kill).pipe(
+                Effect.andThen(
+                  Deferred.await(terminal.exit).pipe(Effect.timeoutOption(KILL_EXIT_CONFIRM_GRACE)),
+                ),
+                Effect.flatMap((exit) =>
+                  Option.isNone(exit)
+                    ? Effect.logWarning("ACP client terminal did not exit after kill", {
+                        terminalId: terminal.terminalId,
+                      })
+                    : Effect.void,
+                ),
+              ),
+            { concurrency: "unbounded", discard: true },
+          ),
+        ),
+      );
+
   const disposeAll: AcpClientTerminals["disposeAll"] = Effect.uninterruptible(
     Effect.suspend(() =>
       Effect.forEach(
@@ -425,12 +469,12 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
   );
 
   const logged =
-    <Request, Response>(
+    <Args extends ReadonlyArray<unknown>, Response>(
       operation: string,
-      handler: (request: Request) => Effect.Effect<Response, EffectAcpErrors.AcpRequestError>,
+      handler: (...args: Args) => Effect.Effect<Response, EffectAcpErrors.AcpRequestError>,
     ) =>
-    (request: Request) =>
-      handler(request).pipe(
+    (...args: Args) =>
+      handler(...args).pipe(
         Effect.tapError((error) =>
           Effect.logWarning("ACP client terminal operation failed", {
             operation,
@@ -447,6 +491,7 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
     release: logged("terminal/release", release),
     readOutputSnapshot,
     readCommandLine,
+    killSession,
     disposeAll,
   };
 });

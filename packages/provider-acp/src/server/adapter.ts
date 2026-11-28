@@ -8304,7 +8304,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ),
           );
 
-        const guardClientTerminalCreate = clientPolicyContext.pipe(
+        const guardClientTerminalCreate = Effect.gen(function* () {
+          // Stop already swept this session's terminals; a command started now would outlive it.
+          if (yield* Ref.get(stoppedRunQuarantine)) {
+            return yield* EffectAcpErrors.AcpRequestError.internalError(
+              "The T3 turn was stopped; terminal/create is refused until the next turn.",
+            );
+          }
+        }).pipe(
+          Effect.andThen(clientPolicyContext),
           Effect.flatMap(({ policy, turnKey }) => {
             const disposition = acpClientExecuteDisposition(policy);
             if (
@@ -8322,7 +8330,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           if (clientTerminals === undefined) return;
           yield* targetRuntime.handleCreateTerminal((request) =>
-            guardClientTerminalCreate.pipe(Effect.andThen(clientTerminals.create(request))),
+            clientTerminals.create(request, guardClientTerminalCreate),
           );
           yield* targetRuntime.handleTerminalOutput(clientTerminals.output);
           yield* targetRuntime.handleTerminalWaitForExit(clientTerminals.waitForExit);
@@ -11997,6 +12005,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         if (restartRuntime && flavor.restartRuntimeAfterInterrupt === true) {
                           yield* requireRuntimeRestart;
                         }
+                      }
+                      // T3 owns client terminals; an agent may answer session/cancel without killing them.
+                      if (
+                        turnInput.requestRuntimeRestart === true &&
+                        clientTerminals !== undefined
+                      ) {
+                        const sessionId = yield* Ref.get(activeSessionId);
+                        if (sessionId !== null) yield* clientTerminals.killSession(sessionId);
                       }
                       const stopped = yield* Deferred.await(context.completed).pipe(
                         Effect.timeoutOption(ACP_STOP_CONFIRM_TIMEOUT_MS),
