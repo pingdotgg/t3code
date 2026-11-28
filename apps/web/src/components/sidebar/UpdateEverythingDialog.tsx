@@ -248,11 +248,11 @@ function UpdateEverythingDialogContent({
       </ScrollArea>
       <AlertDialogFooter>
         {disabledReason !== null ? (
-          <p className="self-center text-body max-sm:order-1 max-sm:text-center sm:mr-auto">
+          <p className="self-center text-body max-sm:order-1 max-sm:text-center sm:flex-1">
             {disabledReason}
           </p>
         ) : running > 0 ? (
-          <p className="self-center text-muted-foreground text-body max-sm:order-1 max-sm:text-center sm:mr-auto">
+          <p className="self-center text-muted-foreground text-body max-sm:order-1 max-sm:text-center sm:flex-1">
             {stopped === 0
               ? gt(
                   "{count, plural, one {{count} running thread will be interrupted and can resume after the restart.} other {{count} running threads will be interrupted and can resume after the restart.}}",

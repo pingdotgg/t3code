@@ -1066,6 +1066,10 @@ it.each([
     expect(links("Served at /index.html; GET /api/users.json; see /tmp/x.md:3.")).toEqual([
       "/tmp/x.md:3",
     ]);
+    expect(links("已保存到 /tmp/report.md。然后打开 /Users/me/app.ts:42，再刷新")).toEqual([
+      "/tmp/report.md",
+      "/Users/me/app.ts:42",
+    ]);
     expect(
       links(
         '<a title="</a>" href="https://example.com">/tmp/notes.md</a> and **<a href="x">/tmp/a.md</a>**',

@@ -1,3 +1,5 @@
+import * as NodeSqlite from "node:sqlite";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -30,6 +32,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -349,6 +352,25 @@ describe("AntigravityAdapterV2 compaction", () => {
           .filter((request) => request.method === "session/prompt")
           .map((request) => request.params?.prompt);
         assert.deepEqual(prompts, compact ? [[{ type: "text", text: "/compact" }]] : []);
+
+        const goalEvents = yield* session.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* session.startTurn({
+          ...turnInput,
+          message: { ...turnInput.message, text: "/goal Count to 3" },
+        });
+        const goals = Array.from(yield* Fiber.join(goalEvents)).flatMap((event) =>
+          event.type === "provider_thread.updated" && event.providerThread.goal !== undefined
+            ? [event.providerThread.goal]
+            : [],
+        );
+        assert.deepEqual(
+          goals,
+          nativeGoals ? [{ objective: "Count to 3", status: "active" }, null] : [],
+        );
       }).pipe(Effect.provide(layerSession)),
   );
 });
@@ -560,6 +582,23 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       );
       assert.equal(viaInsideLink.content, "inside");
+      const relativeInside = yield* readTextFile(
+        { sessionId: "mock-session-1", path: path.join("src", "inside.ts") },
+        context("fs/read_text_file"),
+      );
+      assert.equal(relativeInside.content, "inside");
+      const dotDotFile = path.join(workspace, "..notes.txt");
+      yield* fileSystem.writeFileString(dotDotFile, "dotdot");
+      const dotDotRead = yield* readTextFile(
+        { sessionId: "mock-session-1", path: dotDotFile },
+        context("fs/read_text_file"),
+      );
+      assert.equal(dotDotRead.content, "dotdot");
+      const relativeEscape = yield* readTextFile(
+        { sessionId: "mock-session-1", path: path.relative(workspace, outsideFile) },
+        context("fs/read_text_file"),
+      ).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(relativeEscape), "a relative path escaping cwd is denied");
     }).pipe(Effect.provide(layerSession)),
   );
 });
@@ -731,6 +770,137 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(fromA), "the previous workspace is no longer readable");
     }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+describe("AntigravityAdapterV2 silent prompts", () => {
+  // regression: #44286 agy finished the reply but never answered session/prompt
+  it.effect("completes a silent prompt whose session log already records the finished reply", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const profileDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-silent-",
+      });
+      const conversations = path.join(profileDirectory, "antigravity-acp", "conversations");
+      yield* fileSystem.makeDirectory(conversations, { recursive: true });
+      const appendStep = (type: number, status: number, payload: string) => {
+        const database = new NodeSqlite.DatabaseSync(path.join(conversations, "mock-session-1.db"));
+        try {
+          database.exec(
+            "CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY, step_type INTEGER, status INTEGER, step_payload BLOB)",
+          );
+          database
+            .prepare("INSERT INTO steps (step_type, status, step_payload) VALUES (?, ?, ?)")
+            .run(type, status, Buffer.from(payload));
+        } finally {
+          database.close();
+        }
+      };
+      // USER_INPUT before the prompt, so the outcome check reads only this turn's steps.
+      appendStep(14, 3, "Summarize the README.");
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const replied = yield* Deferred.make<void>();
+      const instanceId = ProviderInstanceId.make("antigravity-silent-reply-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        profileDirectory,
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_HANG_PROMPT_FOREVER: "1" },
+            },
+          }).pipe(
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+            Effect.map((runtime): RuntimeService => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdate = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              // The reply streams and the session log records it DONE; session/prompt never answers.
+              prompt: (request, promptOptions) =>
+                Effect.gen(function* () {
+                  const fiber = yield* runtime
+                    .prompt(request, promptOptions)
+                    .pipe(Effect.forkChild);
+                  yield* Deferred.await(promptOptions!.dispatched!);
+                  yield* sessionUpdate!(
+                    normalizeAntigravitySessionUpdate({
+                      sessionId: "mock-session-1",
+                      update: {
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: "The README describes T3 Code." },
+                      },
+                    }),
+                  );
+                  appendStep(15, 3, "The README describes T3 Code.");
+                  yield* Deferred.succeed(replied, undefined);
+                  return yield* Fiber.join(fiber);
+                }),
+            })),
+          ),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const threadId = ThreadId.make("thread-antigravity-silent-reply");
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-silent-reply"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const terminal = yield* session.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+        Effect.forkScoped,
+      );
+      const now = yield* DateTime.now;
+      yield* session
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            modelSelection,
+            runtimePolicy,
+            now,
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(replied);
+      // Exactly the deadline: a longer jump would also fire the outcome check's own timeout.
+      yield* TestClock.adjust("15 minutes");
+      const ended = Option.getOrUndefined(yield* Fiber.join(terminal));
+      assert.equal(
+        ended?.type === "turn.terminal" && ended.status,
+        "completed",
+        ended?.type === "turn.terminal" ? ended.failure?.message : undefined,
+      );
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
 
@@ -3022,6 +3192,71 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         const terminal = (yield* opened.throughTerminal).at(-1);
         assert.equal(terminal?.type === "turn.terminal" && terminal.status, status);
         assert.equal(opened.cancels(), cancels);
+      }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect(
+    "fails a post-settle reply immediately and cancels pending requests when the agent exits",
+    () =>
+      Effect.gen(function* () {
+        const opened = yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+        yield* opened.startTurn(1, false);
+        yield* opened.throughPromptSettled;
+        yield* opened.send({
+          sessionUpdate: "tool_call_update",
+          ...opened.command,
+          status: "completed",
+          rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+        });
+        yield* opened.send({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Partial post-settle reply" },
+        });
+        yield* opened.runtimeDies;
+        const terminal = (yield* opened.throughTerminal).at(-1);
+        assert.equal(terminal?.type === "turn.terminal" && terminal.status, "failed");
+
+        const withQuestion = yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+        yield* withQuestion.startTurn(1, false);
+        yield* withQuestion.throughPromptSettled;
+        const question = yield* withQuestion
+          .requestPermission(
+            {
+              sessionId: "mock-session-1",
+              toolCall: {
+                toolCallId: "interaction_crash_1",
+                kind: "other",
+                title: "Which branch should I deploy?",
+                status: "pending",
+              },
+              options: [
+                { optionId: "main", name: "main", kind: "allow_once" },
+                { optionId: "dev", name: "dev", kind: "allow_once" },
+              ],
+            },
+            { requestId: "question-crash-1", method: "session/request_permission" },
+          )
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* withQuestion.until(
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+        );
+        yield* withQuestion.runtimeDies;
+        const events = yield* withQuestion.throughTerminal;
+        const questionTerminal = events.at(-1);
+        assert.equal(
+          questionTerminal?.type === "turn.terminal" && questionTerminal.status,
+          "failed",
+        );
+        assert.isTrue(
+          events.some(
+            (event) =>
+              event.type === "runtime_request.updated" &&
+              event.runtimeRequest.status === "cancelled",
+          ),
+          "pending runtime request must be cancelled when the agent exits",
+        );
+        assert.deepEqual(yield* Fiber.join(question), { outcome: { outcome: "cancelled" } });
       }).pipe(Effect.provide(layerSession)),
   );
 });

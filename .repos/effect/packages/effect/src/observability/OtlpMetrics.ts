@@ -396,6 +396,8 @@ export const make: (options: {
     headers: options.headers,
     compression: options.compression,
     maxBatchSize: "disabled",
+    // Each snapshot builds on the last one committed, so they go out one at a time.
+    concurrency: 1,
     exportEmpty: true,
     exportInterval: options.exportInterval ?? Duration.seconds(10),
     body: snapshot,

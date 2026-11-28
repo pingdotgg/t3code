@@ -146,6 +146,7 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
             ${Array.from({ length: 130 }, (_, index) => `{ "path": "gone-${index}" },`).join("")}
             { "path": "api", "name": "API" },
             { "path": " notes", "name": "Intended" },
+            { "path": "notes ", "name": "TrailingSpace" },
             { "path": "notes" },
             { "path": "trailing /", "name": "TrailingSlash" },
             { "path": "../outside" },

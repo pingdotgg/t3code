@@ -95,6 +95,7 @@ import { readEnvironmentScope } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
 import { useEnvironmentScope } from "../state/session";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
+import { useOpenInSystemBrowser } from "../browser/useOpenInSystemBrowser";
 import { terminalInputWriter } from "./terminal/terminalInputWriter";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
@@ -699,6 +700,8 @@ function TerminalSessionViewport({
       if (version > 0) synchronizedStatusRef.current = status;
     },
   );
+  const openInSystemBrowser = useOpenInSystemBrowser(environmentId);
+  const openLinkInSystemBrowser = useEffectEvent((url: string) => openInSystemBrowser(url));
   const openLinkInPreview = useEffectEvent(
     (url: string, forceBrowser: boolean, fallbackToBrowser: () => void) =>
       openTerminalLinkInPreview({ url, threadRef, openPreview, fallbackToBrowser, forceBrowser }),
@@ -1160,7 +1163,7 @@ function TerminalSessionViewport({
             return;
           }
           const fallbackToBrowser = () => {
-            void localApi.shell.openExternal(text).catch((error: unknown) => {
+            void openLinkInSystemBrowser(text).catch((error: unknown) => {
               writeSystemMessage(
                 latestTerminal,
                 thrownErrorMessage(error, m) ?? m(msg("Unable to open link")),
