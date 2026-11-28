@@ -141,15 +141,15 @@ export function ComposerImageAnnotationDialog({
   };
 
   const done = async () => {
-    if (saving) return;
+    if (saving || activeStrokeRef.current) return;
     if (strokes.length === 0 || !viewSize) {
       close();
       return;
     }
     setSaving(true);
     setFailed(false);
-    const file = await flattenAnnotatedImage(image, strokes, viewSize);
-    const saved = file ? await onSave(file) : false;
+    const file = await flattenAnnotatedImage(image, strokes, viewSize).catch(() => null);
+    const saved = file ? await onSave(file).catch(() => false) : false;
     if (saved) {
       if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
       return;
@@ -242,7 +242,7 @@ export function ComposerImageAnnotationDialog({
     const mod = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
     if (mod && !event.shiftKey && event.key.toLowerCase() === "z") {
       event.preventDefault();
-      undo();
+      if (!saving) undo();
       return;
     }
     // Enter on a focused toolbar button presses that button instead.
