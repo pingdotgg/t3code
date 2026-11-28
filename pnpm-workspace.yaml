@@ -54,7 +54,7 @@ catalog:
   "@effect/sql-sqlite-do": 4.1.6
   "@effect/vitest": 4.1.6
   "@electron-webauthn/macos": 1.3.1
-  "@legendapp/list": 3.9.0
+  "@legendapp/list": 3.9.2
   "@noble/curves": 1.9.1
   "@noble/hashes": 1.8.0
   "@pierre/diffs": 1.7.0-beta.4
@@ -119,7 +119,7 @@ overrides:
   expo-sharing: 58.0.23
   expo-widgets: 58.0.29
   "@ff-labs/fff-node": 0.11.0
-  "@legendapp/list": 3.9.0
+  "@legendapp/list": 3.9.2
   "@pierre/diffs": 1.7.0-beta.4
   "@react-native-menu/menu": 2.0.0
   "@react-navigation/native-stack": 7.21.0
@@ -240,7 +240,7 @@ patchedDependencies:
   react-native-image-viewing@0.2.2: patches/react-native-image-viewing@0.2.2.patch
   mdast-util-math@3.0.0: patches/mdast-util-math@3.0.0.patch
   micromark-extension-llm-math@3.1.0: patches/micromark-extension-llm-math@3.1.0.patch
-  "@legendapp/list@3.9.0": patches/@legendapp__list@3.9.0.patch
+  "@legendapp/list@3.9.2": patches/@legendapp__list@3.9.2.patch
   micromark-extension-gfm-table@2.1.1: patches/micromark-extension-gfm-table@2.1.1.patch
   micromark@4.0.2: patches/micromark@4.0.2.patch
   mdast-util-to-hast@13.2.1: patches/mdast-util-to-hast@13.2.1.patch
@@ -341,7 +341,7 @@ publicHoistPattern:
   - "@cursor/sdk-*"
 
 minimumReleaseAgeExclude:
-  - "@legendapp/list@3.9.0"
+  - "@legendapp/list@3.9.2"
   - "@effect/tsgo-darwin-arm64@0.67.1"
   - "@effect/tsgo-darwin-x64@0.67.1"
   - "@effect/tsgo-linux-arm64@0.67.1"

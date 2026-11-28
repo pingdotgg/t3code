@@ -1,8 +1,8 @@
 diff --git a/react-native.js b/react-native.js
-index 785118ab1ac204e831ea6167331a6e8dbc34ed98..74ef4bfba918098ed5bac72b0e94f79f6598f230 100644
+index 87720dec2938cdaee85c06d300f4bebe11ae083e..a03e2bb0bd994e04e4f329eea155eb3ba01bb7e3 100644
 --- a/react-native.js
 +++ b/react-native.js
-@@ -1344,7 +1344,8 @@ function checkAtBottom(ctx, allowedEdge, allowGateCreatedInCurrentCheck) {
+@@ -1357,7 +1357,8 @@ function checkAtBottom(ctx, allowedEdge, allowGateCreatedInCurrentCheck) {
      return;
    }
    if (contentSize > 0 && queuedInitialLayout) {
@@ -12,7 +12,7 @@ index 785118ab1ac204e831ea6167331a6e8dbc34ed98..74ef4bfba918098ed5bac72b0e94f79f
      const isAtEnd = isContentLess || distanceFromEnd <= EDGE_POSITION_EPSILON;
      const deferEndExit = !isAtEnd && state.measuringContainersInLayout && (maintainingScrollAtEnd === "pending-instant" || maintainingScrollAtEnd === "pending-animated") && !state.endFollowInterrupted && peek$(ctx, "isAtEnd");
      if (!deferEndExit) set$(ctx, "isAtEnd", isAtEnd);
-@@ -8288,7 +8289,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -8399,7 +8400,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        contentLength: getContentSize(ctx),
        data: state.props.data,
        dataKey: state.props.dataKey,
@@ -25,10 +25,10 @@ index 785118ab1ac204e831ea6167331a6e8dbc34ed98..74ef4bfba918098ed5bac72b0e94f79f
          var _a3;
          return (_a3 = ctx.viewRefs.get(findContainerId(ctx, getId(state, index)))) == null ? void 0 : _a3.current;
 diff --git a/react-native.mjs b/react-native.mjs
-index 8aae009e1fcd890150e5f216c488ef8ee1747940..65330874626f55b3acb98e40dff999d6002863e6 100644
+index 90faccd0815584dd6e3ea8422eeeb88415f98c0a..e072e48146f7dfbeff46f520bb21413ca8aa4c2d 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
-@@ -1323,7 +1323,8 @@ function checkAtBottom(ctx, allowedEdge, allowGateCreatedInCurrentCheck) {
+@@ -1336,7 +1336,8 @@ function checkAtBottom(ctx, allowedEdge, allowGateCreatedInCurrentCheck) {
      return;
    }
    if (contentSize > 0 && queuedInitialLayout) {
@@ -38,7 +38,7 @@ index 8aae009e1fcd890150e5f216c488ef8ee1747940..65330874626f55b3acb98e40dff999d6
      const isAtEnd = isContentLess || distanceFromEnd <= EDGE_POSITION_EPSILON;
      const deferEndExit = !isAtEnd && state.measuringContainersInLayout && (maintainingScrollAtEnd === "pending-instant" || maintainingScrollAtEnd === "pending-animated") && !state.endFollowInterrupted && peek$(ctx, "isAtEnd");
      if (!deferEndExit) set$(ctx, "isAtEnd", isAtEnd);
-@@ -8267,7 +8268,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -8378,7 +8379,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        contentLength: getContentSize(ctx),
        data: state.props.data,
        dataKey: state.props.dataKey,
@@ -51,10 +51,10 @@ index 8aae009e1fcd890150e5f216c488ef8ee1747940..65330874626f55b3acb98e40dff999d6
          var _a3;
          return (_a3 = ctx.viewRefs.get(findContainerId(ctx, getId(state, index)))) == null ? void 0 : _a3.current;
 diff --git a/react-native.web.js b/react-native.web.js
-index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..43db6848f3303fe6628e2402ce6d7df6c1b06c53 100644
+index 973e31b4fad3e5b33aaa7b2eb1a9e640db945414..baa184b9b0913d11a97cc0b1072c0eec5bb4e795 100644
 --- a/react-native.web.js
 +++ b/react-native.web.js
-@@ -9024,7 +9024,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -9129,7 +9129,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        contentLength: getContentSize(ctx),
        data: state.props.data,
        dataKey: state.props.dataKey,
@@ -67,10 +67,10 @@ index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..43db6848f3303fe6628e2402ce6d7df6
          var _a3;
          return (_a3 = ctx.viewRefs.get(findContainerId(ctx, getId(state, index)))) == null ? void 0 : _a3.current;
 diff --git a/react-native.web.mjs b/react-native.web.mjs
-index 801cd3d7ab65c0abe63f7ceedac69a524d283fe8..590710611f4ceb3b77d84883d2ac196adb3ba5c0 100644
+index e3235673c3da1df8eefadf62f65abb685cc15aa3..5a8f0ee8d36ca17dff78cddd21f9023fa21cd85b 100644
 --- a/react-native.web.mjs
 +++ b/react-native.web.mjs
-@@ -9003,7 +9003,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -9108,7 +9108,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        contentLength: getContentSize(ctx),
        data: state.props.data,
        dataKey: state.props.dataKey,
@@ -83,10 +83,10 @@ index 801cd3d7ab65c0abe63f7ceedac69a524d283fe8..590710611f4ceb3b77d84883d2ac196a
          var _a3;
          return (_a3 = ctx.viewRefs.get(findContainerId(ctx, getId(state, index)))) == null ? void 0 : _a3.current;
 diff --git a/react.js b/react.js
-index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..05a943fa9e56cfcdfbba8e89fc37ee5981322d28 100644
+index 973e31b4fad3e5b33aaa7b2eb1a9e640db945414..76e9c1e9ce676aeeec3e167ffae21bbc1d641bfb 100644
 --- a/react.js
 +++ b/react.js
-@@ -6415,7 +6415,8 @@ function useOnLayoutSync({
+@@ -6506,7 +6506,8 @@ function useOnLayoutSync({
    onLayoutProp,
    onLayoutChange,
    webLayoutResync,
@@ -96,7 +96,7 @@ index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..05a943fa9e56cfcdfbba8e89fc37ee59
  }, deps) {
    const callbacks = useLatestRef({ onLayoutChange, onLayoutProp, webLayoutResync });
    const onExternalLayout = React3.useCallback(
-@@ -6448,7 +6449,7 @@ function useOnLayoutSync({
+@@ -6539,7 +6540,7 @@ function useOnLayoutSync({
        emit(toLayout(rect), true);
        prevRect = rect;
      }
@@ -105,7 +105,7 @@ index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..05a943fa9e56cfcdfbba8e89fc37ee59
        var _a4, _b2, _c;
        const target = entry.target instanceof HTMLElement ? entry.target : void 0;
        const borderBoxSize = Array.isArray(entry.borderBoxSize) ? entry.borderBoxSize[0] : entry.borderBoxSize;
-@@ -6466,7 +6467,30 @@ function useOnLayoutSync({
+@@ -6557,7 +6558,30 @@ function useOnLayoutSync({
          emit(toLayout(rectObserved), false);
        }
      });
@@ -137,7 +137,7 @@ index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..05a943fa9e56cfcdfbba8e89fc37ee59
    return webExternalScroll ? { onLayout: onExternalLayout } : {};
  }
  function toLayout(rect) {
-@@ -7842,10 +7866,10 @@ function useStableRenderComponent(renderComponent, mapProps) {
+@@ -7933,10 +7957,10 @@ function useStableRenderComponent(renderComponent, mapProps) {
      [mapPropsRef, renderComponentRef]
    );
  }
@@ -150,7 +150,7 @@ index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..05a943fa9e56cfcdfbba8e89fc37ee59
    return /* @__PURE__ */ React3__namespace.createElement("div", { ...rest, ref }, children);
  };
  var subscribeScreenReader = () => () => {
-@@ -7922,6 +7946,16 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -8013,6 +8037,16 @@ var ListComponent = typedMemo(function ListComponent2({
    );
    const ScrollComponent = renderScrollComponent ? CustomScrollComponent : ListComponentScrollView;
    const SnapOrScroll = snapToIndices ? SnapWrapper : ScrollComponent;
@@ -167,7 +167,7 @@ index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..05a943fa9e56cfcdfbba8e89fc37ee59
    const updateFooterSize = React3.useCallback(
      (size, afterSizeUpdate) => {
        var _a4;
-@@ -7976,7 +8010,7 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -8067,7 +8101,7 @@ var ListComponent = typedMemo(function ListComponent2({
      },
      [horizontal, onLayoutFooter, updateFooterSize]
    );
@@ -176,7 +176,7 @@ index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..05a943fa9e56cfcdfbba8e89fc37ee59
    const renderRows = canRender && !ListEmptyComponent;
    const extentFooter = void 0;
    return /* @__PURE__ */ React3__namespace.createElement(
-@@ -8000,7 +8034,7 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -8091,7 +8125,7 @@ var ListComponent = typedMemo(function ListComponent2({
        style: autoOtherAxisStyle ? [autoOtherAxisStyle, style] : style
      },
      Platform.OS !== "web",
@@ -185,7 +185,7 @@ index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..05a943fa9e56cfcdfbba8e89fc37ee59
      ListEmptyComponent && getComponent(ListEmptyComponent),
      shouldRenderAlignItemsAtEndSpacer && /* @__PURE__ */ React3__namespace.createElement(AlignItemsAtEndSpacer, { horizontal }),
      (renderRows || extentFooter) && /* @__PURE__ */ React3__namespace.createElement(
-@@ -8909,7 +8943,12 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -9014,7 +9048,12 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
          runScrollRequest(
            pendingScroll.token,
            state.pendingScrollResolve,
@@ -199,7 +199,7 @@ index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..05a943fa9e56cfcdfbba8e89fc37ee59
            () => isScrollToIndexReady(state.props.data.length - 1, true)
          );
        }
-@@ -9024,7 +9063,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -9129,7 +9168,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        contentLength: getContentSize(ctx),
        data: state.props.data,
        dataKey: state.props.dataKey,
@@ -212,10 +212,10 @@ index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..05a943fa9e56cfcdfbba8e89fc37ee59
          var _a3;
          return (_a3 = ctx.viewRefs.get(findContainerId(ctx, getId(state, index)))) == null ? void 0 : _a3.current;
 diff --git a/react.mjs b/react.mjs
-index 801cd3d7ab65c0abe63f7ceedac69a524d283fe8..a1c3fac58ca702836252bf774e8ccc533c597599 100644
+index e3235673c3da1df8eefadf62f65abb685cc15aa3..49e28f91abc5bf3dc2f10a0b4a8a6ae896c710ad 100644
 --- a/react.mjs
 +++ b/react.mjs
-@@ -6394,7 +6394,8 @@ function useOnLayoutSync({
+@@ -6485,7 +6485,8 @@ function useOnLayoutSync({
    onLayoutProp,
    onLayoutChange,
    webLayoutResync,
@@ -225,7 +225,7 @@ index 801cd3d7ab65c0abe63f7ceedac69a524d283fe8..a1c3fac58ca702836252bf774e8ccc53
  }, deps) {
    const callbacks = useLatestRef({ onLayoutChange, onLayoutProp, webLayoutResync });
    const onExternalLayout = useCallback(
-@@ -6427,7 +6428,7 @@ function useOnLayoutSync({
+@@ -6518,7 +6519,7 @@ function useOnLayoutSync({
        emit(toLayout(rect), true);
        prevRect = rect;
      }
@@ -234,7 +234,7 @@ index 801cd3d7ab65c0abe63f7ceedac69a524d283fe8..a1c3fac58ca702836252bf774e8ccc53
        var _a4, _b2, _c;
        const target = entry.target instanceof HTMLElement ? entry.target : void 0;
        const borderBoxSize = Array.isArray(entry.borderBoxSize) ? entry.borderBoxSize[0] : entry.borderBoxSize;
-@@ -6445,7 +6446,30 @@ function useOnLayoutSync({
+@@ -6536,7 +6537,30 @@ function useOnLayoutSync({
          emit(toLayout(rectObserved), false);
        }
      });
@@ -266,7 +266,7 @@ index 801cd3d7ab65c0abe63f7ceedac69a524d283fe8..a1c3fac58ca702836252bf774e8ccc53
    return webExternalScroll ? { onLayout: onExternalLayout } : {};
  }
  function toLayout(rect) {
-@@ -7821,10 +7845,10 @@ function useStableRenderComponent(renderComponent, mapProps) {
+@@ -7912,10 +7936,10 @@ function useStableRenderComponent(renderComponent, mapProps) {
      [mapPropsRef, renderComponentRef]
    );
  }
@@ -279,7 +279,7 @@ index 801cd3d7ab65c0abe63f7ceedac69a524d283fe8..a1c3fac58ca702836252bf774e8ccc53
    return /* @__PURE__ */ React3.createElement("div", { ...rest, ref }, children);
  };
  var subscribeScreenReader = () => () => {
-@@ -7901,6 +7925,16 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -7992,6 +8016,16 @@ var ListComponent = typedMemo(function ListComponent2({
    );
    const ScrollComponent = renderScrollComponent ? CustomScrollComponent : ListComponentScrollView;
    const SnapOrScroll = snapToIndices ? SnapWrapper : ScrollComponent;
@@ -296,7 +296,7 @@ index 801cd3d7ab65c0abe63f7ceedac69a524d283fe8..a1c3fac58ca702836252bf774e8ccc53
    const updateFooterSize = useCallback(
      (size, afterSizeUpdate) => {
        var _a4;
-@@ -7955,7 +7989,7 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -8046,7 +8080,7 @@ var ListComponent = typedMemo(function ListComponent2({
      },
      [horizontal, onLayoutFooter, updateFooterSize]
    );
@@ -305,7 +305,7 @@ index 801cd3d7ab65c0abe63f7ceedac69a524d283fe8..a1c3fac58ca702836252bf774e8ccc53
    const renderRows = canRender && !ListEmptyComponent;
    const extentFooter = void 0;
    return /* @__PURE__ */ React3.createElement(
-@@ -7979,7 +8013,7 @@ var ListComponent = typedMemo(function ListComponent2({
+@@ -8070,7 +8104,7 @@ var ListComponent = typedMemo(function ListComponent2({
        style: autoOtherAxisStyle ? [autoOtherAxisStyle, style] : style
      },
      Platform.OS !== "web",
@@ -314,7 +314,7 @@ index 801cd3d7ab65c0abe63f7ceedac69a524d283fe8..a1c3fac58ca702836252bf774e8ccc53
      ListEmptyComponent && getComponent(ListEmptyComponent),
      shouldRenderAlignItemsAtEndSpacer && /* @__PURE__ */ React3.createElement(AlignItemsAtEndSpacer, { horizontal }),
      (renderRows || extentFooter) && /* @__PURE__ */ React3.createElement(
-@@ -8888,7 +8922,12 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -8993,7 +9027,12 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
          runScrollRequest(
            pendingScroll.token,
            state.pendingScrollResolve,
@@ -328,7 +328,7 @@ index 801cd3d7ab65c0abe63f7ceedac69a524d283fe8..a1c3fac58ca702836252bf774e8ccc53
            () => isScrollToIndexReady(state.props.data.length - 1, true)
          );
        }
-@@ -9003,7 +9042,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -9108,7 +9147,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        contentLength: getContentSize(ctx),
        data: state.props.data,
        dataKey: state.props.dataKey,
