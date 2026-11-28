@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
 import { registerCommands } from "../../shortcuts/dispatcher";
+import { Plug2Icon } from "lucide-react";
 import { PullRequestSearchInput } from "./PullRequestListFilters";
+import type { PullRequestFilterOption } from "./PullRequestListFilters";
 import { PullRequestsColumn } from "./PullRequestsColumn";
 
 import "~/index.css";
@@ -72,7 +74,7 @@ function CondensedSearchColumn({
 }) {
   const [query, setQuery] = useState("label:bug");
   return (
-    <div style={{ display: "flex", height: 400 }}>
+    <div className="flex h-[400px]">
       <PullRequestsColumn
         refreshing={false}
         onRefresh={() => {}}
@@ -100,7 +102,7 @@ function CondensedSearchColumn({
         titlebarControls={null}
         rightPanelOpen={false}
         maximizedAway={false}
-        listBody={<div style={{ height: 2000 }} />}
+        listBody={<div className="h-[2000px]" />}
         scrollRef={scrollRef}
       />
       <button type="button">Elsewhere</button>
@@ -163,5 +165,89 @@ describe("PullRequestsColumn condensed search", () => {
     await expect
       .element(page.getByRole("button", { name: "Search pull requests" }))
       .toBeInTheDocument();
+  });
+});
+
+function HostFilteredColumn({
+  host,
+  onHost,
+}: {
+  host: string | undefined;
+  onHost: (host: string | undefined) => void;
+}) {
+  const scrollRef = createRef<HTMLDivElement>();
+  return (
+    <PullRequestsColumn
+      refreshing={false}
+      onRefresh={() => {}}
+      searchValue=""
+      involvement="all"
+      state="open"
+      host={host}
+      hostMenuOptions={HOST_OPTIONS}
+      onInvolvement={() => {}}
+      onState={() => {}}
+      onHost={onHost}
+      searchInput={<input aria-label="Search pull requests" />}
+      sortMenu={null}
+      filtersMenu={null}
+      savedViewsMenu={null}
+      rightPanelControl={null}
+      titlebarControls={null}
+      rightPanelOpen={false}
+      maximizedAway={false}
+      listBody={<div className="h-[2000px]" />}
+      scrollRef={scrollRef}
+    />
+  );
+}
+
+const HOST_OPTIONS: ReadonlyArray<PullRequestFilterOption<string>> = [
+  { value: "", label: "All", Icon: Plug2Icon },
+  { value: "github.com", label: "GitHub", Icon: Plug2Icon },
+  { value: "gitlab.com", label: "GitLab", Icon: Plug2Icon },
+];
+
+describe("PullRequestsColumn host selector", () => {
+  // Base UI unmounts the popup on pick, so each case opens the menu exactly once.
+  async function pickHost(from: string | undefined, pick: string) {
+    const onHost = vi.fn();
+    await using screen = await render(<HostFilteredColumn host={from} onHost={onHost} />);
+    const name = from === undefined ? "All" : from === "github.com" ? "GitHub" : "GitLab";
+    await userEvent.click(screen.getByRole("button", { name: `Filter by provider: ${name}` }));
+    const items = page.getByRole("menuitemradio");
+    await userEvent.click(items.filter({ hasText: pick }));
+    return onHost;
+  }
+
+  it("moves from All to GitHub", async () => {
+    const onHost = await pickHost(undefined, "GitHub");
+    expect(onHost).toHaveBeenLastCalledWith("github.com");
+  });
+
+  it("moves from GitHub to GitLab", async () => {
+    const onHost = await pickHost("github.com", "GitLab");
+    expect(onHost).toHaveBeenLastCalledWith("gitlab.com");
+  });
+
+  it("clears back to All", async () => {
+    const onHost = await pickHost("gitlab.com", "All");
+    expect(onHost).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it("shows the active host on the surviving selector", async () => {
+    await using screen = await render(<HostFilteredColumn host="gitlab.com" onHost={() => {}} />);
+    // Once a host is chosen the trigger is icon-only, so its accessible name carries the choice.
+    const trigger = screen.getByRole("button", { name: "Filter by provider: GitLab" });
+    await expect.element(trigger).toBeInTheDocument();
+    expect(trigger.element().getAttribute("title")).toBe("Filter by provider: GitLab");
+
+    await userEvent.click(trigger);
+    expect(
+      await page
+        .getByRole("menuitemradio", { name: "GitLab" })
+        .element()
+        .getAttribute("aria-checked"),
+    ).toBe("true");
   });
 });
