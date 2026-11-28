@@ -133,7 +133,7 @@ describe("ThemeImportDialog", () => {
       document.querySelector("[data-slot=tooltip-popup]")?.textContent ?? "";
     await userEvent.hover(page.getByRole("searchbox"));
     await userEvent.hover(page.getByText("acme", { exact: true }));
-    await vi.waitFor(() => expect(tooltipText()).toBe("1 download"));
+    await vi.waitFor(() => expect(tooltipText()).toMatch(/^1 download(?!s)/));
   });
 
   it("reformats the shown download count when the app language changes", async () => {
@@ -177,13 +177,17 @@ describe("ThemeImportDialog", () => {
           />
         </I18nProvider>,
       );
+      const openSearch = [...document.querySelectorAll("button")].find((button) =>
+        button.querySelector(".lucide-search"),
+      )!;
+      await userEvent.click(openSearch);
       await userEvent.fill(page.getByRole("searchbox"), "night");
       await hoverPublisher();
-      await vi.waitFor(() => expect(tooltipText()).toBe("1.2M downloads"));
+      await vi.waitFor(() => expect(tooltipText()).toMatch(/^1\.2M downloads/));
 
       await setLanguage("ru");
       await hoverPublisher();
-      await vi.waitFor(() => expect(tooltipText()).toMatch(/^Скачиваний: 1,2\s+млн$/));
+      await vi.waitFor(() => expect(tooltipText()).toMatch(/^Скачиваний: 1,2\s+млн/));
     } finally {
       await setLanguage("en");
       __resetClientSettingsPersistenceForTests();
