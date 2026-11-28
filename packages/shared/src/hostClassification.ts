@@ -87,6 +87,15 @@ export const isTailnetHost = (host: string): boolean => {
   return ipv6 !== null && ipv6PrefixMatches(ipv6, [0xfd7a, 0x115c, 0xa1e0, 0, 0, 0, 0, 0], 48);
 };
 
+/**
+ * Whether a peer link's pairing code and token may be sent to `url`: over
+ * https, or over plain http where the network already encrypts, which is the
+ * sender's own loopback or a Tailscale address.
+ */
+export const acceptsLinkCredentials = (url: URL): boolean =>
+  url.protocol === "https:" ||
+  (url.protocol === "http:" && (isLocalLoopbackHost(url.hostname) || isTailnetHost(url.hostname)));
+
 export const isSharedAddressSpaceHost = (host: string): boolean => {
   const parts = parseIpv4Address(host);
   return parts !== null && parts[0] === 100 && parts[1]! >= 64 && parts[1]! <= 127;
