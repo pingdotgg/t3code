@@ -4,6 +4,7 @@ import {
   buildCommitUrl,
   changeRequestUrlBelow,
   type ChangeRequestHostIdentity,
+  defaultRepositorySelector,
   defineSourceControl,
   isChangeRequestAuthorityOfProject,
   isChangeRequestInProjectRepository,
@@ -103,6 +104,9 @@ export const definition = defineSourceControl({
   // unless a Forgejo project on that host vouches for it.
   parseIssueUrl: (url, known) =>
     known || isForgejoHost(url.hostname) ? parseIssuePath(url, ISSUE_PATH) : null,
+  issueScope: (identity) =>
+    resolvedWebUrl(identity)?.pathname.replace(/^\/+|\/+$/g, "") ||
+    defaultRepositorySelector(identity),
   changeRequestUrlFromReferenceAutolink: () => null,
   commitUrl: (input) => buildCommitUrl(input, "commit"),
   parseCommitUrl: (url) => parseCommitPath(url, COMMIT_PATH),

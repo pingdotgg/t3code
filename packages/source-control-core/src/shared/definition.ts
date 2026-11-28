@@ -97,7 +97,7 @@ export type RepositorySelectorIdentity = Pick<
 >;
 
 export type IssueScopeIdentity = RepositorySelectorIdentity &
-  Partial<Pick<RepositoryIdentity, "canonicalKey">>;
+  Partial<Pick<RepositoryIdentity, "canonicalKey" | "webUrl">>;
 
 /** A git-host tracker a project's issues are read from and filed in. */
 export interface IssueBinding {
@@ -631,7 +631,7 @@ export function recognizeRemoteWith(
   return remote === null ? null : definition.recognizeRemote(remote);
 }
 
-function defaultRepositorySelector(
+export function defaultRepositorySelector(
   identity: RepositorySelectorIdentity | null | undefined,
 ): string | null {
   if (!identity) return null;
