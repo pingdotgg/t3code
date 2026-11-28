@@ -18,14 +18,11 @@ const FILE_HEADING = /^File: (.+)$/;
 const NUMBERED_LINE = /^\s*(?:(?:Line |L)(\d+): ?|(\d+):)(.*)$/;
 const CONTEXT_LINE = /^\s*\d+-/;
 const PATH_LINE_TEXT = /^(\S.*?):(\d+):(.*)$/;
+// A path can contain `:0:` before the actual line number.
+const POSSIBLE_INLINE_MATCH = /^\S.*?:0*[1-9]\d*:.*$/;
 const COLON_HEADING = /^(\S.*):$/;
 const OPENCODE_NUMBERED_LINE = /^\s+Line \d+:/;
 const RIPGREP_NUMBERED_LINE = /^\d+:/;
-
-function isValidInlineMatch(line: string) {
-  const match = PATH_LINE_TEXT.exec(line);
-  return match !== null && Number(match[2]) >= 1;
-}
 
 /**
  * Grep tool text as one result per matched line, from ripgrep's `path:line:text` and `--heading`
@@ -62,7 +59,7 @@ export function parseGrepOutput(
       if (
         ripgrepFormat === "heading" &&
         RIPGREP_NUMBERED_LINE.test(line) &&
-        !isValidInlineMatch(line)
+        !POSSIBLE_INLINE_MATCH.test(line)
       ) {
         ambiguousHeading = false;
       }
@@ -81,7 +78,8 @@ export function parseGrepOutput(
       // Two inline rows can look like a heading and match. Keep parsing to see if a later row
       // in the grouped output rules out the inline form.
       if (ripgrepFormat === undefined || ambiguousHeading) {
-        ambiguousHeading = isValidInlineMatch(trimmed) && isValidInlineMatch(nextLine);
+        ambiguousHeading =
+          POSSIBLE_INLINE_MATCH.test(trimmed) && POSSIBLE_INLINE_MATCH.test(nextLine);
       }
       file = line;
       ripgrepFormat = "heading";
