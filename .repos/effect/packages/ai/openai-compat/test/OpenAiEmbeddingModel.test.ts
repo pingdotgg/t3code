@@ -59,6 +59,34 @@ describe("OpenAiEmbeddingModel", () => {
       assert.deepStrictEqual(requestBody.input, ["first", "second"])
     }))
 
+  it.effect("decodes responses with null object and usage", () =>
+    Effect.gen(function*() {
+      const clientLayer = OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+        Layer.provide(Layer.succeed(
+          HttpClient.HttpClient,
+          makeHttpClient((request) =>
+            Effect.succeed(jsonResponse(request, {
+              object: null,
+              data: [{ object: null, index: 0, embedding: [1, 2] }],
+              model: "text-embedding-3-small",
+              usage: null
+            }))
+          )
+        ))
+      )
+
+      const response = yield* Effect.gen(function*() {
+        const model = yield* EmbeddingModel.EmbeddingModel
+        return yield* model.embedMany(["hello"])
+      }).pipe(
+        Effect.provide(OpenAiEmbeddingModel.layer({ model: "text-embedding-3-small" })),
+        Effect.provide(clientLayer)
+      )
+
+      assert.deepStrictEqual(response.embeddings.map((embedding) => embedding.vector), [[1, 2]])
+      assert.strictEqual(response.usage.inputTokens, undefined)
+    }))
+
   it.effect("merges config and applies withConfigOverride precedence", () =>
     Effect.gen(function*() {
       let capturedRequest: HttpClientRequest.HttpClientRequest | undefined

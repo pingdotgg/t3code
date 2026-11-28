@@ -48,6 +48,7 @@ describe("isPublicFaviconHost", () => {
       "localhost",
       "air",
       "printer.local",
+      "localhost.localdomain",
       "api.internal",
       "router.home.arpa",
       "home.arpa",

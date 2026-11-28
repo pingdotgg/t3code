@@ -6,8 +6,10 @@ import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import * as NodePtyAdapter from "./NodePtyAdapter.ts";
@@ -196,4 +198,46 @@ it.effect("replays an exit to late subscribers and respects unsubscription", () 
     assert.deepEqual(late.mock.calls, [[{ exitCode: 7, signal: 2 }]]);
     assert.equal(nativeProcess.events.listenerCount("exit"), 0);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("retries the spawn-helper repair after a stalled check times out", () =>
+  Effect.gen(function* () {
+    let stalled = true;
+    const chmod = vi.fn();
+    const fileSystem = Layer.effect(
+      FileSystem.FileSystem,
+      Effect.map(FileSystem.FileSystem, (fs) => ({
+        ...fs,
+        exists: () => (stalled ? Effect.never : Effect.succeed(true)),
+        chmod: (path: string) => Effect.sync(() => chmod(path)),
+      })),
+    ).pipe(Layer.provide(NodeServices.layer));
+    const adapter = yield* PtyAdapter.PtyAdapter.pipe(
+      Effect.provide(
+        NodePtyAdapter.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              fileSystem,
+              Layer.succeed(HostProcess.Platform, "linux"),
+              Layer.succeed(HostProcess.Architecture, "x64"),
+              Layer.succeed(NodePtyAdapter.NodePtyModuleLoaderRef, () =>
+                Promise.resolve(fakeNodePty),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    const input = { ...spawnInput, shell: "/bin/sh" };
+
+    const first = yield* adapter.spawn(input).pipe(Effect.forkChild({ startImmediately: true }));
+    yield* TestClock.adjust("5 seconds");
+    yield* Fiber.join(first);
+    assert.strictEqual(chmod.mock.calls.length, 0);
+
+    stalled = false;
+    yield* adapter.spawn(input);
+    assert.strictEqual(chmod.mock.calls.length, 1);
+  }),
 );

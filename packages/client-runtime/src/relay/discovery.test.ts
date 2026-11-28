@@ -200,14 +200,23 @@ describe("RelayEnvironmentDiscovery", () => {
         const registry = AtomRegistry.make();
         yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
 
-        const refresh = atoms.refresh.run(registry, undefined);
+        const refresh = yield* Effect.forkChild(
+          Effect.exit(atoms.refresh.run(registry, undefined)),
+          { startImmediately: true },
+        );
         yield* SubscriptionRef.changes(discovery.state).pipe(
           Stream.filter((state) => state.environments.size === environments.length),
           Stream.runHead,
         );
-        const coalescedRefresh = atoms.refresh.run(registry, undefined);
+        const coalescedRefresh = yield* Effect.forkChild(
+          Effect.exit(atoms.refresh.run(registry, undefined)),
+          { startImmediately: true },
+        );
         yield* Ref.set(harness.listedEnvironments, [environments[1]!]);
-        const mutationRefresh = atoms.refreshAfterMutation.run(registry, undefined);
+        const mutationRefresh = yield* Effect.forkChild(
+          Effect.exit(atoms.refreshAfterMutation.run(registry, undefined)),
+          { startImmediately: true },
+        );
 
         const requests = yield* Ref.get(harness.statusRequests);
         for (const environment of environments) {
@@ -216,9 +225,7 @@ describe("RelayEnvironmentDiscovery", () => {
             status(environment, "online"),
           );
         }
-        const results = yield* Effect.promise(() =>
-          Promise.all([refresh, coalescedRefresh, mutationRefresh]),
-        );
+        const results = yield* Fiber.joinAll([refresh, coalescedRefresh, mutationRefresh]);
         for (const result of results) {
           expect(result._tag).toBe("Success");
         }

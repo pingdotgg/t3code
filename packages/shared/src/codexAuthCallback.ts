@@ -86,8 +86,8 @@ export async function receiveCodexAuthCallback(
       server.listen(Number(new URL(request.redirectUri).port), "127.0.0.1", resolve);
     });
     if (abort.signal.aborted) throw new Error("Sign-in cancelled on this computer.");
-    if (!(await openBrowser(request.authorizationUrl)))
-      throw new Error("Could not open your sign-in browser.");
+    const opened = await Promise.race([openBrowser(request.authorizationUrl), callback.promise]);
+    if (!opened) throw new Error("Could not open your sign-in browser.");
     return await callback.promise;
   } finally {
     clearTimeout(timer);

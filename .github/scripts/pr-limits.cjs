@@ -100,14 +100,22 @@ function parseExemptions(text) {
 }
 
 // VOUCHED.td: one `github:login` per line, `#` comments, and `-github:login reason` to denounce.
-function vouchedLogins(text) {
-  const logins = new Set();
+// A login listed both ways is an error: pr-vouch.yml's action reads its first line and
+// issue-vouch.yml its last, so no answer here would agree with both labels.
+function parseVouchList(text) {
+  const vouched = new Set();
+  const denounced = new Set();
   for (const raw of text.split("\n")) {
-    const entry = raw.trim().split(/\s+/)[0];
-    if (entry.startsWith("github:")) logins.add(entry.slice("github:".length).toLowerCase());
+    const match = /^(-?)github:(\S+)/.exec(raw.trim());
+    if (!match) continue;
+    const login = match[2].toLowerCase();
+    const [listed, other] = match[1] ? [denounced, vouched] : [vouched, denounced];
+    if (other.has(login))
+      throw new Error(`${VOUCHED_PATH}: ${login} is both vouched and denounced`);
+    listed.add(login);
   }
-  if (logins.size === 0) throw new Error(`${VOUCHED_PATH}: no entries`);
-  return logins;
+  if (vouched.size === 0) throw new Error(`${VOUCHED_PATH}: no entries`);
+  return { vouched, denounced };
 }
 
 function labeledAt(pr, name) {
@@ -278,7 +286,8 @@ async function enforceOpenLimit({ github, context, core, dryRun }) {
   // lookups as "not vouched". Every read below throws on failure, and a throw closes nothing.
   if (pr.user.type === "Bot") return;
   if (parseExemptions(fs.readFileSync(EXEMPTIONS_PATH, "utf8")).has(author.toLowerCase())) return;
-  if (vouchedLogins(fs.readFileSync(VOUCHED_PATH, "utf8")).has(author.toLowerCase())) return;
+  const { vouched, denounced } = parseVouchList(fs.readFileSync(VOUCHED_PATH, "utf8"));
+  if (vouched.has(author.toLowerCase())) return;
   const { data: access } = await github.rest.repos.getCollaboratorPermissionLevel({
     ...context.repo,
     username: author,
@@ -288,6 +297,21 @@ async function enforceOpenLimit({ github, context, core, dryRun }) {
   // Someone else reopening a PR is a maintainer overriding the limit.
   const reopened = context.payload.action === "reopened";
   if (reopened && context.payload.sender.login.toLowerCase() !== author.toLowerCase()) return;
+
+  if (denounced.has(author.toLowerCase())) {
+    if (dryRun) {
+      core.notice(`Dry run. PR #${pr.number} would close: ${author} is denounced.`);
+      return;
+    }
+    await closeWithComment(
+      github,
+      context,
+      pr.number,
+      `Closing: ${author} is banned from contributing here, so this PR will not be reviewed. See [bans](${guideLink(context, "bans")}).`,
+    );
+    core.info(`PR #${pr.number}: closed, ${author} is denounced.`);
+    return;
+  }
 
   const q = `repo:${context.repo.owner}/${context.repo.repo} is:pr is:open author:${author} sort:created-asc`;
   const { search } = await read(github, AUTHOR_OPEN_PRS_QUERY, { q });

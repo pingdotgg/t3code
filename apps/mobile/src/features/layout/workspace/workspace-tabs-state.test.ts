@@ -57,13 +57,19 @@ describe("Duo list clearance", () => {
 describe("workspace root navigation", () => {
   it("pairs Settings, chats and pull requests with a detail column, and keeps Usage one page", () => {
     expect(workspaceUsesColumns("usage")).toBe(false);
+    expect(workspaceUsesColumns("workflows")).toBe(false);
     expect(workspaceUsesColumns("usage", true)).toBe(true);
     expect(workspaceUsesColumns("threads")).toBe(true);
     expect(workspaceUsesColumns("pullRequests")).toBe(true);
   });
 
   it("keeps the registered defaults while customization is unavailable", () => {
-    expect(resolveWorkspaceTabOrder(undefined)).toEqual(["threads", "pullRequests", "usage"]);
+    expect(resolveWorkspaceTabOrder(undefined)).toEqual([
+      "threads",
+      "pullRequests",
+      "issues",
+      "usage",
+    ]);
     expect(resolveWorkspaceTabOrder(["home", "usage", "issues", "threads"])).toEqual(
       resolveWorkspaceTabOrder(undefined),
     );
@@ -128,6 +134,21 @@ describe("workspace root navigation", () => {
     state = workspaceTabsReducer(state, { type: "cancel", tab: "settings" });
     expect(state.tabs.settings).toMatchObject({ query: "", searchMode: "resting" });
     expect(state.tabs.threads.query).toBe("diff");
+  });
+
+  it("applying an empty-query view resets the position that search cancellation restores", () => {
+    let state = initialWorkspaceTabsState();
+    state = workspaceTabsReducer(state, { type: "scroll", tab: "pullRequests", offset: 640 });
+    state = workspaceTabsReducer(state, { type: "search", tab: "pullRequests" });
+    state = workspaceTabsReducer(state, { type: "query", tab: "pullRequests", query: "old query" });
+    state = workspaceTabsReducer(state, { type: "scroll", tab: "pullRequests", offset: 80 });
+    state = workspaceTabsReducer(state, { type: "cancel", tab: "pullRequests", scrollToTop: true });
+    expect(state.tabs.pullRequests).toEqual({
+      query: "",
+      searchMode: "resting",
+      scrollOffset: 0,
+      searchEntryOffset: 0,
+    });
   });
 
   it("a late native blur cannot reopen a cancelled search", () => {
@@ -245,7 +266,8 @@ vi.mock("../../pull-requests/PullRequestFilterMenuContext", () => ({
     createElement("div", null, children),
 }));
 vi.mock("../../pull-requests/PullRequestsScreen", () => ({ PullRequestsScreen: () => null }));
-vi.mock("./PullRequestToolbar.android", () => ({ PullRequestToolbar: () => null }));
+vi.mock("../../issues/IssuesScreen", () => ({ IssuesScreen: () => null }));
+vi.mock("./ListSearchToolbar.android", () => ({ ListSearchToolbar: () => null }));
 vi.mock("./AndroidWorkspaceNavigation", () => ({
   AndroidWorkspaceNavigation: () => null,
   FloatingWorkspaceTabs: () => null,

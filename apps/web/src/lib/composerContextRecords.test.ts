@@ -221,12 +221,17 @@ describe("composerContextRecords", () => {
     expect(image).toMatchObject({ attachmentId: "uploaded-image" });
   });
 
-  it("shortens a long annotation comment label without splitting an emoji", () => {
+  it("shortens a long annotation comment label without splitting an emoji or leaving a space", () => {
     const record = previewAnnotationContextRecord({
       ...annotation,
       comment: `${"a".repeat(46)}😀 and make the button bigger`,
     });
     expect(record.label).toBe(`${"a".repeat(46)}…`);
+    const betweenWords = previewAnnotationContextRecord({
+      ...annotation,
+      comment: `${"a".repeat(46)} make the button bigger`,
+    });
+    expect(betweenWords.label).toBe(`${"a".repeat(46)}…`);
   });
 
   it("shortens a long reply label without splitting an emoji", () => {
@@ -265,6 +270,12 @@ describe("composerContextRecords", () => {
     );
     expect(restored.styleChanges).toEqual(styleChanges);
     expect(restored.elements[0]?.id).toBe("el_1");
+  });
+
+  it("clamps an oversized annotation comment so the record still decodes", () => {
+    const record = previewAnnotationContextRecord({ ...annotation, comment: "c".repeat(8_001) });
+    expect(record.comment.endsWith("… truncated …")).toBe(true);
+    expect(decodeMessageContext({ version: 1, records: [record] }).records).toEqual([record]);
   });
 
   it("removes an expired terminal chip by its kind-scoped id, not the producer id", () => {

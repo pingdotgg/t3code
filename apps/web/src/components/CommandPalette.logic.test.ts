@@ -1,3 +1,4 @@
+import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
@@ -60,6 +61,19 @@ describe("linked pull request thread navigation", () => {
 });
 
 describe("reduceCommandPaletteUiState", () => {
+  it("keeps the session on dismissal and advances it on keyboard reopen", () => {
+    const open: CommandPaletteUiState = {
+      open: true,
+      mode: "command",
+      openIntent: null,
+      session: 1,
+    };
+    const toggle = { _tag: "ToggleMode", mode: "command" } as const;
+    const closed = reduceCommandPaletteUiState(open, toggle);
+    expect(closed).toMatchObject({ open: false, session: 1 });
+    expect(reduceCommandPaletteUiState(closed, toggle)).toMatchObject({ open: true, session: 2 });
+  });
+
   it("opens PR search from another overlay and replaces an earlier search", () => {
     const first = reduceCommandPaletteUiState(
       { open: true, mode: "files", openIntent: null, session: 0 },
@@ -89,7 +103,7 @@ describe("reduceCommandPaletteUiState", () => {
     ).toBeNull();
   });
 
-  it("keeps the session across mode switches so only intents start the palette over", () => {
+  it("starts a new session when a shortcut replaces the active mode", () => {
     let state: CommandPaletteUiState = {
       open: false,
       mode: "command",
@@ -99,12 +113,12 @@ describe("reduceCommandPaletteUiState", () => {
     state = reduceCommandPaletteUiState(state, { _tag: "OpenNewThreadIn" });
     expect(state).toMatchObject({ open: true, openIntent: { kind: "new-thread-in" }, session: 1 });
     state = reduceCommandPaletteUiState(state, { _tag: "ToggleMode", mode: "files" });
-    expect(state).toMatchObject({ mode: "files", openIntent: null, session: 1 });
+    expect(state).toMatchObject({ mode: "files", openIntent: null, session: 2 });
     state = reduceCommandPaletteUiState(state, { _tag: "OpenAddProject" });
     expect(state).toMatchObject({
       mode: "command",
       openIntent: { kind: "add-project" },
-      session: 2,
+      session: 3,
     });
   });
 });
@@ -666,11 +680,13 @@ describe("buildThreadActionItems", () => {
     ]);
   });
 
-  it("hides subagent threads but keeps forks", () => {
+  it("hides subagent threads and tasks shown under their parent but keeps forks", () => {
     const parentId = ThreadId.make("parent");
+    const delegatedId = ThreadId.make("delegated");
     const items = buildThreadActionItems({
       threads: [
         makeThread({ id: parentId, title: "Parent" }),
+        makeThread({ id: delegatedId, title: "Delegated task" }),
         makeThread({
           id: ThreadId.make("subagent"),
           title: "Subagent",
@@ -690,6 +706,9 @@ describe("buildThreadActionItems", () => {
           },
         }),
       ],
+      delegatedUnderParent: new Set([
+        threadKey({ environmentId: LOCAL_ENVIRONMENT_ID, threadId: delegatedId }),
+      ]),
       projectByKey: new Map(),
       icon: null,
       runThread: async () => undefined,
@@ -795,6 +814,26 @@ describe("filterPinnedBrowseEntries", () => {
       visibleEntries: windowsEntries,
       exactEntry: windowsEntries[0],
     });
+    const decomposed = { name: "De\u0301veloppement", fullPath: "/Users/me/De\u0301veloppement" };
+    expect(
+      filterPinnedBrowseEntries({
+        browseEntries: [decomposed],
+        filterQuery: "D\u00e9veloppement",
+        pinnedDirectoryName: "repo",
+        caseSensitive: true,
+      }).exactEntry,
+    ).toBe(decomposed);
+    expect(
+      filterPinnedBrowseEntries({
+        browseEntries: [
+          { name: "\u212B", fullPath: "/home/me/\u212B" },
+          { name: "A\u030A", fullPath: "/home/me/A\u030A" },
+        ],
+        filterQuery: "\u00C5",
+        pinnedDirectoryName: "repo",
+        caseSensitive: true,
+      }).exactEntry,
+    ).toBeNull();
   });
 });
 
@@ -917,7 +956,10 @@ describe("returning from file and content search", () => {
     const closed = reduceCommandPaletteUiState(child, { _tag: "SetOpen", open: false });
     expect(closed).toEqual({ open: false, mode: "files", openIntent: null, session: 0 });
     expect(reduceCommandPaletteUiState(closed, { _tag: "BackToCommand" })).toEqual(closed);
-    expect(reduceCommandPaletteUiState(closed, { _tag: "SetOpen", open: true })).toEqual(root);
+    expect(reduceCommandPaletteUiState(closed, { _tag: "SetOpen", open: true })).toEqual({
+      ...root,
+      session: 1,
+    });
   });
 });
 

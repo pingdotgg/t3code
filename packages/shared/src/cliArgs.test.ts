@@ -35,6 +35,15 @@ describe("tokenizeCliArgs", () => {
         "--verbose",
       ]);
     }
+
+    for (const whitespace of ["\u00a0", "\u2003", "\u2028", "\u2029"]) {
+      const path = `/tmp/project${whitespace}name`;
+      expect(tokenizeCliArgs(`--add-dir ${path} --verbose`)).toEqual([
+        "--add-dir",
+        path,
+        "--verbose",
+      ]);
+    }
   });
 
   it("ignores unescaped surrounding whitespace", () => {
@@ -105,6 +114,14 @@ describe("parseCliArgs", () => {
       flags: { "append-system-prompt": "--", chrome: null },
       positionals: [],
     });
+  });
+
+  it("value flag consumes a next token that starts with --", () => {
+    expect(
+      parseCliArgs(["--append-system-prompt", "-- text", "--chrome"], {
+        valueFlags: ["append-system-prompt"],
+      }),
+    ).toEqual({ flags: { "append-system-prompt": "-- text", chrome: null }, positionals: [] });
   });
 
   it("boolean flag does not consume next token as value", () => {

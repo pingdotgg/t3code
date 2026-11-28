@@ -72,7 +72,9 @@ describe("parseGrokLine", () => {
       reasoningTokens: 180,
     });
     expect(record?.reportedCostUsd).toBeCloseTo(230_272_000 / GROK_COST_USD_TICKS_PER_DOLLAR, 12);
-    expect(record?.dedupeKey).toBe("019fec1a-12f7-72f2-9b1f-7778a00aea3c:prompt-1:grok-4.5-build");
+    expect(record?.dedupeKey).toBe(
+      "019fec1a-12f7-72f2-9b1f-7778a00aea3c:prompt-1:1786372566485:grok-4.5-build",
+    );
   });
 
   it("emits one record per model when modelUsage has several entries", () => {
@@ -85,6 +87,7 @@ describe("parseGrokLine", () => {
             cachedReadTokens: 400,
             reasoningTokens: 20,
             costUsdTicks: 50_000_000,
+            modelCalls: 8,
           },
           "grok-composer-2.5-fast": {
             inputTokens: 200,
@@ -106,6 +109,10 @@ describe("parseGrokLine", () => {
       0.005,
       12,
     );
+    expect(records.find((record) => record.model === "grok-4.5")?.modelCalls).toBe(8);
+    expect(
+      records.find((record) => record.model === "grok-composer-2.5-fast")?.modelCalls,
+    ).toBeUndefined();
   });
 
   it("inherits top-level cost ticks for a single model without its own ticks", () => {
@@ -119,12 +126,13 @@ describe("parseGrokLine", () => {
             reasoningTokens: 0,
           },
         },
-        usage: { costUsdTicks: GROK_COST_USD_TICKS_PER_DOLLAR },
+        usage: { costUsdTicks: GROK_COST_USD_TICKS_PER_DOLLAR, modelCalls: 10 },
       }),
     );
 
     expect(records).toHaveLength(1);
     expect(records[0]?.reportedCostUsd).toBe(1);
+    expect(records[0]?.modelCalls).toBe(10);
   });
 
   it("falls back to a generic grok model when modelUsage is absent", () => {
@@ -142,7 +150,9 @@ describe("parseGrokLine", () => {
       reasoningTokens: 180,
     });
     expect(record?.reportedCostUsd).toBeCloseTo(230_272_000 / GROK_COST_USD_TICKS_PER_DOLLAR, 12);
-    expect(record?.dedupeKey).toBe("019fec1a-12f7-72f2-9b1f-7778a00aea3c:prompt-1:grok");
+    expect(record?.dedupeKey).toBe(
+      "019fec1a-12f7-72f2-9b1f-7778a00aea3c:prompt-1:1786372566485:grok",
+    );
   });
 
   it("pro-rates top-level cost ticks across multi-model turns without per-model ticks", () => {
@@ -228,6 +238,17 @@ describe("parseGrokLine", () => {
     });
 
     expect(parseGrokLine(line)[0]?.dedupeKey).toBeNull();
+  });
+
+  it("keeps later turns that reuse a prompt id after the session resumes in a new process", () => {
+    const first = parseGrokLine(turnCompleted({ promptId: "t3-xai-prompt-1" }))[0];
+    const resumed = parseGrokLine(
+      turnCompleted({ promptId: "t3-xai-prompt-1", agentTimestampMs: 1_786_459_000_000 }),
+    )[0];
+    const copied = parseGrokLine(turnCompleted({ promptId: "t3-xai-prompt-1" }))[0];
+
+    expect(resumed?.dedupeKey).not.toBe(first?.dedupeKey);
+    expect(copied?.dedupeKey).toBe(first?.dedupeKey);
   });
 
   it("ignores non-turn lines and empty usage", () => {

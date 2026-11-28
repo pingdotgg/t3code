@@ -67,6 +67,17 @@ export function resolveFileLinkPath(
   return isAbsolutePath(targetPath) ? targetPath : normalizeRelativePath(targetPath);
 }
 
+export function resolveMarkdownFileLinkPath(
+  workspaceRoot: string,
+  markdownDirectory: string,
+  targetPath: string,
+): string | null {
+  if (targetPath.startsWith("~/") || targetPath.startsWith("~\\")) {
+    return resolveFileLinkPath(workspaceRoot, targetPath);
+  }
+  return resolveWorkspaceFilePath(markdownDirectory, targetPath);
+}
+
 export function resolveWorkspaceRelativeFilePath(
   workspaceRoot: string | null | undefined,
   targetPath: string,
@@ -108,7 +119,7 @@ export function isSvgImagePreviewFile(path: string): boolean {
 }
 
 export function isMarkdownPreviewFile(path: string): boolean {
-  return /\.(?:md|mdx)$/i.test(path);
+  return /\.(?:md|mdx|markdown|mdown|mkd)$/i.test(path);
 }
 
 export function needsWorkspaceFileContents(input: {

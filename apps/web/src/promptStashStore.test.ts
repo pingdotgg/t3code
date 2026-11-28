@@ -115,16 +115,17 @@ describe("promptStashStore", () => {
     expect(usePromptStashStore.getState().takeEntry("citation-stash").entry).toBeNull();
   });
 
-  it("evicts the oldest entry past the cap and returns it", () => {
+  it("refuses a new entry when full instead of discarding the oldest", () => {
     const store = usePromptStashStore.getState();
     for (let index = 0; index < MAX_STASH_ENTRIES; index += 1) {
-      expect(store.stashEntry(makeEntry({ id: `entry-${index}` })).evicted).toBeNull();
+      expect(store.stashEntry(makeEntry({ id: `entry-${index}` })).written).toBe(true);
     }
-    const { evicted } = store.stashEntry(makeEntry({ id: "overflow" }));
-    expect(evicted?.id).toBe("entry-0");
+    const result = store.stashEntry(makeEntry({ id: "overflow" }));
+    expect(result).toEqual({ full: true, written: false, durable: false });
     const entries = usePromptStashStore.getState().entries;
     expect(entries).toHaveLength(MAX_STASH_ENTRIES);
-    expect(entries[0]?.id).toBe("overflow");
+    expect(entries.map((entry) => entry.id)).not.toContain("overflow");
+    expect(entries.map((entry) => entry.id)).toContain("entry-0");
   });
 
   // regression: #4787 stashed prompts were lost when switching providers
@@ -143,6 +144,11 @@ describe("promptStashStore", () => {
     store.stashEntry({ ...makeEntry({ id: "pending-restore" }), pendingImageCount: 1 });
     const menuSnapshot = usePromptStashStore.getState().entries[0];
     expect(menuSnapshot?.attachments).toEqual([]);
+    store.stashEntry(makeEntry({ id: "stashed-while-encoding" }));
+    expect(
+      usePromptStashStore.getState().entries.find((entry) => entry.id === "pending-restore")
+        ?.pendingImageCount,
+    ).toBe(1);
 
     store.finalizeEntryImages("pending-restore", {
       attachments: [
@@ -259,11 +265,79 @@ describe("promptStashStore", () => {
         "this-tab",
         "other-tab",
       ]);
+
+      thisTab.usePromptStashStore.getState().stashEntry({
+        ...makeEntry({ id: "encoding-image" }),
+        pendingImageCount: 1,
+      });
+      vi.resetModules();
+      const secondTab = await import("./promptStashStore");
+      const finalized = makeEntry({ id: "encoding-image", attachmentChars: 12 }).attachments;
+      thisTab.usePromptStashStore.getState().finalizeEntryImages("encoding-image", {
+        attachments: finalized,
+        droppedImageNames: [],
+        unreadableImageNames: [],
+      });
+      secondTab.usePromptStashStore.getState().stashEntry(makeEntry({ id: "second-tab-new" }));
+      const afterFinalization = JSON.parse(
+        sharedStorage.getItem(PROMPT_STASH_STORAGE_KEY) as string,
+      );
+      expect(
+        afterFinalization.state.entries.find(
+          (entry: PromptStashEntry) => entry.id === "encoding-image",
+        )?.attachments,
+      ).toEqual(finalized);
     } finally {
       vi.unstubAllGlobals();
       vi.resetModules();
     }
   });
+
+  it.each(["restore", "take"] as const)(
+    "keeps a failed finalize after another tab stashes, then handles %s",
+    async (action) => {
+      const storage = createMemoryStorage();
+      vi.stubGlobal("localStorage", {
+        ...storage,
+        setItem: (key: string, value: string) => {
+          if (value.includes("rejected-image")) throw new Error("QuotaExceededError");
+          storage.setItem(key, value);
+        },
+      });
+      vi.resetModules();
+      try {
+        const { usePromptStashStore: store } = await import("./promptStashStore");
+        store.getState().stashEntry({ ...makeEntry({ id: "too-big" }), pendingImageCount: 1 });
+        vi.resetModules();
+        const { usePromptStashStore: otherTab } = await import("./promptStashStore");
+        const { attachments } = makeEntry({ id: "rejected-image", attachmentChars: 4 });
+        const images = { attachments, droppedImageNames: [], unreadableImageNames: [] };
+        expect(store.getState().finalizeEntryImages("too-big", images)).toEqual({
+          attached: true,
+          durable: false,
+        });
+        otherTab.getState().stashEntry(makeEntry({ id: "unrelated" }));
+
+        if (action === "take") {
+          otherTab.getState().takeEntry("too-big");
+          expect(store.getState().finalizeEntryImages("too-big", images)).toEqual({
+            attached: false,
+            durable: true,
+          });
+          expect(store.getState().takeEntry("too-big").entry).toBeNull();
+          return;
+        }
+
+        expect(store.getState().takeEntry("too-big").entry).toMatchObject({
+          attachments,
+          unreadableImageNames: [],
+        });
+      } finally {
+        vi.unstubAllGlobals();
+        vi.resetModules();
+      }
+    },
+  );
 });
 
 describe("prompt stash context records", () => {

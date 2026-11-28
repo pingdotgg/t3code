@@ -518,8 +518,8 @@
   replacement: "Generated.OpenAIResponsesTruncation"
   note: "Still generated in v4 from the current OpenRouter specification; re-check the schema's Type/Encoded shape because the generated definition changed."
 "@effect/ai-openrouter/Generated#OpenAIResponsesUsage":
-  replacement: "Generated.OpenAIResponsesUsage"
-  note: "Still generated in v4 from the current OpenRouter specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  replacement: "none"
+  note: "The standalone schema export was removed. For the usage object type, use `NonNullable<Generated.OpenResponsesResult[\"usage\"]>` to exclude `undefined`."
 "@effect/ai-openrouter/Generated#OpenResponsesEasyInputMessage":
   replacement: "none"
   note: "Removed when the OpenRouter specification client was regenerated; use the current Generated request/response schema for the relevant endpoint instead of this old snapshot helper."
@@ -848,8 +848,8 @@
   replacement: "none"
   note: "Removed when the OpenRouter specification client was regenerated; use the current Generated request/response schema for the relevant endpoint instead of this old snapshot helper."
 "@effect/ai-openrouter/Generated#ResponsesErrorField":
-  replacement: "Generated.ResponsesErrorField"
-  note: "Still generated in v4 from the current OpenRouter specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  replacement: "none"
+  note: "The standalone schema export was removed. For the error object type, use `NonNullable<Generated.OpenResponsesResult[\"error\"]>` to exclude `null`."
 "@effect/ai-openrouter/Generated#ResponsesErrorFieldCode":
   replacement: "none"
   note: "Removed when the OpenRouter specification client was regenerated; use the current Generated request/response schema for the relevant endpoint instead of this old snapshot helper."

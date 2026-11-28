@@ -1,8 +1,15 @@
 import {
   managedRuntimeModeDenial,
-  type ManagedPolicySummary,
-  type RuntimeMode,
+  providerRuntimeModeLimitMessage,
+} from "@t3tools/client-runtime/contract-labels";
+import type {
+  ManagedPolicySummary,
+  ProviderRuntimeModeLimit,
+  RuntimeMode,
 } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
   readonly mode: RuntimeMode;
@@ -11,23 +18,23 @@ export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
 }> = [
   {
     mode: "approval-required",
-    label: "Supervised",
-    description: "Ask before commands and file changes.",
+    label: msg("Supervised"),
+    description: msg("Ask before commands and file changes."),
   },
   {
     mode: "auto-accept-edits",
-    label: "Auto-accept edits",
-    description: "Auto-approve edits, ask before other actions.",
+    label: msg("Auto-accept edits"),
+    description: msg("Auto-approve edits, ask before other actions."),
   },
   {
     mode: "auto",
-    label: "Auto",
-    description: "Supported providers approve routine actions; others still ask.",
+    label: msg("Auto"),
+    description: msg("Supported providers approve routine actions; others still ask."),
   },
   {
     mode: "full-access",
-    label: "Full access",
-    description: "Allow commands and edits without prompts.",
+    label: msg("Full access"),
+    description: msg("Allow commands and edits without prompts."),
   },
 ];
 
@@ -40,7 +47,7 @@ export function runtimeModeChoicesForSupportedModes(
 }
 
 export type RuntimeModeChoice = (typeof RUNTIME_MODE_CHOICES)[number] & {
-  /** Set when a target environment's managed policy caps runtime modes below this one. */
+  /** Set when a managed policy caps modes below this one, or the provider cannot run it here. */
   readonly disabledReason?: string;
 };
 
@@ -51,11 +58,29 @@ export type RuntimeModeChoice = (typeof RUNTIME_MODE_CHOICES)[number] & {
 export function withManagedRuntimeModeLimits(
   choices: ReadonlyArray<RuntimeModeChoice>,
   policies: ReadonlyArray<ManagedPolicySummary | undefined>,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<RuntimeModeChoice> {
   return choices.map((choice) => {
     const reason = policies
-      .map((policy) => managedRuntimeModeDenial(policy, choice.mode))
+      .map((policy) => managedRuntimeModeDenial(policy, choice.mode, resolve))
       .find((denial) => denial !== undefined);
+    return reason === undefined ? choice : { ...choice, disabledReason: reason };
+  });
+}
+
+/**
+ * Marks modes the provider cannot run in the thread's folder. They stay listed, and a thread
+ * already in one keeps it, with the reason in place of the description.
+ */
+export function withProviderRuntimeModeLimits(
+  choices: ReadonlyArray<RuntimeModeChoice>,
+  limits: ReadonlyArray<ProviderRuntimeModeLimit> | undefined,
+  resolve: MessageResolver = m,
+): ReadonlyArray<RuntimeModeChoice> {
+  if (limits === undefined || limits.length === 0) return choices;
+  return choices.map((choice) => {
+    if (choice.disabledReason !== undefined) return choice;
+    const reason = providerRuntimeModeLimitMessage(limits, choice.mode, resolve);
     return reason === undefined ? choice : { ...choice, disabledReason: reason };
   });
 }
