@@ -15,6 +15,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
@@ -168,10 +169,20 @@ it.effect(
       const workspaceRoot = path.join(home, "My Project");
       const aliasRoot = path.join(home, "My Project Alias");
       const nestedRoot = path.join(workspaceRoot, "nested");
+      const linkedModels = path.join(workspaceRoot, "src", "models");
+      const outsideDir = path.join(root, "outside");
       const baseDir = path.join(root, "state");
       yield* fs.makeDirectory(nestedRoot, { recursive: true });
+      yield* fs.makeDirectory(linkedModels, { recursive: true });
+      yield* fs.makeDirectory(outsideDir);
       yield* fs.makeDirectory(cwd);
       yield* Effect.promise(() => NodeFSP.symlink(workspaceRoot, aliasRoot, "junction"));
+      yield* Effect.promise(() =>
+        NodeFSP.symlink(linkedModels, path.join(cwd, "models"), "junction"),
+      );
+      yield* Effect.promise(() =>
+        NodeFSP.symlink(outsideDir, path.join(cwd, "outside"), "junction"),
+      );
       const projects = [
         { id: ProjectId.make("current-project"), title: "Current", workspaceRoot: cwd },
         { id: ProjectId.make("home-project"), title: "Home", workspaceRoot: home },
@@ -187,6 +198,11 @@ it.effect(
           id: ProjectId.make("physical-absent-project"),
           title: "Physical absent",
           workspaceRoot: path.join(workspaceRoot, "absent"),
+        },
+        {
+          id: ProjectId.make("outside-absent-project"),
+          title: "Outside absent",
+          workspaceRoot: path.join(cwd, "outside", "absent"),
         },
         { id: ProjectId.make("~/literal-id"), title: "Exact id", workspaceRoot: cwd },
       ];
@@ -226,6 +242,8 @@ it.effect(
         [path.join(aliasRoot, "absent", "plan.ts"), "absent-project"],
         [path.join(aliasRoot, "absent"), "absent-project"],
         [path.join(workspaceRoot, "absent", "plan.ts"), "physical-absent-project"],
+        [path.join(cwd, "outside", "absent", "new.ts"), "outside-absent-project"],
+        [path.join(cwd, "models", "new.ts"), "intended-project"],
         [".", "current-project"],
         ["~/My Project", "intended-project"],
         ["~", "home-project"],
@@ -249,6 +267,60 @@ it.effect(
           identifier,
         );
       }
+
+      const outsideError = yield* Command.runWith(threadCommand, { version: "0.0.0" })([
+        "start",
+        path.join(cwd, "outside", "new.ts"),
+        "Inspect this project",
+        "--json",
+        "--base-dir",
+        baseDir,
+      ]).pipe(
+        Effect.provideService(HostProcess.HomeDirectory, home),
+        Effect.provideService(HostProcess.WorkingDirectory, cwd),
+        Effect.flip,
+      );
+      assert.strictEqual(outsideError._tag, "ThreadProjectNotFoundError");
+
+      const resolveAfterAppearing = (filePath: string) => {
+        let hideOnce = true;
+        const racingFs = FileSystem.FileSystem.of({
+          ...fs,
+          realPath: (value) =>
+            hideOnce && value === filePath
+              ? ((hideOnce = false),
+                Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "NotFound",
+                    module: "FileSystem",
+                    method: "realPath",
+                    pathOrDescriptor: value,
+                  }),
+                ))
+              : fs.realPath(value),
+        });
+        return resolveProject(
+          scriptedTools({ t3_project_list: [{ projects, nextCursor: null }] }).tools,
+          filePath,
+        ).pipe(
+          Effect.provideService(FileSystem.FileSystem, racingFs),
+          Effect.provideService(HostProcess.HomeDirectory, home),
+          Effect.provideService(HostProcess.WorkingDirectory, cwd),
+        );
+      };
+      const appeared = path.join(cwd, "appeared.ts");
+      yield* fs.writeFileString(appeared, "");
+      yield* fs.writeFileString(path.join(linkedModels, "appeared.ts"), "");
+      yield* fs.writeFileString(path.join(outsideDir, "appeared.ts"), "");
+      assert.strictEqual((yield* resolveAfterAppearing(appeared)).id, "current-project");
+      assert.strictEqual(
+        (yield* resolveAfterAppearing(path.join(cwd, "models", "appeared.ts"))).id,
+        "intended-project",
+      );
+      assert.strictEqual(
+        (yield* Effect.flip(resolveAfterAppearing(path.join(cwd, "outside", "appeared.ts"))))._tag,
+        "ThreadProjectNotFoundError",
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
