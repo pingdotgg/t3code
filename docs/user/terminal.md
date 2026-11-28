@@ -27,6 +27,8 @@ Each terminal retains up to **5,000 lines** and **8 MiB** of scrollback on the s
 
 On iOS/iPadOS, long-press the terminal to paste or choose **Select Text**.
 
+In the mobile app, **Attach output** lists the terminal's latest 5,000 lines, including output scrolled out of view. The last screenful starts selected; tap the first and last line of another range to attach that instead.
+
 ## fish shell
 
 T3 Code launches `fish` with `no-query-term` to avoid startup delays, which overrides universal `fish_features`. To keep custom flags or re-enable `query-term`, export `fish_features` in the environment that launches T3 Code.

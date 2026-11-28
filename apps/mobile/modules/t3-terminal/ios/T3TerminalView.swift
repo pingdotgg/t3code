@@ -234,13 +234,16 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
   let onResize = EventDispatcher()
   let onCapture = EventDispatcher()
   let onPaste = EventDispatcher()
+  // Bounds the capture event and the picker sheet; matches Android's MAX_CAPTURED_LINES.
+  private static let maxCapturedLines = 5_000
   var captureRequest: Double = 0 {
     didSet {
       guard captureRequest > 0, captureRequest != oldValue else { return }
-      let text = readViewportText() ?? ""
-      // Android joins snapshot rows with "\n" and trims each row's trailing whitespace, so do
+      let text = readScreenText() ?? ""
+      // Android trims each line's trailing whitespace and keeps the same newest lines, so do
       // the same here: identical terminal content must capture identically on both platforms.
       let normalized = text.split(separator: "\n", omittingEmptySubsequences: false)
+        .suffix(Self.maxCapturedLines)
         .map { row -> String in
           var line = String(row)
           // Kotlin's trimEnd only strips ASCII whitespace; match it exactly.
@@ -468,11 +471,16 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     requestKeyboardFocus()
   }
 
-  private func readViewportText() -> String? {
+  private func readViewportText() -> String? { readText(GHOSTTY_POINT_VIEWPORT) }
+
+  // Scrollback plus the active screen, so output scrolled out of view can still be attached.
+  private func readScreenText() -> String? { readText(GHOSTTY_POINT_SCREEN) }
+
+  private func readText(_ tag: ghostty_point_tag_e) -> String? {
     guard let surface else { return nil }
     let selection = ghostty_selection_s(
-      top_left: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
-      bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
+      top_left: ghostty_point_s(tag: tag, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
+      bottom_right: ghostty_point_s(tag: tag, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
       rectangle: false)
     var captured = ghostty_text_s()
     guard ghostty_surface_read_text(surface, selection, &captured) else { return nil }

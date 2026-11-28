@@ -16,7 +16,7 @@ import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics
 import { useContentTopInset } from "../../components/ui/useBarInset";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useAtomMount } from "@effect/atom-react";
-import { msg, T, useGT, useMessages } from "gt-react-native";
+import { msg, useGT, useMessages } from "gt-react-native";
 import { useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -877,6 +877,7 @@ function ThreadTerminal(props: {
       {capturedOutput !== null ? (
         <TerminalContextSheet
           text={capturedOutput}
+          visibleRows={terminal.grid?.rows ?? 24}
           environmentId={selectedThread.environmentId}
           threadId={selectedThread.id}
           terminalId={terminalId}
@@ -1011,7 +1012,7 @@ function ThreadTerminal(props: {
                     else
                       Dialog.alert(
                         m(msg("No terminal output")),
-                        m(msg("There is no visible output to attach.")),
+                        m(msg("There is no output to attach.")),
                       );
                   }}
                   onInput={handleInput}
@@ -1052,9 +1053,7 @@ function ThreadTerminal(props: {
                         : (nativeColumnMetrics?.safeArea.bottom ?? insets.bottom)),
                   }}
                 >
-                  <Text style={{ color: terminalTheme.foreground }}>
-                    <T>Attach visible output</T>
-                  </Text>
+                  <Text style={{ color: terminalTheme.foreground }}>{gt("Attach output")}</Text>
                 </Pressable>
               ) : null}
               {isAccessoryVisible ? (
