@@ -22,8 +22,6 @@ test(
     const validation = screen.getByText(/Gib zuerst .+ ein\./);
     await validation.waitFor();
     await app.screenshot("jira-required-site-message");
-    const message = await validation.textContent();
-    await expect(message).toMatch(/\b(?:Website|Adresse|Domain|Instanz)\b/i);
-    await expect(message).toBe("Gib zuerst die Website ein.");
+    await expect(await validation.textContent()).toBe("Gib zuerst die Website ein.");
   },
 );
