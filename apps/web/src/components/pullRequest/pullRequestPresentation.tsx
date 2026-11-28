@@ -1,16 +1,20 @@
 import { Spinner } from "~/components/ui/spinner";
-import type {
-  PullRequestActor,
-  PullRequestCheck,
-  PullRequestCheckStatus,
-  PullRequestChecksState,
-  PullRequestLabel,
-  PullRequestMergeability,
-  PullRequestReviewDecision,
-  PullRequestState,
-  ScopedThreadRef,
+import {
+  SOURCE_CONTROL_MEDIA_ASSET,
+  type AssetResource,
+  type EnvironmentId,
+  type PullRequestActor,
+  type PullRequestCheck,
+  type PullRequestCheckStatus,
+  type PullRequestChecksState,
+  type PullRequestLabel,
+  type PullRequestMergeability,
+  type PullRequestReviewDecision,
+  type PullRequestState,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
   CircleCheckIcon,
   CircleDashedIcon,
@@ -23,8 +27,17 @@ import {
   UserRoundXIcon,
 } from "lucide-react";
 import { msg, useGT, useMessages } from "gt-react";
-import { Children, type CSSProperties, isValidElement, type ReactNode, useState } from "react";
+import {
+  Children,
+  createContext,
+  type CSSProperties,
+  isValidElement,
+  type ReactNode,
+  useContext,
+  useState,
+} from "react";
 
+import { useAssetUrlState } from "~/assets/assetUrls";
 import { m, type MessageResolver } from "~/i18n/messages";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
@@ -460,6 +473,13 @@ export function PullRequestReviewOutcomeBadge({
   );
 }
 
+/** Where the server fetches an avatar the client cannot load from the host itself. */
+export const PullRequestAvatarSourceContext = createContext<{
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+  readonly repository: string;
+} | null>(null);
+
 export function PullRequestActorAvatar({
   actor,
   className,
@@ -467,10 +487,62 @@ export function PullRequestActorAvatar({
   actor: PullRequestActor | null;
   className?: string;
 }) {
-  const login = actor?.login ?? "ghost";
+  const source = useContext(PullRequestAvatarSourceContext);
   const avatarUrl = actor?.avatarUrl ?? null;
-  const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
-  return avatarUrl === null || failedAvatarUrl === avatarUrl ? (
+  const fetchUrl = avatarUrl === null ? null : sourceControlClients.mediaUrl(avatarUrl)?.fetchUrl;
+  const login = actor?.login ?? "ghost";
+  return source !== null && fetchUrl != null ? (
+    <HostActorAvatar
+      environmentId={source.environmentId}
+      resource={{
+        _tag: SOURCE_CONTROL_MEDIA_ASSET,
+        cwd: source.cwd,
+        url: fetchUrl,
+        repository: source.repository,
+      }}
+      avatarUrl={avatarUrl}
+      login={login}
+      className={className}
+    />
+  ) : (
+    <ActorAvatarImage src={avatarUrl} login={login} className={className} />
+  );
+}
+
+function HostActorAvatar({
+  environmentId,
+  resource,
+  avatarUrl,
+  login,
+  className,
+}: {
+  environmentId: EnvironmentId;
+  resource: AssetResource;
+  avatarUrl: string | null;
+  login: string;
+  className: string | undefined;
+}) {
+  const asset = useAssetUrlState(environmentId, resource);
+  return (
+    <ActorAvatarImage
+      src={asset._tag === "Success" ? asset.url : asset._tag === "Failure" ? avatarUrl : null}
+      login={login}
+      className={className}
+    />
+  );
+}
+
+function ActorAvatarImage({
+  src,
+  login,
+  className,
+}: {
+  src: string | null;
+  login: string;
+  className: string | undefined;
+}) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  return src === null || failedSrc === src ? (
     <span
       aria-hidden
       className={cn(
@@ -484,10 +556,10 @@ export function PullRequestActorAvatar({
     <img
       aria-hidden
       alt=""
-      src={avatarUrl}
+      src={src}
       loading="lazy"
       className={cn("size-4 shrink-0 rounded-full bg-muted object-cover", className)}
-      onError={() => setFailedAvatarUrl(avatarUrl)}
+      onError={() => setFailedSrc(src)}
     />
   );
 }

@@ -12,6 +12,7 @@ import {
   projectChangeRequestHost,
   remoteWebOrigin,
 } from "@t3tools/source-control-core/shared/definition";
+import { gitLabMediaUrl, isGitLabHostname } from "./gitLabMedia.ts";
 import { icon } from "./icon.ts";
 import { gitLabReferenceAutolinks } from "./referenceAutolinks.ts";
 
@@ -113,7 +114,7 @@ export const definition = defineSourceControl({
   recognizeRemote: ({ host, hostname }) =>
     hostname === "altssh.gitlab.com"
       ? { kind: KIND, name: "GitLab", baseUrl: "https://gitlab.com" }
-      : hostname === "gitlab.com" || hostname.split(".").includes("gitlab")
+      : isGitLabHostname(hostname)
         ? {
             kind: KIND,
             name: hostname === "gitlab.com" ? "GitLab" : "GitLab Self-Hosted",
@@ -134,4 +135,5 @@ export const definition = defineSourceControl({
     const identity = withCanonicalKey(saved);
     return isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link);
   },
+  mediaUrl: gitLabMediaUrl,
 });

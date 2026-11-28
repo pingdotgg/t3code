@@ -166,6 +166,7 @@ import { resolvePickableEnvironments } from "./pullRequestProjectAssignment.logi
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 import {
   PullRequestActorLabel,
+  PullRequestAvatarSourceContext,
   PullRequestMetaLine,
   PullRequestReviewOutcomeIcon,
   pullRequestChecksState,
@@ -1576,7 +1577,7 @@ export function PullRequestDetailPanel({
     );
   }
 
-  return (
+  const panel = (
     <div className="relative flex h-full min-h-0 w-full flex-col bg-background">
       {threadPickerOpen && detail ? (
         <PullRequestThreadLinks
@@ -2306,5 +2307,14 @@ export function PullRequestDetailPanel({
         </div>
       ) : null}
     </div>
+  );
+  return (
+    <PullRequestAvatarSourceContext
+      value={
+        detail ? { environmentId, cwd: detail.workspaceRoot, repository: detail.repository } : null
+      }
+    >
+      {panel}
+    </PullRequestAvatarSourceContext>
   );
 }

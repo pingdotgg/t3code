@@ -239,3 +239,32 @@ describe("GitLab repository keys", () => {
     expect(registry.canonicalRepositoryKey(key)).toBe(key);
   });
 });
+
+describe("GitLab media URLs", () => {
+  const media = (url: string) => definition.mediaUrl?.(new URL(url)) ?? null;
+
+  it("proxies a user's uploaded avatar and leaves every other image alone", () => {
+    expect(
+      media("https://gitlab.example.test/uploads/-/system/user/avatar/857/avatar.png?v=1795510382"),
+    ).toEqual({
+      fetchUrl:
+        "https://gitlab.example.test/uploads/-/system/user/avatar/857/avatar.png?v=1795510382",
+      fileName: "avatar.png",
+    });
+    expect(media("https://git.example.test/uploads/-/system/user/avatar/76/avatar.png")).toEqual({
+      fetchUrl: "https://git.example.test/uploads/-/system/user/avatar/76/avatar.png",
+      fileName: "avatar.png",
+    });
+    for (const url of [
+      "https://secure.gravatar.com/avatar/c4b495b9?s=80&d=identicon",
+      "https://gitlab.example.test/group/project/uploads/0123456789abcdef/shot.png",
+      "https://gitlab.example.test/uploads/-/system/project/avatar/12/logo.png",
+      "https://user:secret@gitlab.example.test/uploads/-/system/user/avatar/857/avatar.png",
+      "http://127.0.0.1:8080/uploads/-/system/user/avatar/857/avatar.png",
+      "http://169.254.169.254/uploads/-/system/user/avatar/857/avatar.png",
+      "http://localhost/uploads/-/system/user/avatar/857/avatar.png",
+    ]) {
+      expect(media(url), url).toBeNull();
+    }
+  });
+});
