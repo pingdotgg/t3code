@@ -124,15 +124,33 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
       thread: { ...emptyProjection.thread, pullRequests: links },
     };
     const updated = { ...links[1]!, source: "agent" as const };
+    const later = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
     const next = applyOrchestrationV2ProjectionEvent(projection, {
       id: "compact-sync" as OrchestrationV2DomainEvent["id"],
       type: "thread.pull-request-link-updated",
       threadId,
-      occurredAt: now,
+      occurredAt: later,
       payload: updated,
     });
     expect(next?.thread).toEqual({ ...projection.thread, pullRequests: [links[0], updated] });
     expect(next?.thread.pullRequests?.[0]).toBe(links[0]);
+    expect(next?.updatedAt).toEqual(projection.updatedAt);
+  });
+
+  it.each([
+    "thread.pull-request-synced",
+    "thread.issue-synced",
+    "thread.active-reordered",
+  ] as const)("keeps the thread's activity time on %s", (type) => {
+    const later = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+    const next = applyOrchestrationV2ProjectionEvent(emptyProjection, {
+      id: "background-sync" as OrchestrationV2DomainEvent["id"],
+      type,
+      threadId,
+      occurredAt: later,
+      payload: emptyProjection.thread,
+    } as OrchestrationV2DomainEvent);
+    expect(next?.updatedAt).toEqual(emptyProjection.thread.updatedAt);
   });
 
   it("keeps live token usage when the terminal provider turn omits it", () => {
@@ -486,7 +504,13 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
 
   it("hides a steer that fell back to the queue until its run starts", () => {
     const queuedRunId = RunId.make("run-requeued-steer");
-    const queuedRun = { ...run, id: queuedRunId, ordinal: 2, status: "queued" } as const;
+    const queuedRun = {
+      ...run,
+      id: queuedRunId,
+      ordinal: 2,
+      status: "queued",
+      startedAt: null,
+    } as const;
     const reply = commandItem("item-reply", "reply", 102);
     const steer: OrchestrationV2TurnItem = {
       id: TurnItemId.make("item-steer"),

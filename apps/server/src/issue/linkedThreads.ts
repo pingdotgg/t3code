@@ -15,6 +15,8 @@ const decodeLinkedThreads = Schema.decodeUnknownEffect(IssueLinkedThreadsResult)
 export const listLinkedIssueThreads = Effect.fn("listLinkedIssueThreads")(
   function* (key: ThreadIssueKey) {
     const sql = yield* SqlClient.SqlClient;
+    // The CASE stops SQLite hoisting the side-chat check out of the link loop,
+    // where it would re-parse every thread's payload, not just matching ones.
     const rows = yield* sql<{
       id: string;
       projectId: string;
@@ -37,9 +39,11 @@ export const listLinkedIssueThreads = Effect.fn("listLinkedIssueThreads")(
         t.updated_at AS "updatedAt"
       FROM orchestration_v2_projection_threads AS t
       JOIN json_each(t.payload_json, '$.issues') AS link
-      WHERE json_extract(link.value, '$.key') = ${key.key.trim()}
-        AND t.deleted_at IS NULL
-        AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
+      WHERE t.deleted_at IS NULL
+        AND CASE WHEN json_extract(link.value, '$.key') = ${key.key.trim()}
+          THEN json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
+          ELSE 0
+        END
       ORDER BY "updatedAt" DESC, id ASC
     `.pipe(NodeSqliteClient.readOnly);
     const threads = rows

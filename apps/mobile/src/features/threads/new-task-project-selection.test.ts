@@ -11,6 +11,7 @@ import {
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
   resolveNewTaskScratchOption,
+  workspaceFolderName,
 } from "./new-task-project-selection";
 
 function makeProject(
@@ -100,6 +101,29 @@ describe("getProjectScopeSelectionTarget", () => {
     expect(target([], "server")).toBe(server);
     expect(target([])).toBe(mac);
   });
+
+  it("starts in the repository root over an earlier sub-folder in the same environment", () => {
+    const identity = (project: EnvironmentProject) => ({
+      ...project.repositoryIdentity!,
+      rootPath: "/work/workspace",
+    });
+    const base = makeProject("old-tool", "mac", {
+      workspaceRoot: "/work/workspace/_archive/old-tool",
+      repositoryKey: "github.com/owner/workspace",
+    });
+    const subfolder = { ...base, repositoryIdentity: identity(base) };
+    const root = {
+      ...makeProject("workspace", "mac", { workspaceRoot: "/work/workspace" }),
+      repositoryIdentity: identity(base),
+    };
+    expect(
+      getProjectScopeSelectionTarget(
+        { ...makeScope([subfolder, root]), representative: root },
+        EnvironmentId.make("mac"),
+        new Set([EnvironmentId.make("mac")]),
+      ),
+    ).toBe(root);
+  });
 });
 
 describe("newTaskFilteredProject", () => {
@@ -160,6 +184,23 @@ describe("resolveEnvironmentProjectMatch", () => {
     expect(resolveEnvironmentProjectMatch(byTitle, selected)).toBe(byTitle[1]);
   });
 
+  it("matches workspace folder names across Windows and POSIX hosts", () => {
+    const windows = makeProject("win", "windows", {
+      title: "T3 Code",
+      workspaceRoot: "C:\\Users\\me\\t3code",
+    });
+    const mac = makeProject("mac", "mac", {
+      title: "t3 (mac)",
+      workspaceRoot: "/Users/me/t3code/",
+    });
+    const other = makeProject("other", "server");
+
+    expect(resolveEnvironmentProjectMatch([other, mac], windows)).toBe(mac);
+    expect(resolveEnvironmentProjectMatch([other, windows], mac)).toBe(windows);
+    const otherDrive = makeProject("d", "windows-2", { workspaceRoot: "D:/src/t3code" });
+    expect(resolveEnvironmentProjectMatch([other, otherDrive], windows)).toBe(otherDrive);
+  });
+
   it("does not treat a known different repository as a basename or title match", () => {
     const selected = makeProject("t3code", "mac", {
       repositoryKey: "github.com/t3tools/t3code",
@@ -174,6 +215,17 @@ describe("resolveEnvironmentProjectMatch", () => {
     expect(resolveEnvironmentProjectMatch([fork, unindexed], selected)).toBe(unindexed);
     expect(resolveEnvironmentProjectMatch([fork], selected)).toBe(fork);
     expect(isSameRepository(fork, selected)).toBe(false);
+  });
+});
+
+describe("workspaceFolderName", () => {
+  it("gives volume roots and empty placeholders no folder name", () => {
+    for (const root of ["", "/", "\\", "C:", "C:\\", "c:/"]) {
+      expect(workspaceFolderName(root)).toBeNull();
+    }
+    expect(workspaceFolderName("C:\\Users\\me\\t3code\\")).toBe("t3code");
+    expect(workspaceFolderName("\\\\server\\share")).toBe("share");
+    expect(workspaceFolderName("/home/me/t3code//")).toBe("t3code");
   });
 });
 

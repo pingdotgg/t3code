@@ -31,6 +31,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { Tool } from "effect/ai";
@@ -51,10 +52,20 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import { THEME_GUIDE } from "@t3tools/shared/themeCss";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
+import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
+import { FeedbackToolkit } from "../../apps/server/src/mcp/toolkits/feedback/tools.ts";
+import {
+  FEEDBACK_AWAITING_APPROVAL_NOTE,
+  FEEDBACK_SUBJECT_MESSAGE,
+  FeedbackInput,
+  FeedbackNotRequestedError,
+  resolveFeedbackSubject,
+} from "../../apps/server/src/feedback/FeedbackReport.ts";
+import { scrubFeedback } from "../../apps/server/src/feedback/scrubFeedback.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
 import { IssuesToolkit } from "../../apps/server/src/mcp/toolkits/issues/tools.ts";
@@ -102,6 +113,7 @@ const MODELS = {
   "claude-opus-5-5": "Opus 5.5",
   "gpt-6.1-sol": "GPT-6.1 Sol",
   "gpt-6-astra": "GPT-6 Astra",
+  "gpt-6-luna": "GPT-6 Luna",
 } as const;
 type Model = keyof typeof MODELS;
 /** GPT models replay a Codex capture through CLIProxyAPI, the rest a Claude Code capture. */
@@ -109,7 +121,7 @@ const isCodex = (model: Model): model is Extract<Model, `gpt-${string}`> =>
   model.startsWith("gpt-");
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 // USD per million tokens. Cache writes use the 5-minute rate.
-const PRICES = {
+export const PRICES = {
   "claude-sonnet-5-5": { input: 2, output: 10, cacheWrite: 2.5, cacheRead: 0.2 },
   "claude-haiku-5-5": { input: 0.1, output: 0.5, cacheWrite: 0.125, cacheRead: 0.01 },
   "claude-opus-5-5": { input: 4, output: 20, cacheWrite: 5, cacheRead: 0.2 },
@@ -183,8 +195,8 @@ const PriorToolCall = Schema.Struct({
 });
 
 /**
- * One expected call. `args` match partially: `~text` is a case-insensitive substring,
- * `"<=N"` / `">=N"` bound a number, `null` matches a missing key, and keys may be dotted paths.
+ * One expected call. `args` match partially: `~text` is a case-insensitive substring, `re:` a
+ * case-sensitive regex, `"<=N"` / `">=N"` bound a number, `null` matches a missing key, and keys may be dotted paths.
  */
 const McpToolUseCall = Schema.Struct({
   tool: Schema.String,
@@ -210,10 +222,17 @@ const McpToolUseCallsExpect = Schema.Struct({
   maxCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
 });
 
+/** One `anyOf` alternative: call checks, and text checks that must hold on the same path. */
+const McpToolUseAlternative = Schema.Struct({
+  ...McpToolUseCallsExpect.fields,
+  textMust: Schema.optional(Schema.Array(Schema.String)),
+  finalTextMust: Schema.optional(Schema.Array(Schema.String)),
+});
+
 const McpToolUseExpect = Schema.Struct({
   ...McpToolUseCallsExpect.fields,
   /** Passes when one alternative passes every one of its checks. */
-  anyOf: Schema.optional(Schema.Array(McpToolUseCallsExpect)),
+  anyOf: Schema.optional(Schema.Array(McpToolUseAlternative)),
   /** No call may match any entry. */
   callsMustNot: Schema.optional(Schema.Array(McpToolUseCallWithAlternatives)),
   notCalls: Schema.optional(Schema.Array(Schema.String)),
@@ -261,6 +280,10 @@ const McpToolUseWorld = Schema.StructWithRest(
   Schema.Struct({
     /** GitHub `owner/name`. Defaults to `acme/app`. */
     repo: Schema.optional(Schema.String),
+    /** `origin`'s host and path, such as `git.cafe/acme/app`. Defaults to `github.com/<repo>`. */
+    remote: Schema.optional(Schema.String),
+    /** The branch has commits but no upstream: T3's pull_request_create refuses until a push. */
+    unpushed: Schema.optional(Schema.Boolean),
     branch: Schema.optional(Schema.String),
     /** `git status --short` lines. */
     status: Schema.optional(Schema.String),
@@ -291,6 +314,8 @@ const McpToolUseWorld = Schema.StructWithRest(
     deviceAgentAccess: Schema.optional(Schema.Boolean),
     /** false: agent browser access is off. T3 denies every preview call and drops its browser text. */
     browserAgentAccess: Schema.optional(Schema.Boolean),
+    /** The Agent feedback mode; absent is off. On, T3 lists its tools and its text has the mode's line. */
+    agentFeedback: Schema.optional(Contracts.AgentFeedbackMode),
     /** Every capture reaches T3 with adb screencap's warning ahead of the PNG: T3 reports 0×0. */
     deviceInvalidCapture: Schema.optional(Schema.Boolean),
     /** Devices another thread's agent-device session holds, by device id: that thread's id. */
@@ -343,10 +368,9 @@ export const McpToolUseCase = Schema.Struct({
     ),
     world: Schema.optional(McpToolUseWorld),
     /**
-     * Canned tool results by bare name, T3 or native. `"default"` uses the runner's result. For a
-     * device tool, a T3 `DeviceError` (`{"_tag": ..., "cause": null}`) fails it inside T3; for a
-     * preview tool, a `PreviewAutomationError` fails it with that error's message. A
-     * `{"$sequence": [...]}` mock answers its nth call with the nth result, then repeats the last.
+     * Canned tool results by bare name, T3 or native; `"default"` uses the runner's result. A T3
+     * `DeviceError` or `PreviewAutomationError` fails the call. `$sequence` and `$byArgs`: see
+     * `nextMock`.
      */
     mocks: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
     /** Regexes on one part of a shell command. A match wins over the shell simulator. */
@@ -363,6 +387,11 @@ export const McpToolUseCase = Schema.Struct({
   /** Records for the context chips `prompt` links, projected as T3 sends them. */
   promptContext: Schema.optional(Schema.Struct({ records: Schema.Array(ComposerContextRecord) })),
   expect: McpToolUseExpect,
+  /**
+   * The checks for `--arm raw`, when its right outcome differs, as when only T3 can watch a PR.
+   * Otherwise both arms are graded on `expect`.
+   */
+  expectRaw: Schema.optional(McpToolUseExpect),
   /** Model calls this case may need. Overrides `--max-steps`. */
   maxSteps: Schema.optional(Schema.Number),
   source: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
@@ -473,6 +502,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   ProjectToolkit,
   EnvironmentToolkit,
   ThemeToolkit,
+  FeedbackToolkit,
   PreviewControlsToolkit,
   WorktreeToolkit,
   PullRequestsToolkit,
@@ -536,16 +566,36 @@ const pastedSecret = (name: string, input: Readonly<Record<string, unknown>>) =>
 const hiddenFromSubagents = enabledWhen(McpInvocationContext.hiddenFromSubagents);
 // The Linked environments beta starts off, and T3 lists its tools only while it is on.
 const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
+// Agent feedback starts off, and T3 lists its tools only while it is on.
+const hiddenWhileFeedbackOff = enabledWhen(McpInvocationContext.hiddenWhileFeedbackOff);
 // T3 lists PR and CI tools only to a thread whose project is on a forge it reads.
 const hiddenWithoutForge = enabledWhen(McpInvocationContext.hiddenWithoutForge);
+/**
+ * `tools` is T3 as shipped. `raw` takes away T3's PR, CI and issue tools and their instructions,
+ * so the agent works the forge with CLIs alone, to measure what the tools save.
+ */
+export const ARMS = ["tools", "raw"] as const;
+export type Arm = (typeof ARMS)[number];
+const forgeToolNames = new Set(
+  [PullRequestsToolkit, IssuesToolkit].flatMap((toolkit) =>
+    Object.values(toolkit.tools).map((tool: Tool.Any) => `${T3_PREFIX}${tool.name}`),
+  ),
+);
+/** T3's text for an arm: `raw` drops the PR linking block that names T3's PR tools. */
+const forArm = (value: string, arm: Arm | undefined) =>
+  arm === "raw" ? value.replace(`\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`, "") : value;
 const visibleT3Tools = (options: {
   readonly subagent?: boolean;
   readonly links?: boolean;
   readonly forge?: boolean;
+  readonly agentFeedback?: Contracts.AgentFeedbackMode;
+  readonly arm?: Arm;
 }) =>
   t3Tools.filter(
     (tool) =>
+      !(options.arm === "raw" && forgeToolNames.has(tool.name)) &&
       (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
+      ((options.agentFeedback ?? "off") !== "off" || !hiddenWhileFeedbackOff.has(tool.name)) &&
       (options.forge !== false || !hiddenWithoutForge.has(tool.name)) &&
       !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
   );
@@ -555,7 +605,12 @@ const visibleT3Tools = (options: {
  * `browser` say whether the thread holds the `device` and `preview` capabilities, as agent device
  * and browser access decide.
  */
-const claudeQueryOptions = (model: Model, device = true, browser = true) => {
+const claudeQueryOptions = (
+  model: Model,
+  device = true,
+  browser = true,
+  agentFeedback: Contracts.AgentFeedbackMode = "off",
+) => {
   // Refs whose text follows a capability read its flag; older ones ignore it.
   const input: Parameters<typeof makeClaudeQueryOptions>[0] & {
     readonly deviceToolsAvailable?: boolean;
@@ -566,6 +621,7 @@ const claudeQueryOptions = (model: Model, device = true, browser = true) => {
     resume: false,
     cwd: null,
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
+    agentFeedback,
     deviceToolsAvailable: device,
     browserToolsAvailable: browser,
   };
@@ -573,8 +629,13 @@ const claudeQueryOptions = (model: Model, device = true, browser = true) => {
 };
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
-export const t3SystemAppend = (model: Model, device = true, browser = true) => {
-  const { systemPrompt } = claudeQueryOptions(model, device, browser);
+export const t3SystemAppend = (
+  model: Model,
+  device = true,
+  browser = true,
+  agentFeedback: Contracts.AgentFeedbackMode = "off",
+) => {
+  const { systemPrompt } = claudeQueryOptions(model, device, browser, agentFeedback);
   if (isRecord(systemPrompt) && systemPrompt.type === "preset" && systemPrompt.append) {
     return systemPrompt.append;
   }
@@ -664,6 +725,9 @@ export const buildBase = (
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
+    /** The Agent feedback mode: on, T3 lists its tools and its text includes the mode's line. */
+    readonly agentFeedback?: Contracts.AgentFeedbackMode;
+    readonly arm?: Arm;
   },
 ) => {
   const t3 = visibleT3Tools(options);
@@ -689,7 +753,10 @@ export const buildBase = (
   const { model } = options;
   const append = options.nativeSubagent
     ? ""
-    : t3SystemAppend(model, options.deviceAccess, options.browserAccess);
+    : forArm(
+        t3SystemAppend(model, options.deviceAccess, options.browserAccess, options.agentFeedback),
+        options.arm,
+      );
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
   const joined = systemTexts.join("\n");
   // The capture's home directory names its user. Cases use `/home/user` paths instead.
@@ -759,6 +826,9 @@ const buildCodexBase = (
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
+    /** The Agent feedback mode: on, T3 lists its tools and its text includes the mode's line. */
+    readonly agentFeedback?: Contracts.AgentFeedbackMode;
+    readonly arm?: Arm;
   },
 ): Base => {
   const t3 = visibleT3Tools(options);
@@ -793,11 +863,17 @@ const buildCodexBase = (
     return [JSON.parse(clean(JSON.stringify(item))) as Block];
   });
   const context = buildCodexAdditionalContext(
-    { model: options.model, reasoningEffort: effort },
+    {
+      model: options.model,
+      reasoningEffort: effort,
+      agentFeedback: options.agentFeedback ?? "off",
+    },
     { browser: options.browserAccess ?? true, device: options.deviceAccess ?? true },
   );
   input.push(
-    ...Object.entries(context).map(([key, entry]) => message(`<${key}>${entry.value}</${key}>`)),
+    ...Object.entries(context).map(([key, entry]) =>
+      message(`<${key}>${forArm(entry.value, options.arm)}</${key}>`),
+    ),
   );
   const nativeTools = input
     .flatMap((item) =>
@@ -895,17 +971,22 @@ const branchPullRequestCreatedBy = (entry: ShellEntry, branch: string | undefine
 const checkedOutBranch = (sample: Sample) => {
   let branch = sample.testCase.setup.world?.branch ?? "";
   for (const entry of sample.shell) {
-    const command = isRecord(entry.input) ? valueText(entry.input.command) : "";
-    for (const part of command.replace(/\s\d?>&\d/g, "").split(/[;&|\n]+/)) {
-      // `git checkout <ref> -- <paths>` restores files and stays on the branch.
-      if (/\s--(\s|$)/.test(part)) continue;
-      const match = /\bgit (?:checkout|switch)\s+(?:-[bcBC]\s+)?([A-Za-z0-9][\w./-]*)\s*$/.exec(
-        part.trim(),
-      );
-      if (match !== null) branch = match[1]!;
-    }
+    for (const part of shellParts(entry)) branch = switchedTo(part) ?? branch;
   }
   return branch;
+};
+/** A shell entry's commands, split at separators, with fd redirects dropped. */
+const shellParts = (entry: ShellEntry) =>
+  (isRecord(entry.input) ? valueText(entry.input.command) : "")
+    .replace(/\s\d?>&\d/g, "")
+    .split(/[;&|\n]+/);
+/** The branch one command checks out or switches to, if it does. */
+const switchedTo = (part: string) => {
+  // `git checkout <ref> -- <paths>` restores files and stays on the branch.
+  if (/\s--(\s|$)/.test(part)) return undefined;
+  return /\bgit (?:checkout|switch)\s+(?:-[bcBC]\s+)?([A-Za-z0-9][\w./-]*)\s*$/.exec(
+    part.trim(),
+  )?.[1];
 };
 
 /**
@@ -1009,8 +1090,16 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
   };
 };
 
-/** A `{"$sequence": [...]}` mock answers its nth call with the nth result, then repeats the last. */
-const nextMock = (sample: Sample, name: string, mock: unknown) => {
+/**
+ * A `{"$sequence": [...]}` mock answers its nth call with the nth result, then repeats the last.
+ * A `{"$byArgs": [{"args": {...}, "result": ...}]}` mock answers with the first entry whose `args`
+ * match the call partially, as `expect` matches them; with none, the runner's default.
+ */
+const nextMock = (sample: Sample, name: string, mock: unknown, input: unknown) => {
+  if (isRecord(mock) && Array.isArray(mock.$byArgs)) {
+    const hit = mock.$byArgs.find((entry) => isRecord(entry) && matches(entry.args ?? {}, input));
+    return isRecord(hit) ? hit.result : undefined;
+  }
   if (!isRecord(mock) || !Array.isArray(mock.$sequence) || mock.$sequence.length === 0) return mock;
   const n = sample.mockCalls.get(name) ?? 0;
   sample.mockCalls.set(name, n + 1);
@@ -1264,6 +1353,10 @@ const worldPullRequests = (sample: Sample) => {
   return Array.isArray(prs) ? prs.filter(isRecord) : [];
 };
 
+/** A world PR's `reviewThreads`: id, path, line, isResolved, comments of author and body. */
+const worldReviewThreads = (pr: Readonly<Record<string, unknown>> | undefined) =>
+  Array.isArray(pr?.reviewThreads) ? pr.reviewThreads.filter(isRecord) : [];
+
 /** World fixtures spell states as GitHub does (`MERGED`) or as T3 does (`merged`). */
 const worldState = (pr: Readonly<Record<string, unknown>> | undefined) => {
   const state = valueText(pr?.state ?? "open").toLowerCase();
@@ -1437,74 +1530,95 @@ export const t3Default = (
       const own = branchPullRequest(sample);
       const number = typeof input.number === "number" ? input.number : own.number;
       const world = worldPullRequests(sample).find((pr) => Number(pr.number) === number);
-      const sections = Array.isArray(input.sections) ? input.sections : ["summary", "checks"];
+      const include = Array.isArray(input.include) ? input.include : [];
       const checks = Array.isArray(world?.checks) ? world.checks.filter(isRecord) : [];
+      const checkRuns = checks.map((check) => ({
+        name: valueText(check.name),
+        status:
+          check.state === "fail"
+            ? "failure"
+            : check.state === "cancelled" ||
+                check.state === "pending" ||
+                check.state === "action-required"
+              ? check.state
+              : "success",
+        description: null,
+        url: null,
+      }));
+      const comments = (Array.isArray(world?.comments) ? world.comments : []).filter(isRecord);
       return {
         ...pullRequest(sample.repo, { number }),
-        ...(sections.includes("summary")
-          ? {
-              summary: {
-                title: valueText(
-                  world?.title ?? sample.testCase.setup.world?.commits?.[0]?.subject,
-                ),
-                body: valueText(world?.body ?? ""),
-                state: mergedIn(sample, sample.repo, number) ? "merged" : worldState(world),
-                isDraft: false,
-                author: "user",
-                headBranch: valueText(world?.headRefName ?? sample.testCase.setup.world?.branch),
-                baseBranch: valueText(world?.baseRefName ?? "main"),
-                // Only the branch's own PR is at the checkout's latest commit.
-                headSha:
-                  typeof world?.headRefOid === "string"
-                    ? world.headRefOid
-                    : number === own.number
-                      ? (sample.testCase.setup.world?.commits?.[0]?.sha ?? null)
-                      : null,
-                mergeability: "mergeable",
-                behindBy: 0,
-                autoMergeEnabled: false,
-                additions: 1,
-                deletions: 1,
-                changedFiles: 1,
-                labels: [],
-                reviewers: [],
-              },
-            }
-          : {}),
-        ...(sections.includes("checks")
-          ? {
-              checks: checks.map((check) => ({
-                name: valueText(check.name),
-                status:
-                  check.state === "fail"
-                    ? "failure"
-                    : check.state === "pending"
-                      ? "pending"
-                      : "success",
-                description: null,
-                url: null,
-              })),
-            }
-          : {}),
-        ...(sections.includes("diff")
+        title: valueText(world?.title ?? sample.testCase.setup.world?.commits?.[0]?.subject),
+        state: mergedIn(sample, sample.repo, number) ? "merged" : worldState(world),
+        isDraft: false,
+        author: "user",
+        headBranch: valueText(world?.headRefName ?? sample.testCase.setup.world?.branch),
+        baseBranch: valueText(world?.baseRefName ?? "main"),
+        // Only the branch's own PR is at the checkout's latest commit.
+        headSha:
+          typeof world?.headRefOid === "string"
+            ? world.headRefOid
+            : number === own.number
+              ? (sample.testCase.setup.world?.commits?.[0]?.sha ?? null)
+              : null,
+        mergeability: valueText(world?.mergeability ?? "mergeable"),
+        behindBy: typeof world?.behindBy === "number" ? world.behindBy : 0,
+        autoMergeEnabled: false,
+        checks: {
+          passed: checkRuns.filter((check) => check.status === "success").length,
+          pending: checkRuns.filter(
+            (check) => check.status === "pending" || check.status === "action-required",
+          ).length,
+          failed: checkRuns
+            .filter((check) => check.status === "failure" || check.status === "cancelled")
+            .map((check) => check.name),
+        },
+        unresolvedThreads: worldReviewThreads(world).filter((thread) => thread.isResolved !== true)
+          .length,
+        ...(include.includes("body") ? { body: valueText(world?.body ?? "") } : {}),
+        ...(include.includes("checks") ? { checkRuns } : {}),
+        ...(include.includes("diff")
           ? { diff: { patch: valueText(world?.diff ?? ""), truncated: false, nextCursor: null } }
           : {}),
-        ...(sections.includes("conversation")
+        ...(include.includes("threads") || include.includes("comments")
           ? {
               conversation: {
-                comments: (Array.isArray(world?.comments) ? world.comments : [])
-                  .filter(isRecord)
-                  .map((comment, index) => ({
-                    id: `comment-${index + 1}`,
-                    kind: "issue-comment",
-                    author: valueText(comment.author),
-                    body: valueText(comment.body),
-                    createdAt: "2026-10-27T10:00:00Z",
-                    path: null,
-                    reviewState: null,
-                  })),
-                reviewThreads: [],
-                hiddenResolvedThreads: 0,
+                ...(include.includes("threads")
+                  ? {
+                      reviewThreads: worldReviewThreads(world)
+                        .filter(
+                          (thread) => input.includeResolved === true || thread.isResolved !== true,
+                        )
+                        .map((thread) => ({
+                          id: valueText(thread.id),
+                          path: valueText(thread.path),
+                          line: typeof thread.line === "number" ? thread.line : null,
+                          isResolved: thread.isResolved === true,
+                          isOutdated: false,
+                          comments: (Array.isArray(thread.comments) ? thread.comments : [])
+                            .filter(isRecord)
+                            .map((comment) => ({
+                              author: valueText(comment.author),
+                              body: valueText(comment.body),
+                              createdAt: "2026-10-27T10:00:00Z",
+                            })),
+                          moreComments: false,
+                        })),
+                    }
+                  : {}),
+                ...(include.includes("comments")
+                  ? {
+                      comments: comments.map((comment, index) => ({
+                        id: `comment-${index + 1}`,
+                        kind: "issue-comment",
+                        author: valueText(comment.author),
+                        body: valueText(comment.body),
+                        createdAt: "2026-10-27T10:00:00Z",
+                        path: null,
+                        reviewState: null,
+                      })),
+                    }
+                  : {}),
                 truncated: false,
                 nextCursor: null,
               },
@@ -1876,7 +1990,7 @@ export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, m
   const command = call.tool === "Bash" && isRecord(call.input) ? call.input.command : undefined;
   const mocks = shellMocksFor(sample, typeof command === "string" ? command : undefined);
   const machine = [
-    `Working directory: ${cwd} on ${platform}, a git checkout of github.com/${repo}.${date ? ` Today is ${date}.` : ""}`,
+    `Working directory: ${cwd} on ${platform}, a git checkout of ${world?.remote ?? `github.com/${repo}`}.${date ? ` Today is ${date}.` : ""}`,
     gitStatus(testCase),
     `World: ${valueText(world ?? {})}`,
     ...(mocks.length > 0
@@ -2033,6 +2147,8 @@ const savedSecretFile = (
   }
 };
 
+const decodeFeedbackInput = Schema.decodeUnknownResult(FeedbackInput);
+
 /** The result for one tool call. */
 const FORGE_WRITE_TOOLS = new Set([
   "pull_request_create",
@@ -2052,6 +2168,74 @@ const recordForgeChange = (
   if (FORGE_WRITE_TOOLS.has(name)) {
     sample.forgeChanges.push(`${name} ${valueText(input)} returned ${valueText(result)}`);
   }
+};
+
+/**
+ * A successful `git push` in this sample published `branch`: a bare push or a push to a remote
+ * alone pushes the current branch; otherwise a refspec has to name it or HEAD. Dry runs don't count.
+ */
+const pushed = (sample: Sample, branch: string) => {
+  // HEAD and a bare push publish whatever is checked out when that push runs.
+  let current = sample.testCase.setup.world?.branch ?? "";
+  for (const entry of sample.shell) {
+    const succeeded = entry.tool === "Bash" && !/^Exit code [1-9]/.test(entry.output);
+    for (const part of shellParts(entry)) {
+      current = switchedTo(part) ?? current;
+      const words = /\bgit\s+push\b(.*)/.exec(part)?.[1]?.trim().split(/\s+/).filter(Boolean);
+      if (!succeeded || words === undefined) continue;
+      if (["--dry-run", "-n", "--help", "-h"].some((flag) => words.includes(flag))) continue;
+      const refs = words.filter((word) => !word.startsWith("-")).slice(1);
+      const sources = refs.map((ref) => ref.split(":")[0]!.replace(/^\+/, ""));
+      if (
+        refs.length === 0
+          ? current === branch
+          : sources.some((source) => source === branch || (source === "HEAD" && current === branch))
+      )
+        return true;
+    }
+  }
+  return false;
+};
+
+/**
+ * Refusals the real tools give for this world, so the tools arm meets the same walls as the CLI.
+ * Messages are PullRequestService's and GitManager's.
+ */
+const productRefusal = (sample: Sample, name: string, input: Readonly<Record<string, unknown>>) => {
+  const world = sample.testCase.setup.world;
+  if (
+    name === "pull_request_create" &&
+    world?.unpushed === true &&
+    !pushed(sample, checkedOutBranch(sample))
+  ) {
+    return "Current branch has not been pushed. Push before creating a PR.";
+  }
+  if (
+    name === "pull_request_review" &&
+    input.verdict === "approve" &&
+    typeof input.expectedHeadSha !== "string"
+  ) {
+    return "Approving needs expectedHeadSha: the headSha pull_request_read reported for the commits you reviewed.";
+  }
+  if (
+    (name === "pull_request_merge" || name === "pull_request_review") &&
+    typeof input.expectedHeadSha === "string"
+  ) {
+    const own = branchPullRequest(sample);
+    const number = input.number ?? own.number;
+    const pr = worldPullRequests(sample).find((candidate) => Number(candidate.number) === number);
+    // The same head pull_request_read reports: the world's, else the checkout's for its own PR.
+    const head =
+      typeof pr?.headRefOid === "string"
+        ? pr.headRefOid
+        : number === own.number
+          ? world?.commits?.[0]?.sha
+          : undefined;
+    if (head !== undefined && head !== input.expectedHeadSha.trim()) {
+      return `The head is now ${head}, not ${input.expectedHeadSha}. Review the new commits first.`;
+    }
+  }
+  return undefined;
 };
 
 export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* (
@@ -2102,7 +2286,7 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
       '`fields` values are saved as files. Leave out `value` and `delivery: "secretRef"`.',
     );
   }
-  const mock = nextMock(sample, name, testCase.setup.mocks?.[name]);
+  const mock = nextMock(sample, name, testCase.setup.mocks?.[name], input);
   if (isT3Name(call.name) && PREVIEW_TOOLS.has(name)) {
     if (testCase.setup.world?.browserAgentAccess === false)
       return failed(
@@ -2124,6 +2308,45 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   if (sample.backgroundWait && isT3Name(call.name) && name === "t3_background_wait" && fromWorld) {
     const result = yield* sample.backgroundWait(input);
     return result.isError ? failed(result.text) : toolResult(call.id, result.text);
+  }
+  // `{"$error": "..."}` fails the call with that text, as T3 reports a forge error.
+  if (isRecord(mock) && typeof mock.$error === "string") return failed(mock.$error);
+  if (isT3Name(call.name)) {
+    const refused = productRefusal(sample, name, input);
+    if (refused !== undefined) return failed(refused);
+  }
+  if (isT3Name(call.name) && name === "t3_feedback" && (mock === undefined || mock === "default")) {
+    const decoded = decodeFeedbackInput(input);
+    if (Result.isFailure(decoded)) return failed(decoded.failure.message);
+    const report = decoded.success;
+    // The same refusals as FeedbackService, in its order.
+    if (sample.testCase.setup.world?.agentFeedback === "on-request" && !report.userRequested)
+      return failed(new FeedbackNotRequestedError({ source: "mcp" }).message);
+    const subject = resolveFeedbackSubject(
+      report.subject,
+      t3SourceTools.map((tool) => tool.name),
+    );
+    if (subject === undefined) return failed(FEEDBACK_SUBJECT_MESSAGE);
+    // T3 shows a requested report to the user in a card and answers at once.
+    if (report.userRequested) {
+      return toolResult(call.id, {
+        status: "awaiting_approval",
+        note: FEEDBACK_AWAITING_APPROVAL_NOTE,
+      });
+    }
+    return toolResult(call.id, {
+      ...report,
+      subject,
+      trace: null,
+      expected: scrubFeedback(report.expected, []),
+      actual: scrubFeedback(report.actual, []),
+      workaround: scrubFeedback(report.workaround, []),
+      id: "019a7b3c-0000-7000-8000-000000000001",
+      threadId: "thread-1",
+      createdAt: `${base.environment.date ?? "2026-01-01"}T12:00:00.000Z`,
+      source: "mcp",
+      sent: true,
+    });
   }
   // A pasted secret is saved without a card, so a mocked card outcome does not apply.
   if (mock !== undefined && mock !== "default" && !pastedSecret(name, input)) {
@@ -2193,6 +2416,9 @@ const matches = (expected: unknown, actual: unknown): boolean => {
   }
   if (typeof expected === "string" && expected.startsWith("~")) {
     return valueText(actual).toLowerCase().includes(expected.slice(1).toLowerCase());
+  }
+  if (typeof expected === "string" && expected.startsWith("re:")) {
+    return new RegExp(expected.slice(3)).test(valueText(actual));
   }
   if (Array.isArray(expected)) {
     return (
@@ -2692,7 +2918,9 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
   // Codex's code-mode cells take more model calls, so a case's own budget grows for it too.
   const extra = isCodex(config.model) ? 4 : 0;
   const maxSteps = testCase.maxSteps === undefined ? config.maxSteps : testCase.maxSteps + extra;
+  let modelCalls = 0;
   for (let step = 0; step < maxSteps; step++) {
+    modelCalls++;
     const response = input
       ? yield* callCodex(config, codexRequest(base, input))
       : yield* callModel(config.apiKey, requestBody(sample, config.effort, messages));
@@ -2803,6 +3031,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
     text: said.join("\n\n"),
     stopReason,
     finalText,
+    modelCalls,
     cwd: base.environment.cwd,
     linked: [...sample.linked],
     ...(sample.devices ? { launchers: [...sample.devices.launchers] } : {}),
@@ -2811,6 +3040,21 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
     transcript: input ? transcript : messages.slice(start),
   };
 }, Effect.scoped);
+
+/**
+ * Model requests a sample made. Rows from before `modelCalls` was recorded count up to the last
+ * step with tool calls, plus the final answer's request when the turn ended.
+ */
+export const modelRequests = (row: {
+  readonly modelCalls?: number | undefined;
+  readonly calls?: ReadonlyArray<{ readonly step: number }> | undefined;
+  readonly stopReason?: string | undefined;
+}) => {
+  if (row.modelCalls !== undefined) return row.modelCalls;
+  const calls = row.calls ?? [];
+  if (calls.length === 0) return 1;
+  return Math.max(...calls.map((call) => call.step)) + 1 + (row.stopReason === "end_turn" ? 1 : 0);
+};
 
 type ResultRow = Pick<McpToolUseCase, "id" | "kind" | "pattern"> & {
   readonly role: string;
@@ -2927,6 +3171,7 @@ const Flags = Schema.Struct({
     ...PROXY_SHELL_MODELS,
   ]),
   "user-instructions": Schema.Literals(["keep", "drop"]),
+  arm: Schema.Literals(ARMS),
   "dry-run": Schema.Boolean,
   "stop-on-regression": Schema.Boolean,
   "regression-budget": Schema.optional(PositiveIntOrZero),
@@ -2967,6 +3212,8 @@ const main = Effect.gen(function* () {
       "shell-model": { ...string, default: "claude-haiku-5-5" },
       // T3's text must work for every user, so the captured CLAUDE.md is dropped by default.
       "user-instructions": { ...string, default: "drop" },
+      // `raw` runs without T3's PR, CI and issue tools, to compare against the CLIs.
+      arm: { ...string, default: "tools" },
       "dry-run": { type: "boolean", default: false },
       "stop-on-regression": { type: "boolean", default: false },
       "regression-budget": string,
@@ -3006,7 +3253,22 @@ const main = Effect.gen(function* () {
       (setup.harness === undefined || setup.harness === harness),
   );
   if (selectedCases.length === 0) return yield* Effect.die(new Error("No case matches --case."));
-  const selected = yield* Effect.forEach(selectedCases, (testCase) =>
+  // The raw arm has no PR or issue tools, so a case whose prior turns call one cannot be replayed.
+  const replaysForgeTool = (testCase: McpToolUseCase) =>
+    (testCase.setup.priorTurns ?? []).some((turn) =>
+      (turn.toolCalls ?? []).some((call) => forgeToolNames.has(`${T3_PREFIX}${call.tool}`)),
+    );
+  const unreplayable =
+    flags.arm === "raw" ? selectedCases.filter(replaysForgeTool).map(({ id }) => id) : [];
+  if (unreplayable.length > 0) {
+    yield* Effect.logWarning(
+      `--arm raw skips ${unreplayable.length} cases whose prior turns call PR or issue tools: ${unreplayable.join(", ")}`,
+    );
+  }
+  const armCases = selectedCases.filter(({ id }) => !unreplayable.includes(id));
+  if (armCases.length === 0)
+    return yield* Effect.die(new Error("No selected case can run with --arm raw."));
+  const selected = yield* Effect.forEach(armCases, (testCase) =>
     Effect.gen(function* () {
       const priorTurns = yield* Effect.forEach(testCase.setup.priorTurns ?? [], (turn) =>
         Effect.gen(function* () {
@@ -3022,6 +3284,7 @@ const main = Effect.gen(function* () {
       );
       return {
         ...testCase,
+        expect: flags.arm === "raw" ? (testCase.expectRaw ?? testCase.expect) : testCase.expect,
         setup: {
           ...testCase.setup,
           priorTurns,
@@ -3045,6 +3308,7 @@ const main = Effect.gen(function* () {
     browserAccess: boolean,
     links: boolean,
     forge: boolean,
+    agentFeedback: Contracts.AgentFeedbackMode = "off",
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -3058,6 +3322,8 @@ const main = Effect.gen(function* () {
               forge,
               deviceAccess,
               browserAccess,
+              agentFeedback,
+              arm: flags.arm,
             }),
           ),
         )
@@ -3072,6 +3338,8 @@ const main = Effect.gen(function* () {
               forge,
               deviceAccess,
               browserAccess,
+              agentFeedback,
+              arm: flags.arm,
             });
             return role === "native-subagent"
               ? Effect.promise(() =>
@@ -3082,14 +3350,15 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.forge !== false}`;
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.forge !== false}:${setup.world?.agentFeedback ?? "off"}`;
   const base = yield* buildFor("top", true, true, false, true);
-  const bases = new Map<string, Base>([["top:true:true:false:true", base]]);
+  const bases = new Map<string, Base>([["top:true:true:false:true:off", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", device, browser, links, forge] = key.split(":") as [
+    const [role = "top", device, browser, links, forge, feedback] = key.split(":") as [
       McpToolUseCase["setup"]["role"],
+      string,
       string,
       string,
       string,
@@ -3103,6 +3372,7 @@ const main = Effect.gen(function* () {
         browser === "true",
         links === "true",
         forge === "true",
+        feedback as Contracts.AgentFeedbackMode,
       ),
     );
   }
@@ -3159,7 +3429,14 @@ const main = Effect.gen(function* () {
   const inFlight = yield* Semaphore.make(flags.concurrency);
   const runOne = (testCase: McpToolUseCase) => {
     const { id, kind, pattern } = testCase;
-    const identity = { id, kind, pattern, role: testCase.setup.role };
+    const identity = {
+      id,
+      kind,
+      pattern,
+      role: testCase.setup.role,
+      arm: flags.arm,
+      shellModel: config.shellModel,
+    };
     const usage = { usage: emptyUsage(), shellUsage: emptyUsage() };
     const privateValues = [config.apiKey, ...Object.values(config.proxy?.headers ?? {})]
       .flatMap((value) => [value, value.replace(/^Bearer /i, "")])
@@ -3234,7 +3511,7 @@ const main = Effect.gen(function* () {
     { concurrency: flags.concurrency, discard: true },
   ).pipe(Effect.ignore);
   const samples = flags.samples === undefined ? "2-3 (adaptive)" : flags.samples;
-  const header = `Commit \`${commit}\`, ${flags.model} at ${effort} effort, user instructions ${flags["user-instructions"]}, ${samples} samples per case, template \`${path.basename(templatePath)}\``;
+  const header = `Commit \`${commit}\`, ${flags.model} at ${effort} effort, user instructions ${flags["user-instructions"]}, arm ${flags.arm}, ${samples} samples per case, template \`${path.basename(templatePath)}\``;
   const finished = new Set(rows.map((row) => row.id)).size;
   const stopped =
     regressions.length === 0

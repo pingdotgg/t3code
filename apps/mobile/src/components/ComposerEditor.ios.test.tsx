@@ -117,7 +117,7 @@ vi.mock("./ui/Dialog", () => ({ alert: vi.fn() }));
 vi.mock("./ui/AppText", () => ({ AppText: ({ children }: { children?: ReactNode }) => children }));
 vi.mock("./ComposerContextSheet", () => ({ ComposerContextSheet: () => null }));
 vi.mock("./AssistantCitationSheet", () => ({ AssistantCitationSheet: () => null }));
-vi.mock("../features/threads/useOpenLinkedThread", () => ({ useOpenLinkedThread: () => vi.fn() }));
+vi.mock("../features/threads/useOpenThreadLink", () => ({ useOpenThreadLink: () => vi.fn() }));
 vi.mock("../state/peerLinks", () => ({ useLinkedEnvironments: () => [] }));
 vi.mock("../state/model-mentions", () => ({ useModelMentions: () => [] }));
 vi.mock("../state/preferences", async () => {
@@ -128,6 +128,9 @@ vi.mock("../lib/composerContextClipboard", () => ({ importComposerContextClipboa
 vi.mock("../lib/useUniwindTheme", () => ({ useUniwindTheme: () => ({}) }));
 vi.mock("../lib/nativeComposerTheme", () => ({ createNativeComposerTheme: () => ({}) }));
 vi.mock("../lib/contextChipIconSource", () => ({ contextChipIconUri: () => "" }));
+vi.mock("../features/settings/appearance/AppearancePreferencesProvider", () => ({
+  useAppearancePreferences: () => ({ fontFamilies: { regular: "System" } }),
+}));
 vi.mock("../features/settings/appearance/useScaledTextRole", () => ({
   useComposerTextRole: () => ({ fontSize: 16, lineHeight: 22 }),
 }));

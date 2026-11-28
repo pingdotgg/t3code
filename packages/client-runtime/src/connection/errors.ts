@@ -54,10 +54,10 @@ export function environmentMismatchError(input: {
   return new ConnectionBlockedError({
     reason: "configuration",
     ...translatableDetail(
-      msg("Connected environment {actual} does not match {expected}.", {
-        actual: input.actual,
-        expected: input.expected,
-      }),
+      msg(
+        "This address now runs a different T3 Code install ({actual}, not {expected}). Remove this connection and add it again.",
+        { actual: input.actual, expected: input.expected },
+      ),
     ),
   });
 }

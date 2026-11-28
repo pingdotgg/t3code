@@ -10,7 +10,10 @@ import {
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
-import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
+import {
+  formatProviderUpdateRequiredNotice,
+  providerUpdateChannelLags,
+} from "@t3tools/client-runtime/providerUpdateRequiredModels";
 import { groupModelsBySubProvider } from "@t3tools/client-runtime/providerSubProviders";
 import { useNavigate } from "@tanstack/react-router";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
@@ -61,7 +64,6 @@ import {
 import { announce } from "~/lib/announce";
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
-import { TooltipProvider } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import { Badge } from "../ui/badge";
 import {
@@ -209,7 +211,11 @@ function ModelPickerProviderNotices({
 }: {
   setupEntries: ReadonlyArray<ProviderInstanceEntry>;
   emptyLabel: string;
-  updateRequiredNotices: ReadonlyArray<{ instanceId: ProviderInstanceId; notice: string }>;
+  updateRequiredNotices: ReadonlyArray<{
+    instanceId: ProviderInstanceId;
+    notice: string;
+    canUpdateInSettings: boolean;
+  }>;
   onRequestClose: (() => void) | undefined;
   onOpenProviderSetup: ((instanceId: ProviderInstanceId) => void) | undefined;
 }) {
@@ -242,20 +248,25 @@ function ModelPickerProviderNotices({
       ) : (
         <ComboboxEmpty className="empty:h-0">{emptyLabel}</ComboboxEmpty>
       )}
-      {updateRequiredNotices.map(({ instanceId, notice }) => (
+      {updateRequiredNotices.map(({ instanceId, notice, canUpdateInSettings }) => (
         <p
           key={instanceId}
           className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
         >
-          {notice}{" "}
-          <InlineButton
-            onClick={() => {
-              onRequestClose?.();
-              void navigate({ to: "/settings/providers" });
-            }}
-          >
-            <T>Provider settings</T>
-          </InlineButton>
+          {notice}
+          {canUpdateInSettings ? (
+            <>
+              {" "}
+              <InlineButton
+                onClick={() => {
+                  onRequestClose?.();
+                  void navigate({ to: "/settings/providers" });
+                }}
+              >
+                <T>Provider settings</T>
+              </InlineButton>
+            </>
+          ) : null}
         </p>
       ))}
     </>
@@ -695,6 +706,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         lockedProvider !== null ? result.filter((m) => matchesLockedProvider(m)) : result;
       return rankModelPickerSearch(candidates, searchQuery, (model) => ({
         name: model.name,
+        slug: model.slug,
         ...(model.shortName ? { shortName: model.shortName } : {}),
         ...(model.subProvider ? { subProvider: model.subProvider } : {}),
         driverKind: model.driverKind,
@@ -818,7 +830,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     const notice = shown
       ? formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery, messages, locale)
       : null;
-    return notice ? [{ instanceId: entry.instanceId, notice }] : [];
+    return notice
+      ? [
+          {
+            instanceId: entry.instanceId,
+            notice,
+            canUpdateInSettings: !providerUpdateChannelLags(entry.snapshot, searchQuery),
+          },
+        ]
+      : [];
   });
 
   const modelJumpModelKeys = visibleModels
@@ -935,7 +955,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   };
 
   return (
-    <TooltipProvider delay={0}>
+    <>
       <WindowKeyDownListener onKeyDown={onWindowKeyDown} />
       <div
         ref={pickerContentRef}
@@ -1236,6 +1256,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           </div>
         </Combobox>
       </div>
-    </TooltipProvider>
+    </>
   );
 });

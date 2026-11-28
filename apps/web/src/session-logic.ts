@@ -1,9 +1,10 @@
-import type { ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
+import type { ThreadStructure, ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import { msg } from "gt-react";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   type AssetResource,
   type OrchestrationV2Checkpoint,
+  type OrchestrationV2ThreadProjection,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
@@ -32,6 +33,7 @@ import {
   workEntryIndicatesToolFailure,
 } from "@t3tools/client-runtime/work-log/presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { repositoryCheckpointScopeIds } from "@t3tools/client-runtime/state/thread-repositories";
 import type {
   ThreadPendingApproval,
   ThreadPendingUserInput,
@@ -237,12 +239,34 @@ export function derivePendingUserInputs(
   return [...inputs].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
+export type TaskListPlan = Extract<OrchestrationV2PlanArtifact, { readonly kind: "todo_list" }>;
+
+// Snapshots do not load plans in run order, so the run ordinal decides which list is newest.
+export function findLatestTaskList(projection: ThreadStructure | null): TaskListPlan | null {
+  if (projection === null) return null;
+  const runOrdinals = new Map<RunId | null, number>(
+    projection.runs.map((run) => [run.id, run.ordinal]),
+  );
+  let latest: TaskListPlan | null = null;
+  for (const plan of projection.plans) {
+    if (plan.kind !== "todo_list" || plan.status === "superseded") continue;
+    if (
+      latest === null ||
+      (runOrdinals.get(plan.runId) ?? -1) >= (runOrdinals.get(latest.runId) ?? -1)
+    ) {
+      latest = plan;
+    }
+  }
+  return latest === null || latest.steps.length === 0 ? null : latest;
+}
+
 const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"]["type"]>([
   "fork",
   "handoff",
   "run_interrupt_request",
   "run_interrupt_result",
   "secret_request",
+  "feedback_request",
   "link_request",
   "subagent",
 ]);
@@ -252,6 +276,7 @@ const PERSISTENT_RESOURCE_V2_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"
   "thread_created",
   // Still answerable after a steer supersedes the attempt that asked.
   "secret_request",
+  "feedback_request",
   "link_request",
 ]);
 
@@ -281,7 +306,7 @@ function projectedWorkEntryStatus(
       return "failed";
     case "cancelled":
     case "interrupted":
-      return "stopped";
+      return item.toolNonExecutionKind === "declined" ? "declined" : "stopped";
   }
 }
 
@@ -1151,18 +1176,25 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   return byUserMessageId;
 }
 
-// A missing snapshot (no git, or a side chat) still pins a conversation position; only
-// restoring files needs a ready one.
+// A missing or failed snapshot (no git, a side chat, a capture error) still pins a
+// conversation position; only restoring files needs a ready one.
 function isRewindableCheckpoint(checkpoint: Pick<OrchestrationV2Checkpoint, "status">) {
-  return checkpoint.status === "ready" || checkpoint.status === "missing";
+  return checkpoint.status !== "stale";
 }
 
 export function findRevertCheckpoint(
-  checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>,
+  projection:
+    | Pick<OrchestrationV2ThreadProjection, "checkpoints" | "checkpointScopes">
+    | null
+    | undefined,
   turnCount: number,
 ): OrchestrationV2Checkpoint | undefined {
-  return checkpoints.findLast(
+  if (projection == null) return undefined;
+  // A tracked repository's baseline also sits at ordinal zero; it is never a rewind target.
+  const repositoryScopeIds = repositoryCheckpointScopeIds(projection.checkpointScopes);
+  return projection.checkpoints.findLast(
     (checkpoint) =>
+      !repositoryScopeIds.has(checkpoint.scopeId) &&
       isRewindableCheckpoint(checkpoint) &&
       (turnCount === 0
         ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null

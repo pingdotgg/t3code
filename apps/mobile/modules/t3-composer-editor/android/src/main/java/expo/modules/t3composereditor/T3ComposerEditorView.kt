@@ -284,6 +284,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   fun setFontFamily(fontFamily: String) {
+    chipTypeface = T3ContextChip.typefaceFor(fontFamily)
     editor.typeface = if (fontFamily.contains("Mono", ignoreCase = true)) {
       Typeface.MONOSPACE
     } else {
@@ -291,6 +292,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     }
     applyLineHeight()
     editor.applyPlaceholder()
+    applyTokenSpans()
   }
 
   fun setFontSize(fontSize: Float) {
@@ -375,6 +377,9 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   fun blurEditor() {
+    // The IME belongs to the window: leave it alone when another text field holds focus.
+    val focused = editor.rootView.findFocus()
+    if (focused != null && focused !== editor && focused.onCheckIsTextEditor()) return
     editor.clearFocus()
     val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
     imm?.hideSoftInputFromWindow(editor.windowToken, 0)
@@ -486,6 +491,8 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
       x >= minOf(left, right) && x <= maxOf(left, right)
   }
 
+  private var chipTypeface = T3ContextChip.typefaceFor("DMSans-Regular")
+
   private fun applyTokenSpans() {
     val editable = editor.text ?: return
     editable.getSpans(
@@ -508,6 +515,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
               tintsIcon = token.tintsIcon
             ),
             fontSize = editor.textSize,
+            chipTypeface = chipTypeface,
             color = T3ContextChip.color(token.accent, editor.currentTextColor),
             maximumWidth = (
               editor.width.takeIf {
@@ -903,7 +911,8 @@ internal class SelectionAwareEditText(
   private fun pasteContextOrImages(): Boolean {
     val payload = T3ComposerClipboard.read(context)
     return when {
-      payload["html"]?.contains("data-t3-context-fragment=") == true -> pasteContext(payload)
+      !payload["fragment"].isNullOrEmpty() ||
+        payload["html"]?.contains("data-t3-context-fragment=") == true -> pasteContext(payload)
       pasteImagesOrInterceptedText() -> true
       isSingleItemClip() && T3ComposerClipboard.hasThreadLink(payload["text"].orEmpty()) ->
         pasteContext(payload)

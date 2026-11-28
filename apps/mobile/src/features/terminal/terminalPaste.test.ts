@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { TERMINAL_WRITE_MAX_LENGTH } from "@t3tools/contracts";
+import { TERMINAL_WRITE_MAX_LENGTH, type TerminalWriteInput } from "@t3tools/contracts";
 import { createTerminalPasteSession } from "./terminalPaste";
 
 function deferred<T>() {
@@ -50,9 +50,11 @@ describe("terminal paste session", () => {
     const firstWrite = deferred<boolean>();
     const firstWriteStarted = deferred<void>();
     const writes: string[] = [];
+    const phases: Array<TerminalWriteInput["plainWrite"]> = [];
     let activeWrites = 0;
     let maximumActiveWrites = 0;
-    const write = async (data: string) => {
+    const write = async (data: string, phase?: TerminalWriteInput["plainWrite"]) => {
+      phases.push(phase);
       writes.push(data);
       activeWrites += 1;
       maximumActiveWrites = Math.max(maximumActiveWrites, activeWrites);
@@ -84,8 +86,45 @@ describe("terminal paste session", () => {
     firstWrite.resolve(true);
     await Promise.all([olderPaste, newerPaste]);
 
-    expect(writes.map((chunk) => chunk.length)).toEqual([TERMINAL_WRITE_MAX_LENGTH, 5]);
-    expect(writes[1]).toBe("newer");
+    expect(writes.map((chunk) => chunk.length)).toEqual([TERMINAL_WRITE_MAX_LENGTH, 0, 5]);
+    expect(writes[2]).toBe("newer");
+    expect(phases).toEqual(["start", "abort", undefined]);
     expect(maximumActiveWrites).toBe(1);
+  });
+  it("keeps a keystroke behind a queued split write", async () => {
+    const session = createTerminalPasteSession();
+    session.reset(true);
+    const firstChunk = deferred<boolean>();
+    const started = deferred<void>();
+    const writes: string[] = [];
+    const send = async (data: string) => {
+      writes.push(data);
+      if (writes.length === 1) {
+        started.resolve();
+        return firstChunk.promise;
+      }
+      return true;
+    };
+    const a = "a".repeat(TERMINAL_WRITE_MAX_LENGTH);
+    const b = "b".repeat(TERMINAL_WRITE_MAX_LENGTH);
+    const first = session.write(a + "1", send);
+    await started.promise;
+    const second = session.write(b + "2", send);
+    const key = session.write("k", send);
+    expect(writes).toEqual([a]);
+
+    firstChunk.resolve(true);
+    await Promise.all([first, second, key]);
+    expect(writes).toEqual([a, "1", b, "2", "k"]);
+  });
+
+  it("sends a keystroke typed before the first attach snapshot", async () => {
+    const session = createTerminalPasteSession();
+    const writes: string[] = [];
+    await session.write("k", async (data) => {
+      writes.push(data);
+      return true;
+    });
+    expect(writes).toEqual(["k"]);
   });
 });

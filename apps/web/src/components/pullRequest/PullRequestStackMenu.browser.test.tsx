@@ -3,17 +3,19 @@ import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
-const state = vi.hoisted(() => ({ detail: "" }));
+const state = vi.hoisted(() => ({ detail: "", sent: [] as unknown[] }));
 
 vi.mock(import("~/state/use-atom-command"), async () => {
   const { PullRequestOperationError } = await import("@t3tools/contracts");
   const { Cause } = await import("effect");
   const { AsyncResult } = await import("effect/reactivity");
   return {
-    useAtomCommand: (() => async () =>
-      AsyncResult.failure(
+    useAtomCommand: (() => async (call: { readonly input: unknown }) => {
+      state.sent.push(call.input);
+      return AsyncResult.failure(
         Cause.fail(new PullRequestOperationError({ operation: "runAction", detail: state.detail })),
-      )) as never,
+      );
+    }) as never,
   };
 });
 
@@ -24,6 +26,7 @@ import { PullRequestStackMenu } from "./PullRequestStackMenu";
 
 function setup(detail: string) {
   state.detail = detail;
+  state.sent = [];
 }
 
 const HEAD_MOVED = "The stack head moved. Refresh the stack before trying again.";
@@ -58,8 +61,13 @@ it.each([
           layers: [{ number: 2, headBranch: "feature", headSha: "abc123", state: "open" }],
         }}
         canMerge
+        shownHeadSha="shown"
         stale={false}
         canRebase
+        canAutoMerge={false}
+        preferAutoMerge={false}
+        autoMergeArmed={false}
+        canCancelAutoMerge={false}
         mergeMethod="squash"
         onActed={() => {}}
       />
@@ -73,4 +81,13 @@ it.each([
   }
   await page.getByRole("dialog").getByRole("button", { name: row.label, exact: true }).click();
   await expect.element(page.getByText(row.description, { exact: true })).toBeInTheDocument();
+  // The stack's own read can be ahead of the head the reader was shown; a merge lands only that one.
+  expect(state.sent).toEqual([
+    expect.objectContaining(
+      row.label === "Merge stack"
+        ? { expectedHeadSha: "shown", expectedStackHeads: [{ number: 2, headSha: "abc123" }] }
+        : { action: "update-branch" },
+    ),
+  ]);
+  if (row.label !== "Merge stack") expect(state.sent[0]).not.toHaveProperty("expectedHeadSha");
 });

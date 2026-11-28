@@ -1,7 +1,7 @@
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import * as NodeURL from "node:url";
 
-import type { ChatAttachment, ProviderApprovalDecision } from "@t3tools/contracts";
+import type { ChatAttachment, ModelSelection, ProviderApprovalDecision } from "@t3tools/contracts";
 import {
   createOpencodeClient,
   type Agent,
@@ -16,6 +16,7 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -27,6 +28,8 @@ import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -36,7 +39,12 @@ import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { collectStreamAsString } from "@t3tools/provider-core/server/snapshotProbe";
 import * as NetService from "@t3tools/shared/Net";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { imageMimeTypeFromBytes } from "@t3tools/shared/image";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import {
+  DEFAULT_VARIANT_CHOICE_ID,
+  getModelSelectionStringOptionValue,
+} from "@t3tools/shared/model";
 import { parseSemver } from "@t3tools/shared/semver";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
@@ -213,8 +221,12 @@ export interface OpenCodeInventory {
 
 export type OpenCodeSlashCommand = Pick<Command, "name" | "description" | "source" | "hints">;
 
-export const loadOpenCodeCommands = (client: OpencodeClient) =>
-  runOpenCodeSdk("command.list", (signal) => client.command.list(undefined, { signal })).pipe(
+export const loadOpenCodeCommands = (client: OpencodeClient, requestSignal?: AbortSignal) =>
+  runOpenCodeSdk("command.list", (signal) =>
+    client.command.list(undefined, {
+      signal: requestSignal === undefined ? signal : AbortSignal.any([signal, requestSignal]),
+    }),
+  ).pipe(
     Effect.map((result): ReadonlyArray<OpenCodeSlashCommand> =>
       (result.data ?? []).map(({ name, description, source, hints }) => ({
         name,
@@ -389,6 +401,11 @@ export function parseOpenCodeModelSlug(
   };
 }
 
+export function openCodeVariant(selection: ModelSelection): string | undefined {
+  const variant = getModelSelectionStringOptionValue(selection, "variant");
+  return variant === DEFAULT_VARIANT_CHOICE_ID ? undefined : variant;
+}
+
 export function openCodeQuestionId(
   index: number,
   question: QuestionRequest["questions"][number],
@@ -419,38 +436,51 @@ function isOpenCodeNativeFilePart(input: {
   );
 }
 
-export function toOpenCodeFileParts(input: {
-  readonly attachments: ReadonlyArray<ChatAttachment> | undefined;
-  readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
-}): Array<FilePartInput> {
-  const parts: Array<FilePartInput> = [];
+export const toOpenCodeFileParts = Effect.fn("OpenCodeRuntime.toOpenCodeFileParts")(
+  function* (input: {
+    readonly attachments: ReadonlyArray<ChatAttachment> | undefined;
+    readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
+    readonly fileSystem: FileSystem.FileSystem;
+  }) {
+    const parts: Array<FilePartInput> = [];
 
-  for (const attachment of input.attachments ?? []) {
-    if (
-      attachment.type === "file" &&
-      "source" in attachment &&
-      attachment.source?._tag === "pasted-text"
-    ) {
-      continue;
-    }
-    if (!isOpenCodeNativeFilePart(attachment)) {
-      continue;
-    }
-    const attachmentPath = input.resolveAttachmentPath(attachment);
-    if (!attachmentPath) {
-      continue;
+    for (const attachment of input.attachments ?? []) {
+      if (
+        attachment.type === "file" &&
+        "source" in attachment &&
+        attachment.source?._tag === "pasted-text"
+      ) {
+        continue;
+      }
+      if (!isOpenCodeNativeFilePart(attachment)) {
+        continue;
+      }
+      const attachmentPath = input.resolveAttachmentPath(attachment);
+      if (!attachmentPath) {
+        continue;
+      }
+
+      // OpenCode inlines the file under `mime`; Anthropic rejects a type that disagrees with the bytes.
+      const sniffedMimeType = OPENCODE_NATIVE_IMAGE_MIMES.has(
+        attachment.mimeType.trim().toLowerCase(),
+      )
+        ? yield* input.fileSystem.stream(attachmentPath, { bytesToRead: 12 }).pipe(
+            Stream.runCollect,
+            Effect.map((chunks) => imageMimeTypeFromBytes(Buffer.concat(chunks))),
+            Effect.orElseSucceed(() => null),
+          )
+        : null;
+      parts.push({
+        type: "file",
+        mime: sniffedMimeType ?? attachment.mimeType,
+        filename: attachment.name,
+        url: NodeURL.pathToFileURL(attachmentPath).href,
+      });
     }
 
-    parts.push({
-      type: "file",
-      mime: attachment.mimeType,
-      filename: attachment.name,
-      url: NodeURL.pathToFileURL(attachmentPath).href,
-    });
-  }
-
-  return parts;
-}
+    return parts;
+  },
+);
 
 export function toOpenCodePermissionReply(
   decision: ProviderApprovalDecision,
@@ -503,6 +533,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   const hostPlatform = yield* HostProcess.Platform;
   const serverLedger = yield* OpenCodeServerLedger.OpenCodeServerLedger;
   const agentScope = yield* AgentScope;
+  const random = yield* SecureRandom.SecureRandom;
   // npm's Windows shim lets the child escape libuv kill-on-close; run its executable directly.
   const resolveCommand = (command: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
     resolveSpawnCommand(command, args, { ...(env ? { env } : {}), bypassNpmShim: true });
@@ -607,11 +638,14 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       shared: true,
     });
     const spawnCommand = yield* resolveCommand(launch.command, launch.args, input.environment);
-    const serverPassword = resolveOpenCodeServerPassword({
-      external: false,
-      ...(input.serverPassword !== undefined ? { serverPassword: input.serverPassword } : {}),
-      ...(input.environment !== undefined ? { environment: input.environment } : {}),
-    });
+    // A server T3 starts always has a password; without a configured one it is generated and
+    // kept in memory.
+    const serverPassword =
+      resolveOpenCodeServerPassword({
+        external: false,
+        ...(input.serverPassword !== undefined ? { serverPassword: input.serverPassword } : {}),
+        ...(input.environment !== undefined ? { environment: input.environment } : {}),
+      }) || Base64Url.encode(yield* random.randomBytes(32));
 
     // Scopes close in reverse order. Forking this before the group kill is
     // registered forgets the ledger entry only once the group is stopped.
@@ -623,7 +657,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           shell: spawnCommand.shell,
           env: {
             ...input.environment,
-            ...(serverPassword !== undefined ? { OPENCODE_SERVER_PASSWORD: serverPassword } : {}),
+            OPENCODE_SERVER_PASSWORD: serverPassword,
             // The value is set explicitly (rather than relying on inheritance) because
             // `extendEnv` is false whenever `input.environment` is provided.
             OPENCODE_CONFIG_CONTENT: resolveOpenCodeConfigContent(input.environment),
@@ -762,19 +796,19 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     const url = readyOption.value;
     const version = yield* (
       input.verify?.(url) ??
-        verifyOpenCodeServerVersion(
-          createOpenCodeSdkClient({
-            baseUrl: url,
-            directory: input.directory,
-            ...(serverPassword !== undefined ? { serverPassword } : {}),
-          }),
-          input.environment,
-        )
+      verifyOpenCodeServerVersion(
+        createOpenCodeSdkClient({
+          baseUrl: url,
+          directory: input.directory,
+          serverPassword,
+        }),
+        input.environment,
+      )
     );
 
     return {
       url,
-      ...(serverPassword !== undefined ? { serverPassword } : {}),
+      serverPassword,
       version,
       isRunning: child.isRunning.pipe(Effect.orElseSucceed(() => false)),
       exitCode: child.exitCode.pipe(
@@ -896,5 +930,5 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(OpenCodeRuntime, makeOpenCodeRuntime).pipe(
-  Layer.provide(NetService.layer),
+  Layer.provide(Layer.merge(NetService.layer, SecureRandom.layerWebCrypto)),
 );

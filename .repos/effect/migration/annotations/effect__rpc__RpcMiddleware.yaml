@@ -13,6 +13,9 @@
 "@effect/rpc/RpcMiddleware#TagClass":
   replacement: "effect/rpc/RpcMiddleware#ServiceClass"
   note: "Renamed class type for the v4 Context.Service-based middleware declaration."
+"@effect/rpc/RpcMiddleware#TagClass.Base":
+  replacement: "effect/rpc/RpcMiddleware#ServiceClass"
+  note: "The shared base interface was folded into ServiceClass; there is no separate public base interface."
 "@effect/rpc/RpcMiddleware#TagClass.Failure":
   replacement: "effect/rpc/RpcMiddleware#Error"
   note: "Failure terminology became error; apply the extractor to the middleware ID."

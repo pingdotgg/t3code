@@ -36,8 +36,16 @@ if (process.env.T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE === "1") {
   fail("text generation must not save a resumable session", 16);
 }
 const settingsIndex = argv.indexOf("--settings");
-if (settingsIndex === -1 || JSON.parse(argv[settingsIndex + 1]).disableAllHooks !== true) {
+const settingsValue = settingsIndex === -1 ? "{}" : argv[settingsIndex + 1];
+// Like the CLI: a value starting with a brace is inline JSON, anything else a file path.
+const settingsText = settingsValue.startsWith("{")
+  ? settingsValue
+  : NodeFS.readFileSync(settingsValue, "utf8");
+if (JSON.parse(settingsText).disableAllHooks !== true) {
   fail("text generation must disable hooks", 10);
+}
+if (process.env.T3_FAKE_CLAUDE_SETTINGS_LOG) {
+  NodeFS.writeFileSync(process.env.T3_FAKE_CLAUDE_SETTINGS_LOG, settingsText);
 }
 const cwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
 if (cwdMustNotBe && NodeFS.realpathSync(process.cwd()) === NodeFS.realpathSync(cwdMustNotBe)) {
@@ -68,14 +76,18 @@ if (stdinMustContain && !stdinContent.includes(stdinMustContain)) {
   fail("stdin missing expected content", 4);
 }
 
-if (process.env.T3_FAKE_CLAUDE_REJECTS_IMAGES === "1" && stdinContent.includes('"type":"image"')) {
+const imageRejection = process.env.T3_FAKE_CLAUDE_IMAGE_REJECTION;
+if (imageRejection && stdinContent.includes('"type":"image"')) {
+  if (process.env.T3_FAKE_CLAUDE_IMAGE_ATTEMPT_LOG) {
+    NodeFS.appendFileSync(process.env.T3_FAKE_CLAUDE_IMAGE_ATTEMPT_LOG, "image\n");
+  }
   process.stdout.write(
     JSON.stringify({
       type: "result",
       subtype: "success",
       is_error: true,
       api_error_status: 400,
-      result: "API Error: 400 Image inputs are not supported by this model",
+      result: `API Error: 400 ${imageRejection}`,
     }) + "\n",
   );
   process.exit(1);

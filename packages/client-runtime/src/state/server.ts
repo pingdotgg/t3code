@@ -4,19 +4,26 @@ import {
   markedTextEnglish,
   resolveMarkedText,
   thrownErrorMessage,
+  withI18nMessage,
 } from "../errors/translatable.ts";
 import {
+  type DesktopUpdateChannel,
   type EnvironmentId,
   type ProviderInstanceId,
   type ServerConfig,
   type ServerConfigStreamEvent,
+  type ServerFeatureFlags,
   type ServerLifecycleWelcomePayload,
   type ServerLifecycleStreamReadyEvent,
   type ServerProviderWorkspaceSnapshot,
+  ServerSelfUpdateError,
+  applyWorkflowRunsUpdate,
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
+  resolveProviderInstanceEnabled,
   shouldRecommendDatabaseCompaction,
   type UsageSummary,
+  type WorkflowRunsSnapshot,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -49,6 +56,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
+import { workflowRunRefreshKey } from "../workflows.ts";
 import {
   currentSession,
   isRpcClientError,
@@ -83,6 +91,8 @@ export type ServerUpdateState =
       readonly stage: ServerUpdateStage;
       readonly fromVersion: string;
       readonly targetVersion: string;
+      /** The service launcher's id for an accepted update, used to find its outcome later. */
+      readonly updateId?: string;
     }
   | {
       readonly status: "failed";
@@ -355,6 +365,9 @@ export function serverUpdateStateForProgressEvent(
           : "resuming",
     fromVersion,
     targetVersion,
+    ...(event.type === "complete" && event.result.updateId !== undefined
+      ? { updateId: event.result.updateId }
+      : {}),
   };
 }
 
@@ -386,6 +399,29 @@ export function serverUpdateFailure(error: unknown): {
   return i18nMessage === undefined
     ? { message: serverUpdateFailureMessage(error) }
     : { message: serverUpdateFailureMessage(error), i18nMessage };
+}
+
+/** Marked text for a desktop app whose build track differs from its saved update track. */
+export function desktopTrackMismatchText(mismatch: {
+  readonly buildChannel: DesktopUpdateChannel;
+  readonly savedChannel: DesktopUpdateChannel;
+}): string {
+  return msg(
+    "This {build, select, nightly {Nightly} other {Stable}} build can't update from the {saved, select, nightly {Nightly} other {Stable}} track on its own. Switch the update track back to {build, select, nightly {Nightly} other {Stable}}, or use Review beside Update track to retry the switch to {saved, select, nightly {Nightly} other {Stable}}.",
+    { build: mismatch.buildChannel, saved: mismatch.savedChannel },
+  );
+}
+
+const isServerSelfUpdateError = Schema.is(ServerSelfUpdateError);
+
+/** Gives a host's track mismatch marked text; older hosts send only the English `reason`. */
+export function localizeServerSelfUpdateError<E>(error: E): E {
+  if (!isServerSelfUpdateError(error) || error.trackMismatch === undefined) return error;
+  return withI18nMessage(
+    error,
+    msg("Server update failed:"),
+    desktopTrackMismatchText(error.trackMismatch),
+  );
 }
 
 export function serverUpdateFailureText(
@@ -451,6 +487,7 @@ const cachedConfigSnapshotEvent = (config: ServerConfig): ServerConfigStreamEven
 export interface ServerConfigSubscriptionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
+  readonly hostPressure?: boolean;
   readonly usageLimitsCommand?: boolean;
   readonly providerCatalogsOnDemand?: boolean;
   readonly providerCatalogDigests?: boolean;
@@ -565,10 +602,12 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
     ) {
       // A cached stall would read as a fresh freeze on the next launch, and
       // serverTime changes every connect, which would rewrite the cache each time.
+      // Pressure is live-only.
       const {
         environmentThemes: _themes,
         usageLimitSources: _sources,
         lastEventLoopStall: _stall,
+        hostPressure: _pressure,
         serverTime: _serverTime,
         ...cacheable
       } = config;
@@ -623,6 +662,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
     const configUpdates = subscribe(WS_METHODS.subscribeServerConfig, {
       ...(subscription.environmentThemes === true ? { environmentThemes: true } : {}),
       ...(subscription.usageLimitSources === true ? { usageLimitSources: true } : {}),
+      ...(subscription.hostPressure === true ? { hostPressure: true } : {}),
       ...(subscription.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
       ...(subscription.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
       ...(subscription.providerCatalogDigests === true ? { providerCatalogDigests: true } : {}),
@@ -806,6 +846,14 @@ function serverWelcomeStateChanges(environmentId: EnvironmentId) {
   );
 }
 
+/** Whether an environment's server turned on a feature flag; unset flags and unloaded configs are off. */
+export function hasFeatureFlag(
+  config: Pick<ServerConfig, "featureFlags"> | null | undefined,
+  flag: keyof ServerFeatureFlags,
+): boolean {
+  return config?.featureFlags?.[flag] === true;
+}
+
 export function resolveServerConfigValue(
   projection: ServerConfigProjection | null,
   initialConfig: ServerConfig | null,
@@ -922,6 +970,7 @@ export function createServerEnvironmentAtoms<R, E>(
     ) => Atom.Atom<ServerConfig | null>;
     readonly environmentThemes?: boolean;
     readonly usageLimitSources?: boolean;
+    readonly hostPressure?: boolean;
     readonly usageLimitsCommand?: boolean;
     readonly providerCatalogsOnDemand?: boolean;
     readonly providerCatalogDigests?: boolean;
@@ -950,6 +999,7 @@ export function createServerEnvironmentAtoms<R, E>(
           {
             ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
             ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
+            ...(options.hostPressure === true ? { hostPressure: true } : {}),
             ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
             ...(options.providerCatalogsOnDemand === true
               ? { providerCatalogsOnDemand: true }
@@ -1216,9 +1266,10 @@ export function createServerEnvironmentAtoms<R, E>(
               stage: currentStage,
               fromVersion,
               targetVersion,
+              ...(updateResult.updateId === undefined ? {} : { updateId: updateResult.updateId }),
             });
             return updateResult;
-          }),
+          }).pipe(Effect.mapError(localizeServerSelfUpdateError)),
         );
 
         // A track switch's desktop host already on its track's newest build only saved the
@@ -1361,11 +1412,20 @@ export function createServerEnvironmentAtoms<R, E>(
     Atom.make((get) => {
       const settings = get(settingsValueAtom(environmentId));
       const aliases = settings?.usageModelAliases ?? {};
+      const instances = settings?.providerInstances ?? {};
       return JSON.stringify([
         get(usagePricesAtom(environmentId)),
         Object.keys(aliases)
           .sort()
           .map((model) => [model, aliases[model]]),
+        // The server scans only enabled instances whose usage access is allowed.
+        Object.entries(instances)
+          .map(([id, instance]) => [
+            id,
+            resolveProviderInstanceEnabled(instance),
+            instance.usageAccess,
+          ])
+          .sort(([a], [b]) => String(a).localeCompare(String(b))),
       ]);
     }).pipe(Atom.withLabel(`environment-data:server:usage-scan-settings:${environmentId}`)),
   );
@@ -1426,6 +1486,46 @@ export function createServerEnvironmentAtoms<R, E>(
       ),
     );
   });
+  const workflowsLive = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-data:server:workflows:live",
+    // Asks for what changed after the first list; a server older than that sends whole lists.
+    subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.workflowsSubscribe>) =>
+      subscribe(WS_METHODS.workflowsSubscribe, { ...input, changes: true }).pipe(
+        Stream.mapAccum(
+          (): WorkflowRunsSnapshot | undefined => undefined,
+          (snapshot, update) => {
+            const next = applyWorkflowRunsUpdate(snapshot, update);
+            return [next, [next]] as const;
+          },
+        ),
+      ),
+  });
+  const liveWorkflowSnapshot = (environmentId: EnvironmentId) => {
+    const live = workflowsLive({ environmentId, input: {} });
+    return (get: Atom.AtomContext) => Option.getOrUndefined(AsyncResult.value(get(live)));
+  };
+  // Keyed by a JSON array of environment ids, like the compaction notice, to read them as one.
+  const workflowsLiveAcross = Atom.family((environmentIdsKey: string) => {
+    const sources = (JSON.parse(environmentIdsKey) as EnvironmentId[]).map((environmentId) => ({
+      environmentId,
+      atom: workflowsLive({ environmentId, input: {} }),
+    }));
+    return Atom.make((get) =>
+      sources.map(({ environmentId, atom }) => ({ environmentId, result: get(atom) })),
+    ).pipe(Atom.withLabel(`environment-data:server:workflows:live-across:${environmentIdsKey}`));
+  });
+  // One change of a run or file at a time per target, so a double click does not act twice.
+  const workflowRunConcurrency = {
+    mode: "singleFlight" as const,
+    key: ({ environmentId, input }: { environmentId: EnvironmentId; input: { runId: string } }) =>
+      JSON.stringify([environmentId, input.runId]),
+  };
+  const workflowDefinitionScheduler = createAtomCommandScheduler();
+  const workflowDefinitionConcurrency = {
+    mode: "serial" as const,
+    key: ({ environmentId, input }: { environmentId: EnvironmentId; input: { name: string } }) =>
+      JSON.stringify([environmentId, input.name]),
+  };
   const welcome = (target: {
     readonly environmentId: EnvironmentId;
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerLifecycle>;
@@ -1536,6 +1636,12 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:provider:install-remove",
       tag: WS_METHODS.providerInstallRemove,
     }),
+    // Short-lived so opening a mode picker shows a setting changed a moment ago.
+    providerRuntimeModeLimits: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:provider-runtime-mode-limits",
+      tag: WS_METHODS.serverGetProviderRuntimeModeLimits,
+      staleTimeMs: 5_000,
+    }),
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,
@@ -1557,6 +1663,15 @@ export function createServerEnvironmentAtoms<R, E>(
       execute: (input: EnvironmentRpcInput<typeof WS_METHODS.serverGetHostResources>) =>
         request(WS_METHODS.serverGetHostResources, input).pipe(Effect.timeout("5 seconds")),
     }),
+    /** The same snapshot, refreshed while a thread's details card shows machine load. */
+    liveHostResources: createEnvironmentQueryAtomFamily(runtime, {
+      label: "environment-data:server:live-host-resources",
+      idleTtlMs: 0,
+      staleTimeMs: 5_000,
+      refreshIntervalMs: 5_000,
+      execute: (input: EnvironmentRpcInput<typeof WS_METHODS.serverGetHostResources>) =>
+        request(WS_METHODS.serverGetHostResources, input).pipe(Effect.timeout("5 seconds")),
+    }),
     processResourceHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
@@ -1571,6 +1686,31 @@ export function createServerEnvironmentAtoms<R, E>(
     scheduledTaskWebhookDelivery: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:scheduled-task:webhook-delivery",
       tag: WS_METHODS.scheduledTasksGetWebhookDelivery,
+    }),
+    workflowsLive,
+    workflowsLiveAcross,
+    workflowRun: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:workflows:run",
+      tag: WS_METHODS.workflowsGet,
+      refreshTrigger: ({ environmentId, input }) => {
+        const snapshot = liveWorkflowSnapshot(environmentId);
+        return Atom.make((get) => workflowRunRefreshKey(snapshot(get), input.runId));
+      },
+      isFinal: (detail) => detail.run.endedAt !== null,
+    }),
+    // Read when an item's view opens: the live list holds only the newest runs of every subject.
+    workflowRunsAbout: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:workflows:about",
+      tag: WS_METHODS.workflowsAbout,
+    }),
+    // Read again whenever the server loads the files or finds them wrong, which `revision` says.
+    workflowDefinition: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:workflows:definition",
+      tag: WS_METHODS.workflowsGetDefinition,
+      refreshTrigger: ({ environmentId }) => {
+        const snapshot = liveWorkflowSnapshot(environmentId);
+        return Atom.make((get) => snapshot(get)?.definition?.revision);
+      },
     }),
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:scheduled-tasks:live",
@@ -1635,6 +1775,18 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     configProjection,
     welcome,
+    updateOutcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:update-outcome",
+      tag: WS_METHODS.subscribeServerLifecycle,
+      transform: (stream) =>
+        stream.pipe(
+          Stream.filterMap((event) =>
+            event.type === "ready" && event.payload.updateOutcome !== undefined
+              ? Result.succeed(event.payload.updateOutcome)
+              : Result.failVoid,
+          ),
+        ),
+    }),
     legacyThreadMigration: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:legacy-thread-migration",
       tag: WS_METHODS.subscribeServerLifecycle,
@@ -1721,6 +1873,7 @@ export function createServerEnvironmentAtoms<R, E>(
             input.fresh ?? false,
             input.refreshModels ?? false,
             input.modelCatalogOnly ?? false,
+            input.limitsOnly ?? false,
           ]),
       },
     }),
@@ -1869,6 +2022,37 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    answerWorkflowQuestion: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:workflows:answer",
+      tag: WS_METHODS.workflowsAnswer,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.runId, input.name]),
+      },
+    }),
+    resumeWorkflowRun: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:workflows:resume",
+      tag: WS_METHODS.workflowsResume,
+      concurrency: workflowRunConcurrency,
+    }),
+    cancelWorkflowRun: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:workflows:cancel",
+      tag: WS_METHODS.workflowsCancel,
+      concurrency: workflowRunConcurrency,
+    }),
+    // Saves and deletes of one file go one after another: each carries its own text.
+    saveWorkflowDefinition: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:workflows:save-definition",
+      tag: WS_METHODS.workflowsSaveDefinition,
+      scheduler: workflowDefinitionScheduler,
+      concurrency: workflowDefinitionConcurrency,
+    }),
+    deleteWorkflowDefinition: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:workflows:delete-definition",
+      tag: WS_METHODS.workflowsDeleteDefinition,
+      scheduler: workflowDefinitionScheduler,
+      concurrency: workflowDefinitionConcurrency,
+    }),
     createGuestShare: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:guest-share:create",
       tag: WS_METHODS.guestShareCreate,
@@ -1878,6 +2062,15 @@ export function createServerEnvironmentAtoms<R, E>(
     answerSecretRequest: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:secrets:answer-request",
       tag: WS_METHODS.secretsAnswerRequest,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.turnItemId]),
+      },
+    }),
+    answerFeedbackRequest: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:agent-feedback:answer-request",
+      tag: WS_METHODS.agentFeedbackAnswerRequest,
       concurrency: {
         mode: "singleFlight",
         key: ({ environmentId, input }) =>

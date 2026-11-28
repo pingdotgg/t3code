@@ -6,6 +6,7 @@ import * as HttpBody from "../HttpBody.ts"
 import type { Compression, CompressionAlgorithm, CompressionOptions } from "../HttpPlatform.ts"
 import * as Response from "../HttpServerResponse.ts"
 import { compressionTransformWeb, singleChunkStream } from "./compressionBody.ts"
+import * as MediaType from "./mediaType.ts"
 
 export { compressionTransformWeb } from "./compressionBody.ts"
 
@@ -132,8 +133,7 @@ export const compressionWeb: Compression = makeCompressionWeb({
  * @internal
  */
 export const defaultCompressible = (contentType: string): boolean => {
-  const semi = contentType.indexOf(";")
-  const type = (semi === -1 ? contentType : contentType.slice(0, semi)).trim().toLowerCase()
+  const type = MediaType.normalize(contentType)
   if (type.startsWith("text/")) {
     return true
   }

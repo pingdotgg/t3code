@@ -446,6 +446,54 @@ describe("CursorAdapterV2", () => {
       answers: [],
     },
     {
+      reason: "no failure when the connection fails after the turn ended",
+      updates: [
+        { type: "text-delta", text: "Done." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "error" as const,
+        error: { message: "Connection failed repeatedly" },
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: null,
+    },
+    {
+      reason: "a connection failure before the turn ends",
+      updates: [
+        { type: "text-delta", text: "Working." },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "error" as const,
+        error: { message: "Connection failed repeatedly" },
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: { class: "provider_error", message: "Connection failed repeatedly" },
+    },
+    {
+      reason: "a connection failure during a continuation after the turn ended",
+      updates: [
+        { type: "text-delta", text: "Done." },
+        { type: "turn-ended" },
+        { type: "step-started", stepId: 2 },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "error" as const,
+        error: { message: "Connection failed repeatedly" },
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: { class: "provider_error", message: "Connection failed repeatedly" },
+    },
+    {
       reason: "the token usage Cursor reported",
       // Cursor's inputTokens already include cache reads and writes.
       updates: [
@@ -756,6 +804,155 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
+  it.effect("marks failed turns as promptDropped only when Cursor did not checkpoint the run", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "cursor-v2-dropped-",
+      });
+      const checkpointedRuns = new Set<string>();
+      let sendCalls = 0;
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-dropped-thread");
+      const modelSelection = { instanceId, model: "gemini-4-neon" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-dropped",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              runCheckpointed: (runId) =>
+                Effect.succeed(runId !== undefined && checkpointedRuns.has(runId)),
+              send: () =>
+                Effect.sync(() => {
+                  sendCalls += 1;
+                  const runId = `native-cursor-run-${sendCalls}`;
+                  return {
+                    agentId: "native-cursor-dropped",
+                    runId,
+                    cancel: Effect.void,
+                    wait: Effect.succeed({
+                      id: runId,
+                      status: "error" as const,
+                      error: {
+                        message:
+                          'AI Model Not Found Invalid parameters for registry model: "gemini-4-neon"',
+                      },
+                    }),
+                  };
+                }),
+            }),
+          textGenerate: () => Effect.die("unused"),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-dropped-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const appThread = {
+        id: threadId,
+        projectId: ProjectId.make("cursor-dropped-project"),
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        title: "Cursor dropped prompt",
+        providerInstanceId: instanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: providerThread.id,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      };
+      const runFailed = (ordinal: number) =>
+        Effect.gen(function* () {
+          yield* runtime.startTurn({
+            threadId,
+            providerThread,
+            modelSelection,
+            runtimePolicy,
+            runId: RunId.make(`cursor-dropped-run-${ordinal}`),
+            runOrdinal: ordinal,
+            providerTurnOrdinal: ordinal,
+            attemptId: RunAttemptId.make(`cursor-dropped-attempt-${ordinal}`),
+            rootNodeId: NodeId.make(`cursor-dropped-root-${ordinal}`),
+            appThread,
+            message: {
+              messageId: MessageId.make(`cursor-dropped-message-${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text: "Resume",
+              attachments: [],
+            },
+          });
+          const events = yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          );
+          const terminal = events.find((event) => event.type === "turn.terminal");
+          const turn = events.findLast(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+          );
+          return {
+            terminal: terminal?.type === "turn.terminal" ? terminal : undefined,
+            turn: turn?.type === "provider_turn.updated" ? turn.providerTurn : undefined,
+          };
+        });
+
+      // Uncheckpointed failure: Cursor never persisted the prompt.
+      const uncheckpointed = yield* runFailed(1);
+      assert.equal(uncheckpointed.terminal?.status, "failed");
+      assert.equal(uncheckpointed.terminal?.promptDropped, true);
+      assert.equal(uncheckpointed.turn?.promptDropped, true);
+
+      // Checkpointed failure: Cursor kept the run's prompt in its store.
+      checkpointedRuns.add("native-cursor-run-2");
+      const checkpointed = yield* runFailed(2);
+      assert.equal(checkpointed.terminal?.status, "failed");
+      assert.isUndefined(checkpointed.terminal?.promptDropped);
+      assert.isUndefined(checkpointed.turn?.promptDropped);
+
+      // After a restart no turn ends to report it, so the next turn start asks instead.
+      const kept = (nativeTurnId: string) =>
+        runtime.nativeTurnKept!({ providerThread, nativeTurnId });
+      assert.isFalse(yield* kept("native-cursor-run-1"));
+      assert.isTrue(yield* kept("native-cursor-run-2"));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
   it.effect("sends T3 instructions to each Cursor conversation that lacks them", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -766,6 +963,9 @@ describe("CursorAdapterV2", () => {
       let nextRunStatus: "finished" | "error" = "finished";
       let nextSummaryCompleted: { readonly failed?: boolean } | undefined;
       let createdAgents = 0;
+      const sentServers: Array<Record<string, unknown> | undefined> = [];
+      let teamBlocksT3 = false;
+      let outage = false;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-device-thread");
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -808,16 +1008,43 @@ describe("CursorAdapterV2", () => {
                     )
                   : Effect.sync(() => void rewoundAfter.push(runId)),
               send: (input) =>
-                Effect.sync(() => {
+                Effect.suspend(() => {
                   sentMessages.push(
                     typeof input.message === "string" ? input.message : input.message.text,
                   );
+                  sentServers.push(input.options?.mcpServers);
+                  // Like the SDK, team policy covers the agent's own servers as well as the turn's,
+                  // and wraps its InlineMcpServersBlockedError in an UnknownAgentError.
+                  const servers = [openInput.options.mcpServers, input.options?.mcpServers];
+                  if (teamBlocksT3 && servers.some((set) => set?.["t3-code"])) {
+                    const blocked = Object.assign(new Error("Blocked by team policy"), {
+                      name: "InlineMcpServersBlockedError",
+                      servers: [{ name: "t3-code", reason: "teamPolicy" }],
+                    });
+                    return Effect.fail(
+                      new CursorAgentSdk.CursorAgentSdkRunnerError({
+                        method: "run.start",
+                        cause: Object.assign(new Error(blocked.message, { cause: blocked }), {
+                          name: "UnknownAgentError",
+                        }),
+                      }),
+                    );
+                  }
+                  if (outage) {
+                    outage = false;
+                    return Effect.fail(
+                      new CursorAgentSdk.CursorAgentSdkRunnerError({
+                        method: "run.start",
+                        cause: new Error("network unreachable"),
+                      }),
+                    );
+                  }
                   const runId = `native-cursor-run-${sentMessages.length}`;
                   const status = nextRunStatus;
                   const summaryCompleted = nextSummaryCompleted;
                   nextRunStatus = "finished";
                   nextSummaryCompleted = undefined;
-                  return {
+                  return Effect.succeed({
                     agentId,
                     runId,
                     wait: Effect.gen(function* () {
@@ -837,7 +1064,7 @@ describe("CursorAdapterV2", () => {
                       };
                     }),
                     cancel: Effect.void,
-                  };
+                  });
                 }),
             });
           },
@@ -882,6 +1109,7 @@ describe("CursorAdapterV2", () => {
       // Starts at run 5: a conversation from before device instructions existed, now resumed.
       let runOrdinal = 4;
       let lastProviderTurn: OrchestrationV2ProviderTurn | undefined;
+      let notices = 0;
       const send = Effect.fnUntraced(function* (
         compact = false,
         nativeThreadHasTurns?: boolean,
@@ -924,6 +1152,9 @@ describe("CursorAdapterV2", () => {
         const providerTurn = events.findLast((event) => event.type === "provider_turn.updated");
         if (providerTurn?.type === "provider_turn.updated")
           lastProviderTurn = providerTurn.providerTurn;
+        notices = events.filter(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+        ).length;
         const sent = sentMessages.at(-1)!;
         return {
           orchestration: sent.includes("## T3 Code orchestration"),
@@ -1029,6 +1260,8 @@ describe("CursorAdapterV2", () => {
         "a failed rewind leaves the conversation, and what it was told, unchanged",
       );
       const rewound = yield* rollbackToKept;
+      // The rewind closed the SDK session, so the next send launches one.
+      assert.equal(runtime.providerSession.startupPhase, "launch");
       assert.deepEqual(rewoundAfter, [keptTurn.nativeTurnRef?.nativeId]);
       assert.deepEqual(
         rewound.providerThread.nativeThreadRef,
@@ -1062,6 +1295,23 @@ describe("CursorAdapterV2", () => {
         told(true, true, true),
         "the fresh agent after a rollback has been told nothing",
       );
+
+      // A team MCP policy blocks T3's server. A retry that fails for another reason leaves the
+      // block to be found, and told, on the next turn.
+      teamBlocksT3 = true;
+      outage = true;
+      yield* Effect.flip(send(false, false));
+      assert.deepEqual(
+        yield* send(false, false),
+        told(false, false, true),
+        "a turn without T3's server leaves out its instructions",
+      );
+      assert.isUndefined(sentServers.at(-1));
+      assert.property(sentServers.at(-2), "t3-code");
+      assert.equal(notices, 1);
+      assert.deepEqual(yield* send(), told(false, false, false));
+      assert.isUndefined(sentServers.at(-1));
+      assert.equal(notices, 0, "later turns skip the blocked server without another notice");
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -1219,6 +1469,13 @@ describe("CursorAdapterV2", () => {
       );
       assert(started.type === "provider_turn.updated");
       yield* runtime.interruptTurn({ providerThread, providerTurnId: started.providerTurn.id });
+      assert.isTrue(
+        yield* runtime.nativeTurnKept!({
+          providerThread,
+          nativeTurnId: started.providerTurn.nativeTurnRef!.nativeId!,
+        }),
+        "a live session replays the stopped request itself, so the server must not resend it too",
+      );
       yield* runtime.startTurn(turnInput(2, steerText));
 
       assert.lengthOf(sentMessages, 2);
@@ -1590,8 +1847,11 @@ describe("CursorAdapterV2", () => {
           toolCall: { type: "shell" as const, args: { command: callId } },
         })),
         {
-          type: "shell-output-delta",
-          event: { case: "stdout", value: { data: "tick 1\n" }, toolCallId: "slow-shell" },
+          type: "shell-tool-call-delta",
+          callId: "slow-shell",
+          modelCallId: "native-model-call",
+          stream: "stdout",
+          content: "tick 1\n",
         },
         {
           type: "shell-output-delta",
@@ -2390,6 +2650,8 @@ describe("CursorAdapterV2", () => {
                 send: (input) =>
                   Effect.gen(function* () {
                     report = input.onBackgroundShell!;
+                    yield* input.onStartupPhase!("plugins");
+                    yield* input.onStartupPhase!("plugins");
                     for (const id of ["6", "7", "8"]) {
                       yield* report({
                         ...shell(id),
@@ -2484,6 +2746,16 @@ describe("CursorAdapterV2", () => {
         const events = yield* runtime.events.pipe(
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
+        );
+        // The worker launch and the phase the SDK reported while starting are each published once,
+        // and the launch holds until the send reports or the run starts.
+        assert.deepEqual(
+          events.flatMap((event) =>
+            event.type === "provider_session.updated"
+              ? [event.providerSession.startupPhase ?? null]
+              : [],
+          ),
+          ["launch", "plugins", null],
         );
         const listed = (
           update: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
@@ -2765,7 +3037,6 @@ describe("CursorAdapterV2", () => {
                 cwd: home,
               },
               threadId: ThreadId.make("cursor-attribution-thread"),
-              mcpSession: undefined,
               platform: "linux",
             }),
           ),
@@ -2808,7 +3079,6 @@ describe("CursorAdapterV2", () => {
                 cwd: home,
               },
               threadId: ThreadId.make(`cursor-new-model-${model}`),
-              mcpSession: undefined,
               platform: "linux",
             }),
             threadId: ThreadId.make(`cursor-new-model-${model}`),
@@ -3006,21 +3276,24 @@ describe("CursorAdapterV2", () => {
         cwd: "/workspace",
       },
       threadId,
-      mcpSession,
       platform: "linux",
     });
-    assert.deepEqual(options.mcpServers, cursorMcpServers(mcpSession));
-
-    const logged = JSON.stringify(CursorAgentSdk.loggedCursorAgentOptions(options));
-    assert.notInclude(logged, "secret-cursor-api-key");
-    assert.notInclude(logged, "secret-cursor-mcp-token");
+    assert.notInclude(
+      JSON.stringify(CursorAgentSdk.loggedCursorAgentOptions(options)),
+      "secret-cursor-api-key",
+    );
+    assert.notInclude(
+      JSON.stringify(
+        CursorAgentSdk.loggedCursorSendOptions({ mcpServers: cursorMcpServers(mcpSession)! }),
+      ),
+      "secret-cursor-mcp-token",
+    );
   });
 
   it("loads project settings only when runtime policy permits unrestricted execution", () => {
     const input = {
       modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2.5" },
       threadId: ThreadId.make("cursor-project-settings"),
-      mcpSession: undefined,
       platform: "linux" as const,
     };
     const policy = { cwd: "/workspace", interactionMode: "default" as const };
@@ -3073,7 +3346,7 @@ describe("CursorAdapterV2", () => {
         const workspace = path.join(scratch, "workspace");
         const home = path.join(scratch, "home");
         const loadServers = () =>
-          cursorWorkspaceMcpServers(cwd, { MCP_TYPE: "stdio" }).pipe(
+          cursorWorkspaceMcpServers(cwd, { MCP_TYPE: "stdio" }, { includeProject: true }).pipe(
             Effect.provideService(HostProcess.HomeDirectory, home),
             Effect.provideService(HostProcess.Environment, {}),
           );
@@ -3196,13 +3469,13 @@ describe("CursorAdapterV2", () => {
             Effect.provideService(HostProcess.Environment, {}),
           );
         const now = yield* DateTime.now;
-        const sendTurn = (ordinal: number) =>
+        const sendTurn = (ordinal: number, turnPolicy = runtimePolicy) =>
           runtime
             .startTurn({
               threadId,
               providerThread,
               modelSelection,
-              runtimePolicy,
+              runtimePolicy: turnPolicy,
               runId: RunId.make(`cursor-mcp-run-${ordinal}`),
               runOrdinal: ordinal,
               providerTurnOrdinal: ordinal,
@@ -3258,8 +3531,8 @@ describe("CursorAdapterV2", () => {
           },
           "cwd-only": { command: "node", args: ["server.mjs"], cwd: projectRoot },
         };
-        // The agent is created with T3's server only; the resolved servers go with each turn.
-        assert.deepEqual(openedWith?.mcpServers, t3Servers);
+        // Cursor checks an agent's own servers against team policy, so every server goes with each turn.
+        assert.isUndefined(openedWith?.mcpServers);
         yield* sendTurn(1);
         assert.deepEqual(sentWith[0], { ...expectedServers, ...t3Servers });
         // A server switched off between turns stays off on the next one.
@@ -3277,6 +3550,20 @@ describe("CursorAdapterV2", () => {
         );
         yield* sendTurn(3);
         assert.deepEqual(sentWith[2], t3Servers);
+        // A restricted turn starts no command the checkout names; the user's own file still applies.
+        yield* fileSystem.writeFileString(
+          path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
+          "[]",
+        );
+        for (const [index, runtimeMode] of (
+          ["approval-required", "auto-accept-edits", "auto"] as const
+        ).entries()) {
+          yield* sendTurn(4 + index, { ...runtimePolicy, runtimeMode });
+          assert.deepEqual(sentWith[3 + index], {
+            repro: { command: "node", args: [`${home}/shadowed.mjs`], cwd: projectRoot },
+            ...t3Servers,
+          });
+        }
         yield* fileSystem.writeFileString(
           path.join(workspace, ".cursor", "mcp.json"),
           JSON.stringify({ mcpServers: { plain: { command: "node", args: ["server.mjs"] } } }),
@@ -3509,6 +3796,160 @@ describe("CursorAdapterV2", () => {
           Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
         ),
       ),
+  );
+
+  it.effect("reopens a fresh session when a cached worker session is no longer alive", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-cursor-dead-worker-",
+      });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-dead-worker-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+
+      let firstAlive = true;
+      let secondAlive = true;
+      const secondEnded = yield* Deferred.make<void>();
+      let firstClosed = 0;
+      const opens: Array<{ readonly operation: string; readonly agentId?: string }> = [];
+      const sends: Array<number> = [];
+
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: (input) => {
+            const sessionNumber = opens.length + 1;
+            opens.push({
+              operation: input.operation,
+              ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
+            });
+            return Effect.succeed({
+              agentId: "native-cursor-reopen",
+              isAlive: () => (sessionNumber === 1 ? firstAlive : secondAlive),
+              ...(sessionNumber === 2 ? { ended: Deferred.await(secondEnded) } : {}),
+              listMessages: Effect.succeed([]),
+              close: Effect.sync(() => {
+                if (sessionNumber === 1) firstClosed += 1;
+              }),
+              send: () => {
+                sends.push(sessionNumber);
+                return Effect.succeed({
+                  agentId: "native-cursor-reopen",
+                  runId: `run-${sessionNumber}`,
+                  wait: Effect.succeed({
+                    id: `run-${sessionNumber}`,
+                    requestId: `req-${sessionNumber}`,
+                    status: "finished" as const,
+                    result: "ok",
+                    model: { id: "composer-2.5" },
+                    durationMs: 1,
+                  }),
+                  cancel: Effect.void,
+                });
+              },
+            });
+          },
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-dead-worker-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.deepEqual(opens, [{ operation: "create" }]);
+
+      // Simulate the first worker terminating after ensureThread.
+      firstAlive = false;
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make("cursor-dead-worker-run"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("cursor-dead-worker-attempt"),
+        rootNodeId: NodeId.make("cursor-dead-worker-root"),
+        appThread: {
+          id: threadId,
+          projectId: ProjectId.make("cursor-dead-worker-project"),
+          createdBy: "user",
+          creationSource: "web",
+          title: "Dead worker recovery",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        message: {
+          messageId: MessageId.make("cursor-dead-worker-message"),
+          createdBy: "user",
+          creationSource: "web",
+          text: "Continue on a fresh worker.",
+          attachments: [],
+        },
+      });
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      );
+      assert.equal(events.find((event) => event.type === "turn.terminal")?.status, "completed");
+      assert.equal(firstClosed, 1);
+      assert.deepEqual(opens, [
+        { operation: "create" },
+        { operation: "resume", agentId: "native-cursor-reopen" },
+      ]);
+      assert.deepEqual(sends, [2]);
+
+      // A worker that dies while the session is idle is reported before the next send.
+      secondAlive = false;
+      yield* Deferred.succeed(secondEnded, undefined);
+      const gone = yield* runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "provider_session.updated" &&
+            event.providerSession.startupPhase === "launch",
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+      );
+      assert.lengthOf(gone, 1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it("preserves failed nested read calls when Cursor omits their path", () => {

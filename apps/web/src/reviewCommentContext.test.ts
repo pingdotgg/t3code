@@ -85,6 +85,51 @@ describe("review comment context parsing", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it("falls back to a line-count label when mixed diff-side line numbers decrease", () => {
+    const [fileDiff] = parsePatchFiles(
+      [
+        "diff --git a/notes.txt b/notes.txt",
+        "--- a/notes.txt",
+        "+++ b/notes.txt",
+        "@@ -1,3 +1,6 @@",
+        "+added A",
+        "+added B",
+        "+added C",
+        " line 1",
+        " line 2",
+        " line 3",
+        "@@ -8,4 +11,3 @@",
+        " line 8",
+        " line 9",
+        " line 10",
+        "-line 11",
+      ].join("\n"),
+      { cacheKeyPrefix: "review-comment-test" },
+    )[0]!.files;
+
+    const comment = buildDiffReviewComment({
+      id: "comment-inverted",
+      sectionId: "turn:2",
+      sectionTitle: "Turn 2",
+      filePath: "notes.txt",
+      fileDiff: fileDiff!,
+      range: {
+        start: 13,
+        side: "additions",
+        end: 11,
+        endSide: "deletions",
+      },
+      text: "Check this deletion.",
+    });
+
+    expect(comment).toEqual(
+      expect.objectContaining({
+        rangeLabel: "2 lines",
+        diff: "@@ -10,2 +13,1 @@\n line 10\n-line 11",
+      }),
+    );
+  });
+
   it("keeps a selection's trailing blank line and whitespace in the rendered excerpt", () => {
     const fileDiff = parsePatchFiles(
       [

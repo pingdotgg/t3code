@@ -1,3 +1,4 @@
+import { compactT3McpToolOutput } from "@t3tools/shared/toolOutput";
 import { describe, expect, it } from "vite-plus/test";
 
 import { summarizeT3ToolCalls, type T3ToolSummaryCall } from "./t3ToolSummary.ts";
@@ -98,6 +99,66 @@ describe("summarizeT3ToolCalls", () => {
       failedCount: 1,
     });
     expect(summarizeT3ToolCalls("ci-rerun", [rerun()]).label).toBe(
+      "Found no failed checks to re-run",
+    );
+  });
+
+  it("preserves pull request summary outcomes after MCP tool output compaction", () => {
+    const createExisting = completed(
+      { title: "t" },
+      compactT3McpToolOutput("t3-code.pull_request_create", {
+        number: 1,
+        repository: "o/r",
+        url: "https://github.com/o/r/pull/1",
+        created: false,
+      }),
+    );
+    expect(summarizeT3ToolCalls("create-pr", [createExisting]).label).toBe(
+      "Found 1 open pull request",
+    );
+
+    const mergeQueued = completed(
+      { auto: false },
+      compactT3McpToolOutput("t3-code.pull_request_merge", { number: 1, state: "open" }),
+    );
+    const mergeLanded = completed(
+      { auto: true },
+      compactT3McpToolOutput("t3-code.pull_request_merge", { number: 2, state: "merged" }),
+    );
+    expect(summarizeT3ToolCalls("merge-pr", [mergeQueued]).label).toBe(
+      "Queued 1 pull request to merge",
+    );
+    expect(summarizeT3ToolCalls("merge-pr", [mergeLanded]).label).toBe("Merged 1 pull request");
+
+    const guidesMixed = completed(
+      {},
+      compactT3McpToolOutput("t3-code.write_pull_request_guides", {
+        guides: [
+          { number: 1, outcome: "started", detail: null },
+          { number: 2, outcome: "failed", detail: "Guides disabled" },
+        ],
+      }),
+    );
+    expect(summarizeT3ToolCalls("write-pr-guides", [guidesMixed])).toEqual({
+      label: "Started 1 review guide, 1 failed",
+      failedCount: 1,
+    });
+
+    const rerunMixed = completed(
+      {},
+      compactT3McpToolOutput("t3-code.ci_rerun", {
+        checks: [
+          { name: "test", rerun: true, detail: null },
+          { name: "external", rerun: false, detail: "Cannot rerun" },
+        ],
+      }),
+    );
+    const rerunEmpty = completed({}, compactT3McpToolOutput("t3-code.ci_rerun", { checks: [] }));
+    expect(summarizeT3ToolCalls("ci-rerun", [rerunMixed])).toEqual({
+      label: "Re-ran 1 check, 1 refused",
+      failedCount: 1,
+    });
+    expect(summarizeT3ToolCalls("ci-rerun", [rerunEmpty]).label).toBe(
       "Found no failed checks to re-run",
     );
   });

@@ -1,7 +1,11 @@
 import type { EnvironmentId, UsageModelFilter, UsageSummaryInput } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import type { AtomRegistry } from "effect/reactivity";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
+import { errorDisplayMessage } from "../errors/translatable.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type { createEnvironmentPresentationAtoms } from "./presentation.ts";
 import { executeAtomQuery, runAtomCommand, squashAtomCommandFailure } from "./runtime.ts";
@@ -15,6 +19,19 @@ export function usageSummaryInput(
   modelFilter: UsageModelFilter | undefined,
 ): UsageSummaryInput {
   return modelFilter === undefined ? input : { ...input, modelFilter };
+}
+
+/** The server's reason a reset credit could not be used, or a generic line when it gave none. */
+export function resetCreditFailureText(
+  result: { readonly cause: Cause.Cause<unknown> },
+  resolve: MFunctionType = mFallback,
+): string {
+  // Squashing an interrupt-only cause invents Effect's own "All fibers interrupted" text.
+  const failed = Cause.hasFails(result.cause) || Cause.hasDies(result.cause);
+  return (
+    (failed ? errorDisplayMessage(squashAtomCommandFailure(result), resolve) : null) ??
+    resolve(msg("Could not use the reset credit."))
+  );
 }
 
 const limitsRefreshAfter = new Map<EnvironmentId, number>();

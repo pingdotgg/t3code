@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({
   openFile: vi.fn(),
   openExternal: vi.fn(),
   copy: vi.fn(),
+  download: vi.fn(),
   pullRequests: [] as ThreadPullRequestLink[],
 }));
 
@@ -96,6 +97,35 @@ vi.mock(import("../localApi"), async (original) => ({
       shell: { openExternal: state.openExternal },
     }) as never,
 }));
+vi.mock(import("../hooks/useFileMetadata"), async (original) => ({
+  ...(await original()),
+  useFileMetadata: ((_id: unknown, path: string) =>
+    path.includes("user.ts")
+      ? null
+      : { kind: path.includes("src") ? "directory" : "file" }) as never,
+}));
+vi.mock(import("./files/useFileDownload"), () => ({ useFileDownload: () => state.download }));
+vi.mock(import("../env"), async (original) => ({ ...(await original()), isElectron: true }));
+// Desktop can forward this environment's ports: it runs on another machine.
+vi.mock(import("../state/portForwards"), async (original) => ({
+  ...(await original()),
+  canForwardPorts: () => true,
+  useForwardLocality: () => "remote" as const,
+  usePortForwards: () => [],
+  forwardPort: (async (environmentId: string, remotePort: number) => ({
+    environmentId,
+    remotePort,
+    localPort: 45000,
+  })) as never,
+}));
+vi.mock(import("../state/environments"), async (original) => ({
+  ...(await original()),
+  useEnvironment: (() => ({
+    connection: { phase: "connected" },
+    entry: { target: { _tag: "BearerConnectionTarget", connectionId: "saved:remote" } },
+    serverConfig: null,
+  })) as never,
+}));
 vi.mock(import("@t3tools/client-runtime/change-request-links"), async (original) => ({
   ...(await original()),
   resolvePullRequestPreviewTarget: () => null,
@@ -140,6 +170,7 @@ function setup() {
   state.openFile.mockReset();
   state.openExternal.mockReset().mockResolvedValue(undefined);
   state.copy.mockReset().mockResolvedValue(undefined);
+  state.download.mockReset();
   const { openFile } = useRightPanelStore.getState();
   useRightPanelStore.setState({ openFile: state.openFile });
   stack.defer(() => useRightPanelStore.setState({ openFile }));
@@ -187,15 +218,30 @@ it("removes host actions after revocation while keeping file preview and copying
   using _setup = setup();
   await using screen = await renderMarkdown("[Readme](docs/readme.md)");
   await screen.openContextMenu();
-  expect(offeredActions()).toEqual(["open", "reveal", "copy-relative", "copy-full"]);
+  expect(offeredActions()).toEqual(["open", "reveal", "download", "copy-relative", "copy-full"]);
   await setAllowed(false);
+  state.choose.mockResolvedValue("download");
+  await screen.openContextMenu();
+  expect(offeredActions()).toEqual(["download", "copy-relative", "copy-full"]);
+  expect(state.download).toHaveBeenCalledWith("/work", expect.any(Promise));
+  await expect(state.download.mock.lastCall![1]).resolves.toBe("/work/docs/readme.md");
   state.choose.mockResolvedValue("copy-full");
   await screen.openContextMenu();
-  expect(offeredActions()).toEqual(["copy-relative", "copy-full"]);
   await vi.waitFor(() => expect(state.copy).toHaveBeenCalledWith("/work/docs/readme.md"));
   await act(async () => screen.anchor().click());
   expect(state.openFile).toHaveBeenCalledWith(threadRef, "docs/readme.md", undefined);
   expect(state.openEditor).not.toHaveBeenCalled();
+});
+
+it("offers download unless the link is a known folder", async () => {
+  using _setup = setup();
+  await using folder = await renderMarkdown("[Source](./src)");
+  await folder.openContextMenu();
+  expect(offeredActions()).not.toContain("download");
+  // A bare name the workspace lookup resolves elsewhere has no metadata at its literal path.
+  await using basename = await renderMarkdown("[user.ts](user.ts)");
+  await basename.openContextMenu();
+  expect(offeredActions()).toContain("download");
 });
 
 it.each(["[Docs](https://example.com/docs)", "[Readme](docs/readme.md)"])(
@@ -322,4 +368,37 @@ it("preserves keyboard activation of a file-options button", async () => {
   }
   await userEvent.click(button);
   await vi.waitFor(() => expect(state.choose.mock.lastCall?.[2]).toBe("mouse"));
+});
+
+it("opens an editor link over the desktop bridge on a click and on a middle-click", async () => {
+  using _setup = setup();
+  const href = "vscode://file/work/docs/readme.md:3";
+  await using screen = await renderMarkdown(`[Open in editor](${href})`);
+  for (const [type, button] of [
+    ["click", 0],
+    ["auxclick", 1],
+  ] as const) {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true, button });
+    await act(async () => screen.anchor().dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(true);
+    expect(state.openExternal).toHaveBeenLastCalledWith(href);
+  }
+  expect(state.openExternal).toHaveBeenCalledTimes(2);
+});
+
+it("opens a remote environment's localhost link in the system browser through a forward", async () => {
+  using _setup = setup();
+  await using screen = await renderMarkdown("[App](http://localhost:3000/docs?x=1#top)");
+  // Keeps the test page from following the link; React's handlers run before this.
+  const stopNavigation = (event: Event) => event.preventDefault();
+  window.addEventListener("click", stopNavigation);
+  try {
+    await userEvent.click(screen.anchor(), { modifiers: ["ControlOrMeta"] });
+  } finally {
+    window.removeEventListener("click", stopNavigation);
+  }
+  await vi.waitFor(() =>
+    expect(state.openExternal).toHaveBeenCalledWith("http://localhost:45000/docs?x=1#top"),
+  );
+  expect(state.openExternal).not.toHaveBeenCalledWith("http://localhost:3000/docs?x=1#top");
 });

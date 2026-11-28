@@ -14,6 +14,7 @@ import {
   type ServerLifecycleWelcomePayload,
   type ServerSelfUpdateOutcome,
   WS_METHODS,
+  CALM_HOST_PRESSURE,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
@@ -66,12 +67,14 @@ import {
   resolveServerUpdateProgressResult,
   serverUpdateStateForProgressEvent,
   serverUpdateStateAtom,
+  serverUpdateFailureText,
   serverUpdateStateForServerVersion,
   validateServerUpdateReadyEvent,
   waitForNextEnvironmentReconnect,
   waitForDesktopUpdateTarget,
   runDesktopCommitWithReconnectObserver,
 } from "./server.ts";
+import { errorDisplayMessage, errorI18nMessage } from "../errors/translatable.ts";
 import { runAtomCommand } from "./runtime.ts";
 import { applyServerConfigProjection } from "./serverConfigProjection.ts";
 
@@ -107,6 +110,7 @@ function session(client: WsRpcProtocolClient): RpcSession {
     ready: Effect.void,
     probe: Effect.void,
     inboundFrames: Effect.succeed(0),
+    awaitingReply: Effect.succeed(false),
     closed: Effect.never,
   };
 }
@@ -239,14 +243,21 @@ describe("accepted server update recovery", () => {
     { loss: "interrupt", resumes: true },
     { loss: "socket", resumes: true },
     { loss: "server_error", resumes: false },
+    { loss: "track_mismatch", method: "desktop-managed", resumes: false },
+    { loss: "track_mismatch", method: "desktop-managed", unary: true, resumes: false },
     { loss: "no_progress", resumes: false },
     { loss: "cancel", resumes: false },
     { loss: "socket", method: "respawn", resumes: true },
     { loss: "socket", method: "desktop-managed", resumes: false },
-  ] as const)("handles $loss with $method and recovery=$resumes", (scenario) =>
+  ] as const)("handles $loss with $method, unary=$unary and recovery=$resumes", (scenario) =>
     Effect.gen(function* () {
       const { loss, resumes } = scenario;
       const method = "method" in scenario ? scenario.method : "boot-service";
+      const trackMismatch = new ServerSelfUpdateError({
+        reason:
+          "This Stable build can't update from the Nightly track on its own. Switch the update track back to Stable, or use Review beside Update track to retry the switch to Nightly.",
+        trackMismatch: { buildChannel: "latest", savedChannel: "nightly" },
+      });
       const observing = yield* Deferred.make<void>();
       const cancelFiber = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
       const oldReadyObserved = yield* Deferred.make<void>();
@@ -257,7 +268,10 @@ describe("accepted server update recovery", () => {
         environment: {
           ...CONFIG.environment,
           serverVersion: "0.0.30",
-          capabilities: { serverSelfUpdate: method, serverSelfUpdateProgress: true },
+          capabilities: {
+            serverSelfUpdate: method,
+            serverSelfUpdateProgress: !("unary" in scenario),
+          },
         },
       } as ServerConfig;
       const ready = (serverVersion: string) =>
@@ -283,6 +297,7 @@ describe("accepted server update recovery", () => {
                 ),
               )
             : Stream.make(ready("0.0.30")).pipe(Stream.concat(Stream.never)),
+        [WS_METHODS.serverUpdateServer]: () => Effect.fail(trackMismatch),
         [WS_METHODS.serverUpdateServerWithProgress]: () =>
           Stream.unwrap(
             Effect.sync(() => {
@@ -306,9 +321,11 @@ describe("accepted server update recovery", () => {
                           ? new ServerSelfUpdateError({
                               reason: "Archive verification failed.",
                             })
-                          : new RpcClientError.RpcClientError({
-                              reason: new Socket.SocketCloseError({ code: 1006 }),
-                            }),
+                          : loss === "track_mismatch"
+                            ? trackMismatch
+                            : new RpcClientError.RpcClientError({
+                                reason: new Socket.SocketCloseError({ code: 1006 }),
+                              }),
                       ),
               ),
             ),
@@ -377,10 +394,22 @@ describe("accepted server update recovery", () => {
       );
       if (!resumes) {
         expect(first).toBe("settled");
-        expect(AsyncResult.isFailure(yield* Effect.promise(() => pending))).toBe(true);
-        expect(registry.get(serverUpdateStateAtom(TARGET.environmentId))).toMatchObject({
-          status: "failed",
-        });
+        const failure = yield* Effect.promise(() => pending);
+        expect(AsyncResult.isFailure(failure)).toBe(true);
+        const failed = registry.get(serverUpdateStateAtom(TARGET.environmentId));
+        expect(failed).toMatchObject({ status: "failed" });
+        if (
+          loss === "track_mismatch" &&
+          AsyncResult.isFailure(failure) &&
+          failed.status === "failed"
+        ) {
+          const cause = Cause.squash(failure.cause);
+          const marked = errorI18nMessage(cause);
+          expect(marked).toHaveLength(2);
+          expect(failed.i18nMessage).toEqual(marked);
+          expect(errorDisplayMessage(cause)).toBe(trackMismatch.message);
+          expect(serverUpdateFailureText(failed)).toBe(trackMismatch.message);
+        }
         return;
       }
       expect(first).toBe("observing");
@@ -822,6 +851,18 @@ describe("server state projection", () => {
       stage: "resuming",
       fromVersion: "0.0.30",
       targetVersion: "0.0.31",
+    });
+    expect(
+      serverUpdateStateForProgressEvent("0.0.30", "0.0.31", {
+        type: "complete",
+        result: { targetVersion: "0.0.31", method: "boot-service", updateId: "update-1" },
+      }),
+    ).toEqual({
+      status: "running",
+      stage: "resuming",
+      fromVersion: "0.0.30",
+      targetVersion: "0.0.31",
+      updateId: "update-1",
     });
     expect(
       serverUpdateStateForProgressEvent("0.0.30", "0.0.31", {
@@ -1438,7 +1479,11 @@ describe("server state projection", () => {
           yield* Queue.offer(events, {
             version: 1,
             type: "snapshot",
-            config: { ...CONFIG, lastEventLoopStall },
+            config: {
+              ...CONFIG,
+              lastEventLoopStall,
+              hostPressure: { ...CALM_HOST_PRESSURE, memory: "severe" },
+            },
           });
           const projected = yield* SubscriptionRef.changes(state).pipe(
             Stream.filter((value) =>
@@ -1456,7 +1501,10 @@ describe("server state projection", () => {
       );
 
       // Cached, it would read as a fresh freeze on the next launch.
-      expect(yield* Queue.take(savedConfigs)).not.toHaveProperty("lastEventLoopStall");
+      const saved = yield* Queue.take(savedConfigs);
+      expect(saved).not.toHaveProperty("lastEventLoopStall");
+      // Never read back, and changes every sample while memory is short.
+      expect(saved).not.toHaveProperty("hostPressure");
     }),
   );
 });

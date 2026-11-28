@@ -500,16 +500,21 @@ it.effect("honors exact aliases and phrase boundaries in batch and streamed text
         { term: "C#", aliases: [] },
         { term: "React", aliases: ["瑞安特"] },
         { term: "Kubernetes", aliases: [] },
+        { term: "T3 Code", aliases: [] },
+        { term: "VSCode", aliases: [] },
+        { term: "iOS", aliases: [] },
       ],
     };
     const spoken =
       'a test with a i and ay eye. Robert, Roberts. "the publisher" and the publisher. (git hub), git (hub). ' +
       "git hub's API, git hub’s API, git’s hub, mac donald's menu, king's cross. vitamin c and plan c. " +
-      "我用github和瑞安特，部署到kubernetis上。Robert用git hub。githubで管理する。";
+      "我用github和瑞安特，部署到kubernetis上。Robert用git hub。githubで管理する。" +
+      "Open T 3 code and VS code. I use I os, not VS CODE or VS CODE's.";
     const expected =
       "a test with AI and AI. Bob, Roberts. O'Reilly and the publisher. (GitHub), git (hub). " +
       "GitHub's API, GitHub’s API, git’s hub, McDonald’s menu, King’s Cross. vitamin c and plan c. " +
-      "我用GitHub和React，部署到Kubernetes上。Bob用GitHub。GitHubで管理する。";
+      "我用GitHub和React，部署到Kubernetes上。Bob用GitHub。GitHubで管理する。" +
+      "Open T3 Code and VSCode. I use iOS, not VSCODE or VSCODE's.";
     native.transcribe.mockResolvedValueOnce({ text: spoken });
     native.finish.mockResolvedValueOnce(spoken);
     expect(yield* speech.transcribe(pcm(), options)).toBe(expected);
@@ -534,12 +539,13 @@ it.effect("uses vocabulary only for supported transcription and always applies a
               { term: "Bob", aliases: ["Robert"] },
               { term: "T3 Code", aliases: [] },
             ],
+            speechHints: ["Server"],
           };
           const vocabulary =
-            supportsVocabulary && !translate ? ["GitHub", "Bob", "T3 Code"] : undefined;
-          native.transcribe.mockResolvedValueOnce({ text: "git hub and Robert" });
+            supportsVocabulary && !translate ? ["Server", "GitHub", "Bob", "T3 Code"] : undefined;
+          native.transcribe.mockResolvedValueOnce({ text: "git hub and Robert on the server" });
           expect(yield* speech.transcribe(pcm(), options)).toBe(
-            vocabulary ? "git hub and Bob" : "GitHub and Bob",
+            vocabulary ? "git hub and Bob on the server" : "GitHub and Bob on the server",
           );
           const delivered = native.transcribe.mock.lastCall?.[1];
           expect(delivered).toEqual({
@@ -553,13 +559,15 @@ it.effect("uses vocabulary only for supported transcription and always applies a
             revision: 1,
             text: { committed: "git hub", tentative: "Robert" },
           });
-          native.finish.mockResolvedValueOnce("git hub and Robert");
+          native.finish.mockResolvedValueOnce("git hub and Robert on the server");
           const stream = yield* speech.startStream(options);
           expect(yield* stream.feed(pcm())).toEqual({
             revision: 1,
             text: { committed: vocabulary ? "git hub" : "GitHub", tentative: "Bob" },
           });
-          expect(yield* stream.finish).toBe(vocabulary ? "git hub and Bob" : "GitHub and Bob");
+          expect(yield* stream.finish).toBe(
+            vocabulary ? "git hub and Bob on the server" : "GitHub and Bob on the server",
+          );
           expect(native.begin.mock.lastCall).toEqual([
             { timestamps: "none", language: "fr", ...(vocabulary ? { vocabulary } : {}) },
             true,

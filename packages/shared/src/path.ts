@@ -127,10 +127,21 @@ export function stripSlashPrefixedWindowsDrive(path: string): string {
 }
 
 export function fileBasename(path: string): string {
-  const trimmed = path.replace(/[/\\]+$/, "");
+  const isPosix =
+    path.startsWith("/") &&
+    !isNetworkPath(path) &&
+    !SLASH_PREFIXED_WINDOWS_DRIVE_PATTERN.test(path);
+  const trimmed = path.replace(isPosix ? /\/+$/ : /[/\\]+$/, "");
   if (trimmed.length === 0) return path;
-  const separatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  const separatorIndex = isPosix
+    ? trimmed.lastIndexOf("/")
+    : Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
   return separatorIndex >= 0 ? trimmed.slice(separatorIndex + 1) : trimmed;
+}
+
+/** A path's last segment composed to NFC for display: macOS stores many names in NFD. */
+export function fileDisplayName(path: string): string {
+  return fileBasename(path).normalize("NFC");
 }
 
 export function workspaceRelativeFilePath(
@@ -153,7 +164,7 @@ export function workspaceRelativeFilePath(
   const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
   if (pathForCompare.replace(/\/+$/, "") === rootForCompare) return ".";
   if (!pathForCompare.startsWith(`${rootForCompare}/`)) return null;
-  const relativePath = normalizedPath.slice(normalizedRoot.length + 1);
+  const relativePath = normalizedPath.slice(normalizedRoot.length + 1).replace(/^\/+/, "");
   // `/repo/../x` starts with the root but escapes it; the server rejects that as a workspace path.
   let depth = 0;
   for (const segment of relativePath.split("/")) {
@@ -209,8 +220,7 @@ export function resolvePastedPath(previous: string, next: string): string {
 
 export function resolveWorkspaceFilePath(path: string, workspaceRoot: string): string {
   if (isAbsolutePath(path) || path.startsWith("~/") || path.startsWith("~\\")) return path;
-  const base = workspaceRoot.replace(/[/\\]+$/, "");
-  return isWindowsAbsolutePath(workspaceRoot)
-    ? `${base}\\${path.replaceAll("/", "\\")}`
-    : `${base}/${path}`;
+  const isWindows = isWindowsAbsolutePath(workspaceRoot);
+  const base = workspaceRoot.replace(isWindows ? /[/\\]+$/ : /\/+$/, "");
+  return isWindows ? `${base}\\${path.replaceAll("/", "\\")}` : `${base}/${path}`;
 }

@@ -8,6 +8,7 @@ import {
   NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2CheckpointScope,
+  type OrchestrationV2ContextHandoff,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PendingBackgroundTask,
@@ -38,6 +39,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -965,7 +967,11 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
 
     const input = yield* Deferred.await(started);
     assert.deepEqual(input.appContext, [
-      { key: "mcp_app_turn-item_provider_codex_native-item_call-1", text: "2 overdue" },
+      {
+        key: "mcp_app_turn-item_provider_codex_native-item_call-1",
+        text: "2 overdue",
+        updatedAt: "2026-11-23T14:02:17.000Z",
+      },
     ]);
   }).pipe(
     Effect.provide(
@@ -981,6 +987,7 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
                     server: "my tools>",
                     tool: "list",
                     text: "2 overdue",
+                    updatedAt: "2026-11-23T14:02:17.000Z",
                   },
                 ]),
             }),
@@ -1208,6 +1215,12 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
       id: CheckpointScopeId.make("checkpoint-scope:run-execution-baseline-failure"),
     } as OrchestrationV2CheckpointScope;
     const providerStarts = yield* Ref.make(0);
+    const warnings: Array<ReadonlyArray<unknown>> = [];
+    const logger = Logger.make(({ logLevel, message }) => {
+      if (logLevel === "Warn") {
+        warnings.push(Array.isArray(message) ? message : [message]);
+      }
+    });
     const writes = yield* Ref.make<
       ReadonlyArray<{
         events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -1295,9 +1308,28 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
           },
         },
       });
-    }).pipe(Effect.provide(layerTest));
+    }).pipe(
+      Effect.provide(
+        layerTest.pipe(Layer.provideMerge(Logger.layer([logger], { mergeWithExisting: false }))),
+      ),
+    );
 
     assert.equal(yield* Ref.get(providerStarts), 1);
+
+    const baselineWarning = warnings.find(
+      (entry) =>
+        entry[0] ===
+        "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
+    );
+    assert.isDefined(baselineWarning);
+    const warningFields = baselineWarning?.[1] as { runId?: unknown; cause?: unknown } | undefined;
+    assert.equal(warningFields?.runId, runId);
+    assert.isTrue(Cause.isCause(warningFields?.cause));
+    if (Cause.isCause(warningFields?.cause)) {
+      const renderedCause = Cause.pretty(warningFields.cause);
+      assert.include(renderedCause, "CheckpointBaselineCaptureError");
+      assert.include(renderedCause, "VCS process timed out");
+    }
 
     const events = (yield* Ref.get(writes)).flatMap((write) => [...write.events]);
     const failedEvent = events.find(
@@ -1473,6 +1505,7 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
                 }),
             Layer.succeed(RunFinalizationService.RunFinalizationObserver, {
               refresh: () => Effect.void,
+              refreshRepositories: () => Effect.void,
               refreshAfterTurn: () => Ref.update(refreshes, (count) => count + 1),
             }),
           ),
@@ -3048,7 +3081,7 @@ it.effect("settles native subagents when a workspace handoff completes the root 
     assert.deepEqual(statusOf("turn-item.updated", runningTurnItem.id), ["interrupted"]);
     assert.deepEqual(statusOf("node.updated", runningNode.id), ["interrupted"]);
     assert.deepEqual(statusOf("node.updated", runningChildNode.id), ["interrupted"]);
-    assert.deepEqual(statusOf("run.updated", ids.runId), ["waiting"]);
+    assert.deepEqual(statusOf("run.updated", ids.runId), ["completed"]);
     assert.deepEqual(statusOf("run-attempt.updated", ids.attemptId), ["completed"]);
     assert.isFalse(
       events.some(
@@ -3594,6 +3627,48 @@ it.effect("ends a running root command when the provider stream fails mid-turn",
   }),
 );
 
+it.effect("fails the run when a released session's interrupt exits interrupted", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const key = "released-session-interrupted-interrupt";
+    const { observed, finalEvents } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.make({
+          type: "provider_turn.updated" as const,
+          driver,
+          providerTurn: {
+            id: ids.rootProviderTurnId,
+            providerThreadId: ids.providerThreadId,
+            nodeId: ids.rootNodeId,
+            runAttemptId: ids.attemptId,
+            nativeTurnRef: null,
+            ordinal: 1,
+            status: "running" as const,
+            startedAt: now,
+            completedAt: null,
+          },
+        }).pipe(
+          Stream.concat(
+            Stream.fail(
+              new ProviderAdapter.ProviderAdapterEventStreamError({
+                driver,
+                providerSessionId: ProviderSessionId.make(`session:${key}`),
+                raisedByT3: true,
+                cause: "Provider sign-in changed.",
+              }),
+            ),
+          ),
+        ),
+      // An ACP session whose scope is already closing interrupts the join.
+      interruptTurn: () => Effect.interrupt,
+    });
+    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+    assert.isTrue(finalEvents.some((event) => event.type === "run.updated"));
+  }),
+);
+
 it.effect("keeps a running root command open when a write fails under a live provider", () =>
   Effect.gen(function* () {
     const key = "write-error-running-command";
@@ -3695,10 +3770,53 @@ it.effect.each([
             : [],
         ),
         ended
-          ? ["run.updated:waiting", "subagent.updated:failed", "turn-item.updated:failed"]
-          : ["run.updated:waiting"],
+          ? ["run.updated:completed", "subagent.updated:failed", "turn-item.updated:failed"]
+          : ["run.updated:completed"],
       );
     }),
+);
+
+it.effect("restores dropped inline handoffs when ingestion fails before the terminal", () =>
+  Effect.gen(function* () {
+    const key = "dropped-turn-ingest-error";
+    const ids = backgroundScenarioIds(key);
+    const handoff = { id: `handoff:${key}` } as unknown as OrchestrationV2ContextHandoff;
+    const { finalEvents } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      loadDroppedInlineHandoffs: () => Effect.succeed([handoff]),
+      events: () =>
+        Stream.make({
+          type: "provider_turn.updated" as const,
+          driver,
+          threadId: ids.threadId,
+          providerTurn: {
+            id: ids.rootProviderTurnId,
+            providerThreadId: ids.providerThreadId,
+            runAttemptId: ids.attemptId,
+            ordinal: 1,
+            status: "failed",
+            promptDropped: true,
+          } as OrchestrationV2ProviderTurn,
+        }),
+      ingestNormalized: ({ event }) =>
+        event.type === "provider_turn.updated"
+          ? Effect.fail(
+              new ProviderEventIngestor.ProviderEventPublishError({
+                providerSessionId: ProviderSessionId.make(`session:${key}`),
+                eventCount: 1,
+                cause: new Error("SQLITE_FULL: database or disk is full"),
+              }),
+            )
+          : Effect.succeed([]),
+    });
+    assert.deepEqual(
+      finalEvents.flatMap((event) =>
+        event.type === "context-handoff.updated" ? [event.payload.id] : [],
+      ),
+      [handoff.id],
+    );
+  }),
 );
 
 it.effect("does not interrupt a provider when ingestion fails before the root turn is known", () =>
@@ -3926,7 +4044,7 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
       events: (ids) => Stream.make(rootTerminalEvent(ids, "completed")),
       refreshAfterTurn: Effect.die("refresh failed"),
     });
-    assert.deepEqual(observed, ["run:waiting", "pull-requests-refreshed"]);
+    assert.deepEqual(observed, ["run:completed", "pull-requests-refreshed"]);
   }),
 );
 
@@ -3988,6 +4106,7 @@ function captureRootRunTermination(input: {
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly hasWorkspaceMoved?: () => Effect.Effect<boolean, never>;
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
+  readonly loadDroppedInlineHandoffs?: RunExecutionService.RunExecutionServiceV2StartRootRunInput["loadDroppedInlineHandoffs"];
   readonly hasPendingBackgroundWorkForThread?: ProviderAdapter.ProviderAdapterV2SessionRuntime["hasPendingBackgroundWorkForThread"];
   readonly seedOpenSubagent?: boolean;
   readonly events?: (
@@ -4137,6 +4256,7 @@ function captureRootRunTermination(input: {
           ServerSettings.layerTest(),
           Layer.succeed(RunFinalizationService.RunFinalizationObserver, {
             refresh: () => Effect.void,
+            refreshRepositories: () => Effect.void,
             refreshAfterTurn: () =>
               Ref.update(observed, (current) => [...current, "pull-requests-refreshed"]).pipe(
                 Effect.andThen(input.refreshAfterTurn ?? Effect.void),
@@ -4233,6 +4353,9 @@ function captureRootRunTermination(input: {
         ...(input.hasWorkspaceMoved === undefined
           ? {}
           : { hasWorkspaceMoved: input.hasWorkspaceMoved }),
+        ...(input.loadDroppedInlineHandoffs === undefined
+          ? {}
+          : { loadDroppedInlineHandoffs: input.loadDroppedInlineHandoffs }),
         message: {
           messageId: MessageId.make(`message:${input.key}`),
           text: input.messageText ?? "interrupt projection",

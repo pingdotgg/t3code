@@ -189,6 +189,73 @@ describe("buildPendingUserInputAnswers", () => {
       compat: "Keep the current envelope for one release window",
     });
   });
+
+  it("answers a multi-select question with no options checked as an empty list", () => {
+    const extrasQuestion = {
+      id: "extras",
+      header: "Extras",
+      question: "Which extras do you want?",
+      options: [{ label: "Lint" }, { label: "Tests" }, { label: "CI" }],
+      multiSelect: true,
+    } as const;
+    const uncheckedAgain = togglePendingUserInputOptionSelection(
+      extrasQuestion,
+      togglePendingUserInputOptionSelection(extrasQuestion, undefined, "Lint"),
+      "Lint",
+    );
+    const scope = { selectedOptionValues: ["Node.js"] };
+
+    expect(buildPendingUserInputAnswers([singleSelectQuestion, extrasQuestion], { scope })).toEqual(
+      { scope: "Node.js", extras: [] },
+    );
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, extrasQuestion], {
+        scope,
+        extras: uncheckedAgain,
+      }),
+    ).toEqual({ scope: "Node.js", extras: [] });
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, extrasQuestion], { extras: {} }),
+    ).toBeNull();
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, { ...extrasQuestion, required: true }], {
+        scope,
+      }),
+    ).toBeNull();
+  });
+
+  it("omits an unselected optional single choice and keeps explicit false and empty choices", () => {
+    const extras = {
+      id: "extras",
+      options: [
+        { label: "true", value: "true" },
+        { label: "false", value: "false" },
+      ],
+      allowCustomAnswer: false,
+      required: false,
+    };
+    const mode = {
+      id: "mode",
+      options: [
+        { label: '""', value: "" },
+        { label: "fast", value: "fast" },
+      ],
+      allowCustomAnswer: false,
+      required: false,
+    };
+
+    expect(buildPendingUserInputAnswers([extras, mode], {})).toEqual({});
+    expect(
+      buildPendingUserInputAnswers([extras, mode], {
+        extras: { selectedOptionValues: ["false"] },
+        mode: { selectedOptionValues: [""] },
+      }),
+    ).toEqual({ extras: "false", mode: "" });
+    expect(
+      buildPendingUserInputAnswers([extras, mode], { extras: { attachmentsBlocked: true } }),
+    ).toBeNull();
+    expect(buildPendingUserInputAnswers([{ ...extras, required: undefined }, mode], {})).toBeNull();
+  });
 });
 
 it.each([

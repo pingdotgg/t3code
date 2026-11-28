@@ -8,6 +8,9 @@ on:
     - cron: "23 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: mobile-android-apk
   cancel-in-progress: false

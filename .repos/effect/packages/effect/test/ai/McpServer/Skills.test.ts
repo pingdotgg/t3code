@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest"
 import * as McpProtocol from "effect/ai/McpProtocol"
 import * as McpSchema from "effect/ai/McpSchema"
 import * as McpServer from "effect/ai/McpServer"
+import * as Skill from "effect/ai/Skill"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
@@ -137,6 +138,42 @@ describe("McpServer skills", () => {
         )
       }))
 
+    it.effect("registers a Skill value with the same manifest and files as the raw-files form", () =>
+      Effect.gen(function*() {
+        const refundsSkill = Skill.make({
+          frontmatter: {
+            name: "refunds",
+            description: "Process refunds using the billing tools",
+            license: "Apache-2.0",
+            metadata: { "acme-tools": "issue_refund" }
+          },
+          instructions: "Read references/policy.md before issuing a refund.\n",
+          files: {
+            "references/policy.md": "Refunds above CHF 500 require manager approval.\n",
+            "assets/logo.png": PNG
+          }
+        })
+        const harness = yield* modernHarness(
+          McpServer.skill(refundsSkill, { uri: "skill://acme/billing/refunds/SKILL.md" })
+        )
+        const { message } = yield* call(harness, "skills/list")
+        const [listed] = message.result.skills
+        assert.strictEqual(listed.uri, "skill://acme/billing/refunds/SKILL.md")
+        assert.deepStrictEqual(listed.frontmatter, refundsSkill.frontmatter)
+        assert.deepStrictEqual(
+          listed.resources.map((resource: any) => resource.uri),
+          [
+            "skill://acme/billing/refunds/SKILL.md",
+            "skill://acme/billing/refunds/assets/logo.png",
+            "skill://acme/billing/refunds/references/policy.md"
+          ]
+        )
+        assert.deepStrictEqual(
+          yield* readBytes(harness, "skill://acme/billing/refunds/assets/logo.png"),
+          Buffer.from(PNG)
+        )
+      }))
+
     // Changing the caller's bytes after registration must not change what is served under the listed digest.
     // A Node `Buffer` is a `Uint8Array` whose `slice` shares memory, so it needs a real copy too.
     it.effect("serves the bytes given at registration after the caller changes them", () =>
@@ -268,7 +305,14 @@ describe("McpServer skills", () => {
   })
 
   describe("sessionful revisions", () => {
-    for (const protocol of [McpProtocol.v2025_11_25, McpProtocol.v2024_11_05]) {
+    for (
+      const protocol of [
+        McpProtocol.v2024_11_05,
+        McpProtocol.v2025_03_26,
+        McpProtocol.v2025_06_18,
+        McpProtocol.v2025_11_25
+      ]
+    ) {
       it.effect(`serves the extension without cache attributes on ${protocol.protocolVersion}`, () =>
         Effect.gen(function*() {
           const harness = yield* makeHttpHarness(Skills.pipe(Layer.provideMerge(makeServerLayer({
@@ -306,6 +350,11 @@ describe("McpServer skills", () => {
           const get = yield* post("skills/get", { uri: "skill://acme/billing/refunds/SKILL.md" })
           assert.deepStrictEqual(Object.keys(get.result), ["skill"])
           assert.strictEqual(get.result.skill.frontmatter.name, "refunds")
+
+          for (const method of ["skills/list", "resources/directory/read"]) {
+            const invalidCursor = yield* post(method, { uri: "skill://acme", cursor: "unknown" })
+            assert.strictEqual(invalidCursor.error.code, -32602)
+          }
 
           const missing = yield* post("skills/get", { uri: "skill://acme/missing/SKILL.md" })
           assert.strictEqual(missing.error.code, -32602)

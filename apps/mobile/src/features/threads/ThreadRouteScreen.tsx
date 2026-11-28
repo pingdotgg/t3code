@@ -105,6 +105,7 @@ import {
 import { useProjects } from "../../state/entities";
 import {
   projectThreadContentPresentation,
+  THREAD_CONTENT_READY,
   threadSyncStatusLabel,
 } from "./threadContentPresentation";
 import {
@@ -127,12 +128,8 @@ import {
   useWorkspaceBackNavigation,
 } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { openSettings } from "../settings/settings-navigation";
-import {
-  InspectorContentScope,
-  ThreadInspectorHeader,
-  ThreadInspectorPreview,
-  type ThreadInspectorPresentation,
-} from "./thread-inspector-preview";
+import { ThreadInspectorHeader, type ThreadInspectorPresentation } from "./thread-inspector-header";
+import { InspectorContentScope, ThreadInspectorPreview } from "./thread-inspector-preview";
 import { useStartSideChat } from "./useStartSideChat";
 import { useThreadStatusAnnouncements } from "./useThreadStatusAnnouncements";
 import type { ThreadInspectorMode, ThreadInspectorTarget } from "./thread-inspector-navigation";
@@ -593,7 +590,11 @@ function ThreadRouteContent(
     environmentId: selectedThread?.environmentId ?? null,
     cwd: selectedThreadCwd,
   };
-  const gitActionProgress = useGitActionProgress(gitActionProgressTarget);
+  const gitActionThreadRef =
+    selectedThread === null
+      ? null
+      : { environmentId: selectedThread.environmentId, threadId: selectedThread.id };
+  const gitActionProgress = useGitActionProgress(gitActionProgressTarget, gitActionThreadRef);
 
   const handleOpenGitInspector = () => {
     navigation.setParams({ inspector: undefined });
@@ -830,6 +831,7 @@ function ThreadRouteContent(
         ? () => void handleMergeBack()
         : undefined,
     currentBranch: selectedThread?.branch ?? null,
+    tracksRepositories: (selectedThreadProject?.trackedFolders?.length ?? 0) > 0,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
     canOpenTerminal:
@@ -971,7 +973,7 @@ function ThreadRouteContent(
   // Queued creation displays its prompt before server creation; temporary not-found is expected.
   const contentPresentation =
     creationState !== null
-      ? { kind: "ready" as const }
+      ? THREAD_CONTENT_READY
       : projectThreadContentPresentation({
           hasDetail: selectedThreadDetail !== null,
           detailError: Option.getOrNull(selectedThreadDetailState.error),
@@ -998,7 +1000,12 @@ function ThreadRouteContent(
   // A thread this client is creating has nothing older to sync.
   const threadSyncLabel =
     creationState === null
-      ? threadSyncStatusLabel(selectedThreadDetailState.status, contentPresentation.kind, m)
+      ? threadSyncStatusLabel(
+          selectedThreadDetailState.status,
+          contentPresentation.kind,
+          Option.isSome(selectedThreadDetailState.error),
+          m,
+        )
       : null;
   // Transient states go in the header subtitle so the composer's status slot doesn't jump.
   const threadStatusLabel = useDelayedStatus(
@@ -1022,122 +1029,6 @@ function ThreadRouteContent(
   }
 
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
-  const renderThreadRouteBody = () => (
-    <>
-      <GitActionProgressOverlay
-        progress={gitActionProgress}
-        onDismiss={dismissGitActionResult}
-        onOpenPullRequest={openPullRequest}
-      />
-
-      <>
-        <ThreadScreenBinding
-          header={
-            props.inspectorPresentation ? null : (
-              <ThreadHeader
-                title={selectedThread.title}
-                subtitle={threadStatusLabel ?? headerSubtitle}
-                gitControls={threadGitControlProps}
-                hasThreadCwd={selectedThreadCwd !== null}
-                inspectorMode={inspectorMode}
-                onOpenFilesInspector={handleOpenFilesInspector}
-                onReturnToThread={props.onReturnToThread}
-              />
-            )
-          }
-          canOperateThread={canOperateThread}
-          selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
-          selectedThreadDetailRef={selectedThreadDetailRef}
-          contentPresentation={contentPresentation}
-          screenTone={connectionTone(
-            routeConnectionState,
-            routeEnvironmentRuntime?.connectionAwaitingApproval === true,
-            m,
-          )}
-          connectionError={routeConnectionError}
-          environmentLabel={selectedEnvironmentConnection?.environmentLabel ?? null}
-          feedbackSubmissions={composer.feedbackSubmissions}
-          onDismissFeedback={composer.dismissFeedback}
-          selectedThreadFeed={composer.selectedThreadFeed}
-          pendingHandoff={composer.pendingHandoff}
-          activityRun={composer.selectedThreadActivityRun}
-          activeWorkStartedAt={
-            creationState?.kind === "preparing" ||
-            (worktreeSetup !== null && setupTurnStartedAt === null)
-              ? null
-              : composer.activeWorkStartedAt
-          }
-          isCompacting={composer.isCompacting}
-          compactBeforeSend={composer.compactBeforeSend}
-          runlessWorkActive={composer.runlessWorkActive}
-          extensionStatuses={composer.extensionStatuses}
-          providerSubagentStatus={composer.providerSubagentStatus}
-          creationState={creationState}
-          worktreeSetup={
-            worktreeSetup
-              ? {
-                  snapshot: worktreeSetup,
-                  turnStarted: setupTurnStartedAt !== null,
-                  onCancel: handleCancelWorktreeSetup,
-                  onWorkLocally: setupMessage && selectedThreadProject ? handleWorkLocally : null,
-                }
-              : null
-          }
-          activePendingApproval={requests.activePendingApproval}
-          activePendingApprovals={requests.activePendingApprovals}
-          respondingApprovalId={requests.respondingApprovalId}
-          activePendingUserInput={requests.activePendingUserInput}
-          activePendingUserInputDrafts={requests.activePendingUserInputDrafts}
-          activePendingUserInputAnswers={requests.activePendingUserInputAnswers}
-          respondingUserInputId={requests.respondingUserInputId}
-          connectionStateLabel={routeConnectionState}
-          historyControls={historyControls}
-          activeThreadBusy={composer.activeThreadBusy}
-          canStopThread={awaitingBootstrapTurn || composer.interruptibleRunId !== null}
-          queuedRunEdit={composer.queuedRunEdit}
-          composerDraftKey={composer.composerDraftKey}
-          followUpBehavior={composer.followUpBehavior}
-          canSteerActiveTurn={composer.canSteerActiveTurn}
-          isSavingQueuedEdit={composer.isSavingQueuedEdit}
-          onCancelQueuedRunEdit={composer.cancelQueuedRunEdit}
-          onRemoveQueuedEditAttachment={composer.onRemoveQueuedEditAttachment}
-          environmentId={selectedThread.environmentId}
-          projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
-          threadCwd={selectedThreadCwd}
-          selectedThreadQueueCount={composer.selectedThreadQueueCount}
-          queuedMessages={
-            selectedThreadCreation && selectedThreadCreation.outcome?.kind !== "delivered"
-              ? [selectedThreadCreation.message, ...composer.selectedThreadQueuedMessages]
-              : composer.selectedThreadQueuedMessages
-          }
-          dispatchingMessageId={composer.dispatchingQueuedMessageId}
-          layoutVariant={layout.variant}
-          usesAutomaticContentInsets={usesNativeHeaderGlass}
-          onOpenConnectionEditor={handleOpenConnectionEditor}
-          onChangeDraftMessage={composer.onChangeDraftMessage}
-          onPickDraftMedia={composer.onPickDraftMedia}
-          onPickDraftFiles={composer.onPickDraftFiles}
-          onNativePasteImages={composer.onNativePasteImages}
-          onNativePasteText={composer.onNativePasteText}
-          onRemoveDraftImage={composer.onRemoveDraftImage}
-          serverConfig={serverConfig}
-          onStopThread={awaitingBootstrapTurn ? handleCancelWorktreeSetup : handleStopThread}
-          onResumeQueue={composer.canResume ? handleResumeQueue : null}
-          onSendMessage={composer.onSendMessage}
-          offersSideChat={composer.sideChatUnavailableReason === null}
-          onSendCommand={composer.onSendCommand}
-          onReconnectEnvironment={handleReconnectEnvironment}
-          canSwitchThreadProvider={composer.canSwitchThreadProvider}
-          onRespondToApproval={requests.onRespondToApproval}
-          onSelectUserInputOption={requests.onSelectUserInputOption}
-          onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
-          onSubmitUserInput={requests.onSubmitUserInput}
-          onDismissUserInput={requests.onDismissUserInput}
-        />
-      </>
-    </>
-  );
-
   return (
     <>
       {inspectorHeader}
@@ -1152,8 +1043,114 @@ function ThreadRouteContent(
           content={inspectorContent}
         />
       ) : null}
-
-      {renderThreadRouteBody()}
+      <GitActionProgressOverlay
+        progress={gitActionProgress}
+        onDismiss={() => dismissGitActionResult(gitActionThreadRef)}
+        onOpenPullRequest={openPullRequest}
+      />
+      <ThreadScreenBinding
+        header={
+          props.inspectorPresentation ? null : (
+            <ThreadHeader
+              title={selectedThread.title}
+              subtitle={threadStatusLabel ?? headerSubtitle}
+              gitControls={threadGitControlProps}
+              hasThreadCwd={selectedThreadCwd !== null}
+              inspectorMode={inspectorMode}
+              onOpenFilesInspector={handleOpenFilesInspector}
+              onReturnToThread={props.onReturnToThread}
+            />
+          )
+        }
+        canOperateThread={canOperateThread}
+        selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
+        selectedThreadDetailRef={selectedThreadDetailRef}
+        contentPresentation={contentPresentation}
+        screenTone={connectionTone(
+          routeConnectionState,
+          routeEnvironmentRuntime?.connectionAwaitingApproval === true,
+          m,
+        )}
+        connectionError={routeConnectionError}
+        environmentLabel={selectedEnvironmentConnection?.environmentLabel ?? null}
+        feedbackSubmissions={composer.feedbackSubmissions}
+        onDismissFeedback={composer.dismissFeedback}
+        selectedThreadFeed={composer.selectedThreadFeed}
+        pendingHandoff={composer.pendingHandoff}
+        activityRun={composer.selectedThreadActivityRun}
+        activeWorkStartedAt={
+          creationState?.kind === "preparing" ||
+          (worktreeSetup !== null && setupTurnStartedAt === null)
+            ? null
+            : composer.activeWorkStartedAt
+        }
+        isCompacting={composer.isCompacting}
+        compactBeforeSend={composer.compactBeforeSend}
+        runlessWorkActive={composer.runlessWorkActive}
+        extensionStatuses={composer.extensionStatuses}
+        providerSubagentStatus={composer.providerSubagentStatus}
+        creationState={creationState}
+        worktreeSetup={
+          worktreeSetup
+            ? {
+                snapshot: worktreeSetup,
+                turnStarted: setupTurnStartedAt !== null,
+                onCancel: handleCancelWorktreeSetup,
+                onWorkLocally: setupMessage && selectedThreadProject ? handleWorkLocally : null,
+              }
+            : null
+        }
+        activePendingApproval={requests.activePendingApproval}
+        activePendingApprovals={requests.activePendingApprovals}
+        respondingApprovalId={requests.respondingApprovalId}
+        activePendingUserInput={requests.activePendingUserInput}
+        activePendingUserInputDrafts={requests.activePendingUserInputDrafts}
+        activePendingUserInputAnswers={requests.activePendingUserInputAnswers}
+        respondingUserInputId={requests.respondingUserInputId}
+        connectionStateLabel={routeConnectionState}
+        historyControls={historyControls}
+        activeThreadBusy={composer.activeThreadBusy}
+        canStopThread={awaitingBootstrapTurn || composer.interruptibleRunId !== null}
+        queuedRunEdit={composer.queuedRunEdit}
+        composerDraftKey={composer.composerDraftKey}
+        followUpBehavior={composer.followUpBehavior}
+        canSteerActiveTurn={composer.canSteerActiveTurn}
+        isSavingQueuedEdit={composer.isSavingQueuedEdit}
+        onCancelQueuedRunEdit={composer.cancelQueuedRunEdit}
+        onRemoveQueuedEditAttachment={composer.onRemoveQueuedEditAttachment}
+        environmentId={selectedThread.environmentId}
+        projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
+        threadCwd={selectedThreadCwd}
+        selectedThreadQueueCount={composer.selectedThreadQueueCount}
+        queuedMessages={
+          selectedThreadCreation && selectedThreadCreation.outcome?.kind !== "delivered"
+            ? [selectedThreadCreation.message, ...composer.selectedThreadQueuedMessages]
+            : composer.selectedThreadQueuedMessages
+        }
+        dispatchingMessageId={composer.dispatchingQueuedMessageId}
+        layoutVariant={layout.variant}
+        usesAutomaticContentInsets={usesNativeHeaderGlass}
+        onOpenConnectionEditor={handleOpenConnectionEditor}
+        onChangeDraftMessage={composer.onChangeDraftMessage}
+        onPickDraftMedia={composer.onPickDraftMedia}
+        onPickDraftFiles={composer.onPickDraftFiles}
+        onNativePasteImages={composer.onNativePasteImages}
+        onNativePasteText={composer.onNativePasteText}
+        onRemoveDraftImage={composer.onRemoveDraftImage}
+        serverConfig={serverConfig}
+        onStopThread={awaitingBootstrapTurn ? handleCancelWorktreeSetup : handleStopThread}
+        onResumeQueue={composer.canResume ? handleResumeQueue : null}
+        onSendMessage={composer.onSendMessage}
+        offersSideChat={composer.sideChatUnavailableReason === null}
+        onSendCommand={composer.onSendCommand}
+        onReconnectEnvironment={handleReconnectEnvironment}
+        canSwitchThreadProvider={composer.canSwitchThreadProvider}
+        onRespondToApproval={requests.onRespondToApproval}
+        onSelectUserInputOption={requests.onSelectUserInputOption}
+        onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
+        onSubmitUserInput={requests.onSubmitUserInput}
+        onDismissUserInput={requests.onDismissUserInput}
+      />
     </>
   );
 }

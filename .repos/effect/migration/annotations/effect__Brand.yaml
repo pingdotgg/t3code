@@ -19,6 +19,9 @@
 "effect/Brand#error":
   replacement: "Brand.make"
   note: "Return a string or Schema filter issue directly from a Brand.make validator."
+"effect/Brand#errors":
+  replacement: "Brand.make"
+  note: "Return an array of strings or Schema filter issues from a Brand.make validator; they are combined into one BrandError."
 "effect/Brand#nominal":
   replacement: "Brand.nominal"
   note: "Still exported; the constructor's either method is now result."

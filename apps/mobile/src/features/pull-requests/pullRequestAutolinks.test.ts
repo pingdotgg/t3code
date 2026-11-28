@@ -1,4 +1,4 @@
-import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
+import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-references";
 import { describe, expect, it } from "vite-plus/test";
 
 import { nativePullRequestMarkdown } from "./pullRequestAutolinks";
@@ -42,6 +42,16 @@ describe("nativePullRequestMarkdown", () => {
     const native = nativePullRequestMarkdown(text, github, true);
     expect(native.markdown).toBe(
       "- [ ] Ship 🎉 [#1](https://github.com/team/repo/issues/1) `:tada:`\n- [ ] [👍 docs](https://x.dev/:tada:) https://x.dev/:tada: \\*️⃣",
+    );
+    const marker = native.markdown.lastIndexOf("[ ]");
+    expect(native.sourceOffset(marker)).toBe(text.lastIndexOf("[ ]"));
+  });
+
+  it("keeps rewrites and task offsets aligned after a leading BOM", () => {
+    const text = "\uFEFF[:+1: see](https://x.test) Fixes #12 :tada:\n- [ ] next";
+    const native = nativePullRequestMarkdown(text, github, true);
+    expect(native.markdown).toBe(
+      "\uFEFF[👍 see](https://x.test) Fixes [#12](https://github.com/team/repo/issues/12) 🎉\n- [ ] next",
     );
     const marker = native.markdown.lastIndexOf("[ ]");
     expect(native.sourceOffset(marker)).toBe(text.lastIndexOf("[ ]"));

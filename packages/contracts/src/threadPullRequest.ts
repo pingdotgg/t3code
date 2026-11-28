@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  GitRefName,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
@@ -37,8 +38,8 @@ export type ThreadPullRequestLinkSource = typeof ThreadPullRequestLinkSource.Typ
 export const ThreadPullRequestSnapshot = Schema.Struct({
   state: PullRequestState,
   title: TrimmedNonEmptyString,
-  headBranch: TrimmedNonEmptyString,
-  baseBranch: TrimmedNonEmptyString,
+  headBranch: GitRefName,
+  baseBranch: GitRefName,
   isDraft: Schema.Boolean,
   updatedAt: Schema.NullOr(IsoDateTime),
   syncedAt: IsoDateTime,
@@ -57,7 +58,7 @@ export type ThreadPullRequestSnapshot = typeof ThreadPullRequestSnapshot.Type;
 
 export const ThreadPullRequestStackLayer = Schema.Struct({
   number: PositiveInt,
-  headBranch: TrimmedNonEmptyString,
+  headBranch: GitRefName,
   state: PullRequestState,
 });
 export type ThreadPullRequestStackLayer = typeof ThreadPullRequestStackLayer.Type;
@@ -68,7 +69,7 @@ export const ThreadPullRequestStack = Schema.Struct({
   id: TrimmedNonEmptyString,
   number: PositiveInt,
   url: TrimmedNonEmptyString,
-  base: TrimmedNonEmptyString,
+  base: GitRefName,
   layers: Schema.Array(ThreadPullRequestStackLayer),
 });
 export type ThreadPullRequestStack = typeof ThreadPullRequestStack.Type;

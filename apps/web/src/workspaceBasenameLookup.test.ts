@@ -129,6 +129,21 @@ describe("chat file links into another project", () => {
     ).toBeNull();
   });
 
+  it("opens nothing when a project left ambiguous by case also has the name", () => {
+    expect(
+      pickProjectLinkMatch("handoff.txt", [
+        { root: "/reports", entries: [{ path: "notes/HANDOFF.txt", kind: "file" }] },
+        {
+          root: "/support",
+          entries: [
+            { path: "current/Handoff.txt", kind: "file" },
+            { path: "archive/HANDOFF.txt", kind: "file" },
+          ],
+        },
+      ]),
+    ).toBeNull();
+  });
+
   it("opens nothing when overlapping projects also list a second suffix match", () => {
     expect(
       pickProjectLinkMatch("docs/handoff.txt", [
@@ -202,10 +217,32 @@ describe("agentWorkingDirectories", () => {
         "abcd /work/a; echo cd /work/b; git -C /work/c status; cd /work/d",
         `echo "cd /work/g"; echo 'x; cd /work/h' && grep -c "cd /work/i" notes`,
         "echo bash -c 'cd /work/j'; cd -",
+        `sh "cd /work/l"`,
         "cat <<EOF > notes\ncd /work/k\nEOF",
         "cd /work/e\\ f && cd `pwd`/x",
       ),
     ).toEqual(["/work/d"]);
+  });
+
+  it("reads cd through every sh-family wrapper an agent runs", () => {
+    expect(
+      directories(
+        `bash -c -- "cd /work/a"`,
+        `bash -Ec 'cd /work/b'`,
+        `ksh -c 'cd /work/c'`,
+        `/bin/ash -c "cd /work/d"`,
+        `mksh -c 'cd /work/e'`,
+      ),
+    ).toEqual(["/work/e", "/work/d", "/work/c", "/work/b", "/work/a"]);
+  });
+
+  it("leaves network shares out of the search roots", () => {
+    expect(
+      directories(
+        "cd //files.example/share",
+        String.raw`cd '\\files.example\share'; cd C:\work\repo`,
+      ),
+    ).toEqual([String.raw`C:\work\repo`]);
   });
 });
 

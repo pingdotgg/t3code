@@ -7,7 +7,10 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
+  ADD_PROJECT_SCOPE_ITEM_VALUE,
+  filterSidebarProjectScopeItems,
   shouldCreateNewThreadInCurrentProject,
+  resolveScopedNewThreadProjectRef,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
@@ -36,9 +39,11 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
+  withoutRemovedCheckout,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
+  activeThreadSortKey,
   sortActiveThreadsByOrderKey,
   sortPinnedThreadsByOrderKey,
 } from "@t3tools/client-runtime/state/thread-sort";
@@ -152,6 +157,48 @@ function makeLatestRun(overrides?: {
       overrides?.completedAt !== undefined ? overrides.completedAt : "2026-03-09T10:05:00.000Z",
   };
 }
+
+describe("withoutRemovedCheckout", () => {
+  const worktree = { branch: "t3/task", worktreePath: "/worktrees/task" };
+  const local = { branch: "main", worktreePath: null };
+  const removed = { branch: null, worktreePath: null };
+  const tracking = { trackedFolders: [{ path: "/work/wrapper/api" }] };
+
+  it.each([
+    {
+      why: "status still loading",
+      thread: worktree,
+      isRepo: undefined,
+      project: null,
+      to: worktree,
+    },
+    { why: "a live checkout", thread: worktree, isRepo: true, project: null, to: worktree },
+    { why: "a removed worktree", thread: worktree, isRepo: false, project: null, to: removed },
+    {
+      why: "a removed worktree of a project tracking nothing",
+      thread: worktree,
+      isRepo: false,
+      project: { trackedFolders: [] },
+      to: removed,
+    },
+    {
+      why: "a plain task folder of a project with tracked folders",
+      thread: worktree,
+      isRepo: false,
+      project: tracking,
+      to: worktree,
+    },
+    {
+      why: "a local thread whose project folder is not a repository",
+      thread: local,
+      isRepo: false,
+      project: tracking,
+      to: removed,
+    },
+  ])("$why", ({ thread, isRepo, project, to }) => {
+    expect(withoutRemovedCheckout(thread, { isRepo }, project)).toEqual(to);
+  });
+});
 
 describe("orderItemsByPreferredIds", () => {
   it("resolves legacy preference aliases without materializing project state", () => {
@@ -434,6 +481,49 @@ describe("resolveThreadStatusPill", () => {
       updatedAt: "2026-03-09T10:00:00.000Z",
     },
   };
+
+  it.each([
+    ["connecting", "connecting", "Connecting"],
+    ["reconnecting", "reconnecting", "Reconnecting"],
+    ["offline", "offline", "Offline"],
+    ["error", "offline", "Offline"],
+    ["unsupported", "offline", "Offline"],
+    ["available", "offline", "Offline"],
+    ["connected", "working", "Working"],
+    [undefined, "working", "Working"],
+  ] as const)(
+    "presents cached running work with connection phase %s",
+    (connectionPhase, status, label) => {
+      const thread = { ...baseThread, connectionPhase };
+      expect(resolveSidebarThreadStatus(thread)).toBe(status);
+      expect(resolveThreadStatusPill({ thread })).toMatchObject({
+        label,
+        pulse: status === "working",
+      });
+      expect(thread.runtime.status).toBe("running");
+    },
+  );
+
+  it("keeps cached requests and terminal outcomes when the connection is lost", () => {
+    const thread = { ...baseThread, connectionPhase: "reconnecting" as const };
+    expect(
+      resolveThreadStatusPill({ thread: { ...thread, hasPendingApprovals: true } })?.label,
+    ).toBe("Pending Approval");
+    expect(
+      resolveThreadStatusPill({ thread: { ...thread, hasPendingUserInput: true } })?.label,
+    ).toBe("Awaiting Input");
+    for (const status of ["failed", "completed", "cancelled", "interrupted", "idle"] as const) {
+      const online = {
+        ...baseThread,
+        runtime: { ...baseThread.runtime, status, activeRunId: null },
+      };
+      const disconnected = { ...online, connectionPhase: "reconnecting" as const };
+      expect(resolveSidebarThreadStatus(disconnected)).toBe(resolveSidebarThreadStatus(online));
+      expect(resolveThreadStatusPill({ thread: disconnected })).toEqual(
+        resolveThreadStatusPill({ thread: online }),
+      );
+    }
+  });
 
   it("shows an active thread wait without a pulse and resumes Working when it ends", () => {
     const blocked = { ...baseThread, blockedOnThreadWait: true };
@@ -1289,7 +1379,12 @@ describe("Working shelf (beta)", () => {
             : sortPinnedThreadsByOrderKey(rows);
         const originalOrder = sort(input.rows).map(keyOf);
         const targetOrder = input.order.map(keyOf);
-        const keysById = new Map(input.rows.map((entry) => [keyOf(entry), entry.activeOrderKey]));
+        const keysById = new Map(
+          input.rows.map((entry) => [
+            keyOf(entry),
+            input.section === "active" ? activeThreadSortKey(entry) : entry.pinOrderKey,
+          ]),
+        );
         const plan = planSidebarThreadDrop({
           activeKey: keyOf(input.moved),
           activeSection: input.from ?? input.section,
@@ -1374,38 +1469,52 @@ describe("Working shelf (beta)", () => {
         expect(result.actualOrder).toEqual(result.targetOrder);
       });
 
-      it.each(["active", "pinned"] as const)(
-        "rejects rebalancing a keyed offline bound in %s",
-        (section) => {
-          const bound = thread("offline", offlineEnvironmentId, "m");
-          const neighbor = thread("neighbor");
-          const result = planDrop({
-            section,
-            rows: [bound, online, neighbor],
-            moved: online,
-            order: [bound, neighbor, online],
-          });
+      it("rejects rebalancing a keyed offline bound in pinned", () => {
+        const bound = thread("offline", offlineEnvironmentId, "m");
+        const neighbor = thread("neighbor");
+        const result = planDrop({
+          section: "pinned",
+          rows: [bound, online, neighbor],
+          moved: online,
+          order: [bound, neighbor, online],
+        });
 
-          expect(result.plan).toEqual({ kind: "none" });
-          expect(result.assignments).toEqual([]);
-        },
-      );
+        expect(result.plan).toEqual({ kind: "none" });
+        expect(result.assignments).toEqual([]);
+      });
 
-      it.each(["active", "pinned"] as const)(
-        "rejects crossing the frozen keyless boundary in %s",
-        (section) => {
-          const bound = {
-            ...offline,
-            createdAt:
-              section === "active" ? "2026-03-09T12:00:00.000Z" : "2026-03-09T10:00:00.000Z",
-          };
-          const order = section === "active" ? [online, bound] : [bound, online];
-          const result = planDrop({ section, rows: [bound, online], moved: online, order });
+      it("rejects crossing the frozen keyless boundary in pinned", () => {
+        const bound = { ...offline, createdAt: "2026-03-09T10:00:00.000Z" };
+        const result = planDrop({
+          section: "pinned",
+          rows: [bound, online],
+          moved: online,
+          order: [bound, online],
+        });
 
-          expect(result.plan).toEqual({ kind: "none" });
-          expect(result.assignments).toEqual([]);
-        },
-      );
+        expect(result.plan).toEqual({ kind: "none" });
+        expect(result.assignments).toEqual([]);
+      });
+
+      it.each([
+        ["an unarranged", null],
+        ["an arranged", "m"],
+      ] as const)("moves %s thread anywhere around an offline one in active", (_, key) => {
+        const neighbor = thread("neighbor");
+        const moved = {
+          ...thread("moved", onlineEnvironmentId, key),
+          createdAt: "2026-03-09T09:00:00.000Z",
+        };
+        const rows = [offline, neighbor, moved];
+        for (const order of [
+          [moved, offline, neighbor],
+          [offline, moved, neighbor],
+        ]) {
+          const result = planDrop({ section: "active", rows, moved, order });
+          expect(result.assignments.map(({ id }) => id)).toEqual([keyOf(moved)]);
+          expect(result.actualOrder).toEqual(result.targetOrder);
+        }
+      });
 
       it.each(["active", "pinned"] as const)(
         "allows realizable moves beside a frozen keyless row in %s",
@@ -1427,38 +1536,42 @@ describe("Working shelf (beta)", () => {
         },
       );
 
-      it.each(["active", "pinned"] as const)(
-        "checks fallback assignments to other rows at the %s boundary",
-        (section) => {
-          const neighbor = thread("neighbor");
-          const order =
-            section === "active" ? [neighbor, offline, online] : [online, offline, neighbor];
-          const result = planDrop({
-            section,
-            rows: [offline, online, neighbor],
-            moved: online,
-            order,
-          });
+      it("checks fallback assignments to other rows at the pinned boundary", () => {
+        const neighbor = thread("neighbor");
+        const result = planDrop({
+          section: "pinned",
+          rows: [offline, online, neighbor],
+          moved: online,
+          order: [online, offline, neighbor],
+        });
 
-          expect(result.plan).toEqual({ kind: "none" });
-        },
-      );
+        expect(result.plan).toEqual({ kind: "none" });
+      });
 
-      it.each(["active", "pinned"] as const)(
-        "rejects impossible pin/unpin placement across the %s boundary",
-        (section) => {
-          const order = section === "active" ? [online, offline] : [offline, online];
-          const result = planDrop({
-            section,
-            rows: [offline, online],
-            moved: online,
-            order,
-            from: section === "active" ? "pinned" : "active",
-          });
+      it("rejects impossible pin placement across the pinned boundary", () => {
+        const result = planDrop({
+          section: "pinned",
+          rows: [offline, online],
+          moved: online,
+          order: [offline, online],
+          from: "active",
+        });
 
-          expect(result.plan).toEqual({ kind: "none" });
-        },
-      );
+        expect(result.plan).toEqual({ kind: "none" });
+      });
+
+      it("unpins a thread above an offline one in active", () => {
+        const result = planDrop({
+          section: "active",
+          rows: [offline, online],
+          moved: online,
+          order: [online, offline],
+          from: "pinned",
+        });
+
+        expect(result.assignments.map(({ id }) => id)).toEqual([keyOf(online)]);
+        expect(result.actualOrder).toEqual(result.targetOrder);
+      });
     });
 
     it("only changes lifecycle when the inbox is time-ordered", () => {
@@ -1702,5 +1815,87 @@ describe("shouldCreateNewThreadInCurrentProject", () => {
     expect(shouldCreateNewThreadInCurrentProject(false, 1, 3)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(false, 0, 0)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(true, 2, 2)).toBe(true);
+  });
+});
+
+describe("resolveScopedNewThreadProjectRef", () => {
+  const local = { environmentId: "env-local", projectId: "api" };
+  const remote = { environmentId: "env-remote", projectId: "api-remote" };
+  const api = { environmentId: "env-local", id: "api", memberProjectRefs: [local, remote] };
+  const web = {
+    environmentId: "env-local",
+    id: "web",
+    memberProjectRefs: [{ environmentId: "env-local", projectId: "web" }],
+  };
+  const viewedWeb = { environmentId: "env-local", projectId: "web" };
+
+  it("starts in the one scoped project even while another project's thread is open", () => {
+    expect(
+      resolveScopedNewThreadProjectRef({
+        shiftKey: false,
+        scopedProjectGroups: [api],
+        viewed: viewedWeb,
+      }),
+    ).toBe(local);
+    expect(
+      resolveScopedNewThreadProjectRef({
+        shiftKey: false,
+        scopedProjectGroups: [api],
+        viewed: null,
+      }),
+    ).toBe(local);
+  });
+
+  it("keeps the viewed thread's environment when that thread is in the scoped project", () => {
+    expect(
+      resolveScopedNewThreadProjectRef({
+        shiftKey: false,
+        scopedProjectGroups: [api],
+        viewed: { environmentId: "env-remote", projectId: "api-remote" },
+      }),
+    ).toBe(remote);
+  });
+
+  it("leaves Shift+click, no scope and several scoped projects to the existing rule", () => {
+    expect(
+      resolveScopedNewThreadProjectRef({
+        shiftKey: true,
+        scopedProjectGroups: [api],
+        viewed: viewedWeb,
+      }),
+    ).toBeNull();
+    expect(
+      resolveScopedNewThreadProjectRef({
+        shiftKey: false,
+        scopedProjectGroups: [],
+        viewed: viewedWeb,
+      }),
+    ).toBeNull();
+    expect(
+      resolveScopedNewThreadProjectRef({
+        shiftKey: false,
+        scopedProjectGroups: [api, web],
+        viewed: viewedWeb,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("filterSidebarProjectScopeItems", () => {
+  it("hides Add project and All projects while searching", () => {
+    const items = [
+      { value: ADD_PROJECT_SCOPE_ITEM_VALUE, label: "Add project" },
+      { value: "all", label: "All projects" },
+      { value: "p1", label: "project" },
+    ];
+    const filter = (query: string) =>
+      filterSidebarProjectScopeItems({
+        items,
+        query,
+        matches: (item, q) => item.label.includes(q),
+      }).map((item) => item.value);
+
+    expect(filter("")).toEqual([ADD_PROJECT_SCOPE_ITEM_VALUE, "all", "p1"]);
+    expect(filter("project")).toEqual(["p1"]);
   });
 });
