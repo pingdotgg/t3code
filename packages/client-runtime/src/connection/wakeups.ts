@@ -7,10 +7,12 @@ export type ConnectionWakeup =
   | "application-active-probe"
   | "application-active-long"
   | "application-focused"
+  // Mobile only: the app stayed in the background, so connections close until it is active again.
+  | "application-suspended"
   | "credentials-changed"
   | "network-changed";
 
-function isApplicationActiveWakeup(reason: ConnectionWakeup): boolean {
+export function isApplicationActiveWakeup(reason: ConnectionWakeup): boolean {
   return (
     reason === "application-active" ||
     reason === "application-active-probe" ||

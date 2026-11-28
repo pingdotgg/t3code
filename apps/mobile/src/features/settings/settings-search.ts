@@ -184,6 +184,16 @@ const termsById: ReadonlyMap<string, readonly string[]> = new Map(
   Object.entries(SETTINGS_SEARCH_TERMS),
 );
 
+/** Terms for settings that only Android renders, so other platforms never match them. */
+const ANDROID_SETTINGS_SEARCH_TERMS: ReadonlyMap<string, readonly string[]> = new Map(
+  Object.entries({
+    SettingsLabs: [
+      msg("battery saver", { $context: "settings search keyword" }),
+      msg("background connections", { $context: "settings search keyword" }),
+    ],
+  } satisfies Partial<Record<SettingsPageTarget, readonly string[]>>),
+);
+
 export interface SettingsSearchRow {
   readonly id: string;
   readonly label: string;
@@ -201,8 +211,14 @@ export interface SettingsSearchSection<Row extends SettingsSearchRow> {
 export function filterSettingsSections<
   Row extends SettingsSearchRow,
   Section extends SettingsSearchSection<Row>,
->(sections: readonly Section[], query: string, resolve: MessageResolver = m): Section[] {
+>(
+  sections: readonly Section[],
+  query: string,
+  platform: string,
+  resolve: MessageResolver = m,
+): Section[] {
   const normalizedQuery = foldSearchQuery(query);
+  const platformTerms = platform === "android" ? ANDROID_SETTINGS_SEARCH_TERMS : null;
   const rows = sections.flatMap((section) =>
     section.rows.map((row) => ({ row, section: section.title })),
   );
@@ -214,7 +230,9 @@ export function filterSettingsSections<
             [
               row.label,
               ...(section ? [section] : []),
-              ...(termsById.get(row.id) ?? []).map((term) => resolve(term)),
+              ...[...(termsById.get(row.id) ?? []), ...(platformTerms?.get(row.id) ?? [])].map(
+                (term) => resolve(term),
+              ),
             ],
             options,
           ),

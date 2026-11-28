@@ -19,11 +19,17 @@ import Constants from "expo-constants";
 import * as Network from "expo-network";
 import { AppState } from "react-native";
 
+import { isAndroidBatterySaverEnabled } from "../lib/androidBatterySaver";
 import { authClientMetadata } from "../lib/authClientMetadata";
+import { subscribeAndroidBackgroundIdle } from "../native/androidPower";
 import * as Runtime from "../lib/runtime";
 import * as MobileStorage from "../persistence/mobile-storage";
 import { appAtomRegistry } from "../state/atom-registry";
-import { mobileApplicationActiveWakeup } from "./app-state-wakeups";
+import {
+  type MobileApplicationWakeup,
+  mobileApplicationActiveWakeup,
+  mobileBackgroundIdleWakeup,
+} from "./app-state-wakeups";
 import * as EnvironmentOwnedDataCleanup from "./environment-owned-data-cleanup";
 import * as ConnectionStorage from "./storage";
 
@@ -115,12 +121,21 @@ const networkPathChanges = Stream.callback<"network-changed">((queue) =>
 const layerWakeups = Wakeups.layer({
   changes: Stream.mergeAll(
     [
-      Stream.callback<"application-active-probe" | "application-active-long">((queue) =>
+      Stream.callback<MobileApplicationWakeup>((queue) =>
         Effect.acquireRelease(
           Effect.gen(function* () {
             const nowMs = yield* Clock.currentTimeMillis;
             let backgroundedAtMs = AppState.currentState === "background" ? nowMs : null;
-            return AppState.addEventListener("change", (state) => {
+            // Android keeps a backgrounded app's sockets open and its JS thread
+            // decoding every streamed frame; Battery Saver closes them until return.
+            const removeIdleListener = subscribeAndroidBackgroundIdle(() => {
+              const wakeup = mobileBackgroundIdleWakeup(
+                AppState.currentState,
+                isAndroidBatterySaverEnabled(),
+              );
+              if (wakeup !== null) Queue.offerUnsafe(queue, wakeup);
+            });
+            const subscription = AppState.addEventListener("change", (state) => {
               if (state === "background") {
                 backgroundedAtMs = Date.now();
                 return;
@@ -131,6 +146,12 @@ const layerWakeups = Wakeups.layer({
                 backgroundedAtMs = null;
               }
             });
+            return {
+              remove: () => {
+                removeIdleListener();
+                subscription.remove();
+              },
+            };
           }),
           (subscription) => Effect.sync(() => subscription.remove()),
         ).pipe(Effect.asVoid),

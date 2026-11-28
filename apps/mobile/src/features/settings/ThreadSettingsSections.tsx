@@ -12,7 +12,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import type { ComponentProps } from "react";
-import { View } from "react-native";
+import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
@@ -65,9 +65,42 @@ export function SettingsLabsRouteScreen() {
             "On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
           )}
         />
+        {Platform.OS === "android" ? <AndroidBatterySaverSection /> : null}
         <AgentFeedbackSection />
       </ScrollView>
     </SettingsScreen>
+  );
+}
+
+function AndroidBatterySaverSection() {
+  const gt = useGT();
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
+  const ready = AsyncResult.isSuccess(preferences) && !preferences.waiting;
+  return (
+    <View className="gap-3">
+      <SettingsSection title={gt("Beta: {feature}", { feature: gt("Battery saver") })}>
+        <SettingsSwitchRow
+          icon="battery.50percent"
+          label={gt("Save battery in the background")}
+          value={
+            AsyncResult.isSuccess(preferences) &&
+            preferences.value.enableAndroidBatterySaver === true
+          }
+          disabled={!ready}
+          onValueChange={(enableAndroidBatterySaver) =>
+            void savePreferences({ enableAndroidBatterySaver })
+          }
+        />
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        <T>
+          Closes this phone's server connections after 30 seconds in the background, and tells your
+          machines when Battery Saver is on so they can pause background work. Reopening the app
+          reconnects. Notifications still arrive.
+        </T>
+      </Text>
+    </View>
   );
 }
 

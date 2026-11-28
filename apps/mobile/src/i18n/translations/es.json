@@ -5766,5 +5766,10 @@
   "5d9bc70d1cb3b596": "{count} máquinas casi no tienen espacio en disco",
   "7bb6d3c4fe5cea0f": "{count} máquinas están sobrecargadas",
   "b48a4b390016a4f0": "Usa {usage} mientras la memoria ralentiza los agentes. Detenerlo ayuda al resto.",
-  "0d23483df1d6fc87": "Usa {usage} mientras esta máquina está sobrecargada. Detenerlo ayuda al resto."
+  "0d23483df1d6fc87": "Usa {usage} mientras esta máquina está sobrecargada. Detenerlo ayuda al resto.",
+  "8c6a3ffe43dae6da": "Ahorro de batería",
+  "d03fe37bf2f2eeb3": "Ahorrar batería en segundo plano",
+  "424a9796c9f38ac8": "Cierra las conexiones de este teléfono con los servidores tras 30 segundos en segundo plano y avisa a tus máquinas cuando el ahorro de batería está activado para que pausen el trabajo en segundo plano. Al volver a abrir la app, se reconecta. Las notificaciones siguen llegando.",
+  "ba0963c7d1a8335b": "ahorro de batería",
+  "20bfe4d123b19bf0": "conexiones en segundo plano"
 }

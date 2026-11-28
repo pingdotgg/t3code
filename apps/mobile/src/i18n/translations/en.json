@@ -5774,5 +5774,10 @@
   "5d9bc70d1cb3b596": "{count} machines are almost out of disk space",
   "7bb6d3c4fe5cea0f": "{count} machines are overloaded",
   "b48a4b390016a4f0": "Using {usage} while memory is slowing agents down. Stopping it helps the rest.",
-  "0d23483df1d6fc87": "Using {usage} while this machine is overloaded. Stopping it helps the rest."
+  "0d23483df1d6fc87": "Using {usage} while this machine is overloaded. Stopping it helps the rest.",
+  "8c6a3ffe43dae6da": "Battery saver",
+  "d03fe37bf2f2eeb3": "Save battery in the background",
+  "424a9796c9f38ac8": "Closes this phone's server connections after 30 seconds in the background, and tells your machines when Battery Saver is on so they can pause background work. Reopening the app reconnects. Notifications still arrive.",
+  "ba0963c7d1a8335b": "battery saver",
+  "20bfe4d123b19bf0": "background connections"
 }

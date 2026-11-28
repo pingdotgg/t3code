@@ -16,6 +16,11 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AppState } from "react-native";
 
+import {
+  isAndroidBatterySaverEnabled,
+  subscribeAndroidBatterySaver,
+} from "../lib/androidBatterySaver";
+import { readAndroidPowerSaveMode, subscribeAndroidPowerSaveMode } from "../native/androidPower";
 import * as MobileStorage from "../persistence/mobile-storage";
 import {
   observeMobileBackgroundActivitySubscription,
@@ -37,6 +42,15 @@ function normalizeAppState(
 }
 
 // Control Center, alerts, and the app switcher leave the app on screen as `inactive`.
+/** Omitted unless Battery Saver is on in Labs, so hosts keep treating the phone as unknown. */
+function reportedLowPowerMode(
+  batterySaverEnabled: boolean,
+  powerSaveMode: boolean | null,
+): Pick<ClientActivityReportInput, "lowPowerMode"> {
+  if (!batterySaverEnabled) return {};
+  return { lowPowerMode: powerSaveMode === null ? "unknown" : powerSaveMode ? "true" : "false" };
+}
+
 function isForeground(state: string | null | undefined): boolean {
   return state === "active" || state === "inactive";
 }
@@ -63,6 +77,11 @@ export const layerReporter = Layer.effectDiscard(
     const report = Effect.gen(function* () {
       const observedAtMs = yield* Clock.currentTimeMillis;
       const foreground = isForeground(appState);
+      // Read at report time: Android drops power-saver broadcasts to a cached app.
+      const lowPowerMode = reportedLowPowerMode(
+        isAndroidBatterySaverEnabled(),
+        readAndroidPowerSaveMode(),
+      );
       const entries = yield* SubscriptionRef.get(registry.entries);
       yield* Effect.forEach(
         entries.keys(),
@@ -78,6 +97,7 @@ export const layerReporter = Layer.effectDiscard(
                 focused: foreground,
                 recentlyInteracted: foreground,
                 appState: normalizeAppState(appState),
+                ...lowPowerMode,
                 scopes: [
                   ...BASELINE_SCOPES,
                   ...retainedMobileBackgroundScopes(environmentId as EnvironmentId),
@@ -97,18 +117,23 @@ export const layerReporter = Layer.effectDiscard(
     yield* Effect.acquireRelease(
       Effect.sync(() => {
         const removeScopeListener = onRetainedMobileBackgroundScopesChange(requestReport);
+        const removeBatterySaverListener = subscribeAndroidBatterySaver(requestReport);
+        const removePowerSaveListener = subscribeAndroidPowerSaveMode(requestReport);
         const subscription = AppState.addEventListener("change", (nextState) => {
           const changed = isForeground(appState) !== isForeground(nextState);
           appState = nextState;
           if (changed) requestReport();
         });
-        return { removeScopeListener, subscription };
+        return {
+          remove: () => {
+            removeScopeListener();
+            removeBatterySaverListener();
+            removePowerSaveListener();
+            subscription.remove();
+          },
+        };
       }),
-      ({ removeScopeListener, subscription }) =>
-        Effect.sync(() => {
-          removeScopeListener();
-          subscription.remove();
-        }),
+      (listeners) => Effect.sync(() => listeners.remove()),
     );
     yield* SubscriptionRef.changes(registry.entries).pipe(
       Stream.runForEach(() => Effect.sync(requestReport)),

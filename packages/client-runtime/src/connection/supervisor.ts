@@ -86,6 +86,7 @@ const BETTER_ROUTE_COOLDOWN_MS = 300_000;
 interface SupervisorIntent {
   readonly desired: boolean;
   readonly network: NetworkStatus;
+  readonly suspended: boolean;
 }
 
 type SupervisorSignal =
@@ -315,10 +316,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const initialIntent: SupervisorIntent = {
     desired: options?.initiallyDesired ?? false,
     network: targetNetwork(yield* connectivity.status),
+    suspended: false,
   };
   const intent = yield* Ref.make(initialIntent);
   const signals = yield* Queue.unbounded<SupervisorSignal>();
   const resetRetryState = yield* Ref.make(false);
+  // Set when a suspension clears, whichever loop branch takes the activation signal.
+  const resumeRequested = yield* Ref.make(false);
   const probeUnanswered = yield* Ref.make(false);
   const state = yield* SubscriptionRef.make<SupervisorConnectionState>(
     !initialIntent.desired
@@ -634,6 +638,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
+  // A suspension the app already undid can still be queued ahead of its activation.
+  const suspensionStillApplies = Ref.get(intent).pipe(Effect.map((current) => current.suspended));
+
   const waitForEstablishmentInterrupt = Effect.fnUntraced(function* (ignoreOffline: boolean) {
     // A primary attempt keeps running through an offline report, so the
     // network returning restarts it in case it stalled meanwhile.
@@ -673,6 +680,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             yield* logManagedRelayAccountChange;
             return false;
           }
+          if (next.reason === "application-suspended" && (yield* suspensionStillApplies)) {
+            return false;
+          }
           break;
       }
     }
@@ -685,7 +695,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     next: ConnectedLeaseSignal,
     lease: ConnectionDriver.EnvironmentConnectionLease,
   ) {
-    if (next._tag === "DisconnectRequested") {
+    if (
+      next._tag === "DisconnectRequested" ||
+      (next._tag === "Wakeup" &&
+        next.reason === "application-suspended" &&
+        (yield* suspensionStillApplies))
+    ) {
       return "end" as const;
     }
     if (next._tag === "BetterRouteAvailable") {
@@ -1074,7 +1089,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
     }
     const currentIntent = yield* Ref.get(intent);
-    if (!currentIntent.desired || (currentIntent.network === "offline" && !ignoreOffline)) {
+    if (
+      !currentIntent.desired ||
+      currentIntent.suspended ||
+      (currentIntent.network === "offline" && !ignoreOffline)
+    ) {
       return {
         _tag: "Interrupted",
         established: false,
@@ -1207,6 +1226,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       pendingRetry = Option.none();
     };
     let replacing = false;
+    // A resume keeps its offline bypass until an attempt it allowed connects or fails.
+    let resuming = false;
 
     for (;;) {
       const retryRequested = yield* Ref.getAndSet(resetRetryState, false);
@@ -1220,15 +1241,26 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       const currentIntent = yield* Ref.get(intent);
       if (!currentIntent.desired) {
         resetRetryLadder();
+        resuming = false;
         latestFailure = null;
         yield* clearLease;
         yield* setState(availableState(currentIntent, generation));
         yield* waitForSignal;
         continue;
       }
+      // Network changes and retries leave a suspended session parked; only
+      // returning to the app clears the suspension, and it reconnects at once.
+      if (currentIntent.suspended) {
+        resetRetryLadder();
+        yield* clearLease;
+        yield* setState(offlineState(currentIntent, generation, 0, latestFailure));
+        yield* waitForSignal;
+        continue;
+      }
       // The platform's offline report can stay wrong after the network is back,
-      // so an explicit retry still tries instead of waiting for it to change.
-      const ignoreOffline = replacing || retryRequested;
+      // so an explicit retry or a resume still tries instead of waiting for it to change.
+      if (yield* Ref.getAndSet(resumeRequested, false)) resuming = true;
+      const ignoreOffline = replacing || retryRequested || resuming;
       if (currentIntent.network === "offline" && !ignoreOffline) {
         yield* clearLease;
         yield* setState(offlineState(currentIntent, generation, failureCount + 1, latestFailure));
@@ -1258,6 +1290,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           ),
       );
       replacing = false;
+      if (outcome.established || outcome._tag !== "Interrupted") resuming = false;
       const failedProbe = yield* Ref.getAndSet(probeUnanswered, false);
       if (outcome.established) {
         // A session came up, so no earlier failure describes the connection.
@@ -1392,6 +1425,15 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           : Effect.void,
       ),
     );
+  const applySuspension = (reason: ConnectionWakeups.ConnectionWakeup) =>
+    reason === "application-suspended" || ConnectionWakeups.isApplicationActiveWakeup(reason)
+      ? Ref.modify(intent, (current) => [
+          current.suspended && reason !== "application-suspended",
+          { ...current, suspended: reason === "application-suspended" },
+        ]).pipe(
+          Effect.flatMap((resumed) => (resumed ? Ref.set(resumeRequested, true) : Effect.void)),
+        )
+      : Effect.void;
   // A restarted listener may have missed changes while it was down.
   yield* keepRunning(
     "network-listener",
@@ -1407,7 +1449,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         (reason === "network-changed" || reason === "application-active-long"
           ? forgetSilentRoutes
           : Effect.void
-        ).pipe(Effect.andThen(signal({ _tag: "Wakeup", reason }))),
+        ).pipe(
+          Effect.andThen(applySuspension(reason)),
+          Effect.andThen(signal({ _tag: "Wakeup", reason })),
+        ),
       ),
     ),
   );

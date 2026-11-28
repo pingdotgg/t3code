@@ -5766,5 +5766,10 @@
   "5d9bc70d1cb3b596": "{count} machines n’ont presque plus d’espace disque",
   "7bb6d3c4fe5cea0f": "{count} machines sont surchargées",
   "b48a4b390016a4f0": "Utilise {usage} alors que la mémoire ralentit les agents. L’arrêter aide les autres.",
-  "0d23483df1d6fc87": "Utilise {usage} alors que cette machine est surchargée. L’arrêter aide les autres."
+  "0d23483df1d6fc87": "Utilise {usage} alors que cette machine est surchargée. L’arrêter aide les autres.",
+  "8c6a3ffe43dae6da": "Économie de batterie",
+  "d03fe37bf2f2eeb3": "Économiser la batterie en arrière-plan",
+  "424a9796c9f38ac8": "Ferme les connexions de ce téléphone aux serveurs après 30 secondes en arrière-plan et indique à vos machines quand l’économiseur de batterie est activé pour qu’elles mettent en pause le travail en arrière-plan. Rouvrir l’app rétablit la connexion. Les notifications arrivent toujours.",
+  "ba0963c7d1a8335b": "économie de batterie",
+  "20bfe4d123b19bf0": "connexions en arrière-plan"
 }
