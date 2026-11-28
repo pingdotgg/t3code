@@ -1200,9 +1200,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const threadSearch = useThreadSearch(
     connectedEnvironmentIds,
     threadSearchQuery,
-    scopedProjectGroups.length === 0
-      ? {}
-      : { projectIds: scopedProjectRefs.map((projectRef) => projectRef.projectId) },
+    scopedProjectGroups.length === 0 ? {} : { projectRefs: scopedProjectRefs },
+  );
+  const failedSearchLabels = threadSearch.failedEnvironmentIds.map(
+    (id) => environmentLabelById.get(id) ?? id,
+  );
+  const offlineSearchLabels = [...environmentLabelById].flatMap(([id, label]) =>
+    !connectedEnvironmentIds.includes(id) &&
+    (scopedProjectGroups.length === 0 || scopedProjectRefs.some((ref) => ref.environmentId === id))
+      ? [label]
+      : [],
   );
   const routeDraftIdForRows = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
   const visibleDraftSessionCount = useComposerDraftStore((store) => {
@@ -1506,7 +1513,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       threadSearchMatchKey({ environmentId: thread.environmentId, threadId: thread.id }),
     );
     const query = threadSearch.query;
-    clearThreadSearch();
     navigateToThread(ref);
     if (match) openThreadFindOnQuery(scopedThreadKey(ref), findForMessageMatch(match, query));
   };
@@ -3203,6 +3209,25 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         }
       >
         <SidebarGroup className="flex-1" role="presentation">
+          {isSearchingThreads &&
+          (failedSearchLabels.length > 0 || offlineSearchLabels.length > 0) ? (
+            <div
+              role="status"
+              className="flex flex-wrap items-center gap-x-2 px-2 py-1 text-xs text-sidebar-muted-foreground"
+            >
+              {offlineSearchLabels.length > 0 ? (
+                <span>Offline · {offlineSearchLabels.join(", ")}</span>
+              ) : null}
+              {failedSearchLabels.length > 0 ? (
+                <>
+                  <span>Search failed · {failedSearchLabels.join(", ")}</span>
+                  <Button variant="ghost" size="xs" onClick={threadSearch.retry}>
+                    Retry
+                  </Button>
+                </>
+              ) : null}
+            </div>
+          ) : null}
           {isSearchingThreads ? (
             threadSearchResults.length > 0 ? (
               <TooltipProvider
@@ -3268,7 +3293,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 role="status"
                 className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
               >
-                {threadSearch.isPending ? "Searching thread messages…" : "No threads found"}
+                {threadSearch.isPending
+                  ? "Searching thread messages…"
+                  : failedSearchLabels.length > 0 || offlineSearchLabels.length > 0
+                    ? "No matches from available results"
+                    : "No threads found"}
               </p>
             )
           ) : null}

@@ -64,15 +64,27 @@ it("ignores invalid search keys", () => {
     const state = registry.get(searchAtom(makeThreadSearchKey([envA], "a".repeat(201))));
     const malformedState = registry.get(searchAtom("not json{{"));
 
-    expect(state).toEqual({ matches: [], isLoading: false, rows: [] });
-    expect(malformedState).toEqual({ matches: [], isLoading: false, rows: [] });
+    expect(state).toEqual({
+      matches: [],
+      isLoading: false,
+      rows: [],
+      failures: [],
+      archivedRows: [],
+    });
+    expect(malformedState).toEqual({
+      matches: [],
+      isLoading: false,
+      rows: [],
+      failures: [],
+      archivedRows: [],
+    });
     expect(searchCount).toBe(0);
   } finally {
     registry.dispose();
   }
 });
 
-it("merges successful environments and silently ignores failures", () => {
+it("keeps successful matches and identifies the failed request", () => {
   const result: OrchestrationSearchThreadsResult = {
     matches: [
       {
@@ -102,6 +114,8 @@ it("merges successful environments and silently ignores failures", () => {
     matches: [{ ...result.matches[0], environmentId: envA }],
     isLoading: false,
     rows: [],
+    failures: [{ environmentId: envB, input: { query: "needle" } }],
+    archivedRows: [],
   });
   expect(threadSearchMatchKey(state.matches[0]!)).toBe('["env-a","thread-a"]');
 
@@ -121,8 +135,9 @@ it("asks environments that omit older settled threads for their rows, with the c
     labelPrefix: "test:thread-search",
   });
   const registry = AtomRegistry.make();
+  const projectId = ProjectId.make("project-a");
   const scope = {
-    projectIds: [ProjectId.make("project-a")],
+    projectRefs: [{ environmentId: envA, projectId }],
     environmentLabels: { [envA]: "Laptop" },
   };
 
@@ -138,15 +153,21 @@ it("asks environments that omit older settled threads for their rows, with the c
       {
         query: "ui",
         olderSettledBefore: "2026-10-01T00:00:00.000Z",
-        projectIds: scope.projectIds,
+        projectIds: [projectId],
         environmentLabel: "Laptop",
         titlesOnly: true,
       },
     ],
   ]);
   inputs.length = 0;
-  registry.get(search.results(makeThreadSearchKey([envB], "needle")));
-  expect(inputs).toEqual([[envB, { query: "needle" }]]);
+  registry.get(
+    search.results(
+      makeThreadSearchKey([envA, envB], "needle", {
+        projectRefs: [{ environmentId: envB, projectId }],
+      }),
+    ),
+  );
+  expect(inputs).toEqual([[envB, { query: "needle", projectIds: [projectId] }]]);
 
   registry.dispose();
 });

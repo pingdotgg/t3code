@@ -1,11 +1,12 @@
 import {
   EnvironmentId,
   OrchestrationSearchThreadsInput,
-  ProjectId,
+  ScopedProjectRef,
   type OrchestrationThreadSearchMatch,
   type OrchestrationV2SearchThreadsInput,
   type OrchestrationV2SearchThreadsResult,
   type OrchestrationV2ThreadFamily,
+  type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -50,6 +51,14 @@ export interface EnvironmentThreadSearchMatch extends OrchestrationThreadSearchM
 export interface ThreadSearchResultsState {
   readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
   readonly isLoading: boolean;
+  readonly failures: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly input: OrchestrationV2SearchThreadsInput;
+  }>;
+  readonly archivedRows: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly thread: OrchestrationV2ThreadShell;
+  }>;
   /** Rows of matching older settled threads, which shells that omit them do not hold. */
   readonly rows: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
@@ -63,7 +72,8 @@ export interface ThreadSearchResultsState {
  * whether to skip message search.
  */
 export const ThreadSearchScope = Schema.Struct({
-  projectIds: Schema.optionalKey(Schema.Array(ProjectId)),
+  projectRefs: Schema.optionalKey(Schema.Array(ScopedProjectRef)),
+  archivedEnvironmentIds: Schema.optionalKey(Schema.Array(EnvironmentId)),
   environmentLabels: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   titlesOnly: Schema.optionalKey(Schema.Boolean),
 });
@@ -119,7 +129,13 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
     Atom.make((get): ThreadSearchResultsState => {
       const parsedKey = parseThreadSearchKey(key);
       if (Option.isNone(parsedKey)) {
-        return { matches: [], isLoading: false, rows: EMPTY_SEARCH_ROWS };
+        return {
+          matches: [],
+          isLoading: false,
+          rows: EMPTY_SEARCH_ROWS,
+          failures: [],
+          archivedRows: [],
+        };
       }
 
       const [environmentIds, query, scope = {}] = parsedKey.value;
@@ -128,31 +144,49 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
         scope.titlesOnly !== true && messageSearchTokens(query).long.length > 0;
       const matches: EnvironmentThreadSearchMatch[] = [];
       const rows: Array<ThreadSearchResultsState["rows"][number]> = [];
+      const failures: Array<ThreadSearchResultsState["failures"][number]> = [];
+      const archivedRows: Array<ThreadSearchResultsState["archivedRows"][number]> = [];
       let isLoading = false;
 
       for (const environmentId of environmentIds) {
         const before = options.olderSettledBefore
           ? get(options.olderSettledBefore(environmentId))
           : null;
-        if (!searchMessages && before === null) continue;
-        const label = scope.environmentLabels?.[environmentId];
-        const result = get(
-          options.getSearchAtom(environmentId, {
-            query,
-            ...(before === null
-              ? {}
-              : {
-                  olderSettledBefore: before,
-                  ...(scope.projectIds === undefined ? {} : { projectIds: scope.projectIds }),
-                  ...(label === undefined ? {} : { environmentLabel: label }),
-                  ...(searchMessages ? {} : { titlesOnly: true }),
-                }),
-          }),
+        const projectIds = scope.projectRefs?.flatMap((ref) =>
+          ref.environmentId === environmentId ? [ref.projectId] : [],
         );
+        if (projectIds?.length === 0) continue;
+        const includeArchived = scope.archivedEnvironmentIds?.includes(environmentId) === true;
+        if (!searchMessages && before === null && !includeArchived) continue;
+        const label = scope.environmentLabels?.[environmentId];
+        const input: OrchestrationV2SearchThreadsInput = {
+          query,
+          ...(projectIds === undefined ? {} : { projectIds }),
+          ...(before === null ? {} : { olderSettledBefore: before }),
+          ...(includeArchived ? { includeArchived: true } : {}),
+          ...((before !== null || includeArchived) && label !== undefined
+            ? { environmentLabel: label }
+            : {}),
+          ...(searchMessages ? {} : { titlesOnly: true }),
+        };
+        const result = get(options.getSearchAtom(environmentId, input));
         isLoading ||= result.waiting;
+        if (AsyncResult.isFailure(result) && !result.waiting)
+          failures.push({ environmentId, input });
         const value = AsyncResult.getOrElse(result, () => null);
         if (value !== null) {
-          matches.push(...value.matches.map((match) => ({ ...match, environmentId })));
+          matches.push(
+            ...value.matches.flatMap((match) =>
+              projectIds === undefined || projectIds.includes(match.projectId)
+                ? [{ ...match, environmentId }]
+                : [],
+            ),
+          );
+          if (includeArchived && value.archivedThreads !== undefined) {
+            archivedRows.push(
+              ...value.archivedThreads.map((thread) => ({ environmentId, thread })),
+            );
+          }
           if (value.threads !== undefined && value.threads.length > 0) {
             rows.push({
               environmentId,
@@ -162,7 +196,13 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
         }
       }
 
-      return { matches, isLoading, rows: rows.length === 0 ? EMPTY_SEARCH_ROWS : rows };
+      return {
+        matches,
+        isLoading,
+        failures,
+        archivedRows,
+        rows: rows.length === 0 ? EMPTY_SEARCH_ROWS : rows,
+      };
     }).pipe(Atom.withLabel(`${options.labelPrefix}:${key}`)),
   );
   const rowsAtom = Atom.family((rowsKey: string) => {

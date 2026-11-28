@@ -1986,13 +1986,13 @@ export const layerWsRpc = (
             .searchThreadStream(input)
             .pipe(Stream.mapError((cause) => new OrchestrationV2SearchThreadError({ cause }))),
         [ORCHESTRATION_V2_WS_METHODS.searchThreads]: (input) =>
-          ThreadSearch.searchThreadsWithOlderSettledRows({
+          ThreadSearch.searchClientThreads({
             request: input,
             search: threadSearch.search,
-            searchOlderSettled: threadSearch.searchOlderSettled,
+            searchUnloadedThreads: threadSearch.searchUnloadedThreads,
             sql,
-            readThreads: (threadIds) =>
-              threadManagement.readShellSnapshot({ location: "active", threadIds }),
+            readThreads: (threadIds, location) =>
+              threadManagement.readShellSnapshot({ location, threadIds }),
             latestSequence: applicationEvents.latestApplicationSequence,
           }).pipe(
             Effect.mapError(

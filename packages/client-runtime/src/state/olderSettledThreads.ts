@@ -464,6 +464,16 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
     /** Their rows, for `createThreadFamilyAtoms(...).mountRows`, under `rowsKey`. */
     pageRowsAtom: (scope: OlderSettledScope, pages: number) => pageRowsAtom(pagesKey(scope, pages)),
     rowsKey: (scope: OlderSettledScope, pages: number) => `older-settled:${pagesKey(scope, pages)}`,
+    retrySearch: (
+      registry: AtomRegistry.AtomRegistry,
+      environmentId: EnvironmentId,
+      search: OrchestrationV2SearchThreadsInput,
+    ) => {
+      const generation = registry.get(searchGenerationAtom(environmentId));
+      if (typeof generation === "number") {
+        registry.refresh(searchReadAtom({ environmentId, input: { generation, search } }));
+      }
+    },
     /** `orchestration.searchThreads` for a search that asks for older settled rows. */
     searchAtom: (environmentId: EnvironmentId, search: OrchestrationV2SearchThreadsInput) =>
       searchAtom(JSON.stringify([environmentId, search])),

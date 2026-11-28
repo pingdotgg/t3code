@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
+import "../index.css";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { act, render } from "../../test/render";
@@ -57,6 +58,13 @@ vi.mock("../state/environments", async (original) => ({
           settings: { addProjectBaseDirectory: "/workspace/" },
         },
       },
+      {
+        environmentId: "remote",
+        label: "Build host",
+        connection: { phase: "disconnected" },
+        entry: { target: { _tag: "RemoteConnectionTarget" } },
+        serverConfig: null,
+      },
     ],
   }),
   usePrimaryEnvironmentId: () => "local",
@@ -75,6 +83,9 @@ vi.mock("../state/queries", async (original) => ({
     matches: [],
     query,
     isPending: false,
+    failedEnvironmentIds: [],
+    archivedRows: [],
+    retry: () => {},
   }),
 }));
 vi.mock("../state/session", async (original) => ({
@@ -127,4 +138,22 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
       await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
     }
   });
+});
+
+it("narrows search coverage and reports an unavailable archive search", async () => {
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette());
+  const query = page.getByRole("combobox").first();
+  await query.fill("billing");
+  await expect.element(page.getByText("Offline · Build host")).toBeVisible();
+  await page.getByRole("combobox", { name: "Search environments" }).click();
+  await page.getByRole("option", { name: "Local" }).click();
+  await expect.element(page.getByText("Offline · Build host")).not.toBeInTheDocument();
+  await page.getByRole("checkbox", { name: "Include archived" }).click();
+  await expect.element(page.getByText("Archive search unavailable · Local")).toBeVisible();
+  await expect.element(query).toHaveValue("billing");
+  await query.fill(">billing");
+  await expect
+    .element(page.getByRole("checkbox", { name: "Include archived" }))
+    .not.toBeInTheDocument();
 });

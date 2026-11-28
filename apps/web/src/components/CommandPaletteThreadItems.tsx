@@ -12,7 +12,8 @@ import {
   pickedQuery,
   rankMessageMatches,
 } from "@t3tools/shared/paletteSearch";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopeThreadShell } from "@t3tools/client-runtime/state/models";
+import type { EnvironmentId, ScopedProjectRef, ThreadId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { MessageSquareIcon } from "lucide-react";
@@ -66,12 +67,23 @@ function useProviderEntryByEnvironmentAndInstanceId() {
   );
 }
 
-function useConnectedThreadSearch(query: string) {
+type PaletteThreadScope = {
+  readonly environmentId: EnvironmentId | null;
+  readonly projectRefs: ReadonlyArray<ScopedProjectRef> | undefined;
+  readonly includeArchived: boolean;
+};
+
+function useConnectedThreadSearch(query: string, scope: PaletteThreadScope) {
   const { environments } = useEnvironments();
   const { projectEnvironmentLocationById } = useEnvironmentLookups();
-  const environmentIds: ReadonlyArray<EnvironmentId> = environments
-    .filter((environment) => environment.connection.phase === "connected")
-    .map((environment) => environment.environmentId);
+  const inScope = environments.filter(
+    ({ environmentId }) =>
+      (scope.environmentId === null || scope.environmentId === environmentId) &&
+      (scope.projectRefs === undefined ||
+        scope.projectRefs.some((ref) => ref.environmentId === environmentId)),
+  );
+  const connected = inScope.filter((environment) => environment.connection.phase === "connected");
+  const environmentIds = connected.map((environment) => environment.environmentId);
   // The palette matches environment names when there are several; older rows must match the same.
   const environmentLabels =
     environments.length > 1
@@ -82,11 +94,31 @@ function useConnectedThreadSearch(query: string) {
           }),
         )
       : undefined;
-  return useThreadSearch(
-    environmentIds,
-    query,
-    environmentLabels === undefined ? {} : { environmentLabels },
-  );
+  const archivedEnvironmentIds = scope.includeArchived
+    ? connected.flatMap(({ environmentId, serverConfig }) =>
+        serverConfig?.environment.capabilities.threadSearchArchives === true ? [environmentId] : [],
+      )
+    : undefined;
+  const result = useThreadSearch(environmentIds, query, {
+    ...(environmentLabels === undefined ? {} : { environmentLabels }),
+    ...(scope.projectRefs === undefined ? {} : { projectRefs: scope.projectRefs }),
+    ...(archivedEnvironmentIds === undefined ? {} : { archivedEnvironmentIds }),
+  });
+  return {
+    ...result,
+    offlineLabels: inScope
+      .filter((environment) => environment.connection.phase !== "connected")
+      .map((environment) => environment.label),
+    failedLabels: connected
+      .filter((environment) => result.failedEnvironmentIds.includes(environment.environmentId))
+      .map((environment) => environment.label),
+    archiveUnavailableLabels:
+      archivedEnvironmentIds === undefined
+        ? []
+        : connected
+            .filter((environment) => !archivedEnvironmentIds.includes(environment.environmentId))
+            .map((environment) => environment.label),
+  };
 }
 
 /**
@@ -96,13 +128,14 @@ function useConnectedThreadSearch(query: string) {
 export function useCommandPaletteThreadItems(input: {
   readonly activeThread: { readonly environmentId: EnvironmentId; readonly id: ThreadId } | null;
   readonly threadSearchQuery: string;
+  readonly scope: PaletteThreadScope;
 }) {
-  const { activeThread, threadSearchQuery } = input;
+  const { activeThread, threadSearchQuery, scope } = input;
   const navigate = useNavigate();
   const threads = useThreadShells();
   const { projectEnvironmentLocationById } = useEnvironmentLookups();
   const providerEntryByEnvironmentAndInstanceId = useProviderEntryByEnvironmentAndInstanceId();
-  const messageSearch = useConnectedThreadSearch(threadSearchQuery);
+  const messageSearch = useConnectedThreadSearch(threadSearchQuery, scope);
   const { projectByKey } = useProjectLookups();
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   // Ranking is relative to when the palette opened, so rows do not reorder as time passes.
@@ -110,7 +143,21 @@ export function useCommandPaletteThreadItems(input: {
 
   const { environments } = useEnvironments();
   const threadItems = buildThreadActionItems({
-    threads,
+    threads: [
+      ...threads.filter(
+        (thread) =>
+          (scope.environmentId === null || thread.environmentId === scope.environmentId) &&
+          (scope.projectRefs === undefined ||
+            scope.projectRefs.some(
+              (ref) =>
+                ref.environmentId === thread.environmentId && ref.projectId === thread.projectId,
+            )),
+      ),
+      ...messageSearch.archivedRows.map(({ environmentId, thread }) =>
+        scopeThreadShell(environmentId, thread),
+      ),
+    ],
+    includeArchived: scope.includeArchived,
     ...(environments.length > 1
       ? {
           environmentLabelOf: (thread: (typeof threads)[number]) =>
@@ -128,7 +175,11 @@ export function useCommandPaletteThreadItems(input: {
           query={threadSearchQuery}
           settled={thread.settledOverride === "settled"}
         />
-        <ThreadRowTrailingStatus thread={thread} />
+        {thread.archivedAt === null ? (
+          <ThreadRowTrailingStatus thread={thread} />
+        ) : (
+          <span className="text-muted-foreground text-xs">Archived</span>
+        )}
       </>
     ),
     renderDescription: (thread, { projectTitle }) => {
@@ -247,5 +298,9 @@ export function useCommandPaletteThreadItems(input: {
     threadMessageItems,
     now,
     isSearchPending: messageSearch.isPending,
+    offlineLabels: messageSearch.offlineLabels,
+    failedLabels: messageSearch.failedLabels,
+    archiveUnavailableLabels: messageSearch.archiveUnavailableLabels,
+    retrySearch: messageSearch.retry,
   };
 }

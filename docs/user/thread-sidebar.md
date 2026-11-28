@@ -221,6 +221,13 @@ you last picked for a query ranks higher when you type that query again.
 Threads whose messages contain all your words appear below, under **In
 messages**, and open at the matching message. Message search needs at least
 one word of three or more letters, or two for Chinese, Japanese, and Korean.
+Once you type a query, narrow the thread results to a project or environment.
+Turn on **Include archived** to search archived threads without restoring them.
+If an environment is offline or its search fails, the available results stay
+visible. Use **Retry** to search an environment whose request failed again.
+In the sidebar, opening a match keeps the search open so you can check another
+result or clear the query with Escape.
+
 On mobile, the thread list search also lists message matches and opens them at
 the matching message; on an iPad with a keyboard, `Cmd+K` opens the same
 palette.

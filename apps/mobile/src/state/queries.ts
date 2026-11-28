@@ -57,6 +57,8 @@ const EMPTY_THREAD_SEARCH_ATOM = Atom.make<ThreadSearchResultsState>({
   matches: EMPTY_THREAD_SEARCH_MATCHES,
   isLoading: false,
   rows: [],
+  failures: [],
+  archivedRows: [],
 }).pipe(Atom.withLabel("mobile:thread-search:empty"));
 
 const olderSettledBeforeAtom = Atom.family((environmentId: EnvironmentId) =>
@@ -218,7 +220,8 @@ export function useThreadSearch(
   const canSearch =
     environmentIds.length > 0 &&
     ((scope.titlesOnly !== true && messageSearchTokens(normalizedQuery).long.length > 0) ||
-      (anyOlderSettled && normalizedQuery.length >= 2));
+      ((anyOlderSettled || (scope.archivedEnvironmentIds?.length ?? 0) > 0) &&
+        normalizedQuery.length >= 2));
   const settledQuery = canSearch && normalizedQuery === debouncedQuery ? debouncedQuery : null;
   const searchKeyOf = (searchQuery: string) =>
     makeThreadSearchKey(environmentIds, searchQuery, scope);
@@ -235,10 +238,15 @@ export function useThreadSearch(
       ? { query: settledQuery, matches: result.matches }
       : null;
   // Kept from earlier renders: React's pattern for information from previous renders.
-  const [previous, setPrevious] = useState<SettledThreadSearch | null>(null);
-  if (ready !== null && previous?.matches !== ready.matches) setPrevious(ready);
+  const scopeKey = searchKeyOf("");
+  const [previous, setPrevious] = useState<(SettledThreadSearch & { scopeKey: string }) | null>(
+    null,
+  );
+  if (ready !== null && (previous?.matches !== ready.matches || previous.scopeKey !== scopeKey)) {
+    setPrevious({ ...ready, scopeKey });
+  }
   const visible = canSearch
-    ? visibleThreadSearch(normalizedQuery, ready, previous)
+    ? visibleThreadSearch(normalizedQuery, ready, previous?.scopeKey === scopeKey ? previous : null)
     : { query: "", matches: EMPTY_THREAD_SEARCH_MATCHES };
   // The shown results' rows stay mounted until newer results replace them.
   const shownKey = visible.query === "" ? null : searchKeyOf(visible.query);

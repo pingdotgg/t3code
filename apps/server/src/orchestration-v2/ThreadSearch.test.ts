@@ -270,7 +270,7 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       for (const match of ['"needle"', null]) {
         const plan = yield* sql<{
           readonly detail: string;
-        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", projectId: null, excludedThreadIds: "[]" })}`;
+        }>`EXPLAIN QUERY PLAN ${ThreadSearch.messageHitsQuery(sql, { match, substrings: "[]", projectIds: null, includeArchived: false, excludedThreadIds: "[]" })}`;
         assert.isFalse(
           plan.some((row) => row.detail.includes("TEMP B-TREE")),
           plan.map((row) => row.detail).join("\n"),
@@ -802,7 +802,7 @@ it.layer(layerTest)("ThreadSearch across scripts and without the index", (it) =>
   );
 });
 
-it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
+it.layer(layerTest)("ThreadSearch.searchUnloadedThreads", (it) => {
   it.effect("returns older settled title matches in scope, then older message hits", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -829,12 +829,12 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
       const before = DateTime.formatIso(at(30));
       const messageThreadIds = [id("new-note"), id("note"), id("old")];
       assert.sameMembers(
-        [...(yield* search.searchOlderSettled({ query: "kestrel", before, messageThreadIds }))],
+        [...(yield* search.searchUnloadedThreads({ query: "kestrel", before, messageThreadIds }))],
         [id("old"), id("elsewhere"), id("note")],
       );
       // The scope applies to titles and message hits; message hits follow the titles in order.
       assert.deepEqual(
-        yield* search.searchOlderSettled({
+        yield* search.searchUnloadedThreads({
           query: "kestrel",
           before,
           projectIds: [project],
@@ -844,7 +844,7 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
       );
       // A palette also matches the environment's name.
       assert.include(
-        yield* search.searchOlderSettled({
+        yield* search.searchUnloadedThreads({
           query: "laptop unrelated",
           before,
           environmentLabel: "Laptop",
@@ -886,7 +886,7 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
         { discard: true },
       );
       const find = (query: string) =>
-        search.searchOlderSettled({
+        search.searchUnloadedThreads({
           query,
           before: DateTime.formatIso(at(30)),
           messageThreadIds: [],
@@ -897,33 +897,43 @@ it.layer(layerTest)("ThreadSearch.searchOlderSettled", (it) => {
   );
 });
 
-it.layer(layerTest)("ThreadSearch.searchThreadsWithOlderSettledRows", (it) => {
+it.layer(layerTest)("ThreadSearch.searchClientThreads", (it) => {
   it.effect("adds older settled rows to message hits, or alone for titles only", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const search = yield* ThreadSearch.ThreadSearch;
       const sql = yield* SqlClient.SqlClient;
       const project = ProjectId.make("project:plover");
+      const unrelated = ProjectId.make("project:other");
       yield* createProject(project);
+      yield* createProject(unrelated);
       const old = ThreadId.make("thread:plover-old");
       const recent = ThreadId.make("thread:plover-recent");
+      const archivedTitle = ThreadId.make("thread:plover-archived-title");
+      const archivedMessage = ThreadId.make("thread:plover-archived-message");
       yield* Effect.forEach(
         [
           thread(old, project, { title: "Plover nest", settledAt: at(10) }),
           thread(recent, project, { title: "Plover nest", settledAt: at(50) }),
           message(recent, "plover-note", "user", "a plover note", { minute: 2 }),
+          thread(archivedTitle, project, { title: "Plover archive", archivedAt: at(25) }),
+          thread(archivedMessage, project, { title: "Old vocabulary", archivedAt: at(25) }),
+          message(archivedMessage, "plover-archive-note", "user", "a plover note", { minute: 1 }),
         ],
         projections.apply,
         { discard: true },
       );
-      const run = (request: { readonly titlesOnly?: boolean }) =>
-        ThreadSearch.searchThreadsWithOlderSettledRows({
+      const run = (request: {
+        readonly titlesOnly?: boolean;
+        readonly includeArchived?: boolean;
+      }) =>
+        ThreadSearch.searchClientThreads({
           request: { query: "plover", olderSettledBefore: DateTime.formatIso(at(30)), ...request },
           search: search.search,
-          searchOlderSettled: search.searchOlderSettled,
+          searchUnloadedThreads: search.searchUnloadedThreads,
           sql,
-          readThreads: (threadIds) =>
-            projections.readShellSnapshot({ location: "active", threadIds }),
+          readThreads: (threadIds, location) =>
+            projections.readShellSnapshot({ location, threadIds }),
           latestSequence: Effect.succeed(7),
         });
       const withMessages = yield* run({});
@@ -936,18 +946,65 @@ it.layer(layerTest)("ThreadSearch.searchThreadsWithOlderSettledRows", (it) => {
         withMessages.threads?.map((row) => row.id),
         [old],
       );
+      assert.isUndefined(withMessages.archivedThreads);
+      const withArchive = yield* run({ includeArchived: true });
+      assert.deepEqual(
+        withArchive.archivedThreads?.map(({ id }) => id),
+        [archivedTitle, archivedMessage],
+      );
+      assert.include(
+        withArchive.matches.map(({ threadId }) => threadId),
+        archivedMessage,
+      );
+      assert.deepEqual(
+        withArchive.threads?.map(({ id }) => id),
+        [old],
+      );
       const titles = yield* run({ titlesOnly: true });
       assert.deepEqual(titles.matches, []);
       assert.deepEqual(
         titles.threads?.map((row) => row.id),
         [old],
       );
+      yield* Effect.forEach(
+        Array.from({ length: 50 }, (_, index) => {
+          const id = ThreadId.make(`thread:other-${index}`);
+          return [
+            thread(id, unrelated),
+            message(id, `other-${index}`, "user", "a plover note", { minute: 3 }),
+          ];
+        }).flat(),
+        projections.apply,
+        { discard: true },
+      );
+      yield* sql`
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 10_000)
+        INSERT INTO orchestration_v2_projection_messages
+          (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+        SELECT 'other-bulk:' || i, 'thread:other-0', 'user', 0,
+          ${DateTime.formatIso(at(5))}, ${DateTime.formatIso(at(5))},
+          json_object('text', 'another plover note')
+        FROM n
+      `;
+      const scoped = yield* ThreadSearch.searchClientThreads({
+        request: { query: "plover", projectIds: [project] },
+        search: search.search,
+        searchUnloadedThreads: search.searchUnloadedThreads,
+        sql,
+        readThreads: (threadIds) =>
+          projections.readShellSnapshot({ location: "active", threadIds }),
+        latestSequence: Effect.succeed(7),
+      });
+      assert.deepEqual(
+        scoped.matches.map((match) => match.threadId),
+        [recent],
+      );
       // Without the cut it is the plain message search.
       assert.isUndefined(
-        (yield* ThreadSearch.searchThreadsWithOlderSettledRows({
+        (yield* ThreadSearch.searchClientThreads({
           request: { query: "plover" },
           search: search.search,
-          searchOlderSettled: search.searchOlderSettled,
+          searchUnloadedThreads: search.searchUnloadedThreads,
           sql,
           readThreads: (threadIds) =>
             projections.readShellSnapshot({ location: "active", threadIds }),

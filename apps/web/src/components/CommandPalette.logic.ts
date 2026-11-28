@@ -422,6 +422,7 @@ export type BuildThreadActionItemsThread = Pick<
 
 export function buildThreadActionItems<TThread extends BuildThreadActionItemsThread>(input: {
   threads: ReadonlyArray<TThread>;
+  includeArchived?: boolean;
   activeThread?: Pick<Thread, "environmentId" | "id">;
   projectByKey: ReadonlyMap<string, Pick<Project, "title">>;
   icon: ReactNode;
@@ -434,7 +435,8 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
 }): CommandPaletteActionItem[] {
   // Callers order these: recents by last use, search results by rank.
   const visibleThreads = input.threads.filter(
-    (thread) => thread.archivedAt === null && !isSidebarHiddenThread(thread),
+    (thread) =>
+      (input.includeArchived || thread.archivedAt === null) && !isSidebarHiddenThread(thread),
   );
 
   return visibleThreads.map((thread) => {

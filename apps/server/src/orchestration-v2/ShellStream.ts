@@ -362,10 +362,11 @@ export const loadShellSnapshotParts = Effect.fn("ShellStream.loadShellSnapshotPa
   };
 });
 
-/** A page of older settled threads, read and decoded like `loadShellSnapshotParts`. */
+/** A ranked page of threads, read and decoded like `loadShellSnapshotParts`. */
 export const loadOlderSettledThreadsPage = Effect.fn("ShellStream.loadOlderSettledThreadsPage")(
   function* <E1, E2, E3, E4>(input: {
     readonly sql: SqlClient.SqlClient;
+    readonly location?: "active" | "archive";
     readonly listThreads: Effect.Effect<
       {
         readonly threadIds: ReadonlyArray<ThreadId>;
@@ -391,7 +392,9 @@ export const loadOlderSettledThreadsPage = Effect.fn("ShellStream.loadOlderSettl
         }),
       )
       .pipe(NodeSqliteClient.readOnly);
-    const threads = read.decodeThreads === null ? [] : (yield* read.decodeThreads).threads;
+    const snapshot = read.decodeThreads === null ? null : yield* read.decodeThreads;
+    const threads =
+      (input.location === "archive" ? snapshot?.archivedThreads : snapshot?.threads) ?? [];
     const order = new Map(read.listed.threadIds.map((threadId, index) => [threadId, index]));
     return {
       snapshotSequence: read.snapshotSequence,

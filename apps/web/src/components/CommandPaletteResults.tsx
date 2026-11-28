@@ -177,7 +177,11 @@ function ThreadRowContext({
 }) {
   if (!item.threadSearch || !(item.threadContentMatch || item.matchHint)) return null;
   // A "Project: …" hint already names the project.
-  const context = [item.threadSearch.projectTitle, item.threadSearch.environmentLabel]
+  const context = [
+    item.threadSearch.projectTitle,
+    item.threadSearch.environmentLabel,
+    item.threadContentMatch ? item.threadSearch.branch : null,
+  ]
     .filter((part) => part && part !== item.matchHint?.text)
     .join(" · ");
   return context ? (

@@ -237,6 +237,7 @@ import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/set
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { suggestAppAccessForRemote } from "./sourceControlAppAccessToast";
@@ -483,6 +484,9 @@ function OpenCommandPaletteDialog(props: {
   const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
   const currentView = viewStack.at(-1)?.view ?? null;
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
+  const [searchEnvironmentId, setSearchEnvironmentId] = useState<EnvironmentId | null>(null);
+  const [searchProjectKey, setSearchProjectKey] = useState<string | null>(null);
+  const [includeArchivedThreads, setIncludeArchivedThreads] = useState(false);
   const [browseGeneration, setBrowseGeneration] = useState(0);
   const [browseNavigation] = useState(createBrowseNavigationCoordinator);
   const [addProjectEnvironmentId, setAddProjectEnvironmentId] = useState<EnvironmentId | null>(
@@ -860,12 +864,33 @@ function OpenCommandPaletteDialog(props: {
     (item) => projectJumpItems.get(item.value) ?? item,
   );
 
+  const threadSearchProjectGroups = projectGroups.filter((group) =>
+    group.memberProjectRefs.some(
+      (ref) => searchEnvironmentId === null || ref.environmentId === searchEnvironmentId,
+    ),
+  );
+  const searchProject = threadSearchProjectGroups.find(
+    (group) => group.projectKey === searchProjectKey,
+  );
+  const hasThreadSearchQuery = threadSearchQuery.trim().length > 0;
   const {
     threadItems: allThreadItems,
     threadMessageItems,
     now: searchNow,
     isSearchPending: isThreadSearchPending,
-  } = useCommandPaletteThreadItems({ activeThread: activeThread ?? null, threadSearchQuery });
+    offlineLabels: threadSearchOfflineLabels,
+    failedLabels: threadSearchFailedLabels,
+    archiveUnavailableLabels,
+    retrySearch: retryThreadSearch,
+  } = useCommandPaletteThreadItems({
+    activeThread: activeThread ?? null,
+    threadSearchQuery,
+    scope: {
+      environmentId: hasThreadSearchQuery ? searchEnvironmentId : null,
+      projectRefs: hasThreadSearchQuery ? searchProject?.memberProjectRefs : undefined,
+      includeArchived: hasThreadSearchQuery && includeArchivedThreads,
+    },
+  });
   // Recent means used recently: written in or opened, whichever is later. The
   // open thread would always lead that list, so it is left out.
   const activeThreadValue = activeThread
@@ -2804,6 +2829,103 @@ function OpenCommandPaletteDialog(props: {
       showBackHint={isSubmenu}
       value={query}
     >
+      {hasThreadSearchQuery && !isLinkedThreadSearch && !isBrowsing && !isSubmenu ? (
+        <>
+          <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
+            {environments.length > 1 ? (
+              <Select
+                items={[
+                  { value: "", label: "All environments" },
+                  ...environments.map(({ environmentId, label }) => ({
+                    value: environmentId,
+                    label,
+                  })),
+                ]}
+                value={searchEnvironmentId ?? ""}
+                onValueChange={(value) => {
+                  setSearchEnvironmentId(
+                    environments.find((environment) => environment.environmentId === value)
+                      ?.environmentId ?? null,
+                  );
+                  setSearchProjectKey(null);
+                  setHighlightedItemValue(null);
+                }}
+              >
+                <SelectTrigger size="compact" variant="ghost" aria-label="Search environments">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value="">All environments</SelectItem>
+                  {environments.map(({ environmentId, label }) => (
+                    <SelectItem key={environmentId} value={environmentId}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            ) : null}
+            {threadSearchProjectGroups.length > 0 ? (
+              <Select
+                items={[
+                  { value: "", label: "All projects" },
+                  ...threadSearchProjectGroups.map(({ projectKey, displayName }) => ({
+                    value: projectKey,
+                    label: displayName,
+                  })),
+                ]}
+                value={searchProject?.projectKey ?? ""}
+                onValueChange={(value) => {
+                  setSearchProjectKey(value || null);
+                  setHighlightedItemValue(null);
+                }}
+              >
+                <SelectTrigger size="compact" variant="ghost" aria-label="Search projects">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value="">All projects</SelectItem>
+                  {threadSearchProjectGroups.map(({ projectKey, displayName }) => (
+                    <SelectItem key={projectKey} value={projectKey}>
+                      {displayName}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            ) : null}
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Checkbox
+                checked={includeArchivedThreads}
+                onCheckedChange={(checked) => {
+                  setIncludeArchivedThreads(checked);
+                  setHighlightedItemValue(null);
+                }}
+              />
+              Include archived
+            </label>
+          </div>
+          {threadSearchOfflineLabels.length > 0 ||
+          threadSearchFailedLabels.length > 0 ||
+          archiveUnavailableLabels.length > 0 ? (
+            <div
+              role="status"
+              className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 px-3 py-1.5 text-xs text-muted-foreground"
+            >
+              {threadSearchOfflineLabels.length > 0 ? (
+                <span>Offline · {threadSearchOfflineLabels.join(", ")}</span>
+              ) : null}
+              {threadSearchFailedLabels.length > 0 ? (
+                <>
+                  <span>Search failed · {threadSearchFailedLabels.join(", ")}</span>
+                  <CommandFooterAction onClick={retryThreadSearch}>Retry</CommandFooterAction>
+                </>
+              ) : null}
+              {archiveUnavailableLabels.length > 0 ? (
+                <span>Archive search unavailable · {archiveUnavailableLabels.join(", ")}</span>
+              ) : null}
+            </div>
+          ) : null}
+        </>
+      ) : null}
       {newProjectPathPreview !== null ? (
         <NewProjectSummary
           name={newProjectName}
