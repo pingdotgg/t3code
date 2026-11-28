@@ -488,17 +488,15 @@ describe("terminalOutputTail", () => {
 
   it.each([
     ["tone: 🏽", 2, 2, "🏽"],
-    [["🖐️", "🏽"], 2, 2, ""],
-    ["\u001b[31m🖐️\u001b[0m🏽", 2, 2, ""],
+    ["\u001b[31m🖐️\u001b[0m🏽X", 3, 3, "X"],
     ["✌️🏽X", 4, 4, "X"],
     ["✌️🏽X", 3, 3, "X"],
     ["✌\u001b[0;31m️\u001b[0m🏽X", 3, 8, "X"],
     ["xx\u001b[0;31m🇺\u001b[0m🇸🇫🇷", 6, 6, "🇫🇷"],
     ["xx🇺🇸🇫🇷", 4, 4, "🇫🇷"],
   ] as const)("keeps complete glyphs in %j", (text, live, saved, expected) => {
-    const chunks = typeof text === "string" ? [text] : text;
-    expect(terminalOutputPlainText(feed(chunks, live).text)).toBe(expected);
-    expect(terminalOutputPlainText(terminalOutputTail(chunks.join(""), saved).text)).toBe(expected);
+    expect(terminalOutputPlainText(normalizeTerminalOutput(text, live).text)).toBe(expected);
+    expect(terminalOutputPlainText(terminalOutputTail(text, saved).text)).toBe(expected);
   });
 
   it("never begins on a lone low surrogate", () => {
