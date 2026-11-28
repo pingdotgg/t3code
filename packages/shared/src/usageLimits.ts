@@ -603,7 +603,7 @@ const CODEX_PLAN_CAPACITY: Record<string, number> = {
 };
 // Claude's published plan multipliers describe the session allowance only.
 const CLAUDE_SESSION_CAPACITY: Record<string, number> = { Pro: 1, Max: 5, Ultra: 20 };
-// The X Subscription included usage relative to Plus, from Cursor's published plans.
+// Included usage relative to Plus, from Cursor's published plans.
 const CURSOR_PLAN_CAPACITY: Record<string, number> = {
   plus: 1,
   premium: 4,

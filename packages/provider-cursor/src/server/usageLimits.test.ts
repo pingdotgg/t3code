@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { cursorUsageResponseToLimits, readCursorUsageLimits } from "./usageLimits.ts";
@@ -213,22 +215,7 @@ describe("Cursor usage limits", () => {
     }),
   );
 
-  it("records the plan name from GetPlanInfo on the usage limits", () => {
-    const limits = cursorUsageResponseToLimits(
-      { planUsage: { totalPercentUsed: 10 } },
-      "2026-09-16T00:00:00.000Z",
-      "Ultra",
-    );
-    expect(limits.plan).toBe("Ultra");
-    expect(
-      cursorUsageResponseToLimits(
-        { planUsage: { totalPercentUsed: 10 } },
-        "2026-09-16T00:00:00.000Z",
-      ).plan,
-    ).toBeUndefined();
-  });
-
-  it.effect("reads the plan name after usage, and still returns usage if plan info fails", () =>
+  it.effect("reads the plan name, and still returns usage when the plan lookup hangs", () =>
     Effect.gen(function* () {
       const requests: string[] = [];
       const limits = yield* readCursorUsageLimits(
@@ -264,16 +251,19 @@ describe("Cursor usage limits", () => {
         Effect.provideService(
           HttpClient.HttpClient,
           HttpClient.make((request) =>
-            Effect.succeed(
-              HttpClientResponse.fromWeb(
-                request,
-                request.url.endsWith("/GetPlanInfo")
-                  ? new Response("nope", { status: 500 })
-                  : Response.json({ planUsage: { totalPercentUsed: 12 } }),
-              ),
-            ),
+            request.url.endsWith("/GetPlanInfo")
+              ? Effect.never
+              : Effect.succeed(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    Response.json({ planUsage: { totalPercentUsed: 12 } }),
+                  ),
+                ),
           ),
         ),
+        Effect.forkChild,
+        Effect.tap(() => TestClock.adjust("5 seconds")),
+        Effect.flatMap(Fiber.join),
       );
       expect(degraded.windows[0]?.usedPercent).toBe(12);
       expect(degraded.plan).toBeUndefined();

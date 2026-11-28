@@ -72,25 +72,27 @@ export function cursorUsageResponseToLimits(
     : makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
 }
 
+function dashboardRequest(endpoint: string, token: string, method: string) {
+  return HttpClientRequest.post(`${endpoint}/aiserver.v1.DashboardService/${method}`).pipe(
+    HttpClientRequest.bearerToken(token),
+    HttpClientRequest.setHeaders({
+      "connect-protocol-version": "1",
+      "x-cursor-client-type": "cli",
+    }),
+    HttpClientRequest.bodyJsonUnsafe({}),
+  );
+}
+
+// Shorter than the usage timeout, so a slow plan lookup never costs the usage reading.
 const readCursorPlanName = Effect.fn("readCursorPlanName")(
   function* (client: HttpClient.HttpClient, endpoint: string, token: string) {
-    const response = yield* client.execute(
-      HttpClientRequest.post(`${endpoint}/aiserver.v1.DashboardService/GetPlanInfo`).pipe(
-        HttpClientRequest.bearerToken(token),
-        HttpClientRequest.setHeaders({
-          "connect-protocol-version": "1",
-          "x-cursor-client-type": "cli",
-        }),
-        HttpClientRequest.bodyJsonUnsafe({}),
-      ),
-    );
+    const response = yield* client.execute(dashboardRequest(endpoint, token, "GetPlanInfo"));
     const body = yield* HttpClientResponse.schemaBodyJson(CursorPlanInfoResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );
-    const planName = body.planInfo?.planName?.trim();
-    return planName || undefined;
+    return body.planInfo?.planName;
   },
-  Effect.timeout("10 seconds"),
+  Effect.timeout("5 seconds"),
   Effect.orElseSucceed(() => undefined),
 );
 
@@ -119,20 +121,18 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
     }
     if (!token) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     const client = yield* HttpClient.HttpClient;
-    const response = yield* client.execute(
-      HttpClientRequest.post(`${endpoint}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`).pipe(
-        HttpClientRequest.bearerToken(token),
-        HttpClientRequest.setHeaders({
-          "connect-protocol-version": "1",
-          "x-cursor-client-type": "cli",
-        }),
-        HttpClientRequest.bodyJsonUnsafe({}),
-      ),
+    const [body, plan] = yield* Effect.all(
+      [
+        client
+          .execute(dashboardRequest(endpoint, token, "GetCurrentPeriodUsage"))
+          .pipe(
+            Effect.flatMap(HttpClientResponse.filterStatusOk),
+            Effect.flatMap(HttpClientResponse.schemaBodyJson(CursorUsageResponse)),
+          ),
+        readCursorPlanName(client, endpoint, token),
+      ],
+      { concurrency: "unbounded" },
     );
-    const body = yield* HttpClientResponse.schemaBodyJson(CursorUsageResponse)(
-      yield* HttpClientResponse.filterStatusOk(response),
-    );
-    const plan = yield* readCursorPlanName(client, endpoint, token);
     return cursorUsageResponseToLimits(body, checkedAt, plan);
   }).pipe(
     Effect.timeout("10 seconds"),
