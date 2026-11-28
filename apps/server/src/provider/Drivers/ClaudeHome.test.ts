@@ -5,6 +5,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   claudeLocalSettingsDirectory,
@@ -29,7 +30,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
 
       expect(yield* claudeLocalSettingsDirectory(worktree)).toBe(repo);
-    }),
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   describe("Claude home resolution", () => {
