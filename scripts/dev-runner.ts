@@ -458,6 +458,25 @@ export function devPortProbeHosts(configuredHost: string | undefined): ReadonlyA
   return [...DEV_PORT_PROBE_HOSTS, host];
 }
 
+// Windows reserves port ranges (Hyper-V, WSL, Docker), so one port can be denied while binding
+// still works.
+const probePortSkippingReserved = (
+  net: NetService.NetServiceShape,
+  port: number,
+  host: string,
+): Effect.Effect<boolean, NetService.NetListenError> =>
+  net.probeListenOnHost(port, host).pipe(
+    Effect.catchTags({
+      NetListenError: (error) =>
+        error.code === "EACCES" || error.code === "EPERM"
+          ? net.probeListenOnHost(0, host).pipe(
+              Effect.as(false),
+              Effect.mapError(() => error),
+            )
+          : Effect.fail(error),
+    }),
+  );
+
 const makeDefaultCheckPortAvailability =
   (configuredHost: string | undefined): PortAvailabilityCheck<NetService.NetService> =>
   (port, role) =>
@@ -465,7 +484,7 @@ const makeDefaultCheckPortAvailability =
       const net = yield* NetService.NetService;
       const hosts = role === "web" ? DEV_PORT_PROBE_HOSTS : devPortProbeHosts(configuredHost);
       return yield* checkPortAvailabilityOnHosts(port, hosts, (candidatePort, host) =>
-        net.probeListenOnHost(candidatePort, host),
+        probePortSkippingReserved(net, candidatePort, host),
       );
     });
 
