@@ -3394,7 +3394,7 @@ const main = Effect.gen(function* () {
   const config: Config = {
     apiKey,
     model: flags.model,
-    ...(codex || !isPricedModel(flags["shell-model"]) ? { proxy: proxyConfig() } : {}),
+    ...(codex || !isPricedModel(flags["shell-model"]) ? { proxy: yield* proxyConfig() } : {}),
     effort,
     maxSteps: flags["max-steps"] ?? (codex ? 10 : 6),
     shellModel: flags["shell-model"],

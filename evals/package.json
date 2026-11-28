@@ -20,7 +20,8 @@
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/shared": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "smol-toml": "1.9.1"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
