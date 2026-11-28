@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   htmlRenderFileName,
+  htmlRenderFrameHeight,
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
@@ -16,6 +17,25 @@ describe("htmlRenderFileName", () => {
     const crosses = "a".repeat(119);
     expect(htmlRenderFileName(`${fits}🚀 report`)).toBe(`${fits}🚀.html`);
     expect(htmlRenderFileName(`${crosses}🚀 report`)).toBe(`${crosses}.html`);
+  });
+});
+
+describe("htmlRenderFrameHeight", () => {
+  const responsive = {
+    attachmentId: "a",
+    title: "Report",
+    height: 600,
+    heights: [
+      [728, 350],
+      [1000, 700],
+      [1144, 250],
+    ],
+  } as const;
+
+  it("uses the last measured height at and above the widest sampled width", () => {
+    expect(
+      [1143, 1144, 1145, 1300].map((width) => htmlRenderFrameHeight(responsive, width)),
+    ).toEqual([700, 250, 250, 250]);
   });
 });
 
