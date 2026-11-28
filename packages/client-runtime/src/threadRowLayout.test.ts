@@ -45,7 +45,7 @@ describe("thread row lines", () => {
 describe("mobile thread row defaults", () => {
   it("saves an unchanged mobile layout as empty, so later default changes reach it", () => {
     const layout = resolveSidebarRowLayout({}, MOBILE_DEFAULT_STORED_LAYOUT);
-    expect(ids(layout.top)).toEqual(["projectIcon", "title"]);
+    expect(ids(layout.top)).toEqual(["projectIcon", "title", "time"]);
     expect(storedSidebarRowLayout(layout, MOBILE_DEFAULT_STORED_LAYOUT)).toEqual({});
   });
 });

@@ -1,6 +1,4 @@
-import { createContext, type ReactNode } from "react";
-
-import type { SidebarRowLine, SidebarRowToken } from "@t3tools/client-runtime/thread-row-layout";
+import type { SidebarRowToken } from "@t3tools/client-runtime/thread-row-layout";
 
 export * from "@t3tools/client-runtime/thread-row-layout";
 
@@ -25,17 +23,3 @@ export function sidebarRowItemFlexClassName(token: SidebarRowToken, titleStretch
       return "shrink-0";
   }
 }
-
-export interface SidebarRowLayoutItem {
-  readonly token: SidebarRowToken;
-  /** Null when this thread has nothing to show for the item, such as no pull request. */
-  readonly node: ReactNode;
-}
-
-/** Set only by the layout editor, which wraps each line of the real row in drag targets. */
-export const SidebarRowLayoutEditingContext = createContext<{
-  renderLine: (
-    line: Exclude<SidebarRowLine, "hidden">,
-    items: ReadonlyArray<SidebarRowLayoutItem>,
-  ) => ReactNode;
-} | null>(null);

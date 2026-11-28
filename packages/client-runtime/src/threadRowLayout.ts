@@ -14,6 +14,7 @@ export const SIDEBAR_ROW_ITEMS = [
   { id: "pullRequest", label: msg("Pull request") },
   { id: "issues", label: msg("Linked issues") },
   { id: "agents", label: msg("Agents") },
+  { id: "time", label: msg("Time", { $context: "how long ago a thread was active" }) },
   { id: "spacer", label: msg("Spacer", { $context: "flexible empty space in a layout" }) },
 ] as const;
 
@@ -21,11 +22,10 @@ export type SidebarRowItemId = (typeof SIDEBAR_ROW_ITEMS)[number]["id"];
 export type SidebarRowItemForm = "wide" | "compact";
 
 /** Items with a wide and a compact form; the first form is the default. */
-export const SIDEBAR_ROW_ITEM_FORMS: Partial<
-  Record<SidebarRowItemId, ReadonlyArray<SidebarRowItemForm>>
-> = {
-  environment: ["wide", "compact"],
-};
+const SIDEBAR_ROW_ITEM_FORMS: Partial<Record<SidebarRowItemId, ReadonlyArray<SidebarRowItemForm>>> =
+  {
+    environment: ["wide", "compact"],
+  };
 
 export interface SidebarRowToken {
   readonly id: SidebarRowItemId;
@@ -53,7 +53,7 @@ type DefaultStoredLayout = Readonly<Record<SidebarRowLine, ReadonlyArray<string>
 
 // Stored as "id" or "id:form". Spacers may repeat; every other item appears once.
 const DEFAULT_STORED_LAYOUT: DefaultStoredLayout = {
-  top: ["projectIcon", "projectName", "spacer"],
+  top: ["projectIcon", "projectName", "spacer", "time"],
   middle: ["title"],
   bottom: [
     "branch",
@@ -81,7 +81,7 @@ function parseToken(stored: string): Omit<SidebarRowToken, "key"> | null {
 
 /** Mobile's thread list keeps its two-line look until someone edits the layout. */
 export const MOBILE_DEFAULT_STORED_LAYOUT: DefaultStoredLayout = {
-  top: ["projectIcon", "title"],
+  top: ["projectIcon", "title", "time"],
   middle: [],
   bottom: ["environment:wide", "spacer", "pullRequest", "agents"],
   hidden: ["projectName", "branch", "terminals", "issues"],
@@ -214,16 +214,6 @@ export function moveSidebarRowToken(
   return next;
 }
 
-export function setSidebarRowTokenForm(
-  layout: SidebarRowLayout,
-  key: string,
-  form: SidebarRowItemForm,
-): SidebarRowLayout {
-  return mapLines(layout, (tokens) =>
-    tokens.map((token) => (token.key === key ? { ...token, form } : token)),
-  );
-}
-
 export function setSidebarRowLineKept(
   layout: SidebarRowLayout,
   line: SidebarRowCollapsibleLine,
@@ -272,8 +262,6 @@ export function resolveSidebarRowLines(input: {
   readonly keepLines: ReadonlyArray<SidebarRowCollapsibleLine>;
   /** False when this thread has nothing to show for the item, such as no pull request. */
   readonly hasContent: (token: SidebarRowToken) => boolean;
-  /** The layout editor keeps every line so empty ones stay drop targets. */
-  readonly editing?: boolean;
 }): Record<SidebarRowVisibleLine, ReadonlyArray<SidebarRowToken> | null> {
   const folds = (line: SidebarRowVisibleLine) => {
     const tokens = input.lines[line];
@@ -282,7 +270,6 @@ export function resolveSidebarRowLines(input: {
       input.keepLines.includes(line) &&
       tokens.some((token) => token.id !== "spacer");
     return (
-      input.editing !== true &&
       line !== "top" &&
       line !== input.titleLine &&
       !kept &&

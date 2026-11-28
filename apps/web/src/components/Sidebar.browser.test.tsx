@@ -590,6 +590,16 @@ describe("sidebar thread card layout", () => {
       heights: [82, 82],
     },
     {
+      // The time keeps a sparse card's last line, so that line never folds.
+      name: "time on the bottom line",
+      layout: {
+        top: ["projectIcon", "projectName"],
+        middle: ["title"],
+        bottom: ["branch", "spacer", "time"],
+      },
+      heights: [82, 82],
+    },
+    {
       name: "fixed height with only the title",
       layout: {
         top: [],
