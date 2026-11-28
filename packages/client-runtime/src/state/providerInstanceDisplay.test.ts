@@ -30,6 +30,13 @@ describe("providerInstanceInitials", () => {
     expect(providerInstanceInitials("😀 Work")).toBe("😀W");
     expect(providerInstanceInitials("😀")).toBe("😀");
   });
+
+  it("normalizes decomposed accents before extracting initials", () => {
+    expect(providerInstanceInitials("Éclair")).toBe("ÉC");
+    expect(providerInstanceInitials("E\u0301clair")).toBe("ÉC");
+    expect(providerInstanceInitials("Éclair Pro")).toBe("ÉP");
+    expect(providerInstanceInitials("E\u0301clair Pro")).toBe("ÉP");
+  });
 });
 
 describe("normalizeProviderAccentColor", () => {
