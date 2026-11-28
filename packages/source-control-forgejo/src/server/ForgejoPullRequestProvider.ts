@@ -327,11 +327,14 @@ export const make = Effect.gen(function* () {
             (error) => error.reason !== "unauthenticated",
             () => Effect.void,
           );
-          const matches = (labels?.all ?? []).filter(
-            (candidate) => candidate.name.toLowerCase() === single.trim().toLowerCase(),
+          const ids = new Set(
+            (labels?.all ?? [])
+              .filter((candidate) => candidate.name.toLowerCase() === single.trim().toLowerCase())
+              .map((candidate) => candidate.id),
           );
-          const label = matches.length === 1 ? matches[0] : undefined;
-          if (label !== undefined) params.set("labels", String(label.id));
+          // A name shared by a repository and an organization label is ambiguous: filter by neither.
+          const [id] = ids;
+          if (ids.size === 1 && id !== undefined) params.set("labels", String(id));
         }
         if (filters?.author !== undefined)
           params.set("poster", resolvePullRequestAuthorFilter(filters.author, input.viewer));
