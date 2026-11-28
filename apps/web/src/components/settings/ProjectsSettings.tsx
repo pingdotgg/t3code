@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
 import { T, useGT } from "gt-react";
 import { LayersIcon } from "lucide-react";
 
@@ -6,12 +7,12 @@ import { Button } from "../ui/button";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
-import { SettingsPageContainer } from "./settingsLayout";
+import { SettingsPageContainer, SettingsRow } from "./settingsLayout";
 import { ALL_ENVIRONMENTS_VALUE, selectEnvironmentAxis } from "./settingsScopeAxis";
 
 export function ProjectsSettings() {
   const gt = useGT();
-  const { search: value, scope, selectScope } = useSettingsScope();
+  const { search: value, scope, selectScope, environment } = useSettingsScope();
   const unavailable =
     scope.kind === "unavailable" ? (
       <SettingsPageContainer>
@@ -38,6 +39,23 @@ export function ProjectsSettings() {
       (scope.reason === "project-missing" || scope.reason === "checkout-missing"));
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {environment ? (
+        <div className="shrink-0 border-b border-border/60 px-6 py-3">
+          <SettingsRow
+            title={gt("Import projects and their threads")}
+            description={environment.label}
+            control={
+              <Button
+                size="sm"
+                variant="outline"
+                render={<Link to="/welcome" hash={`projects:${environment.environmentId}`} />}
+              >
+                <T context="verb, opens a page">Open</T>
+              </Button>
+            }
+          />
+        </div>
+      ) : null}
       {value.project && projectScope ? (
         <ProjectSettingsPanel
           projectKey={value.project}
