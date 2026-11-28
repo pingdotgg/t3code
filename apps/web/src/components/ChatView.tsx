@@ -2398,8 +2398,14 @@ export default function ChatView(props: ChatViewProps) {
     pendingServerThreadBranchEntry?.threadId === activeThread?.id
       ? pendingServerThreadBranchEntry
       : null;
+  // Read here so the compiler caches the setter on the id alone: activeThreadId sits behind hook calls and the
+  // thread object changes with every update, either of which rebuilds the details panel and overlay hosts.
+  // The closure, not a stable wrapper: a checkout resolving after a thread switch must write its own thread.
+  const pendingBranchThreadId = activeThread?.id ?? null;
   const setPendingServerThreadBranch = (branch: string | null) => {
-    if (activeThread) setPendingServerThreadBranchEntry({ threadId: activeThread.id, branch });
+    if (pendingBranchThreadId !== null) {
+      setPendingServerThreadBranchEntry({ threadId: pendingBranchThreadId, branch });
+    }
   };
   const envMode: DraftThreadEnvMode = canOverrideServerThreadEnvMode
     ? (pendingServerThreadEnvMode ?? draftThread?.envMode ?? derivedEnvMode)

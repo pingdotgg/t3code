@@ -296,6 +296,22 @@ describe("report math", () => {
     });
     expect(rendered).toContain("| type-long: key | 2 | 3 | 20 | 30 | TimelineRow 20 |");
     expect(rendered).toContain("Component names are minified");
+    const idle = {
+      label: "on an idle thread",
+      seconds: 10.1,
+      taskPct: 2,
+      scriptPct: 1,
+      stylePct: 0,
+      layoutPct: 0,
+      renders: renders(12),
+    };
+    const quiet = decode({
+      meta: { commit: "abc", platform: "linux-x64" },
+      runs: [{ switches: [], memory: [], idle: [idle] }],
+    });
+    expect(summaryTable(quiet)).toContain(
+      "| streaming: on an idle thread | 1 | 3 | 12 | 12 | TimelineRow 12 |",
+    );
   });
 });
 

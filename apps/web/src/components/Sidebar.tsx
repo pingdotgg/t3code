@@ -1659,6 +1659,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
     navigateToThread(threadRef);
   };
+  // It reads the route, so the plain function is new on every switch and would re-render every row.
+  const handleThreadClickStable = useStableCallback(handleThreadClick);
 
   // Snapshot navigation before partition mutation; background parks use a null plan.
   const planForwardNavigation = (
@@ -3644,7 +3646,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             EMPTY_PROVIDER_ENTRIES
                           }
                           timestampFormat={timestampFormat}
-                          onThreadClick={handleThreadClick}
+                          onThreadClick={handleThreadClickStable}
                           onThreadActivate={navigateToThread}
                           onStartRename={startThreadRename}
                           onRenameTitleChange={setRenamingTitle}

@@ -586,15 +586,21 @@ const memoryAfterGc = Effect.fn("clientMetrics.memory")(function* (page: Page, c
   };
 });
 
-const idleCpu = Effect.fn("clientMetrics.idleCpu")(function* (cdp: CDPSession, label: string) {
+const idleCpu = Effect.fn("clientMetrics.idleCpu")(function* (
+  h: Harness,
+  cdp: CDPSession,
+  label: string,
+) {
   const read = browserPromise("performance metrics", () => cdp.send("Performance.getMetrics")).pipe(
     Effect.map(({ metrics }) => new Map(metrics.map(({ name, value }) => [name, value]))),
   );
+  yield* startRenders(h);
   const startedAt = yield* nowMs;
   const before = yield* read;
   yield* Effect.sleep(Duration.seconds(IDLE_SECONDS));
   const after = yield* read;
   const seconds = ((yield* nowMs) - startedAt) / 1_000;
+  const renders = yield* stopRenders(h, `idle:${label}`, 0);
   const pct = (name: string) =>
     Math.round((((after.get(name) ?? 0) - (before.get(name) ?? 0)) / seconds) * 1_000) / 10;
   const idle: Idle = {
@@ -604,6 +610,7 @@ const idleCpu = Effect.fn("clientMetrics.idleCpu")(function* (cdp: CDPSession, l
     scriptPct: pct("ScriptDuration"),
     stylePct: pct("RecalcStyleDuration"),
     layoutPct: pct("LayoutDuration"),
+    ...(renders === undefined ? {} : { renders }),
   };
   return idle;
 });
@@ -1397,7 +1404,7 @@ const measurePass = Effect.fn("clientMetrics.measurePass")(function* (options: M
     ] as const) {
       yield* onThread(h, thread);
       const before = yield* seeded.workingStatus;
-      const sample = yield* idleCpu(cdp, label);
+      const sample = yield* idleCpu(h, cdp, label);
       const after = yield* seeded.workingStatus;
       if (before !== "running" || after !== "running") {
         const reason = `renderer CPU ${label}: the working thread was ${before === "running" ? after : before}, not streaming`;
@@ -1572,7 +1579,7 @@ const measureFlags = {
   renders: Flag.Boolean("renders").pipe(
     Flag.withDefault(false),
     Flag.withDescription(
-      "Count React commits and component renders per measured step, with their top components and causes. Near-deterministic, so compare gates on them; the probe slows commits a little, so compare like with like. Pair with --unminified for readable names.",
+      "Count React commits and component renders per measured step and per window that samples renderer CPU while a thread streams, with their top components and causes. Near-deterministic, so compare gates on them; the probe slows commits a little, so compare like with like. Pair with --unminified for readable names.",
     ),
   ),
   slotDiff: Flag.String("slot-diff").pipe(

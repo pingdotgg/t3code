@@ -90,10 +90,11 @@ install --only-shell chromium`.
 
 `--renders` counts React commits and component renders per step, the subtrees React bailed out
 of not counted, with the top components and a cause per render (`mount`, `state#<hook slot>`,
-`props:<changed keys>`, `parent-same-props<-Parent`, `context`). Counts barely move between runs,
-so `compare` gates on them and they catch what timing noise hides. The probe slows commits, so
-compare renders runs with renders runs. Names need `--unminified`; `--slot-diff A,B` diffs those
-components' changed hook slots into `renders.ndjson`.
+`props:<changed keys>`, `parent-same-props<-Parent`, `context`). It also counts them in the two
+streaming windows, where nothing is clicked or typed, so their CPU then includes the probe. Counts
+barely move between runs, so `compare` gates on them and they catch what timing noise hides. The
+probe slows commits, so compare renders runs with renders runs. Names need `--unminified`;
+`--slot-diff A,B` diffs those components' changed hook slots into `renders.ndjson`.
 
 `--trace` traces one extra round with a CPU profile and maps it through the build's sourcemaps.
 Per step, the task that ran its input splits into forced style and layout (top call sites at the
