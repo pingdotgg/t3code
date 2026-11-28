@@ -859,12 +859,15 @@ export const layerWithOptions = (
         readonly detail?: string;
       }) {
         const now = yield* DateTime.now;
+        const {
+          startupPhase: _startupPhase,
+          startupPhaseThreadId: _startupPhaseThreadId,
+          ...providerSession
+        } = input.entry.runtime.providerSession;
         const payload: OrchestrationV2ProviderSession = {
-          ...input.entry.runtime.providerSession,
+          ...providerSession,
           status: releaseStatusFor(input.reason),
-          ...(input.entry.runtime.providerSession.extensionStatuses === undefined
-            ? {}
-            : { extensionStatuses: [] }),
+          ...(providerSession.extensionStatuses === undefined ? {} : { extensionStatuses: [] }),
           updatedAt: now,
           lastError:
             input.reason === "runtime_error" ? (input.detail ?? "Provider runtime failed.") : null,

@@ -1260,6 +1260,8 @@ describe("CursorAdapterV2", () => {
         "a failed rewind leaves the conversation, and what it was told, unchanged",
       );
       const rewound = yield* rollbackToKept;
+      // The rewind closed the SDK session, so the next send launches one.
+      assert.equal(runtime.providerSession.startupPhase, "launch");
       assert.deepEqual(rewoundAfter, [keptTurn.nativeTurnRef?.nativeId]);
       assert.deepEqual(
         rewound.providerThread.nativeThreadRef,
@@ -2745,14 +2747,15 @@ describe("CursorAdapterV2", () => {
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
         );
-        // The phase the SDK reported while starting is published once and cleared when the run starts.
+        // The worker launch and the phase the SDK reported while starting are each published once,
+        // and the launch holds until the send reports or the run starts.
         assert.deepEqual(
           events.flatMap((event) =>
             event.type === "provider_session.updated"
               ? [event.providerSession.startupPhase ?? null]
               : [],
           ),
-          ["plugins", null],
+          ["launch", "plugins", null],
         );
         const listed = (
           update: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
@@ -3811,6 +3814,8 @@ describe("CursorAdapterV2", () => {
       });
 
       let firstAlive = true;
+      let secondAlive = true;
+      const secondEnded = yield* Deferred.make<void>();
       let firstClosed = 0;
       const opens: Array<{ readonly operation: string; readonly agentId?: string }> = [];
       const sends: Array<number> = [];
@@ -3829,7 +3834,8 @@ describe("CursorAdapterV2", () => {
             });
             return Effect.succeed({
               agentId: "native-cursor-reopen",
-              isAlive: () => (sessionNumber === 1 ? firstAlive : true),
+              isAlive: () => (sessionNumber === 1 ? firstAlive : secondAlive),
+              ...(sessionNumber === 2 ? { ended: Deferred.await(secondEnded) } : {}),
               listMessages: Effect.succeed([]),
               close: Effect.sync(() => {
                 if (sessionNumber === 1) firstClosed += 1;
@@ -3924,6 +3930,20 @@ describe("CursorAdapterV2", () => {
         { operation: "resume", agentId: "native-cursor-reopen" },
       ]);
       assert.deepEqual(sends, [2]);
+
+      // A worker that dies while the session is idle is reported before the next send.
+      secondAlive = false;
+      yield* Deferred.succeed(secondEnded, undefined);
+      const gone = yield* runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "provider_session.updated" &&
+            event.providerSession.startupPhase === "launch",
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+      );
+      assert.lengthOf(gone, 1);
     }).pipe(
       Effect.scoped,
       Effect.provide(
