@@ -178,6 +178,13 @@ describe("PreviewPasskeys", () => {
       assert.deepStrictEqual(unsupported, { success: false, error: "NotSupportedError" });
       assert.strictEqual(webauthn.createCredential.mock.calls.length, 1);
 
+      const unknownType = yield* call(PASSKEY_CREATE_CHANNEL, {
+        ...publicKey,
+        pubKeyCredParams: [{ type: "future-credential-type", alg: -7 }],
+      });
+      assert.deepStrictEqual(unknownType, { success: false, error: "NotSupportedError" });
+      assert.strictEqual(webauthn.createCredential.mock.calls.length, 1);
+
       const malformed = yield* call(PASSKEY_CREATE_CHANNEL, {
         ...publicKey,
         pubKeyCredParams: { type: "public-key", alg: -7 },
