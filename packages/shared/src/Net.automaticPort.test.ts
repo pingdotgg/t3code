@@ -75,4 +75,57 @@ it.layer(NetService.layer)("Automatic port selection", (it) => {
         }
       }),
   );
+
+  it.effect("skips an IPv6 loopback reservation held on IPv4 loopback", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(
+        () =>
+          new Promise<NodeNet.Server>((resolve, reject) => {
+            const server = NodeNet.createServer();
+            server.once("error", reject);
+            server.listen(0, "127.0.0.1", () => resolve(server));
+          }),
+      ),
+      (occupied) =>
+        Effect.gen(function* () {
+          const net = yield* NetService.NetService;
+          const address = occupied.address();
+          if (address === null || typeof address === "string") {
+            throw new Error("Expected an IPv4 loopback listener");
+          }
+
+          const originalListen = NodeNet.Server.prototype.listen;
+          let offerOccupiedPort = true;
+          const listen = vi.spyOn(NodeNet.Server.prototype, "listen").mockImplementation(function (
+            this: NodeNet.Server,
+            ...args
+          ) {
+            const bindArguments: readonly unknown[] = args;
+            const [port, host] = bindArguments;
+            if (port === 0 && host === "::1") {
+              if (offerOccupiedPort) {
+                offerOccupiedPort = false;
+                vi.spyOn(this, "address").mockReturnValueOnce({
+                  address: "::1",
+                  family: "IPv6",
+                  port: address.port,
+                });
+              }
+              // Simulate IPv6 allocation even on machines without IPv6 support.
+              return Reflect.apply(originalListen, this, [port, "127.0.0.1", ...args.slice(2)]);
+            }
+            return originalListen.apply(this, args);
+          });
+          try {
+            expect(yield* net.findAvailablePort(0, "::1")).not.toBe(address.port);
+          } finally {
+            listen.mockRestore();
+          }
+        }),
+      (occupied) =>
+        Effect.sync(() => {
+          occupied.close();
+        }),
+    ),
+  );
 });
