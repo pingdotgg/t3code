@@ -1323,6 +1323,10 @@ type SettlementThreadRow = Pick<
   | "latest_run_started_at"
   | "latest_run_completed_at"
   | "latest_user_message_at"
+  | "blocking_run_id"
+  | "blocking_run_requested_at"
+  | "blocking_run_started_at"
+  | "blocking_run_completed_at"
 > & {
   readonly latest_resuming_message_at: string | null;
 };
@@ -8496,6 +8500,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
       ORDER BY candidate.ordinal DESC, candidate.run_id DESC
       LIMIT 1
     )`;
+    const latestExecutedRunId = (threadId: Statement.Fragment) => sql`(
+      SELECT candidate.run_id
+      FROM orchestration_v2_projection_runs candidate
+      WHERE candidate.thread_id = ${threadId}
+        AND candidate.status <> 'queued'
+        AND NOT (
+          candidate.status = 'cancelled'
+          AND json_extract(candidate.payload_json, '$.startedAt') IS NULL
+        )
+      -- latestExecutedRun: the run that ended last (runRanAfter).
+      ORDER BY candidate.completed_at IS NULL DESC, candidate.completed_at DESC,
+        candidate.ordinal DESC, candidate.run_id DESC
+      LIMIT 1
+    )`;
 
     // Mirrors isBackgroundWakeRunForShell. Stored sources keep the legacy encoding, where a
     // command is background_command and a subagent is background_task with work "subagent".
@@ -8707,20 +8725,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
             )
             LEFT JOIN orchestration_v2_projection_runs presented
               ON presented.run_id = ${presentedShellRunId(sql.literal("t.thread_id"))}
-            LEFT JOIN orchestration_v2_projection_runs blocked ON blocked.run_id = (
-              SELECT candidate.run_id
-              FROM orchestration_v2_projection_runs candidate
-              WHERE candidate.thread_id = t.thread_id
-                AND candidate.status <> 'queued'
-                AND NOT (
-                  candidate.status = 'cancelled'
-                  AND json_extract(candidate.payload_json, '$.startedAt') IS NULL
-                )
-              -- latestExecutedRun: the run that ended last (runRanAfter).
-              ORDER BY candidate.completed_at IS NULL DESC, candidate.completed_at DESC,
-                candidate.ordinal DESC, candidate.run_id DESC
-              LIMIT 1
-            ) AND blocked.status = 'failed'
+            LEFT JOIN orchestration_v2_projection_runs blocked
+              ON blocked.run_id = ${latestExecutedRunId(sql.literal("t.thread_id"))}
+              AND blocked.status = 'failed'
             WHERE ${includeDeleted ? sql`1 = 1` : sql`t.deleted_at IS NULL`}${
               listedOnly
                 ? sql` AND json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
@@ -8989,6 +8996,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
               r.requested_at AS latest_run_requested_at,
               json_extract(r.payload_json, '$.startedAt') AS latest_run_started_at,
               r.completed_at AS latest_run_completed_at,
+              blocked.run_id AS blocking_run_id,
+              blocked.requested_at AS blocking_run_requested_at,
+              json_extract(blocked.payload_json, '$.startedAt') AS blocking_run_started_at,
+              blocked.completed_at AS blocking_run_completed_at,
               (
                 SELECT message.updated_at
                 FROM orchestration_v2_projection_messages message
@@ -9013,13 +9024,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
                 LIMIT 1
               ) AS latest_resuming_message_at
             FROM orchestration_v2_projection_threads t
-            LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = (
-              SELECT latest.run_id FROM orchestration_v2_projection_runs latest
-              WHERE latest.thread_id = t.thread_id
-                AND NOT ${isSilentShellRun("latest")}
-              ORDER BY latest.ordinal DESC, latest.run_id DESC
-              LIMIT 1
-            )
+            LEFT JOIN orchestration_v2_projection_runs r
+              ON r.run_id = ${presentedShellRunId(sql.literal("t.thread_id"))}
+            LEFT JOIN orchestration_v2_projection_runs blocked
+              ON blocked.run_id = ${latestExecutedRunId(sql.literal("t.thread_id"))}
+              AND blocked.status = 'failed'
             WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}
               AND json_extract(t.payload_json, '$.archivedAt') IS NULL
               AND json_extract(t.payload_json, '$.settledOverride') IS NULL
@@ -9104,9 +9113,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
             return yield* Effect.forEach(rows, (row) =>
               Effect.gen(function* () {
                 const thread = yield* decodeThreadPayload(row.payload_json);
-                const status = shellStatusFromStoredRunStatus(row.latest_run_status);
-                const latestRunId =
-                  row.latest_run_id === null ? null : RunId.make(row.latest_run_id);
+                // Cancelling a message that never started does not resolve a failure, even
+                // where the shell then presents the cancelled run.
+                const blocked = row.blocking_run_id !== null;
+                const status = blocked
+                  ? "failed"
+                  : shellStatusFromStoredRunStatus(row.latest_run_status);
+                const runId = blocked ? row.blocking_run_id : row.latest_run_id;
+                const latestRunId = runId === null ? null : RunId.make(runId);
+                const requestedAt = blocked
+                  ? row.blocking_run_requested_at
+                  : row.latest_run_requested_at;
+                const startedAt = blocked ? row.blocking_run_started_at : row.latest_run_started_at;
+                const completedAt = blocked
+                  ? row.blocking_run_completed_at
+                  : row.latest_run_completed_at;
                 return {
                   ...thread,
                   pinnedAt: thread.pinnedAt ?? null,
@@ -9117,17 +9138,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
                   status,
                   latestRunId,
                   latestRunRequestedAt:
-                    row.latest_run_requested_at === null
-                      ? null
-                      : DateTime.makeUnsafe(row.latest_run_requested_at),
-                  latestRunStartedAt:
-                    row.latest_run_started_at === null
-                      ? null
-                      : DateTime.makeUnsafe(row.latest_run_started_at),
+                    requestedAt === null ? null : DateTime.makeUnsafe(requestedAt),
+                  latestRunStartedAt: startedAt === null ? null : DateTime.makeUnsafe(startedAt),
                   latestRunCompletedAt:
-                    row.latest_run_completed_at === null
-                      ? null
-                      : DateTime.makeUnsafe(row.latest_run_completed_at),
+                    completedAt === null ? null : DateTime.makeUnsafe(completedAt),
                   latestUserMessageAt:
                     row.latest_user_message_at === null
                       ? null
