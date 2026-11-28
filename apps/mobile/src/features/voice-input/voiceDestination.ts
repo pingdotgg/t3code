@@ -139,15 +139,23 @@ export function runSpeech<A, E>(
   );
 }
 function environmentTranscriber(
-  prepared: PreparedConnection,
+  currentConnection: () => PreparedConnection | null,
   canSend: () => boolean,
   cloud?: CloudDestination,
 ) {
   const provider = cloud?.provider;
   const model = cloud?.provider === "openrouter" ? cloud.model : undefined;
+  // Resolved per request: a reconnect replaces the connection, and a recording
+  // made across it still belongs to the same chosen environment.
+  const connection = (message: string) => {
+    const prepared = currentConnection();
+    if (!prepared) throw new VoiceTranscriptionError({ code: "transcription-failed", message });
+    return prepared;
+  };
   return createEnvironmentTranscriber({
     canSend,
     prepare: async (signal) => {
+      const prepared = connection("Connection lost. Try again once reconnected.");
       if (provider) {
         await runSpeech(requireCloudSpeechKey(prepared, provider), signal, canSend);
         return "auto";
@@ -182,8 +190,11 @@ function environmentTranscriber(
         });
       return native.decodeRecording(uri);
     },
-    upload: async (pcm, signal) =>
-      (
+    upload: async (pcm, signal) => {
+      const prepared = connection(
+        "Connection lost. Your recording is saved; retry once reconnected.",
+      );
+      return (
         await runSpeech(
           provider
             ? transcribeCloudPcm(
@@ -203,7 +214,8 @@ function environmentTranscriber(
           signal,
           canSend,
         )
-      ).text,
+      ).text;
+    },
   });
 }
 
@@ -259,8 +271,8 @@ export const voiceRouteAtom = Atom.make((get) => {
     transcriber:
       connection &&
       environmentTranscriber(
-        connection,
-        () => registry.get(voiceGrantAtom) === grant && registry.get(connectionAtom) === connection,
+        () => registry.get(connectionAtom),
+        () => registry.get(voiceGrantAtom) === grant,
         cloud,
       ),
   };
