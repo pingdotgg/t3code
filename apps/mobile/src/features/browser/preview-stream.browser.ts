@@ -34,7 +34,7 @@ const MULTI_CLICK_SLOP_PX = 4;
 const WHEEL_LINE_PX = 16;
 const SCROLL_REPORT_PX = 24;
 const MAX_PIXEL_RATIO = 2;
-// Reuse nearby probe answers: slow replies arrive too late after touch-end to raise the iOS keyboard.
+// Reuse nearby probe answers so a repeat tap opens the keyboard without waiting on the server.
 const PROBE_REUSE_PX = 24;
 const PROBE_REUSE_MS = 10_000;
 // A sentinel makes backspace fire input; Gboard keydown supplies only keyCode 229.
@@ -199,7 +199,6 @@ export function start(configuration: PreviewStreamConfiguration) {
           probe = null;
           if (current.end === "panned") return;
           if (current.end === "acted" && current.editable === result.editable) return;
-          // Late answers can raise Android's keyboard; iOS needs another tap.
           if (result.editable) input.focus({ preventScroll: true });
           else input.blur();
         },
@@ -493,7 +492,6 @@ export function start(configuration: PreviewStreamConfiguration) {
     }
     const point = pagePoint(event.clientX, event.clientY, false);
     if (!point) return;
-    // Focusing inside the tap's user activation is what lets iOS raise the keyboard.
     if (answered?.editable === true) input.focus({ preventScroll: true });
     else if (answered?.editable === false) input.blur();
     if (answered) answered.end = answered.editable === null ? "late" : "acted";

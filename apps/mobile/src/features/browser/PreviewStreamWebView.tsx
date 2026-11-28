@@ -377,6 +377,8 @@ function PreviewStreamDocumentView({
           allowUniversalAccessFromFileURLs
           contentInsetAdjustmentBehavior="never"
           setSupportMultipleWindows={false}
+          // Tap probes often answer after the finger lifts; iOS would then refuse the keyboard.
+          keyboardDisplayRequiresUserAction={false}
           allowsInlineMediaPlayback
           allowsPictureInPictureMediaPlayback
           mediaPlaybackRequiresUserAction={false}
