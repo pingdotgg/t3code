@@ -3869,6 +3869,26 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.effect("deletes the branch of an unchanged worktree it removes", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const { service, fs, repo, worktree, command, setThreads } = yield* cleanupFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeUnchanged: true,
+        });
+        setThreads([shell({ branch: "feature", worktreePath: worktree, archivedAt: at(-DAY_MS) })]);
+
+        const report = yield* service.runNow;
+        expect(report.entries[0]).toMatchObject({ outcome: "removed" });
+        expect(yield* fs.exists(worktree)).toBe(false);
+        expect(
+          (yield* command(repo, ["for-each-ref", "--format=%(refname)", "refs/heads/feature"]))
+            .stdout,
+        ).toBe("");
+      }),
+    ),
+  );
   it.live("keeps an unsettled new thread's unchanged worktree after its first turn", () =>
     runCleanupTest(
       Effect.gen(function* () {
