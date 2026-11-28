@@ -337,34 +337,7 @@ it("retries rejected opens only once per connection generation", async () => {
   expect(t.attempts).toHaveLength(2);
 });
 
-it("does not record a background mount as an open or consume the open claim", () => {
-  using hidden = setup(
-    "thread-background-mount",
-    { updatedAt: at(10), lastVisitedAt: at(10), latestRun: null },
-    { viewing: false },
-  );
-  const unmountHidden = hidden.mount();
-  expect(hidden.searchOpens()).toBeNull();
-  expect(hidden.visits).toEqual([]);
-  unmountHidden();
-
-  using visible = setup(
-    "thread-background-mount",
-    { updatedAt: at(10), lastVisitedAt: at(10), latestRun: null },
-    { viewing: true },
-  );
-  visible.mount();
-  expect(visible.searchOpens()).toEqual({
-    score: 1,
-    picks: [],
-    openedAt: Date.UTC(2026, 0, 1),
-  });
-  expect(visible.visits).toEqual([
-    { threadId: visible.ref.threadId, visitedAt: at(10), opened: true },
-  ]);
-});
-
-it("claims the open on first visibility even before the shell arrives", () => {
+it("claims the open on first visibility, not on a hidden mount", () => {
   using t = setup("thread-background-before-shell", null, { viewing: false });
   t.mount();
   expect(t.searchOpens()).toBeNull();
