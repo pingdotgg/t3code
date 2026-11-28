@@ -47,6 +47,7 @@ import {
   threadListV2RowAccessibilityLabel,
   threadListV2ShowMoreAccessibilityLabel,
   threadHasUnseenCompletion,
+  canMarkThreadUnread,
   type ThreadListV2ListItem,
 } from "./threadListV2";
 
@@ -115,7 +116,14 @@ describe("layoutThreadListV2RowMenuActions", () => {
       direct: actions("new-thread-on-branch", "copy-thread", "copy-thread-id", "settle", "snooze"),
       reorder: actions("arrange", "move-up", "move-down"),
       pin: actions("unpin"),
-      secondary: actions("rename", "regenerate-title", "turn-into-project", "archive", "delete"),
+      secondary: actions(
+        "rename",
+        "regenerate-title",
+        "mark-unread",
+        "turn-into-project",
+        "archive",
+        "delete",
+      ),
     };
     const flat = layoutThreadListV2RowMenuActions({ ...full, nested: false });
     const nested = layoutThreadListV2RowMenuActions({ ...full, nested: true });
@@ -133,6 +141,7 @@ describe("layoutThreadListV2RowMenuActions", () => {
       "more",
     ]);
     expect(nested.at(-1)?.subactions?.map((action) => action.id)).toEqual([
+      "mark-unread",
       "arrange-menu",
       "rename",
       "regenerate-title",
@@ -148,7 +157,12 @@ describe("layoutThreadListV2RowMenuActions", () => {
       reorder: actions("arrange"),
       nested: true,
     });
-    expect(slim.at(-1)?.subactions?.[0]?.id).toBe("arrange");
+    expect(
+      slim
+        .at(-1)
+        ?.subactions?.slice(0, 2)
+        .map((action) => action.id),
+    ).toEqual(["mark-unread", "arrange"]);
   });
 });
 
@@ -321,6 +335,67 @@ describe("threadListV2ShowMoreAccessibilityLabel", () => {
     [26, "Show 25 more settled threads"],
   ])("announces the next page for %i hidden settled threads", (hiddenCount, expected) => {
     expect(threadListV2ShowMoreAccessibilityLabel(hiddenCount)).toBe(expected);
+  });
+});
+
+describe("canMarkThreadUnread", () => {
+  const completed = { status: "completed", completedAt: NOW } as const;
+  it.each([
+    {
+      name: "a read completed run",
+      latestRun: completed,
+      lastVisitedAt: NOW,
+      status: "ready",
+      can: true,
+    },
+    {
+      name: "an unread completed run",
+      latestRun: completed,
+      lastVisitedAt: "2026-06-01T00:00:00.000Z",
+      status: "ready",
+      can: false,
+    },
+    {
+      name: "a cancelled run with a completion timestamp",
+      latestRun: { ...completed, status: "cancelled" },
+      lastVisitedAt: NOW,
+      status: "ready",
+      can: false,
+    },
+    {
+      name: "an interrupted run with a completion timestamp",
+      latestRun: { ...completed, status: "interrupted" },
+      lastVisitedAt: NOW,
+      status: "ready",
+      can: false,
+    },
+    {
+      name: "no completed run",
+      latestRun: undefined,
+      lastVisitedAt: NOW,
+      status: "ready",
+      can: false,
+    },
+    {
+      name: "a server without visit tracking",
+      latestRun: completed,
+      lastVisitedAt: undefined,
+      status: "ready",
+      can: false,
+    },
+    {
+      name: "a working thread",
+      latestRun: completed,
+      lastVisitedAt: NOW,
+      status: "working",
+      can: false,
+    },
+  ] as const)("is $can for $name", ({ latestRun, lastVisitedAt, status, can }) => {
+    const thread = { latestRun, lastVisitedAt } as Pick<
+      EnvironmentThreadShell,
+      "latestRun" | "lastVisitedAt"
+    >;
+    expect(canMarkThreadUnread(thread, status)).toBe(can);
   });
 });
 

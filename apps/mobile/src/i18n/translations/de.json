@@ -4942,6 +4942,8 @@
   "d71048f4fb9cf44a": "Wartet auf Synchronisierung",
   "0a260c7744afd0be": "Wartet",
   "ad78fae7d373cf21": "Arbeitet",
+  "4a0fe8fbac74b25f": "Thread konnte nicht als ungelesen markiert werden",
+  "a5fe475c58fe2f23": "Der Thread konnte nicht als ungelesen markiert werden. Versuche es erneut.",
   "be451f475c514b37": "Aufgeweckt-Hinweis schließen",
   "54ccc22be28a985d": "Benutzerdefiniert…",
   "bdd8716a3d6f1a53": "Threads anordnen…",

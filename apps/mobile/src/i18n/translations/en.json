@@ -4944,6 +4944,8 @@
   "d71048f4fb9cf44a": "Waiting to sync",
   "0a260c7744afd0be": "Waiting",
   "ad78fae7d373cf21": "Working",
+  "4a0fe8fbac74b25f": "Could not mark thread unread",
+  "a5fe475c58fe2f23": "The thread could not be marked unread. Try again.",
   "be451f475c514b37": "Dismiss Woke notification",
   "54ccc22be28a985d": "Custom…",
   "bdd8716a3d6f1a53": "Arrange threads…",

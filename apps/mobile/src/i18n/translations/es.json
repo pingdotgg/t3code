@@ -4935,6 +4935,8 @@
   "d71048f4fb9cf44a": "Esperando sincronización",
   "0a260c7744afd0be": "Esperando",
   "ad78fae7d373cf21": "Trabajando",
+  "4a0fe8fbac74b25f": "No se pudo marcar el hilo como no leído",
+  "a5fe475c58fe2f23": "No se pudo marcar el hilo como no leído. Inténtalo de nuevo.",
   "be451f475c514b37": "Descartar notificación de reactivación",
   "54ccc22be28a985d": "Personalizado…",
   "bdd8716a3d6f1a53": "Organizar hilos…",
