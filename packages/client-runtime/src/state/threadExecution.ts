@@ -680,6 +680,30 @@ export function limitRecoveryOwnsSnooze(input: {
   );
 }
 
+/**
+ * Whether a thread's usage-limit notice concerns the composer's pick. A pick on another provider
+ * instance sends there, and the server holds only sends on the limited instance. An armed resume
+ * or a snooze the recovery holds keeps the notice: it is their only control, and the resume still
+ * runs on the limited instance unless a sent message moves the thread first.
+ */
+export function usageLimitNoticeAppliesToPick(input: {
+  readonly threadInstanceId: ProviderInstanceId;
+  readonly pickInstanceId: ProviderInstanceId | null | undefined;
+  readonly runId: RunId | null | undefined;
+  readonly resetAt: string | null | undefined;
+  readonly recovery: OrchestrationV2LimitRecovery | null | undefined;
+  readonly snoozedUntil: string | null | undefined;
+}): boolean {
+  const { threadInstanceId, pickInstanceId, runId, resetAt, recovery } = input;
+  if (pickInstanceId == null || pickInstanceId === threadInstanceId) return true;
+  const resumes =
+    runId != null &&
+    recovery?.autoResume === true &&
+    recovery.runId === runId &&
+    recovery.resetAt === resetAt;
+  return resumes || limitRecoveryOwnsSnooze(input);
+}
+
 export function threadRuntimeHasInterruptibleRun(
   runtime: ThreadStructureRuntime | null | undefined,
 ): boolean {

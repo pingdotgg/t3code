@@ -43,6 +43,7 @@ import {
   presentRunStop,
   readSelectedEffortValue,
   threadRuntimeHasInterruptibleRun,
+  usageLimitNoticeAppliesToPick,
 } from "./threadExecution.ts";
 
 const now = DateTime.makeUnsafe("2026-07-28T10:00:00.000Z");
@@ -973,6 +974,54 @@ describe("isBackgroundWorkStopPending", () => {
   it("only applies to the thread that sent the Stop", () => {
     expect(isBackgroundWorkStopPending(null, "env:thread", tasks, false)).toBe(false);
     expect(isBackgroundWorkStopPending(sent, "env:other", tasks, false)).toBe(false);
+  });
+});
+
+describe("usageLimitNoticeAppliesToPick", () => {
+  const resetAt = "2026-12-01T06:51:00.000Z";
+  const limited = {
+    threadInstanceId: ProviderInstanceId.make("antigravity"),
+    runId: RunId.make("run-limited"),
+    resetAt,
+    recovery: null,
+    snoozedUntil: null,
+  };
+  const elsewhere = { ...limited, pickInstanceId: ProviderInstanceId.make("claudeAgent") };
+  const recovery = { runId: limited.runId, resetAt, autoResume: false, snooze: false };
+
+  it("applies while the composer still sends to the limited provider", () => {
+    for (const pickInstanceId of [limited.threadInstanceId, null]) {
+      expect(usageLimitNoticeAppliesToPick({ ...limited, pickInstanceId })).toBe(true);
+    }
+  });
+
+  it("no longer applies once the composer picks another provider", () => {
+    expect(usageLimitNoticeAppliesToPick(elsewhere)).toBe(false);
+    expect(usageLimitNoticeAppliesToPick({ ...elsewhere, recovery })).toBe(false);
+  });
+
+  it("keeps an armed resume or a held snooze visible on another provider", () => {
+    expect(
+      usageLimitNoticeAppliesToPick({ ...elsewhere, recovery: { ...recovery, autoResume: true } }),
+    ).toBe(true);
+    expect(
+      usageLimitNoticeAppliesToPick({
+        ...elsewhere,
+        recovery: { ...recovery, snooze: true },
+        snoozedUntil: resetAt,
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores recovery that no longer arms anything for this limit", () => {
+    for (const stale of [
+      { ...recovery, autoResume: true, runId: RunId.make("run-earlier") },
+      { ...recovery, autoResume: true, resetAt: "2026-11-30T06:51:00.000Z" },
+      // The thread was woken, so the snooze no longer holds it.
+      { ...recovery, snooze: true },
+    ]) {
+      expect(usageLimitNoticeAppliesToPick({ ...elsewhere, recovery: stale })).toBe(false);
+    }
   });
 });
 

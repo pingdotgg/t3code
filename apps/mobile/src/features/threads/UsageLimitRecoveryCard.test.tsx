@@ -1,5 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { ProviderInstanceId, type EnvironmentId } from "@t3tools/contracts";
 import {
   CHATGPT_USAGE_LIMIT_CODE,
   CHATGPT_WORKSPACE_USAGE_LIMIT_CODE,
@@ -47,6 +47,8 @@ function failedThread(
 ): EnvironmentThreadShell {
   return {
     id: "thread-1",
+    providerInstanceId: "codex",
+    modelSelection: { instanceId: "codex", model: "gpt-5" },
     updatedAt: new Date(0).toISOString(),
     snoozedUntil: null,
     latestRun: { runId: "run-1", completedAt: new Date(0).toISOString() },
@@ -86,6 +88,28 @@ describe("UsageLimitRecoveryCard", () => {
     expect([...container.querySelectorAll("button")].map((button) => button.textContent)).toEqual(
       actions,
     );
+  });
+
+  it("hides once the composer picks another provider", () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+    const thread = failedThread(null);
+    act(() =>
+      root.render(
+        <UsageLimitRecoveryCard
+          thread={{
+            ...thread,
+            modelSelection: {
+              ...thread.modelSelection,
+              instanceId: ProviderInstanceId.make("claude"),
+            },
+          }}
+          environmentId={"env-1" as EnvironmentId}
+        />,
+      ),
+    );
+    expect(container.textContent).toBe("");
   });
 
   it("drops a failed copy's error once a retry copies the request", async () => {

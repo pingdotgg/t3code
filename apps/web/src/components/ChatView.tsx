@@ -105,6 +105,7 @@ import {
   pendingProviderStartup,
   deriveThreadStructureRuntime,
   limitRecoveryOwnsSnooze,
+  usageLimitNoticeAppliesToPick,
 } from "@t3tools/client-runtime/state/thread-execution";
 import {
   resolveWorkflowOpening,
@@ -2772,7 +2773,16 @@ export default function ChatView(props: ChatViewProps) {
     return item ? [item] : [];
   });
   const limitRecoveryBanner = useUsageLimitRecoveryBannerItem(
-    limitRecoveryRun !== null && activeThreadShell !== null
+    limitRecoveryRun !== null &&
+      activeThreadShell !== null &&
+      usageLimitNoticeAppliesToPick({
+        threadInstanceId: activeThreadShell.providerInstanceId,
+        pickInstanceId: pendingHandoffSelection?.instanceId,
+        runId: limitRecoveryRun.runId,
+        resetAt: serverRuntime?.usageLimitResetAt,
+        recovery: activeThreadShell.limitRecovery,
+        snoozedUntil: activeThreadShell.snoozedUntil,
+      })
       ? {
           runId: limitRecoveryRun.runId,
           errorCode: serverRuntime?.lastErrorCode ?? null,
