@@ -199,6 +199,76 @@ describe("AttachmentUpload", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("rejects image bytes that do not match the declared media type", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const png = Uint8Array.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+      ]);
+      const issue = (name: string, mimeType: string) =>
+        issueAttachmentUploadUrl({ name, mimeType, sizeBytes: png.length });
+      const claimsFor = (relativeUrl: string) =>
+        validateAttachmentUploadToken(
+          relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length),
+        );
+
+      const asJpeg = yield* issue("screenshot.jpg", "image/jpeg");
+      const jpegClaims = yield* claimsFor(asJpeg.relativeUrl);
+      if (!jpegClaims) {
+        throw new Error("Expected valid upload claims.");
+      }
+      expect(yield* storeAttachmentUpload(jpegClaims, png)).toMatchObject({
+        ok: false,
+        status: 400,
+        detail: expect.stringContaining("image/png"),
+      });
+      expect(
+        NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
+          entry.startsWith(asJpeg.attachmentId),
+        ),
+      ).toEqual([]);
+
+      const asPng = yield* issue("screenshot.png", "image/png");
+      const pngClaims = yield* claimsFor(asPng.relativeUrl);
+      if (!pngClaims) {
+        throw new Error("Expected valid upload claims.");
+      }
+      expect(yield* storeAttachmentUpload(pngClaims, png)).toEqual({ ok: true });
+      expect(
+        NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${asPng.attachmentId}.png`)),
+      ).toBe(true);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("checks the image signature when the body arrives in chunks", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const png = Uint8Array.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+      ]);
+      const issued = yield* issueAttachmentUploadUrl({
+        name: "screenshot.jpg",
+        mimeType: "image/jpeg",
+        sizeBytes: png.length,
+      });
+      const claims = yield* validateAttachmentUploadToken(
+        issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length),
+      );
+      if (!claims) {
+        throw new Error("Expected valid upload claims.");
+      }
+
+      expect(
+        yield* storeAttachmentUpload(claims, Stream.make(png.subarray(0, 3), png.subarray(3))),
+      ).toMatchObject({ ok: false, status: 400 });
+      expect(
+        NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
+          entry.startsWith(issued.attachmentId),
+        ),
+      ).toEqual([]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("streams generic files to a path with their original extension", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

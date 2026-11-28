@@ -30,6 +30,44 @@ export const SAFE_IMAGE_FILE_EXTENSIONS = new Set([
   ".webp",
 ]);
 
+/** Bytes the signature check reads from the start of an upload. */
+export const IMAGE_SIGNATURE_HEADER_BYTES = 12;
+
+function startsWith(header: Uint8Array, bytes: ReadonlyArray<number>, offset = 0): boolean {
+  return bytes.every((byte, index) => header[offset + index] === byte);
+}
+
+const asciiBytes = (text: string) => Array.from(text, (character) => character.charCodeAt(0));
+
+/**
+ * The image type whose signature the first bytes of a file match, or null when no signature is
+ * known. Only the four types that are unambiguous at offset 0 are detected, so a PNG uploaded as
+ * image/jpeg is caught here instead of being forwarded with a media type its bytes do not have.
+ */
+export function detectImageMimeType(header: Uint8Array): string | null {
+  if (startsWith(header, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png";
+  if (startsWith(header, [0xff, 0xd8, 0xff])) return "image/jpeg";
+  if (startsWith(header, asciiBytes("GIF8"))) return "image/gif";
+  if (startsWith(header, asciiBytes("RIFF")) && startsWith(header, asciiBytes("WEBP"), 8)) {
+    return "image/webp";
+  }
+  return null;
+}
+
+/** Whether a declared media type names the format the signature detected. */
+export function imageMediaTypeMatches(declared: string, detected: string): boolean {
+  const normalize = (mimeType: string) => {
+    const base = mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+    return base === "image/jpg" ? "image/jpeg" : base;
+  };
+  return normalize(declared) === normalize(detected);
+}
+
+/** Whether a media type claims to be an image, so a signature mismatch is worth rejecting. */
+export function isImageMimeType(mimeType: string): boolean {
+  return (mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "").startsWith("image/");
+}
+
 function isBase64Char(code: number): boolean {
   return (
     (code >= 0x61 && code <= 0x7a) ||

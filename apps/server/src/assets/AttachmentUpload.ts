@@ -30,7 +30,13 @@ import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { base64UrlDecodeUtf8, base64UrlEncode } from "../auth/utils.ts";
 import * as AssetSigner from "./AssetSigner.ts";
 import * as ServerConfig from "../config.ts";
-import { inferImageExtension } from "../imageMime.ts";
+import {
+  detectImageMimeType,
+  imageMediaTypeMatches,
+  inferImageExtension,
+  isImageMimeType,
+  IMAGE_SIGNATURE_HEADER_BYTES,
+} from "../imageMime.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 
 export const ATTACHMENT_UPLOAD_ROUTE_PREFIX = "/api/attachments/upload";
@@ -182,6 +188,9 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   let receivedBytes = 0;
+  // The first bytes decide whether an image is what its declared media type says it is.
+  const header = new Uint8Array(IMAGE_SIGNATURE_HEADER_BYTES);
+  let headerBytes = 0;
   const bodyStream = body instanceof Uint8Array ? Stream.make(body) : body;
   return yield* Effect.gen(function* () {
     yield* fileSystem.makeDirectory(path.dirname(finalPath), { recursive: true });
@@ -191,6 +200,14 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
           receivedBytes += chunk.byteLength;
           return receivedBytes <= claims.sizeBytes;
         }),
+        Stream.tap((chunk) =>
+          Effect.sync(() => {
+            if (headerBytes >= header.length) return;
+            const taken = Math.min(chunk.byteLength, header.length - headerBytes);
+            header.set(chunk.subarray(0, taken), headerBytes);
+            headerBytes += taken;
+          }),
+        ),
       ),
       fileSystem.sink(partPath),
     );
@@ -200,6 +217,17 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
         status: 400,
         detail: `Body was ${receivedBytes} bytes, expected ${claims.sizeBytes}.`,
       } satisfies StoreAttachmentUploadResult;
+    }
+    if (isImageMimeType(claims.mimeType)) {
+      const detected = detectImageMimeType(header.subarray(0, headerBytes));
+      if (detected !== null && !imageMediaTypeMatches(claims.mimeType, detected)) {
+        // Forwarding these bytes as the declared type makes every later turn fail at the provider.
+        return {
+          ok: false,
+          status: 400,
+          detail: `Image bytes are ${detected}, but the upload was declared as ${claims.mimeType}.`,
+        } satisfies StoreAttachmentUploadResult;
+      }
     }
     // Publishing without replacement keeps an upload and its cached text immutable.
     const published = yield* fileSystem.link(partPath, finalPath).pipe(
