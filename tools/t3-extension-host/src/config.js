@@ -56,9 +56,9 @@ const DEFAULTS = {
   reconnectDiscordSeconds: 30,
   discordClientId: null,
   discordSmallImage: {
-    idle: `${ASSETS_URL}/t3-circle-512.png`,
-    working: `${ASSETS_URL}/t3-circle-512.png`,
-    waiting: `${ASSETS_URL}/t3-circle-512.png`,
+    idle: `${ASSETS_URL}/t3-circle-idle-512.png`,
+    working: `${ASSETS_URL}/t3-circle-working-512.png`,
+    waiting: `${ASSETS_URL}/t3-circle-waiting-512.png`,
     editing: `${ASSETS_URL}/t3-circle-512.png`,
   },
   discordSmallText: {

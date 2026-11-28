@@ -85,7 +85,7 @@ Optional files in `%APPDATA%\t3-extension-host\`:
 | `reconnectDiscordSeconds` | `30` | Retry Discord automatically if it wasn't running when T3 started (`0` to disable) |
 | `discordClientId` | `null` | Application ID of your own Discord application. Discord shows that application's name (for example "T3 Code") instead of "Visual Studio Code". Language images keep working |
 | `discordLargeImages` | Moon, sparkle, speech bubble, `"language"` | Large image per mode (see below). `"language"` uses the file-type icon. Values are image links, or VS Code Discord Presence image names such as `"ts"` |
-| `discordSmallImage` | Round T3 Code logo | Small image: one link for every mode, or one per mode. `""` keeps the extension's VS Code icon |
+| `discordSmallImage` | Round T3 Code logo on the same background color as that mode's large image (black while editing) | Small image: one link for every mode, or one per mode. `""` keeps the extension's VS Code icon |
 | `discordSmallText` | `"T3 Code · {model}"` (`"T3 Code"` when idle) | Hover text of the small image: one text, or one per mode |
 | `discordLanguageImages` | `{}` | Your own file-type images, keyed by file extension (`".ts"`) or language ID (`"typescript"`). Files without an entry keep Discord Presence's icon |
 | `discordSwapImages` | `false` | Swap the large and small images and their hover texts, like Discord Presence's `swapBigAndSmallImage` |
