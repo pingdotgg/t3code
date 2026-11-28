@@ -52,7 +52,7 @@ import {
   decodeOrDiscardOrchestrationCache,
 } from "../platform/orchestrationCache.ts";
 import * as RpcSession from "../rpc/session.ts";
-import { v2Now, v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
+import { v2MessageRow, v2Now, v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
 import { onThreadRequestsResolved, type ThreadRequestsResolved } from "./threadRequests.ts";
 import { EMPTY_THREAD_HISTORY_META } from "./threadHistoryMerge.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
@@ -427,6 +427,74 @@ const deleted = (sequence = 3): OrchestrationV2ThreadStreamItem => {
 };
 
 describe("EnvironmentThreads", () => {
+  it.effect.each(["disk", "retained"] as const)(
+    "shows a delivered queued message that an older %s cache hid",
+    (cacheKind) =>
+      Effect.gen(function* () {
+        // The former rule hid the queued message of a started run that a restart cancelled.
+        const runId = RunId.make("run-cancelled-after-start");
+        const later = v2MessageRow("Later input", 2);
+        const delivered = {
+          ...v2MessageRow("Delivered before restart", 1).item,
+          runId,
+          inputIntent: "queued_turn",
+        } as OrchestrationV2TurnItem;
+        const projection: OrchestrationV2ThreadProjection = {
+          ...BASE_PROJECTION,
+          runs: [
+            {
+              id: runId,
+              threadId: THREAD_ID,
+              ordinal: 1,
+              providerInstanceId: BASE_PROJECTION.thread.providerInstanceId,
+              modelSelection: BASE_PROJECTION.thread.modelSelection,
+              providerThreadId: null,
+              userMessageId: MessageId.make("Delivered before restart"),
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "cancelled",
+              requestedAt: v2Now,
+              startedAt: v2Now,
+              completedAt: v2Now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          ],
+          turnItems: [delivered, later.item],
+          visibleTurnItems: [later],
+        };
+        const h = yield* makeHarness({
+          loadCached: Effect.succeedSome({
+            snapshotSequence: CACHED_SNAPSHOT_SEQUENCE,
+            projection,
+          }),
+          ...(cacheKind === "retained"
+            ? {
+                resumeCache: {
+                  owner: undefined,
+                  snapshot: {
+                    state: {
+                      ...EMPTY_ENVIRONMENT_THREAD_STATE,
+                      data: Option.some(projection),
+                      status: "live",
+                    },
+                    sequence: CACHED_SNAPSHOT_SEQUENCE,
+                    persisted: true,
+                  },
+                },
+              }
+            : {}),
+          completionMarker: true,
+        });
+        yield* Queue.offer(h.inputs, synchronized());
+        const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+        expect(
+          Option.getOrThrow(state.data).visibleTurnItems.map((row) => row.sourceItemId),
+        ).toEqual([delivered.id, later.sourceItemId]);
+        expect(yield* Ref.get(h.loaderCalls)).toBe(0);
+      }),
+  );
+
   it.effect.each([
     ["disk", false],
     ["retained", false],
