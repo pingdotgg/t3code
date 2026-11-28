@@ -155,6 +155,7 @@ export function providersWithLimits(
       provider.enabled &&
       provider.installed &&
       isProviderAvailable(provider) &&
+      provider.auth.status !== "unauthenticated" &&
       provider.usageLimits !== undefined,
   );
 }
