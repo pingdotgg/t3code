@@ -371,6 +371,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("checkGrokProvide
       expect(
         snapshot.models[0]?.capabilities?.optionDescriptors?.map((option) => option.id) ?? [],
       ).toEqual(["reasoningEffort"]);
+      expect(snapshot.supportsConversationRollback).toBe(true);
     }),
   );
 
