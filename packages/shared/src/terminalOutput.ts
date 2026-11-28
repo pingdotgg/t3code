@@ -683,18 +683,32 @@ export function terminalOutputTail(
 ): { readonly text: string; readonly truncated: boolean } {
   if (text.length <= maxChars) return { text, truncated: false };
   let start = text.length - maxChars;
+  if (text[start - 1] === "\n") return { text: text.slice(start), truncated: true };
   const newline = text.indexOf("\n", start);
   // Drop the partial first line unless that would discard most of the tail.
   if (newline !== -1 && newline - start < maxChars / 4) {
     return { text: text.slice(newline + 1), truncated: true };
   }
-  // Cutting inside a line: never split an escape, and keep the colour in force.
+  // Cutting inside a line: never split an escape, keep the colour in force, and skip
+  // zero-width marks and lone low surrogates left without their base character.
   const style = styleAt(text, start);
+  let prefix = style.prefix;
   start = style.start;
-  // Never start on a lone low surrogate.
-  const first = text.charCodeAt(start);
-  if (first >= 0xdc00 && first <= 0xdfff) start += 1;
-  return { text: style.prefix + text.slice(start), truncated: true };
+  while (start < text.length) {
+    if (text.startsWith(`${ESC}[`, start)) {
+      const end = text.indexOf("m", start + 2);
+      if (end === -1) break;
+      const seq = text.slice(start, end + 1);
+      prefix = seq === sgr("") ? "" : seq;
+      start = end + 1;
+      continue;
+    }
+    const code = text.charCodeAt(start);
+    const character = String.fromCodePoint(text.codePointAt(start)!);
+    if (!(code >= 0xdc00 && code <= 0xdfff) && characterWidth(character) !== 0) break;
+    start += character.length;
+  }
+  return { text: start < text.length ? prefix + text.slice(start) : "", truncated: true };
 }
 
 /**
@@ -709,16 +723,25 @@ function terminalOutputTailParts(
   for (const part of parts) total += part.length;
   if (total <= maxChars) return { parts, truncated: false };
   const start = total - maxChars;
+  let previousEndedWithNewline = false;
   let offset = 0;
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index]!;
     if (offset + part.length > start) {
-      const newline = part.indexOf("\n", Math.max(0, start - offset));
+      const localStart = start - offset;
+      if (
+        localStart >= 0 &&
+        (localStart === 0 ? previousEndedWithNewline : part[localStart - 1] === "\n")
+      ) {
+        return { parts: [part.slice(localStart), ...parts.slice(index + 1)], truncated: true };
+      }
+      const newline = part.indexOf("\n", Math.max(0, localStart));
       if (newline !== -1) {
         if (offset + newline - start >= maxChars / 4) break;
         return { parts: [part.slice(newline + 1), ...parts.slice(index + 1)], truncated: true };
       }
     }
+    if (part.length > 0) previousEndedWithNewline = part.endsWith("\n");
     offset += part.length;
   }
   return { parts: [terminalOutputTail(parts.join(""), maxChars).text], truncated: true };

@@ -52,7 +52,7 @@ const ownIpv4 = Object.values(NodeOS.networkInterfaces())
 it.layer(NetService.layer)("NetService", (it) => {
   describe("Net helpers", () => {
     it.effect.each(["EAFNOSUPPORT", "EADDRNOTAVAIL"])(
-      "keeps ports available when IPv6 binds fail with %s",
+      "keeps optional IPv6 probes available on %s while failing explicit bind hosts",
       (code) =>
         Effect.gen(function* () {
           const net = yield* NetService.NetService;
@@ -63,7 +63,12 @@ it.layer(NetService.layer)("NetService", (it) => {
             ...args
           ) {
             const [options] = args;
-            if (options?.host === "::1" || options?.host === "::") {
+            if (
+              options?.host === "::1" ||
+              options?.host === "::" ||
+              options?.host === "192.0.2.123" ||
+              options?.host === "2001:db8::1"
+            ) {
               process.nextTick(() => this.emit("error", Object.assign(new Error(code), { code })));
               return this;
             }
@@ -72,6 +77,14 @@ it.layer(NetService.layer)("NetService", (it) => {
           try {
             assert.equal(yield* net.isPortAvailableOnLoopback(port), true);
             assert.equal(yield* net.canListenOnHost(port, "::"), true);
+            for (const host of ["192.0.2.123", "2001:db8::1"]) {
+              assert.equal(yield* net.canListenOnHost(port, host), false);
+              const error = yield* net.probeListenOnHost(port, host).pipe(Effect.flip);
+              assert.deepStrictEqual(
+                [error._tag, error.host, error.code],
+                ["NetListenError", host, code],
+              );
+            }
           } finally {
             spy.mockRestore();
           }

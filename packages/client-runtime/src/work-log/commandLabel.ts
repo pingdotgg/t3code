@@ -257,7 +257,7 @@ const COMMAND_WRAPPER_OPTIONS_WITH_VALUE: Record<CommandWrapper, ReadonlySet<str
 };
 
 const COMMAND_WRAPPER_FLAGS: Record<CommandWrapper, ReadonlySet<string>> = {
-  env: new Set(["-0", "--null", "-i", "--ignore-environment", "--debug", "-v"]),
+  env: new Set(["-", "-0", "--null", "-i", "--ignore-environment", "--debug", "-v"]),
   sudo: new Set(["-A", "--askpass", "-b", "--background", "-E", "-H", "-i", "-n", "-S"]),
 };
 
@@ -1297,11 +1297,16 @@ function parseCommandProgramName(
       NON_PROGRAM_PREFIX_CHARACTERS.includes(token[0] ?? "") &&
       !(token.startsWith("$") && token.includes("/"))
     ) {
-      return executionContext === "shell" && token.startsWith("[") && commandSplit.remainingCommand
+      const canSkipBracketProbe =
+        (executionContext === "shell" && token.startsWith("[")) ||
+        (wrapper === "sudo" &&
+          SKIPPABLE_SUDO_PROBES.has(token) &&
+          (token !== "[[" || tokens.slice(index + 1).includes("]]")));
+      return canSkipBracketProbe && commandSplit.remainingCommand
         ? commandProgramNameInternal(
             commandSplit.remainingCommand,
             depth,
-            executionContext,
+            "shell",
             segmentsRemaining - 1,
           )
         : null;
@@ -1355,6 +1360,28 @@ function parseCommandProgramName(
         let consumesNextToken = false;
         for (const [optionIndex, option] of token.slice(1).split("").entries()) {
           const shortOption = `-${option}`;
+          if (wrapper === "env" && shortOption === "-S") {
+            if (optionIndex === token.length - 2) {
+              const splitCommand = tokens[index + 1];
+              return splitCommand
+                ? commandProgramNameInternal(
+                    splitCommand,
+                    depth + 1,
+                    executionContext,
+                    segmentsRemaining,
+                  )
+                : null;
+            }
+            // An attached payload such as -S"FOO=1" can be followed by the program itself.
+            const payloadProgram = commandProgramNameInternal(
+              token.slice(optionIndex + 2),
+              depth + 1,
+              executionContext,
+              segmentsRemaining,
+            );
+            if (payloadProgram !== null) return payloadProgram;
+            break;
+          }
           if (COMMAND_WRAPPER_OPTIONS_WITH_VALUE[wrapper].has(shortOption)) {
             consumesNextToken = optionIndex === token.length - 2;
             break;
