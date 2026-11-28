@@ -4,9 +4,10 @@ import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { McpProviderSessions } from "@t3tools/provider-core/server/McpProviderSessions";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { McpServer } from "effect/ai";
+import { McpSchema, McpServer } from "effect/ai";
 
 import { AssetSigner } from "../assets/AssetSigner.ts";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
@@ -17,6 +18,7 @@ import { GitManager } from "../git/GitManager.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { TaskFolders } from "../workspace/TaskFolders.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { PreviewAutomationBroker } from "../mcp/PreviewAutomationBroker.ts";
 import {
   CLAUDE_PROVIDER,
@@ -26,6 +28,7 @@ import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
 import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import { ThreadIssueService } from "../orchestration-v2/ThreadIssueService.ts";
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
+import { ThreadImportService } from "../orchestration-v2/ThreadImportService.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { ThreadSearch } from "../orchestration-v2/ThreadSearch.ts";
 import { PeerForwarding } from "../peer/PeerForwarding.ts";
@@ -97,6 +100,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(SourceControlRepositoryService)({}),
   Layer.mock(ThreadIssueService)({}),
   Layer.mock(ThreadLaunchService)({}),
+  Layer.mock(ThreadImportService)({}),
   Layer.mock(ThreadManagementService)({}),
   Layer.mock(ThreadSearch)({}),
   Layer.mock(VcsStatusBroadcaster)({}),
@@ -158,11 +162,18 @@ it.effect("agent context matches the committed budget", () =>
       // The model sees these fields. outputSchema and annotations are protocol metadata.
       mcpToolListJsonBytes: utf8Bytes(
         JSON.stringify(
-          mcp.tools.map(({ tool }) => ({
-            name: tool.name,
-            description: tool.description,
-            inputSchema: tool.inputSchema,
-          })),
+          mcp.tools
+            // No agent in a thread is offered these, so they cost no agent any context.
+            .filter(
+              ({ annotations }) =>
+                Context.getOrUndefined(annotations, McpSchema.EnabledWhen) !==
+                McpInvocationContext.hiddenFromThreads,
+            )
+            .map(({ tool }) => ({
+              name: tool.name,
+              description: tool.description,
+              inputSchema: tool.inputSchema,
+            })),
         ),
       ),
     };

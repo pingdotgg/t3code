@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
 import { outputRequestProblem } from "../../../orchestration-v2/runOutput.ts";
+import * as ThreadImportService from "../../../orchestration-v2/ThreadImportService.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
@@ -538,6 +539,40 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         };
       }),
     // The launched thread carries the caller's link, if it has one.
+    "stamped",
+  ),
+  t3_thread_import: McpToolAccess.startsThreads(
+    (input) => input,
+    (input, { runtimeMode, interactionMode, linkOrigin }) =>
+      Effect.gen(function* () {
+        const projects = yield* access;
+        const project = yield* projects
+          .getById(input.projectId)
+          .pipe(Effect.mapError(unavailable), Effect.map(Option.getOrUndefined));
+        if (project === undefined)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "The project was not found.",
+          });
+        if (input.worktreePath !== undefined)
+          yield* projectWorktreePath(project.workspaceRoot, input.worktreePath);
+        const imports = yield* ThreadImportService.ThreadImportService;
+        return yield* imports
+          .importThread({ ...input, runtimeMode, interactionMode, linkOrigin })
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new OrchestratorMcpFailure({
+                  code:
+                    error._tag === "ThreadImportProjectMismatchError"
+                      ? "invalid_request"
+                      : "orchestration_error",
+                  message: error.message,
+                }),
+            ),
+          );
+      }),
+    // A moved thread carries the link that moved it, like a launch.
     "stamped",
   ),
   t3_project_list: McpToolAccess.reads((input) =>

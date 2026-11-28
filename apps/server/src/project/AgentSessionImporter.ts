@@ -9,7 +9,6 @@ import {
   AgentSessionScanError,
   AgentSessionSource,
   EventId,
-  MessageId,
   ProjectId,
   ProviderDriverKind,
   ThreadId,
@@ -17,10 +16,8 @@ import {
   type AgentSessionImportInput,
   type AgentSessionImportResult,
   type OrchestrationV2AppThread,
-  type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
-  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -33,6 +30,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as ImportedHistory from "../orchestration-v2/importedHistory.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -105,94 +103,11 @@ function dateTime(value: string): DateTime.Utc {
   return DateTime.makeUnsafe(value);
 }
 
-type HistoryMessage = Omit<AgentSessionScanner.AgentSessionThreadMessage, "role"> & {
-  readonly role: AgentSessionScanner.AgentSessionThreadMessage["role"] | "reasoning";
-};
-
-function messageEvents(input: {
+const messageEvents = (input: {
   readonly threadId: ThreadId;
   readonly index: number;
-  readonly message: HistoryMessage;
-}): ReadonlyArray<OrchestrationV2DomainEvent> {
-  const ordinal = input.index + 1;
-  const suffix = String(input.index).padStart(6, "0");
-  const messageId = MessageId.make(`${input.threadId}:${suffix}`);
-  const turnItemId = TurnItemId.make(
-    `${IMPORT_EVENT_PREFIX}:turn-item:${input.threadId}:${suffix}`,
-  );
-  const at = dateTime(input.message.createdAt);
-  const common = {
-    id: turnItemId,
-    threadId: input.threadId,
-    runId: null,
-    nodeId: null,
-    providerThreadId: null,
-    providerTurnId: null,
-    nativeItemRef: null,
-    parentItemId: null,
-    ordinal,
-    status: "completed" as const,
-    title: null,
-    startedAt: at,
-    completedAt: at,
-    updatedAt: at,
-  };
-  const turnItemEvent = (payload: OrchestrationV2TurnItem): OrchestrationV2DomainEvent => ({
-    id: EventId.make(turnItemId),
-    type: "turn-item.updated",
-    threadId: input.threadId,
-    occurredAt: at,
-    payload,
-  });
-  if (input.message.role === "reasoning") {
-    return [
-      turnItemEvent({ ...common, type: "reasoning", text: input.message.text, streaming: false }),
-    ];
-  }
-  const message: OrchestrationV2ConversationMessage = {
-    createdBy: input.message.role === "user" ? "user" : "agent",
-    creationSource: "server",
-    id: messageId,
-    threadId: input.threadId,
-    runId: null,
-    nodeId: null,
-    role: input.message.role,
-    text: input.message.text,
-    attachments: [],
-    streaming: false,
-    createdAt: at,
-    updatedAt: at,
-  };
-  const turnItem: OrchestrationV2TurnItem =
-    input.message.role === "user"
-      ? {
-          ...common,
-          createdBy: "user",
-          creationSource: "server",
-          type: "user_message",
-          messageId,
-          inputIntent: "turn_start",
-          text: input.message.text,
-          attachments: [],
-        }
-      : {
-          ...common,
-          type: "assistant_message",
-          messageId,
-          text: input.message.text,
-          streaming: false,
-        };
-  return [
-    {
-      id: EventId.make(`${IMPORT_EVENT_PREFIX}:message:${input.threadId}:${suffix}`),
-      type: "message.updated",
-      threadId: input.threadId,
-      occurredAt: at,
-      payload: message,
-    },
-    turnItemEvent(turnItem),
-  ];
-}
+  readonly message: ImportedHistory.ImportedHistoryMessage;
+}) => ImportedHistory.importedMessageEvents({ prefix: IMPORT_EVENT_PREFIX, ...input });
 
 function historyTruncatedEvent(input: {
   readonly threadId: ThreadId;
@@ -560,7 +475,7 @@ const make = Effect.gen(function* () {
     );
     // Thread commands write whole thread rows, so hold their lock from the
     // re-read through the write to keep both this marker and their changes.
-    const commit = (messages: ReadonlyArray<HistoryMessage>) =>
+    const commit = (messages: ReadonlyArray<ImportedHistory.ImportedHistoryMessage>) =>
       threadCommands.withLock(
         input.threadId,
         Effect.gen(function* () {

@@ -198,6 +198,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   linkClientPairing: Schema.optionalKey(Schema.Boolean),
   /** The same route also mints a pairing code for a link from another environment. */
   linkPairingForLink: Schema.optionalKey(Schema.Boolean),
+  /** Accepts `t3_thread_import`, for threads handed off here from a linked environment. */
+  threadImport: Schema.optionalKey(Schema.Boolean),
   /** Mints pairing codes that approve one agent sign-in at a set level (`AUTO-…`). */
   mcpApprovalCodes: Schema.optionalKey(Schema.Boolean),
   peerLinkPairingCodes: Schema.optionalKey(Schema.Boolean),

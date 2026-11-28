@@ -21,17 +21,20 @@ import {
   OrchestratorMcpFailure,
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
+  OrchestratorMcpThreadImportInput,
+  OrchestratorMcpThreadImportResult,
 } from "@t3tools/contracts";
 import * as FileSystem from "effect/FileSystem";
 import * as DocumentText from "../../../provider/DocumentText.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import * as ThreadImportService from "../../../orchestration-v2/ThreadImportService.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
@@ -193,8 +196,27 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const ThreadImportTool = Tool.make("t3_thread_import", {
+  ...shared,
+  description:
+    "Create a thread here that continues a conversation handed off from another T3 Code environment. `messages` become its history; `continuationPrompt` starts its first run. A retry with the same `source` returns the same thread.",
+  parameters: OrchestratorMcpThreadImportInput,
+  success: OrchestratorMcpThreadImportResult,
+  dependencies: [
+    ...shared.dependencies,
+    ThreadImportService.ThreadImportService,
+    GitVcsDriver.GitVcsDriver,
+    FileSystem.FileSystem,
+  ],
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true)
+  // A linked environment's handoff calls this; no agent in a thread is offered it.
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromThreads);
+
 export const ProjectToolkit = Toolkit.make(
   ThreadLaunchTool,
+  ThreadImportTool,
   ProjectListTool,
   ProjectReadTool,
   ProjectCreateTool,
