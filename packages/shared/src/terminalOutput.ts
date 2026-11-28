@@ -68,14 +68,54 @@ const ASCII = /^[\x00-\x7f]*$/u;
 
 const DETACHED_MARK = /[\p{Mark}\p{Default_Ignorable_Code_Point}\uDC00-\uDFFF]/u;
 const EMOJI_MODIFIER = /\p{Emoji_Modifier}/u;
-const EMOJI_MODIFIER_BASE_AT_END = /\p{Emoji_Modifier_Base}$/u;
+const EMOJI_MODIFIER_BASE = /\p{Emoji_Modifier_Base}/u;
+const VARIATION_SELECTOR = /\p{Variation_Selector}/u;
+const REGIONAL_INDICATOR = /\p{Regional_Indicator}/u;
 
-function isDetachedTailStart(character: string, text: string, end: number = text.length): boolean {
-  return (
-    DETACHED_MARK.test(character) ||
-    (EMOJI_MODIFIER.test(character) &&
-      EMOJI_MODIFIER_BASE_AT_END.test(text.slice(Math.max(0, end - 2), end)))
-  );
+function isDetachedTailStart(
+  character: string,
+  precedingCharacters: () => Iterable<string>,
+): boolean {
+  if (DETACHED_MARK.test(character)) return true;
+  if (EMOJI_MODIFIER.test(character)) {
+    for (const preceding of precedingCharacters()) {
+      if (!VARIATION_SELECTOR.test(preceding)) return EMOJI_MODIFIER_BASE.test(preceding);
+    }
+  }
+  if (REGIONAL_INDICATOR.test(character)) {
+    let odd = false;
+    for (const preceding of precedingCharacters()) {
+      if (!REGIONAL_INDICATOR.test(preceding)) break;
+      odd = !odd;
+    }
+    return odd;
+  }
+  return false;
+}
+
+function* previousCharacters(text: string, end: number, skipSgr = false): Generator<string> {
+  while (end > 0) {
+    if (skipSgr && text[end - 1] === "m") {
+      let start = end - 1;
+      while (start > 0 && /[0-9;:]/u.test(text[start - 1]!)) start -= 1;
+      if (start >= 2 && text.startsWith(`${ESC}[`, start - 2)) {
+        end = start - 2;
+        continue;
+      }
+    }
+    const pair = end >= 2 ? text.codePointAt(end - 2)! : 0;
+    const start = end - (pair > 0xffff ? 2 : 1);
+    yield text.slice(start, end);
+    end = start;
+  }
+}
+
+function* previousRunCharacters(runs: Line, index: number, end: number): Generator<string> {
+  yield* previousCharacters(runs[index]!.text, end);
+  for (let previous = index - 1; previous >= 0; previous -= 1) {
+    const { text } = runs[previous]!;
+    yield* previousCharacters(text, text.length);
+  }
 }
 
 function characterWidth(character: string): number {
@@ -167,11 +207,7 @@ function trimLineStart(runs: Array<Run>, count: number): number {
     // A retained tail must start at a complete character, with no detached marks.
     while (cut < run.text.length) {
       const character = String.fromCodePoint(run.text.codePointAt(cut)!);
-      const detached =
-        cut === 0
-          ? isDetachedTailStart(character, runs[dropped - 1]?.text ?? "")
-          : isDetachedTailStart(character, run.text, cut);
-      if (!detached) break;
+      if (!isDetachedTailStart(character, () => previousRunCharacters(runs, dropped, cut))) break;
       cut += character.length;
     }
     removedWidth += textWidth(run.text.slice(0, cut));
@@ -674,30 +710,21 @@ class Terminal {
   }
 }
 
-/** Resolves the cut, active style, and end of the preceding visible text. */
-function styleAt(
-  text: string,
-  index: number,
-): { readonly start: number; readonly prefix: string; readonly textEnd: number } {
+/** The active style at `index` of `text` and where a cut there may safely start. */
+function styleAt(text: string, index: number): { readonly start: number; readonly prefix: string } {
   const lineStart = text.lastIndexOf("\n", index - 1) + 1;
   let prefix = "";
   let cursor = lineStart;
-  let textEnd = lineStart;
   while (cursor < index) {
     const found = text.indexOf(`${ESC}[`, cursor);
     if (found === -1 || found >= index) break;
     const end = text.indexOf("m", found);
     if (end === -1) break;
-    if (found > cursor) textEnd = found;
-    if (end >= index) return { start: end + 1, prefix: text.slice(found, end + 1), textEnd };
+    if (end >= index) return { start: end + 1, prefix: text.slice(found, end + 1) };
     prefix = text.slice(found, end + 1);
     cursor = end + 1;
   }
-  return {
-    start: index,
-    prefix: prefix === sgr("") ? "" : prefix,
-    textEnd: cursor < index ? index : textEnd,
-  };
+  return { start: index, prefix: prefix === sgr("") ? "" : prefix };
 }
 
 /** Keeps the last `maxChars`, preferring to start on a fresh line. */
@@ -717,7 +744,6 @@ export function terminalOutputTail(
   // detached marks and modifiers, and lone low surrogates.
   const style = styleAt(text, start);
   let prefix = style.prefix;
-  let textEnd = style.textEnd;
   start = style.start;
   while (start < text.length) {
     if (text.startsWith(`${ESC}[`, start)) {
@@ -729,9 +755,8 @@ export function terminalOutputTail(
       continue;
     }
     const character = String.fromCodePoint(text.codePointAt(start)!);
-    if (!isDetachedTailStart(character, text, textEnd)) break;
+    if (!isDetachedTailStart(character, () => previousCharacters(text, start, true))) break;
     start += character.length;
-    textEnd = start;
   }
   return { text: start < text.length ? prefix + text.slice(start) : "", truncated: true };
 }
