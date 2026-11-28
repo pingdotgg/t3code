@@ -22,14 +22,18 @@ const primaryTarget = (httpBaseUrl: string) =>
     wsBaseUrl: httpBaseUrl.replace("http", "ws"),
   });
 
-const sshRoute = (target: { readonly alias: string; readonly username: string | null }) => ({
+const sshRoute = (target: {
+  readonly alias: string;
+  readonly username: string | null;
+  readonly port?: number | null;
+}) => ({
   target: new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" }),
   profile: Option.some(
     new SshConnectionProfile({
       connectionId: "ssh-1",
       environmentId,
       label: "sol",
-      target: { ...target, hostname: "sol.tail1234.ts.net", port: null },
+      target: { port: null, ...target, hostname: "sol.tail1234.ts.net" },
     }),
   ),
 });
@@ -163,6 +167,27 @@ describe("resolveRemoteOpenState", () => {
     );
   });
 
+  it.each([
+    { port: 10171, vscode: "dockware%40localhost%3A10171", zed: "dockware@localhost:10171" },
+    { port: 22, vscode: "dockware%40localhost", zed: "dockware@localhost" },
+    { port: null, vscode: "dockware%40localhost", zed: "dockware@localhost" },
+  ])("keeps a non-default SSH port in editor links (port: $port)", ({ port, vscode, zed }) => {
+    const state = resolveRemoteOpenState({
+      target: new SshConnectionTarget({ environmentId, label: "dockware", connectionId: "ssh-1" }),
+      routes: [sshRoute({ alias: "localhost", username: "dockware", port })],
+      isDesktopRenderer: true,
+      remoteOpenTargets: TAILSCALE_TARGETS,
+      hostEnvironmentId: null,
+    });
+    if (state.mode !== "remote-links") throw new Error("Expected a remote link");
+    expect(
+      buildRemoteOpenUrl({ editor: "vscode", ...state.host, absolutePath: "/var/www/html" }),
+    ).toBe(`vscode://vscode-remote/ssh-remote+${vscode}/var/www/html?windowId=_blank`);
+    expect(
+      buildRemoteOpenUrl({ editor: "zed", ...state.host, absolutePath: "/var/www/html" }),
+    ).toBe(`zed://ssh/${zed}/var/www/html`);
+  });
+
   it("uses the advertised login username in editor links over a relay", () => {
     const state = resolveRemoteOpenState({
       target: new RelayConnectionTarget({ environmentId, label: "server" }),
@@ -280,15 +305,18 @@ describe("buildRemoteOpenUrl", () => {
     ).toBe("vscode://vscode-remote/ssh-remote+sol/C%3A/Users/theo?windowId=_blank");
   });
 
-  it("keeps a plus in the SSH username through Remote-SSH's authority parsing", () => {
+  it.each([
+    { host: "ssh.example.com", username: "vm+demo" },
+    { host: "2001:db8::1", username: "dev" },
+  ])("keeps $username@$host and its port through Remote-SSH's authority parsing", (target) => {
     const url = buildRemoteOpenUrl({
       editor: "vscode",
-      host: "ssh.example.com",
-      username: "vm+demo",
+      ...target,
+      port: 2222,
       absolutePath: "/workspace/project",
     });
     // VS Code decodes the authority, then Remote-SSH (0.129) takes `authority.split("+")[1]` and
-    // reads it as hex-encoded JSON `{ hostName, user }` or as `user@host`.
+    // reads it as hex-encoded JSON `{ hostName, user, port }` or as `user@host[:port]`.
     const authority = decodeURIComponent(new URL(url ?? "").pathname.split("/")[1] ?? "");
     const destination = authority.split("+")[1] ?? "";
     const hexBytes = /^(?:[0-9a-f]{2})+$/i.test(destination)
@@ -298,9 +326,10 @@ describe("buildRemoteOpenUrl", () => {
       hexBytes === undefined
         ? destination.match(/^(?:(?<user>.*)@)?(?<hostName>.+?)$/)?.groups
         : JSON.parse(new TextDecoder().decode(new Uint8Array(hexBytes)));
-    expect({ user: resolved?.user, hostName: resolved?.hostName }).toEqual({
-      user: "vm+demo",
-      hostName: "ssh.example.com",
+    expect({ user: resolved?.user, hostName: resolved?.hostName, port: resolved?.port }).toEqual({
+      user: target.username,
+      hostName: target.host,
+      port: 2222,
     });
   });
 
@@ -312,6 +341,18 @@ describe("buildRemoteOpenUrl", () => {
       absolutePath: "/work/project",
     });
     expect(new URL(url ?? "").searchParams.get("windowId")).toBe("_blank");
+  });
+
+  it("keeps the port of an IPv6 host in Zed links", () => {
+    expect(
+      buildRemoteOpenUrl({
+        editor: "zed",
+        host: "2001:db8::1",
+        username: "dev",
+        port: 2222,
+        absolutePath: "/work/project",
+      }),
+    ).toBe("zed://ssh/dev@[2001:db8::1]:2222/work/project");
   });
 
   it("drops the Windows drive letter for Zed", () => {

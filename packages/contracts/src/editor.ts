@@ -200,6 +200,7 @@ export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
   readonly host: string;
   readonly username?: string;
+  readonly port?: number;
   readonly absolutePath: string;
   readonly isFile?: boolean;
 }): string | undefined => {
@@ -223,29 +224,38 @@ export const buildRemoteOpenUrl = (input: {
   // Windows server paths (`C:\...`) appear as `/C:/...` in vscode-remote URIs.
   const posixPath = input.absolutePath.replaceAll("\\", "/");
   const rootedPath = posixPath.startsWith("/") ? posixPath : `/${posixPath}`;
-  const encodedHost = encodeURIComponent(input.host);
+  // An unbracketed IPv6 literal cannot take a `:port` suffix without changing the address.
+  const isIpv6Host = input.host.includes(":");
+  const hostWithPort = input.port === undefined ? input.host : `${input.host}:${input.port}`;
+  const encodedHost =
+    encodeURIComponent(input.host) +
+    (input.port === undefined || isIpv6Host ? "" : `:${input.port}`);
   if (input.editor === "zed") {
     // Zed roots paths on the system drive, so omit the Windows drive prefix.
     const zedPath = /^[Cc]:[\\/]/.test(input.absolutePath) ? rootedPath.slice(3) : rootedPath;
     const encodedZedPath = zedPath.split("/").map(encodeURIComponent).join("/");
+    // Zed parses this as an ssh URL, which needs a bracketed IPv6 host to carry a port.
+    const zedHost =
+      isIpv6Host && input.port !== undefined ? `[${input.host}]:${input.port}` : encodedHost;
     // Zed reads this segment as ssh URL userinfo, so the `@` stays literal.
     const zedDestination =
-      input.username === undefined
-        ? encodedHost
-        : `${encodeURIComponent(input.username)}@${encodedHost}`;
+      input.username === undefined ? zedHost : `${encodeURIComponent(input.username)}@${zedHost}`;
     return `${scheme}://ssh/${zedDestination}${encodedZedPath}`;
   }
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
   const plainDestination =
-    input.username === undefined ? input.host : `${input.username}@${input.host}`;
-  // Remote-SSH splits the decoded authority on "+", so a destination containing one must use its
-  // hex-encoded JSON form instead.
-  const destination = plainDestination.includes("+")
-    ? Array.from(
-        new TextEncoder().encode(JSON.stringify({ hostName: input.host, user: input.username })),
-        (byte) => byte.toString(16).padStart(2, "0"),
-      ).join("")
-    : plainDestination;
+    input.username === undefined ? hostWithPort : `${input.username}@${hostWithPort}`;
+  // Remote-SSH splits the decoded authority on "+", so a destination containing one, or an IPv6
+  // host with a port, must use its hex-encoded JSON form instead.
+  const destination =
+    plainDestination.includes("+") || (isIpv6Host && input.port !== undefined)
+      ? Array.from(
+          new TextEncoder().encode(
+            JSON.stringify({ hostName: input.host, user: input.username, port: input.port }),
+          ),
+          (byte) => byte.toString(16).padStart(2, "0"),
+        ).join("")
+      : plainDestination;
   // VS Code opens a bare vscode-remote path as a folder; a trailing position makes it open the file.
   // Without windowId=_blank, a folder link replaces the user's last active window.
   return `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(destination)}${encodedPath}${input.isFile ? ":1:1" : "?windowId=_blank"}`;
