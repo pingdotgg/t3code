@@ -28,6 +28,7 @@ function describeSshTarget(request: DesktopSshPasswordPromptRequest): string {
 }
 
 function formatRemainingSeconds(seconds: number): string {
+  if (!Number.isFinite(seconds)) return "0:00";
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 

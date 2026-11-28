@@ -361,6 +361,7 @@ const daysLabel = (count: number, resolve: MessageResolver) =>
   resolve(msg("{count}d", { count, $context: "days, abbreviated" }));
 
 function relativeElapsedLabel(elapsedMs: number, resolve: MessageResolver): string {
+  if (!Number.isFinite(elapsedMs)) return resolve(msg("just now"));
   const seconds = Math.floor(elapsedMs / 1000);
   if (seconds < 60) return resolve(msg("just now"));
   const minutes = Math.floor(seconds / 60);
@@ -376,7 +377,7 @@ export function formatRelativeElapsed(
 ): RelativeTimeParts {
   const label = relativeElapsedLabel(elapsedMs, resolve);
   const seconds = Math.floor(elapsedMs / 1000);
-  if (seconds < 60) return { value: label, suffix: null, label };
+  if (!Number.isFinite(seconds) || seconds < 60) return { value: label, suffix: null, label };
   const ago = resolve(msg("ago", { $context: "follows an elapsed time such as 5m" }));
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return { value: minutesLabel(minutes, resolve), suffix: ago, label };
