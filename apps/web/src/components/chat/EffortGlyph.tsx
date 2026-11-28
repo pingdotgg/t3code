@@ -90,7 +90,10 @@ export function EffortGlyph(props: { count: number; filled: number; size?: Compo
   );
 }
 
-/** One bolt for Fast. Ultrafast adds an outlined echo behind it, cut away by the surface color. */
+/**
+ * One bolt for Fast. Ultrafast adds an outlined echo behind it, cut away by the surface color:
+ * the composer's inside it, the popover's in portaled menus that sit outside it.
+ */
 export function FastBolt(props: { ultra: boolean }) {
   if (!props.ultra) {
     return (
@@ -102,7 +105,7 @@ export function FastBolt(props: { ultra: boolean }) {
       <ZapIcon className="absolute top-0 left-0.75 size-3" />
       <ZapIcon
         strokeWidth={4}
-        className="absolute top-0 left-0 size-3 fill-current stroke-(--chat-composer-glass-surface) [paint-order:stroke]"
+        className="absolute top-0 left-0 size-3 fill-current stroke-(--chat-composer-glass-surface,var(--popover)) [paint-order:stroke]"
       />
     </span>
   );
