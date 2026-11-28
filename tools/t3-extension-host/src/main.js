@@ -130,7 +130,16 @@ function supervise() {
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) process.on(signal, () => exit(signal));
 }
 
-if (process.argv.includes('--check')) {
+function nodeTooOld() {
+  const [major, minor] = process.versions.node.split('.').map(Number);
+  return major < 22 || (major === 22 && minor < 15);
+}
+
+if (nodeTooOld()) {
+  const message = `Node.js ${process.versions.node} is too old; T3 Extension Host needs 22.15 or newer`;
+  createLogger({ file: config.logFile, level: 'error', console: true, scope: 'supervisor' }).error(message);
+  process.exit(1);
+} else if (process.argv.includes('--check')) {
   runCheck();
 } else {
   acquireLock(supervise, () => {

@@ -51,13 +51,23 @@ Some extensions refuse to run outside Microsoft's VS Code by license (for exampl
 npm run check              # diagnose: T3 Code, VS Code, extensions, Discord
 npm run scan               # compatibility report for your extensions
 npm start                  # run in the foreground
-npm run install-startup    # start hidden at Windows login (and start now)
-npm run uninstall-startup  # remove the login item and stop it
+npm run install-startup    # start hidden at login, add the watchdog task, start now
+npm run uninstall-startup  # remove the login item and the watchdog task, and stop it
 ```
 
 The supervisor waits for T3 Code to start, then launches the extensions in a child process. It shuts them down when T3 Code closes, which clears your Discord status and stops language servers. Only one instance runs at a time.
 
 Logs go to `%APPDATA%\t3-extension-host\logs\host.log`, including every WakaTime heartbeat and each extension's output channel.
+
+## Staying installed through updates
+
+- **T3 Code updates:** nothing lives in T3 Code's install folder or uses its runtime, so the updater can replace or rename the app freely. The host is found by T3 Code's runtime file or, failing that, any process named `T3 Code…`. Running on T3 Code's bundled runtime would lock its executable and block updates, so the host never does that.
+- **T3 Code database changes:** every table and column the host reads is checked first. If a change removes one, the log says which and the host retries quietly instead of crashing. The waiting state is optional and turns off on its own if its data disappears.
+- **Node.js updates:** `scripts/launch.vbs` looks for Node.js on every start (`T3_EXTENSION_HOST_NODE`, then `PATH`, then the usual install folders), so a moved or updated Node keeps working. A missing or too old Node writes one clear line to the log.
+- **Crashes:** the scheduled task `T3 Extension Host Watchdog` starts the launcher every 10 minutes. If the host is already running, the new copy exits at once.
+- **VS Code and extension updates:** the newest installed version of each extension is used, so updates in VS Code apply here too.
+- **Your settings** are in `%APPDATA%\t3-extension-host`, outside every install folder.
+- **Images:** Discord loads them from the `discord-assets` branch of the `5djr/t3code` fork. Copies of all of them are in `assets/`, so they can be hosted elsewhere if that branch ever goes away.
 
 ## Configuration
 
@@ -106,5 +116,5 @@ The Discord modes are `idle` (no agent running), `working` (an agent is running)
 - Commands from the command palette, quick picks and input boxes can't be shown; extensions see them as cancelled.
 - Plain terminals don't execute what extensions type into them, since nobody would see it run.
 - All extensions share one process. One that calls `process.exit` takes the others down; the supervisor restarts them.
-- T3 Code's database is read-only here. If a T3 update changes its schema, the log reports failed polls instead of tracking.
+- T3 Code's database is read-only here. If a T3 update renames tables or columns the host uses, tracking pauses and the log names what's missing until the host is updated.
 - Window focus detection is Windows-only. On macOS and Linux the window is always treated as focused. On first run the host compiles a ~5 KB focus helper into `%APPDATA%\t3-extension-host\bin` with the C# compiler that ships with Windows; if that isn't possible it falls back to a PowerShell loop, which uses more memory.
