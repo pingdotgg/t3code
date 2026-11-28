@@ -48,8 +48,10 @@ const INDENTED_CODE_PATTERN = /^(?: {4}| {0,3}\t)/u;
 const HTML_COMMENT_START_PATTERN = /^ {0,3}<!--/u;
 const BARE_URL_PATTERN = /^<?(https?:\/\/\S+?)>?$/u;
 const IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|gif|webp|avif|heic|heif|svg)$/iu;
-// CommonMark lets any ASCII punctuation be backslash-escaped in a link destination.
-const MARKDOWN_ESCAPE_PATTERN = /\\([!-/:-@[-`{-~])/gu;
+// A destination unescapes backslashed ASCII punctuation and decodes character references
+// (`&amp;`); a link with a reference stays Markdown so its parser decodes it.
+const MARKDOWN_DESTINATION_TOKEN_PATTERN =
+  /\\([!-/:-@[-`{-~])|&(?:#\d{1,7}|#[xX][\da-fA-F]{1,6}|[A-Za-z][A-Za-z\d]{1,31});/gu;
 const VIDEO_EXTENSION_PATTERN = /\.(?:mp4|webm|mov|m4v|ogv)$/iu;
 
 // Stops at the next `<`, so matching stays linear in the length of the line.
@@ -102,10 +104,15 @@ function standaloneMarkdownLink(trimmed: string): { label: string; url: string }
   if (closeBracket < 0 || trimmed[closeBracket + 1] !== "(") return null;
   const destination = markdownLinkDestinationScanner(trimmed)(closeBracket + 1);
   if (destination === null || destination.end !== trimmed.length) return null;
+  let hasCharacterReference = false;
   const url = trimmed
     .slice(destination.hrefStart, destination.hrefEnd)
-    .replace(MARKDOWN_ESCAPE_PATTERN, "$1");
-  return url ? { label: trimmed.slice(1, closeBracket), url } : null;
+    .replace(MARKDOWN_DESTINATION_TOKEN_PATTERN, (token, escaped: string | undefined) => {
+      if (escaped !== undefined) return escaped;
+      hasCharacterReference = true;
+      return token;
+    });
+  return url && !hasCharacterReference ? { label: trimmed.slice(1, closeBracket), url } : null;
 }
 
 function attachmentFromLine(

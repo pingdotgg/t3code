@@ -504,6 +504,12 @@ describe("media on custom hosts", () => {
       "Demo",
     ],
     [
+      "[Demo](https://example.com/demo(1).mp4?a=1\\&amp;b=2)",
+      "https://example.com/demo(1).mp4?a=1&amp;b=2",
+      "video",
+      "Demo",
+    ],
+    [
       "[Screenshot](https://drop.example.com/shot.webp)",
       "https://drop.example.com/shot.webp",
       "image",
@@ -527,6 +533,7 @@ describe("media on custom hosts", () => {
     "https://example.com/report#demo.png",
     "[Demo](https://example.com/demo(1).mp4) trailing",
     "[Demo](https://example.com/demo(1.mp4)",
+    "[Demo](https://example.com/demo(1).mp4?a=1&amp;b=2)",
   ])("keeps %s a link when not a standalone media link", (body) => {
     expect(split(body)).toEqual([
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
