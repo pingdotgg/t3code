@@ -224,3 +224,191 @@ it.effect("merges with Forgejo's fast-forward-only style", () =>
     ]);
   }),
 );
+
+const labelPage = (value: unknown, stderr = "link: \n") =>
+  Effect.succeed({ ...TestSourceControlHost.processOutput(JSON.stringify(value)), stderr });
+
+it.effect(
+  "lists organization labels alongside repository labels, resolving owner on subpath mounts",
+  () =>
+    Effect.gen(function* () {
+      const routes: string[] = [];
+      const orgPage = [
+        { id: 99, name: "bug", color: "000000" },
+        { id: 101, name: "security", color: "ff0000" },
+        ...Array.from({ length: 498 }, (_, i) => ({ id: 200 + i, name: `org-${i}` })),
+      ];
+      const provider = yield* ForgejoPullRequestProvider.make.pipe(
+        Effect.provide(
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            api: (input) => {
+              const [route] = input.path.split("?");
+              routes.push(route ?? "");
+              if (route === "repos/forgejo/acme/web/labels") {
+                return labelPage([{ id: 3, name: "bug", color: "d73a4a" }]);
+              }
+              if (route === "orgs/acme/labels") {
+                return labelPage(
+                  orgPage,
+                  'link: <https://forge.example/api/v1/orgs/acme/labels?page=2>; rel="next"\n',
+                );
+              }
+              return labelPage([]);
+            },
+          }),
+        ),
+      );
+
+      const listed = yield* provider.listRepositoryLabels!({
+        cwd: "/forgejo",
+        repository: "forgejo/acme/web",
+        host: "forge.example:3000",
+      });
+      assert.isTrue(listed.truncated);
+      assert.strictEqual(listed.items.length, 500);
+      assert.deepStrictEqual(listed.items.slice(0, 2), [
+        { name: "bug", color: "d73a4a" },
+        { name: "security", color: "ff0000" },
+      ]);
+      assert.isTrue(routes.includes("orgs/acme/labels"));
+      assert.isFalse(routes.includes("orgs/forgejo/labels"));
+    }),
+);
+
+it.effect("resolves an organization label case-insensitively when filtering pull requests", () =>
+  Effect.gen(function* () {
+    const pullLabelParams: Array<string | null> = [];
+    const provider = yield* ForgejoPullRequestProvider.make.pipe(
+      Effect.provide(
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          api: (input) => {
+            const [route, query] = input.path.split("?");
+            if (route === "repos/acme/web/labels") {
+              return labelPage([{ id: 2, name: "shared", color: "0000ff" }]);
+            }
+            if (route === "orgs/acme/labels") {
+              return labelPage([
+                { id: 5, name: "shared", color: "00ff00" },
+                { id: 101, name: "Needs-Review", color: "ff0000" },
+              ]);
+            }
+            if (route === "repos/acme/web/pulls") {
+              pullLabelParams.push(new URLSearchParams(query).get("labels"));
+            }
+            return labelPage([]);
+          },
+        }),
+      ),
+    );
+
+    const base = {
+      cwd: "/forgejo",
+      repository: "acme/web",
+      host: "forge.example:3000",
+      state: "open" as const,
+      involvement: "all" as const,
+      viewer: "maria",
+      limit: 10,
+    };
+    yield* provider.listChangeRequests({ ...base, filters: { labels: [["needs-review"]] } });
+    yield* provider.listChangeRequests({ ...base, filters: { labels: [["shared"]] } });
+    assert.deepStrictEqual(pullLabelParams, ["101", null]);
+  }),
+);
+
+it.effect("treats 404 and 403 on org labels as empty while failing on 500", () =>
+  Effect.gen(function* () {
+    const makeWithOrgError = (
+      error: ForgejoCli.ForgejoCliError,
+      pullLabelParams?: Array<string | null>,
+    ) => {
+      let orgQueried = false;
+      return ForgejoPullRequestProvider.make.pipe(
+        Effect.provide(
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            api: (input) => {
+              const [route, query] = input.path.split("?");
+              if (route === "orgs/alice/labels") {
+                orgQueried = true;
+                return Effect.fail(error);
+              }
+              if (route === "repos/alice/web/labels") {
+                return labelPage([{ id: 3, name: "bug", color: "d73a4a" }]);
+              }
+              if (route === "repos/alice/web/pulls") {
+                pullLabelParams?.push(new URLSearchParams(query).get("labels"));
+              }
+              return labelPage([]);
+            },
+          }),
+        ),
+        Effect.map((provider) => ({ provider, wasOrgQueried: () => orgQueried })),
+      );
+    };
+
+    const repoInput = {
+      cwd: "/forgejo",
+      repository: "alice/web",
+      host: "forge.example:3000",
+    };
+    const listInput = {
+      ...repoInput,
+      state: "open" as const,
+      involvement: "all" as const,
+      viewer: "maria",
+      limit: 10,
+      filters: { labels: [["bug"]] },
+    };
+
+    for (const [reason, httpStatus] of [
+      ["not-found", 404],
+      ["forbidden", 403],
+    ] as const) {
+      const { provider, wasOrgQueried } = yield* makeWithOrgError(
+        new ForgejoCli.ForgejoCliError({
+          command: "fj",
+          cwd: "/forgejo",
+          detail: String(httpStatus),
+          reason,
+          httpStatus,
+        }),
+      );
+      const listed = yield* provider.listRepositoryLabels!(repoInput);
+      assert.isTrue(wasOrgQueried());
+      assert.deepStrictEqual(listed, {
+        items: [{ name: "bug", color: "d73a4a" }],
+        truncated: false,
+      });
+    }
+
+    const pullLabelParams: Array<string | null> = [];
+    const { provider: serverErrorProvider } = yield* makeWithOrgError(
+      new ForgejoCli.ForgejoCliError({
+        command: "fj",
+        cwd: "/forgejo",
+        detail: "internal server error",
+        httpStatus: 500,
+      }),
+      pullLabelParams,
+    );
+    const failed = yield* Effect.flip(serverErrorProvider.listRepositoryLabels!(repoInput));
+    assert.strictEqual(failed._tag, "PullRequestProviderError");
+    assert.strictEqual(failed.reason, "failed");
+
+    yield* serverErrorProvider.listChangeRequests(listInput);
+    assert.deepStrictEqual(pullLabelParams, [null]);
+
+    const { provider: unauthProvider } = yield* makeWithOrgError(
+      new ForgejoCli.ForgejoCliError({
+        command: "fj",
+        cwd: "/forgejo",
+        detail: "unauthorized",
+        reason: "authentication",
+        httpStatus: 401,
+      }),
+    );
+    const unauthenticated = yield* Effect.flip(unauthProvider.listChangeRequests(listInput));
+    assert.strictEqual(unauthenticated._tag, "PullRequestProviderError");
+    assert.strictEqual(unauthenticated.reason, "unauthenticated");
+  }),
+);
