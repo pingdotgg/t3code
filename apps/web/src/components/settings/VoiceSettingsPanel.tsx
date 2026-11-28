@@ -1454,7 +1454,7 @@ export function VoiceSettingsPanel() {
         "speech-correction-word": cleanupEnabled ? undefined : "speech-post-processing",
       }}
     >
-      <SettingsSection id="voice-input" title={gt("Input")}>
+      <SettingsSection id="voice-input" title={gt("Input", { $context: "audio input section" })}>
         <SettingsRow
           {...setting("voice-microphone")}
           title={gt("Microphone")}

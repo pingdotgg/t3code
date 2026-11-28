@@ -2,7 +2,11 @@ import { msg } from "gt-react";
 import type { UsageModelPriceOverride } from "@t3tools/contracts";
 
 export const USAGE_PRICE_FIELDS = [
-  { key: "inputCostPerMillionTokens", label: msg("Input"), optional: false },
+  {
+    key: "inputCostPerMillionTokens",
+    label: msg("Input", { $context: "input token price column" }),
+    optional: false,
+  },
   { key: "outputCostPerMillionTokens", label: msg("Output"), optional: false },
   { key: "cacheReadCostPerMillionTokens", label: msg("Cache read"), optional: true },
   { key: "cacheWriteCostPerMillionTokens", label: msg("Cache write"), optional: true },
