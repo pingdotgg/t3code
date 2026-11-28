@@ -685,10 +685,9 @@ function checkoutFailureDetail(stderr: string): string {
 function fetchFailureDetail(stderr: string): string | undefined {
   const lines = stderr.split(/\r?\n/).map((line) => line.trim());
   if (
+    isSshPublicKeyDenial(stderr) ||
     lines.some((line) =>
-      /^(?:fatal: (?:Authentication failed|could not read (?:Username|Password))\b|\S+: Permission denied \(publickey)/i.test(
-        line,
-      ),
+      /^fatal: (?:Authentication failed|could not read (?:Username|Password))\b/i.test(line),
     )
   ) {
     return "Git could not authenticate with the remote. Check Git credentials or SSH access on the server, then retry.";
@@ -718,6 +717,13 @@ function fetchFailureDetail(stderr: string): string | undefined {
     return "Git found a broken local ref. Check the local repository on the server for a damaged or stray ref, then retry.";
   }
   return undefined;
+}
+
+// During GitHub incidents, some connections reject a valid SSH key and the next one succeeds.
+function isSshPublicKeyDenial(stderr: string): boolean {
+  return stderr
+    .split(/\r?\n/)
+    .some((line) => /^\S+: Permission denied \(publickey/i.test(line.trim()));
 }
 
 // Git 2.53+ reports ref races as fetching-ref failures; older versions say cannot lock ref.
@@ -7131,6 +7137,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           (result) => !(result.exitCode !== 0 && isRefLockFailure(result.stderr)),
           (_result) => run,
         ),
+        Effect.repeat({
+          while: (result) => result.exitCode !== 0 && isSshPublicKeyDenial(result.stderr),
+          times: 2,
+          schedule: Schedule.spaced("1 second"),
+        }),
       );
     };
     const fetchAll = runFetch(args).pipe(
