@@ -129,6 +129,12 @@ describe("modified Backspace in a list", () => {
   it("leaves an item with text before the caret to the browser", () => {
     expect(press("1. a\n2. b", "Mod-Backspace").handled).toBe(false);
   });
+
+  it("joins a line after a numbered list into its last item, like Backspace", () => {
+    // Position 8 is the start of "b", below the list.
+    expect(press("1. a\n\nb", "Backspace", 8).value).toBe("1. ab");
+    expect(press("1. a\n\nb", "Mod-Backspace", 8).value).toBe("1. ab");
+  });
 });
 
 describe("modified Delete in a list", () => {
