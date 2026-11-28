@@ -45,7 +45,9 @@ function IssueRowImpl({
     <div
       className={cn(
         "flex items-center rounded-md [content-visibility:auto] [contain-intrinsic-block-size:56.5px]",
-        selected ? "bg-accent" : "hover:bg-accent/60",
+        // The browser anchors scrolling on the selected row; a write that moves it to the top
+        // would drag the list there with it.
+        selected ? "bg-accent [overflow-anchor:none]" : "hover:bg-accent/60",
       )}
     >
       <button
