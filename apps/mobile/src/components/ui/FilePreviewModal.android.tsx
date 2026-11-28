@@ -210,17 +210,7 @@ function AndroidFilePreview(props: FilePreviewViewerProps) {
   const selected = source.images[source.selectedIndex]!;
   const images = source.images.filter((image) => !image.failed);
   const gallery = { ...source, images, selectedIndex: images.indexOf(selected) };
-  if (selected.actionsSource)
-    return <ImagePreview source={gallery} onRequestClose={props.onRequestClose} />;
-  return (
-    <ImageViewing
-      {...imageViewingProps(gallery)}
-      visible
-      onRequestClose={props.onRequestClose}
-      swipeToCloseEnabled={false}
-      doubleTapToZoomEnabled
-    />
-  );
+  return <ImagePreview source={gallery} onRequestClose={props.onRequestClose} />;
 }
 
 /** Shows images, PDFs and documents full screen. */
