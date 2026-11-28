@@ -12,7 +12,7 @@ import {
   type BotNoteSummary,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { ChevronLeftIcon, PlusIcon } from "lucide-react";
+import { PlusIcon } from "lucide-react";
 import { T, useGT } from "gt-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
@@ -26,6 +26,16 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { RelativeTime } from "../RelativeTime";
 import { Button } from "../ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
+import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
@@ -132,12 +142,11 @@ function PreferencesForm(props: {
   );
 }
 
-function NoteForm(props: {
+function NoteEditor(props: {
   threadRef: ScopedThreadRef;
   note: BotNote | null;
   takenSlugs: ReadonlySet<string>;
   canWrite: boolean;
-  onSaved: (slug: string) => void;
   onClose: () => void;
 }) {
   const gt = useGT();
@@ -145,32 +154,48 @@ function NoteForm(props: {
   const deleteNote = useAtomCommand(botFilesEnvironment.deleteNote, { reportFailure: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const save = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const title = String(form.get("title") ?? "").trim();
-    if (title === "") {
+  const [title, setTitle] = useState(props.note?.title ?? "");
+  const [summary, setSummary] = useState(props.note?.summary ?? "");
+  const [body, setBody] = useState(props.note?.body ?? "");
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const readOnly = !props.canWrite;
+  const speech = useTextFieldSpeech({
+    environmentId: props.threadRef.environmentId,
+    ownerKey: JSON.stringify([
+      "bot-note",
+      props.threadRef.environmentId,
+      props.threadRef.threadId,
+      props.note?.slug ?? null,
+    ]),
+    text: body,
+    textareaRef: bodyRef,
+    onTextChange: setBody,
+    disabled: readOnly,
+    offerSetup: true,
+  });
+  const save = async (contents: string) => {
+    const trimmedTitle = title.trim();
+    if (trimmedTitle === "") {
       setError(gt("Give the note a title."));
       return;
     }
-    const slug = props.note?.slug ?? noteSlugFromTitle(title, props.takenSlugs);
     setBusy(true);
     const message = failureMessage(
       await writeNote({
         environmentId: props.threadRef.environmentId,
         input: {
           threadId: props.threadRef.threadId,
-          slug,
-          title,
-          summary: String(form.get("summary") ?? "").trim(),
-          body: String(form.get("body") ?? ""),
+          slug: props.note?.slug ?? noteSlugFromTitle(trimmedTitle, props.takenSlugs),
+          title: trimmedTitle,
+          summary: summary.trim(),
+          body: contents,
         },
       }),
       gt("An error occurred."),
     );
     setBusy(false);
     setError(message);
-    if (message === null) props.onSaved(slug);
+    if (message === null) props.onClose();
   };
   const remove = async () => {
     const note = props.note;
@@ -193,109 +218,143 @@ function NoteForm(props: {
     setError(message);
     if (message === null) props.onClose();
   };
-  const readOnly = !props.canWrite;
   return (
-    <form className="flex flex-col gap-1" onSubmit={save}>
-      <div className="flex flex-col rounded-lg bg-muted/40 transition-colors focus-within:bg-muted/60">
-        <input
-          name="title"
-          aria-label={gt("Title")}
-          placeholder={gt("Title")}
-          maxLength={120}
-          defaultValue={props.note?.title ?? ""}
-          readOnly={readOnly}
-          autoFocus={props.note === null}
-          className="w-full bg-transparent px-2.5 pt-2 text-sm font-medium text-foreground outline-none placeholder:text-muted-foreground"
-        />
-        <input
-          name="summary"
-          aria-label={gt("Summary")}
-          placeholder={gt("One line, so the Bot knows when to read it.")}
-          maxLength={300}
-          defaultValue={props.note?.summary ?? ""}
-          readOnly={readOnly}
-          className="w-full bg-transparent px-2.5 pt-0.5 pb-2 text-xs text-muted-foreground outline-none placeholder:text-muted-foreground/70"
-        />
-        <textarea
-          name="body"
-          aria-label={gt("Note")}
-          placeholder={gt("Note")}
-          rows={6}
-          maxLength={BOT_FILE_MAX_CHARS}
-          defaultValue={props.note?.body ?? ""}
-          readOnly={readOnly}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault();
-              event.currentTarget.form?.requestSubmit();
-            }
-          }}
-          className="field-sizing-content block max-h-96 min-h-24 w-full resize-none border-t border-border/60 bg-transparent px-2.5 pt-2 pb-1 text-sm text-foreground outline-none placeholder:text-muted-foreground"
-        />
-        {readOnly ? null : (
-          <div className="flex items-center justify-end gap-1.5 px-1.5 pb-1.5">
-            {props.note === null ? null : (
-              <Button
-                type="button"
-                variant="ghost-destructive"
-                size="xs"
-                disabled={busy}
-                onClick={() => void remove()}
-              >
-                <T>Delete</T>
-              </Button>
-            )}
-            <Button type="submit" size="xs" disabled={busy}>
-              <T>Save</T>
-            </Button>
+    <form
+      className="contents"
+      onSubmit={(event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        speech.submitAfterDictation((contents) => void save(contents));
+      }}
+    >
+      <DialogPanel>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="bot-note-title">
+              <T>Title</T>
+            </Label>
+            <Input
+              id="bot-note-title"
+              size="sm"
+              maxLength={120}
+              value={title}
+              onChange={(event) => setTitle(event.currentTarget.value)}
+              readOnly={readOnly}
+              autoFocus={props.note === null}
+            />
           </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="bot-note-summary">
+              <T>Summary</T>
+            </Label>
+            <Input
+              id="bot-note-summary"
+              size="sm"
+              maxLength={300}
+              value={summary}
+              onChange={(event) => setSummary(event.currentTarget.value)}
+              readOnly={readOnly}
+              placeholder={gt("One line, so the Bot knows when to read it.")}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="bot-note-body">
+              <T>Note</T>
+            </Label>
+            <div className="flex flex-col rounded-lg bg-muted/40 transition-colors focus-within:bg-muted/60">
+              <textarea
+                id="bot-note-body"
+                ref={bodyRef}
+                maxLength={BOT_FILE_MAX_CHARS}
+                value={body}
+                onChange={(event) => setBody(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                readOnly={readOnly || speech.freezesEditor}
+                className="field-sizing-content block max-h-[50vh] min-h-48 w-full resize-none bg-transparent px-2.5 pt-2 pb-1 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+              />
+              {readOnly ? null : (
+                <div className="flex flex-wrap items-center justify-end gap-1.5 px-1.5 pb-1.5">
+                  <TextFieldSpeechControls speech={speech} />
+                </div>
+              )}
+            </div>
+          </div>
+          {error === null ? null : (
+            <p role="alert" className="text-xs text-destructive">
+              {error}
+            </p>
+          )}
+        </div>
+      </DialogPanel>
+      <DialogFooter>
+        {readOnly || props.note === null ? null : (
+          <Button
+            type="button"
+            variant="ghost-destructive"
+            size="sm"
+            className="sm:mr-auto"
+            disabled={busy}
+            onClick={() => void remove()}
+          >
+            <T>Delete</T>
+          </Button>
         )}
-      </div>
-      {error === null ? null : (
-        <p role="alert" className="text-xs text-destructive">
-          {error}
-        </p>
-      )}
+        <DialogClose render={<Button type="button" variant="outline" size="sm" />}>
+          <T>Cancel</T>
+        </DialogClose>
+        {readOnly ? null : (
+          <Button type="submit" size="sm" disabled={busy || speech.preparing}>
+            <T>Save</T>
+          </Button>
+        )}
+      </DialogFooter>
     </form>
   );
 }
 
-function OpenedNote(props: {
+function NoteDialog(props: {
   threadRef: ScopedThreadRef;
-  open: OpenNote;
+  open: OpenNote | null;
   notes: ReadonlyArray<BotNoteSummary>;
   canWrite: boolean;
-  onOpen: (open: OpenNote | null) => void;
+  onClose: () => void;
 }) {
+  const { open } = props;
   const note = useEnvironmentQuery(
-    props.open.kind === "note"
+    open?.kind === "note"
       ? botFilesEnvironment.note({
           environmentId: props.threadRef.environmentId,
-          input: { threadId: props.threadRef.threadId, slug: props.open.slug },
+          input: { threadId: props.threadRef.threadId, slug: open.slug },
         })
       : null,
   );
-  const close = () => props.onOpen(null);
+  const loading = open?.kind === "note" && note.data === null;
   return (
-    <div className="flex flex-col gap-2">
-      <Button type="button" variant="ghost-muted" size="xs" className="self-start" onClick={close}>
-        <ChevronLeftIcon />
-        <T>All notes</T>
-      </Button>
-      {props.open.kind === "note" && note.data === null ? (
-        <p className="text-muted-foreground text-sm">{note.error ?? <T>Loading…</T>}</p>
-      ) : (
-        <NoteForm
-          key={note.dataUpdatedAt}
-          threadRef={props.threadRef}
-          note={note.data}
-          takenSlugs={new Set(props.notes.map((entry) => entry.slug))}
-          canWrite={props.canWrite}
-          onSaved={(slug) => props.onOpen({ kind: "note", slug })}
-          onClose={close}
-        />
-      )}
-    </div>
+    <Dialog open={open !== null} onOpenChange={(next) => (next ? null : props.onClose())}>
+      <DialogPopup className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{open?.kind === "new" ? <T>New note</T> : <T>Edit note</T>}</DialogTitle>
+        </DialogHeader>
+        {open === null ? null : loading ? (
+          <DialogPanel>
+            <p className="text-muted-foreground text-sm">{note.error ?? <T>Loading…</T>}</p>
+          </DialogPanel>
+        ) : (
+          <NoteEditor
+            key={open.kind === "note" ? `${open.slug}:${note.dataUpdatedAt}` : "new"}
+            threadRef={props.threadRef}
+            note={open.kind === "note" ? note.data : null}
+            takenSlugs={new Set(props.notes.map((entry) => entry.slug))}
+            canWrite={props.canWrite}
+            onClose={props.onClose}
+          />
+        )}
+      </DialogPopup>
+    </Dialog>
   );
 }
 
@@ -359,17 +418,6 @@ function BotFiles(props: {
   canWrite: boolean;
 }) {
   const [open, setOpen] = useState<OpenNote | null>(null);
-  if (open !== null) {
-    return (
-      <OpenedNote
-        threadRef={props.threadRef}
-        open={open}
-        notes={props.files.notes}
-        canWrite={props.canWrite}
-        onOpen={setOpen}
-      />
-    );
-  }
   return (
     <>
       <PreferencesForm
@@ -379,6 +427,13 @@ function BotFiles(props: {
         canWrite={props.canWrite}
       />
       <NotesList notes={props.files.notes} canWrite={props.canWrite} onOpen={setOpen} />
+      <NoteDialog
+        threadRef={props.threadRef}
+        open={open}
+        notes={props.files.notes}
+        canWrite={props.canWrite}
+        onClose={() => setOpen(null)}
+      />
     </>
   );
 }

@@ -13038,9 +13038,7 @@
   "6c3933378cf5aa90": "Ponle un título a la nota.",
   "95dec29742162dfb": "¿Eliminar la nota \"{title}\"?",
   "5db766374f823efe": "Una línea, para que el Bot sepa cuándo leerla.",
-  "c3ea24ac809a5ed5": "Título",
   "aba29e77e52bca46": "Eliminar",
-  "58e20fe508eef1a3": "Todas las notas",
   "e807fee27e5cd426": "Nueva nota",
   "61a43a89f093e3f0": "El Bot guarda aquí sus notas.",
   "066644fe3ef88185": "Trabajadores",
@@ -13102,5 +13100,9 @@
     },
     " ",
     "tiene una pregunta"
-  ]
+  ],
+  "2d5f9fc73d29506b": "Editar nota",
+  "3ac8ed47fe50bd34": "Título",
+  "c710ee112651e1dd": "Resumen",
+  "16062ac4bcd9ab9e": "Nota"
 }

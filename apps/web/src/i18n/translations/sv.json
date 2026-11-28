@@ -13050,9 +13050,7 @@
   "6c3933378cf5aa90": "Ge anteckningen en titel.",
   "95dec29742162dfb": "Ta bort anteckningen ”{title}”?",
   "5db766374f823efe": "En rad, så att Bot vet när den ska läsas.",
-  "c3ea24ac809a5ed5": "Titel",
   "aba29e77e52bca46": "Ta bort",
-  "58e20fe508eef1a3": "Alla anteckningar",
   "e807fee27e5cd426": "Ny anteckning",
   "61a43a89f093e3f0": "Bot sparar sina anteckningar här.",
   "066644fe3ef88185": "Arbetare",
@@ -13114,5 +13112,9 @@
     },
     " ",
     "har en fråga"
-  ]
+  ],
+  "2d5f9fc73d29506b": "Redigera anteckning",
+  "3ac8ed47fe50bd34": "Titel",
+  "c710ee112651e1dd": "Sammanfattning",
+  "16062ac4bcd9ab9e": "Anteckning"
 }

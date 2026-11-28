@@ -13052,9 +13052,7 @@
   "6c3933378cf5aa90": "Give the note a title.",
   "95dec29742162dfb": "Delete note \"{title}\"?",
   "5db766374f823efe": "One line, so the Bot knows when to read it.",
-  "c3ea24ac809a5ed5": "Title",
   "aba29e77e52bca46": "Delete",
-  "58e20fe508eef1a3": "All notes",
   "e807fee27e5cd426": "New note",
   "61a43a89f093e3f0": "The Bot keeps its notes here.",
   "066644fe3ef88185": "Workers",
@@ -13116,5 +13114,9 @@
     },
     " ",
     "has a question"
-  ]
+  ],
+  "2d5f9fc73d29506b": "Edit note",
+  "3ac8ed47fe50bd34": "Title",
+  "c710ee112651e1dd": "Summary",
+  "16062ac4bcd9ab9e": "Note"
 }

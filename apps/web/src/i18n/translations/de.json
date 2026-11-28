@@ -13043,9 +13043,7 @@
   "6c3933378cf5aa90": "Gib der Notiz einen Titel.",
   "95dec29742162dfb": "Notiz „{title}“ löschen?",
   "5db766374f823efe": "Eine Zeile, damit der Bot weiß, wann er sie lesen soll.",
-  "c3ea24ac809a5ed5": "Titel",
   "aba29e77e52bca46": "Löschen",
-  "58e20fe508eef1a3": "Alle Notizen",
   "e807fee27e5cd426": "Neue Notiz",
   "61a43a89f093e3f0": "Hier bewahrt der Bot seine Notizen auf.",
   "066644fe3ef88185": "Worker",
@@ -13107,5 +13105,9 @@
     },
     " ",
     "hat eine Frage"
-  ]
+  ],
+  "2d5f9fc73d29506b": "Notiz bearbeiten",
+  "3ac8ed47fe50bd34": "Titel",
+  "c710ee112651e1dd": "Zusammenfassung",
+  "16062ac4bcd9ab9e": "Notiz"
 }
