@@ -274,6 +274,11 @@ describe("composer file attachments", () => {
       );
       expect(image!.sizeBytes).toBeLessThanOrEqual(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
       expect(mocks.delete).toHaveBeenCalledWith("file:///cache/fitted-1397x2000.png");
+      expect(mocks.delete).toHaveBeenCalledWith(
+        `file:///cache/fitted-${last.width}x${last.height}.png`,
+      );
+      expect(mocks.delete).not.toHaveBeenCalledWith(photo.uri);
+      expect(mocks.delete).not.toHaveBeenCalledWith(image!.previewUri);
       expect(imageFiles.get(image!.previewUri)).toBe(
         Buffer.alloc(last.width * last.height * 4).toString("base64"),
       );
@@ -654,6 +659,7 @@ describe("composer file attachments", () => {
         ],
         error: null,
       });
+      expect(mocks.delete).toHaveBeenCalledWith("file:///cache/fitted.png");
       expect(imageFiles.get(`${STORED}-photo.png`)).toBe(oversized ? original : "YWJj");
     });
 

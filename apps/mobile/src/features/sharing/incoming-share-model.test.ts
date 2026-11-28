@@ -142,6 +142,7 @@ describe("incoming native shares", () => {
     ]);
     expect(draft.warnings).toEqual([]);
     expect(removeOwnedFile).not.toHaveBeenCalledWith(persistedUri);
+    expect(removeOwnedFile).toHaveBeenCalledWith("file:///cache/resized.png");
   });
 
   it("releases a shared image when its stored size cannot be measured", async () => {

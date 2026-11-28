@@ -443,6 +443,7 @@ export async function buildIncomingShareDraft(input: {
     const name = resolved?.originalName ?? fallbackName(uri, index, mimeType);
     let persistedImageUri: string | undefined;
     let retainedImageUri: string | undefined;
+    let fittedImageUri: string | undefined;
     try {
       const sharedBase64 = await input.fileReader.readBase64(uri);
       // Use already-read bytes because native image loaders may not read the provider's file.
@@ -451,6 +452,7 @@ export async function buildIncomingShareDraft(input: {
         mimeType,
         base64: sharedBase64,
       });
+      fittedImageUri = fitted?.uri;
       const base64 = fitted?.base64 ?? sharedBase64;
       const decodedSize = estimateBase64ByteSize(base64);
       if (decodedSize <= 0 || decodedSize > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
@@ -496,7 +498,7 @@ export async function buildIncomingShareDraft(input: {
     } finally {
       await releaseOwnedFiles(
         input.fileReader,
-        [uri, payload.value, persistedImageUri].filter(
+        [uri, payload.value, persistedImageUri, fittedImageUri].filter(
           (candidate) => candidate !== retainedImageUri,
         ),
       );

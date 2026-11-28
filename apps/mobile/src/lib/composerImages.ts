@@ -259,6 +259,19 @@ async function ownedComposerImageAttachment(input: {
   }
 }
 
+/** Deletes a resized or re-encoded image once its bytes are copied into app-owned storage. */
+async function removeRenderedImageFile(uri: string): Promise<void> {
+  try {
+    const { File } = await import("expo-file-system");
+    const file = new File(uri);
+    if (file.exists) {
+      file.delete();
+    }
+  } catch (error) {
+    console.warn("[composer-images] could not remove a resized image", error);
+  }
+}
+
 export async function removePersistedComposerAttachmentFile(uri: string): Promise<void> {
   try {
     const { File, Paths } = await import("expo-file-system");
@@ -376,9 +389,10 @@ export async function pickComposerFiles(input: {
       }
       const { File } = await import("expo-file-system");
       let fileUri = attachment.fileUri;
+      let candidate: { readonly base64: string; readonly uri: string } | null = null;
       try {
         const original = await new File(fileUri).base64();
-        const candidate = await fitComposerImage({ uri: fileUri, mimeType, base64: original });
+        candidate = await fitComposerImage({ uri: fileUri, mimeType, base64: original });
         const fitted =
           candidate !== null &&
           estimateBase64ByteSize(candidate.base64) <= PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
@@ -395,6 +409,9 @@ export async function pickComposerFiles(input: {
       } catch (cause) {
         await removePersistedComposerAttachmentFile(attachment.fileUri);
         throw cause;
+      } finally {
+        // The owned copy replaces the resized file, and a resize over the limit is discarded.
+        if (candidate !== null) await removeRenderedImageFile(candidate.uri);
       }
       attachments.push(await ownedComposerImageAttachment({ fileUri, name, mimeType }));
     } catch (cause) {
@@ -581,12 +598,11 @@ export async function pickComposerMedia(input: {
     }
 
     const sizeBytes = estimateBase64ByteSize(image.base64);
-    if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-      error = m(msg("''{name}'' exceeds the 10 MB attachment limit.", { name }));
-      continue;
-    }
-
     try {
+      if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+        error = m(msg("''{name}'' exceeds the 10 MB attachment limit.", { name }));
+        continue;
+      }
       const fileUri = await persistComposerAttachmentFile(
         image.uri,
         image.name,
@@ -597,6 +613,9 @@ export async function pickComposerMedia(input: {
       );
     } catch (cause) {
       error = errorDisplayMessage(cause, m) ?? m(msg("Failed to read ''{name}''.", { name }));
+    } finally {
+      // Resized and re-encoded copies are generated files; the picker's original is left alone.
+      if (image.uri !== asset.uri) await removeRenderedImageFile(image.uri);
     }
   }
 
