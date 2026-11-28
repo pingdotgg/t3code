@@ -284,7 +284,16 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
   var fontSize: CGFloat = 10 {
     didSet {
       guard oldValue != fontSize else { return }
-      inputField.font = UIFont.monospacedSystemFont(ofSize: max(fontSize, 13), weight: .regular)
+      inputField.font = terminalMonoFont(family: fontFamily, size: max(fontSize, 13))
+      applyConfigInPlace()
+    }
+  }
+
+  /// A React Native family name; `ui-monospace` selects the system monospace font.
+  var fontFamily: String = "ui-monospace" {
+    didSet {
+      guard oldValue != fontFamily else { return }
+      inputField.font = terminalMonoFont(family: fontFamily, size: max(fontSize, 13))
       applyConfigInPlace()
     }
   }
@@ -360,7 +369,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     inputField.backgroundColor = UIColor.clear
     inputField.textColor = UIColor.clear
     inputField.tintColor = UIColor.clear
-    inputField.font = UIFont.monospacedSystemFont(ofSize: max(fontSize, 13), weight: .regular)
+    inputField.font = terminalMonoFont(family: fontFamily, size: max(fontSize, 13))
     inputField.placeholder = ""
     inputField.autocorrectionType = .no
     inputField.autocapitalizationType = .none
@@ -585,7 +594,8 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     else { return }
 
     inputField.resignFirstResponder()
-    let controller = TerminalTextSelectionViewController(text: text, fontSize: fontSize)
+    let controller = TerminalTextSelectionViewController(
+      text: text, font: terminalMonoFont(family: fontFamily, size: max(fontSize, 14)))
     let navigation = UINavigationController(rootViewController: controller)
     navigation.modalPresentationStyle = .pageSheet
     presenter.present(navigation, animated: !UIAccessibility.isReduceMotionEnabled)
@@ -964,7 +974,10 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
   }
 
   private func writeThemeConfigFile() -> String? {
-    let configContents = "\(themeConfig)\nfont-size = \(String(format: "%g", Double(fontSize)))\n"
+    // Ghostty finds fonts by CoreText family name, which for the system face is a hidden ".SF" name.
+    let family = terminalMonoFont(family: fontFamily, size: fontSize).familyName
+    let configContents =
+      "\(themeConfig)\nfont-family = \"\(family)\"\nfont-size = \(String(format: "%g", Double(fontSize)))\n"
     let url = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("t3-terminal-theme-\(appearance.rawValue).ghostty")
 
@@ -979,4 +992,11 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
       return nil
     }
   }
+}
+
+func terminalMonoFont(family: String, size: CGFloat) -> UIFont {
+  if family != "ui-monospace", let font = UIFont(name: family, size: size) {
+    return font
+  }
+  return .monospacedSystemFont(ofSize: size, weight: .regular)
 }

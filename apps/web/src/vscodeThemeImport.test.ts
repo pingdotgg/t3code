@@ -632,4 +632,13 @@ describe("VS Code theme import", () => {
       ],
     ]);
   });
+
+  it("does not split a surrogate pair when truncating a 48-character theme name", () => {
+    const imported = darkVsCodeTheme(`${"a".repeat(47)}🌙`, "#101010");
+    const renamed = resolveThemeLabelCollisions([
+      { theme: darkVsCodeTheme("Dracula", "#282a36"), sourceName: "dracula.json" },
+      { theme: darkVsCodeTheme("Dracula", "#22232e"), sourceName: `${"b".repeat(47)}🌙.json` },
+    ]);
+    expect([imported.label, renamed[1]?.label]).toEqual(["a".repeat(47), "b".repeat(47)]);
+  });
 });

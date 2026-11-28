@@ -177,7 +177,8 @@ export const make = (
   /**
    * Moves the scope's index to `indexFile` and makes it hold exactly what a rebuilt index would
    * before `git add`: HEAD outside the staged pathspec, and inside it every previously captured
-   * path that `git add -A` would still stage. Returns the tree it held, or undefined to rebuild.
+   * path that `git add -A` would still stage, except a nested checkout HEAD does not track.
+   * Returns the tree it held, or undefined to rebuild.
    */
   const claim = Effect.fn("GitVcsDriver.checkpoints.claimCaptureIndex")(
     function* (input: {
@@ -237,7 +238,7 @@ export const make = (
       // Records are ":<old mode> <new mode> <old oid> <new oid> <status> NUL <path> NUL".
       const fields = diff.stdout.split("\0");
       const updates: string[] = [];
-      const candidates: Array<{ path: string; mode: string; oid: string }> = [];
+      const candidates: Array<{ path: string; oid: string }> = [];
       const kept = new Set<string>();
       for (let field = 0; field + 1 < fields.length; field += 2) {
         const [oldMode = "", newMode = "", oldOid = "", newOid = ""] =
@@ -245,7 +246,12 @@ export const make = (
         const entryPath = fields[field + 1]!;
         // U+FFFD marks a name that is not UTF-8 and so cannot be fed back to Git from here.
         if (entryPath.includes("�")) return undefined;
-        if (!staged(entryPath) || oldMode === "000000") {
+        if (
+          !staged(entryPath) ||
+          oldMode === "000000" ||
+          // A kept gitlink HEAD lacks makes add -A run git status inside that nested checkout.
+          (oldMode === "160000" && newMode === "000000")
+        ) {
           // HEAD's entry, as a rebuilt index holds it; add -A then decides as it would there.
           updates.push(
             newMode === "000000"
@@ -253,7 +259,7 @@ export const make = (
               : `${newMode} ${newOid}\t${entryPath}`,
           );
         } else if (newMode === "000000") {
-          candidates.push({ path: entryPath, mode: oldMode, oid: oldOid });
+          candidates.push({ path: entryPath, oid: oldOid });
         } else if (oldMode !== "160000") {
           kept.add(oldOid);
         }
@@ -287,8 +293,6 @@ export const make = (
             directories.add(entry.path.slice(0, end));
           }
         }
-        // A gitlink whose directory lost its repository is a plain folder that add -A descends into.
-        for (const entry of candidates) if (entry.mode === "160000") directories.add(entry.path);
         const repositories = new Set<string>();
         yield* Effect.forEach(
           directories,
@@ -311,13 +315,9 @@ export const make = (
           return false;
         };
         for (const entry of candidates) {
-          if (
-            ignoredPaths.has(entry.path) ||
-            insideRepository(entry.path) ||
-            (entry.mode === "160000" && !repositories.has(entry.path))
-          ) {
+          if (ignoredPaths.has(entry.path) || insideRepository(entry.path)) {
             updates.push(`0 ${entry.oid}\t${entry.path}`);
-          } else if (entry.mode !== "160000") {
+          } else {
             kept.add(entry.oid);
           }
         }
@@ -338,6 +338,10 @@ export const make = (
       }
 
       if (updates.length > 0) {
+        // Restore the timestamp Git's racy check reads; update-index advances it.
+        const { mtime } = yield* fileSystem.stat(input.indexFile);
+        const indexTime = Option.isSome(mtime) ? Math.floor(mtime.value.getTime() / 1000) : 0;
+        if (indexTime <= 0) return undefined;
         yield* execute({
           operation,
           cwd: input.topLevel,
@@ -345,6 +349,7 @@ export const make = (
           stdin: `${updates.join("\0")}\0`,
           env: input.env,
         });
+        yield* fileSystem.utimes(input.indexFile, indexTime, indexTime);
       }
       return meta.tree;
     },

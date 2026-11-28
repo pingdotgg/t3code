@@ -117,9 +117,9 @@ export function effectiveSpeechLanguage(
   return model.languages.find((language) => language === "en") ?? model.languages[0] ?? "auto";
 }
 
-/** Rounds down, so a download still in progress never reads 100. */
+/** The final byte count can arrive before the download finishes writing to disk. */
 export function speechModelDownloadPercent(downloaded: number, size: number) {
-  return Math.floor((downloaded * 100) / size);
+  return Math.min(99, Math.floor((downloaded * 100) / size));
 }
 
 /**
