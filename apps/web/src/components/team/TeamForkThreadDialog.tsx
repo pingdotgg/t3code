@@ -3,7 +3,11 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import {
+  thrownErrorMessage,
+  wasBootstrapThreadDeleted,
+  wasBootstrapThreadNotCreated,
+} from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -35,6 +39,7 @@ import {
 } from "~/state/environments";
 import { environmentThreadStateAtom, threadEnvironment } from "~/state/threads";
 import {
+  clearLocalThreadAccess,
   closeTeamForkDialog,
   prepareTeamThreadAccess,
   setTeamDraftViewId,
@@ -255,6 +260,10 @@ export function TeamForkThreadDialogHost() {
       return;
     }
 
+    const error = squashAtomCommandFailure(result);
+    if (wasBootstrapThreadDeleted(error) || wasBootstrapThreadNotCreated(error)) {
+      clearLocalThreadAccess(option.environmentId, targetThreadId);
+    }
     if (!isAtomCommandInterrupted(result)) {
       // Fallback: open a draft on the target environment pre-populated with portable handoff text.
       const draftResult = await handleNewThread(
@@ -274,15 +283,14 @@ export function TeamForkThreadDialogHost() {
           type: "info",
           title: gt("Fork draft prepared"),
           description:
-            thrownErrorMessage(squashAtomCommandFailure(result), m) ??
-            gt("Review the handoff prompt and send to start."),
+            thrownErrorMessage(error, m) ?? gt("Review the handoff prompt and send to start."),
         });
         return;
       }
       toastManager.add({
         type: "error",
         title: gt("Could not fork thread"),
-        description: thrownErrorMessage(squashAtomCommandFailure(result), m) ?? undefined,
+        description: thrownErrorMessage(error, m) ?? undefined,
       });
     }
   };

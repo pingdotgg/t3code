@@ -27,6 +27,7 @@ import {
   selectProjectGroupingSettings,
   type ProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
+import { isTeamHubOnlyServerConfig } from "@t3tools/client-runtime/team";
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   readProjects,
@@ -119,6 +120,28 @@ export function createNewThreadHandler(router: AnyRouter) {
     const projectGroupingSettings = selectProjectGroupingSettings(getClientSettings());
     // Read at call time; status pushes replace the config map and would recreate every sidebar handler.
     const environmentServerConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
+    if (isTeamHubOnlyServerConfig(environmentServerConfigs.get(projectRef.environmentId))) {
+      const source = projects.find(
+        (project) =>
+          project.id === projectRef.projectId && project.environmentId === projectRef.environmentId,
+      );
+      if (!source) return Promise.resolve(null);
+      const key = deriveLogicalProjectKeyFromSettings(source, projectGroupingSettings);
+      const connected = appAtomRegistry.get(environmentSummaries.connectedEnvironmentIdsAtom);
+      const target = projects.find(
+        (project) =>
+          project.archivedAt == null &&
+          connected.includes(project.environmentId) &&
+          !isTeamHubOnlyServerConfig(environmentServerConfigs.get(project.environmentId)) &&
+          deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings) === key,
+      );
+      if (!target) return Promise.resolve(null);
+      projectRef = scopeProjectRef(target.environmentId, target.id);
+      options = {
+        ...(options?.prompt === undefined ? {} : { prompt: options.prompt }),
+        ...(options?.replace === undefined ? {} : { replace: options.replace }),
+      };
+    }
     const targetServerSettings =
       environmentServerConfigs.get(projectRef.environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS;
     const {

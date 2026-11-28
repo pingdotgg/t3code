@@ -8775,6 +8775,13 @@ const make = Effect.gen(function* () {
               : "You do not have permission to sync updates to this thread in its current view.",
         });
       }
+      if (
+        yield* repository
+          .isThreadDeletedInProjection(input.payload.threadId)
+          .pipe(Effect.mapError(toInternalError))
+      ) {
+        return { attribution: existing } satisfies TeamSyncLocalThreadResult;
+      }
       const watermarkOption = yield* repository
         .getLocalSyncWatermark(input.payload.threadId)
         .pipe(Effect.mapError(toInternalError));

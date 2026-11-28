@@ -17,6 +17,7 @@ import { moveDraftToProject } from "~/lib/moveDraftToProject";
 import { useProjectPin } from "~/hooks/useProjectGroupUpdate";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { isTriagePrompt } from "@t3tools/shared/triagePrompt";
+import { isTeamHubOnlyServerConfig } from "@t3tools/client-runtime/team";
 import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import {
   buildSidebarProjectPickerEntries,
@@ -95,8 +96,18 @@ export function DraftHeroHeadline({
         ] as const,
     ),
   );
+  const hubOnlyIds = new Set(
+    environments
+      .filter((environment) => isTeamHubOnlyServerConfig(environment.serverConfig))
+      .map((environment) => environment.environmentId),
+  );
   const projectPickerEntries = buildSidebarProjectPickerEntries({
-    groups: pickableProjectGroups(projectGroups),
+    groups: pickableProjectGroups(projectGroups).map((group) => ({
+      ...group,
+      memberProjects: group.memberProjects.filter(
+        (project) => !hubOnlyIds.has(project.environmentId),
+      ),
+    })),
     preferredProjectRef: activeProjectRef,
   });
   const projectEntryByKey = new Map(

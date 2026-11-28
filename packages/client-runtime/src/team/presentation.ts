@@ -13,7 +13,7 @@ import {
   canMemberRespondToTeamRuntimeRequest,
   canMemberSteerActiveTeamTurn,
   canToggleTeamThreadLock,
-  DEFAULT_MODEL,
+  DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_TEAM_NOTIFICATION_SOUND,
   isTeamAdminRole,
   isTeamOwnedThreadAttribution,
@@ -843,7 +843,11 @@ export function resolveTeamForkModelSelection(input: {
     const exactMatch = usableProviders.find(
       (entry) => entry.instanceId === sourceModelSelection.instanceId,
     );
-    if (exactMatch?.models.some((model) => model.slug === sourceModelSelection.model)) {
+    if (
+      exactMatch &&
+      (exactMatch.models.length === 0 ||
+        exactMatch.models.some((model) => model.slug === sourceModelSelection.model))
+    ) {
       return sourceModelSelection;
     }
   }
@@ -863,8 +867,10 @@ export function resolveTeamForkModelSelection(input: {
       : undefined) ??
     usableProviders.find((entry) => entry.status === "ready") ??
     usableProviders[0]!;
-  const defaultModel = preferred.models[0]?.slug ?? DEFAULT_MODEL;
-  return createModelSelection(preferred.instanceId, defaultModel);
+  const defaultModel = preferred.models[0]?.slug ?? DEFAULT_MODEL_BY_PROVIDER[preferred.driver];
+  return defaultModel === undefined
+    ? null
+    : createModelSelection(preferred.instanceId, defaultModel);
 }
 
 export function listAccessibleTeamEnvironments(

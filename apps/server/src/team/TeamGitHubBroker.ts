@@ -1624,6 +1624,17 @@ const make = Effect.gen(function* () {
       const authorized = yield* Effect.gen(function* () {
         const environment = yield* repo.getEnvironmentByEnvironmentId(lease);
         if (Option.isNone(environment)) return false;
+        const attribution = yield* repo.getThreadAttribution(lease.threadId);
+        if (Option.isNone(attribution)) {
+          if (environment.value.isDefault && lease.issuingSessionId !== null) return false;
+        } else if (
+          attribution.value.teamId !== lease.teamId ||
+          (attribution.value.executionEnvironmentId === null
+            ? !environment.value.isDefault
+            : attribution.value.executionEnvironmentId !== lease.environmentId)
+        ) {
+          return false;
+        }
         if (lease.authorKind !== "member") return true;
         if (lease.authorMemberId === null) return false;
         const member = yield* repo.getMemberById(lease.authorMemberId);
@@ -1633,15 +1644,7 @@ const make = Effect.gen(function* () {
           !canMemberAccessTeamEnvironment(member.value, environment.value)
         )
           return false;
-        const attribution = yield* repo.getThreadAttribution(lease.threadId);
-        if (Option.isNone(attribution))
-          return !environment.value.isDefault || lease.issuingSessionId === null;
-        if (
-          attribution.value.teamId !== lease.teamId ||
-          (attribution.value.executionEnvironmentId !== null &&
-            attribution.value.executionEnvironmentId !== lease.environmentId)
-        )
-          return false;
+        if (Option.isNone(attribution)) return true;
         const view = yield* repo.getViewById(attribution.value.viewId);
         return canMemberPostInTeamThread({
           member: member.value,
@@ -3087,7 +3090,12 @@ const make = Effect.gen(function* () {
     }),
 
     issueRemoteTurnLease: Effect.fn("TeamGitHubBroker.issueRemoteTurnLease")(function* (input) {
-      if (Option.isNone(githubRepoOption) || Option.isNone(secretsOption)) {
+      const leaseScope = { ...input, issuingSessionId: input.issuingSessionId ?? null };
+      if (
+        Option.isNone(githubRepoOption) ||
+        Option.isNone(secretsOption) ||
+        !(yield* canUseRemoteLease(leaseScope))
+      ) {
         return {
           hasCredential: false,
           leaseId: null,
@@ -3160,10 +3168,7 @@ const make = Effect.gen(function* () {
       if (
         identity === null ||
         credentialUpdatedAt === null ||
-        !(yield* canUseRemoteLease({
-          ...input,
-          issuingSessionId: input.issuingSessionId ?? null,
-        }))
+        !(yield* canUseRemoteLease(leaseScope))
       ) {
         return {
           hasCredential: false,

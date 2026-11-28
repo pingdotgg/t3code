@@ -316,8 +316,9 @@ const handleIssueRemoteLease = Effect.fn("TeamGitHubHttp.issue")(function* () {
       });
     }
     if (
-      threadAttr.executionEnvironmentId !== null &&
-      threadAttr.executionEnvironmentId !== payload.environmentId
+      threadAttr.executionEnvironmentId === null
+        ? !envOpt.value.isDefault
+        : threadAttr.executionEnvironmentId !== payload.environmentId
     ) {
       return jsonResponse(403, {
         code: "forbidden",
