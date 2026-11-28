@@ -582,6 +582,23 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       );
       assert.equal(viaInsideLink.content, "inside");
+      const relativeInside = yield* readTextFile(
+        { sessionId: "mock-session-1", path: path.join("src", "inside.ts") },
+        context("fs/read_text_file"),
+      );
+      assert.equal(relativeInside.content, "inside");
+      const dotDotFile = path.join(workspace, "..notes.txt");
+      yield* fileSystem.writeFileString(dotDotFile, "dotdot");
+      const dotDotRead = yield* readTextFile(
+        { sessionId: "mock-session-1", path: dotDotFile },
+        context("fs/read_text_file"),
+      );
+      assert.equal(dotDotRead.content, "dotdot");
+      const relativeEscape = yield* readTextFile(
+        { sessionId: "mock-session-1", path: path.relative(workspace, outsideFile) },
+        context("fs/read_text_file"),
+      ).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(relativeEscape), "a relative path escaping cwd is denied");
     }).pipe(Effect.provide(layerSession)),
   );
 });
@@ -3175,6 +3192,71 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         const terminal = (yield* opened.throughTerminal).at(-1);
         assert.equal(terminal?.type === "turn.terminal" && terminal.status, status);
         assert.equal(opened.cancels(), cancels);
+      }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect(
+    "fails a post-settle reply immediately and cancels pending requests when the agent exits",
+    () =>
+      Effect.gen(function* () {
+        const opened = yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+        yield* opened.startTurn(1, false);
+        yield* opened.throughPromptSettled;
+        yield* opened.send({
+          sessionUpdate: "tool_call_update",
+          ...opened.command,
+          status: "completed",
+          rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+        });
+        yield* opened.send({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Partial post-settle reply" },
+        });
+        yield* opened.runtimeDies;
+        const terminal = (yield* opened.throughTerminal).at(-1);
+        assert.equal(terminal?.type === "turn.terminal" && terminal.status, "failed");
+
+        const withQuestion = yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+        yield* withQuestion.startTurn(1, false);
+        yield* withQuestion.throughPromptSettled;
+        const question = yield* withQuestion
+          .requestPermission(
+            {
+              sessionId: "mock-session-1",
+              toolCall: {
+                toolCallId: "interaction_crash_1",
+                kind: "other",
+                title: "Which branch should I deploy?",
+                status: "pending",
+              },
+              options: [
+                { optionId: "main", name: "main", kind: "allow_once" },
+                { optionId: "dev", name: "dev", kind: "allow_once" },
+              ],
+            },
+            { requestId: "question-crash-1", method: "session/request_permission" },
+          )
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* withQuestion.until(
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+        );
+        yield* withQuestion.runtimeDies;
+        const events = yield* withQuestion.throughTerminal;
+        const questionTerminal = events.at(-1);
+        assert.equal(
+          questionTerminal?.type === "turn.terminal" && questionTerminal.status,
+          "failed",
+        );
+        assert.isTrue(
+          events.some(
+            (event) =>
+              event.type === "runtime_request.updated" &&
+              event.runtimeRequest.status === "cancelled",
+          ),
+          "pending runtime request must be cancelled when the agent exits",
+        );
+        assert.deepEqual(yield* Fiber.join(question), { outcome: { outcome: "cancelled" } });
       }).pipe(Effect.provide(layerSession)),
   );
 });

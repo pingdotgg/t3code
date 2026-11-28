@@ -226,11 +226,31 @@ describe("extractTerminalLinks", () => {
       "/app/src/main/java/App.java:[99]",
       "/app/src/main/java/App.java:99",
     ],
+    [
+      "   at Demo.Program.Main(String[] args) in /home/dev/app/Program.cs:line 29",
+      "/home/dev/app/Program.cs:line",
+      "/home/dev/app/Program.cs:29",
+    ],
+    [
+      String.raw`   at Demo.Program.Main(String[] args) in C:\app\Program.cs:line 29`,
+      String.raw`C:\app\Program.cs:line`,
+      String.raw`C:\app\Program.cs:29`,
+    ],
   ])("offers the closing location in %s as the fallback", (line, text, fallback) => {
     const start = line.indexOf(text);
     const end = start + text.length;
     expect(extractTerminalLinks(line)).toEqual([
       { kind: "path", text, start, end, fallback: { text: fallback, end } },
+    ]);
+  });
+
+  it.each([
+    ["see /home/dev/app/notes:line for details", "/home/dev/app/notes:line"],
+    ["see /home/dev/app/notes:line 0x1d", "/home/dev/app/notes:line"],
+  ])("offers no line number as the fallback in %s", (line, text) => {
+    const start = line.indexOf(text);
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text, start, end: start + text.length },
     ]);
   });
 
@@ -404,6 +424,7 @@ describe("resolvePathLinkTarget", () => {
     [String.raw`PS C:\dev\folder (42,7)> `, String.raw`C:\dev\folder (42,7)`],
     ["/tmp/report(42,7)", "/tmp/report(42,7)"],
     ["/tmp/report:[42,7]", "/tmp/report:[42,7]"],
+    ["/tmp/notes:line 29", "/tmp/notes:line"],
     ["src/Program.cs(3,10): error CS1002: x", "/repo/src/Program.cs"],
   ])("preserves existing path targets in %s", (line, target) => {
     const [link] = extractTerminalLinks(line);

@@ -4,6 +4,7 @@ import { es } from "./es";
 import { fr } from "./fr";
 import { ja } from "./ja";
 import { ko } from "./ko";
+import { pl } from "./pl";
 import type { Locale } from "./locales";
 import { ptBR } from "./pt-BR";
 import { ru } from "./ru";
@@ -18,6 +19,7 @@ const MESSAGES: Record<Locale, Messages> = {
   de,
   ja,
   ko,
+  pl,
   ru,
 };
 

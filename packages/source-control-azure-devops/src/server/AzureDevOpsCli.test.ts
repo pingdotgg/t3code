@@ -675,8 +675,14 @@ describe("primaryRemoteUrl", () => {
       `origin\t${azure("origin")[1]} (fetch) [blob:none]\norigin\tpush-url (push)\n`,
       azure("origin")[1],
     ],
+    [
+      remotes(["origin", "https://dev.azure.com/acme/My Project/_git/My Repo"]),
+      "https://dev.azure.com/acme/My Project/_git/My Repo",
+    ],
+    [remotes(["backup", "/Users/alice/My Repos/app"], azure("origin")), azure("origin")[1]],
     [remotes(), null],
     [`origin\t${azure("origin")[1]} (fetch)`, null],
+    [remotes(["origin", "https://dev.azure.com/acme/My\tProject/_git/Repo"]), null],
   ])("picks the scoping remote from %j", (output, url) => {
     expect(primaryRemoteUrl(output)).toBe(url);
   });
