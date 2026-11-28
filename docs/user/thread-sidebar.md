@@ -61,6 +61,8 @@ Enable **Settings → Labs → Boring sidebar (group by project)** on web/deskto
 
 Customize presets in **Settings → Threads → Snooze options** (durations like `3 hours` or times like `9:00 PM tomorrow`), or pick **Snooze → Custom…** for an exact date/time or duration. **Snooze → Indefinitely** keeps a thread snoozed until you wake it (it still wakes early on approvals, questions, errors, or new messages). Choose **Wake thread** to bring a thread back early.
 
+On a thread with an open pull request, **Snooze → Until PR updates** wakes it when the PR is approved or gets changes requested, hits a merge conflict, or finishes its checks (checks are left to an agent watching the PR). It also wakes when the PR merges or closes, and after 30 days at most. Hosts report different things: review verdicts come from GitHub, GitLab, GitCafe and Forgejo/Gitea, and Forgejo/Gitea does not report merge conflicts.
+
 ## Link a pull request
 
 The server automatically links open PRs matching an unsettled thread's branch. On web/desktop, right-click any PR link in a thread and choose **Link to thread** or **Unlink from thread** to override it. Linked PRs participate in auto-settlement.

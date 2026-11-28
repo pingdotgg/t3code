@@ -417,6 +417,8 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
   snoozedUntil: Schema.NullOr(IsoDateTime),
+  /** True while the snooze also ends when the thread's open pull requests update. */
+  snoozeUntilPullRequest: Schema.optional(Schema.Boolean),
   /** Absent from linked environments that predate it. */
   pinned: Schema.optional(Schema.Boolean),
   /** Absent from linked environments that predate it. */
@@ -494,6 +496,8 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
   snoozedUntil: Schema.NullOr(IsoDateTime),
+  /** True while the snooze also ends when the thread's open pull requests update. */
+  snoozeUntilPullRequest: Schema.optional(Schema.Boolean),
   /** Absent from linked environments that predate it. */
   pinned: Schema.optional(Schema.Boolean),
   /** Absent from linked environments that predate it. */

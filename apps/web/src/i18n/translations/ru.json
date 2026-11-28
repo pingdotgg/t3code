@@ -13067,5 +13067,9 @@
   "0d50b5bfe7151ece": "Не удалось скачать файл",
   "eb1fd384ad5919dd": "Внутренняя заметка",
   "b45f0b467e9406d0": "Ответить клиенту",
+  "784eceb3489793d5": "До обновления PR",
+  "affc8e3f430bb845": "{count, plural, one {{count} PR} few {{count} PR} many {{count} PR} other {{count} PR}}",
+  "e8019d388fb8258b": "PR",
+  "9694ba86f72beeaf": "Отложен до обновления PR",
   "d454bfdeea6f1129": "Открыть предпросмотр"
 }

@@ -103,10 +103,11 @@ function applySettle(
 
 function applySnooze(
   thread: OrchestrationV2ThreadShell,
-  snoozedUntil: string,
+  input: { readonly snoozedUntil: string; readonly untilPullRequest?: boolean },
   now: DateTime.Utc,
   accepted: boolean,
 ): OrchestrationV2ThreadShell {
+  const { snoozedUntil } = input;
   return (!accepted &&
     ((thread.pendingRuntimeRequest !== null &&
       thread.pendingRuntimeRequest.kind !== "user_input") ||
@@ -117,6 +118,7 @@ function applySnooze(
         ...thread,
         snoozedUntil: DateTime.makeUnsafe(snoozedUntil),
         snoozedAt: now,
+        snoozeUntilPullRequest: input.untilPullRequest === true,
       };
 }
 
@@ -550,13 +552,18 @@ export function createThreadEnvironmentAtoms<R, E>(
     apply: (thread, action, queuedAt) =>
       action.type === "settle"
         ? applySettle(thread, queuedAt, false)
-        : applySnooze(thread, action.snoozedUntil, queuedAt, false),
+        : applySnooze(thread, action, queuedAt, false),
     send: (registry, { environmentId, threadId, commandId, action }) =>
       action.type === "settle"
         ? settle.run(registry, { environmentId, input: { threadId, commandId } })
         : snooze.run(registry, {
             environmentId,
-            input: { threadId, commandId, snoozedUntil: action.snoozedUntil },
+            input: {
+              threadId,
+              commandId,
+              snoozedUntil: action.snoozedUntil,
+              ...(action.untilPullRequest === true ? { untilPullRequest: true } : {}),
+            },
           }),
   });
   const optimistic = createOptimisticThreadLifecycle(triage.snapshotAtom);
@@ -564,7 +571,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     applySettle(thread, now, accepted),
   );
   const snooze = optimistic.wrap(commands.snooze, (thread, input, now, accepted) =>
-    applySnooze(thread, input.snoozedUntil, now, accepted),
+    applySnooze(thread, input, now, accepted),
   );
   const disconnectedAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
@@ -627,8 +634,9 @@ export function createThreadEnvironmentAtoms<R, E>(
       triage.queueWhenOffline(commands.snooze, (input) => ({
         type: "snooze" as const,
         snoozedUntil: input.snoozedUntil,
+        ...(input.untilPullRequest === true ? { untilPullRequest: true } : {}),
       })),
-      (thread, input, now, accepted) => applySnooze(thread, input.snoozedUntil, now, accepted),
+      (thread, input, now, accepted) => applySnooze(thread, input, now, accepted),
     ),
     unsnooze: triage.cancelQueued(
       optimistic.wrap(commands.unsnooze, (thread) => ({

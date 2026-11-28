@@ -224,3 +224,91 @@ it.effect("merges with Forgejo's fast-forward-only style", () =>
     ]);
   }),
 );
+
+it.effect("summarizes review verdicts and check state for pull request snoozes", () =>
+  Effect.gen(function* () {
+    let reviews: ReadonlyArray<object> = [];
+    let statuses: ReadonlyArray<object> = [];
+    let mergeable = true;
+    const review = (login: string, state: string, at: string, dismissed = false) => ({
+      id: at.length,
+      body: "",
+      user: { login },
+      state,
+      dismissed,
+      submitted_at: at,
+      comments_count: 0,
+    });
+    const status = (context: string, state: string) => ({
+      id: context.length,
+      context,
+      status: state,
+      description: null,
+      target_url: null,
+      updated_at: "2026-10-12T00:00:00Z",
+    });
+    const provider = yield* ForgejoPullRequestProvider.make.pipe(
+      Effect.provide(
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          api: (input) => {
+            const [path] = input.path.split("?");
+            const reply = (value: unknown) =>
+              Effect.succeed(TestSourceControlHost.processOutput(JSON.stringify(value)));
+            switch (path) {
+              case "repos/maria/project/pulls/3":
+                return reply({
+                  number: 3,
+                  title: "Snooze me",
+                  body: "",
+                  html_url: "https://forge.example:3000/maria/project/pulls/3",
+                  user: { login: "maria" },
+                  state: "open",
+                  merged: false,
+                  mergeable,
+                  head: { ref: "feature", sha: "head-sha", repo: null },
+                  base: { ref: "main", sha: "base-sha", repo: null },
+                  created_at: "2026-10-12T00:00:00Z",
+                  updated_at: "2026-10-12T00:00:00Z",
+                  closed_at: null,
+                  merged_at: null,
+                  labels: [],
+                });
+              case "repos/maria/project/pulls/3/reviews":
+                return reply(input.path.endsWith("page=1") ? reviews : []);
+              case "repos/maria/project/statuses/head-sha":
+                return reply(input.path.endsWith("page=1") ? statuses : []);
+              default:
+                return reply([]);
+            }
+          },
+        }),
+      ),
+    );
+    const summary = () => provider.getChangeRequestSummary!(fastForwardOnly);
+
+    statuses = [status("build", "pending")];
+    const before = yield* summary();
+    assert.strictEqual(before.reviewDecision, null);
+    assert.strictEqual(before.checksState, "pending");
+
+    reviews = [
+      review("ana", "REQUEST_CHANGES", "2026-10-12T01:00:00Z"),
+      review("ana", "APPROVED", "2026-10-12T02:00:00Z"),
+      review("ben", "COMMENT", "2026-10-12T03:00:00Z"),
+    ];
+    statuses = [status("build", "success"), status("lint", "warning")];
+    const after = yield* summary();
+    assert.strictEqual(after.reviewDecision, "approved");
+    assert.strictEqual(after.checksState, "passing");
+
+    reviews = [...reviews, review("ben", "REQUEST_CHANGES", "2026-10-12T04:00:00Z", true)];
+    statuses = [status("build", "failure")];
+    const dismissed = yield* summary();
+    assert.strictEqual(dismissed.reviewDecision, "approved");
+    assert.strictEqual(dismissed.checksState, "failing");
+
+    // `mergeable: false` also covers unfinished conflict checks, so a conflict stays unreported.
+    mergeable = false;
+    assert.strictEqual((yield* summary()).mergeability, "unknown");
+  }),
+);

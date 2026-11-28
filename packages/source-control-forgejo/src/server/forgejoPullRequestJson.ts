@@ -4,14 +4,19 @@ import type {
   PullRequestActor,
   PullRequestCheck,
   PullRequestCheckStatus,
+  PullRequestChecksState,
   PullRequestComment,
   PullRequestCommit,
   PullRequestReaction,
   PullRequestReactionContent,
+  PullRequestReviewDecision,
   PullRequestReviewThread,
 } from "@t3tools/contracts";
 import type { ProviderChangeRequest } from "@t3tools/source-control-core/server/PullRequestProvider";
-import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
+import {
+  dedupeChecks,
+  rollupCheckStatuses,
+} from "@t3tools/source-control-core/server/pullRequestChecks";
 import { forgejoHeadBranch } from "./forgejoPullRequests.ts";
 
 export const ForgejoUser = Schema.Struct({
@@ -261,6 +266,31 @@ export function forgejoChecks(
       },
     })),
   );
+}
+
+export function forgejoChecksState(
+  statuses: ReadonlyArray<typeof ForgejoStatus.Type>,
+  pullRequestUrl: string,
+): PullRequestChecksState | null {
+  return rollupCheckStatuses(forgejoChecks(statuses, pullRequestUrl).map((check) => check.status));
+}
+
+/** Each reviewer's latest verdict counts; a dismissed one counts for nothing. */
+export function forgejoReviewDecision(
+  reviews: ReadonlyArray<typeof ForgejoReview.Type>,
+): PullRequestReviewDecision | null {
+  const latest = new Map<string, typeof ForgejoReview.Type>();
+  for (const review of reviews) {
+    const login = review.user?.login;
+    if (!login || (review.state !== "APPROVED" && review.state !== "REQUEST_CHANGES")) continue;
+    const previous = latest.get(login);
+    if (previous === undefined || review.submitted_at >= previous.submitted_at) {
+      latest.set(login, review);
+    }
+  }
+  const current = [...latest.values()].filter((review) => review.dismissed !== true);
+  if (current.some((review) => review.state === "REQUEST_CHANGES")) return "changes-requested";
+  return current.some((review) => review.state === "APPROVED") ? "approved" : null;
 }
 
 export const FORGEJO_REACTIONS: Record<PullRequestReactionContent, string> = {

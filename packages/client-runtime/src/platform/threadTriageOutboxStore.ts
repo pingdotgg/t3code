@@ -11,7 +11,11 @@ export const PendingThreadTriage = Schema.Struct({
   commandId: CommandId,
   action: Schema.Union([
     Schema.Struct({ type: Schema.Literal("settle") }),
-    Schema.Struct({ type: Schema.Literal("snooze"), snoozedUntil: Schema.String }),
+    Schema.Struct({
+      type: Schema.Literal("snooze"),
+      snoozedUntil: Schema.String,
+      untilPullRequest: Schema.optionalKey(Schema.Boolean),
+    }),
   ]),
   queuedAt: Schema.DateTimeUtcFromString,
   /** The thread as the user saw it; if it shows otherwise on reconnect, the change is dropped. */

@@ -32,7 +32,9 @@ import {
   forgejoReviewThread,
   forgejoCommit,
   forgejoChecks,
+  forgejoChecksState,
   forgejoReactions,
+  forgejoReviewDecision,
 } from "./forgejoPullRequestJson.ts";
 import { ForgejoBranchStatusChecks, markRequiredForgejoChecks } from "./forgejoRequiredChecks.ts";
 import { definition } from "../shared/definition.ts";
@@ -244,6 +246,14 @@ export const make = Effect.gen(function* () {
     );
     return permissions(repo, pr, viewer);
   });
+  const readStatuses = (input: ProviderRepositoryRef, pr: typeof ForgejoPullRequest.Type) =>
+    page(
+      {
+        ...input,
+        path: `${repoPath(input)}/statuses/${encodeURIComponent(pr.head.sha)}?sort=recentupdate`,
+      },
+      ForgejoStatus,
+    );
   const readChecks = Effect.fn("ForgejoPullRequestProvider.readChecks")(function* (
     input: ProviderRepositoryRef,
     pr: typeof ForgejoPullRequest.Type,
@@ -267,19 +277,9 @@ export const make = Effect.gen(function* () {
         },
       }),
     );
-    const [statuses, policy] = yield* Effect.all(
-      [
-        page(
-          {
-            ...input,
-            path: `${repoPath(input)}/statuses/${encodeURIComponent(pr.head.sha)}?sort=recentupdate`,
-          },
-          ForgejoStatus,
-        ),
-        branch,
-      ],
-      { concurrency: 2 },
-    );
+    const [statuses, policy] = yield* Effect.all([readStatuses(input, pr), branch], {
+      concurrency: 2,
+    });
     return markRequiredForgejoChecks(forgejoChecks(statuses.items, pr.html_url), policy);
   });
   const unsupported = (operation: string) =>
@@ -352,7 +352,23 @@ export const make = Effect.gen(function* () {
       },
     ),
     getChangeRequestPreview: (input) => getPull(input).pipe(Effect.map(forgejoChangeRequest)),
-    getChangeRequestSummary: (input) => getPull(input).pipe(Effect.map(forgejoChangeRequest)),
+    // Forgejo's pull request JSON has no review verdict or check state; read them alongside.
+    getChangeRequestSummary: Effect.fn("ForgejoPullRequestProvider.getChangeRequestSummary")(
+      function* (input) {
+        const [pr, reviews] = yield* Effect.all(
+          [getPull(input), page({ ...input, path: `${pullPath(input)}/reviews` }, ForgejoReview)],
+          { concurrency: 2 },
+        );
+        const statuses = pr.head.sha.trim() === "" ? undefined : yield* readStatuses(input, pr);
+        return {
+          ...forgejoChangeRequest(pr),
+          ...(reviews.truncated ? {} : { reviewDecision: forgejoReviewDecision(reviews.items) }),
+          ...(statuses === undefined || statuses.truncated
+            ? {}
+            : { checksState: forgejoChecksState(statuses.items, pr.html_url) }),
+        };
+      },
+    ),
     getChangeRequestChecks: Effect.fn("ForgejoPullRequestProvider.getChangeRequestChecks")(
       function* (input) {
         const pr = yield* getPull(input);

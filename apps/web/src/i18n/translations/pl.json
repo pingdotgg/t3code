@@ -13075,5 +13075,9 @@
   "0d50b5bfe7151ece": "Nie udało się pobrać pliku",
   "eb1fd384ad5919dd": "Notatka wewnętrzna",
   "b45f0b467e9406d0": "Odpowiedz klientowi",
+  "784eceb3489793d5": "Do aktualizacji PR",
+  "affc8e3f430bb845": "{count, plural, one {{count} PR} few {{count} PR-y} many {{count} PR-ów} other {{count} PR-a}}",
+  "e8019d388fb8258b": "PR",
+  "9694ba86f72beeaf": "Odroczone do aktualizacji PR",
   "d454bfdeea6f1129": "Otwórz podgląd"
 }

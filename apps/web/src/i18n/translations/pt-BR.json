@@ -13068,5 +13068,9 @@
   "0d50b5bfe7151ece": "Não foi possível baixar o arquivo",
   "eb1fd384ad5919dd": "Nota interna",
   "b45f0b467e9406d0": "Responder ao cliente",
+  "784eceb3489793d5": "Até o PR ser atualizado",
+  "affc8e3f430bb845": "{count, plural, one {{count} PR} other {{count} PRs}}",
+  "e8019d388fb8258b": "PR",
+  "9694ba86f72beeaf": "Adiada até o PR ser atualizado",
   "d454bfdeea6f1129": "Abrir pré-visualização"
 }
