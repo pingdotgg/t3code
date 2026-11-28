@@ -227,22 +227,19 @@ export function heaviestAgents(
     }));
 }
 
-/** Summed over every block device; null when no device line parses. */
+/** Per block device: I/Os in flight and ms spent doing I/O; empty when nothing parses. */
 function diskActivity(diskstats: string) {
-  let inFlight = 0;
-  let ioTicks = 0;
-  let devices = 0;
+  const devices = new Map<string, { readonly inFlight: number; readonly ioTicks: number }>();
   for (const line of diskstats.split("\n")) {
     // After major, minor and name: field 9 is I/Os in flight, field 10 is ms spent doing I/O.
     const fields = line.trim().split(/\s+/);
-    const flight = Number(fields[11]);
-    const ticks = Number(fields[12]);
-    if (!Number.isFinite(flight) || !Number.isFinite(ticks)) continue;
-    inFlight += flight;
-    ioTicks += ticks;
-    devices++;
+    const inFlight = Number(fields[11]);
+    const ioTicks = Number(fields[12]);
+    if (fields[2] === undefined || !Number.isFinite(inFlight) || !Number.isFinite(ioTicks))
+      continue;
+    devices.set(fields[2], { inFlight, ioTicks });
   }
-  return devices === 0 ? null : { inFlight, ioTicks };
+  return devices;
 }
 
 function cgroupNumber(text: string, pattern: RegExp): number | null {
@@ -259,9 +256,10 @@ const make = Effect.fn("makeHostResources")(function* () {
   const config = yield* Config.ServerConfig;
   const levels = yield* Ref.make(CALM);
   const unreadSamples = yield* Ref.make({ memory: 0, cpu: 0, io: 0, disk: 0 });
-  const lastDiskTicks = yield* Ref.make<{ readonly at: number; readonly ticks: number } | null>(
-    null,
-  );
+  const lastDiskActivity = yield* Ref.make<{
+    readonly at: number;
+    readonly devices: ReturnType<typeof diskActivity>;
+  } | null>(null);
   const lastAgentCpu = yield* Ref.make<{
     readonly at: number;
     readonly usage: ReadonlyMap<string, number>;
@@ -336,18 +334,31 @@ const make = Effect.fn("makeHostResources")(function* () {
         : null;
     const disk = yield* diskSpace;
     const sampledAt = yield* Clock.currentTimeMillis;
-    const diskActive = linux ? diskActivity(yield* readFile("/proc/diskstats")) : null;
-    const previousTicks = yield* Ref.getAndSet(
-      lastDiskTicks,
-      diskActive === null ? null : { at: sampledAt, ticks: diskActive.ioTicks },
+    const devices = linux ? diskActivity(yield* readFile("/proc/diskstats")) : new Map();
+    const previousDisks = yield* Ref.getAndSet(
+      lastDiskActivity,
+      devices.size === 0 ? null : { at: sampledAt, devices },
     );
-    // An io_uring waiter (Ghostty) counts as PSI io full with no disk request in flight.
-    const disksIdle =
-      diskActive !== null &&
-      diskActive.inFlight === 0 &&
-      (previousTicks === null ||
-        sampledAt - previousTicks.at > CPU_SAMPLE_MAX_AGE_MS ||
-        previousTicks.ticks === diskActive.ioTicks);
+    // An io_uring waiter (Ghostty) counts as PSI io full while no disk works, so the busiest
+    // disk's share of time doing I/O caps it; the first sample has only requests in flight.
+    const elapsedMs =
+      previousDisks === null || sampledAt - previousDisks.at > CPU_SAMPLE_MAX_AGE_MS
+        ? null
+        : sampledAt - previousDisks.at;
+    let diskBusyPercent: number | null = null;
+    if (devices.size > 0) {
+      diskBusyPercent = 0;
+      for (const [name, device] of devices) {
+        const before = previousDisks?.devices.get(name);
+        const busy =
+          elapsedMs !== null && elapsedMs > 0 && before !== undefined
+            ? (Math.max(0, device.ioTicks - before.ioTicks) / elapsedMs) * 100
+            : device.inFlight > 0
+              ? 100
+              : 0;
+        diskBusyPercent = Math.max(diskBusyPercent, busy);
+      }
+    }
     const ioFull = psiAverage(ioPsi, "full", "avg60");
     const sample: PressureSample = {
       memorySome: psiAverage(memoryPsi, "some", "avg10"),
@@ -355,7 +366,8 @@ const make = Effect.fn("makeHostResources")(function* () {
       agentsMemoryFull: psiAverage(agentsPsi, "full", "avg10"),
       darwinMemoryLevel,
       cpuSome,
-      ioFull: disksIdle && ioFull !== null ? 0 : ioFull,
+      ioFull:
+        ioFull === null || diskBusyPercent === null ? ioFull : Math.min(ioFull, diskBusyPercent),
       loadPerCpu,
       diskFreeBytes: disk?.free ?? null,
       diskTotalBytes: disk?.total ?? null,

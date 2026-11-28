@@ -509,6 +509,39 @@ describe("HostResources pressure on Linux", () => {
     ),
   );
 
+  const ioFullWhileDiskTicks = (ticks: ReadonlyArray<number>) =>
+    pressured({
+      "/proc/pressure/cpu": ["some avg10=0.00 avg60=0.00\nfull avg10=0.00 avg60=0.00\n"],
+      "/proc/pressure/io": ["some avg10=77.00 avg60=77.00\nfull avg10=76.00 avg60=76.00\n"],
+      "/proc/diskstats": ticks.map(
+        (ioTicks) =>
+          ` 259       0 nvme0n1 52000 0 4100000 9000 81000 0 6300000 41000 0 ${ioTicks} 50000 0 0 0 0 0 0\n`,
+      ),
+    });
+  // The stream emits changes only, so the level after the second sample is the latest one.
+  const secondIoLevel = Effect.gen(function* () {
+    setup();
+    const levels: Array<string> = [];
+    yield* Stream.runForEach((yield* HostResources.HostResources).pressure, (pressure) =>
+      Effect.sync(() => levels.push(pressure.io)),
+    ).pipe(Effect.forkScoped);
+    yield* TestClock.adjust("5 seconds");
+    return levels.at(-1);
+  });
+
+  // Background writes keep an otherwise idle disk a few ms busy every sample.
+  it.effect("does not report io pressure while disks do light background writes", () =>
+    Effect.gen(function* () {
+      expect(yield* secondIoLevel).toBe("none");
+    }).pipe(Effect.provide(ioFullWhileDiskTicks([68000, 68050]))),
+  );
+
+  it.effect("reports io pressure while a disk is busy most of the time", () =>
+    Effect.gen(function* () {
+      expect(yield* secondIoLevel).toBe("severe");
+    }).pipe(Effect.provide(ioFullWhileDiskTicks([68000, 72500]))),
+  );
+
   it.effect("reports a nearly full disk with its free space", () =>
     Effect.gen(function* () {
       setup();
