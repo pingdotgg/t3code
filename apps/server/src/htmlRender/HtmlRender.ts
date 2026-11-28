@@ -117,7 +117,23 @@ const SCRIPT_STYLE =
 // and identifiers such as `.h-100vmax` or `.h\+100vh`, while signed and scientific-notation lengths still count.
 const VIEWPORT_HEIGHT_UNIT =
   /(?<![\w.+/\\-])[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?[sld]?v(?:h|b|max)(?![\w-])/i;
+// In CSS, skip comments and strings so generated text like `content:"100vh"` passes.
+// Escapes and unquoted url() bodies go first: there a quote or `/*` is plain text.
+// An unclosed string ends at a newline, as CSS ends it there.
+const CSS_VIEWPORT_HEIGHT_UNIT = new RegExp(
+  String.raw`\\[\s\S]|url\((?!\s*["'])[^)]*\)?|\/\*[\s\S]*?(?:\*\/|$)|"(?:\\(?:\r\n|[\s\S])|[^"\\\r\n\f])*"?|'(?:\\(?:\r\n|[\s\S])|[^'\\\r\n\f])*'?|(${VIEWPORT_HEIGHT_UNIT.source})`,
+  "gi",
+);
 
+const findInCss = (css: string) => {
+  for (const [, found] of css.matchAll(CSS_VIEWPORT_HEIGHT_UNIT)) {
+    if (found !== undefined) return found;
+  }
+  return undefined;
+};
+
+// Generated text (`content`) only lives in stylesheets. Attribute values hold HTML character
+// references and scripts hold their own quotes, so neither is parsed as CSS strings.
 const findViewportHeight = (source: string, pattern: RegExp) => {
   for (const [, ...captures] of source.matchAll(pattern)) {
     for (const css of captures) {
@@ -136,7 +152,7 @@ const rejectViewportHeight = (html: string) => {
           findViewportHeight(script, SCRIPT_STYLE))
         : tag !== undefined
           ? findViewportHeight(tag, TAG_STYLE)
-          : VIEWPORT_HEIGHT_UNIT.exec(sheet ?? "")?.[0];
+          : findInCss(sheet ?? "");
     if (found !== undefined) return Effect.fail(new HtmlRenderViewportHeightError({ found }));
   }
   return Effect.void;
