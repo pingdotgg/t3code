@@ -2524,10 +2524,22 @@ describe("OrchestratorMcpService provider resolution", () => {
               { id: "agent", values: ["build"], default: "build" },
             ],
           },
-          { id: "gpt-4" },
+          { id: "gpt-4", favorite: true },
           { id: "gpt-3" },
           { id: "my-alpha" },
         ]);
+      }),
+    );
+
+    it.effect("marks which listed models are the user's favorites", () =>
+      Effect.gen(function* () {
+        const favorites = (yield* capabilitiesWith()).providers.map((provider) =>
+          provider.models
+            .filter((entry) => "favorite" in entry && entry.favorite === true)
+            .map((entry) => entry.id),
+        );
+        // gpt-3 is the caller's model and my-alpha/oc-custom are custom: listed, but not favorites.
+        assert.deepEqual(favorites, [["gpt-4"], ["oc/m10"]]);
       }),
     );
   });
@@ -4551,6 +4563,15 @@ describe("OrchestratorMcpService provider resolution", () => {
         prompt: `${"a".repeat(78)}😀 rest`,
         title: `${"a".repeat(78)}😀`,
       },
+      ...[
+        ["CR", "\r"],
+        ["Unicode line separator", "\u2028"],
+        ["Unicode paragraph separator", "\u2029"],
+      ].map(([label, newline]) => ({
+        name: `stops at a ${label}`,
+        prompt: `Review merge${newline}Check changelog`,
+        title: "Review merge",
+      })),
     ])("a prompt-derived title $name", ({ prompt, title }) =>
       Effect.gen(function* () {
         const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);

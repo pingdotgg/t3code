@@ -84,6 +84,7 @@ const IMPORT_SPECIFIER = /(?:\bfrom|\bimport|\brequire\s*\()\s*\(?\s*["']([^"']+
 function importedPaths(
   path: string,
   lines: ReadonlyArray<string>,
+  exactPaths: ReadonlySet<string>,
   byModulePath: ReadonlyMap<string, string>,
   byModuleName: ReadonlyMap<string, string>,
 ): ReadonlySet<string> {
@@ -94,10 +95,10 @@ function importedPaths(
     while (match !== null) {
       // Bundler queries such as `?worker` or `?url` name the same file.
       const specifier = (match[1] ?? "").replace(/\?.*$/, "");
-      const resolved = stripModuleExtension(
-        specifier.startsWith(".") ? resolveRelative(path, specifier) : specifier,
-      );
+      const resolvedPath = specifier.startsWith(".") ? resolveRelative(path, specifier) : specifier;
+      const resolved = stripModuleExtension(resolvedPath);
       const target =
+        (exactPaths.has(resolvedPath) ? resolvedPath : undefined) ??
         byModulePath.get(resolved) ??
         byModulePath.get(`${resolved}/index`) ??
         byModuleName.get(moduleName(resolved));
@@ -223,6 +224,7 @@ function orderByImportsAndTier<F extends OrderableDiffFile>(
   for (const path of byPath.keys()) tiers.set(path, diffFileTier(path));
 
   const sourcePaths = [...byPath.keys()].filter((path) => tiers.get(path) === "source");
+  const exactPaths = new Set(sourcePaths);
   const byModulePath = new Map<string, string>();
   const ambiguousModuleNames = new Set<string>();
   const byModuleName = new Map<string, string>();
@@ -239,7 +241,7 @@ function orderByImportsAndTier<F extends OrderableDiffFile>(
     const lines = byPath
       .get(path)!
       .flatMap((file) => [...file.additionLines, ...file.deletionLines]);
-    imports.set(path, importedPaths(path, lines, byModulePath, byModuleName));
+    imports.set(path, importedPaths(path, lines, exactPaths, byModulePath, byModuleName));
   }
   const orderedSource = orderByImports(sourcePaths, imports);
 
