@@ -346,6 +346,7 @@
   "cbba2216dafdd91d": "{count, plural, one {Wysłano załączniki {count} raz} few {Wysłano załączniki {count} razy} many {Wysłano załączniki {count} razy} other {Wysłano załączniki {count} razy}}",
   "f6589d3539e5e4b0": "{count, plural, one {Próbowano wysłać załączniki {count} raz} few {Próbowano wysłać załączniki {count} razy} many {Próbowano wysłać załączniki {count} razy} other {Próbowano wysłać załączniki {count} razy}}",
   "bba19d414974a12c": "Powiązano pull requesty",
+  "4eb908d895a28c5f": "Powiązane pull requesty",
   "3ab4b1ee5133f899": "Próbowano powiązać pull requesty",
   "72d699ac25327b32": "{count, plural, one {Powiązano {count} pull request} few {Powiązano {count} pull requesty} many {Powiązano {count} pull requestów} other {Powiązano {count} pull requestów}}",
   "c4c26dc511a3e964": "{count, plural, one {Próbowano powiązać {count} pull request} few {Próbowano powiązać {count} pull requesty} many {Próbowano powiązać {count} pull requestów} other {Próbowano powiązać {count} pull requestów}}",
