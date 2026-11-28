@@ -14,6 +14,7 @@ import {
 import { WifiOffIcon } from "lucide-react";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { environmentCatalog } from "../../connection/catalog";
+import { retryClerkLoadForEnvironment } from "../clerk/clerkLoadFailure";
 import { ConnectionDiagnosisHeadline } from "../settings/ConnectionDiagnosisDetails";
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import {
@@ -90,10 +91,13 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
   );
   const handleReconnectActiveEnvironment = async (environmentId: EnvironmentId) => {
     // A retry does nothing while the environment is switched off.
-    const result =
-      activeEnvironment?.entry.enabled === false
-        ? await setEnvironmentEnabled({ environmentId, enabled: true })
-        : await retryEnvironment(environmentId);
+    const enabled = activeEnvironment?.entry.enabled !== false;
+    if (enabled && activeEnvironment && retryClerkLoadForEnvironment(activeEnvironment.entry)) {
+      return;
+    }
+    const result = enabled
+      ? await retryEnvironment(environmentId)
+      : await setEnvironmentEnabled({ environmentId, enabled: true });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add(
