@@ -180,6 +180,7 @@ export function resetCreditChoices(
           }),
         ),
         availableCount: option.availableCount,
+        expiries: option.expiries,
         input: { ...input, creditId: option.creditId },
       };
     });
@@ -216,9 +217,21 @@ export function resetCreditChoices(
         ),
       ),
       availableCount: count,
+      expiries: credits.expiries,
       input,
     },
   ];
+}
+
+/** @public */
+export function resetCreditExpiryText(
+  at: string,
+  now: number,
+  formatTimestamp: (at: string) => string,
+  resolve: MFunctionType = mFallback,
+): string {
+  const expires = formatDuration(Date.parse(at) - now, resolve);
+  return `${formatTimestamp(at)} · ${resolve(msg("expires in {expires}", { expires }))}`;
 }
 
 /**

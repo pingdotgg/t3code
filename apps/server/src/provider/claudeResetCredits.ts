@@ -4,6 +4,7 @@ import type {
   ServerProviderResetCredits,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { resetCreditExpiries } from "@t3tools/shared/usageLimits";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -158,12 +159,19 @@ export function claudeResetCreditsToContract(
       const target = grants?.[0];
       if (!grants || !target) return [];
       const optionExpiresAt = expiresAt(target);
+      const expiries = resetCreditExpiries(
+        grants.flatMap((grant) => {
+          const at = expiresAt(grant);
+          return at ? Array.from({ length: Math.min(grant.resets_left, 20) }, () => at) : [];
+        }),
+      );
       return [
         {
           creditId: target.id,
           ...RESET_KINDS[kind],
           availableCount: grants.reduce((sum, grant) => sum + grant.resets_left, 0),
           ...(optionExpiresAt ? { expiresAt: optionExpiresAt } : {}),
+          ...(expiries.length > 0 ? { expiries } : {}),
         },
       ];
     },

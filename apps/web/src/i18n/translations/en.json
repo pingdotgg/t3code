@@ -13170,5 +13170,6 @@
   "236911500e5aff7c": "Agents keep waiting while the system frees up memory.",
   "81aafe06d7fede9a": "Where T3 Code keeps its data and worktrees",
   "9429f8ff8866edac": "CPU",
-  "79a21371b8db96da": "Work waits for a free CPU or for the disk, so agents run slowly."
+  "79a21371b8db96da": "Work waits for a free CPU or for the disk, so agents run slowly.",
+  "0a8bfde2b6d6a379": "expires in {expires}"
 }

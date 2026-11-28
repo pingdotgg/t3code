@@ -13162,5 +13162,6 @@
   "236911500e5aff7c": "Agents warten immer wieder, während das System Arbeitsspeicher freigibt.",
   "81aafe06d7fede9a": "Wo T3 Code seine Daten und Worktrees speichert",
   "9429f8ff8866edac": "CPU",
-  "79a21371b8db96da": "Die Arbeit wartet auf eine freie CPU oder auf die Festplatte, daher laufen Agents langsam."
+  "79a21371b8db96da": "Die Arbeit wartet auf eine freie CPU oder auf die Festplatte, daher laufen Agents langsam.",
+  "0a8bfde2b6d6a379": "läuft in {expires} ab"
 }

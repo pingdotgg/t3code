@@ -4,6 +4,7 @@ import type {
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
+import { resetCreditExpiries } from "@t3tools/shared/usageLimits";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import type * as CodexErrors from "effect-codex-app-server/errors";
@@ -110,6 +111,9 @@ function codexResetCreditsToContract(
   return {
     availableCount: Math.max(0, summary.availableCount),
     ...(nextExpiresAt ? { nextExpiresAt } : {}),
+    ...(expiries.length > 0
+      ? { expiries: resetCreditExpiries(expiries.flatMap((at) => isoFromEpochSeconds(at) ?? [])) }
+      : {}),
   };
 }
 

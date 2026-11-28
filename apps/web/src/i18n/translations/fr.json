@@ -13162,5 +13162,6 @@
   "236911500e5aff7c": "Les agents attendent sans cesse que le système libère de la mémoire.",
   "81aafe06d7fede9a": "Là où T3 Code conserve ses données et ses worktrees",
   "9429f8ff8866edac": "Processeur",
-  "79a21371b8db96da": "Le travail attend un processeur libre ou le disque, les agents sont donc lents."
+  "79a21371b8db96da": "Le travail attend un processeur libre ou le disque, les agents sont donc lents.",
+  "0a8bfde2b6d6a379": "expire dans {expires}"
 }

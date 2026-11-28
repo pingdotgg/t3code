@@ -6,6 +6,7 @@ import {
   type UsageLimitSourceConfig,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import { resetCreditExpiries } from "@t3tools/shared/usageLimits";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -276,6 +277,11 @@ const CODEX_HUB: HubProvider = {
           ? {
               resetCredits: {
                 availableCount: available.length,
+                expiries: resetCreditExpiries(
+                  available.map((credit) =>
+                    DateTime.formatIso(DateTime.makeUnsafe(credit.expires_at)),
+                  ),
+                ),
                 ...(next
                   ? {
                       nextCreditId: next.id,

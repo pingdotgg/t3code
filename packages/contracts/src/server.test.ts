@@ -94,6 +94,10 @@ describe("server config forward compatibility", () => {
       ...baseProviderSnapshot,
       usageLimits: {
         checkedAt: "2026-04-10T00:00:00.000Z",
+        resetCredits: {
+          availableCount: 2,
+          expiries: ["2026-12-01T12:00:00.000Z", { future: true }, "2026-12-02T13:00:00.000Z"],
+        },
         windows: [
           { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
           { id: "future", kind: "some-future-kind", label: "Future", usedPercent: 1 },
@@ -104,6 +108,10 @@ describe("server config forward compatibility", () => {
 
     expect(parsed.usageLimits?.windows).toEqual([
       { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
+    ]);
+    expect(parsed.usageLimits?.resetCredits?.expiries).toEqual([
+      "2026-12-01T12:00:00.000Z",
+      "2026-12-02T13:00:00.000Z",
     ]);
   });
 });
