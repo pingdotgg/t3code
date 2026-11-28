@@ -29,6 +29,20 @@ export function useThreadTaskList(target: ScopedThreadRef | null) {
   );
 }
 
+export function useThreadTasksAction(target: ScopedThreadRef | null) {
+  const gt = useGT();
+  const navigation = useNavigation();
+  const tasks = useThreadTaskList(target);
+  return tasks === null || target === null
+    ? null
+    : {
+        accessibilityLabel: gt("Tasks"),
+        icon: "list.number" as const,
+        overflowOnly: true,
+        onPress: () => navigation.navigate("ThreadTasks", target),
+      };
+}
+
 export function TaskProgressRing({ percentage }: { readonly percentage: number }) {
   return (
     <ThemedSvg

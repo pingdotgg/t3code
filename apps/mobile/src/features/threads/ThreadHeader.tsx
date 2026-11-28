@@ -1,6 +1,4 @@
 import { useGT, useMessages } from "gt-react-native";
-import { useNavigation } from "@react-navigation/native";
-import type { ScopedThreadRef } from "@t3tools/contracts";
 
 import { AppBar } from "../../components/ui/AppBar";
 import type { AppBarAction, AppBarMenu } from "../../components/ui/AppBar.types";
@@ -9,7 +7,6 @@ import {
   useWorkspacePaneState,
 } from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-navigation";
-import { useThreadTaskList } from "./ThreadTasksSheet";
 import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import {
   threadTerminalMenu,
@@ -19,7 +16,7 @@ import {
 
 export function ThreadHeader(props: {
   readonly title: string;
-  readonly threadRef?: ScopedThreadRef | null;
+  readonly tasksAction?: AppBarAction | null;
   readonly subtitle: string;
   readonly gitControls: ThreadGitControlsProps;
   readonly onReturnToThread?: () => void;
@@ -30,9 +27,6 @@ export function ThreadHeader(props: {
 }) {
   const gt = useGT();
   const m = useMessages();
-  const navigation = useNavigation();
-  const target = props.threadRef ?? null;
-  const tasks = useThreadTaskList(target);
   const goBack = useWorkspaceBackNavigation();
   const { toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();
@@ -51,14 +45,7 @@ export function ThreadHeader(props: {
         },
       ]
     : [];
-  if (tasks !== null && target !== null) {
-    actions.push({
-      accessibilityLabel: gt("Tasks"),
-      icon: "list.number",
-      overflowOnly: true,
-      onPress: () => navigation.navigate("ThreadTasks", target),
-    });
-  }
+  if (props.tasksAction) actions.push(props.tasksAction);
   const menus = [gitMenu, terminalMenu].filter((menu): menu is AppBarMenu => menu !== null);
 
   return (

@@ -129,6 +129,7 @@ import {
 } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { openSettings } from "../settings/settings-navigation";
 import { ThreadInspectorHeader, type ThreadInspectorPresentation } from "./thread-inspector-header";
+import { useThreadTasksAction } from "./ThreadTasksSheet";
 import { InspectorContentScope, ThreadInspectorPreview } from "./thread-inspector-preview";
 import { useStartSideChat } from "./useStartSideChat";
 import { useThreadStatusAnnouncements } from "./useThreadStatusAnnouncements";
@@ -377,6 +378,7 @@ function ThreadRouteContent(
     selectedThreadProject,
     selectedEnvironmentConnection,
   } = useThreadSelection();
+  const tasksAction = useThreadTasksAction(selectedThreadDetailRef);
   useRememberThreadProject(selectedThreadProject);
   const canOperateThread = useEnvironmentScope(
     selectedThread?.environmentId ?? null,
@@ -1016,6 +1018,7 @@ function ThreadRouteContent(
     <ThreadInspectorHeader
       title={selectedThread?.title ?? gt("Thread")}
       subtitle={threadStatusLabel ?? undefined}
+      tasksAction={tasksAction}
       {...props.inspectorPresentation}
     />
   ) : null;
@@ -1053,7 +1056,7 @@ function ThreadRouteContent(
           props.inspectorPresentation ? null : (
             <ThreadHeader
               title={selectedThread.title}
-              threadRef={selectedThreadDetailRef}
+              tasksAction={tasksAction}
               subtitle={threadStatusLabel ?? headerSubtitle}
               gitControls={threadGitControlProps}
               hasThreadCwd={selectedThreadCwd !== null}
