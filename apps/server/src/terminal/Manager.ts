@@ -8,6 +8,7 @@ import {
   DEFAULT_TERMINAL_ID,
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   retainTerminalSnapshotHistory,
+  skipTerminalSnapshotContinuation,
   TERMINAL_SEQUENCE_GROUND,
   TERMINAL_BRACKETED_PASTE_END,
   TERMINAL_BRACKETED_PASTE_START,
@@ -321,6 +322,7 @@ interface TerminalSessionState {
   pid: number | null;
   history: BoundedTerminalHistory;
   pendingHistoryControlSequence: string;
+  pendingHistorySequenceStart: number;
   pendingProcessEvents: Array<PendingProcessEvent | undefined>;
   pendingProcessEventIndex: number;
   processEventDrainRunning: boolean;
@@ -420,11 +422,17 @@ function terminalWireLabel(session: TerminalSessionState): string {
   return truncateTerminalWireLabel(getTerminalLabel(session.terminalId));
 }
 
+// Attach and clear use the same sequence origin without exposing it on the wire.
+const pendingSequenceStarts = new WeakMap<
+  TerminalSessionSnapshot | Extract<TerminalEvent, { type: "cleared" }>,
+  number
+>();
+
 function snapshot(
   session: TerminalSessionState,
   supportsSnapshotSequenceState = false,
 ): TerminalSessionSnapshot {
-  return {
+  const result: TerminalSessionSnapshot = {
     threadId: session.threadId,
     terminalId: session.terminalId,
     cwd: session.cwd,
@@ -442,6 +450,10 @@ function snapshot(
     rows: session.rows,
     ...(session.startupError === null ? {} : { error: session.startupError }),
   };
+  if (session.pendingHistoryControlSequence) {
+    pendingSequenceStarts.set(result, session.pendingHistorySequenceStart);
+  }
+  return result;
 }
 
 function summary(session: TerminalSessionState): TerminalSummary {
@@ -1514,8 +1526,16 @@ export function sanitizeTerminalHistoryChunk(
   pendingControlSequence: string,
   data: string,
 ): { visibleText: string; pendingControlSequence: string } {
+  const { visibleText, pendingControlSequence: pending } = scanTerminalHistoryChunk(
+    pendingControlSequence,
+    data,
+  );
+  return { visibleText, pendingControlSequence: pending };
+}
+
+function scanTerminalHistoryChunk(pendingControlSequence: string, data: string) {
   if (pendingControlSequence.length === 0 && !HISTORY_SEQUENCE_START.test(data)) {
-    return { visibleText: data, pendingControlSequence: "" };
+    return { visibleText: data, pendingControlSequence: "", continuesPending: false };
   }
 
   const resumesOversized = pendingControlSequence.startsWith(OVERSIZED_SEQUENCE);
@@ -1540,11 +1560,12 @@ export function sanitizeTerminalHistoryChunk(
       // Empty for a sequence the input introduces itself, which starts with ESC at `index`.
       const prefix = c1Introducer;
       c1Introducer = "";
+      const continuesPending = index === 0 && prefix === "" && held.length > 0;
       const oversized = resumesOversized && index === 0;
       const contentStart = prefix.length > 0 ? index : index + 2;
       const nextCodePoint = (prefix || input).charCodeAt(prefix.length > 0 ? 1 : index + 1);
       if (Number.isNaN(nextCodePoint)) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return { visibleText, pendingControlSequence: input.slice(index), continuesPending };
       }
 
       if (nextCodePoint === 0x5b) {
@@ -1602,10 +1623,11 @@ export function sanitizeTerminalHistoryChunk(
             const endStart = /[\ud800-\udbff]$/.exec(unfinished)?.[0] ?? "";
             return {
               visibleText,
+              continuesPending,
               pendingControlSequence: `${OVERSIZED_SEQUENCE}\u001b[${endStart}`,
             };
           }
-          return { visibleText, pendingControlSequence: unfinished };
+          return { visibleText, pendingControlSequence: unfinished, continuesPending };
         }
         continue;
       }
@@ -1628,10 +1650,11 @@ export function sanitizeTerminalHistoryChunk(
             const endStart = /[\u001b\ud800-\udbff]$/.exec(unfinished)?.[0] ?? "";
             return {
               visibleText,
+              continuesPending,
               pendingControlSequence: OVERSIZED_SEQUENCE + unfinished.slice(0, 2) + endStart,
             };
           }
-          return { visibleText, pendingControlSequence: unfinished };
+          return { visibleText, pendingControlSequence: unfinished, continuesPending };
         }
         const { end, c1 } = stringEnd;
         const content = stripStringTerminator(
@@ -1672,6 +1695,7 @@ export function sanitizeTerminalHistoryChunk(
       if (escapeSequenceEndIndex === null) {
         return {
           visibleText,
+          continuesPending,
           pendingControlSequence: input.slice(index, index + MAX_HELD_ESCAPE_LENGTH),
         };
       }
@@ -1690,7 +1714,16 @@ export function sanitizeTerminalHistoryChunk(
     index = nextSequenceStart;
   }
 
-  return { visibleText, pendingControlSequence: c1Introducer };
+  return { visibleText, pendingControlSequence: c1Introducer, continuesPending: false };
+}
+
+function scanSessionHistory(session: TerminalSessionState, data: string) {
+  const result = scanTerminalHistoryChunk(session.pendingHistoryControlSequence, data);
+  session.pendingHistoryControlSequence = result.pendingControlSequence;
+  if (result.pendingControlSequence && !result.continuesPending) {
+    session.pendingHistorySequenceStart = session.eventSequence + 1;
+  }
+  return result.visibleText;
 }
 
 function legacySafeThreadId(threadId: string): string {
@@ -2756,13 +2789,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         }
 
         if (nextEvent.type === "output") {
-          const sanitized = sanitizeTerminalHistoryChunk(
-            session.pendingHistoryControlSequence,
-            nextEvent.data,
-          );
-          session.pendingHistoryControlSequence = sanitized.pendingControlSequence;
-          if (sanitized.visibleText.length > 0) {
-            session.history.append(sanitized.visibleText);
+          const visibleText = scanSessionHistory(session, nextEvent.data);
+          if (visibleText.length > 0) {
+            session.history.append(visibleText);
           }
           const eventStamp = advanceEventSequence(session);
 
@@ -2771,7 +2800,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             threadId: session.threadId,
             terminalId: session.terminalId,
             sequence: eventStamp.sequence,
-            history: sanitized.visibleText.length > 0 ? session.history : null,
+            history: visibleText.length > 0 ? session.history : null,
             data: nextEvent.data,
           } as const;
         }
@@ -3468,6 +3497,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         pid: null,
         history,
         pendingHistoryControlSequence: "",
+        pendingHistorySequenceStart: 0,
         pendingProcessEvents: [],
         pendingProcessEventIndex: 0,
         processEventDrainRunning: false,
@@ -3853,20 +3883,57 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     viewerId,
   ) => {
     const { maxHistoryBytes, supportsSnapshotSequenceState } = input;
-    const retained = (listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>) =>
-      maxHistoryBytes === undefined
-        ? listener
-        : (event: TerminalAttachStreamEvent) => {
-            if (!("snapshot" in event)) return listener(event);
-            const retained = retainTerminalSnapshotHistory(event.snapshot.history, maxHistoryBytes);
-            return listener({
-              ...event,
-              snapshot: {
-                ...event.snapshot,
-                ...(supportsSnapshotSequenceState ? retained : { history: retained.history }),
-              },
-            });
-          };
+    const retained = (listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>) => {
+      if (maxHistoryBytes === undefined) return listener;
+      // Legacy viewers cannot resume a clipped sequence from snapshot metadata.
+      let pending = TERMINAL_SEQUENCE_GROUND;
+      let clearSequence: number | undefined;
+      let omittedSequenceStart: number | undefined;
+      return (event: TerminalAttachStreamEvent) => {
+        if ("snapshot" in event) {
+          const retained = retainTerminalSnapshotHistory(event.snapshot.history, maxHistoryBytes);
+          if (!supportsSnapshotSequenceState) {
+            pending = retained.historySequenceState ?? TERMINAL_SEQUENCE_GROUND;
+            clearSequence = undefined;
+            omittedSequenceStart = pendingSequenceStarts.get(event.snapshot);
+          }
+          return listener({
+            ...event,
+            snapshot: {
+              ...event.snapshot,
+              ...(supportsSnapshotSequenceState ? retained : { history: retained.history }),
+            },
+          });
+        }
+        if (event.type === "cleared" && pending !== TERMINAL_SEQUENCE_GROUND) {
+          // Clear may have consumed the terminator from queued output.
+          const { pendingControlSequence, ...cleared } = event;
+          clearSequence = event.sequence;
+          if (
+            !pendingControlSequence ||
+            pendingSequenceStarts.get(event) !== omittedSequenceStart
+          ) {
+            pending = TERMINAL_SEQUENCE_GROUND;
+            return listener(event);
+          }
+          pending = terminalSequenceStateAfter(TERMINAL_SEQUENCE_GROUND, pendingControlSequence);
+          return listener(cleared);
+        }
+        if (event.type !== "output") return listener(event);
+        // Fanout of the pre-clear bytes can finish after the clear event.
+        if (
+          clearSequence !== undefined &&
+          event.sequence !== undefined &&
+          event.sequence <= clearSequence
+        ) {
+          return Effect.void;
+        }
+        if (pending === TERMINAL_SEQUENCE_GROUND) return listener(event);
+        const continuation = skipTerminalSnapshotContinuation(pending, event.data);
+        pending = continuation.state;
+        return listener({ ...event, data: continuation.data });
+      };
+    };
     return Stream.unwrap(
       Effect.acquireRelease(
         Effect.sync(() => retainViewerOnce(input, viewerId, null)),
@@ -4141,10 +4208,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             break;
           }
           if (event?.type === "output") {
-            session.pendingHistoryControlSequence = sanitizeTerminalHistoryChunk(
-              session.pendingHistoryControlSequence,
-              event.data,
-            ).pendingControlSequence;
+            scanSessionHistory(session, event.data);
           }
         }
         // Controls embedded in an unfinished CSI have already run before the clear.
@@ -4167,13 +4231,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           history: session.history,
           immediate: true,
         });
-        yield* publishEvent({
+        const event: TerminalEvent = {
           type: "cleared",
           threadId: input.threadId,
           terminalId,
           sequence: eventStamp.sequence,
           ...(pendingControlSequence === "" ? {} : { pendingControlSequence }),
-        });
+        };
+        if (pendingControlSequence) {
+          pendingSequenceStarts.set(event, session.pendingHistorySequenceStart);
+        }
+        yield* publishEvent(event);
       }),
     );
 

@@ -3540,6 +3540,30 @@ it.layer(
     }),
   );
 
+  it.effect("keeps the rest of a split title hidden from a bounded legacy viewer", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const input = openInput();
+      const live = yield* Stream.toPull(manager.attachOutputStream(input, "live"));
+      yield* live;
+      const process = ptyAdapter.processes[0]!;
+      process.emitData("\u001b]0;Build ");
+      yield* live;
+
+      const joining = yield* Stream.toPull(
+        manager.attachOutputStream({ ...input, maxHistoryBytes: 8 }, "joining"),
+      );
+      const [snapshot] = yield* joining;
+      if (snapshot?.type !== "snapshot") throw new Error("Expected a terminal snapshot");
+
+      process.emitData("complete\u0007ready");
+      const [output] = yield* joining;
+      if (output?.type !== "output") throw new Error("Expected live terminal output");
+      const parser = terminalSequenceStateAfter(0, snapshot.snapshot.history);
+      expect(output.data.slice(terminalSequenceEnd(parser, output.data))).toBe("ready");
+    }),
+  );
+
   it.effect(
     "keeps a title update hidden when the history limit cuts through the previous title",
     () =>
