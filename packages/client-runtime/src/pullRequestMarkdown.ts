@@ -282,7 +282,7 @@ export function splitPullRequestBody(
   const leading = `${definitions.join("\n")}\n\n`;
   // Past the budget the body renders as one document: its media stays links, its references resolve.
   if (leading.length * segmentsWithReferences(segments) > DEFINITIONS_MAX_ADDED_LENGTH) {
-    const text = body.replace(/^(?:\r?\n)+/u, "");
+    const text = body.replace(/^(?:\r|\n)+/u, "");
     return [
       {
         id: "markdown:0",
@@ -320,7 +320,7 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
     }
   };
 
-  const lines = body.split("\n");
+  const lines = body.replace(/\r(?!\n)/gu, "\n").split("\n");
   let tableScannedThrough = -1;
   let lineStart = baseOffset;
   for (let index = 0; index < lines.length; lineStart += lines[index]!.length + 1, index += 1) {
