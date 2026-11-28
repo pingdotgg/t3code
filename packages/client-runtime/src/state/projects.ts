@@ -1,5 +1,6 @@
 import {
   isExplicitRelativePath,
+  isNetworkPath,
   isUncPath,
   isWindowsAbsolutePath,
   isWindowsDrivePath,
@@ -129,10 +130,24 @@ export function findProjectByPath<T extends { workspaceRoot?: string; cwd?: stri
   if (normalizedCandidate.length === 0) {
     return undefined;
   }
+  const candidate = candidatePath.trim();
   return projects.find((project) => {
-    const cwd = project.workspaceRoot ?? project.cwd;
-    return cwd ? normalizeProjectPathForComparison(cwd) === normalizedCandidate : false;
+    const cwd = (project.workspaceRoot ?? project.cwd)?.trim();
+    if (!cwd) return false;
+    // `//` names a UNC root only on Windows, which a `\\` root on either side proves.
+    if (
+      isNetworkPath(cwd) &&
+      isNetworkPath(candidate) &&
+      (isUncPath(cwd) || isUncPath(candidate))
+    ) {
+      return normalizeUncForComparison(cwd) === normalizeUncForComparison(candidate);
+    }
+    return normalizeProjectPathForComparison(cwd) === normalizedCandidate;
   });
+}
+
+function normalizeUncForComparison(value: string): string {
+  return normalizeProjectPathForComparison(value.replaceAll("/", "\\"));
 }
 
 export function isScratchProject(
