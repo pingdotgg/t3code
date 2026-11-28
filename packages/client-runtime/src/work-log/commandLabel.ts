@@ -1356,16 +1356,26 @@ function parseCommandProgramName(
         for (const [optionIndex, option] of token.slice(1).split("").entries()) {
           const shortOption = `-${option}`;
           if (wrapper === "env" && shortOption === "-S") {
-            const splitCommand =
-              optionIndex === token.length - 2 ? tokens[index + 1] : token.slice(optionIndex + 2);
-            return splitCommand
-              ? commandProgramNameInternal(
-                  splitCommand,
-                  depth + 1,
-                  executionContext,
-                  segmentsRemaining,
-                )
-              : null;
+            if (optionIndex === token.length - 2) {
+              const splitCommand = tokens[index + 1];
+              return splitCommand
+                ? commandProgramNameInternal(
+                    splitCommand,
+                    depth + 1,
+                    executionContext,
+                    segmentsRemaining,
+                  )
+                : null;
+            }
+            // An attached payload such as -S"FOO=1" can be followed by the program itself.
+            const payloadProgram = commandProgramNameInternal(
+              token.slice(optionIndex + 2),
+              depth + 1,
+              executionContext,
+              segmentsRemaining,
+            );
+            if (payloadProgram !== null) return payloadProgram;
+            break;
           }
           if (COMMAND_WRAPPER_OPTIONS_WITH_VALUE[wrapper].has(shortOption)) {
             consumesNextToken = optionIndex === token.length - 2;
