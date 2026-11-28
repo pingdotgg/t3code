@@ -176,7 +176,7 @@ function UsageAccessRows({
                   }
                   title={label}
                   description={usageAccessReadsLabel(prompt.driver, m)}
-                  control={
+                  trailing={
                     <Switch
                       aria-label={label}
                       checked={!declined.has(key)}
