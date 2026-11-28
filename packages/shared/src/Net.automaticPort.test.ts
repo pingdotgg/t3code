@@ -95,7 +95,7 @@ it.layer(NetService.layer)("Automatic port selection", (it) => {
           }
 
           const originalListen = NodeNet.Server.prototype.listen;
-          let offerOccupiedPort = true;
+          const offeredPorts: number[] = [];
           const listen = vi.spyOn(NodeNet.Server.prototype, "listen").mockImplementation(function (
             this: NodeNet.Server,
             ...args
@@ -103,21 +103,26 @@ it.layer(NetService.layer)("Automatic port selection", (it) => {
             const bindArguments: readonly unknown[] = args;
             const [port, host] = bindArguments;
             if (port === 0 && host === "::1") {
-              if (offerOccupiedPort) {
-                offerOccupiedPort = false;
-                vi.spyOn(this, "address").mockReturnValueOnce({
-                  address: "::1",
-                  family: "IPv6",
-                  port: address.port,
-                });
-              }
+              const readAddress = this.address.bind(this);
+              vi.spyOn(this, "address").mockImplementationOnce(() => {
+                const assigned = readAddress();
+                if (assigned === null || typeof assigned === "string") {
+                  throw new Error("Expected an ephemeral port");
+                }
+                const offeredPort = offeredPorts.length === 0 ? address.port : assigned.port;
+                offeredPorts.push(offeredPort);
+                return { address: "::1", family: "IPv6", port: offeredPort };
+              });
               // Simulate IPv6 allocation even on machines without IPv6 support.
               return Reflect.apply(originalListen, this, [port, "127.0.0.1", ...args.slice(2)]);
             }
             return originalListen.apply(this, args);
           });
           try {
-            expect(yield* net.findAvailablePort(0, "::1")).not.toBe(address.port);
+            const selected = yield* net.findAvailablePort(0, "::1");
+            expect(offeredPorts[0]).toBe(address.port);
+            expect(offeredPorts.slice(1)).toContain(selected);
+            expect(selected).not.toBe(address.port);
           } finally {
             listen.mockRestore();
           }
