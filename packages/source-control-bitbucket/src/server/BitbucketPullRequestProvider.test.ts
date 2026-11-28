@@ -179,6 +179,44 @@ it.effect("reads checks and PR state without diff, mergeability, or permission r
   }),
 );
 
+it.effect.each([
+  { status: "pending", checksState: "pending" },
+  { status: "success", checksState: "passing" },
+  { status: "failure", checksState: "failing" },
+] as const)("rolls up a $status check into the detail's checksState", ({ status, checksState }) =>
+  Effect.gen(function* () {
+    const pullRequest = Result.getOrThrow(
+      decodePullRequestJson(`{
+      "id": 1, "title": "Checks", "state": "OPEN",
+      "source": { "branch": { "name": "feature" } },
+      "destination": { "branch": { "name": "main" } },
+      "created_on": "2026-09-16T00:00:00Z", "updated_on": "2026-09-16T00:00:00Z",
+      "links": { "html": { "href": "https://bitbucket.org/acme/web/pull-requests/1" } }
+    }`),
+    );
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({
+          getPullRequest: () => Effect.succeed(pullRequest),
+          getDiffStat: () => Effect.succeed({ additions: 0, deletions: 0, changedFiles: 0 }),
+          getMergeability: () => Effect.succeed("unknown" as const),
+          listChecks: () =>
+            Effect.succeed([{ name: "build", status, description: null, url: null }]),
+          getRepositoryPermission: () => Effect.succeed(true),
+        }),
+      ),
+    );
+    const detail = yield* provider.getChangeRequest({
+      cwd: "/repo",
+      repository: "acme/web",
+      host: "bitbucket.org",
+      number: 1,
+    });
+
+    expect(detail.checksState).toBe(checksState);
+  }),
+);
+
 it.effect("serves only Bitbucket Cloud hosts unless an API base url is configured", () =>
   Effect.gen(function* () {
     const servedHosts = (env: Record<string, string>) =>
