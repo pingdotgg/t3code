@@ -66,7 +66,7 @@ vi.mock(import("../../state/use-atom-command"), () => ({
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 
-import { fakeTimers, render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 import { isMacPlatform } from "../../lib/utils";
 import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
@@ -552,6 +552,35 @@ it("hides a deleted fork and keeps unloaded and archived forks with their curren
   await expect.element(screen.getByText("Unloaded fork", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("Archived fork", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("deleted-fork", { exact: true })).not.toBeInTheDocument();
+});
+
+it("shares the hover delay between adjacent lineage rows", async () => {
+  setup();
+  state.relatedShells = [
+    { id: "source", title: "First agent", lineage: { parentThreadId: null } },
+    {
+      id: "child",
+      title: "Second agent",
+      lineage: { parentThreadId: threadId, relationshipToParent: "fork", sideChat: false },
+    },
+  ];
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats={false}
+    />,
+  );
+  using _timers = fakeTimers();
+  const first = screen.getByRole("button", { name: /^First agent/ });
+  const second = screen.getByRole("button", { name: /^Second agent/ });
+  await userEvent.hover(first);
+  await act(() => vi.advanceTimersByTime(200));
+  expect(first.element()).toHaveAttribute("data-popup-open");
+  await userEvent.hover(second);
+  await act(() => vi.advanceTimersByTime(1));
+  expect(second.element()).toHaveAttribute("data-popup-open");
 });
 
 it.each([1, 18])("continues scrolling the panel past a list of %i subagents", async (count) => {

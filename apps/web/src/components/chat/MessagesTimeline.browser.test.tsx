@@ -2982,3 +2982,33 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
     .element(screen.getByRole("button", { name: "Open the current tab", exact: true }))
     .toBeVisible();
 });
+
+it("opens adjacent subagent previews without repeating the hover delay", async () => {
+  const entries = ["Review implementation", "Check edge cases"].map((title, index) => ({
+    kind: "event" as const,
+    id: `hover-agent-${index}`,
+    createdAt: CREATED_AT,
+    projectedItem: v2Item("subagent", {
+      id: `hover-item-${index}`,
+      subagentId: `hover-agent-${index}`,
+      title,
+      providerInstanceId: "codex",
+      driver: "codex",
+      origin: "app_owned",
+      childThreadId: `child-${index}`,
+      result: `Result for ${title}`,
+    }),
+  }));
+  await using screen = await renderTimeline(entries);
+  await screen.getByRole("button", { name: /Worked for/ }).click();
+  await screen.getByRole("button", { name: "2 subagents", exact: true }).click();
+  using _timers = fakeTimers();
+  const first = screen.getByRole("button", { name: "Open Review implementation" });
+  const second = screen.getByRole("button", { name: "Open Check edge cases" });
+  await userEvent.hover(first);
+  await act(() => vi.advanceTimersByTime(200));
+  expect(first.element()).toHaveAttribute("data-popup-open");
+  await userEvent.hover(second);
+  await act(() => vi.advanceTimersByTime(1));
+  expect(second.element()).toHaveAttribute("data-popup-open");
+});

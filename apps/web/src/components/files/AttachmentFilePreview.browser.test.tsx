@@ -1616,7 +1616,11 @@ it.each(["draft", "thread"] as const)(
 it("refreshes authorization and retries a failed streamed attachment", async () => {
   const bad = URL.createObjectURL(new Blob(["invalid\0text"]));
   const good = URL.createObjectURL(new Blob(["recovered text\n"]));
-  refresh.mockReset().mockResolvedValueOnce(bad).mockResolvedValue(good);
+  refresh
+    .mockReset()
+    .mockRejectedValueOnce(new Error("The attachment is unavailable."))
+    .mockResolvedValueOnce(bad)
+    .mockResolvedValue(good);
   try {
     await using screen = await render(
       <AttachmentFilePreview
@@ -1626,6 +1630,12 @@ it("refreshes authorization and retries a failed streamed attachment", async () 
         asset={{ environmentId: EnvironmentId.make("test"), attachmentId: "retry" }}
       />,
     );
+    await expect
+      .element(screen.getByText("The attachment is unavailable.", { exact: true }))
+      .toBeVisible();
+    expect(screen.container.querySelector('button[aria-label="Copy contents"]')).toBeNull();
+
+    await screen.getByRole("button", { name: "Try again" }).click();
     // A cold large-text worker can take longer than waitFor's default to boot on CI.
     await vi.waitFor(
       () => expect(screen.container.textContent).toContain("This file contains binary data."),
@@ -1635,7 +1645,8 @@ it("refreshes authorization and retries a failed streamed attachment", async () 
       screen.container.querySelector<HTMLButtonElement>('[role="alert"] button')!.click(),
     );
     await vi.waitFor(() => expect(screen.container.textContent).toContain("recovered text"));
-    expect(refresh).toHaveBeenCalledTimes(2);
+    await expect.element(screen.getByRole("button", { name: "Copy contents" })).toBeVisible();
+    expect(refresh).toHaveBeenCalledTimes(3);
   } finally {
     URL.revokeObjectURL(bad);
     URL.revokeObjectURL(good);

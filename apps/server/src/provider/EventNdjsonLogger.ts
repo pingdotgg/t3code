@@ -179,6 +179,14 @@ function providerLogPath(directory: string, prefix: string, threadSegment: strin
   return NodePath.join(directory, `${prefix}${threadSegment}.log`);
 }
 
+export function providerThreadLogPath(providerEventLogPath: string, threadId: string): string {
+  return providerLogPath(
+    NodePath.dirname(providerEventLogPath),
+    providerLogPrefix(providerEventLogPath),
+    resolveThreadSegment(threadId),
+  );
+}
+
 export function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unknown): boolean {
   if (stream === "orchestration" || typeof event !== "object" || event === null) {
     return true;

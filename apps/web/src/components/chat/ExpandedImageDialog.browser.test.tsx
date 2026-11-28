@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { SnapShotSource } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { cdp, page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
@@ -233,4 +233,58 @@ describe("ExpandedImageDialog", () => {
     expect(onClose).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { gesture: "backdrop to image", closes: false },
+    { gesture: "image to backdrop", closes: false },
+    { gesture: "backdrop to backdrop", closes: true },
+  ])(
+    "a press dragged from the $gesture closes the preview: $closes",
+    async ({ gesture, closes }) => {
+      await page.viewport(1280, 800);
+      const onClose = vi.fn();
+      await using screen = await render(
+        <ExpandedImageDialog
+          preview={{ images: [{ src: PIXEL, name: "shot.png" }], index: 0 }}
+          onClose={onClose}
+        />,
+        // The dialog renders no links and reads no route.
+        { router: false },
+      );
+      const image = screen.getByRole("img", { name: "shot.png", exact: true });
+      await expect.element(image).toBeVisible();
+      const popup = screen.getByRole("dialog").element();
+      const box = popup.getBoundingClientRect();
+      const imageBox = image.element().getBoundingClientRect();
+      // The empty part of the preview around the image closes it on a plain click.
+      const empty = { x: box.left + 8, y: box.top + box.height / 2 };
+      expect(document.elementFromPoint(empty.x, empty.y)).toBe(popup);
+      const onImage = {
+        x: imageBox.left + imageBox.width / 2,
+        y: imageBox.top + imageBox.height / 2,
+      };
+      const from = gesture.startsWith("image") ? onImage : empty;
+      const to = gesture.endsWith("image") ? onImage : empty;
+      const frame = window.frameElement?.getBoundingClientRect() ?? { left: 0, top: 0 };
+      const mouse = (type: "mousePressed" | "mouseMoved" | "mouseReleased", x: number, y: number) =>
+        cdp().send("Input.dispatchMouseEvent", {
+          type,
+          x: frame.left + x,
+          y: frame.top + y,
+          button: "left",
+          buttons: type === "mouseReleased" ? 0 : 1,
+          clickCount: 1,
+        });
+
+      await mouse("mousePressed", from.x, from.y);
+      await mouse("mouseMoved", to.x, to.y);
+      await mouse("mouseReleased", to.x, to.y);
+
+      if (closes) await vi.waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+      else {
+        await expect.element(image).toBeVisible();
+        expect(onClose).not.toHaveBeenCalled();
+      }
+    },
+  );
 });
