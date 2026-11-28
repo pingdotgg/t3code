@@ -1,12 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as ForgejoIssueTracker from "./ForgejoIssueTracker.ts";
 
 const encode = (value: unknown) => JSON.stringify(value);
+const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
 
 const ISSUE = {
   number: 42,
@@ -136,19 +138,25 @@ function answer(path: string): { readonly stdout: string; readonly stderr?: stri
 }
 
 function tracker(
-  onApi: (input: ForgejoCli.ForgejoApiInput) => {
-    readonly stdout: string;
-    readonly stderr?: string;
-  },
+  onApi: (input: ForgejoCli.ForgejoApiInput) =>
+    | {
+        readonly stdout: string;
+        readonly stderr?: string;
+      }
+    | ForgejoCli.ForgejoCliError,
 ) {
   return ForgejoIssueTracker.make.pipe(
     Effect.provide(
       Layer.mock(ForgejoCli.ForgejoCli)({
         api: (input) => {
-          const { stdout, stderr } = onApi(input);
-          return Effect.succeed(
-            TestSourceControlHost.processOutput(stdout, { stderr: stderr ?? "" }),
-          );
+          const result = onApi(input);
+          return isForgejoCliError(result)
+            ? Effect.fail(result)
+            : Effect.succeed(
+                TestSourceControlHost.processOutput(result.stdout, {
+                  stderr: result.stderr ?? "",
+                }),
+              );
         },
       }),
     ),
@@ -274,13 +282,14 @@ describe("ForgejoIssueTracker", () => {
       calls.length = 0;
       yield* api.update!({ ...target, labels: ["bug", "urgent"] });
       expect(calls.at(-1)).toEqual(["PUT", "repos/acme/web/issues/42/labels", { labels: [3, 9] }]);
-      // A name the repository lacks refuses the save before anything is written.
+      expect(calls.some(([, path]) => path.startsWith("orgs/"))).toBe(false);
+      // A name neither the repository nor its org owns refuses the save before anything is written.
       calls.length = 0;
       const error = yield* Effect.flip(
         api.update!({ ...target, title: "Renamed", labels: ["bug", "missing"] }),
       );
       expect(error.reason).toBe("failed");
-      expect(calls.map(([method]) => method)).toEqual(["GET", "GET"]);
+      expect(calls.map(([method]) => method)).toEqual(["GET", "GET", "GET"]);
     }),
   );
 
@@ -362,5 +371,135 @@ describe("ForgejoIssueTracker", () => {
       // No `Link` header at all means the server may still have more; a full page carries on.
       expect(page.nextCursor).toBe("3");
     }),
+  );
+
+  it.effect("offers organization labels as candidates after the repository's own", () =>
+    Effect.gen(function* () {
+      const api = yield* tracker((input) => {
+        const [route] = input.path.split("?");
+        if (route === "repos/acme/web/labels") {
+          return { stdout: encode([{ id: 3, name: "bug", color: "d73a4a" }]), stderr: "link: \n" };
+        }
+        if (route === "orgs/acme/labels") {
+          return {
+            stdout: encode([
+              { id: 99, name: "bug", color: "000000" },
+              { id: 101, name: "security", color: "ff0000" },
+            ]),
+            stderr: 'link: <https://forgejo.test/api/v1/orgs/acme/labels?page=2>; rel="next"\n',
+          };
+        }
+        return { stdout: "[]", stderr: "link: \n" };
+      });
+      const candidates = yield* api.listCandidates!({
+        cwd: "/w",
+        host: "forgejo.test",
+        scope: "acme/web",
+      });
+      expect(candidates.labels).toEqual([
+        { name: "bug", color: "d73a4a", description: null },
+        { name: "security", color: "ff0000", description: null },
+      ]);
+      expect(candidates.truncated).toBe(true);
+    }),
+  );
+
+  it.effect("writes organization labels by id, preferring the repository's label of a name", () =>
+    Effect.gen(function* () {
+      const writes: Array<readonly [string, string, unknown]> = [];
+      const api = yield* tracker((input) => {
+        const [route] = input.path.split("?");
+        if (route === "repos/acme/web/labels") {
+          return { stdout: encode([{ id: 3, name: "shared" }]), stderr: "link: \n" };
+        }
+        if (route === "orgs/acme/labels") {
+          return input.path.endsWith("page=1")
+            ? {
+                stdout: encode([{ id: 99, name: "shared" }]),
+                stderr: 'link: <https://forgejo.test/api/v1/orgs/acme/labels?page=2>; rel="next"\n',
+              }
+            : { stdout: encode([{ id: 102, name: "org-b" }]), stderr: "link: \n" };
+        }
+        writes.push([input.method ?? "GET", input.path, input.body]);
+        return { stdout: "{}" };
+      });
+      yield* api.update!({
+        cwd: "/w",
+        host: "forgejo.test",
+        scope: "acme/web",
+        key: "42",
+        labels: ["shared", "org-b"],
+      });
+      expect(writes).toEqual([["PUT", "repos/acme/web/issues/42/labels", { labels: [3, 102] }]]);
+    }),
+  );
+
+  it.effect("reads organization labels from the owner when the scope carries a mount path", () =>
+    Effect.gen(function* () {
+      const writes: Array<readonly [string, string, unknown]> = [];
+      const api = yield* tracker((input) => {
+        const [route] = input.path.split("?");
+        if (route === "orgs/acme/labels") {
+          return { stdout: encode([{ id: 101, name: "org-only" }]) };
+        }
+        if (route === "repos/forgejo/acme/web/labels") return { stdout: "[]" };
+        writes.push([input.method ?? "GET", input.path, input.body]);
+        return { stdout: "{}" };
+      });
+      yield* api.update!({
+        cwd: "/w",
+        host: "forgejo.test",
+        scope: "forgejo/acme/web",
+        key: "42",
+        labels: ["org-only"],
+      });
+      expect(writes).toEqual([
+        ["PUT", "repos/forgejo/acme/web/issues/42/labels", { labels: [101] }],
+      ]);
+    }),
+  );
+
+  it.effect(
+    "treats a personal owner (404) or a token without org scope (403) as no org labels",
+    () =>
+      Effect.gen(function* () {
+        for (const [reason, httpStatus] of [
+          ["not-found", 404],
+          ["forbidden", 403],
+        ] as const) {
+          const api = yield* tracker((input) => {
+            const [route] = input.path.split("?");
+            if (route === "orgs/alice/labels") {
+              return new ForgejoCli.ForgejoCliError({
+                command: "fj",
+                cwd: "/w",
+                detail: String(httpStatus),
+                reason,
+                httpStatus,
+              });
+            }
+            if (route === "repos/alice/web/labels") {
+              return { stdout: encode([{ id: 3, name: "bug" }]), stderr: "link: \n" };
+            }
+            return { stdout: "[]", stderr: "link: \n" };
+          });
+          const candidates = yield* api.listCandidates!({
+            cwd: "/w",
+            host: "forgejo.test",
+            scope: "alice/web",
+          });
+          expect(candidates.labels.map((label) => label.name)).toEqual(["bug"]);
+          const error = yield* Effect.flip(
+            api.update!({
+              cwd: "/w",
+              host: "forgejo.test",
+              scope: "alice/web",
+              key: "42",
+              labels: ["missing"],
+            }),
+          );
+          expect(error.detail).toBe("Forgejo found no label by one of the names given.");
+        }
+      }),
   );
 });
