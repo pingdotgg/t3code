@@ -159,18 +159,14 @@ const make = Effect.gen(function* () {
         message: "The ACP agent cannot load or resume native sessions.",
       });
     }
-    const threadId = importedThreadId({
+    const sessionKey = {
       driver: instance.driverKind,
       instanceId: input.instanceId,
       sessionId: input.sessionId,
-    });
-    const owner = yield* findOwner({
-      driver: instance.driverKind,
-      instanceId: input.instanceId,
-      sessionId: input.sessionId,
-    });
-    if (owner !== null && owner !== threadId) return { threadId: owner, imported: false } as const;
-    const existing = yield* threadManagement.getThreadShell(threadId).pipe(
+    };
+    const owner = yield* findOwner(sessionKey);
+    const existingThreadId = owner ?? importedThreadId(sessionKey);
+    const existing = yield* threadManagement.getThreadShell(existingThreadId).pipe(
       Effect.mapError(
         (cause) =>
           new AcpRegistryOperationError({
@@ -181,21 +177,28 @@ const make = Effect.gen(function* () {
       ),
     );
     if (existing !== null) {
-      const repairing = AgentSessionImporter.isNativeHistoryPending({
-        historyOrigin: existing.historyOrigin,
-        hasRun: existing.latestRunId !== null,
-      });
-      yield* agentSessionImporter.importNativeHistory({ threadId, workspaceRoot }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new AcpRegistryOperationError({
-              reason: "session_import_failed",
-              message: "Could not import the ACP session history.",
-              cause,
-            }),
-        ),
-      );
-      return { threadId, imported: repairing } as const;
+      if (
+        existing.projectId !== input.projectId ||
+        !AgentSessionImporter.isNativeHistoryPending({
+          historyOrigin: existing.historyOrigin,
+          hasRun: existing.latestRunId !== null,
+        })
+      ) {
+        return { threadId: existingThreadId, imported: false } as const;
+      }
+      yield* agentSessionImporter
+        .importNativeHistory({ threadId: existingThreadId, workspaceRoot })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new AcpRegistryOperationError({
+                reason: "session_import_failed",
+                message: "Could not import the ACP session history.",
+                cause,
+              }),
+          ),
+        );
+      return { threadId: existingThreadId, imported: true } as const;
     }
 
     const provider = (yield* providerRegistry.getProviders).find(
@@ -210,7 +213,6 @@ const make = Effect.gen(function* () {
       startup.enqueueCommand(
         threadLaunch.launch({
           commandId,
-          threadId,
           projectId: input.projectId,
           title: input.title ?? "Imported ACP session",
           modelSelection: { instanceId: input.instanceId, model },
@@ -235,7 +237,7 @@ const make = Effect.gen(function* () {
       ),
     );
     if (Result.isFailure(launched)) {
-      const racedImport = yield* threadManagement.getThreadShell(threadId).pipe(
+      const racedOwner = yield* findOwner(sessionKey).pipe(
         Effect.mapError(
           (cause) =>
             new AcpRegistryOperationError({
@@ -245,13 +247,14 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-      if (racedImport !== null) return { threadId, imported: false } as const;
+      if (racedOwner !== null) return { threadId: racedOwner, imported: false } as const;
       return yield* new AcpRegistryOperationError({
         reason: "session_import_failed",
         message: "Could not create a T3 thread for the ACP session.",
         cause: launched.failure,
       });
     }
+    const { threadId } = launched.success;
     // The thread is usable without its history, so a failed read only logs.
     yield* agentSessionImporter.importNativeHistory({ threadId, workspaceRoot }).pipe(
       Effect.catch((cause) =>
