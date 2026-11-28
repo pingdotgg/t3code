@@ -1,5 +1,38 @@
 import type { ProjectId, ProjectScript, ServerSettings } from "@t3tools/contracts";
 
+const FILE_SCRIPT_RUNNERS: Readonly<Record<string, string>> = {
+  sh: "sh",
+  bash: "bash",
+  js: "node",
+  mjs: "node",
+  cjs: "node",
+  py: "python3",
+  rb: "ruby",
+  pl: "perl",
+  php: "php",
+};
+
+export function projectScriptFileCommand(path: string): string | null {
+  // Double quotes work in POSIX, PowerShell and cmd; reject characters they expand differently.
+  if (!path || /["$`%!^\\\x00-\x1f]/.test(path) || path.startsWith("/")) return null;
+  if (path.split("/").some((part) => part === ".." || part === "." || !part)) return null;
+  const extension = path.split(".").at(-1) ?? "";
+  const runner = FILE_SCRIPT_RUNNERS[extension];
+  return runner ? `${runner} "./${path}"` : null;
+}
+
+export function projectScriptForFile(path: string): ProjectScript | null {
+  const command = projectScriptFileCommand(path);
+  if (command === null) return null;
+  return {
+    id: `file-${crypto.randomUUID().slice(0, 18)}`,
+    name: path.split("/").at(-1) ?? path,
+    command,
+    icon: "play",
+    runOnWorktreeCreate: false,
+  };
+}
+
 type ProjectScriptSettings = Pick<
   ServerSettings,
   | "defaultProjectScripts"

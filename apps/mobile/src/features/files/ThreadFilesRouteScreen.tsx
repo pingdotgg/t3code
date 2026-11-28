@@ -421,15 +421,15 @@ function useThreadFilesWorkspace(params: {
       ? EnvironmentId.make(routeEnvironmentId)
       : (selectedThread?.environmentId ?? null);
   const threadId = routeThreadId !== null ? ThreadId.make(routeThreadId) : null;
-  const project = selectedThreadProject as {
-    readonly title?: string;
-    readonly workspaceRoot?: string;
-  } | null;
+  const project = selectedThreadProject;
 
   return {
     cwd: routeCwd ?? selectedThreadCwd ?? project?.workspaceRoot ?? null,
     environmentId,
     projectName: routeProjectName ?? project?.title ?? "Files",
+    project: project?.environmentId === environmentId &&
+      (routeCwd === null || routeCwd === selectedThreadCwd || routeCwd === project.workspaceRoot)
+      ? project : null,
     relativePath: normalizeRoutePath(params.path),
     selectedThread,
     threadId,
@@ -500,7 +500,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const { fileInspector } = useWorkspacePaneState();
   const [searchQuery, setSearchQuery] = useState("");
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
-  const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
+  const { cwd, environmentId, projectName, project, selectedThread, threadId } = useThreadFilesWorkspace(
     props.route.params,
   );
   const hasFileInspector = fileInspector.supported && threadId !== null;
@@ -561,6 +561,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const renderInspector = () =>
     environmentId !== null && cwd !== null ? (
       <ThreadFileNavigatorPane
+        project={project}
         cwd={cwd}
         environmentId={environmentId}
         projectName={projectName}
@@ -630,6 +631,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
       />
       <ScreenContent>
         <FileTreeBrowser
+          project={project}
           key={JSON.stringify([environmentId, cwd])}
           revealSelection={entriesQuery.revealSelection}
           expandedPaths={entriesQuery.expandedPaths}
@@ -664,7 +666,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
   const params = props.route.params;
   const targetLine = normalizeRouteLine(firstRouteParam(params.line));
-  const { cwd, environmentId, projectName, relativePath, selectedThread, threadId } =
+  const { cwd, environmentId, projectName, project, relativePath, selectedThread, threadId } =
     useThreadFilesWorkspace(props.route.params);
   const messages = useMessages();
   const fileAccessSession = useEnvironmentQuery(
@@ -891,6 +893,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const renderInspector = () =>
     fileInspector.supported && environmentId !== null && cwd !== null ? (
       <ThreadFileNavigatorPane
+        project={directoryPath === null ? project : null}
         cwd={directoryPath ?? cwd}
         environmentId={environmentId}
         projectName={directoryPath ?? projectName}

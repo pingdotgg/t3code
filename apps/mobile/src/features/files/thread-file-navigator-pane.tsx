@@ -1,6 +1,7 @@
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "../../state/session";
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useGT, useMessages } from "gt-react-native";
@@ -15,6 +16,7 @@ import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 
 export function ThreadFileNavigatorPane(props: {
+  readonly project?: EnvironmentProject | null;
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
   readonly projectName: string;
@@ -58,6 +60,7 @@ export function ThreadFileNavigatorPane(props: {
   };
   const fileTree = (
     <FileTreeBrowser
+      {...(props.project ? { project: props.project } : {})}
       key={workspaceKey}
       revealSelection={entriesQuery.revealSelection}
       expandedPaths={entriesQuery.expandedPaths}
