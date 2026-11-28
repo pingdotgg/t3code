@@ -26,6 +26,10 @@ export function desktopLocalBackendId(target: ConnectionTarget): string | null {
     : null;
 }
 
+export function isDesktopWslTarget(target: ConnectionTarget | undefined): boolean {
+  return target !== undefined && (desktopLocalBackendId(target)?.startsWith("wsl:") ?? false);
+}
+
 export type DesktopSecondaryBootstrapsRead =
   | {
       readonly _tag: "Success";
