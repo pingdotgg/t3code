@@ -196,12 +196,13 @@ interface OdfTextStyle {
 }
 
 // ODF 1.3 Part 3 §19.510: parent-style-name names a common style, never an automatic one.
-interface OdfTextStyles {
+interface OdfStyleFamily {
   common: Map<string, OdfTextStyle>;
   automatic: Map<string, OdfTextStyle>;
 }
+type OdfTextStyles = Record<"text" | "paragraph", OdfStyleFamily>;
 
-function odfTextStyleHidden(styles: OdfTextStyles, name: string) {
+function odfTextStyleHidden(styles: OdfStyleFamily, name: string) {
   const automatic = styles.automatic.get(name);
   if (!automatic) return odfCommonTextStyleHidden(styles.common, name);
   if (automatic.hidden !== undefined) return automatic.hidden;
@@ -320,7 +321,7 @@ function xml(
           // A foreign attribute must not shadow an XHTML table span or a namespace declaration.
           return (extension === ".epub" &&
             (local === "colspan" || local === "rowspan" || local === "xmlns")) ||
-            ((extension === ".odt" || wordStyles !== undefined) && local === "xmlns")
+            ((odf || wordStyles !== undefined) && local === "xmlns")
             ? [[key, String(value)]]
             : [
                 [key, String(value)],
@@ -354,13 +355,14 @@ function xml(
     }
     if (odfTextStyles) {
       if (parent.odfSpanHidden) node.odfSpanHidden = true;
+      const styles = odfTextStyles[node.name === "span" ? "text" : "paragraph"];
       if (
-        node.name === "span" &&
-        odfTextStyles.common.size + odfTextStyles.automatic.size > 0 &&
+        (node.name === "span" || node.name === "p" || node.name === "h") &&
+        styles.common.size + styles.automatic.size > 0 &&
         namespaceOf(tag.name, stack) === ODF_TEXT_NS
       ) {
         const style = odfAttribute(tag.attributes, "style-name", stack);
-        const hidden = style === undefined ? undefined : odfTextStyleHidden(odfTextStyles, style);
+        const hidden = style === undefined ? undefined : odfTextStyleHidden(styles, style);
         if (hidden !== undefined) node.odfSpanHidden = hidden;
       }
       if (
@@ -426,13 +428,14 @@ function xml(
       (parent.name === "styles" || parent.name === "automatic-styles")
     ) {
       const scope = [...stack, node];
+      const family = odfAttribute(tag.attributes, "family", scope, ODF_STYLE_NS);
       if (
         namespaceOf(tag.name, scope) === ODF_STYLE_NS &&
-        odfAttribute(tag.attributes, "family", scope, ODF_STYLE_NS) === "text"
+        (family === "text" || family === "paragraph")
       ) {
         const name = odfAttribute(tag.attributes, "name", scope, ODF_STYLE_NS);
         if (name !== undefined) {
-          odfTextStyles[parent.name === "styles" ? "common" : "automatic"].set(name, {
+          odfTextStyles[family][parent.name === "styles" ? "common" : "automatic"].set(name, {
             parent: odfAttribute(tag.attributes, "parent-style-name", scope, ODF_STYLE_NS),
             hidden: node.odfStyleHidden,
           });
@@ -516,6 +519,10 @@ function xml(
       (extension === ".odp" &&
         node.name === "page-thumbnail" &&
         stack.some((ancestor) => ancestor.name === "notes")) ||
+      // Calc anchors floating shapes inside cells; their text is not cell data.
+      (extension === ".ods" &&
+        parent.name === "table-cell" &&
+        namespaceOf(tag.name, [...stack, node]) === ODF_DRAW_NS) ||
       (isCompatibilityChoice && parent.hasSelectedChoice)
     ) {
       parent.children.pop();
@@ -1685,8 +1692,9 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       }
       yield* paragraphs(doc);
     } else if ([".odt", ".ods", ".odp"].includes(extension)) {
+      const odfFamily = (): OdfStyleFamily => ({ common: new Map(), automatic: new Map() });
       const odfTextStyles: OdfTextStyles | undefined =
-        extension === ".odt" ? { common: new Map(), automatic: new Map() } : undefined;
+        extension === ".odt" ? { text: odfFamily(), paragraph: odfFamily() } : undefined;
       if (odfTextStyles) {
         const namedStyles = files.get(part("styles.xml"));
         if (namedStyles !== undefined) {
@@ -1694,8 +1702,8 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             xml(namedStyles, extension, undefined, odfTextStyles);
           } catch {
             // A partial or oversized optional styles part must not hide otherwise readable text.
-            odfTextStyles.common.clear();
-            odfTextStyles.automatic.clear();
+            odfTextStyles.text = odfFamily();
+            odfTextStyles.paragraph = odfFamily();
           }
         }
       }

@@ -562,11 +562,19 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   let html = "";
   const pages: { title: undefined; html: string }[] = [];
   let completedLength = 0;
+  // Footnotes follow the page text, as in ODT previews; noteDepth marks the open footnote group.
+  let notes = "";
+  let noteCount = 0;
+  let noteDepth: number | undefined;
+  let noteParent = "";
   const finishPage = () => {
     if (pages.length >= 500) throw new PreviewError({ code: "rtf-too-many-pages" });
-    pages.push({ title: undefined, html: `<p data-rtf-whitespace>${html}</p>` });
+    pages.push({
+      title: undefined,
+      html: `<p data-rtf-whitespace>${html}</p>${notes && `<hr>${notes}`}`,
+    });
     completedLength += html.length;
-    html = "";
+    html = notes = "";
   };
   let run = "";
   let fallback = 0;
@@ -625,6 +633,12 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     } else if (char === "}") {
       flush();
       fallback = 0;
+      if (noteDepth === stack.length) {
+        notes += `<p data-rtf-whitespace>${html}</p>`;
+        completedLength += html.length;
+        html = noteParent;
+        noteDepth = undefined;
+      }
       const parent = stack.pop();
       if (!parent) throw new PreviewError({ code: "rtf-damaged" });
       state = parent;
@@ -647,7 +661,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       }
       if (next === "*") {
         // Shape instructions are an optional destination, but a text box keeps its text there.
-        if (!/^\*[\r\n]*\\shpinst(?![a-z])/i.test(source.slice(i, i + 16))) state.skip = true;
+        if (!/^\*[\r\n]*\\(?:shpinst|footnote)(?![a-z])/i.test(source.slice(i, i + 16)))
+          state.skip = true;
         i++;
         continue;
       }
@@ -777,7 +792,12 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
           html += lineBreak();
         }
         fallback = state.uc;
-      } else if (!hidden() && word === "page") finishPage();
+      } else if (word === "footnote") {
+        if (hidden() || noteDepth !== undefined) state.skip = true;
+        else [noteDepth, noteParent, html] = [stack.length, html, ""];
+      } else if (word === "chftn" && !hidden())
+        html += `<sup>${noteDepth === undefined ? ++noteCount : noteCount}</sup>`;
+      else if (!hidden() && word === "page") finishPage();
       else if (word === "cell" || word === "nestcell") emit("\t", state.skip);
       else if (
         (!state.skip && word === "row") ||

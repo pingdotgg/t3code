@@ -1741,19 +1741,54 @@ describe("question answer paths", () => {
           exact:
             "Use the north entrance.\nWait near the red marker.\nBring your badge.\nVisible control.\nKeep common parent.",
         },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml": [
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:s="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:foreign="urn:example">',
+              '<office:automatic-styles><s:style s:name="P1" s:family="paragraph"><s:text-properties text:display="none"/></s:style>',
+              '<s:style s:name="HiddenChild" s:family="paragraph" s:parent-style-name="HiddenBase"/>',
+              '<s:style s:name="ShowSpan" s:family="text"><s:text-properties text:display="true"/></s:style>',
+              '<s:style s:name="ForeignHidden" s:family="paragraph"><s:text-properties foreign:display="none"/></s:style></office:automatic-styles>',
+              "<office:body><office:text>",
+              '<text:p text:style-name="P1">Retired <text:line-break/> route.</text:p>',
+              '<text:h text:outline-level="2" text:style-name="HiddenBase">Retired section</text:h>',
+              '<text:p text:style-name="HiddenChild">Draft <text:span text:style-name="ShowSpan">North entrance</text:span> only.</text:p>',
+              '<text:p text:style-name="Shared">Hidden shared paragraph.</text:p>',
+              '<text:p>Keep <text:span text:style-name="Shared">shared text</text:span>.</text:p>',
+              '<text:p text:style-name="TextOnly">Paragraph ignores text family.</text:p>',
+              '<text:p text:style-name="ForeignHidden">Foreign display control.</text:p>',
+              '<text:p foreign:style-name="P1">Foreign style control.</text:p>',
+              "</office:text></office:body></office:document-content>",
+            ].join(""),
+            "styles.xml": [
+              '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:t="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"><office:styles>',
+              '<style:style style:name="HiddenBase" style:family="paragraph"><style:text-properties t:display="none"/></style:style>',
+              '<style:style style:name="Shared" style:family="paragraph"><style:text-properties t:display="none"/></style:style>',
+              '<style:style style:name="Shared" style:family="text"><style:text-properties t:display="true"/></style:style>',
+              '<style:style style:name="TextOnly" style:family="text"><style:text-properties t:display="none"/></style:style>',
+              "</office:styles></office:document-styles>",
+            ].join(""),
+          },
+          expected: [],
+          exact:
+            "North entrance\nKeep shared text.\nParagraph ignores text family.\nForeign display control.\nForeign style control.",
+        },
         ...["<mismatch>", "<nested>".repeat(129) + "</nested>".repeat(129)].map((trailer) => ({
           ext: "odt",
           parts: {
             "styles.xml":
               '<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:s="urn:oasis:names:tc:opendocument:xmlns:style:1.0"><office:styles>' +
-              '<s:style s:name="Retired" s:family="text"><s:text-properties text:display="none"/></s:style></office:styles>' +
+              '<s:style s:name="Retired" s:family="text"><s:text-properties text:display="none"/></s:style>' +
+              '<s:style s:name="Retired" s:family="paragraph"><s:text-properties text:display="none"/></s:style></office:styles>' +
               trailer +
               "</office:document-styles>",
             "content.xml":
-              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:p>Bring your <text:span text:style-name="Retired">badge</text:span>.</text:p></office:text></office:body></office:document-content>',
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><text:p>Bring your <text:span text:style-name="Retired">badge</text:span>.</text:p><text:p text:style-name="Retired">Check in at reception.</text:p></office:text></office:body></office:document-content>',
           },
           expected: [],
-          exact: "Bring your badge.",
+          exact: "Bring your badge.\nCheck in at reception.",
         })),
         {
           ext: "odt",
@@ -2143,10 +2178,25 @@ describe("question answer paths", () => {
               '<text:p><draw:frame draw:name="Frame1" text:anchor-type="paragraph"><draw:text-box><text:p>Call the dock manager</text:p><text:p>before noon</text:p></draw:text-box></draw:frame>Trucks leave at six.</text:p>' +
               '<text:p><draw:custom-shape text:anchor-type="char" draw:name="Text Box 1"><text:p>Gate 4</text:p><text:p>North side</text:p><draw:enhanced-geometry draw:type="ooxml-rect"/></draw:custom-shape>Drivers sign in.</text:p>' +
               '<text:p>Badge <draw:custom-shape text:anchor-type="as-char"><text:p>A</text:p><text:p>B</text:p></draw:custom-shape> required.</text:p>' +
+              "<table:table><table:table-row><table:table-cell><draw:custom-shape><text:p>Cell callout</text:p></draw:custom-shape></table:table-cell></table:table-row></table:table>" +
               "</office:text></office:body></office:document-content>",
           },
           exact:
-            "Shipping update.\nCall the dock manager\nbefore noon\nTrucks leave at six.\nGate 4\nNorth side\nDrivers sign in.\nBadge A\nB required.",
+            "Shipping update.\nCall the dock manager\nbefore noon\nTrucks leave at six.\nGate 4\nNorth side\nDrivers sign in.\nBadge A\nB required.\nCell callout",
+          expected: [],
+        },
+        {
+          ext: "ods",
+          parts: {
+            "content.xml":
+              '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:d="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:foo="urn:example:foo"><office:body><office:spreadsheet><table:table table:name="Stock">' +
+              '<table:table-row><table:table-cell><text:p>Apples</text:p></table:table-cell><table:table-cell office:value-type="float" office:value="42"><text:p>42</text:p><draw:custom-shape table:end-cell-address="Stock.D4"><text:p>Recount on Monday</text:p></draw:custom-shape></table:table-cell></table:table-row>' +
+              '<table:table-row><table:table-cell><text:p>Pears</text:p></table:table-cell><table:table-cell><draw:frame table:end-cell-address="Stock.D6"><draw:text-box><text:p>Supplier late</text:p></draw:text-box></draw:frame></table:table-cell></table:table-row>' +
+              '<table:table-row><table:table-cell office:value-type="float" office:value="99"><draw:custom-shape><text:p>Check bin</text:p></draw:custom-shape></table:table-cell><table:table-cell><d:g><d:custom-shape><text:p>Grouped note</text:p></d:custom-shape></d:g></table:table-cell><table:table-cell><text:list><text:list-item><text:p>Crate A</text:p></text:list-item><text:list-item><text:p>Crate B</text:p></text:list-item></text:list><custom-shape xmlns="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" foo:xmlns="urn:example:other"><text:p>Default NS shape</text:p></custom-shape></table:table-cell></table:table-row>' +
+              '<table:table-row><table:table-cell><text:p>Badge <draw:frame text:anchor-type="as-char"><draw:text-box><text:p>A</text:p></draw:text-box></draw:frame> required.</text:p></table:table-cell></table:table-row>' +
+              "</table:table></office:spreadsheet></office:body></office:document-content>",
+          },
+          exact: "## Sheet: Stock\nApples\t42\nPears\n99\t\tCrate A Crate B\nBadge A required.",
           expected: [],
         },
         {
