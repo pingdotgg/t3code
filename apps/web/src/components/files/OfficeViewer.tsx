@@ -367,6 +367,8 @@ function ExtendedOfficeViewer(props: {
                 name={`${props.name}: ${sheetName(page)}`}
                 count={sheet.rowCount}
                 columns={sheet.columns}
+                rowIndexes={sheet.rowIndexes}
+                columnIndexes={sheet.columnIndexes}
                 getRows={(index) => (index === 0 ? sheet.rows : sheetPages.get(`${page}:${index}`))}
                 loadPage={(index) => {
                   const key = `${page}:${index}`;

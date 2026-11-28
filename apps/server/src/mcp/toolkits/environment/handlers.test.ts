@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  CALM_HOST_PRESSURE,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProviderInstanceId,
@@ -15,6 +16,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import * as Environment from "../../../environment/ServerEnvironment.ts";
+import * as HostResources from "../../../resourceTelemetry/HostResources.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Settings from "../../../serverSettings.ts";
@@ -26,6 +28,56 @@ import { EnvironmentToolkit } from "./tools.ts";
 
 const environmentId = EnvironmentId.make("environment:settings");
 const threadId = ThreadId.make("thread:settings");
+
+const layerEnvironment = (overrides: {
+  readonly getThreadShell: ThreadManagement.ThreadManagementService["Service"]["getThreadShell"];
+  readonly updateSettings?: Settings.ServerSettingsService["Service"]["updateSettings"];
+}) =>
+  Layer.mergeAll(
+    ThreadCommandExecutor.layer,
+    Layer.succeed(McpInvocationContext.McpInvocationContext, {
+      environmentId,
+      requestNamespace: "provider:preferences",
+      thread: {
+        threadId,
+        providerSessionId: "provider:preferences",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      },
+      client: undefined,
+      capabilities: new Set(["orchestration" as const]),
+      issuedAt: 0,
+    }),
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      getThreadShell: overrides.getThreadShell,
+    }),
+    Layer.mock(Environment.ServerEnvironment)({
+      getDescriptor: Effect.succeed({
+        environmentId,
+        label: "Test",
+        platform: { os: "linux", arch: "x64" },
+        serverVersion: "0.0.0",
+        capabilities: { repositoryIdentity: false },
+      }),
+    }),
+    Layer.mock(Settings.ServerSettingsService)({
+      getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+      ...(overrides.updateSettings === undefined
+        ? {}
+        : { updateSettings: overrides.updateSettings }),
+    }),
+    Layer.mock(HostResources.HostResources)({
+      read: Effect.succeed({
+        sampledAt: 0,
+        cpuUtilization: 0.934,
+        cpuCount: 16,
+        availableMemoryBytes: 3.26e9,
+        totalMemoryBytes: 64e9,
+        diskFreeBytes: 812e9,
+        diskTotalBytes: 2e12,
+      }),
+      readPressure: Effect.succeed({ ...CALM_HOST_PRESSURE, memory: "severe", cpu: "elevated" }),
+    }),
+  );
 
 const layerCaller = (
   shell: Effect.Effect<OrchestrationV2ThreadShell>,
@@ -57,6 +109,8 @@ const layerCaller = (
             capabilities: { repositoryIdentity: false },
           }),
         }),
+        // Settings tools never read the machine; `t3_environment_read` does.
+        Layer.mock(HostResources.HostResources)({}),
         settings,
       ),
     ),
@@ -158,6 +212,33 @@ it.effect("keeps agent feedback out of the settings agents read and write", () =
       layerCaller(
         Effect.succeed(liveThreadShell(threadId)),
         Settings.ServerSettingsService.layerTest({ agentFeedback: { mode: "auto" } }),
+      ),
+    ),
+  ),
+);
+
+it.effect("t3_environment_read tells agents how loaded the machine is", () =>
+  Effect.gen(function* () {
+    const toolkit = yield* EnvironmentToolkit;
+    const result = yield* toolkit
+      .handle("t3_environment_read", {})
+      .pipe(Stream.unwrap, Stream.runCollect);
+    expect(result.at(-1)?.result).toMatchObject({
+      machine: {
+        pressure: { memory: "severe", cpu: "elevated", io: "none", disk: "none" },
+        cpuCount: 16,
+        cpuUsedPercent: 93,
+        memoryAvailableGb: 3.3,
+        memoryTotalGb: 64,
+        diskFreeGb: 812,
+      },
+    });
+  }).pipe(
+    Effect.provide(
+      McpToolAccess.HandlersLayer.layer(EnvironmentHandlers.layer).pipe(
+        Layer.provideMerge(
+          layerEnvironment({ getThreadShell: () => Effect.succeed(liveThreadShell(threadId)) }),
+        ),
       ),
     ),
   ),

@@ -41,6 +41,27 @@ describe("boundedZip", () => {
       ["a.txt", "ASCII"],
     ]);
   });
+
+  it("enforces xmlLimit case-insensitively on unencrypted and encrypted ZIP entries", async () => {
+    const payload = "x".repeat(200);
+    const bytes = await new JSZip()
+      .file("word/document.XML", payload)
+      .generateAsync({ type: "arraybuffer", compression: "STORE" });
+    await expect(boundedZip(bytes, 1000, { xmlLimit: 100 })).rejects.toMatchObject({
+      code: "archive-expanded-too-large",
+    });
+
+    const { Uint8ArrayWriter, TextReader, ZipWriter } =
+      await import("@zip.js/zip.js/index-native.js");
+    const writer = new ZipWriter(new Uint8ArrayWriter(), { useWebWorkers: false });
+    await writer.add("word/document.XML", new TextReader(payload), { password: "open me" });
+    const encryptedBytes = (await writer.close()).buffer;
+    await expect(
+      boundedZip(encryptedBytes, 1000, { password: "open me", xmlLimit: 100 }),
+    ).rejects.toMatchObject({
+      code: "archive-expanded-too-large",
+    });
+  });
 });
 
 it.each([false, true])("opens a password-protected ZIP (ZipCrypto: %s)", async (zipCrypto) => {

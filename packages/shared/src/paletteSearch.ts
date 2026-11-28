@@ -5,6 +5,10 @@ import type { OrchestrationV2ThreadOpens } from "@t3tools/contracts";
 import { WORKTREE_BRANCH_PREFIX } from "./git.ts";
 
 const ALPHANUMERIC = /[\p{L}\p{N}]/u;
+// A vowel sign or accent; variation selectors follow emoji ("⚠️"), not letters.
+const LETTER_MARK = /(?![\uFE00-\uFE0F\u{E0100}-\u{E01EF}])[\p{Mn}\p{Mc}]/u;
+// Thai, Lao, Myanmar and Khmer have no spaces, so a letter after a mark stays their only word start.
+const SPACELESS = /[\u0E00-\u0EFF\u1000-\u109F\u1780-\u17FF]/;
 const LOWERCASE = /\p{Ll}/u;
 const UPPERCASE = /\p{Lu}/u;
 const DIGIT = /\p{N}/u;
@@ -78,6 +82,14 @@ function hasCjkWord(token: string): boolean {
   });
 }
 
+// "ताब" is not a word in "किताब": the vowel sign continues the letter before it.
+function continuesWord(previous: string, character: string): boolean {
+  return (
+    ALPHANUMERIC.test(previous) ||
+    (LETTER_MARK.test(previous) && ALPHANUMERIC.test(character) && !SPACELESS.test(character))
+  );
+}
+
 /**
  * Whether `character` starts a word after `previous` and `beforePrevious`
  * ("" at the start): after a non-letter, at a camelCase or digit boundary, or
@@ -95,7 +107,7 @@ function isWordStart(
     (ALPHANUMERIC.test(character) || SYMBOL.test(character)) &&
     !afterApostrophe &&
     (previous === "" ||
-      !ALPHANUMERIC.test(previous) ||
+      !continuesWord(previous, character) ||
       (LOWERCASE.test(previous) && UPPERCASE.test(character)) ||
       // The last capital of an acronym starts the next word: "JSONSchema".
       (UPPERCASE.test(previous) && UPPERCASE.test(character) && LOWERCASE.test(next)) ||
@@ -853,15 +865,7 @@ export function findSearchTokenRanges(text: string, query: string): SearchRange[
         ranges.push(found);
       }
     }
-    // Overlaps go, longest first; touching matches stay apart, so find opens
-    // on the first one alone.
-    const kept: SearchRange[] = [];
-    for (const range of ranges.sort(
-      (left, right) => left.start - right.start || right.end - left.end,
-    )) {
-      if (range.start >= (kept.at(-1)?.end ?? 0)) kept.push(range);
-    }
-    return kept;
+    return separateExactRanges(ranges);
   }
   // Each folded token, and whether it must start a word; a spelling any token
   // allows mid-word lights up mid-word.
@@ -893,7 +897,19 @@ export function findSearchTokenRanges(text: string, query: string): SearchRange[
       index = field.text.indexOf(token, index + token.length);
     }
   }
-  return mergeRanges(ranges);
+  return exact ? separateExactRanges(ranges) : mergeRanges(ranges);
+}
+
+// Overlaps go, longest first; touching exact matches stay apart, so find opens
+// on the first one alone.
+function separateExactRanges(ranges: SearchRange[]): SearchRange[] {
+  const kept: SearchRange[] = [];
+  for (const range of ranges.sort(
+    (left, right) => left.start - right.start || right.end - left.end,
+  )) {
+    if (range.start >= (kept.at(-1)?.end ?? 0)) kept.push(range);
+  }
+  return kept;
 }
 
 export interface SearchTextPart {

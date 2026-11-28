@@ -6691,6 +6691,186 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect("marks a command Auto-review denied as declined with the reviewer's reason", () =>
+    Effect.gen(function* () {
+      const scenario = "codex-auto-review-denied";
+      const nativeThreadId = `native-${scenario}-thread`;
+      const nativeTurnId = `native-${scenario}-turn`;
+      const command = "/bin/bash -lc 'rm -rf /tmp/unknown'";
+      const action = { type: "command", source: "unifiedExec", command, cwd: "/workspace" };
+      const commandItem = (status: "inProgress" | "declined") => ({
+        type: "commandExecution",
+        id: "command-denied",
+        command,
+        cwd: "/workspace",
+        processId: null,
+        source: "unifiedExecStartup",
+        status,
+        commandActions: [{ type: "unknown", command }],
+        aggregatedOutput: null,
+        exitCode: null,
+        durationMs: null,
+      });
+      const frame = (method: string, params: Record<string, unknown>) => ({
+        type: "emit_inbound" as const,
+        label: method,
+        frame: { method, params: { threadId: nativeThreadId, turnId: nativeTurnId, ...params } },
+      });
+      const transcript = makeCodexReplayTranscript({
+        scenario,
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Delete it." }),
+          frame("item/started", { startedAtMs: 1782622445000, item: commandItem("inProgress") }),
+          frame("item/autoApprovalReview/completed", {
+            reviewId: "review-1",
+            targetItemId: "command-denied",
+            startedAtMs: 1782622445001,
+            completedAtMs: 1782622445002,
+            decisionSource: "agent",
+            action,
+            review: {
+              status: "denied",
+              riskLevel: "high",
+              userAuthorization: "low",
+              rationale: "Deletes a directory of unknown contents.",
+            },
+          }),
+          frame("item/completed", { completedAtMs: 1782622445003, item: commandItem("declined") }),
+          {
+            type: "emit_inbound",
+            label: "turn/completed",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`attempt-${scenario}`),
+          text: "Delete it.",
+        }),
+      );
+      yield* harness.awaitTerminal(1);
+
+      const declined = harness.events.findLast(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
+      );
+      assert.isTrue(declined?.type === "turn_item.updated");
+      if (declined?.type !== "turn_item.updated") return;
+      assert.strictEqual(declined.turnItem.status, "cancelled");
+      assert.strictEqual(declined.turnItem.toolNonExecutionKind, "declined");
+      assert.strictEqual(
+        declined.turnItem.type === "command_execution" ? declined.turnItem.output : undefined,
+        "Auto-review denied this command: Deletes a directory of unknown contents.",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("marks a file change Auto-review denied as declined", () =>
+    Effect.gen(function* () {
+      const scenario = "codex-auto-review-denied-patch";
+      const nativeThreadId = `native-${scenario}-thread`;
+      const nativeTurnId = `native-${scenario}-turn`;
+      const patchItem = (status: "inProgress" | "declined") => ({
+        type: "fileChange",
+        id: "patch-denied",
+        status,
+        changes: [
+          {
+            path: "/workspace/.env",
+            kind: { type: "update", move_path: null },
+            diff: "-A=1\n+A=2\n",
+          },
+        ],
+      });
+      const frame = (method: string, params: Record<string, unknown>) => ({
+        type: "emit_inbound" as const,
+        label: method,
+        frame: { method, params: { threadId: nativeThreadId, turnId: nativeTurnId, ...params } },
+      });
+      const transcript = makeCodexReplayTranscript({
+        scenario,
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Edit it." }),
+          frame("item/started", { startedAtMs: 1782622445000, item: patchItem("inProgress") }),
+          frame("item/autoApprovalReview/completed", {
+            reviewId: "review-1",
+            targetItemId: "patch-denied",
+            startedAtMs: 1782622445001,
+            completedAtMs: 1782622445002,
+            decisionSource: "agent",
+            action: { type: "applyPatch", cwd: "/workspace", files: ["/workspace/.env"] },
+            review: {
+              status: "denied",
+              riskLevel: "high",
+              userAuthorization: "low",
+              rationale: "Edits a secrets file.",
+            },
+          }),
+          frame("item/completed", { completedAtMs: 1782622445003, item: patchItem("declined") }),
+          {
+            type: "emit_inbound",
+            label: "turn/completed",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`attempt-${scenario}`),
+          text: "Edit it.",
+        }),
+      );
+      yield* harness.awaitTerminal(1);
+
+      const declined = harness.events.findLast(
+        (event) => event.type === "turn_item.updated" && event.turnItem.type === "file_change",
+      );
+      assert.isTrue(declined?.type === "turn_item.updated");
+      if (declined?.type !== "turn_item.updated") return;
+      assert.strictEqual(declined.turnItem.status, "cancelled");
+      assert.strictEqual(declined.turnItem.toolNonExecutionKind, "declined");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("fails a stalled 429 provider retry as a usage limit and stops the Codex turn", () =>
     Effect.gen(function* () {
       const scenario = "codex-provider-retry-stall";

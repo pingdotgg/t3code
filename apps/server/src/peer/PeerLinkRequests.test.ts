@@ -145,7 +145,7 @@ const makeLaptopWith = (
     const layerDatabase = Layer.succeedContext(database);
     const layerOrchestrator = Layer.mergeAll(
       layerDatabase,
-      ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+      ProjectionStore.layer.pipe(Layer.provide(NodeCrypto.layer), Layer.provide(layerDatabase)),
       ProviderReplayHarness.layerWithRegistry(
         { name: "peer-link-requests" },
         ProviderAdapterRegistry.layerFromAdapters([adapter]),

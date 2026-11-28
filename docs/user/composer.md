@@ -28,6 +28,11 @@ Files upload to the environment's machine as soon as you attach them, and all up
 - **Web and desktop**: Drag, paste, or pick files. Reloading before an upload finishes requires re-attaching.
 - **Mobile**: Pick files, share into T3 Code via the system share sheet, or drag images in Android split screen.
 
+In the desktop app, when the thread's environment runs on this computer, drag a
+folder onto the composer or choose **Folder…** from the attach button to add its
+path. Nothing is uploaded, so there is no size limit; the agent reads the folder
+in place.
+
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
 ## Send while the agent is working

@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
+import * as HostResources from "../../../resourceTelemetry/HostResources.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as Settings from "../../../serverSettings.ts";
 import { advertisedSchemaOf } from "../../advertisedJsonSchema.ts";
@@ -48,6 +49,32 @@ const jsonValue = (
   encoded: Record<string, Schema.Json | undefined>,
   key: AgentSettingKey,
 ) => encoded[key] ?? (settings[key] === null ? null : undefined);
+const GB = 1e9;
+const gigabytes = (bytes: number) => Math.round((bytes / GB) * 10) / 10;
+
+const machine = Effect.gen(function* () {
+  const hostResources = yield* HostResources.HostResources;
+  const [snapshot, pressure] = yield* Effect.all([hostResources.read, hostResources.readPressure], {
+    concurrency: "unbounded",
+  });
+  return {
+    pressure: {
+      memory: pressure.memory,
+      cpu: pressure.cpu,
+      io: pressure.io,
+      disk: pressure.disk,
+    },
+    cpuCount: snapshot.cpuCount,
+    cpuUsedPercent:
+      snapshot.cpuUtilization === null ? null : Math.round(snapshot.cpuUtilization * 100),
+    memoryAvailableGb: gigabytes(snapshot.availableMemoryBytes),
+    memoryTotalGb: gigabytes(snapshot.totalMemoryBytes),
+    diskFreeGb:
+      snapshot.diskFreeBytes === undefined || snapshot.diskFreeBytes === null
+        ? null
+        : gigabytes(snapshot.diskFreeBytes),
+  };
+});
 
 const access = Effect.gen(function* () {
   const context = yield* readCaller();
@@ -175,6 +202,7 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
         label: descriptor.label,
         serverVersion: descriptor.serverVersion,
         platform: descriptor.platform,
+        machine: yield* machine,
       };
     }),
   ),

@@ -2,6 +2,7 @@ import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwarene
 import { applyOrchestrationV2ThreadVisit, pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
+import * as Digest from "effect/crypto/Digest";
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
@@ -512,6 +513,7 @@ export interface ActiveShellIndexEntry extends Pick<
   | "id"
   | "projectId"
   | "lineage"
+  | "delegatedFrom"
   | "settledOverride"
   | "settledAt"
   | "pinnedAt"
@@ -667,6 +669,10 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, ProjectionStoreV2Error>;
+  readonly hasProviderThread: (
+    threadId: ThreadId,
+    providerThreadId: ProviderThreadId,
+  ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
   /** The thread whose current guest share has this id. Scans thread rows; only redeem uses it. */
   readonly findGuestShareThreadId: (
     shareId: GuestShareId,
@@ -821,6 +827,7 @@ export interface ProjectionStoreV2Shape {
   readonly getCheckpointCaptureContext: (
     threadId: ThreadId,
     target: { readonly runId: RunId; readonly scopeId: CheckpointScopeId },
+    options?: { readonly preservedCheckpoints: "baselines" },
   ) => Effect.Effect<ProjectionCheckpointCaptureContext, ProjectionStoreV2Error>;
   readonly getCheckpointRollbackContext: (
     threadId: ThreadId,
@@ -2390,10 +2397,13 @@ const isInlineWorkOutput = (payloadJson: string) => {
   );
 };
 
-export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> = Layer.effect(
+type ProjectionStoreServices = SqlClient.SqlClient | Digest.Digest;
+
+export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreServices> = Layer.effect(
   ProjectionStoreV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const digests = yield* Digest.Digest;
 
     // SQLite uses the partial conversation index of migration 082 only for this exact predicate.
     const CONVERSATION_INDEX_EXCLUDED_TYPES = sql.literal(
@@ -6096,6 +6106,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       "ProjectionStore.findThread",
     )(selectThread);
 
+    const hasProviderThread: ProjectionStoreV2Shape["hasProviderThread"] = Effect.fn(
+      "ProjectionStore.hasProviderThread",
+    )((threadId, providerThreadId) =>
+      sql`
+        SELECT 1 FROM orchestration_v2_projection_provider_threads
+        WHERE provider_thread_id = ${providerThreadId}
+      `.pipe(
+        Effect.map((rows) => rows.length > 0),
+        Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+      ),
+    );
+
     const requireThread = Effect.fn("ProjectionStore.requireThread")(function* (
       threadId: ThreadId,
     ) {
@@ -6459,6 +6481,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const getCheckpointCaptureContext: ProjectionStoreV2Shape["getCheckpointCaptureContext"] = (
       threadId,
       target,
+      options,
     ) =>
       sql
         .withTransaction(
@@ -6503,7 +6526,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               sql<{ readonly ordinal: number }>`SELECT ordinal_within_scope AS ordinal
             FROM orchestration_v2_projection_checkpoints
             WHERE thread_id = ${threadId} AND scope_id = ${target.scopeId}
-              AND ${preservedCheckpoint}`,
+              AND ${preservedCheckpoint}
+              ${
+                options?.preservedCheckpoints === "baselines"
+                  ? sql`AND ordinal_within_scope IN (0, ${run === undefined ? null : Math.max(0, run.ordinal - 1)})`
+                  : sql``
+              }`,
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_checkpoint_scopes
             WHERE thread_id = ${threadId} AND kind = 'manual' ORDER BY scope_id ASC`,
               sql<{ readonly scope_id: CheckpointScopeId }>`SELECT scope_id
@@ -9173,11 +9201,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
     );
 
+    // The minute sweeps reread mostly unchanged rows; reuse a thread's decode while its payload digest matches.
+    const textEncoder = new TextEncoder();
+    const decodedPullRequestThreads = new Map<
+      string,
+      { readonly digest: string; readonly thread: ProjectionThreadPullRequests }
+    >();
+    const pullRequestSweepIds = {
+      active: new Set<string>(),
+      includeArchived: new Set<string>(),
+    };
     const getThreadsWithPullRequests: ProjectionStoreV2Shape["getThreadsWithPullRequests"] =
       Effect.fn("ProjectionStore.getThreadsWithPullRequests")(
         function* (threadId, options) {
-          const rows = yield* sql<PayloadRow>`
-          SELECT payload_json
+          const rows = yield* sql<PayloadRow & { readonly thread_id: string }>`
+          SELECT thread_id, payload_json
           FROM orchestration_v2_projection_threads
           WHERE deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND thread_id = ${threadId}`}
             ${
@@ -9189,18 +9227,53 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }
           ORDER BY updated_at ASC, thread_id ASC
         `;
-          return yield* Effect.forEach(rows, (row) =>
-            decodeThreadPayload(row.payload_json).pipe(
-              Effect.map((thread): ProjectionThreadPullRequests => ({
-                id: thread.id,
-                projectId: thread.projectId,
-                lineage: thread.lineage,
-                settledOverride: thread.settledOverride,
-                settledAt: thread.settledAt,
-                pullRequests: thread.pullRequests ?? [],
-              })),
-            ),
+          let cacheHits = 0;
+          const threads = yield* Effect.forEach(rows, (row) =>
+            Effect.gen(function* () {
+              const digest = yield* digests.digestHex(
+                Digest.sha256,
+                textEncoder.encode(row.payload_json),
+              );
+              const cached = decodedPullRequestThreads.get(row.thread_id);
+              if (cached?.digest === digest) {
+                cacheHits++;
+                return cached.thread;
+              }
+              return yield* decodeThreadPayload(row.payload_json).pipe(
+                Effect.map((thread): ProjectionThreadPullRequests => ({
+                  id: thread.id,
+                  projectId: thread.projectId,
+                  lineage: thread.lineage,
+                  settledOverride: thread.settledOverride,
+                  settledAt: thread.settledAt,
+                  pullRequests: thread.pullRequests ?? [],
+                })),
+                Effect.tap((thread) =>
+                  Effect.sync(() =>
+                    decodedPullRequestThreads.set(row.thread_id, { digest, thread }),
+                  ),
+                ),
+              );
+            }),
           );
+          yield* Effect.annotateCurrentSpan({
+            "orchestration_v2.projection_row_count": rows.length,
+            "orchestration_v2.decode_cache_hit_count": cacheHits,
+            "orchestration_v2.decode_cache_miss_count": rows.length - cacheHits,
+          });
+          if (threadId === undefined) {
+            pullRequestSweepIds[options?.includeArchived === true ? "includeArchived" : "active"] =
+              new Set(rows.map((row) => row.thread_id));
+            for (const id of decodedPullRequestThreads.keys()) {
+              if (
+                !pullRequestSweepIds.active.has(id) &&
+                !pullRequestSweepIds.includeArchived.has(id)
+              ) {
+                decodedPullRequestThreads.delete(id);
+              }
+            }
+          }
+          return threads;
         },
         Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
       );
@@ -9708,6 +9781,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly parent_thread_id: string | null;
         readonly root_thread_id: string;
         readonly side_chat: number | null;
+        readonly delegated_from_environment_id: string | null;
+        readonly delegated_from_thread_id: string | null;
+        readonly delegated_from_title: string | null;
         readonly settled_override: string | null;
         readonly settled_at: string | null;
         readonly pinned_at: string | null;
@@ -9723,6 +9799,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ${indexedField("$.lineage.parentThreadId")} AS parent_thread_id,
           ${indexedField("$.lineage.rootThreadId")} AS root_thread_id,
           ${indexedField("$.lineage.sideChat")} AS side_chat,
+          ${indexedField("$.delegatedFrom.environmentId")} AS delegated_from_environment_id,
+          ${indexedField("$.delegatedFrom.threadId")} AS delegated_from_thread_id,
+          ${indexedField("$.delegatedFrom.title")} AS delegated_from_title,
           ${indexedField("$.settledOverride")} AS settled_override,
           ${indexedField("$.settledAt")} AS settled_at,
           ${indexedField("$.pinnedAt")} AS pinned_at,
@@ -9784,6 +9863,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         id: ThreadId.make(row.thread_id),
         projectId: ProjectId.make(row.project_id),
         lineage: shellIndexLineage(row),
+        ...(row.delegated_from_environment_id === null || row.delegated_from_thread_id === null
+          ? {}
+          : {
+              delegatedFrom: {
+                environmentId: EnvironmentId.make(row.delegated_from_environment_id),
+                threadId: ThreadId.make(row.delegated_from_thread_id),
+                title: row.delegated_from_title ?? "",
+              },
+            }),
         settledOverride:
           row.settled_override === "settled" || row.settled_override === "active"
             ? row.settled_override
@@ -9918,6 +10006,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           AND t.archived_at IS NULL
           AND json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
           AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
+          AND json_type(t.payload_json, '$.delegatedFrom') IS NOT 'object'
           AND json_extract(t.payload_json, '$.settledOverride') = 'settled'
           AND json_extract(t.payload_json, '$.settledAt') IS NOT NULL${
             projectIds === undefined ? sql`` : sql` AND t.project_id IN ${sql.in(projectIds)}`
@@ -10059,6 +10148,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       readShellSnapshot: readOnReader(readShellSnapshot),
       listOlderSettledThreads: readOnReader(listOlderSettledThreads),
       getThreadShell: readOnReader(getThreadShell),
+      hasProviderThread: readOnReader(hasProviderThread),
       findGuestShareThreadId: readOnReader(findGuestShareThreadId),
       getThread: readOnReader(getThread),
       findThread: readOnReader(findThread),
