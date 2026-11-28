@@ -85,6 +85,27 @@ describe("markdownProseDirection", () => {
     ["Hebrew immediately after an angle autolink", "<https://example.org>שלום", "rtl"],
     ["English around inline code", "Should I edit `useMemo` or keep it?", "ltr"],
     ["English quoting one Hebrew word", "Please check the שלום label before the release", "ltr"],
+    ["Hebrew between escaped backticks", "Go \\`שלום עולם יפה\\`", "rtl"],
+    ["Hebrew after an escaped backtick run", "Go \\```שלום עולם יפה", "rtl"],
+    ["Hebrew after an escaped tilde run", "Go \\~~~שלום עולם יפה", "rtl"],
+    [
+      "Hebrew between unmatched backticks across paragraphs",
+      "Start `שלום עולם\n\nשלום יפה`",
+      "rtl",
+    ],
+    ["Hebrew across CR-only paragraphs", "Start `שלום עולם\r\rשלום יפה`", "rtl"],
+    ["Hebrew across quoted paragraphs", "> Start `שלום עולם\n>\n> שלום יפה`", "rtl"],
+    ["Hebrew around inline code with one CRLF", "שלום `one two\r\nthree four`", "rtl"],
+    [
+      "Hebrew after inline code that follows an escaped backtick",
+      "Go \\```one two`` שלום עולם יפה",
+      "rtl",
+    ],
+    [
+      "Hebrew around soft-wrapped inline code after escaped backslash",
+      "שלום \\\\`one two\nthree four`",
+      "rtl",
+    ],
   ])("reads %s", (_, markdown, direction) => {
     expect(markdownProseDirection(markdown)).toBe(direction);
   });
