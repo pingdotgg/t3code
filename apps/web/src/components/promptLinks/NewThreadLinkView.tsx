@@ -22,6 +22,8 @@ import {
   type NewThreadLink,
   type PromptLinkRepository,
   promptLinkPullRequestUrl,
+  promptLinkRepositoryCloneUrl,
+  promptLinkRepositoryName,
 } from "@t3tools/shared/promptLinks";
 import { useAtomValue } from "@effect/atom-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -224,7 +226,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       return;
     }
     setState({ status: "opening" });
-    const remoteUrl = `https://github.com/${repository.owner}/${repository.name}.git`;
+    const remoteUrl = promptLinkRepositoryCloneUrl(repository);
     const settings = serverConfig.settings;
     const result = await startProjectClone({
       environmentId,
@@ -255,10 +257,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       setState({ status: "missing-repository", repository });
       return;
     }
-    void suggestAppAccessForRemote(
-      environmentId,
-      `https://github.com/${repository.owner}/${repository.name}.git`,
-    );
+    void suggestAppAccessForRemote(environmentId, remoteUrl);
     const project = await waitForProject(
       scopeProjectRef(environmentId, result.value.projectId),
       5_000,
@@ -274,7 +273,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       setState({
         status: "failed",
         title: gt("Cloning {repository}", {
-          repository: `${repository.owner}/${repository.name}`,
+          repository: promptLinkRepositoryName(repository),
         }),
         message: gt("Open this link again when the clone finishes."),
       });
@@ -387,7 +386,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
         />
       );
     case "missing-repository": {
-      const name = `${state.repository.owner}/${state.repository.name}`;
+      const name = promptLinkRepositoryName(state.repository);
       return (
         <LinkPage
           title={gt("You don't have {repository}", { repository: name })}
