@@ -4541,9 +4541,7 @@ it.layer(
           assert.deepStrictEqual(spawnedCommands, [firstMissing]);
 
           const pendingRebuild = yield* Stream.toPull(
-            codexSnapshots.pipe(
-              Stream.filter((provider) => provider.status === "warning" && !provider.installed),
-            ),
+            codexSnapshots.pipe(Stream.filter((provider) => provider.checking === true)),
           );
           yield* serverSettings.updateSettings({
             providerInstances: {
@@ -4567,6 +4565,7 @@ it.layer(
           assert.deepStrictEqual(spawnedCommands, [firstMissing, secondMissing]);
           assert.strictEqual(reprobedCodex?.status, "error");
           assert.strictEqual(reprobedCodex?.installed, false);
+          assert.strictEqual(reprobedCodex?.checking, undefined);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

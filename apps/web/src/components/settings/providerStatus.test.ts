@@ -23,6 +23,21 @@ const provider: ServerProvider = {
 };
 
 describe("getProviderSummary", () => {
+  it("presents an initial check neutrally before installation is known", () => {
+    const checking: ServerProvider = {
+      ...provider,
+      installed: false,
+      status: "warning",
+      checking: true,
+      auth: { status: "unknown" },
+    };
+    const { checking: _checking, ...checked } = checking;
+    expect(getProviderStatusKey(checking)).toBe("neutral");
+    expect(getProviderSummary(checking).headline).toBe("Checking provider status");
+    expect(getProviderSummary(checked).headline).toBe("Not found");
+    expect(getProviderSummary({ ...checking, enabled: false }).headline).toBe("Disabled");
+  });
+
   it("does not hide a provider error behind a previous authenticated state", () => {
     expect(
       getProviderSummary({

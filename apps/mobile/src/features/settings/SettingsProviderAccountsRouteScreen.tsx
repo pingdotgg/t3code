@@ -265,17 +265,19 @@ function ProviderAccount({
       ? state.message
       : !provider.enabled
         ? gt("Turned off")
-        : signedIn
-          ? gt("Signed in")
-          : isDiscovering
-            ? gt("Discovering sign-in methods…")
-            : needsExternalSetup
-              ? gt("No in-app sign-in advertised. Follow the provider's docs to finish setup.")
-              : !provider.installed
-                ? gt("Not installed")
-                : usesCredentials
-                  ? gt("Connect to load models")
-                  : gt("Not signed in");
+        : provider.checking
+          ? gt("Checking provider status")
+          : signedIn
+            ? gt("Signed in")
+            : isDiscovering
+              ? gt("Discovering sign-in methods…")
+              : needsExternalSetup
+                ? gt("No in-app sign-in advertised. Follow the provider's docs to finish setup.")
+                : !provider.installed
+                  ? gt("Not installed")
+                  : usesCredentials
+                    ? gt("Connect to load models")
+                    : gt("Not signed in");
   // A provider with several sign-in methods picks one from a menu on the same control.
   const methodActions: MenuAction[] = methods.map((method) => ({
     id: `method:${method.id}`,

@@ -5766,5 +5766,6 @@
   "5d9bc70d1cb3b596": "{count} máquinas estão quase sem espaço em disco",
   "7bb6d3c4fe5cea0f": "{count} máquinas estão sobrecarregadas",
   "b48a4b390016a4f0": "Usando {usage} enquanto a memória deixa os agentes lentos. Pará-lo ajuda os demais.",
-  "0d23483df1d6fc87": "Usando {usage} enquanto esta máquina está sobrecarregada. Pará-lo ajuda os demais."
+  "0d23483df1d6fc87": "Usando {usage} enquanto esta máquina está sobrecarregada. Pará-lo ajuda os demais.",
+  "49c009661b1e91d6": "Verificando o status do provedor"
 }
