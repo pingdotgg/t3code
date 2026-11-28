@@ -167,7 +167,7 @@ function accentInsensitiveGlob(token: string): string {
 function buildMessageSearch(
   query: string,
   hasIndex: boolean,
-): Omit<typeof SearchRequest.Type, "projectId" | "excludedThreadIds"> | null {
+): Omit<typeof SearchRequest.Type, "projectIds" | "excludedThreadIds"> | null {
   const { long, short, words, exact } = messageSearchTokens(query);
   if (long.length === 0) return null;
   // Two-character CJK words are too short for trigrams.
