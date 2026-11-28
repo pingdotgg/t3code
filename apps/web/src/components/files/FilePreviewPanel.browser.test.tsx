@@ -18,6 +18,9 @@ const state = vi.hoisted(() => ({
   optimistic: null as ProjectReadFileResult | null,
   writeFile: vi.fn(),
   assetUrl: { _tag: "Loading" } as import("~/assets/assetUrls").AssetUrlState,
+  assetUrlForRevision: null as
+    | ((revision: string | null | undefined) => import("~/assets/assetUrls").AssetUrlState)
+    | null,
   assetResources: [] as Array<import("@t3tools/contracts").AssetResource>,
   mintUrl: vi.fn<() => Promise<string | null>>(),
   browserAssetMints: 0,
@@ -71,9 +74,10 @@ vi.mock(import("~/assets/assetUrls"), async (original) => ({
   useAssetUrlState: (
     _environmentId: unknown,
     resource: import("@t3tools/contracts").AssetResource | null,
+    revision?: string | null,
   ) => {
     if (resource) state.assetResources.push(resource);
-    return state.assetUrl;
+    return state.assetUrlForRevision ? state.assetUrlForRevision(revision) : state.assetUrl;
   },
 }));
 vi.mock(import("~/browser/previewRuntime"), async (original) => ({
@@ -132,8 +136,13 @@ vi.mock(import("./OfficeFilePreview"), () => ({
 }));
 vi.mock(import("./FileBreadcrumbs"), () => ({ FileBreadcrumbs: () => <></> }));
 vi.mock(import("./FileBrowserPanel"), () => ({
-  default: () => (
+  default: ({ onRefreshSelectedFile }: { onRefreshSelectedFile?: () => void }) => (
     <div role="tree">
+      {onRefreshSelectedFile ? (
+        <button type="button" onClick={onRefreshSelectedFile}>
+          Refresh workspace files
+        </button>
+      ) : null}
       <button type="button" role="treeitem" data-item-path="src/">
         src
       </button>
@@ -191,6 +200,7 @@ function setup() {
   state.file = null;
   state.optimistic = null;
   state.assetUrl = { _tag: "Loading" };
+  state.assetUrlForRevision = null;
   state.assetResources = [];
   state.openedBrowserUrls = [];
   state.diffWorkersReady = true;
@@ -848,6 +858,51 @@ describe("open file in preview browser", () => {
     expect(state.openedBrowserUrls[1], "the second click reused the first signed URL").not.toBe(
       state.openedBrowserUrls[0],
     );
+  });
+});
+
+describe("workspace HTML preview refresh", () => {
+  it.each([
+    {
+      label: "reloads a rendered HTML preview on refresh when fileRevision advances",
+      workspaceMutationId: null as string | null,
+      withFileRevision: true,
+    },
+    {
+      label: "reloads a rendered HTML preview on refresh without a server fileRevision",
+      workspaceMutationId: "mutation-1" as string | null,
+      withFileRevision: false,
+    },
+  ])("$label", async ({ workspaceMutationId, withFileRevision }) => {
+    using _settings = setup();
+    localStorage.setItem("t3code.fileExplorerOpen", "true");
+    state.file = {
+      relativePath: "page.html",
+      contents: "<h1>v1</h1>",
+      byteLength: 11,
+      truncated: false,
+    };
+    const seenRevisions: Array<string | null | undefined> = [];
+    state.assetUrlForRevision = (revision) => {
+      seenRevisions.push(revision);
+      const refreshed = revision !== workspaceMutationId;
+      return {
+        _tag: "Success",
+        url: refreshed ? "data:text/html,v2" : "data:text/html,v1",
+        expiresAt: Number.MAX_SAFE_INTEGER,
+        ...(withFileRevision ? { fileRevision: refreshed ? "rev-2" : "rev-1" } : {}),
+      };
+    };
+
+    await using screen = await render(filePreview("page.html", workspaceMutationId));
+    const shownIframeSrc = () =>
+      screen.container.querySelector('iframe:not([aria-hidden="true"])')?.getAttribute("src");
+    await vi.waitFor(() => expect(shownIframeSrc()).toMatch(/^data:text\/html,v1/));
+
+    await userEvent.click(screen.getByRole("button", { name: "Refresh workspace files" }));
+
+    await vi.waitFor(() => expect(shownIframeSrc()).toMatch(/^data:text\/html,v2/));
+    expect(seenRevisions.at(-1)).not.toBe(workspaceMutationId);
   });
 });
 
