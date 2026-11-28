@@ -229,6 +229,7 @@ const readCodeWorkspaceFolders = Effect.fn("WorkspaceFolders.readCodeWorkspaceFo
 const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
   input: WorkspaceScanFoldersInput,
   limit: number = PROJECT_TRACKED_FOLDERS_MAX,
+  excludedChildRoot: string | null = null,
 ): Effect.fn.Return<
   WorkspaceScanFoldersResult,
   WorkspaceFoldersError,
@@ -289,6 +290,14 @@ const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
   );
   const seen = new Set<string>();
   const candidates = resolved.flatMap(({ folder, real }) => {
+    // Dropped before `seen`, so a link in it does not hide the repository it points to.
+    if (
+      folder.source === "child" &&
+      excludedChildRoot !== null &&
+      isWithinRoot(path, folder.path, excludedChildRoot)
+    ) {
+      return [];
+    }
     // The scanned folder and its parents are never tracked, however a symlink names them.
     if (seen.has(real) || isWithinRoot(path, realRoot, real)) return [];
     seen.add(real);
@@ -340,8 +349,16 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
   ).map((entry) => path.resolve(root, entry));
   // Everything the scan could find would be dropped, so skip the walk.
   if (ignored.some((entry) => isWithinRoot(path, root, entry))) return [];
+  // Mix keeps its fetched dependencies, often git clones, in `deps`.
+  const mixDeps = (yield* fileSystem
+    .exists(path.join(root, "mix.exs"))
+    .pipe(Effect.orElseSucceed(() => false)))
+    ? path.join(root, "deps")
+    : null;
   // Uncapped: the folders outside the project are dropped below, and must not use up the room.
-  const scan = yield* scanFolders({ workspaceRoot }, Number.POSITIVE_INFINITY).pipe(Effect.option);
+  const scan = yield* scanFolders({ workspaceRoot }, Number.POSITIVE_INFINITY, mixDeps).pipe(
+    Effect.option,
+  );
   if (Option.isNone(scan)) return [];
   const realRoot = yield* realPath(root);
   const inside = yield* Effect.filter(
