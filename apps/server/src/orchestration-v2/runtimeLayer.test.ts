@@ -13695,7 +13695,9 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("PR link events", (it
         });
       yield* sync("baseline", "review-required");
       yield* snooze("with-pr");
-      assert.isTrue((yield* orchestrator.getThreadShell(threadId))?.snoozeUntilPullRequest);
+      const snoozed = yield* orchestrator.getThreadShell(threadId);
+      assert.isTrue(snoozed?.snoozeUntilPullRequest);
+      assert.deepEqual(snoozed?.snoozedUntil, DateTime.add(yield* DateTime.now, { days: 30 }));
 
       yield* sync("approved", "approved");
       const [row] = yield* sql<{ event_type: string }>`

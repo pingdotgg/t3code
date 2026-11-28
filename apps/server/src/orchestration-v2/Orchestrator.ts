@@ -1,3 +1,4 @@
+import { MAX_SNOOZE_PRESET_MINUTES } from "@t3tools/contracts/settings";
 import type {
   OrchestrationV2ThreadLinkMetadata,
   GuestShareId,
@@ -5095,7 +5096,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} has no open pull request to snooze until.`,
         });
       }
-      snoozedUntil = parsedSnoozedUntil.value;
+      snoozedUntil =
+        command.untilPullRequest !== true
+          ? parsedSnoozedUntil.value
+          : DateTime.makeUnsafe(
+              Math.min(
+                DateTime.toEpochMillis(parsedSnoozedUntil.value),
+                DateTime.toEpochMillis(now) + MAX_SNOOZE_PRESET_MINUTES * 60_000,
+              ),
+            );
     }
     let markUnreadVisitedAt: DateTime.Utc | null = null;
     if (command.type === "thread.mark-unread") {

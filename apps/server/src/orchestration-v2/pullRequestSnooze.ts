@@ -9,18 +9,18 @@ import * as DateTime from "effect/DateTime";
 import { threadPullRequestKeysEqual } from "../sourceControl/threadPullRequests.ts";
 
 function pullRequestUpdated(
-  before: ThreadPullRequestSnapshot,
+  before: ThreadPullRequestSnapshot | null,
   after: ThreadPullRequestSnapshot,
   watched: boolean,
 ): boolean {
   const reviewed =
     (after.reviewDecision === "approved" || after.reviewDecision === "changes-requested") &&
-    after.reviewDecision !== before.reviewDecision;
-  const conflicted = after.mergeability === "conflicting" && before.mergeability !== "conflicting";
+    after.reviewDecision !== before?.reviewDecision;
+  const conflicted = after.mergeability === "conflicting" && before?.mergeability !== "conflicting";
   // A watching agent answers its own checks; the user hears if it gets stuck.
   const checksFinished =
     !watched &&
-    before.checksState === "pending" &&
+    (before?.checksState == null || before.checksState === "pending") &&
     (after.checksState === "passing" || after.checksState === "failing");
   return reviewed || conflicted || checksFinished;
 }
@@ -43,10 +43,10 @@ export function wakePullRequestSnooze<
   const wake =
     open.length === 0 ||
     open.some((link) => {
-      // A pull request's first read is its baseline, not news.
+      // One linked after the snooze has no baseline; one linked but unread before it does.
       const previous = before.find((candidate) => threadPullRequestKeysEqual(candidate, link));
       return (
-        previous?.snapshot != null &&
+        previous !== undefined &&
         link.snapshot !== null &&
         pullRequestUpdated(previous.snapshot, link.snapshot, link.watch !== undefined)
       );

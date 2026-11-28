@@ -97,8 +97,11 @@ describe("wakePullRequestSnooze", () => {
     assert.isFalse(woke([pending, other], [link({ state: "merged" }), other]));
   });
 
-  it("takes a pull request's first read as its baseline", () => {
-    assert.isFalse(woke([link(null)], [link({ reviewDecision: "approved" })]));
+  it("wakes on a first read that already qualifies, but not for a pull request linked later", () => {
+    assert.isTrue(woke([link(null)], [link({ reviewDecision: "approved" })]));
+    assert.isTrue(woke([link(null)], [link({ checksState: "passing" })]));
+    assert.isFalse(woke([link(null)], [pending]));
+    assert.isFalse(woke([], [link({ reviewDecision: "approved" })]));
   });
 
   it("ends the snooze now and leaves timed snoozes alone", () => {
