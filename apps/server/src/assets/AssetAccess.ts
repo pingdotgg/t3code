@@ -306,6 +306,15 @@ const projectFaviconAsset = Effect.fn("AssetAccess.projectFaviconAsset")(functio
     : null;
 });
 
+const resolveRealPathOrSelf = Effect.fn("AssetAccess.resolveRealPathOrSelf")(function* (
+  filePath: string,
+) {
+  // Resolving a network path signs in to its host before containment is checked.
+  if (isNetworkPath(filePath)) return filePath;
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.realPath(filePath).pipe(Effect.orElseSucceed(() => filePath));
+});
+
 const resolveCanonicalFile = Effect.fn("AssetAccess.resolveCanonicalFile")(function* (
   filePath: string,
 ) {
@@ -508,12 +517,27 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     readonly requestedPath: string;
     readonly resource: AssetResource;
     readonly expiresAt: number;
+    /**
+     * Refuse a target that is not a page, so the caller can issue it as the media file it is.
+     * A grant over the folder is chosen by the requested name, which a link need not match.
+     */
+    readonly requirePageTarget?: boolean;
   }) {
     const path = yield* Path.Path;
     const fileSystem = yield* FileSystem.FileSystem;
     const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+    // A root registered through a symlink spells a directory differently from the real path an
+    // agent writes, so both are compared resolved; an unresolvable path is compared as written.
+    // Only the directory is resolved: the file's own name is kept as written, so a page that is a
+    // link still names itself for the entry check that decides whether it may leave its folder.
     const relativePath = path.isAbsolute(input.requestedPath)
-      ? path.relative(input.workspaceRoot, input.requestedPath)
+      ? path.join(
+          path.relative(
+            yield* resolveRealPathOrSelf(input.workspaceRoot),
+            yield* resolveRealPathOrSelf(path.dirname(input.requestedPath)),
+          ),
+          path.basename(input.requestedPath),
+        )
       : input.requestedPath;
     const resolved = yield* workspacePaths
       .resolveRelativePathWithinRoot({ workspaceRoot: input.workspaceRoot, relativePath })
@@ -575,6 +599,11 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     }
     // The response type follows the file a link points at, so that file must be previewable too.
     if (!isWorkspacePreviewEntryPath(canonicalFile)) {
+      return yield* new AssetPreviewTypeValidationError({
+        resource: input.resource,
+      });
+    }
+    if (input.requirePageTarget === true && !/\.html?$/i.test(canonicalFile)) {
       return yield* new AssetPreviewTypeValidationError({
         resource: input.resource,
       });
@@ -650,6 +679,37 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         yield* toHostDrivePath(input.resource.path),
         yield* HostProcess.HomeDirectory,
       );
+      // Clients pick media-file by comparing paths as written, so a page in a project registered
+      // through a symlink arrives here. As a workspace file it loads its stylesheets and scripts.
+      if (
+        input.workspaceRoot &&
+        path.isAbsolute(requestedPath) &&
+        !isNetworkPath(requestedPath) &&
+        input.resource.disposition !== "attachment" &&
+        /\.html?$/i.test(requestedPath)
+      ) {
+        const workspaceRoot = input.workspaceRoot;
+        const resource = input.resource;
+        const asWorkspaceFile = yield* workspacePaths.normalizeWorkspaceRoot(workspaceRoot).pipe(
+          Effect.flatMap((normalizedRoot) =>
+            finalizeWorkspaceFileAsset({
+              workspaceRoot: normalizedRoot,
+              requestedPath,
+              resource,
+              expiresAt,
+              requirePageTarget: true,
+            }),
+          ),
+          Effect.option,
+        );
+        if (Option.isSome(asWorkspaceFile)) {
+          claims = asWorkspaceFile.value.claims;
+          fileName = asWorkspaceFile.value.fileName;
+          imageDimensions = asWorkspaceFile.value.imageDimensions;
+          fileRevision = asWorkspaceFile.value.fileRevision;
+          break;
+        }
+      }
       if (!path.isAbsolute(requestedPath)) {
         if (!input.workspaceRoot) {
           return yield* new AssetWorkspaceContextNotFoundError({ resource: input.resource });

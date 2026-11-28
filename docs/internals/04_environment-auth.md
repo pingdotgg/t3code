@@ -151,8 +151,11 @@ included; see [`WorkspaceFileSystem.ts`](../../apps/server/src/workspace/Workspa
 
 Signed asset URLs are bearer credentials for a single canonical file, rechecked by device/inode
 identity on serve ([`AssetAccess.ts`](../../apps/server/src/assets/AssetAccess.ts)). They never
-grant access to sibling files, with one exception: the URL of an HTML page opened from a workspace
-also serves the files that page loads (styles, scripts, images, media, fonts and other pages) from
-the page's own folder and the folders below it. It serves no hidden file, and no file that a link
-in that folder points to outside it. Because `filesystem:read` is checked only at mint time, an
-issued URL remains valid until it expires even if the session or grant is revoked.
+grant access to sibling files, with one exception: an HTML page in its workspace gets a workspace
+grant, so that it can load the files it references (styles, scripts, images, media, fonts and other
+pages) from the page's own folder and the folders below it. It serves no hidden file, and no file
+that a link in that folder points to outside it — only the opened page itself may be reached by a
+link that leaves its folder. This applies whether the client asked for the page as a workspace file
+or by its absolute path, because only the server can tell that a real path lies under a root
+registered through a symlink. Because `filesystem:read` is checked only at mint time, an issued URL
+remains valid until it expires even if the session or grant is revoked.

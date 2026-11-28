@@ -5,9 +5,10 @@ import { WebSocket } from "@effect/platform-node/NodeWS";
 import * as NodeHttp from "node:http";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import {
   AuthAccessReadScope,
+  AuthFilesystemReadScope,
   AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -49,6 +50,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { SOCKET_FRAME_PARTS_QUERY_PARAM } from "@t3tools/shared/socketFrameParts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Deferred from "effect/Deferred";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as DateTime from "effect/DateTime";
@@ -58,6 +60,7 @@ import * as Cause from "effect/Cause";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -75,7 +78,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 import { vi } from "vite-plus/test";
 
+import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
 import * as AssetSigner from "./assets/AssetSigner.ts";
+import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as WorkspacePreviewRevisions from "./assets/WorkspacePreviewRevisions.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
@@ -1963,6 +1968,167 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
     ),
   ),
 );
+
+// `git-repos` aliases `Documents/git-repos`, and the project is registered through the alias.
+const makeAliasedProject = Effect.fn(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const directory = yield* fileSystem.realPath(
+    yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ws-aliased-root-" }),
+  );
+  const realProjects = path.join(directory, "Documents", "git-repos");
+  yield* fileSystem.makeDirectory(path.join(realProjects, "proj", "sub"), { recursive: true });
+  yield* fileSystem.writeFileString(
+    path.join(realProjects, "proj", "sub", "index.html"),
+    '<link rel="stylesheet" href="style.css">',
+  );
+  yield* fileSystem.writeFileString(
+    path.join(realProjects, "proj", "sub", "style.css"),
+    "body { color: red; }",
+  );
+  yield* fileSystem.symlink(realProjects, path.join(directory, "git-repos"));
+  return {
+    workspaceRoot: path.join(directory, "git-repos", "proj"),
+    page: path.join(realProjects, "proj", "sub", "index.html"),
+    styleSheet: path.join(realProjects, "proj", "sub", "style.css"),
+  };
+});
+
+const createThreadMediaFileUrl = Effect.fn(function* (input: {
+  readonly page: string;
+  readonly projectWorkspaceRoot: string | null;
+}) {
+  const projectId = ProjectId.make("project:aliased");
+  const threadId = ThreadId.make("thread:aliased");
+  const responses = yield* Queue.unbounded<unknown>();
+  const services = Layer.mergeAll(
+    layerUnusedConfigRpcServices,
+    WorkspacePaths.layer,
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      getThreadRecords: () =>
+        Effect.succeed({ thread: { id: threadId, projectId, worktreePath: null } } as never),
+    }),
+    Layer.mock(ProjectService.ProjectService)({
+      getById: () =>
+        Effect.succeed(
+          input.projectWorkspaceRoot === null
+            ? Option.none()
+            : Option.some({ workspaceRoot: input.projectWorkspaceRoot } as never),
+        ),
+    }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+    Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+    Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+    Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+    Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+    Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+    Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+    Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+    Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+  );
+  const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+    ...WS_RPC_SERVER_OPTIONS,
+    onFromServer: (response) =>
+      response._tag === "Exit"
+        ? Queue.offer(responses, response.exit)
+        : response._tag === "Defect"
+          ? Queue.offer(responses, Exit.die(response.defect))
+          : Effect.void,
+  }).pipe(
+    Effect.provide(
+      layerWsRpc(
+        {
+          sessionId: AuthSessionId.make("aliased-project-assets-test"),
+          subject: "aliased-project-assets-test",
+          method: "browser-session-cookie",
+          scopes: [AuthFilesystemReadScope],
+        },
+        {},
+        yield* ServerBrowser.ServerBrowser,
+        () => Effect.void,
+        { secretReferences: true },
+      ).pipe(
+        Layer.provide(services),
+        Layer.merge(RpcAuthorization.layer([AuthFilesystemReadScope])),
+      ),
+    ),
+  );
+  yield* server.write(0, {
+    _tag: "Request",
+    id: RpcMessage.RequestId("asset"),
+    tag: WS_METHODS.assetsCreateUrl,
+    payload: { resource: { _tag: "media-file", threadId, path: input.page } },
+    headers: Headers.empty,
+  });
+  const exit = (yield* Queue.take(responses)) as Exit.Exit<{ readonly relativeUrl: string }>;
+  if (Exit.isFailure(exit))
+    return assert.fail(`assets.createUrl failed: ${Cause.pretty(exit.cause)}`);
+  const suffix = exit.value.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+  return suffix.slice(0, suffix.indexOf("/"));
+});
+
+const layerAliasedProjectAssets = Layer.mergeAll(
+  WorkspacePaths.layer,
+  Layer.mock(NativeAppIconResolver.NativeAppIconResolver)({}),
+  Layer.mock(Orchestrator.OrchestratorV2)({}),
+  Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+  Layer.mock(ServerBrowser.ServerBrowser)({}),
+).pipe(Layer.provideMerge(Layer.fresh(layerConfigSources)));
+
+describe.skipIf(!symlinksSupported)("a thread's HTML page linked by its real path", () => {
+  it.effect("loads its stylesheet from the thread's project opened through a symlink", () =>
+    Effect.gen(function* () {
+      const project = yield* makeAliasedProject();
+
+      const token = yield* createThreadMediaFileUrl({
+        page: project.page,
+        projectWorkspaceRoot: project.workspaceRoot,
+      });
+
+      assert.deepEqual(yield* resolveAsset(token, "style.css"), {
+        kind: "file",
+        path: project.styleSheet,
+        renderIntent: "file-preview",
+      });
+    }).pipe(Effect.provide(layerAliasedProjectAssets)),
+  );
+
+  it.effect("leaves a PDF bound to the file it was issued for", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const project = yield* makeAliasedProject();
+      const pdf = path.join(path.dirname(project.page), "report.pdf");
+      yield* fileSystem.writeFileString(pdf, "%PDF-1.4 original");
+
+      const token = yield* createThreadMediaFileUrl({
+        page: pdf,
+        projectWorkspaceRoot: project.workspaceRoot,
+      });
+      assert.include(yield* resolveAsset(token, "report.pdf"), { kind: "file" });
+
+      const replacement = path.join(path.dirname(project.page), "replacement.pdf");
+      yield* fileSystem.writeFileString(replacement, "%PDF-1.4 replacement");
+      yield* fileSystem.rename(replacement, pdf);
+
+      assert.isNull(yield* resolveAsset(token, "report.pdf"));
+    }).pipe(Effect.provide(layerAliasedProjectAssets)),
+  );
+
+  it.effect("is served alone when the thread's project is gone", () =>
+    Effect.gen(function* () {
+      const project = yield* makeAliasedProject();
+
+      const token = yield* createThreadMediaFileUrl({
+        page: project.page,
+        projectWorkspaceRoot: null,
+      });
+
+      assert.include(yield* resolveAsset(token, "index.html"), { kind: "file" });
+      assert.isNull(yield* resolveAsset(token, "style.css"));
+    }).pipe(Effect.provide(layerAliasedProjectAssets)),
+  );
+});
 
 it.effect(
   "worktree requests run a project's layout commands only for a session that may run commands",

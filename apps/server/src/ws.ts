@@ -3240,6 +3240,15 @@ export const layerWsRpc = (
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
             const path = yield* Path.Path;
+            const isLocalMediaFile =
+              input.resource._tag === "media-file" &&
+              path.isAbsolute(input.resource.path) &&
+              !isNetworkPath(input.resource.path);
+            // Only a page loads sibling files; other media keep their file-identity grant.
+            const isLocalInlinePage =
+              isLocalMediaFile &&
+              input.resource.disposition !== "attachment" &&
+              /\.html?$/i.test(input.resource.path);
             if (
               input.resource._tag === "attachment" ||
               input.resource._tag === "native-app-icon" ||
@@ -3247,9 +3256,7 @@ export const layerWsRpc = (
               input.resource._tag === "tool-output-image" ||
               input.resource._tag === SOURCE_CONTROL_MEDIA_ASSET ||
               // A network path is served only from the thread's project, looked up below.
-              (input.resource._tag === "media-file" &&
-                path.isAbsolute(input.resource.path) &&
-                !isNetworkPath(input.resource.path))
+              (isLocalMediaFile && !isLocalInlinePage)
             ) {
               return yield* issueAssetUrl({ resource: input.resource });
             }
@@ -3288,35 +3295,36 @@ export const layerWsRpc = (
                   : {}),
               });
             }
-            const thread = yield* threadManagement
-              .getThreadRecords(input.resource.threadId, [])
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new AssetWorkspaceContextResolutionError({
-                      resource: input.resource,
-                      cause,
-                    }),
-                ),
-              );
-            const project = yield* projectService.getById(thread.thread.projectId).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new AssetWorkspaceContextResolutionError({
-                    resource: input.resource,
-                    cause,
-                  }),
-              ),
-            );
-            if (Option.isNone(project)) {
-              return yield* new AssetWorkspaceContextNotFoundError({
-                resource: input.resource,
+            const resource = input.resource;
+            const threadWorkspaceRoot = Effect.gen(function* () {
+              const thread = yield* threadManagement
+                .getThreadRecords(resource.threadId, [])
+                .pipe(
+                  Effect.mapError(
+                    (cause) => new AssetWorkspaceContextResolutionError({ resource, cause }),
+                  ),
+                );
+              const project = yield* projectService
+                .getById(thread.thread.projectId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) => new AssetWorkspaceContextResolutionError({ resource, cause }),
+                  ),
+                );
+              if (Option.isNone(project)) {
+                return yield* new AssetWorkspaceContextNotFoundError({ resource });
+              }
+              return thread.thread.worktreePath ?? project.value.workspaceRoot;
+            });
+            if (isLocalInlinePage) {
+              // A page whose thread has no project left is still served alone.
+              const workspaceRoot = yield* Effect.option(threadWorkspaceRoot);
+              return yield* issueAssetUrl({
+                resource,
+                ...(Option.isSome(workspaceRoot) ? { workspaceRoot: workspaceRoot.value } : {}),
               });
             }
-            return yield* issueAssetUrl({
-              resource: input.resource,
-              workspaceRoot: thread.thread.worktreePath ?? project.value.workspaceRoot,
-            });
+            return yield* issueAssetUrl({ resource, workspaceRoot: yield* threadWorkspaceRoot });
           }),
         [WS_METHODS.assetsPersistChatAttachments]: (input) =>
           persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),

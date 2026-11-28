@@ -740,6 +740,30 @@ describe("AssetAccess", () => {
         expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
       }
       expect(resolved).toEqual([path.resolve(`${share}/a.png`)]);
+
+      const localRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-asset-network-page-" });
+      const pageError = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: "//attacker.test/s/a.html",
+        },
+        workspaceRoot: localRoot,
+      }).pipe(
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.FileSystem.of({
+            ...fs,
+            realPath: (requestedPath) => {
+              resolved.push(requestedPath);
+              return fs.realPath(requestedPath);
+            },
+          }),
+        ),
+        Effect.flip,
+      );
+      expect(pageError._tag).toBe("AssetWorkspacePathValidationError");
+      expect(resolved.filter((entry) => entry.includes("attacker.test"))).toEqual([]);
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -854,6 +878,34 @@ describe("AssetAccess", () => {
         yield* fs.remove(link);
         yield* fs.symlink(path.join(root, "page.xhtml"), link);
         expect(yield* resolveIssued(issued.relativeUrl)).toBeNull();
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "a page link to a non-page is not promoted to a grant over its folder",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-page-link-" }),
+        );
+        yield* fs.writeFileString(path.join(root, "report.pdf"), "%PDF-1.4");
+        yield* fs.writeFileString(path.join(root, "private.html"), "<html>private</html>");
+        const link = path.join(root, "page.html");
+        yield* fs.symlink(path.join(root, "report.pdf"), link);
+        const issued = yield* issueAssetUrl({
+          resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: link },
+          workspaceRoot: root,
+        });
+        const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const token = suffix.slice(0, separator);
+        const name = suffix.slice(separator + 1);
+        expect(yield* resolveAsset(token, name)).toMatchObject({
+          path: path.join(root, "report.pdf"),
+        });
+        expect(yield* resolveAsset(token, "private.html")).toBeNull();
       }).pipe(Effect.provide(layerTest)),
   );
 
@@ -1230,6 +1282,49 @@ describe("AssetAccess", () => {
             expect(resolved).toBeNull();
           }
         }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "opens a page reached through its real path in a workspace registered by a symlink",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-asset-symlinked-root-",
+        });
+        const realRoot = path.join(directory, "Documents", "project");
+        const symlinkedRoot = path.join(directory, "git-repos", "project");
+        yield* fileSystem.makeDirectory(path.join(realRoot, "repro"), { recursive: true });
+        yield* fileSystem.makeDirectory(path.join(directory, "git-repos"), { recursive: true });
+        yield* fileSystem.symlink(realRoot, symlinkedRoot);
+        const htmlPath = path.join(realRoot, "repro", "index.html");
+        const cssPath = path.join(realRoot, "repro", "style.css");
+        yield* fileSystem.writeFileString(htmlPath, '<link rel="stylesheet" href="style.css">');
+        yield* fileSystem.writeFileString(cssPath, "body { color: red; }");
+
+        const result = yield* issueAssetUrl({
+          resource: {
+            _tag: "workspace-file",
+            threadId: ThreadId.make("thread-1"),
+            path: htmlPath,
+          },
+          workspaceRoot: symlinkedRoot,
+        });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const token = suffix.slice(0, suffix.indexOf("/"));
+
+        expect(yield* resolveAsset(token, "index.html")).toEqual({
+          kind: "file",
+          path: yield* fileSystem.realPath(htmlPath),
+          renderIntent: "file-preview",
+        });
+        expect(yield* resolveAsset(token, "style.css")).toEqual({
+          kind: "file",
+          path: yield* fileSystem.realPath(cssPath),
+          renderIntent: "file-preview",
+        });
       }).pipe(Effect.provide(layerTest)),
   );
 
