@@ -1,10 +1,12 @@
 import { RelayApi } from "@t3tools/contracts/relay";
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
+import * as Aead from "effect/crypto/Aead";
 import * as Mac from "effect/crypto/Mac";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -18,11 +20,14 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as RelayConfiguration from "../Config.ts";
 import { RELAY_DPOP_ACCESS_TOKEN_TTL } from "../auth/RelayTokens.ts";
 import * as RelayDb from "../db.ts";
+import * as AccountEmails from "./AccountEmails.ts";
+import * as SealedEmail from "./SealedEmail.ts";
 import * as HeldHooks from "../hooks/HeldHooks.ts";
 import * as HookInbox from "../hooks/HookInbox.ts";
 import { unlinkEnvironmentRecord } from "../http/Api.ts";
 import {
   relayAccountDeletions,
+  relayAccountEmails,
   relayAgentActivityRows,
   relayDeliveryAttempts,
   relayEnvironmentCredentials,
@@ -40,6 +45,7 @@ export class AccountDeletionFailed extends Schema.TaggedError<AccountDeletionFai
     userId: Schema.String,
     stage: Schema.Literals([
       "record-request",
+      "record-email",
       "list-environments",
       "clear-held-webhooks",
       "deprovision",
@@ -68,6 +74,8 @@ const DELETION_SETTLE = Duration.sum(
   Duration.minutes(5),
 );
 const PENDING_BATCH_SIZE = 25;
+// A notice that keeps failing (for example, a dead address) stops being retried after this.
+const NOTICE_GIVE_UP = Duration.days(1);
 
 const identityKey = (identity: {
   readonly environmentId: string;
@@ -78,6 +86,14 @@ const identityKey = (identity: {
 export class AccountDeletion extends Context.Service<
   AccountDeletion,
   {
+    /**
+     * Keeps the address the deletion notice goes to, sealed. Ignored once the account is deleted,
+     * or when no ACCOUNT_EMAIL_KEY is configured.
+     */
+    readonly recordEmail: (input: {
+      readonly userId: string;
+      readonly email: string;
+    }) => Effect.Effect<void, AccountDeletionFailed>;
     /** Durably records a deletion; `processPending` carries it out. */
     readonly request: (input: {
       readonly userId: string;
@@ -99,6 +115,8 @@ const make = Effect.gen(function* () {
   const config = yield* RelayConfiguration.RelayConfiguration;
   const t3Chat = yield* T3ChatAccounts.T3ChatAccounts;
   const inbox = yield* HookInbox.HookInbox;
+  const emails = yield* AccountEmails.AccountEmails;
+  const cryptoContext = yield* Effect.context<Aead.Aead | SecureRandom.SecureRandom>();
   // unlinkEnvironmentRecord reads these from context; capture them once for the service.
   const unlinkContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof unlinkEnvironmentRecord>>>();
@@ -232,6 +250,8 @@ const make = Effect.gen(function* () {
           yield* db
             .delete(relayManagedTunnelLimits)
             .where(eq(relayManagedTunnelLimits.userId, userId));
+          // A `user.updated` delivered after the deletion can write the address back.
+          yield* db.delete(relayAccountEmails).where(eq(relayAccountEmails.userId, userId));
         }),
       )
       .pipe(
@@ -249,19 +269,70 @@ const make = Effect.gen(function* () {
     }
   });
 
+  const recordEmail = Effect.fn("relay.account_deletion.record_email")(function* (input: {
+    readonly userId: string;
+    readonly email: string;
+  }) {
+    const { userId, email } = input;
+    yield* Effect.annotateCurrentSpan({ "relay.user_id": userId });
+    const key = config.accountEmailKey;
+    if (key === undefined) return;
+    const encryptedEmail = yield* SealedEmail.seal(key, { userId, email }).pipe(
+      Effect.provideContext(cryptoContext),
+      Effect.mapError(
+        (cause) => new AccountDeletionFailed({ userId, stage: "record-email", cause }),
+      ),
+    );
+    yield* transactions
+      .withTransaction(
+        Effect.gen(function* () {
+          const deleted = yield* db
+            .select({ userId: relayAccountDeletions.userId })
+            .from(relayAccountDeletions)
+            .where(eq(relayAccountDeletions.userId, userId))
+            .limit(1);
+          if (deleted.length > 0) return;
+          yield* db
+            .insert(relayAccountEmails)
+            .values({ userId, encryptedEmail })
+            .onConflictDoUpdate({ target: relayAccountEmails.userId, set: { encryptedEmail } });
+        }),
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) => new AccountDeletionFailed({ userId, stage: "record-email", cause }),
+        ),
+      );
+  });
+
   const request = Effect.fn("relay.account_deletion.request")(function* (input: {
     readonly userId: string;
   }) {
-    yield* Effect.annotateCurrentSpan({ "relay.user_id": input.userId });
+    const { userId } = input;
+    yield* Effect.annotateCurrentSpan({ "relay.user_id": userId });
     const now = DateTime.formatIso(yield* DateTime.now);
-    yield* db
-      .insert(relayAccountDeletions)
-      .values({ userId: input.userId, requestedAt: now })
-      .onConflictDoNothing()
+    yield* transactions
+      .withTransaction(
+        Effect.gen(function* () {
+          const [known] = yield* db
+            .select({ encryptedEmail: relayAccountEmails.encryptedEmail })
+            .from(relayAccountEmails)
+            .where(eq(relayAccountEmails.userId, userId))
+            .limit(1);
+          yield* db
+            .insert(relayAccountDeletions)
+            .values({
+              userId,
+              requestedAt: now,
+              encryptedNotifyEmail: known?.encryptedEmail ?? null,
+            })
+            .onConflictDoNothing();
+          yield* db.delete(relayAccountEmails).where(eq(relayAccountEmails.userId, userId));
+        }),
+      )
       .pipe(
         Effect.mapError(
-          (cause) =>
-            new AccountDeletionFailed({ userId: input.userId, stage: "record-request", cause }),
+          (cause) => new AccountDeletionFailed({ userId, stage: "record-request", cause }),
         ),
       );
   });
@@ -305,15 +376,69 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError((cause) => new AccountDeletionQueueFailed({ cause })));
       }
     }
+
+    const giveUpBefore = DateTime.formatIso(
+      DateTime.subtractDuration(yield* DateTime.now, NOTICE_GIVE_UP),
+    );
+    const notices = yield* db
+      .select({
+        userId: relayAccountDeletions.userId,
+        completedAt: relayAccountDeletions.completedAt,
+        encryptedNotifyEmail: relayAccountDeletions.encryptedNotifyEmail,
+      })
+      .from(relayAccountDeletions)
+      .where(
+        and(
+          isNotNull(relayAccountDeletions.completedAt),
+          isNotNull(relayAccountDeletions.encryptedNotifyEmail),
+        ),
+      )
+      .limit(PENDING_BATCH_SIZE)
+      .pipe(Effect.mapError((cause) => new AccountDeletionQueueFailed({ cause })));
+    let noticesSent = 0;
+    for (const notice of notices) {
+      const { userId, encryptedNotifyEmail, completedAt } = notice;
+      if (encryptedNotifyEmail === null || completedAt === null) continue;
+      if (completedAt > giveUpBefore) {
+        const sent = yield* Effect.exit(
+          Effect.fromNullishOr(config.accountEmailKey).pipe(
+            Effect.flatMap((key) =>
+              SealedEmail.open(key, { userId, sealed: encryptedNotifyEmail }),
+            ),
+            Effect.provideContext(cryptoContext),
+            Effect.flatMap((to) => emails.sendDeletionNotice({ to })),
+          ),
+        );
+        if (sent._tag === "Failure") {
+          yield* Effect.logWarning("Account deletion notice failed; retrying next sweep", {
+            "relay.user_id": notice.userId,
+            cause: sent.cause,
+          });
+          continue;
+        }
+        noticesSent += 1;
+      } else {
+        yield* Effect.logWarning("Gave up on an account deletion notice", {
+          "relay.user_id": notice.userId,
+        });
+      }
+      yield* db
+        .update(relayAccountDeletions)
+        .set({ encryptedNotifyEmail: null })
+        .where(eq(relayAccountDeletions.userId, notice.userId))
+        .pipe(Effect.mapError((cause) => new AccountDeletionQueueFailed({ cause })));
+    }
+
     yield* Effect.annotateCurrentSpan({
       "relay.account_deletion.pending": pending.length,
       "relay.account_deletion.completed": completed,
       "relay.account_deletion.failed": failed,
+      "relay.account_deletion.notices_sent": noticesSent,
     });
     return { completed, failed };
   }).pipe(Effect.withSpan("relay.account_deletion.process_pending"));
 
-  return AccountDeletion.of({ request, deleteAccount, processPending });
+  return AccountDeletion.of({ recordEmail, request, deleteAccount, processPending });
 });
 
 export const layer = Layer.effect(AccountDeletion, make);
@@ -363,6 +488,25 @@ const ClerkEvent = Schema.fromJsonString(
 const decodeClerkEvent = Schema.decodeUnknownEffect(ClerkEvent);
 const ClerkDeletedUser = Schema.Struct({ id: Schema.String.check(Schema.isNonEmpty()) });
 const decodeClerkDeletedUser = Schema.decodeUnknownEffect(ClerkDeletedUser);
+const ClerkUser = Schema.Struct({
+  id: Schema.String.check(Schema.isNonEmpty()),
+  primary_email_address_id: Schema.NullOr(Schema.String),
+  email_addresses: Schema.Array(Schema.Struct({ id: Schema.String, email_address: Schema.String })),
+});
+const decodeClerkUser = Schema.decodeUnknownEffect(ClerkUser);
+
+const respondTo = <E extends { readonly cause: unknown }, R>(
+  recorded: Effect.Effect<void, E, R>,
+  message: string,
+) =>
+  recorded.pipe(
+    Effect.as(HttpServerResponse.empty({ status: 200 })),
+    Effect.catch((error) =>
+      Effect.logError(message, { cause: error.cause }).pipe(
+        Effect.as(HttpServerResponse.empty({ status: 500 })),
+      ),
+    ),
+  );
 
 export const handleClerkWebhook = Effect.fn("relay.account_deletion.clerk_webhook")(function* (
   request: HttpServerRequest.HttpServerRequest,
@@ -385,23 +529,38 @@ export const handleClerkWebhook = Effect.fn("relay.account_deletion.clerk_webhoo
     return HttpServerResponse.empty({ status: 400 });
   }
   yield* Effect.annotateCurrentSpan({ "relay.clerk_webhook.type": event.value.type });
-  if (event.value.type !== "user.deleted") {
-    return HttpServerResponse.empty({ status: 204 });
-  }
-  const user = yield* decodeClerkDeletedUser(event.value.data).pipe(Effect.option);
-  if (user._tag === "None") {
-    return HttpServerResponse.empty({ status: 400 });
-  }
   const accounts = yield* AccountDeletion;
-  // Once recorded, the deletion is ours to retry. Clerk retries only if recording fails.
-  return yield* accounts.request({ userId: user.value.id }).pipe(
-    Effect.as(HttpServerResponse.empty({ status: 200 })),
-    Effect.catch((error) =>
-      Effect.logError("Could not record account deletion", { cause: error.cause }).pipe(
-        Effect.as(HttpServerResponse.empty({ status: 500 })),
-      ),
-    ),
-  );
+  switch (event.value.type) {
+    case "user.created":
+    case "user.updated": {
+      const user = yield* decodeClerkUser(event.value.data).pipe(Effect.option);
+      if (user._tag === "None") {
+        return HttpServerResponse.empty({ status: 400 });
+      }
+      const { id, primary_email_address_id, email_addresses } = user.value;
+      const primary = email_addresses.find((address) => address.id === primary_email_address_id);
+      if (primary === undefined) {
+        return HttpServerResponse.empty({ status: 204 });
+      }
+      return yield* respondTo(
+        accounts.recordEmail({ userId: id, email: primary.email_address }),
+        "Could not record account email",
+      );
+    }
+    case "user.deleted": {
+      const user = yield* decodeClerkDeletedUser(event.value.data).pipe(Effect.option);
+      if (user._tag === "None") {
+        return HttpServerResponse.empty({ status: 400 });
+      }
+      // Once recorded, the deletion is ours to retry. Clerk retries only if recording fails.
+      return yield* respondTo(
+        accounts.request({ userId: user.value.id }),
+        "Could not record account deletion",
+      );
+    }
+    default:
+      return HttpServerResponse.empty({ status: 204 });
+  }
 });
 
 export const layerApi = HttpApiBuilder.group(

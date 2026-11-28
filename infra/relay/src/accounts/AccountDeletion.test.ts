@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { getTableName, type SQL, type Table } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
+import * as Aead from "effect/crypto/Aead";
 import * as Mac from "effect/crypto/Mac";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -18,12 +19,20 @@ import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvide
 import * as HookInbox from "../hooks/HookInbox.ts";
 import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
 import * as AccountDeletion from "./AccountDeletion.ts";
+import * as AccountEmails from "./AccountEmails.ts";
+import * as SealedEmail from "./SealedEmail.ts";
 
 const signingKey = new TextEncoder().encode("clerk-webhook-test-signing-key");
 const signingSecret = `whsec_${Base64.encode(signingKey)}`;
 
+const accountEmailKey = Redacted.make(Base64.encode(new Uint8Array(32).fill(7)));
+const layerCrypto = Layer.mergeAll(Aead.layerWebCrypto, Mac.layerWebCrypto).pipe(
+  Layer.provideMerge(SecureRandom.layerWebCrypto),
+);
+
 const config = {
   clerkWebhookSigningSecret: Redacted.make(signingSecret),
+  accountEmailKey,
   managedEndpointNamespace: "dev",
 } as unknown as RelayConfiguration.RelayConfiguration["Service"];
 
@@ -55,7 +64,7 @@ const clerkRequest = Effect.fn(function* (
 });
 
 describe("Clerk webhook", () => {
-  it.effect("records a deletion only for a signed user.deleted event", () => {
+  it.effect("keeps the primary email from user events and records signed deletions", () => {
     const requested: Array<string> = [];
     const respond = (request: ReturnType<typeof clerkRequest>) =>
       request.pipe(
@@ -70,20 +79,31 @@ describe("Clerk webhook", () => {
           clerkRequest(userDeleted, { key: new TextEncoder().encode("some-other-signing-key") }),
         ),
       ).toBe(401);
-      expect(yield* respond(clerkRequest({ type: "user.created", data: { id: "user_2" } }))).toBe(
-        204,
-      );
       expect(requested).toEqual([]);
+      const userUpdated = {
+        type: "user.updated",
+        data: {
+          id: "user_1",
+          primary_email_address_id: "idn_2",
+          email_addresses: [
+            { id: "idn_1", email_address: "old@example.com" },
+            { id: "idn_2", email_address: "primary@example.com" },
+          ],
+        },
+      };
+      expect(yield* respond(clerkRequest(userUpdated))).toBe(200);
       expect(yield* respond(clerkRequest(userDeleted))).toBe(200);
-      expect(requested).toEqual(["user_1"]);
+      expect(requested).toEqual(["email user_1 primary@example.com", "delete user_1"]);
     }).pipe(
       Effect.provideService(RelayConfiguration.RelayConfiguration, config),
       Effect.provide(
         Layer.mergeAll(
           Layer.mock(AccountDeletion.AccountDeletion, {
-            request: ({ userId }) => Effect.sync(() => void requested.push(userId)),
+            recordEmail: ({ userId, email }) =>
+              Effect.sync(() => void requested.push(`email ${userId} ${email}`)),
+            request: ({ userId }) => Effect.sync(() => void requested.push(`delete ${userId}`)),
           }),
-          Mac.layerWebCrypto.pipe(Layer.provide(SecureRandom.layerWebCrypto)),
+          layerCrypto,
         ),
       ),
     );
@@ -94,6 +114,13 @@ const layerAccountDeletionTest = (fakeDb: RelayDb.RelayDb["Service"], calls: Arr
   AccountDeletion.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.mock(AccountEmails.AccountEmails, {
+          sendDeletionNotice: ({ to }) =>
+            to.startsWith("bounce")
+              ? Effect.fail(new AccountEmails.AccountEmailFailed({ cause: new Error("rejected") }))
+              : Effect.sync(() => void calls.push(`notice ${to}`)),
+        }),
+        layerCrypto,
         Layer.succeed(RelayDb.RelayDb, fakeDb),
         Layer.succeed(RelayDb.RelayTransactions, { withTransaction: (effect) => effect }),
         Layer.succeed(RelayConfiguration.RelayConfiguration, config),
@@ -203,6 +230,7 @@ describe("AccountDeletion", () => {
           "delete relay_mobile_devices user_1",
           "delete relay_delivery_attempts user_1",
           "delete relay_managed_tunnel_limits user_1",
+          "delete relay_account_emails user_1",
           "unlink-t3chat user_1",
         ]);
 
@@ -235,6 +263,7 @@ describe("AccountDeletion", () => {
           where: () =>
             Object.assign(Effect.succeed([]), {
               orderBy: () => ({ limit: () => Effect.succeed(pending) }),
+              limit: () => Effect.succeed([]),
             }),
         }),
       }),
@@ -268,4 +297,64 @@ describe("AccountDeletion", () => {
       ]);
     }).pipe(Effect.provide(layerAccountDeletionTest(fakeDb, calls)));
   });
+
+  it.effect("sends each deletion notice once, and gives up on one that fails for a day", () => {
+    const calls: Array<string> = [];
+    const notices: Array<{
+      userId: string;
+      completedAt: string;
+      encryptedNotifyEmail: string;
+    }> = [];
+    const fakeDb = {
+      select: () => ({
+        from: () => ({
+          where: () =>
+            Object.assign(Effect.succeed([]), {
+              orderBy: () => ({ limit: () => Effect.succeed([]) }),
+              limit: () => Effect.succeed(notices),
+            }),
+        }),
+      }),
+      update: () => ({
+        set: (values: Record<string, unknown>) => ({
+          where: (condition: SQL | undefined) =>
+            Effect.sync(() => {
+              if (values.encryptedNotifyEmail === null) {
+                calls.push(`clear ${params(condition).join(",")}`);
+              }
+            }),
+        }),
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const notice = Effect.fn(function* (userId: string, completedAt: string, email: string) {
+        const encryptedNotifyEmail = yield* SealedEmail.seal(accountEmailKey, { userId, email });
+        notices.push({ userId, completedAt, encryptedNotifyEmail });
+      });
+      yield* notice("user_done", "2026-11-24T11:30:00.000Z", "done@example.com");
+      yield* notice("user_bounce", "2026-11-24T11:30:00.000Z", "bounce@example.com");
+      yield* notice("user_old", "2026-11-22T11:00:00.000Z", "bounce-old@example.com");
+      yield* TestClock.setTime(Date.parse("2026-11-24T12:00:00.000Z"));
+      const accounts = yield* AccountDeletion.AccountDeletion;
+      yield* accounts.processPending;
+      expect(calls).toEqual(["notice done@example.com", "clear user_done", "clear user_old"]);
+    }).pipe(Effect.provide(Layer.merge(layerAccountDeletionTest(fakeDb, calls), layerCrypto)));
+  });
+});
+
+describe("SealedEmail", () => {
+  it.effect("opens only for the account it was sealed for", () =>
+    Effect.gen(function* () {
+      const sealed = yield* SealedEmail.seal(accountEmailKey, {
+        userId: "user_1",
+        email: "a@example.com",
+      });
+      expect(sealed).not.toContain("example.com");
+      expect(yield* SealedEmail.open(accountEmailKey, { userId: "user_1", sealed })).toBe(
+        "a@example.com",
+      );
+      yield* Effect.flip(SealedEmail.open(accountEmailKey, { userId: "user_2", sealed }));
+    }).pipe(Effect.provide(layerCrypto)),
+  );
 });

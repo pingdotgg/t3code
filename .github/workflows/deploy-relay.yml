@@ -82,6 +82,8 @@ jobs:
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           # Unset leaves the Clerk account-deletion webhook route off.
           CLERK_WEBHOOK_SIGNING_SECRET: ${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
+          # Unset stores no account emails, so deletions send no notice.
+          ACCOUNT_EMAIL_KEY: ${{ secrets.ACCOUNT_EMAIL_KEY }}
           APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
           FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
           T3CHAT_LINK_SECRET: ${{ secrets.T3CHAT_LINK_SECRET }}

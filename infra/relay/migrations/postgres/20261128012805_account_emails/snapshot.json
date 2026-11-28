@@ -1,0 +1,102 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "bee2ec7d-7711-4611-8794-4ca3a6ee23fa",
+  "prevIds": ["0a77840f-76b7-46b8-9df4-14f4a48beeec"],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": ["table", "public", "relay_account_emails"],
+      "writes": [
+        "s|tbl|public.relay_account_emails",
+        "n|tbl|public.relay_account_emails",
+        "e|tbl|public.relay_account_emails",
+        "n|rel|public.relay_account_emails",
+        "n|type|public.relay_account_emails",
+        "n|rel|public.relay_account_emails_pkey"
+      ],
+      "reads": ["n|sch|public"]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": ["column", "public", "relay_account_deletions", "encrypted_notify_email"],
+      "writes": [
+        "s|col|public.relay_account_deletions.encrypted_notify_email",
+        "n|col|public.relay_account_deletions.encrypted_notify_email",
+        "e|col|public.relay_account_deletions.encrypted_notify_email"
+      ],
+      "reads": ["n|tbl|public.relay_account_deletions", "n|sch|public"]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "relay_account_emails",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_account_deletions",
+        "name": "encrypted_notify_email",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_account_emails",
+        "name": "user_id",
+        "type": "varchar(255)",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_account_emails",
+        "name": "encrypted_email",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "relay_account_emails",
+        "name": "relay_account_emails_pkey",
+        "columns": ["user_id"],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    }
+  ]
+}
