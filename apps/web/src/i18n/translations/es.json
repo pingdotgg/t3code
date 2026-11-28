@@ -4264,6 +4264,7 @@
   ],
   "02d9667ff2c8e0b8": "Issue {key}: {title}",
   "4276743ee60a3c62": "{count, plural, one {{count} comentario} other {{count} comentarios}}",
+  "ebbd5bb8cf5fcaf3": "Asignados: {names}",
   "42f634397f3960aa": "Mostrar en los detalles del hilo",
   "e3738ef0423ddfe7": "Restablecer al valor predeterminado",
   "ae10d34e11064fec": "Control de versiones",

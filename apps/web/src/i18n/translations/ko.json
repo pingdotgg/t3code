@@ -4251,6 +4251,7 @@
   ],
   "02d9667ff2c8e0b8": "이슈 {key}: {title}",
   "4276743ee60a3c62": "{count, plural, other {댓글 {count}개}}",
+  "ebbd5bb8cf5fcaf3": "담당자: {names}",
   "42f634397f3960aa": "스레드 세부 정보에 표시",
   "e3738ef0423ddfe7": "기본값으로 재설정",
   "ae10d34e11064fec": "버전 관리",

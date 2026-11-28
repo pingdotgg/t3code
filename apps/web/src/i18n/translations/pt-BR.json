@@ -4264,6 +4264,7 @@
   ],
   "02d9667ff2c8e0b8": "Issue {key}: {title}",
   "4276743ee60a3c62": "{count, plural, one {{count} comentário} other {{count} comentários}}",
+  "ebbd5bb8cf5fcaf3": "Responsáveis: {names}",
   "42f634397f3960aa": "Mostrar nos detalhes da thread",
   "e3738ef0423ddfe7": "Redefinir para o padrão",
   "ae10d34e11064fec": "Controle de versão",

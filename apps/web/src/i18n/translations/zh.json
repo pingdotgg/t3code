@@ -4269,6 +4269,7 @@
   ],
   "02d9667ff2c8e0b8": "issue {key}：{title}",
   "4276743ee60a3c62": "{count, plural, other {{count} 条评论}}",
+  "ebbd5bb8cf5fcaf3": "受理人：{names}",
   "42f634397f3960aa": "在会话详情中显示",
   "e3738ef0423ddfe7": "恢复默认值",
   "ae10d34e11064fec": "版本控制",

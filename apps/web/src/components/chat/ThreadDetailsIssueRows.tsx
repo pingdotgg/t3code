@@ -1,6 +1,6 @@
 import { threadIssueKeyOf, type ScopedThreadRef, type ThreadIssueLink } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { useGT } from "gt-react";
+import { useGT, useLocale } from "gt-react";
 import { MessageSquareIcon } from "lucide-react";
 import { useState, type MouseEvent } from "react";
 
@@ -19,7 +19,10 @@ import {
   PULL_REQUEST_ROW_NUMBER_CLASS,
   PullRequestRowLines,
 } from "../pullRequest/PullRequestListRow";
-import { PullRequestActorLabel } from "../pullRequest/pullRequestPresentation";
+import {
+  PullRequestActorAvatar,
+  PullRequestActorLabel,
+} from "../pullRequest/pullRequestPresentation";
 import { ThreadDetailsControl, ThreadDetailsMoreButton } from "./ThreadDetailsControl";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
@@ -37,6 +40,7 @@ function LinkedIssueRow({
   onOpen: (() => void) | undefined;
 }) {
   const gt = useGT();
+  const locale = useLocale();
   const configs = useServerConfigs();
   const detail = useLinkedIssueDetail(threadRef.environmentId, link, mountScope);
   const trackerPresentation = issueTrackerPresentation(link.tracker);
@@ -78,6 +82,44 @@ function LinkedIssueRow({
         <span aria-hidden>{detail.commentCount}</span>
       </span>
     ) : null;
+  const assignedActors = detail?.assignees ?? [];
+  const [firstAssignee] = assignedActors;
+  const singleAssignee = assignedActors.length === 1;
+  const assigneeLabel = firstAssignee
+    ? gt("Assignees: {names}", {
+        names: new Intl.ListFormat(locale).format(
+          assignedActors.map((assignee) => assignee.name || assignee.login),
+        ),
+      })
+    : undefined;
+  const assignees = firstAssignee ? (
+    <span
+      role="img"
+      aria-label={assigneeLabel}
+      className={cn("flex shrink-0 items-center", !singleAssignee && "-space-x-1")}
+    >
+      {singleAssignee ? (
+        <PullRequestActorLabel actor={firstAssignee} tooltip={false} className="max-w-24" />
+      ) : (
+        assignedActors
+          .slice(0, 3)
+          .map((assignee) => (
+            <PullRequestActorAvatar
+              key={assignee.login}
+              actor={assignee}
+              className="ring-1 ring-background"
+            />
+          ))
+      )}
+    </span>
+  ) : null;
+  const status =
+    assignees || comments ? (
+      <>
+        {assignees}
+        {comments}
+      </>
+    ) : null;
   const trackerIcon = (
     <trackerPresentation.Icon
       role="img"
@@ -91,7 +133,7 @@ function LinkedIssueRow({
       <PullRequestRowLines
         number={<span className={PULL_REQUEST_ROW_NUMBER_CLASS}>{link.displayKey}</span>}
         title={title}
-        status={comments}
+        status={status}
         meta={
           <>
             {detail?.author ? (
@@ -126,7 +168,7 @@ function LinkedIssueRow({
           {link.displayKey}
         </span>
         {trackerIcon}
-        {comments}
+        {status}
       </div>
     </div>
   ) : (

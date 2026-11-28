@@ -4266,6 +4266,7 @@
   ],
   "02d9667ff2c8e0b8": "Issue {key}: {title}",
   "4276743ee60a3c62": "{count, plural, one {{count} comment} other {{count} comments}}",
+  "ebbd5bb8cf5fcaf3": "Assignees: {names}",
   "42f634397f3960aa": "Show in thread details",
   "e3738ef0423ddfe7": "Reset to default",
   "ae10d34e11064fec": "Version Control",

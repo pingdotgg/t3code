@@ -4265,6 +4265,7 @@
   ],
   "02d9667ff2c8e0b8": "Ticket {key} : {title}",
   "4276743ee60a3c62": "{count, plural, one {{count} commentaire} other {{count} commentaires}}",
+  "ebbd5bb8cf5fcaf3": "Assignés : {names}",
   "42f634397f3960aa": "Afficher dans les détails du fil",
   "e3738ef0423ddfe7": "Rétablir la valeur par défaut",
   "ae10d34e11064fec": "Gestion de versions",
