@@ -94,6 +94,44 @@ function setup() {
 }
 
 it.each([
+  { targetEnvironment: HERE.environmentId, route: "/environment/here", self: true },
+  { targetEnvironment: EnvironmentId.make("remote"), route: "/environment/here", self: false },
+  { targetEnvironment: HERE.environmentId, route: "/", self: false },
+])(
+  "renders a thread reference to $targetEnvironment from $route (self: $self)",
+  async ({ targetEnvironment, route, self }) => {
+    const { registry, reply } = setup();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    state.remote = null;
+    registry.set(
+      reply,
+      AsyncResult.success({ [HERE.threadId]: { title: "Release notes", projectId: null } }),
+    );
+    await using screen = await render(
+      <RegistryContext value={registry}>
+        <MarkdownThreadLink
+          environmentId={HERE.environmentId}
+          threadRef={HERE}
+          link={{ environmentId: targetEnvironment, threadId: HERE.threadId }}
+          label={null}
+        />
+      </RegistryContext>,
+      { router: route },
+    );
+    await expect.element(screen.getByText("Release notes")).toBeVisible();
+    const link = screen.getByRole("link");
+    if (self) {
+      await expect.element(link).not.toBeInTheDocument();
+    } else {
+      await link.click();
+      await vi.waitFor(() =>
+        expect(screen.router?.state.location.pathname).toBe(`/${targetEnvironment}/here`),
+      );
+    }
+  },
+);
+
+it.each([
   { legacy: false, encoded: false },
   { legacy: true, encoded: false },
   { legacy: false, encoded: true },

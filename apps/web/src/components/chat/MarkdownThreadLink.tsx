@@ -1,5 +1,5 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useGT, useMessages } from "gt-react";
 import { MessagesSquareIcon } from "lucide-react";
 import {
@@ -11,6 +11,7 @@ import {
 import { unknownThreadLinkLabel } from "@t3tools/shared/threadLinksCopy";
 import { resolveLinkedThreadOpen } from "@t3tools/client-runtime/linked-thread";
 
+import { isThreadRoutePathname } from "../../threadRoutes";
 import { configuredHostedAppUrl } from "../../hostedPairing";
 import { useThreadRefs, useThreadShell } from "../../state/entities";
 import { useConnectedEnvironmentIds, useEnvironmentIdentities } from "../../state/environments";
@@ -85,6 +86,10 @@ export function MarkdownThreadLink(props: {
     : null;
   const remote = useThreadShell(remoteRef);
   const resolved = target ?? (remoteRef && remote ? { ref: remoteRef, metadata: remote } : null);
+  const ref = resolved?.ref ?? writtenRef;
+  const isCurrentThread = useLocation({
+    select: (location) => isThreadRoutePathname(location.pathname, ref),
+  });
   if (linked && linkedLabel !== undefined) {
     const knownTitle = props.label ?? written?.title ?? null;
     const title = knownTitle ?? gt("Thread on {label}", { label: linkedLabel });
@@ -129,13 +134,16 @@ export function MarkdownThreadLink(props: {
     const unknown = unknownThreadLinkLabel(props.link, props.environmentId, messages);
     return <UnresolvedChip label={props.label ?? unknown} tooltip={unknown} />;
   }
-  const ref = resolved?.ref ?? writtenRef;
   const title = resolved?.metadata.title.trim() || props.label || gt("Thread");
+  const copyMarkdown = formatHostedThreadLink(ref, title, configuredHostedAppUrl());
+  if (isCurrentThread) {
+    return <span data-markdown-copy={copyMarkdown}>{title}</span>;
+  }
   return (
     <ThreadContextChip
       record={{ ...ref, title }}
       projectId={resolved?.metadata.projectId ?? null}
-      copyMarkdown={formatHostedThreadLink(ref, title, configuredHostedAppUrl())}
+      copyMarkdown={copyMarkdown}
     />
   );
 }
