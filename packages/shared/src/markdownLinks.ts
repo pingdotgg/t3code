@@ -519,6 +519,8 @@ const FOOTNOTE_DEFINITION_PATTERN = /^\[\^(?:\\[\\[\]]|\\(?![\\[\]])|[^\s\\[\]])
 const TABLE_DELIMITER_PATTERN = /^\|? *:?-+:? *(?:\| *:?-+:? *)*\|? *$/;
 
 const BLOCKQUOTE = 0;
+// A recovered list block continues within the original code block's four-column prefix.
+const RECOVERED_LIST_CODE = -4;
 
 function tableColumnCount(row: string): number {
   const trimmed = row.trimEnd();
@@ -553,7 +555,7 @@ function visitMarkdownLines(
   text: string,
   visit: (line: string, start: number, code: boolean) => void,
 ) {
-  // Open containers, outermost first: BLOCKQUOTE, or a list item's content indentation.
+  // Open containers, outermost first: blockquotes, indented content, and recovered list code.
   const containers: number[] = [];
   let fence: { marker: string; indented: boolean } | null = null;
   // Whether the previous line left a paragraph open, and whether indented code is still open:
@@ -604,8 +606,8 @@ function visitMarkdownLines(
         enterBlockquote();
       } else if (content === "") {
         if (matched === blankEndsItemAt) break;
-      } else if (indent >= container) {
-        position += container;
+      } else if (indent >= Math.abs(container)) {
+        position += Math.abs(container);
       } else {
         break;
       }
@@ -638,6 +640,7 @@ function visitMarkdownLines(
       if (
         paragraph &&
         content !== "" &&
+        containers.lastIndexOf(RECOVERED_LIST_CODE) < matched &&
         (indent >= 4 ||
           (!PARAGRAPH_INTERRUPTION_PATTERN.test(content) &&
             !FOOTNOTE_DEFINITION_PATTERN.test(content)))
@@ -711,6 +714,7 @@ function visitMarkdownLines(
         readIndent();
         // The renderer recovers same-line indented list code with whitespace left in its value.
         if (!emptyItem && padding > 5) {
+          containers.push(RECOVERED_LIST_CODE);
           visit(line, start, false);
           paragraph = true;
           break;

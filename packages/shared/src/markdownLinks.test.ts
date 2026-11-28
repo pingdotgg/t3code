@@ -318,6 +318,10 @@ describe("extractMarkdownLinkHrefs", () => {
       "-     [code](src/code.ts)\n-      [a](src/a.ts)\n- \t\t[b](src/b.ts)",
       ["src/a.ts", "src/b.ts"],
     ],
+    [
+      "-      Example\n\n      [a](src/a.ts)\n\n          [code](src/code.ts)\n- [b](src/b.ts)",
+      ["src/a.ts", "src/b.ts"],
+    ],
   ])("excludes indented code destinations in %j", (markdown, hrefs) => {
     expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
   });
