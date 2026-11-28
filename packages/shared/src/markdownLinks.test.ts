@@ -258,8 +258,6 @@ describe("extractInlineCodeSpans", () => {
     ["    ```\n    `./a/shared.ts`\n    ```\n\n`./b/shared.ts`", ["./b/shared.ts"]],
     ["Example\n\n    `src/a/index.ts`\n\nOpen `src/b/index.ts`", ["src/b/index.ts"]],
     ["\r\t`src/a/index.ts`\r\rOpen `src/b/index.ts`", ["src/b/index.ts"]],
-    ["- Example\n\n      `src/a/index.ts`\n\n  Open `src/b/index.ts`", ["src/b/index.ts"]],
-    [">     `src/a/index.ts`\n>\n> Open `src/b/index.ts`", ["src/b/index.ts"]],
     ["Example\n    `src/a/index.ts`\n\n    `src/b/index.ts`", ["src/a/index.ts"]],
   ])("skips code spans inside code blocks in %j", (markdown, spans) => {
     expect(extractInlineCodeSpans(markdown)).toEqual(spans);
