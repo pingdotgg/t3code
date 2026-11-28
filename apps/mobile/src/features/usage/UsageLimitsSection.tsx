@@ -323,8 +323,8 @@ export function ResetCredits(props: {
           {choice.expiries?.length ? (
             <View className="w-full gap-0.5">
               {choice.expiries.map((at, index) => (
-                // oxlint-disable-next-line react/no-array-index-key -- Identical expiry timestamps have no individual identity; these rows contain only text.
                 <Text
+                  // oxlint-disable-next-line react/no-array-index-key -- Identical expiry timestamps have no individual identity; these rows contain only text.
                   key={`${at}:${index}`}
                   className="text-xs tabular-nums text-foreground-tertiary"
                 >
