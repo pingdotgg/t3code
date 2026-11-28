@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
   ProjectId,
@@ -46,6 +47,8 @@ const finalizationLayer = (
   const usedRepositoryScopeId = CheckpointScopeId.make(`${scopeId}_api`);
   const idleRepositoryScopeId = CheckpointScopeId.make(`${scopeId}_docs`);
   const repositoryCheckpoint = (repositoryScopeId: CheckpointScopeId, checkpointRunId: RunId) => ({
+    id: CheckpointId.make(`checkpoint:${repositoryScopeId}:${checkpointRunId}`),
+    parentCheckpointId: null,
     scopeId: repositoryScopeId,
     runId: checkpointRunId,
     ordinalWithinScope: 1,

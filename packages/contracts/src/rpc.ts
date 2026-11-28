@@ -120,6 +120,7 @@ import {
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
   AgentSessionImportResult,
+  AgentSessionRefreshCodexHistoryInput,
   AgentSessionScanInput,
   AgentSessionScanResult,
   AgentSessionScanError,
@@ -515,6 +516,7 @@ export const WS_METHODS = {
   filesystemGetMetadata: "filesystem.getMetadata",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
+  agentSessionsRefreshCodexHistory: "agentSessions.refreshCodexHistory",
   assetsCreateUrl: "assets.createUrl",
   assetsPersistChatAttachments: "assets.persistChatAttachments",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
@@ -1783,6 +1785,15 @@ const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
   ]),
 });
 
+const WsAgentSessionsRefreshCodexHistoryRpc = Rpc.make(
+  WS_METHODS.agentSessionsRefreshCodexHistory,
+  {
+    payload: AgentSessionRefreshCodexHistoryInput,
+    success: Schema.Void,
+    error: EnvironmentAuthorizationError,
+  },
+);
+
 const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
@@ -2679,6 +2690,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemGetMetadataRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
+  WsAgentSessionsRefreshCodexHistoryRpc,
   WsAssetsCreateUrlRpc,
   WsAssetsPersistChatAttachmentsRpc,
   WsAttachmentsCreateUploadUrlRpc,

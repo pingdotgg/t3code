@@ -100,19 +100,41 @@ type ContextCheckpoint = ProjectionCheckpointContext["checkpoints"][number];
  */
 function repositoryDiffRange(
   checkpoints: ReadonlyArray<ContextCheckpoint>,
-  range: { readonly fromTurnCount: number; readonly toTurnCount: number },
+  range: { readonly fromOrdinal: number; readonly toOrdinal: number },
 ): { readonly from: ContextCheckpoint; readonly to: ContextCheckpoint } | undefined {
   const ready = checkpoints
     .filter(
       (checkpoint) =>
         checkpoint.status === "ready" &&
-        checkpoint.ordinalWithinScope >= range.fromTurnCount &&
-        checkpoint.ordinalWithinScope <= range.toTurnCount,
+        checkpoint.ordinalWithinScope >= range.fromOrdinal &&
+        checkpoint.ordinalWithinScope <= range.toOrdinal,
     )
     .toSorted((left, right) => left.ordinalWithinScope - right.ordinalWithinScope);
   const from = ready[0];
   const to = ready.at(-1);
   return from === undefined || to === undefined || from === to ? undefined : { from, to };
+}
+
+// Imported turns have no snapshots; a repository range starts at the first captured turn's baseline.
+function repositoryRangeStart(
+  checkpoints: ReadonlyArray<ContextCheckpoint>,
+  range: { readonly fromTurnCount: number; readonly toTurnCount: number },
+  toOrdinal: number,
+): number {
+  if (range.fromTurnCount === 0) return 0;
+  let firstOrdinal = toOrdinal;
+  for (const checkpoint of checkpoints) {
+    if (
+      checkpoint.status !== "stale" &&
+      checkpoint.appRunOrdinal !== null &&
+      checkpoint.appRunOrdinal > range.fromTurnCount &&
+      checkpoint.appRunOrdinal <= range.toTurnCount &&
+      checkpoint.ordinalWithinScope < firstOrdinal
+    ) {
+      firstOrdinal = checkpoint.ordinalWithinScope;
+    }
+  }
+  return firstOrdinal - 1;
 }
 
 /** @public */
@@ -193,8 +215,8 @@ export const make = Effect.gen(function* () {
   const repositoryDiffs = Effect.fn("CheckpointDiffQuery.repositoryDiffs")(function* (input: {
     readonly projection: ProjectionCheckpointContext;
     readonly threadCwd: string;
-    readonly fromTurnCount: number;
-    readonly toTurnCount: number;
+    readonly fromOrdinal: number;
+    readonly toOrdinal: number;
     readonly ignoreWhitespace: boolean;
     readonly nested: ReadonlyMap<string, ReadonlyArray<string>>;
     readonly maxBytes: number;
@@ -346,7 +368,7 @@ export const make = Effect.gen(function* () {
                 projection.checkpoints.some(
                   (checkpoint) =>
                     checkpoint.scopeId === scope.id &&
-                    checkpoint.ordinalWithinScope <= input.toTurnCount,
+                    checkpoint.ordinalWithinScope <= toCheckpoint.ordinalWithinScope,
                 ),
             ),
           ]).pipe(
@@ -361,8 +383,12 @@ export const make = Effect.gen(function* () {
             : yield* repositoryDiffs({
                 projection,
                 threadCwd: toScope.cwd,
-                fromTurnCount: input.fromTurnCount,
-                toTurnCount: input.toTurnCount,
+                fromOrdinal: repositoryRangeStart(
+                  projection.checkpoints,
+                  input,
+                  toCheckpoint.ordinalWithinScope,
+                ),
+                toOrdinal: toCheckpoint.ordinalWithinScope,
                 ignoreWhitespace,
                 nested,
                 maxBytes: Math.max(0, CHECKPOINT_DIFF_MAX_OUTPUT_BYTES - Buffer.byteLength(diff)),
@@ -378,15 +404,16 @@ export const make = Effect.gen(function* () {
       });
       if (toCheckpoint.status === "missing") return yield* withRepositories("");
 
-      // Capture compares against the preceding scope ordinal, even when that
-      // checkpoint belongs to a stopped run or has no run.
+      // Imported turns can move app ordinals while the captured parent and its ref stay in place.
       const parentCheckpoint =
         input.fromTurnCount === input.toTurnCount - 1
           ? projection.checkpoints.find(
               (checkpoint) =>
                 checkpoint.status === "ready" &&
                 checkpoint.scopeId === toCheckpoint.scopeId &&
-                checkpoint.ordinalWithinScope === toCheckpoint.ordinalWithinScope - 1,
+                (toCheckpoint.parentCheckpointId === null
+                  ? checkpoint.ordinalWithinScope === toCheckpoint.ordinalWithinScope - 1
+                  : checkpoint.id === toCheckpoint.parentCheckpointId),
             )
           : undefined;
 

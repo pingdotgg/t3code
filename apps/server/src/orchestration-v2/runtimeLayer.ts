@@ -279,6 +279,7 @@ const layerAgentSessionImporterProvided = AgentSessionImporter.layer.pipe(
       layerProjectService,
       layerOrchestratorProvided,
       layerEventSink,
+      EffectOutbox.layer,
       IdAllocator.layer,
       ProviderSessionRuntime.layer,
       ProviderAdapterRegistry.layerFromProviderInstanceRegistry,

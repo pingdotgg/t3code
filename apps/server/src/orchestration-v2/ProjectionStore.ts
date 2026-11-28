@@ -269,7 +269,18 @@ const ProjectionCheckpointContext = Schema.Struct({
   ),
   checkpoints: Schema.Array(
     OrchestrationV2CheckpointJsonSchema.mapFields(
-      ({ scopeId, runId, ordinalWithinScope, appRunOrdinal, status, ref }) => ({
+      ({
+        id,
+        parentCheckpointId,
+        scopeId,
+        runId,
+        ordinalWithinScope,
+        appRunOrdinal,
+        status,
+        ref,
+      }) => ({
+        id,
+        parentCheckpointId,
         scopeId,
         runId,
         ordinalWithinScope,
@@ -288,6 +299,9 @@ export interface ProjectionCheckpointCaptureContext {
   readonly rootNode: OrchestrationV2ExecutionNode | undefined;
   readonly scope: OrchestrationV2CheckpointScope | undefined;
   readonly providerThread: OrchestrationV2ProviderThread | undefined;
+  readonly previousRunCheckpoint:
+    | Pick<OrchestrationV2Checkpoint, "id" | "ref" | "ordinalWithinScope">
+    | undefined;
   /**
    * Ordinals a runless baseline must not overwrite: ready snapshots, and missing checkpoints pinning
    * a run. Without file snapshots that run link is what rewind uses. Stale rows are rebaselined.
@@ -321,6 +335,7 @@ export interface ProjectionCheckpointRollbackContext {
   readonly providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>;
   readonly rolledBackAttemptIds: ReadonlyArray<RunAttemptId>;
   readonly runsToRollback: ReadonlyArray<OrchestrationV2Run>;
+  readonly discardedSnapshotOrdinals: ReadonlyArray<number>;
   readonly rootNodes: ReadonlyArray<OrchestrationV2ExecutionNode>;
   /** Ready checkpoints of the target scope and of repository scopes that the rollback discards. */
   readonly staleCheckpoints: ReadonlyArray<OrchestrationV2Checkpoint>;
@@ -6458,7 +6473,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
               ORDER BY ordinal_within_parent ASC, scope_id ASC
             `,
               sql`
-              SELECT scope_id AS "scopeId", run_id AS "runId",
+              SELECT checkpoint_id AS id, scope_id AS "scopeId", run_id AS "runId",
+                json_extract(payload_json, '$.parentCheckpointId') AS "parentCheckpointId",
                 ordinal_within_scope AS "ordinalWithinScope",
                 app_run_ordinal AS "appRunOrdinal", status,
                 json_extract(payload_json, '$.ref') AS ref
@@ -6505,6 +6521,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
               runRows[0] === undefined
                 ? undefined
                 : yield* decodeRunPayload(runRows[0].payload_json);
+            const previousRunOrdinal = run === undefined ? null : run.ordinal - 1;
             const preservedCheckpoint = sql`(status = 'ready' OR (status IN ('missing', 'error') AND run_id IS NOT NULL))`;
             const [
               nodeRows,
@@ -6523,13 +6540,30 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
               AND (thread_id = ${threadId}
                 OR owner_node_id IN (${nodesOwningProviderThreads(threadId)})
                 OR provider_thread_id IN (SELECT provider_thread_id FROM orchestration_v2_projection_subagents WHERE thread_id = ${threadId}))`,
-              sql<{ readonly ordinal: number }>`SELECT ordinal_within_scope AS ordinal
+              sql<{
+                readonly id: OrchestrationV2Checkpoint["id"];
+                readonly ref: OrchestrationV2Checkpoint["ref"];
+                readonly ordinal: number;
+                readonly run_id: RunId | null;
+                readonly app_run_ordinal: number | null;
+              }>`SELECT checkpoint_id AS id, json_extract(payload_json, '$.ref') AS ref,
+                ordinal_within_scope AS ordinal, run_id, app_run_ordinal
             FROM orchestration_v2_projection_checkpoints
             WHERE thread_id = ${threadId} AND scope_id = ${target.scopeId}
               AND ${preservedCheckpoint}
               ${
                 options?.preservedCheckpoints === "baselines"
-                  ? sql`AND ordinal_within_scope IN (0, ${run === undefined ? null : Math.max(0, run.ordinal - 1)})`
+                  ? sql`AND ordinal_within_scope IN (0, ${previousRunOrdinal}, (
+                      -- History refresh moves app runs without changing their Git checkpoint slots.
+                      SELECT previous_checkpoint.ordinal_within_scope
+                      FROM orchestration_v2_projection_runs AS previous_run
+                      JOIN orchestration_v2_projection_checkpoints AS previous_checkpoint
+                        ON previous_checkpoint.checkpoint_id = json_extract(previous_run.payload_json, '$.checkpointId')
+                      WHERE previous_run.thread_id = ${threadId}
+                        AND previous_run.ordinal = ${previousRunOrdinal}
+                        AND previous_checkpoint.scope_id = ${target.scopeId}
+                        AND previous_checkpoint.run_id = previous_run.run_id
+                    ))`
                   : sql``
               }`,
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_checkpoint_scopes
@@ -6542,6 +6576,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
                 WHERE thread_id = ${threadId} AND kind = 'manual')
               AND ${preservedCheckpoint}`,
             ]);
+            const previous =
+              previousRunOrdinal === null
+                ? undefined
+                : preservedRows.find(
+                    (checkpoint) =>
+                      checkpoint.run_id !== null &&
+                      checkpoint.app_run_ordinal === previousRunOrdinal,
+                  );
             return {
               run,
               rootNode:
@@ -6557,6 +6599,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
                   ? undefined
                   : yield* decodeProviderThreadPayload(providerRows[0].payload_json),
               preservedCheckpointOrdinals: preservedRows.map(({ ordinal }) => ordinal),
+              previousRunCheckpoint:
+                previous === undefined
+                  ? undefined
+                  : { id: previous.id, ref: previous.ref, ordinalWithinScope: previous.ordinal },
               sideChat: threadRows[0].side_chat === 1,
               thread: {
                 projectId: threadRows[0].project_id,
@@ -6613,6 +6659,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
               providerTurns: [],
               rolledBackAttemptIds: [],
               runsToRollback: [],
+              discardedSnapshotOrdinals: [],
               rootNodes: [],
               staleCheckpoints: [],
             };
@@ -6637,10 +6684,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
               ON attempt.attempt_id = json_extract(run.payload_json, '$.activeAttemptId')
             WHERE run.thread_id = ${threadId} AND run.ordinal = ${targetOrdinal}
               AND run.status != 'rolled_back' AND attempt.thread_id = ${threadId}`,
-                sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_runs
-            WHERE thread_id = ${threadId} AND ordinal > ${targetOrdinal}
-              AND status IN ('completed', 'interrupted', 'failed', 'cancelled')
-            ORDER BY ordinal ASC`,
+                sql<PayloadRow & { readonly snapshot_ordinal: number }>`
+            SELECT run.payload_json, coalesce(snapshot.ordinal_within_scope, run.ordinal) AS snapshot_ordinal
+            FROM orchestration_v2_projection_runs AS run
+            LEFT JOIN orchestration_v2_projection_checkpoints AS snapshot
+              ON snapshot.thread_id = run.thread_id AND snapshot.run_id = run.run_id
+              AND snapshot.checkpoint_id = json_extract(run.payload_json, '$.checkpointId')
+            WHERE run.thread_id = ${threadId} AND run.ordinal > ${targetOrdinal}
+              AND run.status IN ('completed', 'interrupted', 'failed', 'cancelled')
+            ORDER BY run.ordinal ASC`,
                 sql<PayloadRow>`SELECT session.payload_json
             FROM orchestration_v2_projection_provider_sessions AS session
             JOIN orchestration_v2_projection_provider_session_bindings AS binding
@@ -6655,14 +6707,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
                 sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_checkpoints
             WHERE thread_id = ${threadId} AND status = 'ready'
               AND ((scope_id = ${scope.id} AND app_run_ordinal > ${targetOrdinal})
-                -- Repository checkpoints carry no app run ordinal; theirs is the run's ordinal.
-                OR (ordinal_within_scope > ${targetOrdinal} AND scope_id IN (
+                OR (ordinal_within_scope > ${checkpoint.ordinalWithinScope} AND scope_id IN (
                   SELECT scope_id FROM orchestration_v2_projection_checkpoint_scopes
                   WHERE thread_id = ${threadId} AND kind = 'manual')))
             ORDER BY scope_id = ${scope.id} DESC, scope_id ASC, ordinal_within_scope ASC`,
               ]);
             const targetAttempt = (yield* decodeRollbackTargetAttempts(attemptRows))[0];
             const runsToRollback = yield* decodeRows(decodeRunPayload, threadId)(runRows);
+            // A later capture can leave a baseline ref even when that repository never changed.
+            const discardedSnapshotOrdinals = new Set<number>();
+            for (const { snapshot_ordinal } of runRows) {
+              for (const ordinal of [snapshot_ordinal - 1, snapshot_ordinal]) {
+                if (ordinal > checkpoint.ordinalWithinScope) discardedSnapshotOrdinals.add(ordinal);
+              }
+            }
             const [nodeRows, turnRows] = yield* Effect.all([
               sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_nodes
             WHERE thread_id = ${threadId} AND ${sql.in(
@@ -6681,6 +6739,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, ProjectionStoreService
               ...context,
               targetAttempt,
               runsToRollback,
+              discardedSnapshotOrdinals: [...discardedSnapshotOrdinals],
               providerSession:
                 sessionRows[0] === undefined
                   ? undefined

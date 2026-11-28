@@ -15011,7 +15011,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             typeof scope.repositoryPath === "string" &&
             repositoryRewindCheckpoint(
               projection.checkpoints.filter((candidate) => candidate.scopeId === scope.id),
-              targetCheckpoint.appRunOrdinal ?? 0,
+              targetCheckpoint.ordinalWithinScope,
             ) !== null,
         );
       // Missing or failed snapshots otherwise support conversation rewind only.

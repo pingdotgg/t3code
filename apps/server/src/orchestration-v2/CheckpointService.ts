@@ -220,6 +220,7 @@ export interface CheckpointServiceV2Shape {
     readonly runId: RunId | null;
     readonly nodeId: NodeId;
     readonly ordinalWithinScope: number;
+    readonly previousCheckpoint?: Pick<OrchestrationV2Checkpoint, "id" | "ref">;
     readonly appRunOrdinal: number | null;
     readonly capturedAt: DateTime.Utc;
     readonly forceMissing?: boolean;
@@ -651,19 +652,22 @@ export const layer: Layer.Layer<
           });
           const parentCheckpointId =
             input.ordinalWithinScope > 0
-              ? yield* checkpointIdForScopeOrdinal(idAllocator, {
+              ? (input.previousCheckpoint?.id ??
+                (yield* checkpointIdForScopeOrdinal(idAllocator, {
                   scopeId: input.scope.id,
                   ordinalWithinScope: input.ordinalWithinScope - 1,
-                })
+                })))
               : null;
           const checkpointRef = yield* checkpointRefFor({
             scopeId: input.scope.id,
             ordinalWithinScope: input.ordinalWithinScope,
           });
-          const previousCheckpointRef = yield* checkpointRefFor({
-            scopeId: input.scope.id,
-            ordinalWithinScope: Math.max(0, input.ordinalWithinScope - 1),
-          });
+          const previousCheckpointRef =
+            input.previousCheckpoint?.ref ??
+            (yield* checkpointRefFor({
+              scopeId: input.scope.id,
+              ordinalWithinScope: Math.max(0, input.ordinalWithinScope - 1),
+            }));
 
           const repository =
             input.forceMissing === true ? "missing" : yield* probeRepository(input.scope);

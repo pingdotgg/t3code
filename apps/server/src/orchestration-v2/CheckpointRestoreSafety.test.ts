@@ -89,7 +89,14 @@ it.effect.each([
       targetAttempt: undefined,
       rolledBackAttemptIds: [],
       staleCheckpoints: [],
-      checkpoint: { id: checkpointId, scopeId, status: "ready", appRunOrdinal: null },
+      discardedSnapshotOrdinals: [1],
+      checkpoint: {
+        id: checkpointId,
+        scopeId,
+        status: "ready",
+        appRunOrdinal: null,
+        ordinalWithinScope: 0,
+      },
       scope: { id: scopeId, cwd },
       runsToRollback: [{ id: "later-run", ordinal: 1, status: "completed", rootNodeId: null }],
     } as unknown as ProjectionCheckpointRollbackContext;

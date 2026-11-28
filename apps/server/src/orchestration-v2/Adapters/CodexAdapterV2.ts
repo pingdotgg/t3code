@@ -1264,6 +1264,30 @@ const CodexThreadHistoryMetadata = Schema.Struct({
 });
 const decodeCodexThreadHistoryMetadata = Schema.decodeUnknownEffect(CodexThreadHistoryMetadata);
 
+type CodexHistoryTurn = ProviderAdapter.ProviderAdapterV2HistoryTurn;
+type LegacyHistoryRead = {
+  readonly anchor: string;
+  readonly head: CodexHistoryTurn;
+  readonly headCursor: string | null;
+  readonly turns: Array<CodexHistoryTurn>;
+  readonly cursors: Set<string>;
+  cursor: string;
+};
+
+const LEGACY_HISTORY_PAGES_PER_READ = 4;
+const LEGACY_HISTORY_READ_CACHE_SIZE = 8;
+
+function codexHistoryMessage(
+  item: CodexSchema.V2ThreadItemsListResponse__ThreadItem,
+): CodexHistoryTurn["messages"][number] | undefined {
+  if (item.type === "userMessage")
+    return { role: "user", text: codexUserMessageText(item.content) };
+  if (item.type === "agentMessage" && item.text.trim() !== "") {
+    return { role: "assistant", text: item.text };
+  }
+  return undefined;
+}
+
 const readCodexThreadHistoryMetadata = Effect.fn("CodexAdapterV2.readThreadHistoryMetadata")(
   function* (
     raw: Pick<CodexClient.CodexAppServerClient["Service"]["raw"], "request">,
@@ -2149,6 +2173,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     threadId === null ? Effect.undefined : mcpSessions.read(threadId);
   const { clientFactory, digest, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
+  const legacyHistoryReads = new Map<string, LegacyHistoryRead>();
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -9492,6 +9517,176 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ),
           ),
           mcpApps,
+          readHistoryAfter: Effect.fn("CodexAdapterV2.readHistoryAfter")(
+            function* ({ providerThread, nativeTurnId, knownNativeTurnIds }) {
+              const threadId = yield* getNativeThreadId(providerThread);
+              yield* ensureInitialized;
+              const { historyMode } = yield* readCodexThreadHistoryMetadata(client.raw, threadId);
+              const paginated = historyMode === "paginated";
+              const observedAt = yield* DateTime.now;
+              let pending = paginated ? undefined : legacyHistoryReads.get(threadId);
+              if (pending !== undefined && pending.anchor === nativeTurnId) {
+                // Check the saved head before reusing pages. Newer turns may be appended meanwhile.
+                const head = yield* client
+                  .request("thread/turns/list", {
+                    threadId,
+                    cursor: pending.headCursor,
+                    limit: 1,
+                    itemsView: "notLoaded",
+                    sortDirection: pending.headCursor === null ? "desc" : "asc",
+                  })
+                  .pipe(
+                    Effect.catchIf(
+                      (error) =>
+                        error._tag === "CodexAppServerRequestError" &&
+                        error.errorMessage.startsWith("invalid cursor:"),
+                      () => Effect.succeed(null),
+                    ),
+                  );
+                if (
+                  head?.data[0]?.id !== pending.head.id ||
+                  head.data[0].status !== pending.head.status ||
+                  (pending.headCursor !== null && head.nextCursor != null)
+                ) {
+                  pending = undefined;
+                }
+              } else {
+                pending = undefined;
+              }
+              if (pending === undefined) legacyHistoryReads.delete(threadId);
+              const turns = pending?.turns ?? [];
+              const cursors = pending?.cursors ?? new Set<string>();
+              let cursor = pending?.cursor ?? null;
+              const pageLimit = paginated ? Infinity : LEGACY_HISTORY_PAGES_PER_READ;
+              for (let index = 0; index < pageLimit; index++) {
+                const page: CodexSchema.V2ThreadTurnsListResponse = yield* client
+                  .request("thread/turns/list", {
+                    threadId,
+                    cursor,
+                    limit: paginated ? 32 : 8,
+                    itemsView: paginated ? "notLoaded" : "full",
+                    sortDirection: "desc",
+                  })
+                  .pipe(
+                    Effect.tapError((error) =>
+                      Effect.sync(() => {
+                        if (
+                          error._tag === "CodexAppServerRequestError" &&
+                          error.errorMessage.startsWith("invalid cursor:")
+                        ) {
+                          legacyHistoryReads.delete(threadId);
+                        }
+                      }),
+                    ),
+                  );
+                const anchor = page.data.findIndex((turn) => turn.id === nativeTurnId);
+                for (const turn of anchor < 0 ? page.data : page.data.slice(0, anchor)) {
+                  const start = turn.startedAt ?? turn.completedAt;
+                  const startedAt = start == null ? observedAt : codexTimestamp(start);
+                  turns.push({
+                    id: turn.id,
+                    status: turn.status,
+                    startedAt,
+                    completedAt:
+                      turn.completedAt == null ? startedAt : codexTimestamp(turn.completedAt),
+                    messages:
+                      !paginated && turn.status === "completed"
+                        ? turn.items.flatMap((item) => {
+                            const message = codexHistoryMessage(item);
+                            return message === undefined ? [] : [message];
+                          })
+                        : [],
+                  });
+                }
+                if (anchor >= 0) {
+                  legacyHistoryReads.delete(threadId);
+                  const history: Array<CodexHistoryTurn> = [];
+                  for (const turn of turns.reverse()) {
+                    if (turn.status === "inProgress") break;
+                    if (knownNativeTurnIds?.has(turn.id)) {
+                      history.push({ ...turn, messages: [] });
+                      continue;
+                    }
+                    if (!paginated || turn.status !== "completed") {
+                      history.push(turn);
+                      continue;
+                    }
+                    const messages: Array<CodexHistoryTurn["messages"][number]> = [];
+                    const itemCursors = new Set<string | null>();
+                    let itemCursor: string | null = null;
+                    do {
+                      if (itemCursors.has(itemCursor)) {
+                        return yield* toProtocolError(
+                          `Codex repeated a history item cursor for turn ${turn.id}.`,
+                        );
+                      }
+                      itemCursors.add(itemCursor);
+                      const items: CodexSchema.V2ThreadItemsListResponse = yield* client.request(
+                        "thread/items/list",
+                        {
+                          threadId,
+                          turnId: turn.id,
+                          cursor: itemCursor,
+                          limit: 100,
+                          sortDirection: "asc",
+                        },
+                      );
+                      for (const entry of items.data) {
+                        if (entry.turnId !== turn.id) {
+                          return yield* toProtocolError(
+                            `Codex returned history items for a different turn than ${turn.id}.`,
+                          );
+                        }
+                        const message = codexHistoryMessage(entry.item);
+                        if (message !== undefined) messages.push(message);
+                      }
+                      itemCursor = items.nextCursor ?? null;
+                    } while (itemCursor !== null);
+                    history.push({ ...turn, messages });
+                  }
+                  return history;
+                }
+                const next = page.nextCursor;
+                if (next == null || cursors.has(next) || page.data.length === 0) {
+                  legacyHistoryReads.delete(threadId);
+                  return [];
+                }
+                cursors.add(next);
+                cursor = next;
+                if (!paginated) {
+                  if (pending === undefined) {
+                    pending = {
+                      anchor: nativeTurnId,
+                      head: turns[0]!,
+                      headCursor: page.backwardsCursor ?? null,
+                      turns,
+                      cursors,
+                      cursor,
+                    };
+                    if (legacyHistoryReads.size >= LEGACY_HISTORY_READ_CACHE_SIZE) {
+                      const oldest = legacyHistoryReads.keys().next().value;
+                      if (oldest !== undefined) legacyHistoryReads.delete(oldest);
+                    }
+                    legacyHistoryReads.set(threadId, pending);
+                  } else {
+                    pending.cursor = cursor;
+                  }
+                }
+              }
+              return [];
+            },
+            (effect, { providerThread }) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterReadThreadSnapshotError({
+                      driver: CODEX_PROVIDER,
+                      providerThreadId: providerThread.id,
+                      cause,
+                    }),
+                ),
+              ),
+          ),
           mcpSignIn: {
             start: Effect.fn("CodexAdapterV2.mcpSignIn.start")(
               function* ({ providerThread, server }) {
@@ -9649,16 +9844,21 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 threadInput.target.type === "provider_turn"
                   ? threadInput.target.providerTurn.nativeTurnRef
                   : null;
-              if (numTurns === 0) {
-                return {
-                  providerThread: {
-                    ...threadInput.providerThread,
-                    nativeConversationHeadRef,
-                    status: "idle" as const,
-                  },
-                  messages: [],
-                  runtimeRequests: [],
-                };
+              const afterTurnId =
+                nativeConversationHeadRef?.strength === "strong"
+                  ? (nativeConversationHeadRef.nativeId ?? undefined)
+                  : undefined;
+              const unchanged = () => ({
+                providerThread: {
+                  ...threadInput.providerThread,
+                  nativeConversationHeadRef,
+                  status: "idle" as const,
+                },
+                messages: [],
+                runtimeRequests: [],
+              });
+              if (numTurns === 0 && afterTurnId === undefined) {
+                return unchanged();
               }
               const keptNativeTurnId = nativeConversationHeadRef?.nativeId ?? null;
               const nativeTurnIds = rollbackTurns.flatMap(
@@ -9675,6 +9875,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 Effect.andThen(readCodexThreadHistoryMetadata(client.raw, threadId)),
               );
               if (historyMode !== "paginated") {
+                if (numTurns === 0 && afterTurnId !== undefined) {
+                  const { data } = yield* client.request("thread/turns/list", {
+                    threadId,
+                    cursor: null,
+                    limit: 1,
+                    sortDirection: "desc",
+                    itemsView: "notLoaded",
+                  });
+                  if (data[0]?.id === afterTurnId && data[0].status !== "inProgress") {
+                    return unchanged();
+                  }
+                }
                 return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
                   driver: CODEX_PROVIDER,
                   providerThreadId: threadInput.providerThread.id,

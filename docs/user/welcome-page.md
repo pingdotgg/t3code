@@ -35,4 +35,5 @@ Conversation import is best-effort:
 
 - Keeps the first user prompt and the most recent visible user/assistant messages (up to 200 messages total), omitting tool activity and attachments.
 - Skips malformed/empty sessions, files over 4 GiB, sessions over 32 MiB of kept text/metadata, or sessions with over 100,000 records.
-- Each import pass reads up to 100 conversations and 4 GiB per project. Reopen the Welcome page and select the project in **Review all** to continue importing a larger batch; already-imported conversations are skipped.
+- Each import pass reads up to 100 conversations and 4 GiB per project. Reopen the Welcome page and select the project in **Review all** to continue importing a larger batch; unchanged conversations are skipped.
+- Re-importing a conversation updates its existing messages if you have not run a turn in T3 Code yet. After running a Codex turn in T3 Code, you can continue the same conversation in Codex. Opening the conversation in T3 Code or returning to its window picks up completed text turns from that Codex session.

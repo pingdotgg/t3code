@@ -1,7 +1,13 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
-import { CheckpointRef, CheckpointScopeId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -36,6 +42,8 @@ function makeProjection(): ProjectionCheckpointContext {
     ],
     checkpoints: [
       {
+        id: CheckpointId.make("checkpoint:second"),
+        parentCheckpointId: null,
         scopeId: secondScopeId,
         runId: secondRunId,
         ordinalWithinScope: 1,
@@ -112,6 +120,8 @@ function makeProjectionAfterStoppedRun(stoppedRunCheckpoint: boolean) {
     ordinalWithinScope: number,
     runId: RunId | null,
   ): ProjectionCheckpointContext["checkpoints"][number] => ({
+    id: CheckpointId.make(`checkpoint:root:${ordinalWithinScope}`),
+    parentCheckpointId: null,
     scopeId: firstScopeId,
     runId,
     ordinalWithinScope,
@@ -132,6 +142,7 @@ function makeProjectionAfterStoppedRun(stoppedRunCheckpoint: boolean) {
     checkpoints: [
       {
         ...checkpoint(2, null),
+        id: CheckpointId.make("checkpoint:tool:2"),
         scopeId: secondScopeId,
         ref: CheckpointRef.make("refs/t3/test/tool/2"),
       },
@@ -185,6 +196,44 @@ it.effect.each([false, true])(
       assert.deepEqual(
         { checkpoint: stoppedTurnError.checkpoint, turnCount: stoppedTurnError.turnCount },
         { checkpoint: "to", turnCount: 2 },
+      );
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "uses the captured parent when refreshed history separates app and scope ordinals",
+  () => {
+    const projection = makeProjectionAfterStoppedRun(true);
+    const parent = { ...projection.checkpoints[3]!, appRunOrdinal: 3 };
+    const unusedBaseline = { ...projection.checkpoints[4]!, runId: null, appRunOrdinal: null };
+    const target = {
+      ...projection.checkpoints[4]!,
+      id: CheckpointId.make("checkpoint:root:4"),
+      parentCheckpointId: parent.id,
+      ordinalWithinScope: 4,
+      appRunOrdinal: 4,
+      ref: CheckpointRef.make("refs/t3/test/ordinal/4"),
+    };
+    const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+      Effect.succeed("diff --git a/file b/file"),
+    );
+    const layer = layerFor({
+      projection: Effect.succeed({
+        ...projection,
+        runs: projection.runs.map((run) =>
+          run.ordinal === 1 ? run : { ...run, ordinal: run.ordinal + 1 },
+        ),
+        checkpoints: [...projection.checkpoints.slice(0, 3), parent, unusedBaseline, target],
+      }),
+      diffCheckpoints,
+    });
+    return Effect.gen(function* () {
+      const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      yield* query.getTurnDiff({ threadId, fromTurnCount: 3, toTurnCount: 4 });
+      assert.deepEqual(
+        diffCheckpoints.mock.calls.map(([input]) => input.fromCheckpointRef),
+        [parent.ref],
       );
     }).pipe(Effect.provide(layer));
   },
@@ -260,6 +309,8 @@ it.effect("shares the turn and full-thread diff budget across real Git batches",
               checkpointScopes: [{ id: scopeId, runId, kind: "root_run", cwd }],
               checkpoints: [
                 {
+                  id: CheckpointId.make("checkpoint:patch-budget:1"),
+                  parentCheckpointId: null,
                   scopeId,
                   runId,
                   ordinalWithinScope: 1,
@@ -360,6 +411,8 @@ it.effect("adds a patch for each tracked repository that changed in the range", 
         repositoryPath: cwd,
       },
       checkpoints: ordinals.map((ordinalWithinScope) => ({
+        id: CheckpointId.make(`checkpoint:${name}:${ordinalWithinScope}`),
+        parentCheckpointId: null,
         scopeId: id,
         runId: ordinalWithinScope === 2 ? secondRunId : null,
         ordinalWithinScope,
@@ -380,6 +433,11 @@ it.effect("adds a patch for each tracked repository that changed in the range", 
   const layer = layerFor({
     projection: Effect.succeed({
       ...projection,
+      runs: [
+        projection.runs[0]!,
+        { id: RunId.make("imported-turn"), ordinal: 2, status: "completed" },
+        { ...projection.runs[1]!, ordinal: 3 },
+      ],
       checkpointScopes: [
         ...projection.checkpointScopes.map((scope) => ({ ...scope, cwd: "/work/app" })),
         sibling.scope,
@@ -387,7 +445,14 @@ it.effect("adds a patch for each tracked repository that changed in the range", 
         later.scope,
       ],
       checkpoints: [
-        ...projection.checkpoints,
+        {
+          ...projection.checkpoints[0]!,
+          id: CheckpointId.make("checkpoint:first"),
+          runId: firstRunId,
+          appRunOrdinal: 1,
+          ref: CheckpointRef.make("refs/t3/test/first"),
+        },
+        { ...projection.checkpoints[0]!, ordinalWithinScope: 2, appRunOrdinal: 3 },
         ...sibling.checkpoints,
         ...nested.checkpoints,
         ...later.checkpoints,
@@ -397,7 +462,7 @@ it.effect("adds a patch for each tracked repository that changed in the range", 
   });
   return Effect.gen(function* () {
     const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
-    const result = yield* query.getTurnDiff({ threadId, fromTurnCount: 0, toTurnCount: 2 });
+    const result = yield* query.getTurnDiff({ threadId, fromTurnCount: 2, toTurnCount: 3 });
     assert.deepEqual(result.repositories, [
       {
         name: "shared",
@@ -412,6 +477,8 @@ it.effect("adds a patch for each tracked repository that changed in the range", 
       diffCheckpoints.mock.calls.find(([input]) => input.cwd === "/work/app")?.[0].excludePaths,
       ["packages/ui"],
     );
+    const aggregate = yield* query.getFullThreadDiff({ threadId, toTurnCount: 3 });
+    assert.deepEqual(aggregate.repositories, result.repositories);
   }).pipe(Effect.provide(layer));
 });
 

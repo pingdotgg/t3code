@@ -364,7 +364,7 @@ export const layer: Layer.Layer<
       const repositoryTargets = repositories.flatMap((repository) => {
         const target = repositoryRewindCheckpoint(
           recorded.filter((candidate) => candidate.scopeId === repository.id),
-          targetOrdinal,
+          checkpoint.ordinalWithinScope,
         );
         return target === null ? [] : [{ scope: repository, checkpoint: target }];
       });
@@ -375,7 +375,7 @@ export const layer: Layer.Layer<
           recorded.some(
             (candidate) =>
               candidate.scopeId === repository.id &&
-              candidate.ordinalWithinScope > targetOrdinal &&
+              candidate.ordinalWithinScope > checkpoint.ordinalWithinScope &&
               (candidate.status === "ready" || candidate.runId !== null),
           ),
       );
@@ -439,7 +439,7 @@ export const layer: Layer.Layer<
       yield* checkpoints.discardRepositorySnapshots({
         rootScope: scope,
         thread: context.thread,
-        ordinals: runsToRollback.map((run) => run.ordinal),
+        ordinals: context.discardedSnapshotOrdinals,
       });
 
       // Lock against full-row thread writes that could restore the old native session after rollback.

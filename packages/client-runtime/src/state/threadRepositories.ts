@@ -101,20 +101,19 @@ export function repositoryCheckpointScopeIds(
  */
 export function rewindFileRestore(input: {
   readonly projection: Pick<OrchestrationV2ThreadProjection, "checkpoints" | "checkpointScopes">;
-  readonly checkpoint: Pick<OrchestrationV2Checkpoint, "status" | "appRunOrdinal"> | undefined;
+  readonly checkpoint: Pick<OrchestrationV2Checkpoint, "status" | "ordinalWithinScope"> | undefined;
   readonly taskFolder: Pick<TaskFolder, "projectIsWorktree"> | null | undefined;
 }): "files" | "repositories" | null {
   const { checkpoint, projection } = input;
   if (checkpoint === undefined) return null;
   if (checkpoint.status === "ready") return "files";
   if (checkpoint.status !== "missing" || input.taskFolder?.projectIsWorktree !== false) return null;
-  const targetOrdinal = checkpoint.appRunOrdinal ?? 0;
   return projection.checkpointScopes.some(
     (scope) =>
       isRepositoryCheckpointScope(scope) &&
       repositoryRewindCheckpoint(
         projection.checkpoints.filter((candidate) => candidate.scopeId === scope.id),
-        targetOrdinal,
+        checkpoint.ordinalWithinScope,
       ) !== null,
   )
     ? "repositories"
