@@ -1,20 +1,20 @@
-import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
-import { msg } from "gt-react";
-import { m } from "~/i18n/messages";
 import {
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { nextTerminalId } from "@t3tools/shared/terminalLabels";
+import { msg } from "gt-react";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { m } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 import {
   rightPanelHostRef,
