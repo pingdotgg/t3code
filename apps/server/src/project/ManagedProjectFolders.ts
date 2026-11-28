@@ -176,11 +176,12 @@ function escapeXml(value: string): string {
 
 // ProjectFaviconResolver finds assets/icon.svg on every clone.
 function namedProjectIconSvg(name: string): string {
-  const words = name.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  // Combining marks belong to their word and stay on its first letter.
+  const words = name.match(/[\p{L}\p{N}][\p{L}\p{N}\p{M}]*/gu) ?? [];
   const initials =
     words
       .slice(0, 2)
-      .map((word) => Array.from(word)[0] ?? "")
+      .map((word) => word.match(/^\P{M}\p{M}*/u)?.[0] ?? "")
       .join("")
       .toUpperCase() ||
     Array.from(name.trim())[0] ||
