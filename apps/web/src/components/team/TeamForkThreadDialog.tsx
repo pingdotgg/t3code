@@ -10,16 +10,11 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   extractProjectRepoIdentityKey,
+  isTeamHubOnlyServerConfig,
   listAccessibleTeamEnvironments,
+  resolveTeamForkModelSelection,
 } from "@t3tools/client-runtime/team";
-import {
-  DEFAULT_MODEL,
-  ProviderInstanceId,
-  type EnvironmentId,
-  type ProjectId,
-  type ThreadId,
-} from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
@@ -33,12 +28,15 @@ import { m } from "~/i18n/messages";
 import { newMessageId, newThreadId } from "~/lib/utils";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useProjects, waitForThreadShell } from "~/state/entities";
-import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import {
+  useEnvironmentProviders,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "~/state/environments";
 import { environmentThreadStateAtom, threadEnvironment } from "~/state/threads";
 import {
-  clearPendingLocalThreadViewId,
   closeTeamForkDialog,
-  setPendingLocalThreadViewId,
+  prepareTeamThreadAccess,
   setTeamDraftViewId,
   useTeamEnvironmentState,
   useTeamForkDialogRequest,
@@ -91,6 +89,7 @@ export function TeamForkThreadDialogHost() {
   const gt = useGT();
   const navigate = useNavigate();
   const { environments } = useEnvironments();
+  const providersByEnvironment = useEnvironmentProviders();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projects = useProjects();
   const teamState = useTeamEnvironmentState(request?.teamEnvironmentId ?? null);
@@ -126,10 +125,12 @@ export function TeamForkThreadDialogHost() {
   const seenEnvIds = new Set<EnvironmentId>();
 
   if (primaryEnvironmentId && primaryEnvironmentId !== request.teamEnvironmentId) {
-    const localProjectId = findProjectForEnv(primaryEnvironmentId);
+    const localEnv = envById.get(primaryEnvironmentId);
+    const localProjectId = isTeamHubOnlyServerConfig(localEnv?.serverConfig)
+      ? null
+      : findProjectForEnv(primaryEnvironmentId);
     if (localProjectId) {
       seenEnvIds.add(primaryEnvironmentId);
-      const localEnv = envById.get(primaryEnvironmentId);
       options.push({
         environmentId: primaryEnvironmentId,
         projectId: localProjectId,
@@ -142,6 +143,8 @@ export function TeamForkThreadDialogHost() {
 
   for (const teamEnv of accessibleTeamEnvs) {
     if (seenEnvIds.has(teamEnv.environmentId)) continue;
+    const connectedEnv = envById.get(teamEnv.environmentId);
+    if (isTeamHubOnlyServerConfig(connectedEnv?.serverConfig)) continue;
     const targetProjectId = findProjectForEnv(teamEnv.environmentId);
     if (!targetProjectId) continue;
     seenEnvIds.add(teamEnv.environmentId);
@@ -176,14 +179,36 @@ export function TeamForkThreadDialogHost() {
 
     const targetThreadId = newThreadId();
     const targetThreadRef = scopeThreadRef(option.environmentId, targetThreadId);
-    const sourceModelSelection =
-      sourceProjection?.thread.modelSelection ??
-      createModelSelection(ProviderInstanceId.make("codex"), DEFAULT_MODEL);
-    const forkTitle = gt("{title} (fork)", { title: request.sourceThreadTitle });
-    if (option.isLocal && inheritedTeamViewId !== null) {
-      // Preserve source View visibility when TeamLocalThreadSyncCoordinator mirrors the local fork.
-      setPendingLocalThreadViewId(targetThreadId, inheritedTeamViewId);
+    const targetProviders = providersByEnvironment.get(option.environmentId) ?? [];
+    const resolvedModelSelection = resolveTeamForkModelSelection({
+      sourceModelSelection: sourceProjection?.thread.modelSelection ?? null,
+      targetProviders,
+      teamState,
+      isLocalTarget: option.isLocal,
+    });
+    if (resolvedModelSelection === null) {
+      toastManager.add({
+        type: "error",
+        title: gt("No compatible team provider available on {environment}", {
+          environment: option.label,
+        }),
+        description: option.isLocal
+          ? gt(
+              "Remote-only team providers cannot run locally. Choose a remote team environment or ask an admin to enable a local-compatible team provider.",
+            )
+          : gt("No enabled team provider is available on this target environment."),
+      });
+      return;
     }
+    const forkTitle = gt("{title} (fork)", { title: request.sourceThreadTitle });
+    const teamAccess =
+      option.isLocal || option.environmentId === request.teamEnvironmentId
+        ? prepareTeamThreadAccess(option.environmentId, targetThreadId, {
+            teamEnvironmentId: request.teamEnvironmentId,
+            viewId: inheritedTeamViewId,
+            locked: false,
+          })
+        : {};
     const result = await startThreadTurn({
       environmentId: option.environmentId,
       input: {
@@ -194,7 +219,7 @@ export function TeamForkThreadDialogHost() {
           text: handoffPrompt,
           attachments: [],
         },
-        modelSelection: sourceModelSelection,
+        modelSelection: resolvedModelSelection,
         titleSeed: forkTitle,
         runtimeMode: sourceProjection?.thread.runtimeMode ?? "auto",
         interactionMode: DEFAULT_INTERACTION_MODE,
@@ -202,15 +227,13 @@ export function TeamForkThreadDialogHost() {
           createThread: {
             projectId: option.projectId,
             title: forkTitle,
-            modelSelection: sourceModelSelection,
+            modelSelection: resolvedModelSelection,
             runtimeMode: sourceProjection?.thread.runtimeMode ?? "auto",
             interactionMode: DEFAULT_INTERACTION_MODE,
             branch: sourceProjection?.thread.branch ?? null,
             worktreePath: null,
             createdAt: new Date().toISOString(),
-            ...(!option.isLocal && inheritedTeamViewId !== null
-              ? { teamViewId: inheritedTeamViewId }
-              : {}),
+            ...teamAccess,
           },
         },
         createdAt: new Date().toISOString(),
@@ -232,10 +255,6 @@ export function TeamForkThreadDialogHost() {
       return;
     }
 
-    if (option.isLocal && inheritedTeamViewId !== null) {
-      clearPendingLocalThreadViewId(targetThreadId);
-    }
-
     if (!isAtomCommandInterrupted(result)) {
       // Fallback: open a draft on the target environment pre-populated with portable handoff text.
       const draftResult = await handleNewThread(
@@ -248,7 +267,7 @@ export function TeamForkThreadDialogHost() {
           const draftRouteThreadKey = scopedThreadKey(
             scopeThreadRef(option.environmentId, draftResult.threadId),
           );
-          setTeamDraftViewId(draftRouteThreadKey, inheritedTeamViewId);
+          setTeamDraftViewId(draftRouteThreadKey, inheritedTeamViewId, request.teamEnvironmentId);
         }
         closeTeamForkDialog();
         toastManager.add({

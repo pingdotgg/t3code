@@ -193,7 +193,7 @@ export function useThreadActionMenu(input: {
       }
       if (action.startsWith("team-view:")) {
         await setThreadView({
-          environmentId: threadRef.environmentId,
+          environmentId: teamAccessActions.teamEnvironmentId ?? threadRef.environmentId,
           threadId: threadRef.threadId,
           viewId: action.slice("team-view:".length) as TeamViewId,
         });
@@ -272,7 +272,7 @@ export function useThreadActionMenu(input: {
         case "team-lock":
         case "team-unlock":
           await setThreadLocked({
-            environmentId: threadRef.environmentId,
+            environmentId: teamAccessActions.teamEnvironmentId ?? threadRef.environmentId,
             threadId: threadRef.threadId,
             locked: action === "team-lock",
           });

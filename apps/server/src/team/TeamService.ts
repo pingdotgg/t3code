@@ -3347,7 +3347,7 @@ const make = Effect.gen(function* () {
     yield* publish({ version: 1, type: "threadAttributed", payload: updated.value });
     yield* publishAccessChange({ type: "threadView", threadId: input.payload.threadId });
     return updated.value;
-  });
+  }, withMembershipMutationGate);
 
   const setThreadLocked = Effect.fn("TeamService.setThreadLocked")(function* (input: {
     readonly sessionId: AuthSessionId;
@@ -3387,7 +3387,7 @@ const make = Effect.gen(function* () {
     yield* publish({ version: 1, type: "threadAttributed", payload: updated.value });
     yield* publishAccessChange({ type: "threadView", threadId: input.payload.threadId });
     return updated.value;
-  });
+  }, withMembershipMutationGate);
 
   const updateMyPseudo = Effect.fn("TeamService.updateMyPseudo")(function* (input: {
     readonly sessionId: AuthSessionId;
@@ -8733,37 +8733,103 @@ const make = Effect.gen(function* () {
     const existingAttribution = yield* repository
       .getThreadAttribution(input.payload.threadId)
       .pipe(Effect.mapError(toInternalError));
-    if (Option.isNone(existingAttribution) && input.projectionStore !== undefined) {
-      const existingProjection = yield* input.projectionStore
-        .getThreadProjection(input.payload.threadId)
-        .pipe(
-          Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
-          Effect.mapError(toInternalError),
-        );
-      if (existingProjection !== null) {
+    const incomingUpdatedMs = DateTime.toEpochMillis(DateTime.makeUnsafe(input.payload.updatedAt));
+    const incomingSyncSeq = input.payload.syncSeq;
+
+    let resolvedViewId: TeamViewId;
+    let locked: boolean;
+    let existingWatermark: TeamRepository.TeamLocalSyncWatermark | null = null;
+
+    if (Option.isSome(existingAttribution)) {
+      const existing = existingAttribution.value;
+      if (
+        existing.teamId !== team.id ||
+        existing.isLocalSynced !== true ||
+        existing.creatorMemberId !== actor.id ||
+        (existing.executionEnvironmentId !== null &&
+          existing.executionEnvironmentId !== input.payload.executionEnvironmentId)
+      ) {
         return yield* new TeamOperationError({
           code: "forbidden",
-          message: "Cannot overwrite an existing Team Server thread via local sync.",
+          message: "Only the owner of a local-synced thread can update its synced state.",
+        });
+      }
+      const persistedViewOption = yield* repository
+        .getViewById(existing.viewId)
+        .pipe(Effect.mapError(toInternalError));
+      const persistedView =
+        Option.isSome(persistedViewOption) && persistedViewOption.value.teamId === team.id
+          ? persistedViewOption.value
+          : null;
+      const postBlockReason = resolveTeamThreadPostBlockReason({
+        member: actor,
+        attribution: existing,
+        view: persistedView,
+      });
+      if (postBlockReason !== "ok") {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message:
+            postBlockReason === "locked"
+              ? "This thread is locked. Only team owners and admins can sync updates."
+              : "You do not have permission to sync updates to this thread in its current view.",
+        });
+      }
+      const watermarkOption = yield* repository
+        .getLocalSyncWatermark(input.payload.threadId)
+        .pipe(Effect.mapError(toInternalError));
+      if (Option.isSome(watermarkOption)) {
+        existingWatermark = watermarkOption.value;
+        const lastUpdatedMs = DateTime.toEpochMillis(
+          DateTime.makeUnsafe(existingWatermark.lastUpdatedAt),
+        );
+        const isStaleTimestamp = incomingUpdatedMs < lastUpdatedMs;
+        const isStaleSeq =
+          incomingUpdatedMs === lastUpdatedMs &&
+          existingWatermark.lastSyncSeq > 0 &&
+          (incomingSyncSeq ?? 0) < existingWatermark.lastSyncSeq;
+        if (isStaleTimestamp || isStaleSeq) {
+          return { attribution: existing } satisfies TeamSyncLocalThreadResult;
+        }
+      }
+      resolvedViewId = existing.viewId;
+      locked = existing.locked;
+    } else {
+      if (input.projectionStore !== undefined) {
+        const existingProjection = yield* input.projectionStore
+          .getThreadProjection(input.payload.threadId)
+          .pipe(
+            Effect.catchTags({
+              ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+            }),
+            Effect.mapError(toInternalError),
+          );
+        if (existingProjection !== null) {
+          return yield* new TeamOperationError({
+            code: "forbidden",
+            message: "Cannot overwrite an existing Team Server thread via local sync.",
+          });
+        }
+      }
+      resolvedViewId = yield* resolveDefaultViewIdForProject(
+        team,
+        input.payload.projectId,
+        input.payload.viewId,
+      );
+      const viewOption = yield* repository
+        .getViewById(resolvedViewId)
+        .pipe(Effect.mapError(toInternalError));
+      const view =
+        Option.isSome(viewOption) && viewOption.value.teamId === team.id ? viewOption.value : null;
+      locked = input.payload.locked === true;
+      if (view === null || !canMemberCreateThreadInTeamView(actor, view, locked)) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message: "You do not have permission to sync a thread into this view.",
         });
       }
     }
-    const resolvedViewId = yield* resolveDefaultViewIdForProject(
-      team,
-      input.payload.projectId,
-      input.payload.viewId,
-    );
-    const viewOption = yield* repository
-      .getViewById(resolvedViewId)
-      .pipe(Effect.mapError(toInternalError));
-    const view =
-      Option.isSome(viewOption) && viewOption.value.teamId === team.id ? viewOption.value : null;
-    const locked = input.payload.locked === true;
-    if (!canMemberCreateThreadInTeamView(actor, view, locked)) {
-      return yield* new TeamOperationError({
-        code: "forbidden",
-        message: "You do not have permission to sync a thread into this view.",
-      });
-    }
+
     const label =
       input.payload.executionEnvironmentLabel?.trim() || `${actor.pseudo}'s local environment`;
     const attributionOption = yield* repository
@@ -8804,10 +8870,28 @@ const make = Effect.gen(function* () {
         sync: input.payload,
       }).pipe(Effect.mapError(toInternalError));
     }
+    const nowIso = DateTime.formatIso(yield* DateTime.now);
+    const nextSyncSeq =
+      existingWatermark !== null &&
+      DateTime.toEpochMillis(DateTime.makeUnsafe(existingWatermark.lastUpdatedAt)) ===
+        incomingUpdatedMs
+        ? Math.max(existingWatermark.lastSyncSeq, incomingSyncSeq ?? 0)
+        : (incomingSyncSeq ?? 0);
+    yield* repository
+      .upsertLocalSyncWatermark({
+        threadId: input.payload.threadId,
+        teamId: team.id,
+        lastUpdatedAt: input.payload.updatedAt,
+        lastSyncSeq: nextSyncSeq,
+        updatedAt: nowIso,
+      })
+      .pipe(Effect.mapError(toInternalError));
     // Record turn attributions, relink msg:<userMessageId> note anchors to mirrored run IDs, and
     // re-anchor pending notes once for the highest-ordinal brand-new local run.
-    let highestInsertedRun: { readonly ordinal: number; readonly mirroredRunId: string } | null =
-      null;
+    let highestInsertedRun: {
+      readonly ordinal: number;
+      readonly mirroredRunId: string;
+    } | null = null;
     for (const run of input.payload.runs) {
       const mirroredRunId = localSyncMirroredRunId(input.payload.threadId, run.id);
       const mirroredMessageId = localSyncMirroredMessageId(
@@ -8876,7 +8960,7 @@ const make = Effect.gen(function* () {
       payload: attributionOption.value,
     });
     return { attribution: attributionOption.value } satisfies TeamSyncLocalThreadResult;
-  });
+  }, withMembershipMutationGate);
 
   const assertActorCanResolveNotesOnThread = Effect.fn(
     "TeamService.assertActorCanResolveNotesOnThread",

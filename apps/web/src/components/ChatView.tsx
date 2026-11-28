@@ -2894,9 +2894,23 @@ export default function ChatView(props: ChatViewProps) {
     isServerThread &&
     teamThreadContext.envAccess.canExecute &&
     teamThreadContext.acceptedNotes.length > 0;
+  const ownLocalMirrorTargetRef = (() => {
+    if (teamThreadContext.envAccess.canExecute) return null;
+    if (teamThreadContext.envAccess.reason !== "own_local_mirror") return null;
+    const localEnvId = teamThreadAttribution?.executionEnvironmentId ?? null;
+    if (!localEnvId || !connectedEnvironmentIds.includes(localEnvId)) return null;
+    return scopeThreadRef(localEnvId, threadId);
+  })();
   const teamEnvDisabledReason =
     isServerThread && !teamThreadContext.envAccess.canExecute && !effectiveTeamNoteMode
-      ? formatTeamThreadEnvBlockReason(teamThreadContext.envAccess, teamThreadOwnerPseudo, messages)
+      ? formatTeamThreadEnvBlockReason(
+          teamThreadContext.envAccess,
+          teamThreadOwnerPseudo,
+          messages,
+          {
+            canOpenLocalThread: ownLocalMirrorTargetRef !== null,
+          },
+        )
       : null;
   const reserveAcceptedTeamNotesForCard = useAtomCommand(teamEnvironment.reserveAcceptedNotes, {
     reportFailure: false,
@@ -3076,6 +3090,16 @@ export default function ChatView(props: ChatViewProps) {
             ownerPseudo: teamThreadOwnerPseudo,
             environmentLabel: teamThreadEnvLabel,
             canLeaveNote: teamThreadContext.canLeaveNote,
+            ...(ownLocalMirrorTargetRef !== null
+              ? {
+                  onOpenLocalThread: () => {
+                    void navigate({
+                      to: "/$environmentId/$threadId",
+                      params: buildThreadRouteParams(ownLocalMirrorTargetRef),
+                    });
+                  },
+                }
+              : {}),
             onForkThread: () => {
               if (!activeThread || !teamThreadContext.teamEnvironmentId) return;
               openTeamForkDialog({
@@ -4385,7 +4409,12 @@ export default function ChatView(props: ChatViewProps) {
                                         trailing: (
                                           <div className="flex items-center gap-1.5">
                                             <TeamDraftAccessControls
-                                              environmentId={environmentId}
+                                              environmentId={
+                                                environmentId === primaryEnvironment?.environmentId
+                                                  ? (activeProjectTeamAssignment?.teamEnvironmentId ??
+                                                    environmentId)
+                                                  : environmentId
+                                              }
                                               draftKey={routeThreadKey}
                                             />
                                             <ComposerContextPermissions

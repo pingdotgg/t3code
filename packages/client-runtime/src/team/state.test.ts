@@ -49,15 +49,20 @@ import {
   filterProviderEntriesForTeamProject,
   formatTeamThreadTitle,
   hasActiveTeamEnvironment,
+  isDuplicateMirroredLocalTeamThread,
   isFollowingTeamThread,
   isTeamColleagueThread,
+  isTeamHubOnlyServerConfig,
   isTeamOwnedThread,
   isTeamThreadLocked,
   listAccessibleTeamEnvironments,
   listAccessibleTeamViews,
   listConnectedTeams,
   listRemoteOnlyTeamProviders,
+  resolveCorrelatedLocalSyncedTeamThread,
+  resolveOwningTeamEnvironment,
   resolveProjectTeamAssignment,
+  resolveTeamForkModelSelection,
   resolveTeamNotificationSoundPreset,
   resolveTeamQueuedRunAuthorPseudo,
   resolveTeamScheduledTaskMeta,
@@ -2000,5 +2005,272 @@ describe("team client-runtime state and presentation", () => {
       teamAId,
       teamBId,
     ]);
+  });
+
+  it("P1-5/P1-6/P1-7: resolves t3runner owning teams, teamHubOnly configs, local fork provider isolation, and mirrored local thread deduplication", () => {
+    const hubEnvId = EnvironmentId.make("env-hub");
+    const runnerEnvId = EnvironmentId.make("env-runner");
+    const localEnvId = EnvironmentId.make("env-alice-local");
+    const teamId = TeamId.make("team-multi-env");
+    const viewId = TeamViewId.make("view-default");
+    const aliceId = TeamMemberId.make("member-alice");
+    const bobId = TeamMemberId.make("member-bob");
+    const now = "2026-11-26T12:00:00.000Z";
+
+    const alice = {
+      id: aliceId,
+      teamId,
+      pseudo: "alice" as TeamPseudo,
+      role: "owner" as const,
+      status: "active" as const,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const teamWorkspace = {
+      id: teamId,
+      name: "Hub Team",
+      displayName: "Hub Team",
+      defaultViewId: viewId,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const syncedThreadId = ThreadId.make("thread-alice-local-synced");
+    const bobSyncedThreadId = ThreadId.make("thread-bob-local-synced");
+    const hubState = applyTeamStreamEvent(EMPTY_TEAM_ENVIRONMENT_STATE, {
+      version: 1,
+      type: "snapshot",
+      payload: {
+        team: teamWorkspace,
+        currentMember: alice,
+        members: [alice],
+        views: [
+          {
+            id: viewId,
+            teamId,
+            name: "Default",
+            description: null,
+            isDefault: true,
+            readRule: { roles: ["owner", "admin", "modo", "regular"], memberIds: [] },
+            postRule: { roles: ["owner", "admin", "modo", "regular"], memberIds: [] },
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        invites: [],
+        threadAttributions: [
+          {
+            threadId: syncedThreadId,
+            teamId,
+            creatorMemberId: aliceId,
+            creatorPseudo: alice.pseudo,
+            viewId,
+            locked: true,
+            lockedByMemberId: aliceId,
+            executionEnvironmentId: localEnvId,
+            executionEnvironmentLabel: "Alice Laptop",
+            isLocalSynced: true,
+            createdAt: now,
+          },
+          {
+            threadId: bobSyncedThreadId,
+            teamId,
+            creatorMemberId: bobId,
+            creatorPseudo: "bob" as TeamPseudo,
+            viewId,
+            locked: false,
+            lockedByMemberId: null,
+            executionEnvironmentId: EnvironmentId.make("env-bob-local"),
+            executionEnvironmentLabel: "Bob Laptop",
+            isLocalSynced: true,
+            createdAt: now,
+          },
+        ],
+        followedThreadIds: [],
+        latestTurnAttributions: [],
+        teamProjects: [],
+        environments: [
+          {
+            id: TeamEnvironmentRecordId.make("te-hub"),
+            teamId,
+            environmentId: hubEnvId,
+            name: "Hub",
+            isDefault: true,
+            peerLinkId: null,
+            accessRule: { roles: ["owner", "admin", "modo", "regular"], memberIds: [] },
+            createdAt: now,
+            updatedAt: now,
+          },
+          {
+            id: TeamEnvironmentRecordId.make("te-runner"),
+            teamId,
+            environmentId: runnerEnvId,
+            name: "Shared Runner",
+            isDefault: false,
+            peerLinkId: null,
+            accessRule: { roles: ["owner", "admin", "modo", "regular"], memberIds: [] },
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        providers: [
+          {
+            id: "tp-remote" as never,
+            teamId,
+            providerInstanceId: ProviderInstanceId.make("claude-remote"),
+            driver: ProviderDriverKind.make("claudeAgent"),
+            displayName: "Remote Claude",
+            deliveryStrategy: "remote-only",
+            upstreamBaseUrl: null,
+            apiKeyHeader: null,
+            apiKeyPrefix: null,
+            hasSecret: true,
+            config: {},
+            enabled: true,
+            updatedByMemberId: aliceId,
+            createdAt: now,
+            updatedAt: now,
+          },
+          {
+            id: "tp-proxy" as never,
+            teamId,
+            providerInstanceId: ProviderInstanceId.make("codex-proxy"),
+            driver: ProviderDriverKind.make("codex"),
+            displayName: "Team Codex Proxy",
+            deliveryStrategy: "proxy",
+            upstreamBaseUrl: "https://proxy.example.com",
+            apiKeyHeader: "authorization",
+            apiKeyPrefix: "Bearer ",
+            hasSecret: true,
+            config: {},
+            enabled: true,
+            updatedByMemberId: aliceId,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      },
+    });
+    const teamStates = new Map<EnvironmentId, TeamEnvironmentState>([
+      [hubEnvId, hubState],
+      [runnerEnvId, EMPTY_TEAM_ENVIRONMENT_STATE],
+      [localEnvId, EMPTY_TEAM_ENVIRONMENT_STATE],
+    ]);
+
+    // P1-5: resolveOwningTeamEnvironment resolves both direct hub and attached t3runner.
+    expect(
+      resolveOwningTeamEnvironment({ environmentId: hubEnvId, teamStates })?.teamEnvironmentId,
+    ).toBe(hubEnvId);
+    expect(
+      resolveOwningTeamEnvironment({ environmentId: runnerEnvId, teamStates })?.teamEnvironmentId,
+    ).toBe(hubEnvId);
+    expect(resolveOwningTeamEnvironment({ environmentId: localEnvId, teamStates })).toBeNull();
+    expect(
+      isTeamHubOnlyServerConfig({
+        environment: { capabilities: { teamHubOnly: true } },
+      } as never),
+    ).toBe(true);
+    expect(
+      isTeamHubOnlyServerConfig({
+        environment: { capabilities: {} },
+      } as never),
+    ).toBe(false);
+
+    // P1-6: Local fork excludes remote-only and personal providers and picks compatible team provider.
+    const remoteTeamInstanceId = ProviderInstanceId.make(`team:${teamId}:claude-remote`);
+    const proxyTeamInstanceId = ProviderInstanceId.make(`team:${teamId}:codex-proxy`);
+    const personalInstanceId = ProviderInstanceId.make("codex");
+    const sourceRemoteSelection = {
+      instanceId: remoteTeamInstanceId,
+      model: "claude-sonnet-4-6",
+    };
+    const localProviders = [
+      {
+        instanceId: personalInstanceId,
+        driver: "codex" as const,
+        enabled: true,
+        status: "ready" as const,
+        models: [{ slug: "gpt-5.4", name: "GPT-5.4" }],
+      },
+      {
+        instanceId: remoteTeamInstanceId,
+        driver: "claudeAgent" as const,
+        enabled: true,
+        status: "ready" as const,
+        models: [{ slug: "claude-sonnet-4-6", name: "Claude Sonnet" }],
+      },
+      {
+        instanceId: proxyTeamInstanceId,
+        driver: "codex" as const,
+        enabled: true,
+        status: "ready" as const,
+        models: [{ slug: "gpt-5.4-team", name: "GPT-5.4 Team" }],
+      },
+    ];
+    expect(
+      resolveTeamForkModelSelection({
+        sourceModelSelection: sourceRemoteSelection,
+        targetProviders: localProviders as never,
+        teamState: hubState,
+        isLocalTarget: true,
+      }),
+    ).toEqual({
+      instanceId: proxyTeamInstanceId,
+      model: "gpt-5.4-team",
+    });
+    // When only remote-only / personal providers exist on local target, returns null (blocks invalid fork).
+    expect(
+      resolveTeamForkModelSelection({
+        sourceModelSelection: sourceRemoteSelection,
+        targetProviders: localProviders.slice(0, 2) as never,
+        teamState: hubState,
+        isLocalTarget: true,
+      }),
+    ).toBeNull();
+    // Remote target preserves remote-only team provider.
+    expect(
+      resolveTeamForkModelSelection({
+        sourceModelSelection: sourceRemoteSelection,
+        targetProviders: localProviders as never,
+        teamState: hubState,
+        isLocalTarget: false,
+      }),
+    ).toEqual(sourceRemoteSelection);
+
+    // P1-7: Mirrored row deduplication & local row team metadata hydration.
+    const liveLocalThreadKeys = new Set([`${localEnvId}\0${syncedThreadId}`]);
+    expect(
+      isDuplicateMirroredLocalTeamThread({
+        environmentId: hubEnvId,
+        threadId: syncedThreadId,
+        teamStates,
+        liveLocalThreadKeys,
+      }),
+    ).toBe(true);
+    // Not a duplicate when local thread is absent (e.g. viewing from another device).
+    expect(
+      isDuplicateMirroredLocalTeamThread({
+        environmentId: hubEnvId,
+        threadId: syncedThreadId,
+        teamStates,
+        liveLocalThreadKeys: new Set(),
+      }),
+    ).toBe(false);
+    // Colleague's local-synced thread is never hidden.
+    expect(
+      isDuplicateMirroredLocalTeamThread({
+        environmentId: hubEnvId,
+        threadId: bobSyncedThreadId,
+        teamStates,
+        liveLocalThreadKeys,
+      }),
+    ).toBe(false);
+    const correlated = resolveCorrelatedLocalSyncedTeamThread({
+      environmentId: localEnvId,
+      threadId: syncedThreadId,
+      teamStates,
+    });
+    expect(correlated?.teamEnvironmentId).toBe(hubEnvId);
+    expect(correlated?.attribution.locked).toBe(true);
+    expect(correlated?.attribution.creatorPseudo).toBe("alice");
   });
 });

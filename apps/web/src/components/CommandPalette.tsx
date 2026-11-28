@@ -88,10 +88,14 @@ import {
   UserPlusIcon,
   WorkflowIcon,
 } from "lucide-react";
-import { extractProjectRepoIdentityKey } from "@t3tools/client-runtime/team";
+import {
+  extractProjectRepoIdentityKey,
+  isTeamHubOnlyServerConfig,
+  resolveOwningTeamEnvironment,
+} from "@t3tools/client-runtime/team";
 import { useTeamCommandPaletteActions } from "./team/useTeamCommandPaletteActions";
 import { waitForCloneAndAssignProject } from "./team/waitForCloneAndAssignProject";
-import { teamEnvironment, useTeamEnvironmentState } from "../state/team";
+import { teamEnvironment, useTeamStatesByEnvironment } from "../state/team";
 import { canManageTeamProjects } from "@t3tools/contracts";
 import { UsersIcon } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
@@ -595,25 +599,46 @@ function OpenCommandPaletteDialog(props: {
   const assignProjectToTeam = useAtomCommand(teamEnvironment.assignProject, {
     reportFailure: false,
   });
-  const newProjectTeamState = useTeamEnvironmentState(newProjectFlow?.environmentId ?? null);
+  const teamStatesByEnvironment = useTeamStatesByEnvironment();
+  const newProjectOwningTeam =
+    newProjectFlow !== null
+      ? resolveOwningTeamEnvironment({
+          environmentId: newProjectFlow.environmentId,
+          teamStates: teamStatesByEnvironment,
+        })
+      : null;
+  const newProjectTeamState = newProjectOwningTeam?.teamState ?? null;
   const canAssignNewProjectScope = useAtomValue(
-    teamEnvironment.assignProject.permissionAtom(newProjectFlow?.environmentId ?? null),
+    teamEnvironment.assignProject.permissionAtom(
+      newProjectOwningTeam?.teamEnvironmentId ?? newProjectFlow?.environmentId ?? null,
+    ),
   );
   const canAssignNewProjectToTeam =
     newProjectFlow !== null &&
+    newProjectOwningTeam !== null &&
+    newProjectTeamState !== null &&
     newProjectTeamState.team !== null &&
     newProjectTeamState.currentMember !== null &&
     newProjectTeamState.currentMember.status === "active" &&
     canManageTeamProjects(newProjectTeamState.currentMember.role) &&
     canAssignNewProjectScope;
-  const browseTeamEnvironmentId = addProjectCloneFlow?.environmentId ?? addProjectEnvironmentId;
-  const browseTeamState = useTeamEnvironmentState(browseTeamEnvironmentId);
+  const browseExecutionEnvironmentId =
+    addProjectCloneFlow?.environmentId ?? addProjectEnvironmentId;
+  const browseOwningTeam =
+    browseExecutionEnvironmentId === null
+      ? null
+      : resolveOwningTeamEnvironment({
+          environmentId: browseExecutionEnvironmentId,
+          teamStates: teamStatesByEnvironment,
+        });
+  const browseTeamEnvironmentId = browseOwningTeam?.teamEnvironmentId ?? null;
+  const browseTeamState = browseOwningTeam?.teamState ?? null;
   const canAssignBrowseProjectScope = useAtomValue(
     teamEnvironment.assignProject.permissionAtom(browseTeamEnvironmentId),
   );
   const canAssignBrowseProjectToTeam =
     browseTeamEnvironmentId !== null &&
-    browseTeamState.team !== null &&
+    browseTeamState?.team != null &&
     browseTeamState.currentMember !== null &&
     browseTeamState.currentMember.status === "active" &&
     canManageTeamProjects(browseTeamState.currentMember.role) &&
@@ -653,16 +678,34 @@ function OpenCommandPaletteDialog(props: {
     defaultProjectRef,
     handleNewThread,
   });
+  const pickerGroups = pickableProjectGroups(projectGroups);
   const projectPickerEntries = buildSidebarProjectPickerEntries({
-    groups: pickableProjectGroups(projectGroups),
+    groups: pickerGroups,
     preferredProjectRef: contextualProjectRef,
   });
+  const hubOnlyEnvironmentIds = new Set(
+    environments
+      .filter((environment) => isTeamHubOnlyServerConfig(environment.serverConfig))
+      .map((environment) => environment.environmentId),
+  );
+  const executionProjectEntries =
+    hubOnlyEnvironmentIds.size === 0
+      ? projectPickerEntries
+      : buildSidebarProjectPickerEntries({
+          groups: pickerGroups.map((group) => ({
+            ...group,
+            memberProjects: group.memberProjects.filter(
+              (member) => !hubOnlyEnvironmentIds.has(member.environmentId),
+            ),
+          })),
+          preferredProjectRef: contextualProjectRef,
+        });
   const pickerProjects = projectPickerEntries.map(({ group, targetProject }) => ({
     ...targetProject,
     displayName: group.displayName,
   }));
   const projectGroupByTargetKey = new Map(
-    projectPickerEntries.map(({ group, targetProject }) => [
+    [...executionProjectEntries, ...projectPickerEntries].map(({ group, targetProject }) => [
       `${targetProject.environmentId}:${targetProject.id}`,
       group,
     ]),
@@ -685,7 +728,11 @@ function OpenCommandPaletteDialog(props: {
 
   const addProjectEnvironmentOptions = (() => {
     const options = environments
-      .filter((environment) => canCreateProjectInEnvironment(environment.connection.phase))
+      .filter(
+        (environment) =>
+          canCreateProjectInEnvironment(environment.connection.phase) &&
+          !isTeamHubOnlyServerConfig(environment.serverConfig),
+      )
       .map((environment): AddProjectEnvironmentOption => {
         const isPrimary = environment.entry.target._tag === "PrimaryConnectionTarget";
         return {
@@ -963,9 +1010,11 @@ function OpenCommandPaletteDialog(props: {
       const currentEntry =
         currentProjectId === null
           ? undefined
-          : projectPickerEntries.find((entry) => entry.isPreferred);
+          : executionProjectEntries.find((entry) => entry.isPreferred);
       const projectItems = buildNewThreadInProjectItems({
-        projects: pickerProjects.filter((project) => !isScratch(project)),
+        projects: executionProjectEntries
+          .map(({ group, targetProject }) => ({ ...targetProject, displayName: group.displayName }))
+          .filter((project) => !isScratch(project)),
         currentProjectKey: currentEntry
           ? `${currentEntry.targetProject.environmentId}:${currentEntry.targetProject.id}`
           : null,
@@ -976,6 +1025,7 @@ function OpenCommandPaletteDialog(props: {
           const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
           const contextualProjectIsEligible =
             contextualProjectRef !== null &&
+            !hubOnlyEnvironmentIds.has(contextualProjectRef.environmentId) &&
             group?.memberProjects.some(
               (member) =>
                 member.environmentId === contextualProjectRef.environmentId &&
@@ -992,7 +1042,7 @@ function OpenCommandPaletteDialog(props: {
       if (scratchTargetEnvironmentId === null) return projectItems;
 
       const noProjectIndex = newThreadNoProjectIndex(
-        projectPickerEntries.map(({ group, targetProject, isPreferred }) => ({
+        executionProjectEntries.map(({ group, targetProject, isPreferred }) => ({
           isScratch: isScratchProject(
             targetProject,
             scratchWorkspaceRootFor(targetProject.environmentId),
@@ -1413,10 +1463,13 @@ function OpenCommandPaletteDialog(props: {
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
   if (projects.length > 0) {
+    const preferredExecutionProject = executionProjectEntries.find((entry) => entry.isPreferred);
+    const contextualProjectIsHub =
+      contextualProjectRef !== null &&
+      hubOnlyEnvironmentIds.has(contextualProjectRef.environmentId);
     const activeProjectTitle =
-      projectPickerEntries.find((entry) => entry.isPreferred)?.group.displayName ??
-      currentProject?.title ??
-      null;
+      preferredExecutionProject?.group.displayName ??
+      (contextualProjectIsHub ? null : (currentProject?.title ?? null));
 
     if (activeProjectTitle) {
       actionItems.push({
@@ -1435,6 +1488,11 @@ function OpenCommandPaletteDialog(props: {
         icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
         shortcutCommand: "chat.newLocal",
         run: async () => {
+          if (contextualProjectIsHub && preferredExecutionProject) {
+            const target = preferredExecutionProject.targetProject;
+            await handleNewThread(scopeProjectRef(target.environmentId, target.id));
+            return;
+          }
           await startNewThreadFromContext({
             activeDraftThread,
             activeThread: activeThread ?? undefined,
@@ -2061,7 +2119,7 @@ function OpenCommandPaletteDialog(props: {
     readonly rawCwd: string;
     readonly platform: string;
     readonly currentProjectCwd: string | null;
-    readonly assignToTeam?: boolean;
+    readonly teamEnvironmentId?: EnvironmentId | null;
   }) => {
     const environment = environments.find(
       (candidate) => candidate.environmentId === input.environmentId,
@@ -2117,8 +2175,8 @@ function OpenCommandPaletteDialog(props: {
           input: { projectId: existing.id, archived: false },
         }).then((result) => reportProjectFailure(gt("Failed to unarchive project"), result));
       }
-      if (input.assignToTeam) {
-        await assignAddedProjectToTeam(existing.environmentId, existing.id, existing);
+      if (input.teamEnvironmentId) {
+        await assignAddedProjectToTeam(input.teamEnvironmentId, existing.id, existing);
       }
       if (await moveDraftToAddedProject(existing)) {
         setOpen(false);
@@ -2192,9 +2250,9 @@ function OpenCommandPaletteDialog(props: {
     }
 
     const projectRef = scopeProjectRef(input.environmentId, projectId);
-    if (input.assignToTeam) {
+    if (input.teamEnvironmentId) {
       const createdProject = await waitForProject(projectRef, 3_000).catch(() => null);
-      await assignAddedProjectToTeam(input.environmentId, projectId, createdProject);
+      await assignAddedProjectToTeam(input.teamEnvironmentId, projectId, createdProject);
     }
 
     const navigationResult = await settlePromise(() => openAddedProject(projectRef));
@@ -2219,7 +2277,8 @@ function OpenCommandPaletteDialog(props: {
       rawCwd,
       platform: browseEnvironmentPlatform,
       currentProjectCwd: currentProjectCwdForBrowse,
-      assignToTeam: canAssignBrowseProjectToTeam && browseAssignsToTeam,
+      teamEnvironmentId:
+        canAssignBrowseProjectToTeam && browseAssignsToTeam ? browseTeamEnvironmentId : null,
     });
   };
 
@@ -2253,6 +2312,10 @@ function OpenCommandPaletteDialog(props: {
         name: newProjectName,
         publishTo: newProjectPublishes ? newProjectPublishTarget : null,
         assignToTeam: canAssignNewProjectToTeam && newProjectAssignsToTeam,
+        teamEnvironmentId:
+          canAssignNewProjectToTeam && newProjectAssignsToTeam
+            ? (newProjectOwningTeam?.teamEnvironmentId ?? null)
+            : null,
       }),
     );
     newProjectSubmittingRef.current = false;
@@ -2464,12 +2527,13 @@ function OpenCommandPaletteDialog(props: {
       startResult.value.projectId,
     );
     await waitForProject(projectRef, 3_000).catch(() => null);
-    if (shouldAssignToTeam) {
+    if (shouldAssignToTeam && browseTeamEnvironmentId) {
       // Wait for the clone to succeed and populate repositoryIdentity before assigning to the team.
       void waitForCloneAndAssignProject({
         environmentId: addProjectCloneFlow.environmentId,
         projectId: startResult.value.projectId,
-        assign: assignAddedProjectToTeam,
+        assign: (_runnerId, projectId, project) =>
+          assignAddedProjectToTeam(browseTeamEnvironmentId, projectId, project),
       });
     }
     const navigationResult = await settlePromise(() => openAddedProject(projectRef));
@@ -2625,7 +2689,7 @@ function OpenCommandPaletteDialog(props: {
           ],
         };
   const newProjectOptionItems: CommandPaletteView["groups"][number]["items"][number][] = [
-    ...(canAssignNewProjectToTeam && newProjectTeamState.team !== null
+    ...(canAssignNewProjectToTeam && newProjectTeamState?.team != null
       ? [
           {
             kind: "action" as const,
@@ -3121,10 +3185,12 @@ function OpenCommandPaletteDialog(props: {
         rawCwd: selection.linuxPath,
         platform: "Linux",
         currentProjectCwd: null,
-        assignToTeam:
-          selection.environmentId === browseTeamEnvironmentId &&
+        teamEnvironmentId:
+          selection.environmentId === browseExecutionEnvironmentId &&
           canAssignBrowseProjectToTeam &&
-          browseAssignsToTeam,
+          browseAssignsToTeam
+            ? browseTeamEnvironmentId
+            : null,
       });
       return;
     }
@@ -3307,7 +3373,7 @@ function OpenCommandPaletteDialog(props: {
           description={addProjectCloneFlow.repository?.url ?? addProjectCloneFlow.remoteUrl}
         />
       ) : null}
-      {isBrowsing && canAssignBrowseProjectToTeam && browseTeamState.team !== null ? (
+      {isBrowsing && canAssignBrowseProjectToTeam && browseTeamState?.team != null ? (
         <label className="flex cursor-pointer items-center justify-between gap-3 border-b border-border/60 px-4 py-2 text-xs">
           <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
             <UsersIcon className="size-3.5 shrink-0" />

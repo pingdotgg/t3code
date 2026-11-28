@@ -709,6 +709,21 @@ export const TEAM_MIGRATIONS: ReadonlyArray<TeamMigration> = [
       `;
     }),
   },
+  {
+    id: 11,
+    name: "TeamLocalSyncWatermarks",
+    up: Effect.fn("TeamMigrations.TeamLocalSyncWatermarks")(function* (sql: SqlClient.SqlClient) {
+      yield* sql`
+        CREATE TABLE IF NOT EXISTS team_local_sync_watermarks (
+          thread_id TEXT PRIMARY KEY,
+          team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
+          last_updated_at TEXT NOT NULL,
+          last_sync_seq INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL
+        )
+      `;
+    }),
+  },
 ];
 
 const migrationLocks = new WeakMap<SqlClient.SqlClient, Semaphore.Semaphore>();

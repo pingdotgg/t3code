@@ -26,7 +26,9 @@ export function TeamDraftAccessControls({
 }) {
   const gt = useGT();
   const teamState = useTeamEnvironmentState(environmentId);
-  const draftOptions = useTeamDraftAccessOptions(draftKey);
+  const options = useTeamDraftAccessOptions(draftKey);
+  const viewId = options.teamEnvironmentId === environmentId ? options.viewId : null;
+  const locked = options.teamEnvironmentId === environmentId && options.locked;
 
   if (teamState.team === null || teamState.currentMember === null) {
     return null;
@@ -35,9 +37,7 @@ export function TeamDraftAccessControls({
   const creatableViews = listCreatableTeamViews(teamState);
   const defaultView = resolveTeamDefaultView(teamState);
   const selectedView =
-    (draftOptions.viewId !== null
-      ? creatableViews.find((view) => view.id === draftOptions.viewId)
-      : undefined) ??
+    (viewId !== null ? creatableViews.find((view) => view.id === viewId) : undefined) ??
     defaultView ??
     creatableViews[0] ??
     null;
@@ -54,7 +54,7 @@ export function TeamDraftAccessControls({
           value={selectedView.id}
           onValueChange={(value) => {
             if (typeof value === "string") {
-              setTeamDraftViewId(draftKey, value as TeamViewId);
+              setTeamDraftViewId(draftKey, value as TeamViewId, environmentId);
             }
           }}
         >
@@ -87,29 +87,25 @@ export function TeamDraftAccessControls({
               <Button
                 type="button"
                 size="xs"
-                variant={draftOptions.locked ? "secondary" : "ghost"}
+                variant={locked ? "secondary" : "ghost"}
                 data-testid="team-draft-lock-toggle"
-                aria-pressed={draftOptions.locked}
+                aria-pressed={locked}
                 aria-label={
-                  draftOptions.locked
-                    ? gt("New thread will start locked")
-                    : gt("Start new thread locked")
+                  locked ? gt("New thread will start locked") : gt("Start new thread locked")
                 }
-                onClick={() => setTeamDraftLocked(draftKey, !draftOptions.locked)}
+                onClick={() => setTeamDraftLocked(draftKey, !locked, environmentId)}
               />
             }
           >
-            {draftOptions.locked ? (
+            {locked ? (
               <LockIcon aria-hidden className="size-3.5" />
             ) : (
               <UnlockIcon aria-hidden className="size-3.5" />
             )}
-            <span className="hidden sm:inline">
-              {draftOptions.locked ? <T>Locked</T> : <T>Lock</T>}
-            </span>
+            <span className="hidden sm:inline">{locked ? <T>Locked</T> : <T>Lock</T>}</span>
           </TooltipTrigger>
           <TooltipPopup side="top">
-            {draftOptions.locked ? (
+            {locked ? (
               <T>This thread will be created locked (only owners and admins can post).</T>
             ) : (
               <T>Create this thread locked so only owners and admins can post.</T>

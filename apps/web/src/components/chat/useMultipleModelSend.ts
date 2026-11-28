@@ -1,5 +1,9 @@
 import { msg } from "gt-react";
-import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import {
+  thrownErrorMessage,
+  wasBootstrapThreadDeleted,
+  wasBootstrapThreadNotCreated,
+} from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import {
   type EnvironmentId,
@@ -23,6 +27,11 @@ import type { ComposerHandleRef } from "../../composerHandleContext";
 import { releaseDraftAttachments } from "../../lib/attachmentUploadQueue";
 import type { buildMessageContext } from "../../lib/composerContextRecords";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import {
+  clearLocalThreadAccess,
+  prepareTeamThreadAccess,
+  type TeamDraftAccessOptions,
+} from "../../state/team";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -92,6 +101,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
   return async ({
     threadId,
     project,
+    teamDraftAccess,
     branch,
     selections,
     targets,
@@ -106,6 +116,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
   }: {
     readonly threadId: ThreadId;
     readonly project: EnvironmentProject;
+    readonly teamDraftAccess: TeamDraftAccessOptions | null;
     readonly branch: string;
     readonly selections: ReadonlyArray<ModelSelection>;
     readonly targets: ReadonlyArray<MultipleModelTarget>;
@@ -168,8 +179,8 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
             ]),
             model: target.selection.model,
             uncertainSubmissions: uncertainSubmissionsRef.current,
-            start: (targetThreadId) => {
-              return startThreadTurn({
+            start: async (targetThreadId) => {
+              const result = await startThreadTurn({
                 environmentId,
                 input: {
                   threadId: targetThreadId,
@@ -196,6 +207,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                       branch,
                       worktreePath: null,
                       createdAt: createdAt,
+                      ...prepareTeamThreadAccess(environmentId, targetThreadId, teamDraftAccess),
                     },
                     prepareWorktree: {
                       projectCwd: project.workspaceRoot,
@@ -209,6 +221,13 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                   createdAt: createdAt,
                 },
               });
+              if (result._tag === "Failure") {
+                const error = squashAtomCommandFailure(result);
+                if (wasBootstrapThreadDeleted(error) || wasBootstrapThreadNotCreated(error)) {
+                  clearLocalThreadAccess(environmentId, targetThreadId);
+                }
+              }
+              return result;
             },
             openThread: (threadId) =>
               void navigate({

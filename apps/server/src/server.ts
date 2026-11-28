@@ -866,7 +866,11 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(CodexManagedTokenBroker.layer),
   Layer.provideMerge(layerServerEnvironment),
-  Layer.provideMerge(TeamGitHubBroker.layer),
+  Layer.provideMerge(
+    TeamGitHubBroker.layer.pipe(
+      Layer.provide(ProjectionStoreV2.layer.pipe(Layer.provide(layerPersistence))),
+    ),
+  ),
   Layer.provideMerge(
     TeamService.layer.pipe(Layer.provide(layerServerEnvironment), Layer.provide(layerPersistence)),
   ),

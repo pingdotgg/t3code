@@ -192,6 +192,14 @@ export interface StoredTeamAutomationTurnScope {
   readonly createdAt: string;
 }
 
+export interface TeamLocalSyncWatermark {
+  readonly threadId: ThreadId;
+  readonly teamId: TeamId;
+  readonly lastUpdatedAt: string;
+  readonly lastSyncSeq: number;
+  readonly updatedAt: string;
+}
+
 interface WorkspaceRow {
   readonly id: string;
   readonly name: string;
@@ -746,6 +754,12 @@ export class TeamRepository extends Context.Service<
       Option.Option<TeamThreadAttribution>,
       TeamRepositoryError | TeamMemberForbiddenError
     >;
+    readonly getLocalSyncWatermark: (
+      threadId: ThreadId,
+    ) => Effect.Effect<Option.Option<TeamLocalSyncWatermark>, TeamRepositoryError>;
+    readonly upsertLocalSyncWatermark: (
+      input: TeamLocalSyncWatermark,
+    ) => Effect.Effect<void, TeamRepositoryError>;
     readonly updateThreadView: (input: {
       readonly teamId: TeamId;
       readonly threadId: ThreadId;
@@ -2369,6 +2383,59 @@ const make = Effect.gen(function* () {
         );
     }),
 
+    getLocalSyncWatermark: Effect.fn("TeamRepository.getLocalSyncWatermark")(function* (threadId) {
+      const rows = yield* runSql(
+        "getLocalSyncWatermark",
+        sql<{
+          readonly thread_id: string;
+          readonly team_id: string;
+          readonly last_updated_at: string;
+          readonly last_sync_seq: number;
+          readonly updated_at: string;
+        }>`
+          SELECT thread_id, team_id, last_updated_at, last_sync_seq, updated_at
+          FROM team_local_sync_watermarks
+          WHERE thread_id = ${threadId}
+          LIMIT 1
+        `,
+      );
+      const row = rows[0];
+      return row
+        ? Option.some({
+            threadId: ThreadId.make(row.thread_id),
+            teamId: TeamId.make(row.team_id),
+            lastUpdatedAt: row.last_updated_at,
+            lastSyncSeq: row.last_sync_seq,
+            updatedAt: row.updated_at,
+          })
+        : Option.none();
+    }),
+
+    upsertLocalSyncWatermark: Effect.fn("TeamRepository.upsertLocalSyncWatermark")(
+      function* (input) {
+        yield* runSql(
+          "upsertLocalSyncWatermark",
+          sql`
+          INSERT INTO team_local_sync_watermarks (
+            thread_id, team_id, last_updated_at, last_sync_seq, updated_at
+          )
+          VALUES (
+            ${input.threadId},
+            ${input.teamId},
+            ${input.lastUpdatedAt},
+            ${input.lastSyncSeq},
+            ${input.updatedAt}
+          )
+          ON CONFLICT(thread_id) DO UPDATE SET
+            team_id = excluded.team_id,
+            last_updated_at = excluded.last_updated_at,
+            last_sync_seq = excluded.last_sync_seq,
+            updated_at = excluded.updated_at
+        `,
+        );
+      },
+    ),
+
     updateThreadView: Effect.fn("TeamRepository.updateThreadView")(function* (input) {
       const updated = yield* runSql(
         "updateThreadView.update",
@@ -2442,6 +2509,7 @@ const make = Effect.gen(function* () {
             Effect.gen(function* () {
               yield* sql`DELETE FROM team_thread_meta WHERE thread_id = ${threadId}`;
               yield* sql`DELETE FROM team_thread_env_labels WHERE thread_id = ${threadId}`;
+              yield* sql`DELETE FROM team_local_sync_watermarks WHERE thread_id = ${threadId}`;
               yield* sql`DELETE FROM team_turn_meta WHERE thread_id = ${threadId}`;
               yield* sql`DELETE FROM team_automation_turn_scopes WHERE thread_id = ${threadId}`;
             }),

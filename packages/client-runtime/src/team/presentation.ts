@@ -13,19 +13,24 @@ import {
   canMemberRespondToTeamRuntimeRequest,
   canMemberSteerActiveTeamTurn,
   canToggleTeamThreadLock,
+  DEFAULT_MODEL,
   DEFAULT_TEAM_NOTIFICATION_SOUND,
   isTeamAdminRole,
   isTeamOwnedThreadAttribution,
   isTeamProviderInstanceId,
   isTeamProviderInstanceIdForTeam,
+  parseTeamProviderInstanceId,
   resolveTeamThreadEnvironmentAccess,
   resolveTeamThreadPostBlockReason,
   shouldNotifyTeamMemberForThread,
   type EnvironmentId,
+  type ModelSelection,
   type ProjectId,
   type ProviderInstanceId,
   type RepositoryIdentity,
   type ScheduledTaskId,
+  type ServerConfig,
+  type ServerProvider,
   type TeamEnvironment,
   type TeamId,
   type TeamMemberId,
@@ -33,6 +38,7 @@ import {
   type TeamProjectAssignment,
   type TeamProvider,
   type TeamScheduledTaskMeta,
+  type TeamThreadAttribution,
   type TeamThreadEnvironmentAccess,
   type TeamThreadNote,
   type TeamThreadPostBlockReason,
@@ -41,6 +47,7 @@ import {
   type TeamWorkspace,
   type ThreadId,
 } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import type { TeamEnvironmentState } from "./state.ts";
 
 export function resolveTeamThreadCreatorPseudo(
@@ -212,7 +219,10 @@ export function shouldShowThreadInTeamFilter(input: {
   readonly showColleaguesThreads: boolean;
   readonly followedOnly?: boolean;
 }): boolean {
-  const teamState = input.teamStates.get(input.environmentId);
+  const direct = input.teamStates.get(input.environmentId);
+  const teamState = direct?.team
+    ? direct
+    : resolveCorrelatedLocalSyncedTeamThread(input)?.teamState;
   if (!teamState || teamState.team === null || teamState.currentMember === null) {
     return !input.followedOnly;
   }
@@ -682,17 +692,15 @@ export function resolveProjectTeamAssignment(input: {
 }): ResolvedProjectTeamAssignment | null {
   const { project, teamStates } = input;
   if (!project) return null;
-  const directTeamState = teamStates.get(project.environmentId);
-  if (directTeamState && directTeamState.team !== null) {
-    const direct = directTeamState.projectAssignmentByProjectId.get(project.id);
-    if (direct) {
-      return {
-        teamEnvironmentId: project.environmentId,
-        team: directTeamState.team,
-        assignment: direct,
-        teamState: directTeamState,
-      };
-    }
+  const owning = resolveOwningTeamEnvironment({ environmentId: project.environmentId, teamStates });
+  const direct = owning?.teamState.projectAssignmentByProjectId.get(project.id);
+  if (owning && direct && owning.teamState.team) {
+    return {
+      teamEnvironmentId: owning.teamEnvironmentId,
+      team: owning.teamState.team,
+      assignment: direct,
+      teamState: owning.teamState,
+    };
   }
   const repoKey = extractProjectRepoIdentityKey(project.repositoryIdentity);
   if (repoKey !== null) {
@@ -710,6 +718,153 @@ export function resolveProjectTeamAssignment(input: {
     }
   }
   return null;
+}
+
+export interface ResolvedOwningTeamEnvironment {
+  readonly teamEnvironmentId: EnvironmentId;
+  readonly teamState: TeamEnvironmentState;
+}
+
+/**
+ * Resolves the owning Team Server for either a Team Server itself or an attached runner
+ * (`t3runner`) registered in a connected team's `environmentById`.
+ */
+export function resolveOwningTeamEnvironment(input: {
+  readonly environmentId: EnvironmentId;
+  readonly teamStates: ReadonlyMap<EnvironmentId, TeamEnvironmentState>;
+}): ResolvedOwningTeamEnvironment | null {
+  const direct = input.teamStates.get(input.environmentId);
+  if (direct != null && direct.team !== null) {
+    return { teamEnvironmentId: input.environmentId, teamState: direct };
+  }
+  for (const [teamEnvironmentId, state] of input.teamStates) {
+    if (state.team === null) continue;
+    if (state.environmentById.has(input.environmentId)) {
+      return { teamEnvironmentId, teamState: state };
+    }
+  }
+  return null;
+}
+
+/** Returns true when an environment is running in `--team-hub-only` control-plane mode. */
+export function isTeamHubOnlyServerConfig(
+  serverConfig: Pick<ServerConfig, "environment"> | null | undefined,
+): boolean {
+  return serverConfig?.environment?.capabilities?.teamHubOnly === true;
+}
+
+export interface CorrelatedLocalSyncedTeamThread {
+  readonly teamEnvironmentId: EnvironmentId;
+  readonly teamState: TeamEnvironmentState;
+  readonly attribution: TeamThreadAttribution;
+}
+
+/**
+ * Finds the Team Server attribution for a local-environment thread that has been mirrored via
+ * local sync, allowing local sidebar rows and controls to display team pseudo/view/lock metadata.
+ */
+export function resolveCorrelatedLocalSyncedTeamThread(input: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly teamStates: ReadonlyMap<EnvironmentId, TeamEnvironmentState>;
+}): CorrelatedLocalSyncedTeamThread | null {
+  for (const [teamEnvironmentId, teamState] of input.teamStates) {
+    if (teamState.team === null) continue;
+    const attribution = teamState.attributionByThreadId.get(input.threadId);
+    if (
+      attribution?.isLocalSynced === true &&
+      attribution.executionEnvironmentId === input.environmentId
+    ) {
+      return { teamEnvironmentId, teamState, attribution };
+    }
+  }
+  return null;
+}
+
+/**
+ * Returns true when `(environmentId, threadId)` is a Team Server mirrored copy of the signed-in
+ * member's own local-synced thread and the live local `(executionEnvironmentId, threadId)` thread
+ * is already present in the client (preventing duplicate sidebar rows).
+ */
+export function isDuplicateMirroredLocalTeamThread(input: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly teamStates: ReadonlyMap<EnvironmentId, TeamEnvironmentState>;
+  readonly liveLocalThreadKeys: ReadonlySet<string>;
+}): boolean {
+  const teamState = input.teamStates.get(input.environmentId);
+  if (!teamState || teamState.team === null || teamState.currentMember === null) {
+    return false;
+  }
+  const attribution = teamState.attributionByThreadId.get(input.threadId);
+  if (
+    !attribution ||
+    attribution.isLocalSynced !== true ||
+    attribution.creatorMemberId !== teamState.currentMember.id ||
+    attribution.executionEnvironmentId == null
+  ) {
+    return false;
+  }
+  return input.liveLocalThreadKeys.has(`${attribution.executionEnvironmentId}\0${input.threadId}`);
+}
+
+/**
+ * Resolves a target-compatible `team:<teamId>:*` model selection for team thread forks,
+ * excluding `remote-only` and disabled providers on local targets (returns `null` if none fit).
+ */
+export function resolveTeamForkModelSelection(input: {
+  readonly sourceModelSelection: ModelSelection | null | undefined;
+  readonly targetProviders: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "driver" | "enabled" | "status" | "models">
+  >;
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly isLocalTarget: boolean;
+}): ModelSelection | null {
+  const { sourceModelSelection, targetProviders, teamState, isLocalTarget } = input;
+  if (!teamState || teamState.team === null) {
+    return sourceModelSelection ?? null;
+  }
+  const teamId = teamState.team.id;
+  const providerMetaBySourceId = new Map(
+    teamState.providers.map((provider) => [provider.providerInstanceId, provider] as const),
+  );
+  const usableProviders = targetProviders.filter((entry) => {
+    if (!entry.enabled || entry.status === "disabled") return false;
+    const parsed = parseTeamProviderInstanceId(entry.instanceId);
+    if (parsed?.teamId !== teamId) return false;
+    const meta = providerMetaBySourceId.get(parsed.sourceInstanceId);
+    if (isLocalTarget) return meta?.enabled === true && meta.deliveryStrategy !== "remote-only";
+    return meta?.enabled !== false;
+  });
+  if (usableProviders.length === 0) {
+    return null;
+  }
+  if (sourceModelSelection != null) {
+    const exactMatch = usableProviders.find(
+      (entry) => entry.instanceId === sourceModelSelection.instanceId,
+    );
+    if (exactMatch?.models.some((model) => model.slug === sourceModelSelection.model)) {
+      return sourceModelSelection;
+    }
+  }
+  const sourceParsed =
+    sourceModelSelection != null
+      ? parseTeamProviderInstanceId(sourceModelSelection.instanceId)
+      : null;
+  const sourceDriver =
+    sourceParsed !== null
+      ? providerMetaBySourceId.get(sourceParsed.sourceInstanceId)?.driver
+      : undefined;
+  const preferred =
+    (sourceDriver !== undefined
+      ? (usableProviders.find(
+          (entry) => entry.driver === sourceDriver && entry.status === "ready",
+        ) ?? usableProviders.find((entry) => entry.driver === sourceDriver))
+      : undefined) ??
+    usableProviders.find((entry) => entry.status === "ready") ??
+    usableProviders[0]!;
+  const defaultModel = preferred.models[0]?.slug ?? DEFAULT_MODEL;
+  return createModelSelection(preferred.instanceId, defaultModel);
 }
 
 export function listAccessibleTeamEnvironments(
