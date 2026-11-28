@@ -381,6 +381,33 @@ it.layer(layerTest)("ThreadSearch", (it) => {
     }),
   );
 
+  it.effect("finds words with vowel signs inside longer words", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:search-vowel-signs");
+      const threadId = ThreadId.make("thread:vowel-signs");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(threadId, project),
+          message(threadId, "bangla", "user", "আমি বাংলাদেশে থাকি"),
+          message(threadId, "thai", "user", "ช่วยค้นหาไฟล์นี้"),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const snippets = (query: string) =>
+        Effect.map(search.search({ query }), (result) =>
+          result.matches
+            .filter((match) => match.threadId === threadId)
+            .map((match) => match.snippet),
+        );
+      assert.deepEqual(yield* snippets("বাংলা"), ["আমি বাংলাদেশে থাকি"]);
+      assert.deepEqual(yield* snippets("ค้นหา"), ["ช่วยค้นหาไฟล์นี้"]);
+    }),
+  );
+
   it.effect("matches the readable text of quotes and their comments", () =>
     Effect.gen(function* () {
       const projections = yield* ProjectionStore.ProjectionStoreV2;
