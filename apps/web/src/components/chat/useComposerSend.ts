@@ -223,6 +223,8 @@ interface ComposerSendInput {
   readonly isServerThread: boolean;
   readonly isLocalDraftThread: boolean;
   readonly isGitRepo: boolean;
+  /** Undefined until the project folder's Git status has loaded. */
+  readonly knownIsGitRepo: boolean | undefined;
   readonly phase: SessionPhase;
   readonly runtimeMode: RuntimeMode;
   readonly sendEnvMode: DraftThreadEnvMode;
@@ -326,6 +328,7 @@ export function useComposerSend(input: ComposerSendInput) {
     isServerThread,
     isLocalDraftThread,
     isGitRepo,
+    knownIsGitRepo,
     phase,
     runtimeMode,
     sendEnvMode,
@@ -1028,7 +1031,7 @@ export function useComposerSend(input: ComposerSendInput) {
       sendEnvMode,
       worktreePath: activeThread.worktreePath,
       activeThreadBranch,
-      projectIsGitRepo: isGitRepo,
+      projectIsGitRepo: knownIsGitRepo,
       plainProjectBaseBranch: readWorktreeBaseBranch(activeProject),
       isScratchProject: activeProjectIsScratch,
       resumeCompactionTokens,

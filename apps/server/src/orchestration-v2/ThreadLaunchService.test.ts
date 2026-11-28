@@ -2811,6 +2811,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
           ),
         checkWorktreeBase: launches.checkWorktreeBase,
         isNonGitProject: launches.isNonGitProject,
+        resolveClientWorkspaceStrategy: launches.resolveClientWorkspaceStrategy,
         retryPreparation: launches.retryPreparation,
         prepareRun: launches.prepareRun,
       }),
@@ -4102,6 +4103,35 @@ it.effect.each(["origin/master", ":/initial"])(
         });
       }).pipe(Effect.provide(harness.layer));
     }),
+);
+
+it.effect("runs a person's worktree request in a plain folder with nothing to check out", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      isGitRepository: (cwd) => Effect.succeed(cwd !== project.workspaceRoot),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const worktree = { type: "worktree", baseRef: "HEAD" } as const;
+      assert.deepEqual(
+        yield* launches.resolveClientWorkspaceStrategy({ projectId, workspaceStrategy: worktree }),
+        { type: "root" },
+      );
+      // A repository keeps its worktree, and naming repositories still goes through the checks.
+      assert.deepEqual(
+        yield* launches.resolveClientWorkspaceStrategy({
+          projectId: otherProjectId,
+          workspaceStrategy: worktree,
+        }),
+        worktree,
+      );
+      const chosen = { ...worktree, repositories: [{ path: "/repo/api" }] };
+      assert.deepEqual(
+        yield* launches.resolveClientWorkspaceStrategy({ projectId, workspaceStrategy: chosen }),
+        chosen,
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
 );
 
 it.effect("leaves uncertain Git detection failures to workspace preparation", () =>

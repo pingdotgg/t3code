@@ -262,6 +262,13 @@ export class ThreadLaunchService extends Context.Service<
     >;
     /** True only when the project's folder is known not to be a Git repository. */
     readonly isNonGitProject: (projectId: ProjectId) => Effect.Effect<boolean>;
+    /**
+     * A person's worktree request runs in the folder when the project is a plain folder with no
+     * repository to check out; agents keep the not-a-repository error from `checkWorktreeBase`.
+     */
+    readonly resolveClientWorkspaceStrategy: (
+      input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy">,
+    ) => Effect.Effect<ThreadLaunchWorkspaceStrategy>;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
     ) => Effect.Effect<
@@ -1839,10 +1846,22 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const resolveClientWorkspaceStrategy: ThreadLaunchService["Service"]["resolveClientWorkspaceStrategy"] =
+    Effect.fn("ThreadLaunchService.resolveClientWorkspaceStrategy")(function* (input) {
+      const strategy = input.workspaceStrategy;
+      if (strategy.type !== "worktree" || (strategy.repositories ?? []).length > 0) return strategy;
+      if (!(yield* isNonGitProject(input.projectId))) return strategy;
+      const taskPlan = yield* taskFolders
+        .plan({ projectId: input.projectId })
+        .pipe(Effect.orElseSucceed(() => undefined));
+      return taskPlan === null ? { type: "root" } : strategy;
+    });
+
   return ThreadLaunchService.of({
     launch,
     checkWorktreeBase,
     isNonGitProject,
+    resolveClientWorkspaceStrategy,
     retryPreparation,
     prepareRun,
   });

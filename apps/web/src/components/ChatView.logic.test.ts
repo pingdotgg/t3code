@@ -1350,6 +1350,13 @@ describe("planComposerTurn", () => {
     expect(
       planComposerTurn({ ...base, activeThreadBranch: null, projectIsGitRepo: false }),
     ).toMatchObject({ missingWorktreeBaseBranch: false, baseBranchForWorktree: "HEAD" });
+    // Before Git status loads, the server decides: a plain folder runs in place.
+    expect(
+      planComposerTurn({ ...base, activeThreadBranch: null, projectIsGitRepo: undefined }),
+    ).toMatchObject({ missingWorktreeBaseBranch: false, baseBranchForWorktree: "HEAD" });
+    expect(planComposerTurn({ ...base, projectIsGitRepo: undefined }).baseBranchForWorktree).toBe(
+      "main",
+    );
     expect(
       planComposerTurn({ ...base, activeThreadBranch: null, isScratchProject: true }),
     ).toMatchObject({
