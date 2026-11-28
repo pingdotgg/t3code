@@ -1,6 +1,17 @@
+import type * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import type * as AcpSchema from "effect-acp/compat";
+import * as EffectAcpErrors from "effect-acp/errors";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
-import type { AcpAdapterV2SubagentUpdate } from "@t3tools/provider-acp/server/adapter";
+import type {
+  AcpAdapterV2ExtensionContext,
+  AcpAdapterV2SubagentUpdate,
+} from "@t3tools/provider-acp/server/adapter";
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -61,3 +72,88 @@ export function devinAnswerablePermissionOptions(
 ): ReadonlyArray<AcpSchema.PermissionOption> {
   return request.options.filter((option) => option.optionId.trim() !== "plan_bypass");
 }
+
+const DEVIN_COMPACTION_METHOD = "_cognition.ai/compaction";
+const DevinCompactionNotice = Schema.Struct({ sessionId: Schema.String, status: Schema.String });
+// Devin 3000.14 reports `started` within milliseconds of answering `/compact`, and nothing at all
+// when there is nothing to compact. Without a notice the turn settles as it did before.
+const DEVIN_COMPACTION_START_WAIT: Duration.Input = "2 seconds";
+// Nothing ends the wait if Devin's process dies after `started`, so the turn fails here instead.
+const DEVIN_COMPACTION_LIMIT: Duration.Input = "10 minutes";
+// The status comes from the agent, so error data keeps only known values.
+const DEVIN_COMPACTION_FAILURES: ReadonlySet<string> = new Set([
+  "failed",
+  "timeout",
+  "cancelled",
+  "refusal",
+  "max_tokens",
+  "max_turn_requests",
+  "error",
+]);
+
+/**
+ * Devin answers `/compact` before it summarizes and reports the outcome through
+ * `_cognition.ai/compaction`. Holding the turn until then keeps "Context compacted" honest and
+ * queues the next message instead of letting it cancel the compaction.
+ */
+export const makeDevinCompaction = Effect.gen(function* () {
+  const waiters = yield* Ref.make(new Map<string, Queue.Queue<string>>());
+  const registerExtensions = (context: AcpAdapterV2ExtensionContext) =>
+    context.runtime.handleExtNotification(
+      DEVIN_COMPACTION_METHOD,
+      DevinCompactionNotice,
+      (notice) =>
+        Ref.get(waiters).pipe(
+          Effect.flatMap((current) => {
+            const statuses = current.get(notice.sessionId);
+            return statuses === undefined ? Effect.void : Queue.offer(statuses, notice.status);
+          }),
+          Effect.asVoid,
+        ),
+    );
+  const fail = (status: string) =>
+    new EffectAcpErrors.AcpRequestError({
+      code: -32603,
+      errorMessage:
+        status === "timeout"
+          ? "Devin did not report the end of the compaction."
+          : "Devin could not compact the conversation.",
+      method: DEVIN_COMPACTION_METHOD,
+      data: { status: DEVIN_COMPACTION_FAILURES.has(status) ? status : "unknown" },
+    });
+  const compact = Effect.fn("DevinCompaction.compact")(function* (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+    sessionId: string,
+  ) {
+    const statuses = yield* Queue.unbounded<string>();
+    yield* Ref.update(waiters, (current) => new Map(current).set(sessionId, statuses));
+    return yield* Effect.gen(function* () {
+      const result = yield* runtime.prompt({ prompt: [{ type: "text", text: "/compact" }] });
+      if (result.stopReason !== "end_turn") return yield* fail(result.stopReason);
+      const first = yield* Queue.take(statuses).pipe(
+        Effect.timeoutOption(DEVIN_COMPACTION_START_WAIT),
+      );
+      if (Option.isNone(first)) return;
+      const terminal = yield* Effect.gen(function* () {
+        let status = first.value;
+        while (status === "started") status = yield* Queue.take(statuses);
+        return status;
+      }).pipe(Effect.timeoutOption(DEVIN_COMPACTION_LIMIT));
+      const status = Option.getOrElse(terminal, () => "timeout");
+      if (status !== "completed") return yield* fail(status);
+    }).pipe(
+      Effect.ensuring(
+        Ref.update(waiters, (current) => {
+          if (current.get(sessionId) !== statuses) return current;
+          const updated = new Map(current);
+          updated.delete(sessionId);
+          return updated;
+        }),
+      ),
+    );
+  });
+  return {
+    registerExtensions,
+    compactSession: { supported: () => true, compact },
+  };
+});
